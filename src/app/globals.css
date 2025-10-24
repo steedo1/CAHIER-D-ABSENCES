@@ -1,26 +1,169 @@
+/* web/src/app/globals.css — Tailwind v4 (Slate + Emerald) */
+
+/* 1) Tailwind puis plugins */
 @import "tailwindcss";
+@plugin "tailwindcss-animate";
+/* Optionnel : seulement si installé */
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
 
+/* 2) Variant dark (classe .dark sur <html>) */
+@custom-variant dark (&:is(.dark *));
+
+/* 3) Helpers globaux */
+* { box-sizing: border-box }
+body { @apply m-0 font-sans }
+button { cursor: pointer }
+
+/* 4) UI helpers (conservés) */
+.container { @apply max-w-[960px] mx-auto p-4 }
+.card { @apply border border-gray-200 rounded-xl p-4 my-3 }
+.row { @apply flex gap-2 items-center flex-wrap }
+.badge { @apply px-2 py-0.5 rounded-full bg-gray-200 text-sm }
+
+/* 5) Mapping Tailwind v4 <-> tokens shadcn */
 @theme inline {
+  /* Rayons */
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+
+  /* Couleurs (exposées comme bg-primary, text-foreground, etc.) */
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  /* Charts */
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+
+  /* Sidebar */
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+/* 6) Thème clair (Slate + Emerald) */
+:root {
+  --radius: 0.625rem;
+
+  /* Base slate */
+  --background: oklch(0.99 0 0);
+  --foreground: oklch(0.19 0.03 255);
+
+  /* Surfaces */
+  --card: var(--background);
+  --card-foreground: var(--foreground);
+  --popover: var(--background);
+  --popover-foreground: var(--foreground);
+
+  /* Brand (Emerald) */
+  --primary: #059669;                 /* emerald-600 */
+  --primary-foreground: #ffffff;
+
+  /* Neutres */
+  --secondary: oklch(0.968 0.007 247.896);
+  --secondary-foreground: oklch(0.208 0.042 265.755);
+  --muted: oklch(0.968 0.007 247.896);
+  --muted-foreground: oklch(0.48 0.03 255);
+  --accent: oklch(0.968 0.007 247.896);
+  --accent-foreground: oklch(0.208 0.042 265.755);
+
+  /* États */
+  --destructive: #ef4444;             /* red-500 */
+  --border: oklch(0.929 0.013 255.508);
+  --input: var(--border);
+  --ring: #86efac;                    /* emerald-300 */
+
+  /* Charts (amber, emerald, sky, violet, pink) */
+  --chart-1: #f59e0b;
+  --chart-2: #10b981;
+  --chart-3: #0ea5e9;
+  --chart-4: #8b5cf6;
+  --chart-5: #ec4899;
+
+  /* Sidebar */
+  --sidebar: oklch(0.984 0.003 247.858);
+  --sidebar-foreground: var(--foreground);
+  --sidebar-primary: var(--primary);
+  --sidebar-primary-foreground: var(--primary-foreground);
+  --sidebar-accent: oklch(0.968 0.007 247.896);
+  --sidebar-accent-foreground: oklch(0.208 0.042 265.755);
+  --sidebar-border: var(--border);
+  --sidebar-ring: var(--ring);
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+/* 7) Thème sombre */
+.dark {
+  --background: oklch(0.14 0.02 255);
+  --foreground: oklch(0.984 0.003 247.858);
+
+  --card: oklch(0.17 0.02 255);
+  --card-foreground: var(--foreground);
+
+  --popover: oklch(0.17 0.02 255);
+  --popover-foreground: var(--foreground);
+
+  /* Brand un peu plus lumineuse en dark */
+  --primary: #10b981;                 /* emerald-500 */
+  --primary-foreground: #06281e;      /* emerald très foncé pour le contraste */
+
+  --secondary: oklch(0.28 0.04 260);
+  --secondary-foreground: var(--foreground);
+  --muted: oklch(0.28 0.04 260);
+  --muted-foreground: oklch(0.70 0.04 256);
+  --accent: oklch(0.28 0.04 260);
+  --accent-foreground: var(--foreground);
+
+  --destructive: #f87171;             /* red-400 */
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 15%);
+  --ring: #34d399;                    /* emerald-400 */
+
+  --chart-1: #f59e0b;
+  --chart-2: #34d399;
+  --chart-3: #38bdf8;
+  --chart-4: #a78bfa;
+  --chart-5: #f472b6;
+
+  --sidebar: oklch(0.17 0.02 255);
+  --sidebar-foreground: var(--foreground);
+  --sidebar-primary: var(--primary);
+  --sidebar-primary-foreground: var(--primary-foreground);
+  --sidebar-accent: oklch(0.28 0.04 260);
+  --sidebar-accent-foreground: var(--foreground);
+  --sidebar-border: oklch(1 0 0 / 10%);
+  --sidebar-ring: var(--ring);
 }
+
+/* 8) Base layer (applique les tokens) */
+@layer base {
+  *   { @apply border-border outline-ring/50; }
+  body{ @apply bg-background text-foreground; }
+}
+
+/* 9) Bonus : si tu utilises .card pour des surfaces */
+.card { @apply bg-card text-card-foreground }
