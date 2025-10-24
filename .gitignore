@@ -18,9 +18,9 @@
 # ➜ Next.js / build
 /.next/
 out/
-/build
-/dist
-/.turbo
+build/
+dist/
+.turbo
 .eslintcache
 
 # ➜ Logs & debug
@@ -43,7 +43,6 @@ yarn-error.log*
 Thumbs.db
 *.pem
 *.tsbuildinfo
-next-env.d.ts
 
 # ➜ IDE/OS
 .vscode/
