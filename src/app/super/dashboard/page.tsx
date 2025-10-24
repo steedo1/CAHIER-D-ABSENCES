@@ -1,0 +1,83 @@
+// src/app/super/dashboard/page.tsx
+import { headers } from "next/headers";
+import { redirect } from "next/navigation";
+import { getSupabaseServerClient } from "@/lib/supabaseServer";
+
+function getBaseUrl() {
+  if (process.env.NEXT_PUBLIC_SITE_URL) return process.env.NEXT_PUBLIC_SITE_URL;
+  if (process.env.VERCEL_URL) return `https://${process.env.VERCEL_URL}`;
+  return "http://localhost:3000";
+}
+
+export const dynamic = "force-dynamic";
+
+export default async function SuperDashboardPage() {
+  // SÃ©curitÃ© cÃ´tÃ© serveur (auth + rÃ´le)
+  const supabase = await getSupabaseServerClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) redirect("/login");
+  const { data: roles } = await supabase.from("user_roles").select("role").eq("profile_id", user.id);
+  const isSuper = (roles ?? []).some(r => r.role === "super_admin");
+  if (!isSuper) redirect("/(errors)/forbidden");
+
+  // ---- FIX: headers() est async dans ton setup
+  const h = await headers();
+  const cookie = h.get("cookie") ?? "";
+
+  const res = await fetch(`${getBaseUrl()}/api/super/stats`, {
+    cache: "no-store",
+    headers: { cookie },
+  });
+  if (!res.ok) throw new Error(`Stats API error: ${res.status}`);
+  const stats = await res.json(); // { institutions, admins, users, expiringIn30d }
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-semibold">Tableau de bord</h1>
+          <p className="text-sm text-slate-600">Vue dâ€™ensemble des abonnements et utilisateurs.</p>
+        </div>
+      </div>
+
+      {/* Cartes de stats */}
+      <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        {[
+          { label: "Ã‰tablissements", value: stats.institutions, icon: "ðŸ«" },
+          { label: "Admins dâ€™Ã©tablissement", value: stats.admins, icon: "ðŸ§‘â€ðŸ’¼" },
+          { label: "Utilisateurs (profils)", value: stats.users, icon: "ðŸ‘¥" },
+          { label: "Abonnements expirant â‰¤ 30 j", value: stats.expiringIn30d, icon: "â³" },
+        ].map((c) => (
+          <div key={c.label} className="rounded-xl border bg-white p-4">
+            <div className="flex items-center justify-between">
+              <div className="text-2xl">{c.icon}</div>
+              <div className="text-3xl font-semibold">{c.value ?? 0}</div>
+            </div>
+            <div className="mt-1 text-sm text-slate-600">{c.label}</div>
+          </div>
+        ))}
+      </section>
+
+      {/* Raccourcis */}
+      <section className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+        <div className="rounded-xl border bg-white p-4">
+          <h3 className="mb-2 text-sm font-semibold text-slate-700">Actions rapides</h3>
+          <ul className="text-sm leading-7">
+            <li><a className="text-violet-700 hover:underline" href="/super/etablissements">CrÃ©er un Ã©tablissement</a></li>
+            <li><a className="text-violet-700 hover:underline" href="/super/admins">Ajouter un admin</a></li>
+            <li><a className="text-violet-700 hover:underline" href="/super/abonnements">Voir les abonnements</a></li>
+          </ul>
+        </div>
+
+        <div className="rounded-xl border bg-white p-4 lg:col-span-2">
+          <h3 className="mb-2 text-sm font-semibold text-slate-700">Aide rapide</h3>
+          <ul className="list-disc pl-5 text-sm text-slate-700">
+            <li>Les abonnements se dÃ©finissent par une <b>durÃ©e (mois)</b>, la date dâ€™expiration est calculÃ©e automatiquement.</li>
+            <li>Un <b>admin dâ€™Ã©tablissement</b> est crÃ©Ã© Ã  partir de son email (profil + rÃ´le + rattachement).</li>
+            <li>Les rÃ©glages JSON sont optionnels (thÃ¨me/quotas/toggles).</li>
+          </ul>
+        </div>
+      </section>
+    </div>
+  );
+}
