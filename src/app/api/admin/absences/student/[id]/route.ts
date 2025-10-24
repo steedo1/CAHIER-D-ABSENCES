@@ -1,35 +1,44 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 
-export async function GET(req: Request, ctx: { params: { id: string } }) {
-  const supa = await getSupabaseServerClient();
-  const srv  = getSupabaseServiceClient();
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
-  // Auth + Ã©tablissement
-  const { data: { user } } = await supa.auth.getUser();
+export async function GET(
+  req: NextRequest,
+  context: { params: Promise<{ id: string }> }
+) {
+  const { id: student_id } = await context.params;
+
+  const supa = await getSupabaseServerClient();
+  const srv = getSupabaseServiceClient();
+
+  // Auth + établissement
+  const {
+    data: { user },
+  } = await supa.auth.getUser();
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
 
   const { data: me } = await supa
     .from("profiles")
     .select("institution_id, display_name")
-    .eq("id", user.id).maybeSingle();
+    .eq("id", user.id)
+    .maybeSingle();
 
   const inst = me?.institution_id as string | undefined;
   if (!inst) return NextResponse.json({ error: "no_institution" }, { status: 400 });
 
   const { searchParams } = new URL(req.url);
-  const from      = searchParams.get("from");
-  const to        = searchParams.get("to");
-  const class_id  = searchParams.get("class_id"); // optionnel
+  const from = searchParams.get("from");
+  const to = searchParams.get("to");
+  const class_id = searchParams.get("class_id"); // optionnel
 
-  const student_id = ctx.params.id;
-
-  // DÃ©tail des marques + discipline + libellÃ© classe
-  // Discipline: on rÃ©sout via class_teachers (si dispo) sur la date de session
+  // Détail des marques + discipline + libellé classe
   const { data, error } = await srv
     .from("v_mark_effective_minutes")
-    .select(`
+    .select(
+      `
       mark_id:mark_id,
       status,
       minutes_effective,
@@ -38,26 +47,24 @@ export async function GET(req: Request, ctx: { params: { id: string } }) {
       class_id,
       teacher_id,
       classes:class_id(label),
-      t:teacher_id(
-        id
-      )
-    `)
+      t:teacher_id(id)
+    `
+    )
     .eq("student_id", student_id)
     .order("started_at", { ascending: true });
 
   if (error) return NextResponse.json({ error: error.message }, { status: 400 });
 
-  // Filtrage pÃ©riode et classe cÃ´tÃ© Node (plus souple sur la vue)
-  let rows = (data ?? []).filter((r: any) => {
+  // Filtrage période et classe côté Node (laisser en any pour éviter TS2769)
+  const rows = (data ?? []).filter((r: any) => {
     const okFrom = from ? new Date(r.started_at) >= new Date(from) : true;
-    const okTo   = to   ? new Date(r.started_at) <= new Date(to + "T23:59:59Z") : true;
+    const okTo = to ? new Date(r.started_at) <= new Date(to + "T23:59:59Z") : true;
     const okClass = class_id ? r.class_id === class_id : true;
     return okFrom && okTo && okClass;
   });
 
-  // Cherche le subject name via class_teachers â†’ institution_subjects â†’ subjects
-  // (best effort : si introuvable, on renvoie "â€”")
-  const subjectNameByKey = new Map<string,string>();
+  // Résolution discipline via class_teachers → institution_subjects → subjects
+  const subjectNameByKey = new Map<string, string>();
   async function resolveSubject(class_id: string, teacher_id: string, iso: string): Promise<string> {
     const key = `${class_id}:${teacher_id}`;
     if (subjectNameByKey.has(key)) return subjectNameByKey.get(key)!;
@@ -67,20 +74,17 @@ export async function GET(req: Request, ctx: { params: { id: string } }) {
       .select("subject_id, start_date, end_date")
       .eq("institution_id", inst)
       .eq("class_id", class_id)
-      .eq("teacher_id", teacher_id)
-      .limit(1);
+      .eq("teacher_id", teacher_id);
 
-    let subjName = "â€”";
-    const link = (ct ?? []).find((l:any) => {
-      const d = iso.slice(0,10);
+    let subjName = "—";
+    const link = (ct ?? []).find((l: any) => {
+      const d = iso.slice(0, 10);
       const okStart = !l.start_date || d >= l.start_date;
-      const okEnd   = !l.end_date   || d <= l.end_date;
+      const okEnd = !l.end_date || d <= l.end_date;
       return okStart && okEnd;
     });
 
     if (link?.subject_id) {
-      // subject_id peut pointer soit institution_subjects.id soit subjects.id selon tes donnÃ©es
-      // On tente institution_subjects puis subjects
       const { data: instSubj } = await srv
         .from("institution_subjects")
         .select("custom_name, subjects:subject_id(name)")
@@ -89,34 +93,47 @@ export async function GET(req: Request, ctx: { params: { id: string } }) {
         .limit(1)
         .maybeSingle();
 
-      subjName = instSubj?.custom_name || instSubj?.subjects?.name || "â€”";
+      // subjects peut être un objet OU un tableau selon la relation
+      const rel: any = instSubj?.subjects;
+      const relName = Array.isArray(rel) ? rel[0]?.name : rel?.name;
+      subjName = instSubj?.custom_name || relName || "—";
     }
 
     subjectNameByKey.set(key, subjName);
     return subjName;
   }
 
-  const items = await Promise.all(rows.map(async (r:any) => {
-    const start = new Date(r.started_at);
-    const end   = r.ended_at ? new Date(r.ended_at) :
-      new Date(new Date(r.started_at).getTime() + (r.expected_minutes ?? r.minutes_effective)*60000);
+  const items = await Promise.all(
+    (rows as any[]).map(async (r) => {
+      const start = new Date(r.started_at);
+      const expected = (r as any).expected_minutes ?? r.minutes_effective;
+      const end = r.ended_at
+        ? new Date(r.ended_at)
+        : new Date(new Date(r.started_at).getTime() + (expected || 0) * 60000);
 
-    const subject_name = await resolveSubject(r.class_id, r.teacher_id, r.started_at);
+      const subject_name = await resolveSubject(r.class_id, r.teacher_id, r.started_at);
 
-    return {
-      id: r.mark_id,
-      date: start.toISOString().slice(0,10),
-      start: start.toISOString(),
-      end: end.toISOString(),
-      rangeLabel: `${start.toLocaleTimeString([], {hour:"2-digit", minute:"2-digit"})}â€“${end.toLocaleTimeString([], {hour:"2-digit", minute:"2-digit"})}`,
-      class_label: r.classes?.label ?? "â€”",
-      subject_name,
-      status: r.status,
-      minutes: r.minutes_effective,
-    };
-  }));
+      // classes peut être un objet OU un tableau → normaliser
+      const classLabel = Array.isArray(r.classes) ? r.classes[0]?.label : r.classes?.label;
 
-  const totalMinutes = items.reduce((a,i)=>a+i.minutes,0);
+      return {
+        id: r.mark_id,
+        date: start.toISOString().slice(0, 10),
+        start: start.toISOString(),
+        end: end.toISOString(),
+        rangeLabel: `${start.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}–${end.toLocaleTimeString(
+          [],
+          { hour: "2-digit", minute: "2-digit" }
+        )}`,
+        class_label: classLabel ?? "—",
+        subject_name,
+        status: r.status,
+        minutes: r.minutes_effective,
+      };
+    })
+  );
+
+  const totalMinutes = items.reduce((a, i) => a + i.minutes, 0);
 
   return NextResponse.json({ items, totalMinutes }, { status: 200 });
 }
