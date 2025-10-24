@@ -1,0 +1,34 @@
+name: Dispatch Push Cron (CIV 07h–18h)
+
+on:
+  workflow_dispatch:   # déclenchement manuel possible
+  schedule:
+    - cron: "*/5 7-17 * * *"  # toutes les 5 min de 07:00 à 17:55 (UTC = heure Côte d'Ivoire)
+    - cron: "0 18 * * *"      # un dernier passage à 18:00 pile
+
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    concurrency:
+      group: dispatch-push
+      cancel-in-progress: false
+    steps:
+      - name: Appel de l’endpoint Vercel (avec retries)
+        env:
+          DISPATCH_URL: ${{ vars.DISPATCH_URL }}         # ex: https://www.mon-cahier.com ou https://<ton-projet>.vercel.app
+          CRON_PUSH_SECRET: ${{ secrets.CRON_PUSH_SECRET }}
+        run: |
+          for i in 1 2 3; do
+            echo "Tentative $i..."
+            code=$(curl -sS -o /tmp/res.txt -w "%{http_code}" \
+              -H "x-cron-secret: ${CRON_PUSH_SECRET}" \
+              "${DISPATCH_URL%/}/api/push/dispatch")
+            echo "HTTP ${code}"
+            cat /tmp/res.txt || true
+            if [ "$code" = "200" ]; then
+              echo "OK"; exit 0
+            fi
+            sleep 5
+          done
+          echo "Echec après 3 tentatives"; exit 1
