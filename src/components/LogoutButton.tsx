@@ -9,22 +9,15 @@ export function LogoutButton() {
   return (
     <button
       onClick={async () => {
+        await supabase.auth.signOut();
         try {
-          await supabase.auth.signOut();
+          await fetch("/api/auth/sync", { method: "DELETE", credentials: "include" });
         } catch {}
-
-        try {
-          await fetch("/api/auth/sync", {
-            method: "DELETE",
-            credentials: "include",
-          });
-        } catch {}
-
-        router.replace("/login?from=logout");
+        router.replace("/login");
       }}
       className="rounded-lg border px-3 py-1.5 text-sm hover:bg-slate-50"
     >
-      Se dÃ©connecter
+      Se déconnecter
     </button>
   );
 }

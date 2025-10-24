@@ -4,7 +4,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/app/providers";
-import { getSupabaseBrowserClient } from "@/lib/supabaseClient";
+import { getSupabaseBrowserClient } from "@/lib/supabase-browser";
 import { normalizePhone } from "@/lib/phone";
 import { Mail, Phone as PhoneIcon, Lock, Eye, EyeOff, Loader2, ShieldAlert } from "lucide-react";
 

@@ -1,31 +1,34 @@
 // src/app/login/page.tsx
+"use client";
+
+import { useAuth } from "@/app/providers";
 import LoginCard from "@/components/auth/LoginCard";
 
-type Search = {
-  redirectTo?: string;
-  from?: string;
-};
+export default function LoginPage() {
+  const { session } = useAuth();
 
-export default function LoginPage({
-  searchParams,
-}: {
-  searchParams?: Search;
-}) {
-  const redirectTo =
-    (typeof searchParams?.redirectTo === "string" && searchParams.redirectTo) ||
-    "/redirect";
-  const fromLogout = searchParams?.from === "logout";
-
+  // La LoginCard gère déjà la redirection si session existe.
   return (
-    <main className="min-h-screen grid place-items-center bg-slate-50 px-4 py-10">
-      <div className="w-full max-w-md">
-        {fromLogout && (
-          <div className="mb-4 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">
-            Vous Ãªtes bien dÃ©connectÃ©Â·e. Connectez-vous pour continuer.
+    <main className="min-h-screen bg-gradient-to-b from-sky-50 via-white to-white">
+      <header className="mx-auto flex max-w-6xl items-center justify-between px-4 py-6">
+        <div className="flex items-center gap-3">
+          <div className="grid h-9 w-9 place-items-center rounded-xl bg-sky-700 text-white shadow-sm">
+            <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth={2}>
+              <path d="M4 6h16M4 12h16M4 18h10" />
+            </svg>
           </div>
-        )}
-        <LoginCard redirectTo={redirectTo} />
-      </div>
+          <span className="text-sm font-semibold text-slate-700">
+            Mon Cahier d’Absences
+          </span>
+        </div>
+      </header>
+
+      <section className="mx-auto max-w-md px-4">
+        <LoginCard redirectTo="/redirect" />
+        <p className="mt-6 text-center text-xs text-slate-400">
+          © {new Date().getFullYear()} Mon Cahier d’Absences — Tous droits réservés
+        </p>
+      </section>
     </main>
   );
 }
