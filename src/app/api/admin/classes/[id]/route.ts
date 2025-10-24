@@ -1,12 +1,14 @@
 // app/api/admin/classes/[id]/route.ts
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 
-/** RÃ©cupÃ¨re l'institution du user courant, sinon 401/400 */
+/** Récupère l'institution du user courant, sinon 401/400 */
 async function getMyInstitutionId() {
   const supabaseAuth = await getSupabaseServerClient();
-  const { data: { user } } = await supabaseAuth.auth.getUser();
+  const {
+    data: { user },
+  } = await supabaseAuth.auth.getUser();
   if (!user) return { error: NextResponse.json({ error: "unauthorized" }, { status: 401 }) };
 
   const { data: me, error: meErr } = await supabaseAuth
@@ -21,17 +23,21 @@ async function getMyInstitutionId() {
   return { institution_id: me.institution_id as string };
 }
 
-export async function PATCH(req: Request, ctx: { params: { id: string } }) {
-  const { id } = ctx.params;
+export async function PATCH(
+  req: NextRequest,
+  context: { params: Promise<{ id: string }> } // 👈 Next 15
+) {
+  const { id } = await context.params; // 👈 on attend la Promise
   const { institution_id, error } = await getMyInstitutionId();
   if (error) return error;
 
-  const body = await req.json().catch(() => ({}));
+  const body = await req.json().catch(() => ({} as any));
   const row: Record<string, any> = {};
   if (typeof body.label === "string") row.label = body.label.trim();
   if (typeof body.level === "string") row.level = body.level.trim();
   if (typeof body.code === "string" || body.code === null) row.code = body.code ?? null;
-  if (typeof body.academic_year === "string" || body.academic_year === null) row.academic_year = body.academic_year ?? null;
+  if (typeof body.academic_year === "string" || body.academic_year === null)
+    row.academic_year = body.academic_year ?? null;
 
   if (Object.keys(row).length === 0) {
     return NextResponse.json({ error: "bad_payload" }, { status: 400 });
@@ -47,8 +53,7 @@ export async function PATCH(req: Request, ctx: { params: { id: string } }) {
     .maybeSingle();
 
   if (dbErr) {
-    // Conflit de contrainte unique (institution_id, label)
-    const isUnique = (dbErr as any).code === "23505";
+    const isUnique = (dbErr as any).code === "23505"; // contrainte unique
     return NextResponse.json({ error: dbErr.message }, { status: isUnique ? 409 : 400 });
   }
   if (!data) return NextResponse.json({ error: "not_found" }, { status: 404 });
@@ -56,8 +61,11 @@ export async function PATCH(req: Request, ctx: { params: { id: string } }) {
   return NextResponse.json({ item: data });
 }
 
-export async function DELETE(req: Request, ctx: { params: { id: string } }) {
-  const { id } = ctx.params;
+export async function DELETE(
+  _req: NextRequest,
+  context: { params: Promise<{ id: string }> } // 👈 Next 15
+) {
+  const { id } = await context.params; // 👈 on attend la Promise
   const { institution_id, error } = await getMyInstitutionId();
   if (error) return error;
 

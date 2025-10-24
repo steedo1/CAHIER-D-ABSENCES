@@ -1,14 +1,18 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export async function GET(req: Request, ctx: { params: { id: string } }) {
+export async function GET(
+  req: NextRequest,
+  context: { params: Promise<{ id: string }> } // ← Next 15: params est une Promise
+) {
+  const { id: class_id } = await context.params; // ← on "await" les params
+
   const supa = await getSupabaseServerClient();
   const srv = getSupabaseServiceClient();
-  const class_id = ctx.params.id;
 
   const {
     data: { user },
@@ -20,6 +24,7 @@ export async function GET(req: Request, ctx: { params: { id: string } }) {
     .select("institution_id")
     .eq("id", user.id)
     .maybeSingle();
+
   const inst = me?.institution_id as string | undefined;
   if (!inst) return NextResponse.json({ error: "no_institution" }, { status: 400 });
 
@@ -73,8 +78,8 @@ export async function GET(req: Request, ctx: { params: { id: string } }) {
       (l: any) => (!l.start_date || d >= l.start_date) && (!l.end_date || d <= l.end_date)
     );
     if (!link?.subject_id) {
-      subjCache.set(key, "â€”");
-      return "â€”";
+      subjCache.set(key, "—");
+      return "—";
     }
 
     const { data: instSubj } = await srv
@@ -85,7 +90,7 @@ export async function GET(req: Request, ctx: { params: { id: string } }) {
       .limit(1)
       .maybeSingle();
 
-    const name = (instSubj as any)?.custom_name || (instSubj as any)?.subjects?.name || "â€”";
+    const name = (instSubj as any)?.custom_name || (instSubj as any)?.subjects?.name || "—";
     subjCache.set(key, name);
     return name;
   }
@@ -94,11 +99,11 @@ export async function GET(req: Request, ctx: { params: { id: string } }) {
     (rows as any[]).map(async (r) => {
       const start = new Date(r.started_at);
       const end = r.ended_at ? new Date(r.ended_at) : start;
-      const full = `${r.students?.first_name ?? ""} ${r.students?.last_name ?? ""}`.trim() || "â€”";
+      const full = `${r.students?.first_name ?? ""} ${r.students?.last_name ?? ""}`.trim() || "—";
       const subject = await resolveSubject(r.class_id, r.teacher_id, r.started_at);
       return {
-        level: r.classes?.level ?? "â€”",
-        class_label: r.classes?.label ?? "â€”",
+        level: r.classes?.level ?? "—",
+        class_label: r.classes?.label ?? "—",
         student: full,
         date: start.toISOString().slice(0, 10),
         start: start.toISOString(),
@@ -118,7 +123,7 @@ export async function GET(req: Request, ctx: { params: { id: string } }) {
 
   // ===== CSV =====
   if (format === "csv") {
-    const header = ["Classe", "Ã‰lÃ¨ve", "Date", "DÃ©but", "Fin", "Discipline", "Statut", "Minutes"];
+    const header = ["Classe", "Élève", "Date", "Début", "Fin", "Discipline", "Statut", "Minutes"];
     const lines = [header.join(";")].concat(
       items.map((i) =>
         [
@@ -153,17 +158,17 @@ export async function GET(req: Request, ctx: { params: { id: string } }) {
     doc.on("end", resolve);
     doc.on("error", reject);
 
-    doc.fontSize(16).text(`Absences â€” ${classLabel}`, { align: "center" });
+    doc.fontSize(16).text(`Absences — ${classLabel}`, { align: "center" });
     doc.moveDown(0.4);
-    doc.fontSize(10).text(`PÃ©riode : ${from || "â€”"} â†’ ${to || "â€”"}`);
+    doc.fontSize(10).text(`Période : ${from || "—"} → ${to || "—"}`);
     doc.moveDown(0.8);
 
-    // RÃ©sumÃ©
-    doc.fontSize(12).text("RÃ©sumÃ© par Ã©lÃ¨ve", { underline: true });
+    // Résumé
+    doc.fontSize(12).text("Résumé par élève", { underline: true });
     doc.moveDown(0.4);
 
     const rCol = [40, 360];
-    doc.fontSize(10).text("Ã‰lÃ¨ve", rCol[0], doc.y, { continued: true });
+    doc.fontSize(10).text("Élève", rCol[0], doc.y, { continued: true });
     doc.text("Minutes", rCol[1]);
     doc.moveTo(40, doc.y).lineTo(550, doc.y).stroke();
 
@@ -182,12 +187,12 @@ export async function GET(req: Request, ctx: { params: { id: string } }) {
       .text(`Total minutes : ${total}  (= ${Math.floor(total / 60)} h ${total % 60} min)`, { align: "right" });
     doc.moveDown(0.8);
 
-    // DÃ©tail
-    doc.fontSize(12).text("DÃ©tail", { underline: true });
+    // Détail
+    doc.fontSize(12).text("Détail", { underline: true });
     doc.moveDown(0.4);
 
     const col = [40, 95, 140, 270, 420, 500];
-    const head = ["Date", "DÃ©but", "Fin", "Ã‰lÃ¨ve", "Discipline", "Min"];
+    const head = ["Date", "Début", "Fin", "Élève", "Discipline", "Min"];
     doc.fontSize(9);
     head.forEach((h: string, i: number) => doc.text(h, col[i], doc.y, { continued: i < head.length - 1 }));
     doc.moveDown(0.3);
@@ -215,7 +220,7 @@ export async function GET(req: Request, ctx: { params: { id: string } }) {
   });
 
   const pdfBuffer = Buffer.concat(chunks);
-  const body = new Uint8Array(pdfBuffer); // âœ… BodyInit compatible
+  const body = new Uint8Array(pdfBuffer);
 
   return new Response(body, {
     status: 200,
