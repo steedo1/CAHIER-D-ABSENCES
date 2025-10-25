@@ -1,14 +1,24 @@
 // src/app/providers.tsx
 "use client";
 
-import React, { createContext, useEffect, useRef, useState, useContext } from "react";
+import React, {
+  createContext,
+  useEffect,
+  useRef,
+  useState,
+  useContext,
+} from "react";
 import type { Session } from "@supabase/supabase-js";
 import { getSupabaseBrowserClient } from "@/lib/supabase-browser";
 
-const AuthContext = createContext<{ session: Session | null; loading: boolean }>({
-  session: null,
-  loading: true,
-});
+// Patch global fetch on some browsers (Edge/WebView) to avoid
+// "Failed to execute 'fetch' on 'Window': Invalid value"
+import { applyFetchPatch } from "@/lib/fetch-safe";
+applyFetchPatch();
+
+const AuthContext = createContext<{ session: Session | null; loading: boolean }>(
+  { session: null, loading: true }
+);
 
 export function useAuth() {
   return useContext(AuthContext);
@@ -20,7 +30,7 @@ export default function Providers({ children }: { children: React.ReactNode }) {
   const didInitialSyncRef = useRef(false);
   const supRef = useRef<ReturnType<typeof getSupabaseBrowserClient> | null>(null);
 
-  // Sync cookies SSR (tolérant)
+  // Sync cookies for SSR (tolerant)
   const syncSsrCookies = async (s: Session | null) => {
     if (!s?.access_token || !s?.refresh_token) return;
     try {
@@ -40,7 +50,7 @@ export default function Providers({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     let active = true;
 
-    // ⚠️ Création du client STRICTEMENT dans le navigateur
+    // Create client strictly in the browser
     const supabase = getSupabaseBrowserClient();
     supRef.current = supabase;
 
@@ -63,7 +73,11 @@ export default function Providers({ children }: { children: React.ReactNode }) {
       setSession(s ?? null);
 
       try {
-        if ((event === "SIGNED_IN" || event === "TOKEN_REFRESHED") && s?.access_token && s?.refresh_token) {
+        if (
+          (event === "SIGNED_IN" || event === "TOKEN_REFRESHED") &&
+          s?.access_token &&
+          s?.refresh_token
+        ) {
           await fetch("/api/auth/sync", {
             method: "POST",
             headers: new Headers({ "Content-Type": "application/json" }),
@@ -93,5 +107,3 @@ export default function Providers({ children }: { children: React.ReactNode }) {
     </AuthContext.Provider>
   );
 }
-
-
