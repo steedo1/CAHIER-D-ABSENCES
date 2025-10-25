@@ -1,0 +1,6 @@
+{
+  "extends": ["next", "next/core-web-vitals"],
+  "rules": {
+    "react/no-unstable-nested-components": ["warn", { "allowAsProps": true }]
+  }
+}

@@ -1,9 +1,18 @@
 // src/app/login/page.tsx
 "use client";
 
+import { useEffect } from "react";
 import LoginCard from "@/components/auth/LoginCard";
 
+const DEBUG = true;
+
 export default function LoginPage() {
+  useEffect(() => {
+    if (!DEBUG) return;
+    console.log("[LOGIN/page] mount");
+    return () => console.log("[LOGIN/page] unmount");
+  }, []);
+
   return (
     <main className="min-h-screen bg-gradient-to-b from-sky-50 via-white to-white">
       <header className="mx-auto flex max-w-6xl items-center justify-between px-4 py-6">
@@ -15,7 +24,7 @@ export default function LoginPage() {
               fill="none"
               stroke="currentColor"
               strokeWidth={2}
-              aria-hidden="true"  // icône décorative
+              aria-hidden="true"
             >
               <path d="M4 6h16M4 12h16M4 18h10" />
             </svg>
