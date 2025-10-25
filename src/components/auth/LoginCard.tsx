@@ -9,8 +9,8 @@ import { normalizePhone } from "@/lib/phone";
 import { Mail, Phone as PhoneIcon, Lock, Eye, EyeOff, Loader2, ShieldAlert } from "lucide-react";
 
 type Props = {
-  redirectTo?: string; // par défaut "/redirect"
-  compactHeader?: boolean; // pour masquer le header interne si besoin
+  redirectTo?: string;
+  compactHeader?: boolean;
 };
 
 export default function LoginCard({ redirectTo = "/redirect", compactHeader }: Props) {
@@ -32,7 +32,11 @@ export default function LoginCard({ redirectTo = "/redirect", compactHeader }: P
   const [capsEmail, setCapsEmail] = useState(false);
   const [capsPhone, setCapsPhone] = useState(false);
 
-  // Empêcher la double redirection si une session existe déjà
+  // refs pour focus robuste
+  const emailRef = useRef<HTMLInputElement>(null);
+  const phoneRef = useRef<HTMLInputElement>(null);
+
+  // Empêcher double redirection si session déjà là
   const redirectedRef = useRef(false);
   useEffect(() => {
     if (session && !redirectedRef.current) {
@@ -41,13 +45,21 @@ export default function LoginCard({ redirectTo = "/redirect", compactHeader }: P
     }
   }, [session, router, redirectTo]);
 
+  // Focus auto quand on change d’onglet
+  useEffect(() => {
+    const t = setTimeout(() => {
+      if (mode === "email") emailRef.current?.focus();
+      else phoneRef.current?.focus();
+    }, 0);
+    return () => clearTimeout(t);
+  }, [mode]);
+
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     setErr(null);
     setSubmitting(true);
 
     try {
-      // 1) Auth
       if (mode === "email") {
         const { error } = await supabase.auth.signInWithPassword({ email, password: pwdEmail });
         if (error) throw new Error(error.message || "Identifiants invalides.");
@@ -63,14 +75,12 @@ export default function LoginCard({ redirectTo = "/redirect", compactHeader }: P
       return;
     }
 
-    // 2) Sync cookies SSR (tolérant : ne bloque jamais la redirection)
+    // Sync cookies SSR (tolérant)
     try {
       const { data } = await supabase.auth.getSession();
       const at = data.session?.access_token;
       const rt = data.session?.refresh_token;
-
       if (typeof at === "string" && typeof rt === "string") {
-        // Fire-and-forget, pas de credentials, headers via new Headers (compat Android/WebView)
         fetch("/api/auth/sync", {
           method: "POST",
           headers: new Headers({ "Content-Type": "application/json" }),
@@ -85,10 +95,8 @@ export default function LoginCard({ redirectTo = "/redirect", compactHeader }: P
     router.replace(redirectTo);
   }
 
-  const busy = submitting || false;
-  const disableInputs = busy || loading;
+  const disableInputs = submitting || loading;
 
-  /* ───────── petites briques UI ───────── */
   const Field = ({
     children,
     label,
@@ -169,166 +177,172 @@ export default function LoginCard({ redirectTo = "/redirect", compactHeader }: P
             </div>
           </div>
 
-          {/* Formulaire — les deux blocs sont TOUJOURS montés, on masque celui qui n'est pas actif */}
-          <form onSubmit={onSubmit} className="space-y-4 px-6 py-6">
-            {/* Bloc EMAIL */}
-            <div className={mode === "email" ? "" : "hidden"}>
-              <Field label="Email">
-                <InputWrap IconLeft={Mail}>
-                  <input
-                    id="login-email"
-                    type="email"
-                    inputMode="email"
-                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm outline-none transition placeholder:text-slate-400 focus:border-blue-400 focus:ring-4 focus:ring-blue-500/20 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400"
-                    placeholder="nom@ecole.ci"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    required
-                    autoComplete="username"
-                    autoCapitalize="none"
-                    autoCorrect="off"
-                    spellCheck={false}
-                    enterKeyHint="next"
-                    disabled={disableInputs}
-                  />
-                </InputWrap>
-              </Field>
-
-              <Field
-                label="Mot de passe"
-                hint={
-                  <div className="flex items-center gap-3">
-                    {capsEmail && (
-                      <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-800 ring-1 ring-amber-200">
-                        <ShieldAlert className="h-3.5 w-3.5" />
-                        Verr. Maj activée
-                      </span>
-                    )}
-                    <button
-                      type="button"
-                      onClick={() => setForgotOpen(true)}
-                      className="text-xs text-slate-500 underline-offset-2 hover:underline"
-                      disabled={disableInputs}
-                    >
-                      Mot de passe oublié ?
-                    </button>
-                  </div>
-                }
-              >
-                <InputWrap IconLeft={Lock}>
-                  <div className="relative">
+          {/* Formulaire — on ne monte QUE le bloc actif */}
+          <form noValidate onSubmit={onSubmit} className="space-y-4 px-6 py-6">
+            {mode === "email" ? (
+              <>
+                <Field label="Email">
+                  <InputWrap IconLeft={Mail}>
                     <input
-                      id="login-password-email"
-                      type={showPwdEmail ? "text" : "password"}
-                      className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 pr-10 text-sm shadow-sm outline-none transition placeholder:text-slate-400 focus:border-blue-400 focus:ring-4 focus:ring-blue-500/20 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400"
-                      placeholder="••••••••"
-                      value={pwdEmail}
-                      onChange={(e) => setPwdEmail(e.target.value)}
-                      onKeyUp={(e) => {
-                        const v = e.getModifierState?.("CapsLock") ?? false;
-                        setCapsEmail((prev) => (prev === v ? prev : v));
-                      }}
+                      ref={emailRef}
+                      id="login-email"
+                      name="email"                 // ← IMPORTANT
+                      type="email"
+                      inputMode="email"
+                      className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm outline-none transition placeholder:text-slate-400 focus:border-blue-400 focus:ring-4 focus:ring-blue-500/20 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400"
+                      placeholder="nom@ecole.ci"
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
                       required
-                      autoComplete="current-password"
+                      autoComplete="username"
                       autoCapitalize="none"
                       autoCorrect="off"
                       spellCheck={false}
-                      enterKeyHint="done"
+                      enterKeyHint="next"
                       disabled={disableInputs}
                     />
-                    <button
-                      type="button"
-                      onClick={() => setShowPwdEmail((v) => !v)}
-                      className="absolute inset-y-0 right-0 grid w-10 place-items-center text-slate-500 hover:text-slate-700"
-                      tabIndex={-1}
-                      aria-label={showPwdEmail ? "Masquer le mot de passe" : "Afficher le mot de passe"}
-                    >
-                      {showPwdEmail ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                    </button>
-                  </div>
-                </InputWrap>
-              </Field>
-            </div>
+                  </InputWrap>
+                </Field>
 
-            {/* Bloc TÉLÉPHONE */}
-            <div className={mode === "phone" ? "" : "hidden"}>
-              <Field label="Téléphone">
-                <InputWrap IconLeft={PhoneIcon}>
-                  <input
-                    id="login-phone"
-                    type="tel"
-                    inputMode="tel"
-                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm outline-none transition placeholder:text-slate-400 focus:border-blue-400 focus:ring-4 focus:ring-blue-500/20 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400"
-                    placeholder="Ex. 07 08 09 10"
-                    value={phone}
-                    onChange={(e) => setPhone(e.target.value)}
-                    required
-                    autoComplete="tel"
-                    autoCapitalize="none"
-                    autoCorrect="off"
-                    spellCheck={false}
-                    enterKeyHint="next"
-                    disabled={disableInputs}
-                  />
-                </InputWrap>
-              </Field>
-
-              <Field
-                label="Mot de passe"
-                hint={
-                  <div className="flex items-center gap-3">
-                    {capsPhone && (
-                      <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-800 ring-1 ring-amber-200">
-                        <ShieldAlert className="h-3.5 w-3.5" />
-                        Verr. Maj activée
-                      </span>
-                    )}
-                    <button
-                      type="button"
-                      onClick={() => setForgotOpen(true)}
-                      className="text-xs text-slate-500 underline-offset-2 hover:underline"
-                      disabled={disableInputs}
-                    >
-                      Mot de passe oublié ?
-                    </button>
-                  </div>
-                }
-              >
-                <InputWrap IconLeft={Lock}>
-                  <div className="relative">
+                <Field
+                  label="Mot de passe"
+                  hint={
+                    <div className="flex items-center gap-3">
+                      {capsEmail && (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-800 ring-1 ring-amber-200">
+                          <ShieldAlert className="h-3.5 w-3.5" />
+                          Verr. Maj activée
+                        </span>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => setForgotOpen(true)}
+                        className="text-xs text-slate-500 underline-offset-2 hover:underline"
+                        disabled={disableInputs}
+                      >
+                        Mot de passe oublié ?
+                      </button>
+                    </div>
+                  }
+                >
+                  <InputWrap IconLeft={Lock}>
+                    <div className="relative">
+                      <input
+                        id="login-password-email"
+                        name="password"            // ← IMPORTANT
+                        type={showPwdEmail ? "text" : "password"}
+                        className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 pr-10 text-sm shadow-sm outline-none transition placeholder:text-slate-400 focus:border-blue-400 focus:ring-4 focus:ring-blue-500/20 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400"
+                        placeholder="••••••••"
+                        value={pwdEmail}
+                        onChange={(e) => setPwdEmail(e.target.value)}
+                        onKeyUp={(e) => {
+                          const v = e.getModifierState?.("CapsLock") ?? false;
+                          setCapsEmail((prev) => (prev === v ? prev : v));
+                        }}
+                        required
+                        autoComplete="current-password"
+                        autoCapitalize="none"
+                        autoCorrect="off"
+                        spellCheck={false}
+                        enterKeyHint="done"
+                        disabled={disableInputs}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowPwdEmail((v) => !v)}
+                        className="absolute inset-y-0 right-0 grid w-10 place-items-center text-slate-500 hover:text-slate-700"
+                        tabIndex={-1}
+                        aria-label={showPwdEmail ? "Masquer le mot de passe" : "Afficher le mot de passe"}
+                      >
+                        {showPwdEmail ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                      </button>
+                    </div>
+                  </InputWrap>
+                </Field>
+              </>
+            ) : (
+              <>
+                <Field label="Téléphone">
+                  <InputWrap IconLeft={PhoneIcon}>
                     <input
-                      id="login-password-phone"
-                      type={showPwdPhone ? "text" : "password"}
-                      className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 pr-10 text-sm shadow-sm outline-none transition placeholder:text-slate-400 focus:border-blue-400 focus:ring-4 focus:ring-blue-500/20 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400"
-                      placeholder="••••••••"
-                      value={pwdPhone}
-                      onChange={(e) => setPwdPhone(e.target.value)}
-                      onKeyUp={(e) => {
-                        const v = e.getModifierState?.("CapsLock") ?? false;
-                        setCapsPhone((prev) => (prev === v ? prev : v));
-                      }}
+                      ref={phoneRef}
+                      id="login-phone"
+                      name="phone"                 // ← IMPORTANT
+                      type="tel"
+                      inputMode="tel"
+                      className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm outline-none transition placeholder:text-slate-400 focus:border-blue-400 focus:ring-4 focus:ring-blue-500/20 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400"
+                      placeholder="Ex. 07 08 09 10"
+                      value={phone}
+                      onChange={(e) => setPhone(e.target.value)}
                       required
+                      autoComplete="tel"
                       autoCapitalize="none"
                       autoCorrect="off"
                       spellCheck={false}
-                      enterKeyHint="done"
+                      enterKeyHint="next"
                       disabled={disableInputs}
                     />
-                    <button
-                      type="button"
-                      onClick={() => setShowPwdPhone((v) => !v)}
-                      className="absolute inset-y-0 right-0 grid w-10 place-items-center text-slate-500 hover:text-slate-700"
-                      tabIndex={-1}
-                      aria-label={showPwdPhone ? "Masquer le mot de passe" : "Afficher le mot de passe"}
-                    >
-                      {showPwdPhone ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                    </button>
-                  </div>
-                </InputWrap>
-              </Field>
-            </div>
+                  </InputWrap>
+                </Field>
 
-            {/* Erreur */}
+                <Field
+                  label="Mot de passe"
+                  hint={
+                    <div className="flex items-center gap-3">
+                      {capsPhone && (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-800 ring-1 ring-amber-200">
+                          <ShieldAlert className="h-3.5 w-3.5" />
+                          Verr. Maj activée
+                        </span>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => setForgotOpen(true)}
+                        className="text-xs text-slate-500 underline-offset-2 hover:underline"
+                        disabled={disableInputs}
+                      >
+                        Mot de passe oublié ?
+                      </button>
+                    </div>
+                  }
+                >
+                  <InputWrap IconLeft={Lock}>
+                    <div className="relative">
+                      <input
+                        id="login-password-phone"
+                        name="password"            // ← IMPORTANT
+                        type={showPwdPhone ? "text" : "password"}
+                        className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 pr-10 text-sm shadow-sm outline-none transition placeholder:text-slate-400 focus:border-blue-400 focus:ring-4 focus:ring-blue-500/20 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400"
+                        placeholder="••••••••"
+                        value={pwdPhone}
+                        onChange={(e) => setPwdPhone(e.target.value)}
+                        onKeyUp={(e) => {
+                          const v = e.getModifierState?.("CapsLock") ?? false;
+                          setCapsPhone((prev) => (prev === v ? prev : v));
+                        }}
+                        required
+                        autoComplete="current-password"
+                        autoCapitalize="none"
+                        autoCorrect="off"
+                        spellCheck={false}
+                        enterKeyHint="done"
+                        disabled={disableInputs}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowPwdPhone((v) => !v)}
+                        className="absolute inset-y-0 right-0 grid w-10 place-items-center text-slate-500 hover:text-slate-700"
+                        tabIndex={-1}
+                        aria-label={showPwdPhone ? "Masquer le mot de passe" : "Afficher le mot de passe"}
+                      >
+                        {showPwdPhone ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                      </button>
+                    </div>
+                  </InputWrap>
+                </Field>
+              </>
+            )}
+
             {err && (
               <div className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
                 <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" />
@@ -357,7 +371,6 @@ export default function LoginCard({ redirectTo = "/redirect", compactHeader }: P
         </>
       )}
 
-      {/* Modal "Mot de passe oublié ?" */}
       {forgotOpen && (
         <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 px-4 backdrop-blur-sm">
           <div className="w-full max-w-md overflow-hidden rounded-2xl bg-white shadow-xl">
