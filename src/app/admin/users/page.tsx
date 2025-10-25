@@ -80,7 +80,7 @@ export default function UsersPage() {
     try {
       const r = await fetch("/api/admin/users/create", {
         method: "POST",
-        headers: new Headers({ "Content-Type": "application/json" }),
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           role: "teacher",
           email: tEmail.trim() || null, // email optionnel
@@ -151,7 +151,7 @@ export default function UsersPage() {
     try {
       const r = await fetch("/api/admin/teachers/remove", {
         method: "POST",
-        headers: new Headers({ "Content-Type": "application/json" }),
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           profile_id,
           end_open_sessions: true,

@@ -115,7 +115,7 @@ export default function LoginCard({ redirectTo = "/redirect", compactHeader }: P
       if (typeof at === "string" && typeof rt === "string") {
         fetch("/api/auth/sync", {
           method: "POST",
-          headers: new Headers({ "Content-Type": "application/json" }),
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ access_token: at, refresh_token: rt }),
         }).catch(() => {});
       }

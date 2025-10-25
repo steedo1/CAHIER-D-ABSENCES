@@ -104,7 +104,7 @@ export default function ParentsClient() {
     try {
       const r = await fetch("/api/admin/users/create", {
         method: "POST",
-        headers: new Headers({ "Content-Type": "application/json" }),
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           role: "parent",
           email: pEmail.trim() || null, // optionnel
@@ -167,7 +167,7 @@ export default function ParentsClient() {
     try {
       const r = await fetch("/api/admin/associations", {
         method: "POST",
-        headers: new Headers({ "Content-Type": "application/json" }),
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           type: "parent_students",
           student_ids: selectedIds,

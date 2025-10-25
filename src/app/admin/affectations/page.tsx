@@ -132,7 +132,7 @@ export default function AffectationsPage() {
     try {
       const r = await fetch("/api/admin/associations", {
         method: "POST",
-        headers: new Headers({ "Content-Type": "application/json" }),
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           type: "teacher_classes",
           teacher_id: teacherId,
@@ -191,7 +191,7 @@ export default function AffectationsPage() {
     try {
       const r = await fetch("/api/admin/associations", {
         method: "POST",
-        headers: new Headers({ "Content-Type": "application/json" }),
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           type: "teacher_class_remove",
           teacher_id,
@@ -214,7 +214,7 @@ export default function AffectationsPage() {
     try {
       const r = await fetch("/api/admin/associations", {
         method: "POST",
-        headers: new Headers({ "Content-Type": "application/json" }),
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           type: "teacher_classes_clear",
           teacher_id,
@@ -240,7 +240,7 @@ export default function AffectationsPage() {
     try {
       const r = await fetch("/api/admin/associations", {
         method: "POST",
-        headers: new Headers({ "Content-Type": "application/json" }),
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           type: "teacher_classes_clear_all",
           subject_id: subject_id || null, // optionnel

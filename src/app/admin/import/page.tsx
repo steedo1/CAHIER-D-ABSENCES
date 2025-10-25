@@ -145,7 +145,7 @@ export default function ImportPage() {
 
       const r = await fetch(url, {
         method: "POST",
-        headers: new Headers({ "Content-Type": "application/json" }),
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
 
@@ -184,7 +184,7 @@ export default function ImportPage() {
 
       const r = await fetch(url, {
         method: "POST",
-        headers: new Headers({ "Content-Type": "application/json" }),
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
 

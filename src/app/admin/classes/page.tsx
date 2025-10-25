@@ -153,7 +153,7 @@ export default function ClassesPage() {
   async function create() {
     const r = await fetch("/api/admin/classes/bulk", {
       method: "POST",
-      headers: new Headers({ "Content-Type": "application/json" }),
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ level, format, count }), // "none" possible
     });
     if (r.status === 401) {
@@ -201,7 +201,7 @@ export default function ClassesPage() {
     setSaving(true);
     const r = await fetch(`/api/admin/classes/${editId}`, {
       method: "PATCH",
-      headers: new Headers({ "Content-Type": "application/json" }),
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ label: eLabel, level: eLevel }),
     });
     setSaving(false);
