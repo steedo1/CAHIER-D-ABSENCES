@@ -1,24 +1,17 @@
-// src/app/providers.tsx
 "use client";
 
-import React, {
-  createContext,
-  useEffect,
-  useRef,
-  useState,
-  useContext,
-} from "react";
+import { applyFetchPatch } from "@/lib/fetch-safe";
+// ⚠️ Patcher AVANT tout import/usage qui ferait un fetch
+applyFetchPatch();
+
+import React, { createContext, useEffect, useRef, useState, useContext } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { getSupabaseBrowserClient } from "@/lib/supabase-browser";
 
-// Patch global fetch on some browsers (Edge/WebView) to avoid
-// "Failed to execute 'fetch' on 'Window': Invalid value"
-import { applyFetchPatch } from "@/lib/fetch-safe";
-applyFetchPatch();
-
-const AuthContext = createContext<{ session: Session | null; loading: boolean }>(
-  { session: null, loading: true }
-);
+const AuthContext = createContext<{ session: Session | null; loading: boolean }>({
+  session: null,
+  loading: true,
+});
 
 export function useAuth() {
   return useContext(AuthContext);
@@ -28,31 +21,10 @@ export default function Providers({ children }: { children: React.ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
   const didInitialSyncRef = useRef(false);
-  const supRef = useRef<ReturnType<typeof getSupabaseBrowserClient> | null>(null);
-
-  // Sync cookies for SSR (tolerant)
-  const syncSsrCookies = async (s: Session | null) => {
-    if (!s?.access_token || !s?.refresh_token) return;
-    try {
-      await fetch("/api/auth/sync", {
-        method: "POST",
-        headers: new Headers({ "Content-Type": "application/json" }),
-        body: JSON.stringify({
-          access_token: s.access_token,
-          refresh_token: s.refresh_token,
-        }),
-      });
-    } catch (e) {
-      console.warn("[providers] initial sync failed:", (e as any)?.message);
-    }
-  };
 
   useEffect(() => {
     let active = true;
-
-    // Create client strictly in the browser
     const supabase = getSupabaseBrowserClient();
-    supRef.current = supabase;
 
     (async () => {
       const { data, error } = await supabase.auth.getSession();
@@ -65,7 +37,18 @@ export default function Providers({ children }: { children: React.ReactNode }) {
 
       if (s && !didInitialSyncRef.current) {
         didInitialSyncRef.current = true;
-        await syncSsrCookies(s);
+        try {
+          await fetch("/api/auth/sync", {
+            method: "POST",
+            headers: new Headers({ "Content-Type": "application/json" }),
+            body: JSON.stringify({
+              access_token: s.access_token,
+              refresh_token: s.refresh_token,
+            }),
+          });
+        } catch (e) {
+          console.warn("[providers] initial sync failed:", (e as any)?.message);
+        }
       }
     })();
 
@@ -73,11 +56,7 @@ export default function Providers({ children }: { children: React.ReactNode }) {
       setSession(s ?? null);
 
       try {
-        if (
-          (event === "SIGNED_IN" || event === "TOKEN_REFRESHED") &&
-          s?.access_token &&
-          s?.refresh_token
-        ) {
+        if ((event === "SIGNED_IN" || event === "TOKEN_REFRESHED") && s?.access_token && s?.refresh_token) {
           await fetch("/api/auth/sync", {
             method: "POST",
             headers: new Headers({ "Content-Type": "application/json" }),
