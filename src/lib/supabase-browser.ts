@@ -27,7 +27,7 @@ export function getSupabaseBrowserClient(): SupabaseClient {
   try {
     const u = new URL(rawUrl);
     if (!/^https?:$/.test(u.protocol)) throw new Error("URL doit commencer par http(s)://");
-    base = u.origin; // normalise (enlève trailing slash/chemin)
+    base = u.origin; // normalise: garde juste https://xxxxx.supabase.co
   } catch {
     throw new Error(`NEXT_PUBLIC_SUPABASE_URL invalide: "${rawUrl}"`);
   }
@@ -36,7 +36,7 @@ export function getSupabaseBrowserClient(): SupabaseClient {
     throw new Error("NEXT_PUBLIC_SUPABASE_ANON_KEY semble invalide (trop courte).");
   }
 
-  // 3) Création du client (sans override fetch)
+  // 3) Création du client (pas d'override fetch)
   const client = createBrowserClient(base, rawAnon, {
     auth: {
       persistSession: true,
@@ -45,7 +45,7 @@ export function getSupabaseBrowserClient(): SupabaseClient {
     },
   });
 
-  // 4) Cache en dev et mini-debug
+  // 4) Cache en dev + petit debug visible en prod
   if (process.env.NODE_ENV !== "production") {
     globalThis.__supabase__ = client;
   }
