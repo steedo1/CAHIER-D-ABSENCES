@@ -1,9 +1,10 @@
-"use client";
+// src/app/admin/affectations/page.tsx (ou le bon chemin)
+// "use client";
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 
-type ClassRow   = { id: string; name: string; level?: string };
+type ClassRow   = { id: string; name: string; level?: string | null };
 type SubjectRow = { id: string; name: string };
 type TeacherRow = { id: string; display_name: string | null; email: string | null; phone: string | null };
 
@@ -18,7 +19,15 @@ function Input(p: React.InputHTMLAttributes<HTMLInputElement>) {
   return <input {...p} className={"w-full rounded-lg border px-3 py-2 text-sm " + (p.className ?? "")} />;
 }
 function Button(p: React.ButtonHTMLAttributes<HTMLButtonElement>) {
-  return <button {...p} className={"rounded-xl bg-emerald-600 text-white px-4 py-2 text-sm font-medium shadow " + (p.disabled ? "opacity-60" : "hover:bg-emerald-700 transition")} />;
+  return (
+    <button
+      {...p}
+      className={
+        "rounded-xl bg-emerald-600 text-white px-4 py-2 text-sm font-medium shadow " +
+        (p.disabled ? "opacity-60" : "hover:bg-emerald-700 transition")
+      }
+    />
+  );
 }
 function Select(p: React.SelectHTMLAttributes<HTMLSelectElement>) {
   return <select {...p} className={"w-full rounded-lg border bg-white px-3 py-2 text-sm " + (p.className ?? "")} />;
@@ -28,7 +37,7 @@ export default function AffectationsPage() {
   const router = useRouter();
 
   async function fetchJSON<T = any>(url: string) {
-    const r = await fetch(url, { cache: "no-store", credentials: "include" as RequestCredentials });
+    const r = await fetch(url, { cache: "no-store" });
     if (r.status === 401) throw new Error("unauthorized");
     const j = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(j?.error || "Erreur");
@@ -40,7 +49,7 @@ export default function AffectationsPage() {
   const [classes,  setClasses]  = useState<ClassRow[]>([]);
   const [teachers, setTeachers] = useState<TeacherRow[]>([]);
 
-  // SÃ©lections (affecter)
+  // Sélections (affecter)
   const [subjectId,  setSubjectId]  = useState<string>("");
   const [teacherId,  setTeacherId]  = useState<string>("");
   const [classIds,   setClassIds]   = useState<string[]>([]);
@@ -68,7 +77,7 @@ export default function AffectationsPage() {
           fetchJSON<{ items: any[] }>("/api/admin/classes?limit=999"),
         ]);
         setSubjects(s.items || []);
-        setClasses((c.items || []).map((x: any) => ({ id: x.id, name: x.name, level: x.level })));
+        setClasses((c.items || []).map((x: any) => ({ id: x.id, name: x.name, level: x.level ?? null })));
       } catch (e: any) {
         if (e.message === "unauthorized") setAuthErr(true);
         else alert(e.message || "Erreur");
@@ -76,7 +85,7 @@ export default function AffectationsPage() {
     })();
   }, []);
 
-  // Charger enseignants : SI discipline â†’ filtre, SINON â†’ tous
+  // Charger enseignants : SI discipline → filtre, SINON → tous
   useEffect(() => {
     (async () => {
       try {
@@ -94,45 +103,54 @@ export default function AffectationsPage() {
   }, [subjectId]);
 
   const levels = useMemo(
-    () => Array.from(new Set(classes.map(c => c.level).filter(Boolean)))
-      .sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true })),
+    () =>
+      Array.from(new Set(classes.map((c) => c.level).filter(Boolean)))
+        .sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true })),
     [classes]
   );
 
   const filteredClasses = useMemo(
-    () => classes.filter(c => !levelsFilter || c.level === levelsFilter),
+    () => classes.filter((c) => !levelsFilter || c.level === levelsFilter),
     [classes, levelsFilter]
   );
 
   function toggleClass(id: string) {
-    setClassIds(prev => (prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]));
+    setClassIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
   }
   function toggleAllVisible() {
-    const visibleIds = filteredClasses.map(c => c.id);
-    const allSelected = visibleIds.every(id => classIds.includes(id));
-    setClassIds(allSelected ? classIds.filter(id => !visibleIds.includes(id)) : Array.from(new Set([...classIds, ...visibleIds])));
+    const visibleIds = filteredClasses.map((c) => c.id);
+    const allSelected = visibleIds.every((id) => classIds.includes(id));
+    setClassIds(
+      allSelected ? classIds.filter((id) => !visibleIds.includes(id)) : Array.from(new Set([...classIds, ...visibleIds]))
+    );
   }
 
   async function save() {
     if (!teacherId || classIds.length === 0) return;
-    setSaving(true); setMsg(null);
+    setSaving(true);
+    setMsg(null);
     try {
       const r = await fetch("/api/admin/associations", {
         method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
+        headers: new Headers({ "Content-Type": "application/json" }),
         body: JSON.stringify({
           type: "teacher_classes",
           teacher_id: teacherId,
-          subject_id: subjectId || null, // peut Ãªtre null au primaire
+          subject_id: subjectId || null, // peut être null au primaire
           class_ids: classIds,
         }),
       });
       const j = await r.json().catch(() => ({}));
       setSaving(false);
-      if (r.status === 401) { setAuthErr(true); return; }
-      if (!r.ok) { alert(j?.error || "Erreur"); return; }
-      setMsg("Affectations enregistrÃ©es.");
+      if (r.status === 401) {
+        setAuthErr(true);
+        return;
+      }
+      if (!r.ok) {
+        alert(j?.error || "Erreur");
+        return;
+      }
+      setMsg("Affectations enregistrées.");
       await loadCurrent();
     } catch (e: any) {
       setSaving(false);
@@ -140,9 +158,9 @@ export default function AffectationsPage() {
     }
   }
 
-  const selectedTeacher = teachers.find(t => t.id === teacherId);
+  const selectedTeacher = teachers.find((t) => t.id === teacherId) || null;
 
-  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ Vue de gestion : liste actuelle â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ───────── Vue de gestion : liste actuelle ─────────
   async function loadCurrent() {
     setLoadingCurrent(true);
     try {
@@ -159,24 +177,33 @@ export default function AffectationsPage() {
     }
   }
 
-  useEffect(() => { loadCurrent(); }, []);
-  useEffect(() => { const t = setTimeout(loadCurrent, 300); return () => clearTimeout(t); }, [q, manageSubject]);
+  useEffect(() => {
+    loadCurrent();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  useEffect(() => {
+    const t = setTimeout(loadCurrent, 300);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [q, manageSubject]);
 
   async function removeOne(teacher_id: string, class_id: string, subject_id: string | null) {
     try {
       const r = await fetch("/api/admin/associations", {
         method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
+        headers: new Headers({ "Content-Type": "application/json" }),
         body: JSON.stringify({
           type: "teacher_class_remove",
           teacher_id,
           class_id,
-          subject_id, // peut Ãªtre null
+          subject_id, // peut être null
         }),
       });
       const j = await r.json().catch(() => ({}));
-      if (!r.ok) { alert(j?.error || "Erreur retrait"); return; }
+      if (!r.ok) {
+        alert(j?.error || "Erreur retrait");
+        return;
+      }
       await loadCurrent();
     } catch (e: any) {
       alert(e.message || "Erreur");
@@ -187,31 +214,33 @@ export default function AffectationsPage() {
     try {
       const r = await fetch("/api/admin/associations", {
         method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
+        headers: new Headers({ "Content-Type": "application/json" }),
         body: JSON.stringify({
           type: "teacher_classes_clear",
           teacher_id,
-          subject_id, // si null â†’ toutes disciplines
+          subject_id, // si null → toutes disciplines
         }),
       });
       const j = await r.json().catch(() => ({}));
-      if (!r.ok) { alert(j?.error || "Erreur rÃ©initialisation"); return; }
+      if (!r.ok) {
+        alert(j?.error || "Erreur réinitialisation");
+        return;
+      }
       await loadCurrent();
     } catch (e: any) {
       alert(e.message || "Erreur");
     }
   }
 
-  // ðŸ‘‡ NEW : reset global (tous les enseignants)
+  // NEW : reset global (tous les enseignants)
   async function clearAllInstitution(subject_id: string | null) {
-    if (!confirm(`Confirmer la rÃ©initialisation pour TOUS les enseignants${subject_id ? " (discipline filtrÃ©e)" : ""} ?`)) return;
-    setManageBusy(true); setManageMsg(null);
+    if (!confirm(`Confirmer la réinitialisation pour TOUS les enseignants${subject_id ? " (discipline filtrée)" : ""} ?`)) return;
+    setManageBusy(true);
+    setManageMsg(null);
     try {
       const r = await fetch("/api/admin/associations", {
         method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
+        headers: new Headers({ "Content-Type": "application/json" }),
         body: JSON.stringify({
           type: "teacher_classes_clear_all",
           subject_id: subject_id || null, // optionnel
@@ -219,8 +248,11 @@ export default function AffectationsPage() {
       });
       const j = await r.json().catch(() => ({}));
       setManageBusy(false);
-      if (!r.ok) { alert(j?.error || "Erreur reset global"); return; }
-      setManageMsg(`RÃ©initialisation effectuÃ©e : ${j.removed ?? 0} lignes supprimÃ©es.`);
+      if (!r.ok) {
+        alert(j?.error || "Erreur reset global");
+        return;
+      }
+      setManageMsg(`Réinitialisation effectuée : ${j.removed ?? 0} lignes supprimées.`);
       await loadCurrent();
     } catch (e: any) {
       setManageBusy(false);
@@ -232,7 +264,7 @@ export default function AffectationsPage() {
     return (
       <div className="rounded-xl border bg-white p-5">
         <div className="text-sm text-slate-700">
-          Votre session a expirÃ©.{" "}
+          Votre session a expiré.{" "}
           <button className="text-emerald-700 underline" onClick={() => router.replace("/login")}>
             Se reconnecter
           </button>
@@ -246,32 +278,32 @@ export default function AffectationsPage() {
       <div>
         <h1 className="text-2xl font-semibold">Affectation des classes</h1>
         <p className="text-slate-600">
-          (Filtre par discipline optionnel) â€” choisissez un enseignant, puis cochez les classes.
+          (Filtre par discipline optionnel) — choisissez un enseignant, puis cochez les classes.
         </p>
       </div>
 
-      {/* â”€â”€â”€â”€â”€â”€â”€â”€â”€ Bloc "Affecter" (existant) â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+      {/* ───────── Bloc "Affecter" ───────── */}
       <div className="rounded-2xl border bg-white p-5 space-y-4">
         <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
           <div>
             <div className="mb-1 text-xs text-slate-500">Discipline (facultatif)</div>
             <Select value={subjectId} onChange={(e) => setSubjectId(e.target.value)}>
-              <option value="">â€” Toutes les disciplines â€”</option>
-              {subjects.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+              <option value="">— Toutes les disciplines —</option>
+              {subjects.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name}
+                </option>
+              ))}
             </Select>
           </div>
 
           <div>
             <div className="mb-1 text-xs text-slate-500">Enseignant</div>
-            <Select
-              value={teacherId}
-              onChange={(e) => setTeacherId(e.target.value)}
-              disabled={teachers.length === 0}
-            >
-              <option value="">{teachers.length ? "â€” Choisir â€”" : "Aucun enseignant"}</option>
+            <Select value={teacherId} onChange={(e) => setTeacherId(e.target.value)} disabled={teachers.length === 0}>
+              <option value="">{teachers.length ? "— Choisir —" : "Aucun enseignant"}</option>
               {teachers.map((t) => (
                 <option key={t.id} value={t.id}>
-                  {t.display_name || "(Sans nom)"} {t.phone ? `â€” ${t.phone}` : t.email ? `â€” ${t.email}` : ""}
+                  {t.display_name || "(Sans nom)"} {t.phone ? `— ${t.phone}` : t.email ? `— ${t.email}` : ""}
                 </option>
               ))}
             </Select>
@@ -280,18 +312,22 @@ export default function AffectationsPage() {
           <div>
             <div className="mb-1 text-xs text-slate-500">Filtrer par niveau (optionnel)</div>
             <Select value={levelsFilter} onChange={(e) => setLevelsFilter(e.target.value)}>
-              <option value="">â€” Tous les niveaux â€”</option>
-              {levels.map((l) => <option key={String(l)} value={String(l)}>{String(l)}</option>)}
+              <option value="">— Tous les niveaux —</option>
+              {levels.map((l) => (
+                <option key={String(l)} value={String(l)}>
+                  {String(l)}
+                </option>
+              ))}
             </Select>
           </div>
         </div>
 
         {selectedTeacher && (
           <div className="rounded-lg border bg-slate-50 px-3 py-2 text-xs text-slate-700">
-            <div className="font-medium">Enseignant sÃ©lectionnÃ©</div>
-            <div>Nom : {selectedTeacher.display_name || "â€”"}</div>
-            <div>TÃ©lÃ©phone : {selectedTeacher.phone || "â€”"}</div>
-            <div>Email : {selectedTeacher.email || "â€”"}</div>
+            <div className="font-medium">Enseignant sélectionné</div>
+            <div>Nom : {selectedTeacher.display_name || "—"}</div>
+            <div>Téléphone : {selectedTeacher.phone || "—"}</div>
+            <div>Email : {selectedTeacher.email || "—"}</div>
           </div>
         )}
       </div>
@@ -301,8 +337,12 @@ export default function AffectationsPage() {
           <div className="text-sm font-semibold uppercase tracking-wide text-slate-700">
             Classes {levelsFilter ? `(niveau ${levelsFilter})` : ""}
           </div>
-          <button type="button" onClick={toggleAllVisible} className="text-xs text-emerald-700 underline-offset-2 hover:underline">
-            {filteredClasses.map(c => c.id).every(id => classIds.includes(id)) ? "Tout dÃ©sÃ©lectionner" : "Tout sÃ©lectionner"}
+          <button
+            type="button"
+            onClick={toggleAllVisible}
+            className="text-xs text-emerald-700 underline-offset-2 hover:underline"
+          >
+            {filteredClasses.map((c) => c.id).every((id) => classIds.includes(id)) ? "Tout désélectionner" : "Tout sélectionner"}
           </button>
         </div>
 
@@ -322,35 +362,35 @@ export default function AffectationsPage() {
 
         <div className="mt-4">
           <Button onClick={save} disabled={!teacherId || classIds.length === 0 || saving}>
-            {saving ? "Enregistrementâ€¦" : "Enregistrer les affectations"}
+            {saving ? "Enregistrement…" : "Enregistrer les affectations"}
           </Button>
           {msg && <span className="ml-3 text-sm text-slate-600">{msg}</span>}
         </div>
       </div>
 
-      {/* â”€â”€â”€â”€â”€â”€â”€â”€â”€ Bloc "GÃ©rer les affectations actuelles" â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+      {/* ───────── Bloc "Gérer les affectations actuelles" ───────── */}
       <div className="rounded-2xl border bg-white p-5 space-y-3">
         <div className="flex items-center justify-between">
           <div className="text-sm font-semibold uppercase tracking-wide text-slate-700">
-            GÃ©rer les affectations actuelles
+            Gérer les affectations actuelles
           </div>
           <div className="flex items-center gap-2">
             <div className="w-56">
-              <Input
-                value={q}
-                onChange={(e) => setQ(e.target.value)}
-                placeholder="Rechercher (enseignant, classe, discipline)â€¦"
-              />
+              <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Rechercher (enseignant, classe, discipline)…" />
             </div>
             <Select value={manageSubject} onChange={(e) => setManageSubject(e.target.value)}>
               <option value="">Toutes disciplines</option>
-              {subjects.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+              {subjects.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name}
+                </option>
+              ))}
             </Select>
           </div>
         </div>
 
         {loadingCurrent ? (
-          <div className="text-sm text-slate-500">Chargementâ€¦</div>
+          <div className="text-sm text-slate-500">Chargement…</div>
         ) : current.length === 0 ? (
           <div className="text-sm text-slate-500">Aucune affectation active.</div>
         ) : (
@@ -368,10 +408,10 @@ export default function AffectationsPage() {
                 {current.map((g, idx) => (
                   <tr key={idx} className="border-t align-top">
                     <td className="px-3 py-2">
-                      <div className="font-medium">{g.teacher.display_name || "â€”"}</div>
-                      <div className="text-xs text-slate-500">{g.teacher.phone || g.teacher.email || "â€”"}</div>
+                      <div className="font-medium">{g.teacher.display_name || "—"}</div>
+                      <div className="text-xs text-slate-500">{g.teacher.phone || g.teacher.email || "—"}</div>
                     </td>
-                    <td className="px-3 py-2">{g.subject.label || "â€”"}</td>
+                    <td className="px-3 py-2">{g.subject.label || "—"}</td>
                     <td className="px-3 py-2">
                       <div className="flex flex-wrap gap-2">
                         {g.classes.map((c) => (
@@ -382,7 +422,7 @@ export default function AffectationsPage() {
                               title="Retirer cette classe"
                               onClick={() => removeOne(g.teacher.id, c.id, g.subject.id)}
                             >
-                              Ã—
+                              ×
                             </button>
                           </span>
                         ))}
@@ -392,7 +432,7 @@ export default function AffectationsPage() {
                       <button
                         className="rounded-lg border px-3 py-1.5 text-xs hover:bg-rose-50 text-rose-700"
                         onClick={() => clearAll(g.teacher.id, g.subject.id)}
-                        title="Tout retirer pour cet enseignant (et cette discipline le cas Ã©chÃ©ant)"
+                        title="Tout retirer pour cet enseignant (et cette discipline le cas échéant)"
                       >
                         Tout retirer{g.subject.id ? " (cette discipline)" : ""}
                       </button>
@@ -408,23 +448,27 @@ export default function AffectationsPage() {
         <div className="mt-4 rounded-lg border border-rose-200 bg-rose-50 p-3">
           <div className="flex items-center justify-between">
             <div>
-              <div className="font-semibold text-rose-800 text-sm">Zone de rÃ©initialisation</div>
+              <div className="font-semibold text-rose-800 text-sm">Zone de réinitialisation</div>
               <div className="text-[12px] text-rose-700">
-                Cette action supprime toutes les affectations actives de lâ€™Ã©tablissement
-                {manageSubject ? " pour la discipline sÃ©lectionnÃ©e." : "."}
+                Cette action supprime toutes les affectations actives de l’établissement
+                {manageSubject ? " pour la discipline sélectionnée." : "."}
               </div>
             </div>
             <div className="flex items-center gap-2">
               <Select value={manageSubject} onChange={(e) => setManageSubject(e.target.value)}>
                 <option value="">Toutes disciplines</option>
-                {subjects.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                {subjects.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.name}
+                  </option>
+                ))}
               </Select>
               <button
                 onClick={() => clearAllInstitution(manageSubject || null)}
                 className="rounded-xl bg-rose-600 text-white px-4 py-2 text-sm font-medium shadow hover:bg-rose-700 disabled:opacity-60"
                 disabled={manageBusy}
               >
-                {manageBusy ? "RÃ©initialisationâ€¦" : "Tout retirer (global)"}
+                {manageBusy ? "Réinitialisation…" : "Tout retirer (global)"}
               </button>
             </div>
           </div>

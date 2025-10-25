@@ -45,49 +45,20 @@ type StudentRow = {
 };
 
 export default function ParentsClient() {
-  // CrÃ©ation parent
+  // Création parent
   const [pEmail, setPEmail] = useState("");
   const [pPhone, setPPhone] = useState("");
   const [pName, setPName] = useState("");
   const [creating, setCreating] = useState(false);
   const [msgCreate, setMsgCreate] = useState<string | null>(null);
 
-  async function createParent() {
-    setCreating(true);
-    setMsgCreate(null);
-    try {
-      const r = await fetch("/api/admin/users/create", {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          role: "parent",
-          email: pEmail.trim() || null, // optionnel
-          phone: pPhone.trim(), // obligatoire
-          display_name: pName.trim() || null,
-        }),
-      });
-      const j = await r.json().catch(() => ({}));
-      setCreating(false);
-      if (!r.ok) {
-        setMsgCreate(j?.error || "Ã‰chec");
-        return;
-      }
-      setMsgCreate("Parent crÃ©Ã©.");
-      setPEmail("");
-      setPPhone("");
-      setPName("");
-    } catch (e: any) {
-      setCreating(false);
-      setMsgCreate(e?.message || "Erreur rÃ©seau");
-    }
-  }
-
-  // DonnÃ©es classes + Ã©lÃ¨ves
+  // Données classes + élèves
   const [classes, setClasses] = useState<ClassRow[]>([]);
   const [students, setStudents] = useState<StudentRow[]>([]);
   const [level, setLevel] = useState<string>("");
   const [classId, setClassId] = useState<string>("");
+
+  const [authErr, setAuthErr] = useState(false);
 
   const levels = useMemo(
     () =>
@@ -108,22 +79,60 @@ export default function ParentsClient() {
 
   useEffect(() => {
     (async () => {
-      const [c, s] = await Promise.all([
-        fetch("/api/admin/classes?limit=999", {
-          cache: "no-store",
-          credentials: "include",
-        }).then((r) => r.json()),
-        fetch("/api/admin/students?limit=2000", {
-          cache: "no-store",
-          credentials: "include",
-        }).then((r) => r.json()),
-      ]);
-      setClasses(c.items || []);
-      setStudents(s.items || []);
+      try {
+        const rc = await fetch("/api/admin/classes?limit=999", { cache: "no-store" });
+        const rs = await fetch("/api/admin/students?limit=2000", { cache: "no-store" });
+
+        if (rc.status === 401 || rs.status === 401) {
+          setAuthErr(true);
+          return;
+        }
+        const [cj, sj] = await Promise.all([rc.json().catch(() => ({})), rs.json().catch(() => ({}))]);
+        if (!rc.ok || !rs.ok) throw new Error((cj?.error || sj?.error || "HTTP_ERROR"));
+
+        setClasses(cj.items || []);
+        setStudents(sj.items || []);
+      } catch {
+        // silencieux
+      }
     })();
   }, []);
 
-  // SÃ©lection multiple d'Ã©lÃ¨ves
+  async function createParent() {
+    setCreating(true);
+    setMsgCreate(null);
+    try {
+      const r = await fetch("/api/admin/users/create", {
+        method: "POST",
+        headers: new Headers({ "Content-Type": "application/json" }),
+        body: JSON.stringify({
+          role: "parent",
+          email: pEmail.trim() || null, // optionnel
+          phone: pPhone.trim(), // obligatoire
+          display_name: pName.trim() || null,
+        }),
+      });
+      const j = await r.json().catch(() => ({}));
+      setCreating(false);
+      if (r.status === 401) {
+        setAuthErr(true);
+        return;
+      }
+      if (!r.ok) {
+        setMsgCreate(j?.error || "Échec");
+        return;
+      }
+      setMsgCreate("Parent créé.");
+      setPEmail("");
+      setPPhone("");
+      setPName("");
+    } catch (e: any) {
+      setCreating(false);
+      setMsgCreate(e?.message || "Erreur réseau");
+    }
+  }
+
+  // Sélection multiple d'élèves
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   function toggleStudent(id: string) {
     setSelectedIds((prev) =>
@@ -140,7 +149,7 @@ export default function ParentsClient() {
     );
   }
 
-  // Liaison parent â†” Ã©lÃ¨ves (tÃ©lÃ©phone prioritaire / email fallback) â€” VERSION BULK
+  // Liaison parent ↔ élèves (téléphone prioritaire / email fallback) — VERSION BULK
   const [parentPhone, setParentPhone] = useState("");
   const [parentEmail, setParentEmail] = useState("");
   const [linking, setLinking] = useState(false);
@@ -149,7 +158,7 @@ export default function ParentsClient() {
   async function linkParentToStudents() {
     if (!selectedIds.length) return;
     if (!parentPhone.trim() && !parentEmail.trim()) {
-      setMsgLink("Renseigne au moins le tÃ©lÃ©phone ou l'email du parent.");
+      setMsgLink("Renseigne au moins le téléphone ou l’email du parent.");
       return;
     }
 
@@ -158,8 +167,7 @@ export default function ParentsClient() {
     try {
       const r = await fetch("/api/admin/associations", {
         method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
+        headers: new Headers({ "Content-Type": "application/json" }),
         body: JSON.stringify({
           type: "parent_students",
           student_ids: selectedIds,
@@ -168,11 +176,14 @@ export default function ParentsClient() {
         }),
       });
       const j = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(j?.error || "Ã‰chec");
+      if (r.status === 401) {
+        setAuthErr(true);
+        setLinking(false);
+        return;
+      }
+      if (!r.ok) throw new Error(j?.error || "Échec");
 
-      setMsgLink(
-        `Association rÃ©ussie pour ${j.linked ?? selectedIds.length} Ã©lÃ¨ve(s)`
-      );
+      setMsgLink(`Association réussie pour ${j.linked ?? selectedIds.length} élève(s)`);
       setSelectedIds([]);
     } catch (e: any) {
       setMsgLink(e?.message || "Erreur");
@@ -181,24 +192,37 @@ export default function ParentsClient() {
     }
   }
 
+  if (authErr) {
+    return (
+      <div className="rounded-xl border bg-white p-5">
+        <div className="text-sm text-slate-700">
+          Votre session a expiré.{" "}
+          <a className="text-emerald-700 underline" href="/login">
+            Se reconnecter
+          </a>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-semibold">Parents</h1>
         <p className="text-slate-600">
-          CrÃ©er un parent et lâ€™associer Ã  un ou plusieurs Ã©lÃ¨ves (par numÃ©ro).
-          Un parent peut aussi Ãªtre enseignant avec le mÃªme numÃ©ro.
+          Créer un parent et l’associer à un ou plusieurs élèves (par numéro).
+          Un parent peut aussi être enseignant avec le même numéro.
         </p>
       </div>
 
-      {/* CrÃ©ation parent */}
+      {/* Création parent */}
       <div className="rounded-2xl border bg-white p-5">
         <div className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-700">
-          CrÃ©er un parent
+          Créer un parent
         </div>
         <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
           <div>
-            <div className="mb-1 text-xs text-slate-500">Nom affichÃ©</div>
+            <div className="mb-1 text-xs text-slate-500">Nom affiché</div>
             <Input
               value={pName}
               onChange={(e) => setPName(e.target.value)}
@@ -207,21 +231,17 @@ export default function ParentsClient() {
             />
           </div>
           <div>
-            <div className="mb-1 text-xs text-slate-500">
-              TÃ©lÃ©phone (obligatoire)
-            </div>
+            <div className="mb-1 text-xs text-slate-500">Téléphone (obligatoire)</div>
             <Input
               value={pPhone}
               onChange={(e) => setPPhone(e.target.value)}
-              placeholder="NumÃ©ro de tÃ©lÃ©phone"
+              placeholder="Numéro de téléphone"
               inputMode="tel"
               autoComplete="tel"
             />
           </div>
           <div>
-            <div className="mb-1 text-xs text-slate-500">
-              Email (optionnel)
-            </div>
+            <div className="mb-1 text-xs text-slate-500">Email (optionnel)</div>
             <Input
               type="email"
               value={pEmail}
@@ -233,10 +253,10 @@ export default function ParentsClient() {
         </div>
         <div className="mt-3">
           <Button onClick={createParent} disabled={creating || !pPhone.trim()}>
-            {creating ? "CrÃ©ationâ€¦" : "CrÃ©er le parent"}
+            {creating ? "Création…" : "Créer le parent"}
           </Button>
           {msgCreate && (
-            <span className="ml-3 text-sm text-slate-600">{msgCreate}</span>
+            <span className="ml-3 text-sm text-slate-600" aria-live="polite">{msgCreate}</span>
           )}
         </div>
       </div>
@@ -244,7 +264,7 @@ export default function ParentsClient() {
       {/* Association */}
       <div className="rounded-2xl border bg-white p-5">
         <div className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-700">
-          Associer parent â†” Ã©lÃ¨ves
+          Associer parent ↔ élèves
         </div>
 
         {/* Filtres */}
@@ -259,7 +279,7 @@ export default function ParentsClient() {
                 setSelectedIds([]);
               }}
             >
-              <option value="">â€” Tous les niveaux â€”</option>
+              <option value="">— Tous les niveaux —</option>
               {levels.map((l) => (
                 <option key={l} value={l}>
                   {l}
@@ -276,7 +296,7 @@ export default function ParentsClient() {
                 setSelectedIds([]);
               }}
             >
-              <option value="">â€” Choisir â€”</option>
+              <option value="">— Choisir —</option>
               {classesOfLevel.map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.name}
@@ -285,10 +305,10 @@ export default function ParentsClient() {
             </Select>
           </div>
           <div className="rounded-lg border bg-slate-50 px-3 py-2 text-xs text-slate-700">
-            <div className="font-medium mb-1">Parent Ã  associer</div>
+            <div className="font-medium mb-1">Parent à associer</div>
             <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
               <Input
-                placeholder="TÃ©lÃ©phone parent"
+                placeholder="Téléphone parent"
                 value={parentPhone}
                 onChange={(e) => setParentPhone(e.target.value)}
                 inputMode="tel"
@@ -305,10 +325,10 @@ export default function ParentsClient() {
           </div>
         </div>
 
-        {/* Ã‰lÃ¨ves */}
+        {/* Élèves */}
         <div className="mb-3 flex items-center justify-between">
           <div className="text-sm font-semibold uppercase tracking-wide text-slate-700">
-            Ã‰lÃ¨ves de la classe
+            Élèves de la classe
           </div>
           <button
             type="button"
@@ -318,17 +338,17 @@ export default function ParentsClient() {
           >
             {filteredStudents.length &&
             filteredStudents.every((s) => selectedIds.includes(s.id))
-              ? "Tout dÃ©sÃ©lectionner"
-              : "Tout sÃ©lectionner"}
+              ? "Tout désélectionner"
+              : "Tout sélectionner"}
           </button>
         </div>
 
         {!classId ? (
           <div className="text-sm text-slate-500">
-            Choisis dâ€™abord une classe.
+            Choisis d’abord une classe.
           </div>
         ) : filteredStudents.length === 0 ? (
-          <div className="text-sm text-slate-500">Aucun Ã©lÃ¨ve.</div>
+          <div className="text-sm text-slate-500">Aucun élève.</div>
         ) : (
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
             {filteredStudents.map((s) => (
@@ -357,11 +377,11 @@ export default function ParentsClient() {
             }
           >
             {linking
-              ? "Associationâ€¦"
+              ? "Association…"
               : `Associer au parent (${selectedIds.length})`}
           </Button>
           {msgLink && (
-            <span className="ml-3 text-sm text-slate-600">{msgLink}</span>
+            <span className="ml-3 text-sm text-slate-600" aria-live="polite">{msgLink}</span>
           )}
         </div>
       </div>

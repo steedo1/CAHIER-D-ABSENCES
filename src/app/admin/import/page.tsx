@@ -81,6 +81,7 @@ export default function ImportPage() {
   const [preview, setPreview] = useState<any[] | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [authErr, setAuthErr] = useState(false);
 
   // file picker
   const fileRef = useRef<HTMLInputElement>(null);
@@ -91,11 +92,13 @@ export default function ImportPage() {
   }, []);
   async function loadClasses() {
     try {
-      const r = await fetch("/api/admin/classes?limit=500", {
-        cache: "no-store",
-        credentials: "include",
-      });
-      const j = await r.json();
+      const r = await fetch("/api/admin/classes?limit=500", { cache: "no-store" });
+      if (r.status === 401) {
+        setAuthErr(true);
+        return;
+      }
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j?.error || `HTTP ${r.status}`);
       setClasses(j.items || []);
     } catch {
       // silencieux
@@ -113,7 +116,7 @@ export default function ImportPage() {
     if (!f) return;
     setFileName(f.name);
     if (!/\.(csv|txt|tsv)$/i.test(f.name)) {
-      setMsg("Format non supportÃ©. Utilisez un fichier .csv, .txt ou .tsv.");
+      setMsg("Format non supporté. Utilisez un fichier .csv, .txt ou .tsv.");
     }
     const text = await f.text();
     setCsv(text);
@@ -142,25 +145,26 @@ export default function ImportPage() {
 
       const r = await fetch(url, {
         method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
+        headers: new Headers({ "Content-Type": "application/json" }),
         body: JSON.stringify(body),
       });
 
-      let j: any = null;
-      try {
-        j = await r.json();
-      } catch {}
+      const j = await r.json().catch(() => ({}));
 
+      if (r.status === 401) {
+        setAuthErr(true);
+        setLoading(false);
+        return;
+      }
       if (!r.ok) {
-        const text = j?.error || (await r.text().catch(() => "")) || `HTTP ${r.status}`;
+        const text = j?.error || `HTTP ${r.status}`;
         setMsg(text);
         setLoading(false);
         return;
       }
       setPreview(j.preview || []);
     } catch (e: any) {
-      setMsg(e?.message || "Erreur rÃ©seau");
+      setMsg(e?.message || "Erreur réseau");
     } finally {
       setLoading(false);
     }
@@ -180,25 +184,26 @@ export default function ImportPage() {
 
       const r = await fetch(url, {
         method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
+        headers: new Headers({ "Content-Type": "application/json" }),
         body: JSON.stringify(body),
       });
 
-      let j: any = null;
-      try {
-        j = await r.json();
-      } catch {}
+      const j = await r.json().catch(() => ({}));
 
+      if (r.status === 401) {
+        setAuthErr(true);
+        setLoading(false);
+        return;
+      }
       if (!r.ok) {
-        const text = j?.error || (await r.text().catch(() => "")) || `HTTP ${r.status}`;
+        const text = j?.error || `HTTP ${r.status}`;
         setMsg(text);
         setLoading(false);
         return;
       }
 
       if (mode === "students") {
-        setMsg(`Import OK : ${j?.inserted ?? 0} Ã©lÃ¨ves`);
+        setMsg(`Import OK : ${j?.inserted ?? 0} élèves`);
       } else {
         const created = j?.created ?? 0;
         const updated = j?.updated ?? 0;
@@ -206,36 +211,49 @@ export default function ImportPage() {
         const failed = j?.failed ?? 0;
         const subjectsAdded = j?.subjects_added ?? 0;
         setMsg(
-          `Import OK : ${created} crÃ©Ã©(s), ${updated} mis Ã  jour, ${subjectsAdded} matiÃ¨re(s), ${skipped} sans tÃ©lÃ©phone${failed ? `, ${failed} Ã©chec(s)` : ""}`
+          `Import OK : ${created} créé(s), ${updated} mis à jour, ${subjectsAdded} matière(s), ${skipped} sans téléphone${failed ? `, ${failed} échec(s)` : ""}`
         );
       }
       setPreview(null);
     } catch (e: any) {
-      setMsg(e?.message || "Erreur rÃ©seau");
+      setMsg(e?.message || "Erreur réseau");
     } finally {
       setLoading(false);
     }
   }
 
   // placeholders
-  const phStudents = `NÂ°,Matricule,Nom et prÃ©noms
+  const phStudents = `N°,Matricule,Nom et prénoms
 1,19659352H,Abia Yapi Christ Brayan
 2,19578655R,Aboy Othniel`;
-  const phTeachers = `Nom,Email,TÃ©lÃ©phone,Disciplines
+  const phTeachers = `Nom,Email,Téléphone,Disciplines
 M. FABRE,fabre@ecole.ci,+22501020304,Maths; Physique
-Mme KONE,kone@ecole.ci,+22505060708,FranÃ§ais`;
+Mme KONE,kone@ecole.ci,+22505060708,Français`;
+
+  if (authErr) {
+    return (
+      <div className="rounded-xl border bg-white p-5">
+        <div className="text-sm text-slate-700">
+          Votre session a expiré.{" "}
+          <a className="text-emerald-700 underline" href="/login">
+            Se reconnecter
+          </a>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-4">
       <div>
         <h1 className="text-2xl font-semibold">Import</h1>
-        <p className="text-slate-600">Import flexible (dÃ©tection automatique des colonnes).</p>
+        <p className="text-slate-600">Import flexible (détection automatique des colonnes).</p>
       </div>
 
       <div className="rounded-2xl border bg-white p-5 space-y-3">
         <div className="flex gap-2">
           <Button onClick={() => setMode("students")} disabled={mode === "students"}>
-            Ã‰lÃ¨ves
+            Élèves
           </Button>
           <Button onClick={() => setMode("teachers")} disabled={mode === "teachers"}>
             Enseignants
@@ -244,10 +262,10 @@ Mme KONE,kone@ecole.ci,+22505060708,FranÃ§ais`;
 
         {mode === "teachers" && (
           <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-[13px] text-amber-800">
-            <b>TÃ©lÃ©phone obligatoire</b> pour chaque enseignant (connexion par
-            <i> tÃ©lÃ©phone + mot de passe</i>). Formats : <code>+22501020304</code>,{" "}
+            <b>Téléphone obligatoire</b> pour chaque enseignant (connexion par
+            <i> téléphone + mot de passe</i>). Formats : <code>+22501020304</code>,{" "}
             <code>0022501020304</code>, <code>01020304</code>. Colonnes : <code>Nom</code>,{" "}
-            <code>Email</code>, <code>TÃ©lÃ©phone</code>, <code>Disciplines</code>.
+            <code>Email</code>, <code>Téléphone</code>, <code>Disciplines</code>.
           </div>
         )}
 
@@ -262,7 +280,7 @@ Mme KONE,kone@ecole.ci,+22505060708,FranÃ§ais`;
                   setClassId("");
                 }}
               >
-                <option value="">â€” Tous â€”</option>
+                <option value="">— Tous —</option>
                 {levels.map((l) => (
                   <option key={l} value={l}>
                     {l}
@@ -273,7 +291,7 @@ Mme KONE,kone@ecole.ci,+22505060708,FranÃ§ais`;
             <div>
               <div className="mb-1 text-xs text-slate-500">Classe</div>
               <Select value={classId} onChange={(e) => setClassId(e.target.value)}>
-                <option value="">â€” Choisir â€”</option>
+                <option value="">— Choisir —</option>
                 {classesOfLevel.map((c) => (
                   <option key={c.id} value={c.id}>
                     {c.name}
@@ -281,21 +299,21 @@ Mme KONE,kone@ecole.ci,+22505060708,FranÃ§ais`;
                 ))}
               </Select>
               <div className="mt-1 text-[11px] text-slate-500">
-                SÃ©lectionne la classe ciblÃ©e pour lâ€™inscription.
+                Sélectionne la classe ciblée pour l’inscription.
               </div>
             </div>
           </div>
         )}
 
-        {/* Zone CSV + barre dâ€™actions fichiers */}
+        {/* Zone CSV + barre d’actions fichiers */}
         <div className="space-y-2">
           <div className="flex flex-wrap items-center gap-2">
-            <SecondaryButton onClick={pickFile}>Choisir un fichierâ€¦</SecondaryButton>
+            <SecondaryButton onClick={pickFile}>Choisir un fichier…</SecondaryButton>
             <SecondaryButton onClick={clearCsv} disabled={!csv.trim() && !fileName}>
               Effacer
             </SecondaryButton>
             {fileName && (
-              <span className="text-xs text-slate-500">Fichier sÃ©lectionnÃ© : {fileName}</span>
+              <span className="text-xs text-slate-500">Fichier sélectionné : {fileName}</span>
             )}
             <input
               ref={fileRef}
@@ -316,35 +334,35 @@ Mme KONE,kone@ecole.ci,+22505060708,FranÃ§ais`;
 
         <div className="flex gap-2">
           <Button onClick={parse} disabled={!canPreview}>
-            {loading ? "â€¦" : "PrÃ©visualiser"}
+            {loading ? "…" : "Prévisualiser"}
           </Button>
           <Button onClick={save} disabled={!canImport}>
-            {loading ? "â€¦" : "Importer"}
+            {loading ? "…" : "Importer"}
           </Button>
         </div>
-        {msg && <div className="text-sm text-slate-600">{msg}</div>}
+        {msg && <div className="text-sm text-slate-600" aria-live="polite">{msg}</div>}
       </div>
 
       {preview && (
         <div className="rounded-xl border bg-white p-4">
           <div className="text-sm font-semibold mb-2">
-            PrÃ©visualisation ({preview.length})
+            Prévisualisation ({preview.length})
           </div>
           <div className="overflow-x-auto">
             {mode === "students" ? (
               <table className="min-w-full text-sm">
                 <thead className="bg-slate-50">
                   <tr>
-                    <th className="px-3 py-2 text-left">NÂ°</th>
+                    <th className="px-3 py-2 text-left">N°</th>
                     <th className="px-3 py-2 text-left">Matricule</th>
                     <th className="px-3 py-2 text-left">Nom</th>
-                    <th className="px-3 py-2 text-left">PrÃ©nom</th>
+                    <th className="px-3 py-2 text-left">Prénom</th>
                   </tr>
                 </thead>
                 <tbody>
                   {preview.map((r: any, idx: number) => (
                     <tr key={idx} className="border-t">
-                      {/* âœ… Fallback : si la colonne NÂ° est absente/vide, on affiche idx+1 */}
+                      {/* Fallback : si la colonne N° est absente/vide, on affiche idx+1 */}
                       <td className="px-3 py-2">{r.numero ?? String(idx + 1)}</td>
                       <td className="px-3 py-2">{r.matricule ?? ""}</td>
                       <td className="px-3 py-2">{r.last_name ?? ""}</td>
@@ -357,9 +375,9 @@ Mme KONE,kone@ecole.ci,+22505060708,FranÃ§ais`;
               <table className="min-w-full text-sm">
                 <thead className="bg-slate-50">
                   <tr>
-                    <th className="px-3 py-2 text-left">Nom affichÃ©</th>
+                    <th className="px-3 py-2 text-left">Nom affiché</th>
                     <th className="px-3 py-2 text-left">Email</th>
-                    <th className="px-3 py-2 text-left">TÃ©lÃ©phone</th>
+                    <th className="px-3 py-2 text-left">Téléphone</th>
                     <th className="px-3 py-2 text-left">Disciplines</th>
                   </tr>
                 </thead>

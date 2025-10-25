@@ -1,4 +1,4 @@
-//src/app/logout/page.tsx
+// src/app/logout/page.tsx
 "use client";
 
 import { useEffect, useRef } from "react";
@@ -16,17 +16,17 @@ export default function LogoutPage() {
     (async () => {
       const supabase = getSupabaseBrowserClient();
 
-      // 1) Vide localStorage + mémoire du SDK
+      // 1) Déconnexion SDK (cache + localStorage)
       try {
         await supabase.auth.signOut();
       } catch {}
 
-      // 2) Supprime tous les cookies SSR (sb-access, sb-refresh, sb-<project>-auth-token)
+      // 2) Nettoyage cookies SSR (fire-and-forget, sans credentials)
       try {
-        await fetch("/api/auth/sync", { method: "DELETE", credentials: "include" });
+        fetch("/api/auth/sync", { method: "DELETE" }).catch(() => {});
       } catch {}
 
-      // 3) Redirige vers /login
+      // 3) Redirection vers /login
       router.replace("/login");
     })();
   }, [router]);

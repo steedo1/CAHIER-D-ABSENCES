@@ -34,17 +34,20 @@ function Help({ children }: { children: any }) {
 
 type SubjectItem = { id: string; name: string };
 
-// Pour la recherche dâ€™utilisateurs (rÃ©ponse /api/admin/users)
+// Réponse /api/admin/users (recherche)
 type AdminUserItem = {
   id: string;
   display_name: string;
   email: string | null;
   phone: string | null;
-  role: string | null; // rÃ´le â€œprincipalâ€ (peut Ãªtre admin/teacher/â€¦)
+  role: string | null;
 };
 
 export default function UsersPage() {
-  // ENSEIGNANT (crÃ©ation)
+  // État auth (session expirée)
+  const [authErr, setAuthErr] = useState(false);
+
+  // ENSEIGNANT (création)
   const [tEmail, setTEmail] = useState("");
   const [tPhone, setTPhone] = useState("");
   const [tName, setTName] = useState("");
@@ -53,22 +56,19 @@ export default function UsersPage() {
   const [submitting, setSubmitting] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
 
-  // suggestions de disciplines de l'Ã©tablissement
+  // Suggestions de disciplines
   const [subjects, setSubjects] = useState<SubjectItem[]>([]);
   useEffect(() => {
     (async () => {
       try {
-        const r = await fetch("/api/admin/subjects", {
-          cache: "no-store",
-          credentials: "include", // â† important pour Ã©viter 401
-        });
+        const r = await fetch("/api/admin/subjects", { cache: "no-store" });
         if (r.status === 401) {
-          setMsg("Votre session a expirÃ©. Veuillez vous reconnecter.");
+          setAuthErr(true);
           return;
         }
         const j = await r.json().catch(() => ({}));
         setSubjects(j.items || []);
-      } catch (e) {
+      } catch {
         setMsg("Impossible de charger les disciplines.");
       }
     })();
@@ -80,40 +80,37 @@ export default function UsersPage() {
     try {
       const r = await fetch("/api/admin/users/create", {
         method: "POST",
-        credentials: "include", // â† important pour Ã©viter 401
-        headers: { "Content-Type": "application/json" },
+        headers: new Headers({ "Content-Type": "application/json" }),
         body: JSON.stringify({
           role: "teacher",
           email: tEmail.trim() || null, // email optionnel
-          phone: tPhone,
-          display_name: tName || null,
+          phone: tPhone.trim(), // téléphone obligatoire
+          display_name: tName.trim() || null,
           subject: tSubject.trim() || null, // discipline optionnelle
         }),
       });
       const j = await r.json().catch(() => ({}));
       setSubmitting(false);
       if (r.status === 401) {
-        setMsg("Votre session a expirÃ©. Veuillez vous reconnecter.");
+        setAuthErr(true);
         return;
       }
       if (!r.ok) {
-        setMsg(j?.error || "Ã‰chec");
+        setMsg(j?.error || "Échec");
         return;
       }
-      setMsg("Enseignant crÃ©Ã©.");
+      setMsg("Enseignant créé.");
       setTEmail("");
       setTPhone("");
       setTName("");
       setTSubject("");
-    } catch (e: any) {
+    } catch {
       setSubmitting(false);
-      setMsg("Erreur rÃ©seau.");
+      setMsg("Erreur réseau.");
     }
   }
 
-  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-  // RETIRER UN ENSEIGNANT (UI + actions)
-  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ───────────────── Retirer un enseignant ─────────────────
   const [q, setQ] = useState("");
   const [searching, setSearching] = useState(false);
   const [results, setResults] = useState<AdminUserItem[]>([]);
@@ -121,17 +118,23 @@ export default function UsersPage() {
   const [rmMsg, setRmMsg] = useState<string | null>(null);
 
   async function searchUsers() {
+    if (!q.trim()) return;
     setSearching(true);
     setRmMsg(null);
     try {
-      const url = `/api/admin/users?q=${encodeURIComponent(q)}`;
-      const r = await fetch(url, { cache: "no-store", credentials: "include" });
+      const url = `/api/admin/users?q=${encodeURIComponent(q.trim())}`;
+      const r = await fetch(url, { cache: "no-store" });
+      if (r.status === 401) {
+        setAuthErr(true);
+        setResults([]);
+        setSearching(false);
+        return;
+      }
       const j = await r.json().catch(() => ({}));
       if (!r.ok) {
         setRmMsg(j?.error || "Recherche impossible.");
         setResults([]);
       } else {
-        // On garde les 50 premiers cÃ´tÃ© serveur ; cÃ´tÃ© client on peut trier/filtrer
         setResults((j.items || []) as AdminUserItem[]);
       }
     } catch (e: any) {
@@ -148,31 +151,45 @@ export default function UsersPage() {
     try {
       const r = await fetch("/api/admin/teachers/remove", {
         method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
+        headers: new Headers({ "Content-Type": "application/json" }),
         body: JSON.stringify({
           profile_id,
           end_open_sessions: true,
-          unset_profile_institution: true, // â† nettoie lâ€™institution active si câ€™Ã©tait celle-ci
+          unset_profile_institution: true, // nettoie institution active si c'était celle-ci
         }),
       });
-      const j = await r.json().catch(() => ({}));
-      if (!r.ok) {
-        setRmMsg(j?.error || "Ã‰chec de la suppression.");
+      if (r.status === 401) {
+        setAuthErr(true);
+        setRemovingId(null);
         return;
       }
-      // Feedback lisible
-      const ended = j?.ended_sessions ? ` â€” ${j.ended_sessions} sÃ©ance(s) clÃ´turÃ©e(s)` : "";
-      const cleared = j?.cleared_institution ? " â€” institution active nettoyÃ©e" : "";
-      setRmMsg(`Enseignant retirÃ© de lâ€™Ã©tablissement${ended}${cleared}.`);
-
-      // Retire de la liste locale pour Ã©viter un second clic
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        setRmMsg(j?.error || "Échec de la suppression.");
+        return;
+      }
+      const ended = j?.ended_sessions ? ` — ${j.ended_sessions} séance(s) clôturée(s)` : "";
+      const cleared = j?.cleared_institution ? " — institution active nettoyée" : "";
+      setRmMsg(`Enseignant retiré de l’établissement${ended}${cleared}.`);
       setResults((prev) => prev.filter((u) => u.id !== profile_id));
     } catch (e: any) {
-      setRmMsg(e?.message || "Erreur rÃ©seau.");
+      setRmMsg(e?.message || "Erreur réseau.");
     } finally {
       setRemovingId(null);
     }
+  }
+
+  if (authErr) {
+    return (
+      <div className="rounded-xl border bg-white p-5">
+        <div className="text-sm text-slate-700">
+          Votre session a expiré.{" "}
+          <a className="text-emerald-700 underline" href="/login">
+            Se reconnecter
+          </a>
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -180,25 +197,24 @@ export default function UsersPage() {
       <div>
         <h1 className="text-2xl font-semibold">Enseignants</h1>
         <p className="text-slate-600">
-          CrÃ©er des comptes enseignants (mot de passe temporaire) et donner une
+          Créer des comptes enseignants (mot de passe temporaire) et donner une
           discipline principale (optionnelle).
         </p>
       </div>
 
-      {/* â”€â”€â”€â”€â”€ Carte 1 : CrÃ©ation enseignant â”€â”€â”€â”€â”€ */}
+      {/* Carte 1 : Création enseignant */}
       <div className="rounded-2xl border bg-white p-5">
         <div className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-700">
-          CrÃ©er un enseignant
+          Créer un enseignant
         </div>
         <Help>
-          TÃ©lÃ©phone <b>obligatoire</b> (pour la connexion). Email{" "}
-          <b>facultatif</b>. La discipline est <b>optionnelle</b> (utile surtout
-          au secondaire).
+          Téléphone <b>obligatoire</b> (pour la connexion). Email <b>facultatif</b>.
+          La discipline est <b>optionnelle</b> (utile surtout au secondaire).
         </Help>
 
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
           <div>
-            <div className="mb-1 text-xs text-slate-500">Nom affichÃ©</div>
+            <div className="mb-1 text-xs text-slate-500">Nom affiché</div>
             <Input
               value={tName}
               onChange={(e) => setTName(e.target.value)}
@@ -217,7 +233,7 @@ export default function UsersPage() {
             />
           </div>
           <div>
-            <div className="mb-1 text-xs text-slate-500">TÃ©lÃ©phone</div>
+            <div className="mb-1 text-xs text-slate-500">Téléphone</div>
             <Input
               type="tel"
               value={tPhone}
@@ -227,14 +243,12 @@ export default function UsersPage() {
             />
           </div>
           <div>
-            <div className="mb-1 text-xs text-slate-500">
-              Discipline (optionnel)
-            </div>
+            <div className="mb-1 text-xs text-slate-500">Discipline (optionnel)</div>
             <Input
               list="subjects-list"
               value={tSubject}
               onChange={(e) => setTSubject(e.target.value)}
-              placeholder="MathÃ©matiques, FranÃ§aisâ€¦"
+              placeholder="Mathématiques, Français…"
             />
             <datalist id="subjects-list">
               {subjects.map((s) => (
@@ -249,23 +263,27 @@ export default function UsersPage() {
 
         <div className="mt-4">
           <Button onClick={createTeacher} disabled={submitting || !tPhone.trim()}>
-            {submitting ? "CrÃ©ationâ€¦" : "CrÃ©er lâ€™enseignant"}
+            {submitting ? "Création…" : "Créer l’enseignant"}
           </Button>
         </div>
-        {msg && <div className="mt-2 text-sm text-slate-600">{msg}</div>}
+        {msg && (
+          <div className="mt-2 text-sm text-slate-600" aria-live="polite">
+            {msg}
+          </div>
+        )}
       </div>
 
-      {/* â”€â”€â”€â”€â”€ Carte 2 : Retirer un enseignant â”€â”€â”€â”€â”€ */}
+      {/* Carte 2 : Retirer un enseignant */}
       <div className="rounded-2xl border bg-white p-5">
         <div className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-700">
-          Retirer un enseignant de lâ€™Ã©tablissement
+          Retirer un enseignant de l’établissement
         </div>
         <Help>
-          Recherchez lâ€™utilisateur par <b>nom</b>, <b>email</b> ou <b>tÃ©lÃ©phone</b>,
-          puis cliquez sur <b>Retirer</b>. Lâ€™action enlÃ¨ve le rÃ´le <code>teacher</code> pour
-          votre Ã©tablissement, clÃ´ture les sÃ©ances ouvertes et, si besoin, met{" "}
-          <code>profiles.institution_id</code> Ã  <code>NULL</code> lorsquâ€™il pointait
-          encore sur votre Ã©tablissement (ainsi, il ne voit plus vos classes).
+          Recherchez l’utilisateur par <b>nom</b>, <b>email</b> ou <b>téléphone</b>,
+          puis cliquez sur <b>Retirer</b>. L’action enlève le rôle <code>teacher</code> pour
+          votre établissement, clôture les séances ouvertes et, si besoin, met{" "}
+          <code>profiles.institution_id</code> à <code>NULL</code> lorsqu’il pointait
+          encore sur votre établissement (ainsi, il ne voit plus vos classes).
         </Help>
 
         <div className="flex items-end gap-2">
@@ -274,27 +292,28 @@ export default function UsersPage() {
             <Input
               value={q}
               onChange={(e) => setQ(e.target.value)}
-              placeholder="Nom, email ou tÃ©lÃ©phone"
-              onKeyDown={(e) => { if (e.key === "Enter") searchUsers(); }}
+              placeholder="Nom, email ou téléphone"
+              onKeyDown={(e) => {
+                if (e.key === "Enter") searchUsers();
+              }}
             />
           </div>
           <Button onClick={searchUsers} disabled={searching || !q.trim()}>
-            {searching ? "Rechercheâ€¦" : "Rechercher"}
+            {searching ? "Recherche…" : "Rechercher"}
           </Button>
         </div>
 
-        {/* RÃ©sultats */}
+        {/* Résultats */}
         <div className="mt-4 space-y-2">
           {results.length === 0 ? (
-            <div className="text-sm text-slate-500">Aucun rÃ©sultat pour lâ€™instant.</div>
+            <div className="text-sm text-slate-500">Aucun résultat pour l’instant.</div>
           ) : (
             results.map((u) => (
               <div key={u.id} className="flex items-center justify-between rounded-xl border p-3">
                 <div className="min-w-0">
                   <div className="truncate font-medium">{u.display_name || "(Sans nom)"}</div>
-                  <div className="text-xs text-slate-500 truncate">
-                    {u.email || "â€”"} {u.phone ? `â€¢ ${u.phone}` : ""}{" "}
-                    {u.role ? `â€¢ rÃ´le: ${u.role}` : ""}
+                  <div className="truncate text-xs text-slate-500">
+                    {u.email || "—"} {u.phone ? `• ${u.phone}` : ""} {u.role ? `• rôle: ${u.role}` : ""}
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
@@ -302,9 +321,9 @@ export default function UsersPage() {
                     onClick={() => removeTeacher(u.id)}
                     disabled={removingId === u.id}
                     className="rounded-xl bg-red-600 text-white px-3 py-1.5 text-sm font-medium shadow hover:bg-red-700 disabled:opacity-60"
-                    title="Retirer le rÃ´le teacher pour cet Ã©tablissement"
+                    title="Retirer le rôle teacher pour cet établissement"
                   >
-                    {removingId === u.id ? "Retraitâ€¦" : "Retirer"}
+                    {removingId === u.id ? "Retrait…" : "Retirer"}
                   </button>
                 </div>
               </div>
@@ -312,7 +331,11 @@ export default function UsersPage() {
           )}
         </div>
 
-        {rmMsg && <div className="mt-3 text-sm text-slate-600">{rmMsg}</div>}
+        {rmMsg && (
+          <div className="mt-3 text-sm text-slate-600" aria-live="polite">
+            {rmMsg}
+          </div>
+        )}
       </div>
     </div>
   );

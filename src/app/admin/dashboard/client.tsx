@@ -1,3 +1,4 @@
+// src/app/admin/dashboard/AdminDashboardClient.tsx (ou le bon chemin)
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -20,9 +21,9 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 
-/* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-   Types d'API (identiques Ã  ta version)
-â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ─────────────────────────────
+   Types d'API
+───────────────────────────── */
 type MetricsOk = {
   ok: true;
   counts: { classes: number; teachers: number; parents: number; students: number };
@@ -30,12 +31,11 @@ type MetricsOk = {
 };
 
 type MetricsErr = { ok: false; error: string };
-
 type DaysRange = 7 | 30 | 90;
 
-/* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+/* ─────────────────────────────
    Petites briques UI
-â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+───────────────────────────── */
 function Skeleton({ className = "" }: { className?: string }) {
   return <div className={`animate-pulse rounded-lg bg-slate-200/70 ${className}`} />;
 }
@@ -209,12 +209,9 @@ function Segmented({ value, onChange }: { value: DaysRange; onChange: (v: DaysRa
   );
 }
 
-/* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-   Barre supÃ©rieure (HEADER) en BLEU NUIT
-   Ã€ utiliser dans le layout global pour la bande
-   horizontale avec "Mon Cahier d'Absences",
-   "Admin Ã©tablissement" et le bouton "Se dÃ©connecter".
-â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ─────────────────────────────
+   Barre supérieure bleue (option)
+───────────────────────────── */
 export function ColoredTopbar({ children, className = "" }: { children: React.ReactNode; className?: string }) {
   return (
     <div
@@ -231,9 +228,9 @@ export function ColoredTopbar({ children, className = "" }: { children: React.Re
   );
 }
 
-/* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+/* ─────────────────────────────
    Composant principal
-â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+───────────────────────────── */
 export default function AdminDashboardClient() {
   const [data, setData] = useState<MetricsOk | MetricsErr | null>(null);
   const [loading, setLoading] = useState(true);
@@ -242,12 +239,14 @@ export default function AdminDashboardClient() {
   const [updatedAt, setUpdatedAt] = useState<Date | null>(null);
 
   const nfmt = useMemo(() => new Intl.NumberFormat(), []);
+  void nfmt; // (dispo si tu veux formatter autre chose)
 
   async function load(d: DaysRange = days) {
     try {
       setRefreshing(true);
-      const r = await fetch(`/api/admin/dashboard/metrics?days=${d}`, { credentials: "include" });
-      const j = await r.json();
+      const r = await fetch(`/api/admin/dashboard/metrics?days=${d}`, { cache: "no-store" });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j?.error || `HTTP_${r.status}`);
       setData(j);
       setUpdatedAt(new Date());
     } catch (e: any) {
@@ -262,9 +261,10 @@ export default function AdminDashboardClient() {
     let alive = true;
     (async () => {
       try {
-        const r = await fetch(`/api/admin/dashboard/metrics?days=${days}`, { credentials: "include" });
-        const j = await r.json();
+        const r = await fetch(`/api/admin/dashboard/metrics?days=${days}`, { cache: "no-store" });
+        const j = await r.json().catch(() => ({}));
         if (!alive) return;
+        if (!r.ok) throw new Error(j?.error || `HTTP_${r.status}`);
         setData(j);
         setUpdatedAt(new Date());
       } catch (e: any) {
@@ -287,7 +287,7 @@ export default function AdminDashboardClient() {
 
   return (
     <div className="space-y-6">
-      {/* En-tÃªte gradient (section hÃ©ro) */}
+      {/* En-tête gradient (section héro) */}
       <div className="relative overflow-hidden rounded-3xl bg-gradient-to-r from-emerald-600 via-lime-500 to-amber-500 p-6 text-white">
         <div
           className="pointer-events-none absolute inset-0 opacity-20"
@@ -298,14 +298,20 @@ export default function AdminDashboardClient() {
         />
         <div className="relative z-10 flex flex-col items-start gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <h1 className="text-2xl font-semibold tracking-tight drop-shadow-sm">Espace Ã©tablissement</h1>
-            <p className="mt-1 text-sm/6 text-white/90">Vue d'ensemble de votre Ã©tablissement scolaire</p>
+            <h1 className="text-2xl font-semibold tracking-tight drop-shadow-sm">Espace établissement</h1>
+            <p className="mt-1 text-sm/6 text-white/90">Vue d&apos;ensemble de votre établissement scolaire</p>
           </div>
           <div className="flex items-center gap-2">
-            <Segmented value={days} onChange={(d) => { setDays(d); load(d); }} />
+            <Segmented
+              value={days}
+              onChange={(d) => {
+                setDays(d);
+                load(d);
+              }}
+            />
             <Badge variant="secondary" className="bg-white/20 text-white hover:bg-white/30">
               <CalendarClock className="mr-1 h-3.5 w-3.5" />
-              Aujourd'hui
+              Aujourd&apos;hui
             </Badge>
             <Button
               variant="secondary"
@@ -319,14 +325,14 @@ export default function AdminDashboardClient() {
           </div>
         </div>
 
-        {/* Ã‰tat d'erreur affichÃ© sous le header si prÃ©sent */}
+        {/* État d'erreur affiché sous le header si présent */}
         {!loading && data && "ok" in data && !data.ok && (
           <div className="relative z-10 mt-4 rounded-xl border border-red-300/60 bg-red-50/80 px-4 py-3 text-sm text-red-800">
             {(data as MetricsErr).error === "UNAUTHENTICATED"
-              ? "Session expirÃ©e. RÃ©actualisez la page ou reconnectez-vous."
+              ? "Session expirée. Réactualisez la page ou reconnectez-vous."
               : (data as MetricsErr).error === "FORBIDDEN"
-              ? "AccÃ¨s non autorisÃ©."
-              : "Erreur lors du chargement des mÃ©triques."}
+              ? "Accès non autorisé."
+              : "Erreur lors du chargement des métriques."}
           </div>
         )}
       </div>
@@ -336,22 +342,22 @@ export default function AdminDashboardClient() {
         <StatCard label="Classes" value={counts.classes} Icon={School} accent="emerald" loading={loading} />
         <StatCard label="Enseignants" value={counts.teachers} Icon={Users} accent="teal" loading={loading} />
         <StatCard label="Parents" value={counts.parents} Icon={UserRoundCheck} accent="sky" loading={loading} />
-        <StatCard label="Ã‰lÃ¨ves" value={counts.students} Icon={GraduationCap} accent="violet" loading={loading} />
+        <StatCard label="Élèves" value={counts.students} Icon={GraduationCap} accent="violet" loading={loading} />
       </section>
 
       {/* KPIs + Raccourcis */}
       <section className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <KpiCard
-          title="Absences / pÃ©riode"
+          title="Absences / période"
           value={absences}
-          hint="Total des absences enregistrÃ©es sur la pÃ©riode"
+          hint="Total des absences enregistrées sur la période"
           tone="red"
           loading={loading}
         />
         <KpiCard
-          title="Retards / pÃ©riode"
+          title="Retards / période"
           value={retards}
-          hint="Total des retards enregistrÃ©es sur la pÃ©riode"
+          hint="Total des retards enregistrés sur la période"
           tone="amber"
           loading={loading}
         />
@@ -361,11 +367,21 @@ export default function AdminDashboardClient() {
           </CardHeader>
           <CardContent className="pt-0">
             <div className="space-y-2">
-              <QuickLink href="/admin/classes" icon={School}>CrÃ©er des classes</QuickLink>
-              <QuickLink href="/admin/users" icon={Users}>CrÃ©er un enseignant</QuickLink>
-              <QuickLink href="/admin/affectations" icon={UserRoundCheck}>Affecter des classes</QuickLink>
-              <QuickLink href="/admin/parents" icon={Users}>GÃ©rer les parents</QuickLink>
-              <QuickLink href="/admin/import" icon={GraduationCap}>Importer Ã©lÃ¨ves</QuickLink>
+              <QuickLink href="/admin/classes" icon={School}>
+                Créer des classes
+              </QuickLink>
+              <QuickLink href="/admin/users" icon={Users}>
+                Créer un enseignant
+              </QuickLink>
+              <QuickLink href="/admin/affectations" icon={UserRoundCheck}>
+                Affecter des classes
+              </QuickLink>
+              <QuickLink href="/admin/parents" icon={Users}>
+                Gérer les parents
+              </QuickLink>
+              <QuickLink href="/admin/import" icon={GraduationCap}>
+                Importer élèves
+              </QuickLink>
             </div>
           </CardContent>
         </Card>
@@ -376,12 +392,14 @@ export default function AdminDashboardClient() {
         <Card className="rounded-2xl border-amber-200 bg-amber-50/60 shadow-sm">
           <CardContent className="flex flex-col items-start gap-4 p-5 sm:flex-row sm:items-center sm:justify-between">
             <div>
-              <div className="font-medium text-amber-900">Commencez par crÃ©er vos classes</div>
-              <div className="text-sm text-amber-800/90">Aucune classe trouvÃ©e pour le moment. Ajoutez vos classes pour activer la prise de prÃ©sence.</div>
+              <div className="font-medium text-amber-900">Commencez par créer vos classes</div>
+              <div className="text-sm text-amber-800/90">
+                Aucune classe trouvée pour le moment. Ajoutez vos classes pour activer la prise de présence.
+              </div>
             </div>
             <Button asChild className="bg-amber-600 text-white hover:bg-amber-600/90">
               <Link href="/admin/classes">
-                <School className="mr-2 h-4 w-4" /> CrÃ©er des classes
+                <School className="mr-2 h-4 w-4" /> Créer des classes
               </Link>
             </Button>
           </CardContent>
@@ -392,10 +410,10 @@ export default function AdminDashboardClient() {
         <Separator className="my-2" />
       </div>
       <div className="flex items-center justify-between text-xs text-slate-400">
-        <div>Â© {new Date().getFullYear()} Mon Cahier dâ€™Absences Â· Tableau de bord</div>
+        <div>© {new Date().getFullYear()} Mon Cahier d’Absences · Tableau de bord</div>
         <div className="inline-flex items-center gap-1 text-slate-400">
           <Clock4 className="h-3.5 w-3.5" />
-          {updatedAt ? `Mis Ã  jour Ã  ${updatedAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : "â€”"}
+          {updatedAt ? `Mis à jour à ${updatedAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : "—"}
         </div>
       </div>
     </div>
