@@ -3,7 +3,6 @@
 
 import React, { createContext, useEffect, useRef, useState, useContext } from "react";
 import type { Session } from "@supabase/supabase-js";
-// ✅ Assure-toi que ce module retourne bien le client navigateur Supabase
 import { getSupabaseBrowserClient } from "@/lib/supabase-browser";
 
 const AuthContext = createContext<{ session: Session | null; loading: boolean }>({
@@ -16,12 +15,12 @@ export function useAuth() {
 }
 
 export default function Providers({ children }: { children: React.ReactNode }) {
-  const supabase = getSupabaseBrowserClient();
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
   const didInitialSyncRef = useRef(false);
+  const supRef = useRef<ReturnType<typeof getSupabaseBrowserClient> | null>(null);
 
-  /** Sync cookies SSR (compatible Android/WebView) */
+  // Sync cookies SSR (tolérant)
   const syncSsrCookies = async (s: Session | null) => {
     if (!s?.access_token || !s?.refresh_token) return;
     try {
@@ -41,6 +40,10 @@ export default function Providers({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     let active = true;
 
+    // ⚠️ Création du client STRICTEMENT dans le navigateur
+    const supabase = getSupabaseBrowserClient();
+    supRef.current = supabase;
+
     (async () => {
       const { data, error } = await supabase.auth.getSession();
       if (!active) return;
@@ -49,7 +52,6 @@ export default function Providers({ children }: { children: React.ReactNode }) {
       const s = data?.session ?? null;
       setSession(s);
       setLoading(false);
-      console.log("[providers] init session:", !!s);
 
       if (s && !didInitialSyncRef.current) {
         didInitialSyncRef.current = true;
@@ -58,7 +60,6 @@ export default function Providers({ children }: { children: React.ReactNode }) {
     })();
 
     const { data: sub } = supabase.auth.onAuthStateChange(async (event, s) => {
-      console.log("[providers] onAuthStateChange:", event, !!s);
       setSession(s ?? null);
 
       try {
@@ -73,9 +74,7 @@ export default function Providers({ children }: { children: React.ReactNode }) {
           });
         }
         if (event === "SIGNED_OUT") {
-          await fetch("/api/auth/sync", {
-            method: "DELETE",
-          });
+          await fetch("/api/auth/sync", { method: "DELETE" });
         }
       } catch (e) {
         console.warn("[providers] sync cookies failed:", (e as any)?.message);
@@ -84,10 +83,8 @@ export default function Providers({ children }: { children: React.ReactNode }) {
 
     return () => {
       active = false;
-      // sub contient { subscription }, on se désabonne proprement
       sub.subscription.unsubscribe();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return (

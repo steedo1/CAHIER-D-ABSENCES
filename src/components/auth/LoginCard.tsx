@@ -4,6 +4,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/app/providers";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { getSupabaseBrowserClient } from "@/lib/supabase-browser";
 import { normalizePhone } from "@/lib/phone";
 import { Mail, Phone as PhoneIcon, Lock, Eye, EyeOff, Loader2, ShieldAlert } from "lucide-react";
@@ -42,7 +43,12 @@ function InputWrap({
 export default function LoginCard({ redirectTo = "/redirect", compactHeader }: Props) {
   const { session, loading } = useAuth();
   const router = useRouter();
-  const supabase = getSupabaseBrowserClient();
+
+  // Client Supabase (navigateur uniquement)
+  const supRef = useRef<SupabaseClient | null>(null);
+  useEffect(() => {
+    supRef.current = getSupabaseBrowserClient();
+  }, []);
 
   const [mode, setMode] = useState<"email" | "phone">("email");
   const [email, setEmail] = useState("");
@@ -82,6 +88,9 @@ export default function LoginCard({ redirectTo = "/redirect", compactHeader }: P
     e.preventDefault();
     setErr(null);
     setSubmitting(true);
+
+    const supabase = supRef.current ?? getSupabaseBrowserClient();
+
     try {
       if (mode === "email") {
         const { error } = await supabase.auth.signInWithPassword({ email, password: pwdEmail });
