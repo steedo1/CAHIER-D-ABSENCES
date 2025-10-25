@@ -4,11 +4,11 @@ import { createServerClient, type CookieOptions } from "@supabase/ssr";
 
 const SUPABASE_URL  = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_ANON = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-const PROJECT_REF   = SUPABASE_URL.match(/^https:\/\/([^.]+)\.supabase\.co/i)?.[1] ?? null;
+const PROJECT_REF   = (SUPABASE_URL ?? "").match(/^https:\/\/([^.]+)\.supabase\.co/i)?.[1] ?? null;
 
 export async function getSupabaseServerClient(opts: { writable?: boolean } = {}) {
   const writable = !!opts.writable;
-  const jar = await cookies();
+  const jar = await cookies(); // ✅ <- AJOUTER await
 
   const safeSet = (name: string, value: string, options: CookieOptions) => {
     if (!writable) return;
@@ -42,7 +42,7 @@ export async function getSupabaseServerClient(opts: { writable?: boolean } = {})
   }
 
   if (access && refresh) {
-    try { await client.auth.setSession({ access_token: access, refresh_token: refresh }); } catch {}
+    await client.auth.setSession({ access_token: access, refresh_token: refresh }).catch(() => {});
   }
 
   return client;

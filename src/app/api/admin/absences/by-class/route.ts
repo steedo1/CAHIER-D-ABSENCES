@@ -1,3 +1,4 @@
+// src/app/api/admin/absences/by-class/route.ts
 import { NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
@@ -10,6 +11,7 @@ function endISO(d?: string) {
 }
 
 export async function GET(req: Request) {
+  // ✅ ICI: on attend le client, sinon 'supa' est une Promise
   const supa = await getSupabaseServerClient();
   const srv  = getSupabaseServiceClient();
 
@@ -52,7 +54,7 @@ export async function GET(req: Request) {
     (students || []).map(s => [s.id as string, [s.last_name, s.first_name].filter(Boolean).join(" ")])
   );
 
-  const agg = new Map<string, number>(); // total minutes par Ã©lÃ¨ve
+  const agg = new Map<string, number>();
   for (const m of marks || []) {
     agg.set(m.student_id!, (agg.get(m.student_id!) || 0) + ((m as any).minutes || 0));
   }
@@ -60,7 +62,7 @@ export async function GET(req: Request) {
   const items = Array.from(agg.entries())
     .map(([student_id, minutes]) => ({
       student_id,
-      full_name: nameOf.get(student_id) || "â€”",
+      full_name: nameOf.get(student_id) || "—",
       minutes,
     }))
     .sort((a, b) => b.minutes - a.minutes);
