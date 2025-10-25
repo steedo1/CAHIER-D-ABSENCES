@@ -1,6 +1,6 @@
 // src/app/api/admin/students/route.ts
 import { NextResponse } from "next/server";
-import { getSupabaseServerClient } from "../../../../lib/supabaseServer";
+import { getSupabaseServerClient } from "@/lib/supabase-server"; // ✅ chemin correct
 
 export async function GET() {
   const supa = await getSupabaseServerClient();
@@ -34,7 +34,7 @@ export async function GET() {
   const items = (data ?? []).map((row: any) => {
     const s = row.students || {};
     const c = row.classes || {};
-    const full = `${s.first_name ?? ""} ${s.last_name ?? ""}`.trim() || "â€”";
+    const full = `${s.first_name ?? ""} ${s.last_name ?? ""}`.trim() || "—";
     return {
       id: s.id as string,
       full_name: full,
@@ -45,5 +45,3 @@ export async function GET() {
 
   return NextResponse.json({ items });
 }
-
-
