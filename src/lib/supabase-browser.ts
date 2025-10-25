@@ -2,46 +2,33 @@
 import { createBrowserClient } from "@supabase/ssr";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-declare global {
-  // eslint-disable-next-line no-var
-  var __supabase__: SupabaseClient | undefined;
-}
+// Singleton (partagé par tous les composants du même onglet)
+let _browserClient: SupabaseClient | null = null;
 
 export function getSupabaseBrowserClient(): SupabaseClient {
   if (typeof window === "undefined") {
-    throw new Error("getSupabaseBrowserClient() ne peut être appelé que dans le navigateur.");
+    throw new Error("getSupabaseBrowserClient() doit être appelé dans le navigateur.");
   }
-  if (globalThis.__supabase__) return globalThis.__supabase__;
+  if (_browserClient) return _browserClient;
 
-  const rawUrl  = (process.env.NEXT_PUBLIC_SUPABASE_URL ?? "").trim();
-  const rawAnon = (process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "").trim();
-  if (!rawUrl || !rawAnon) {
+  const url  = (process.env.NEXT_PUBLIC_SUPABASE_URL || "").trim();
+  const anon = (process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "").trim();
+  if (!url || !anon) {
     throw new Error("Config Supabase manquante: NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY.");
   }
 
-  let base: string;
-  try { base = new URL(rawUrl).origin; }
-  catch { throw new Error(`NEXT_PUBLIC_SUPABASE_URL invalide: "${rawUrl}"`); }
-
-  const client = createBrowserClient(base, rawAnon, {
+  // ⚠️ Pas de global.headers personnalisés : Supabase gère apikey/Authorization.
+  _browserClient = createBrowserClient(url, anon, {
     auth: {
       persistSession: true,
       autoRefreshToken: true,
       detectSessionInUrl: true,
-    },
-    // ⬇️ force l’envoi de l’API key sur tous les fetch émis par le SDK
-    global: {
-      headers: {
-        apikey: rawAnon,
-        Authorization: `Bearer ${rawAnon}`,
-      },
+      // Clé de stockage dédiée pour éviter toute collision
+      storageKey: "mca-auth-v1",
     },
   });
 
-  try { (window as any).__SUPA_DBG__ = { supabaseUrl: base, anonLen: rawAnon.length }; } catch {}
+  try { (window as any).__SUPA_DBG__ = { supabaseUrl: url, anonLen: anon.length }; } catch {}
 
-  if (process.env.NODE_ENV !== "production") {
-    globalThis.__supabase__ = client;
-  }
-  return client;
+  return _browserClient;
 }
