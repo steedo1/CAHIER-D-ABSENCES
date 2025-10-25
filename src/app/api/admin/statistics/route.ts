@@ -1,7 +1,7 @@
 // src/app/api/admin/statistics/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
-import { getSupabaseServerClient } from "@/lib/supabaseServer";
+import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 /* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
    Helpers
@@ -261,3 +261,5 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: e?.message || "Server error" }, { status: 500 });
   }
 }
+
+

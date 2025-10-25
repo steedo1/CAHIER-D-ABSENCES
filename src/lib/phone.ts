@@ -276,3 +276,5 @@ export function getCountryCallingCode(e164?: string | null): string | null {
   // fallback : 1 Ã  3 premiers chiffres
   return digits.slice(0, Math.min(3, digits.length));
 }
+
+

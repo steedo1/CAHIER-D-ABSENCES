@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getSupabaseServerClient } from "@/lib/supabaseServer";
+import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 export async function POST(req: Request) {
   const supa = await getSupabaseServerClient();
@@ -16,3 +16,5 @@ export async function POST(req: Request) {
 
   return NextResponse.json({ ok: true });
 }
+
+

@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { getSupabaseServerClient } from "@/lib/supabaseServer";
+import { getSupabaseServerClient } from "@/lib/supabase-server";
 import AdminsTable from "./ui/AdminsTable";
 
 export const dynamic = "force-dynamic";
@@ -18,3 +18,5 @@ export default async function AdminsPage() {
     </div>
   );
 }
+
+

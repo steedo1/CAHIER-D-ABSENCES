@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getSupabaseServerClient } from "@/lib/supabaseServer";
+import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 
 export const dynamic = "force-dynamic";
@@ -52,3 +52,5 @@ export async function GET(req: NextRequest) {
 
   return NextResponse.json({ counts }, { status: 200 });
 }
+
+

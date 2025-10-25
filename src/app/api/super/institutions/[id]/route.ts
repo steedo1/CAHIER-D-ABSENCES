@@ -1,7 +1,7 @@
 // src/app/api/super/institutions/[id]/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
-import { getSupabaseActionClient } from "@/lib/supabaseServer";
+import { getSupabaseActionClient } from "@/lib/supabase-server";
 
 export const dynamic = "force-dynamic";
 

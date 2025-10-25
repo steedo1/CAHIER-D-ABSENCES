@@ -9,3 +9,5 @@ export const metadata: Metadata = {
 export default function SuperLayout({ children }: { children: React.ReactNode }) {
   return <Shell>{children}</Shell>;
 }
+
+

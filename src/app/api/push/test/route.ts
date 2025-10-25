@@ -1,6 +1,6 @@
 //src/app/api/push/test/route.ts
 import { NextResponse } from "next/server";
-import { getSupabaseServerClient } from "@/lib/supabaseServer";
+import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import webpush from "web-push";
 
@@ -31,3 +31,5 @@ export async function POST() {
     return NextResponse.json({ error: e?.message || "push_failed" }, { status: 400 });
   }
 }
+
+

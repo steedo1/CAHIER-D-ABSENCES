@@ -1,6 +1,6 @@
 //src/app/api/teacher/sessions/start/route.ts
 import { NextResponse } from "next/server";
-import { getSupabaseServerClient } from "@/lib/supabaseServer";
+import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 
 type Body = {
@@ -95,3 +95,5 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: e?.message || "start_failed" }, { status: 400 });
   }
 }
+
+

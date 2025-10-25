@@ -1,12 +1,16 @@
 // src/app/api/admin/teachers/import/route.ts
 import { NextResponse } from "next/server";
-import { getSupabaseServerClient } from "@/lib/supabaseServer";
+import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
-import { normalizePhone } from "@/lib/phone"; // âœ… source unique
+import { normalizePhone } from "@/lib/phone";
 
-/* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// Assure un runtime Node (accès process.env, service role, etc.)
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+/* ======================================================================
    Helpers
-â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+====================================================================== */
 
 // Mot de passe temporaire (8 car.) lisible
 function genTempPassword() {
@@ -25,7 +29,7 @@ function genTempPassword() {
   return p;
 }
 
-/** CSV parser basique (sÃ©parateur auto ; , ou tab + guillemets) */
+/** CSV parser basique (séparateur auto ; , ou tab + guillemets) */
 function parseCSV(raw: string) {
   const firstLine = (raw.split(/\r?\n/).find((l) => l.trim().length > 0) ?? "");
   const sep =
@@ -59,14 +63,14 @@ function normalizeHeader(h: string) {
   return h.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
 }
 
-/** Parse CSV enseignants â†’ { display_name, email, phone, subjects[] }[] */
+/** Parse CSV enseignants → { display_name, email, phone, subjects[] }[] */
 function parseTeachersCsvFlexible(raw: string) {
   const rows = parseCSV(raw);
   if (!rows.length) return [];
 
   const H = rows[0].map(normalizeHeader);
   const idx = {
-    name: H.findIndex((h) => /\b(nom|name|display|affiche|affichee|affichÃ©|display_name)\b/i.test(h)),
+    name: H.findIndex((h) => /\b(nom|name|display|affiche|affichee|affiché|display_name)\b/i.test(h)),
     email: H.findIndex((h) => /\b(mail|e[- ]?mail|email)\b/i.test(h)),
     phone: H.findIndex((h) => /\b(tel|telephone|phone|portable|gsm|mobile)\b/i.test(h)),
     subjects: H.findIndex((h) => /\b(subjects?|disciplines?|matieres?)\b/i.test(h)),
@@ -92,44 +96,44 @@ function parseTeachersCsvFlexible(raw: string) {
   return body.filter((r) => r.display_name || r.email || r.phone);
 }
 
-/* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-   Normalisation & alias matiÃ¨res (tolÃ©rant sur sigles)
-â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ======================================================================
+   Normalisation & alias matières (tolérant sur sigles)
+====================================================================== */
 
 const unaccent = (s: string) => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
 const norm = (s: string) => unaccent(String(s || "")).toLowerCase().replace(/[^a-z0-9]+/g, "");
 
-/** Table canonique (Enseignement gÃ©nÃ©ral) */
+/** Table canonique (Enseignement général) */
 const SUBJECTS_CANON: Array<{ code: string; name: string; aliases: string[] }> = [
-  { code: "ANGL", name: "Anglais", aliases: ["anglais", "english", "ang", "angl", "lv1anglais"] },
-  { code: "FRAN", name: "FranÃ§ais", aliases: ["francais", "fr"] },
-  { code: "HISTGEO", name: "Histoire-GÃ©ographie", aliases: ["hg", "h-g", "histgeo", "hist-geo", "histoiregeographie", "histoiregeo"] },
-  { code: "MATH", name: "MathÃ©matiques", aliases: ["math", "maths", "mathematiques", "mathematique"] },
-  { code: "P-C", name: "Physique-Chimie", aliases: ["pc", "p.c", "p-c", "physiquechimie", "physique-chimie", "physchim", "physchimie"] },
-  { code: "SVT", name: "Sciences de la Vie et de la Terre", aliases: ["svt", "s.v.t", "sciencevieetterre", "sciencesdelavieetdelaterre"] },
-  { code: "PHILO", name: "Philosophie", aliases: ["philo"] },
-  { code: "EPS", name: "Ã‰ducation Physique et Sportive", aliases: ["eps", "e.p.s", "sport", "educationphysique"] },
-  { code: "EDHC", name: "Ã‰ducation aux Droits de lâ€™Homme et Ã  la CitoyennetÃ©", aliases: ["edhc", "e.d.h.c", "citoyennete", "droitsdelhomme"] },
-  { code: "ARTPL", name: "Arts plastiques", aliases: ["ap", "a-p", "a.p", "artsplastiques", "dessin", "arts"] },
-  { code: "MUSIQ", name: "Ã‰ducation musicale", aliases: ["mus", "musique", "educationmusicale", "music"] },
-  { code: "ALL", name: "Allemand (LV2)", aliases: ["allemand", "lv2all", "all", "a.l.l", "lv2allemand"] },
-  { code: "ESP", name: "Espagnol (LV2)", aliases: ["esp", "espagnol", "lv2esp", "lv2espagnol", "e.s.p"] },
+  { code: "ANGL",   name: "Anglais",                         aliases: ["anglais", "english", "ang", "angl", "lv1anglais"] },
+  { code: "FRAN",   name: "Français",                        aliases: ["francais", "fr"] },
+  { code: "HISTGEO",name: "Histoire-Géographie",             aliases: ["hg", "h-g", "histgeo", "hist-geo", "histoiregeographie", "histoiregeo"] },
+  { code: "MATH",   name: "Mathématiques",                   aliases: ["math", "maths", "mathematiques", "mathematique"] },
+  { code: "P-C",    name: "Physique-Chimie",                 aliases: ["pc", "p.c", "p-c", "physiquechimie", "physique-chimie", "physchim", "physchimie"] },
+  { code: "SVT",    name: "Sciences de la Vie et de la Terre", aliases: ["svt", "s.v.t", "sciencevieetterre", "sciencesdelavieetdelaterre"] },
+  { code: "PHILO",  name: "Philosophie",                      aliases: ["philo"] },
+  { code: "EPS",    name: "Éducation Physique et Sportive",  aliases: ["eps", "e.p.s", "sport", "educationphysique"] },
+  { code: "EDHC",   name: "Éducation aux Droits de l’Homme et à la Citoyenneté", aliases: ["edhc", "e.d.h.c", "citoyennete", "droitsdelhomme"] },
+  { code: "ARTPL",  name: "Arts plastiques",                  aliases: ["ap", "a-p", "a.p", "artsplastiques", "dessin", "arts"] },
+  { code: "MUSIQ",  name: "Éducation musicale",               aliases: ["mus", "musique", "educationmusicale", "music"] },
+  { code: "ALL",    name: "Allemand (LV2)",                   aliases: ["allemand", "lv2all", "all", "a.l.l", "lv2allemand"] },
+  { code: "ESP",    name: "Espagnol (LV2)",                   aliases: ["esp", "espagnol", "lv2esp", "lv2espagnol", "e.s.p"] },
 ];
 
-/** Retourne un { code?, name } canonisÃ© Ã  partir d'un libellÃ©/sigle quelconque */
+/** Retourne un { code?, name } canonisé à partir d'un libellé/sigle quelconque */
 function canonicalizeSubject(raw: string): { code?: string; name: string } {
   const n = norm(raw || "");
   for (const s of SUBJECTS_CANON) {
     if (norm(s.code) === n || norm(s.name) === n) return { code: s.code, name: s.name };
     for (const a of s.aliases) if (norm(a) === n) return { code: s.code, name: s.name };
   }
-  // Inconnu : renvoyer tel quel (crÃ©ation libre)
+  // Inconnu : renvoyer tel quel (création libre)
   return { name: (raw || "").trim() };
 }
 
-/* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+/* ======================================================================
    Route
-â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+====================================================================== */
 export async function POST(req: Request) {
   const supa = await getSupabaseServerClient(); // user-scoped (RLS)
   const srv = getSupabaseServiceClient();       // service (bypass RLS)
@@ -155,7 +159,7 @@ export async function POST(req: Request) {
       ? String(body.country).trim()
       : undefined;
 
-  // âœ… mot de passe dÃ©terministe si fourni, sinon fallback env, sinon alÃ©atoire
+  // mot de passe déterministe si fourni, sinon fallback env, sinon aléatoire
   const defaultPasswordOrRandom = () =>
     String(body?.default_password || process.env.DEFAULT_TEMP_PASSWORD || "") || genTempPassword();
 
@@ -190,14 +194,10 @@ export async function POST(req: Request) {
     error?: string;
   }> = [];
 
-  // Cache local pour les matiÃ¨res (clÃ© canonique â†’ institution_subjects.id)
+  // Cache local pour les matières (clé canonique → institution_subjects.id)
   const knownSubjects = new Map<string, string>();
 
-  /** Assure la matiÃ¨re cÃ´tÃ© rÃ©fÃ©rentiel + cÃ´tÃ© Ã©tablissement
-   *  - tolÃ©rant sur sigles/alias
-   *  - crÃ©e dans subjects si manquant
-   *  - crÃ©e/relie dans institution_subjects avec custom_name EXACT (saisi CSV)
-   */
+  /** Assure la matière côté référentiel + côté établissement */
   async function ensureSubject(instId: string, rawLabel: string): Promise<{
     institution_subject_id: string;
     subject_id: string | null;
@@ -212,7 +212,7 @@ export async function POST(req: Request) {
       return { institution_subject_id: knownSubjects.get(cacheKey)!, subject_id: null, label: raw };
     }
 
-    // (A) RÃ©soudre/CrÃ©er la matiÃ¨re rÃ©fÃ©rentielle (subjects)
+    // (A) Résoudre/Créer la matière référentielle (subjects)
     let subject_id: string | null = null;
     if (code) {
       const { data: byCode } = await srv.from("subjects").select("id").eq("code", code).maybeSingle();
@@ -223,9 +223,10 @@ export async function POST(req: Request) {
       if (byName?.id) subject_id = String(byName.id);
     }
     if (!subject_id) {
-      // crÃ©er la matiÃ¨re (code canonique si dispo, sinon dÃ©rivÃ©)
-      let finalCode = (code || name).normalize("NFD").replace(/[\u0300-\u036f]/g, "")
-        .toUpperCase().replace(/[^A-Z0-9]+/g, "-").slice(0, 12) || "SUBJ";
+      // créer la matière
+      let finalCode =
+        (code || name).normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+          .toUpperCase().replace(/[^A-Z0-9]+/g, "-").slice(0, 12) || "SUBJ";
       let createdOk = false;
       for (let attempt = 0; attempt < 2 && !createdOk; attempt++) {
         const { data: createdSubj, error: sErr } = await srv
@@ -237,15 +238,14 @@ export async function POST(req: Request) {
           subject_id = String(createdSubj.id);
           createdOk = true;
         } else if (sErr) {
-          // collision de code â†’ tente un suffixe court
+          // collision de code → tente un suffixe court
           finalCode = (finalCode + "-" + Math.random().toString(36).slice(2, 5)).slice(0, 12);
         }
       }
-      if (!subject_id) subject_id = null; // en dernier recours, on peut laisser null (rare)
+      if (!subject_id) subject_id = null;
     }
 
-    // (B) Tenter de retrouver une ligne Ã©tablissement existante
-    //     prioritÃ©: mÃªme libellÃ© saisi (pour Ã©viter doublons proches)
+    // (B) Retrouver une ligne établissement existante (libellé exact d’abord)
     const { data: exactFound } = await srv
       .from("institution_subjects")
       .select("id")
@@ -259,7 +259,7 @@ export async function POST(req: Request) {
       return { institution_subject_id: String(exactFound.id), subject_id, label: raw };
     }
 
-    // sinon, si sujet rÃ©fÃ©rentiel rÃ©solu â†’ chercher par (instId, subject_id)
+    // sinon par (instId, subject_id)
     if (subject_id) {
       const { data: byRef } = await srv
         .from("institution_subjects")
@@ -268,13 +268,12 @@ export async function POST(req: Request) {
         .eq("subject_id", subject_id)
         .maybeSingle();
       if (byRef?.id) {
-        // ne pas Ã©craser le custom_name existant
         knownSubjects.set(cacheKey, byRef.id as string);
         return { institution_subject_id: String(byRef.id), subject_id, label: raw };
       }
     }
 
-    // (C) CrÃ©er la ligne Ã©tablissement avec le libellÃ© EXACT saisi
+    // (C) Créer la ligne établissement avec le libellé EXACT saisi
     const { data: createdRow, error } = await srv
       .from("institution_subjects")
       .insert({ institution_id: instId, custom_name: raw, subject_id })
@@ -334,7 +333,7 @@ export async function POST(req: Request) {
       let temp_password: string | undefined = undefined;
 
       if (!existing) {
-        // 3.2 CrÃ©ation auth + profil
+        // 3.2 Création auth + profil
         const password = defaultPasswordOrRandom();
         const { data: createdUser, error: cuErr } = await srv.auth.admin.createUser({
           phone: phoneNorm,
@@ -346,21 +345,21 @@ export async function POST(req: Request) {
         });
 
         if (!createdUser?.user?.id) {
-          // Fallback : re-lookup dans auth.users (doublon dÃ©jÃ  existant)
+          // Fallback : re-lookup dans auth.users (doublon déjà existant)
           const { data: auByPhone } = await srv
-            .from("auth.users")
+            .from("auth.users" as any)
             .select("id")
             .eq("phone", phoneNorm)
             .maybeSingle();
           const { data: auByEmail } =
             !auByPhone && email
-              ? await srv.from("auth.users").select("id").eq("email", email).maybeSingle()
+              ? await srv.from("auth.users" as any).select("id").eq("email", email).maybeSingle()
               : { data: null as any };
 
-        if (auByPhone?.id || auByEmail?.id) {
+          if (auByPhone?.id || auByEmail?.id) {
             profile_id = String(auByPhone?.id || auByEmail?.id);
 
-            // âœ… assure le profil (UPSERT, pas update)
+            // assure le profil (UPSERT)
             await srv
               .from("profiles")
               .upsert(
@@ -393,7 +392,7 @@ export async function POST(req: Request) {
 
           temp_password = password;
 
-          // âœ… crÃ©e/Ã©crase proprement la ligne profil
+          // crée/écrase proprement la ligne profil
           await srv
             .from("profiles")
             .upsert(
@@ -411,7 +410,7 @@ export async function POST(req: Request) {
           created++;
         }
       } else {
-        // 3.3 Mise Ã  jour du profil existant
+        // 3.3 Mise à jour du profil existant
         profile_id = existing.id;
         const pid = profile_id as string;
 
@@ -429,7 +428,7 @@ export async function POST(req: Request) {
         updated++;
       }
 
-      // 3.4 Assurer les matiÃ¨res (tolÃ©rant : sigles & alias OK) + liaison teacher_subjects
+      // 3.4 Assurer les matières (tolérant : sigles & alias OK) + liaison teacher_subjects
       for (const subj of row.subjects || []) {
         if (!subj) continue;
         const { subject_id } = await ensureSubject(institution_id, subj);
@@ -441,7 +440,7 @@ export async function POST(req: Request) {
                 { profile_id, subject_id, institution_id },
                 { onConflict: "profile_id,subject_id,institution_id" }
               );
-          } catch (e) {
+          } catch {
             // silencieux
           }
         }
@@ -473,6 +472,6 @@ export async function POST(req: Request) {
     skipped_no_phone,
     failed,
     subjects_added,
-    results, // ðŸ‘‰ contient temp_password quand un compte vient d'Ãªtre crÃ©Ã©
+    results, // ↩ contient temp_password quand un compte vient d'être créé
   });
 }

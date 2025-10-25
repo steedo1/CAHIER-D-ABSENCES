@@ -1,6 +1,6 @@
 // src/app/api/admin/subjects/route.ts
 import { NextResponse } from "next/server";
-import { getSupabaseServerClient } from "@/lib/supabaseServer";
+import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 /** Renvoie les matiÃ¨res disponibles pour l'Ã©tablissement courant (triÃ©es par nom). */
 export async function GET() {
@@ -103,3 +103,5 @@ async function tryFallbackSubjects(supa: any) {
     return [];
   }
 }
+
+

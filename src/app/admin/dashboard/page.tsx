@@ -6,3 +6,5 @@ import AdminDashboardClient from "./client";
 export default function AdminDashboard() {
   return <AdminDashboardClient />;
 }
+
+

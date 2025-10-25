@@ -33,3 +33,5 @@ export default function LogoutPage() {
 
   return <main className="p-6">Déconnexion…</main>;
 }
+
+

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getSupabaseServerClient } from "@/lib/supabaseServer";
+import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { normalizePhone as toE164 } from "@/lib/phone";
 
@@ -444,3 +444,5 @@ export async function POST(req: Request) {
 
   return NextResponse.json({ error: "bad_type" }, { status: 400 });
 }
+
+

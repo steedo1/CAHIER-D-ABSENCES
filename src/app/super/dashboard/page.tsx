@@ -1,7 +1,7 @@
 // src/app/super/dashboard/page.tsx
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
-import { getSupabaseServerClient } from "@/lib/supabaseServer";
+import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 function getBaseUrl() {
   if (process.env.NEXT_PUBLIC_SITE_URL) return process.env.NEXT_PUBLIC_SITE_URL;
@@ -81,3 +81,5 @@ export default async function SuperDashboardPage() {
     </div>
   );
 }
+
+

@@ -1,6 +1,6 @@
 // app/api/admin/classes/bulk/route.ts
 import { NextResponse } from "next/server";
-import { getSupabaseServerClient } from "@/lib/supabaseServer";
+import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 
 type Body = {
@@ -99,3 +99,5 @@ export async function POST(req: Request) {
 
   return NextResponse.json({ inserted: data?.length ?? 0, items: data ?? [] });
 }
+
+

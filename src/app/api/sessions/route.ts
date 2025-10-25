@@ -1,6 +1,6 @@
 // src/app/api/admin/sessions/route.ts
 import { NextResponse } from "next/server";
-import { getSupabaseServerClient } from "@/lib/supabaseServer";
+import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 export async function POST(req: Request) {
   const supabase = await getSupabaseServerClient();
@@ -37,3 +37,5 @@ export async function POST(req: Request) {
 
   return NextResponse.json({ session: data }, { status: 201 });
 }
+
+

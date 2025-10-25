@@ -1,6 +1,6 @@
 // src/app/api/admin/hours/route.ts
 import { NextResponse } from "next/server";
-import { getSupabaseServerClient } from "@/lib/supabaseServer";
+import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 export async function GET(req: Request) {
   const supabase = await getSupabaseServerClient();
@@ -33,3 +33,5 @@ export async function GET(req: Request) {
   const totalMinutes = sessions.reduce((acc, s) => acc + s.minutes, 0);
   return NextResponse.json({ totalMinutes, sessions }, { status: 200 });
 }
+
+

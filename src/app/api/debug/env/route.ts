@@ -30,3 +30,5 @@ export async function GET() {
     hint: "Si serverFetchOK=true mais le client Ã©choue, câ€™est un blocage cÃ´tÃ© navigateur (ad-block, proxy).",
   });
 }
+
+

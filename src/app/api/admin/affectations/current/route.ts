@@ -1,6 +1,6 @@
 // src/app/api/admin/affectations/current/route.ts
 import { NextResponse } from "next/server";
-import { getSupabaseServerClient } from "@/lib/supabaseServer";
+import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 
 type CurrentItem = {
@@ -147,3 +147,5 @@ export async function GET(req: Request) {
 
   return NextResponse.json({ items: out });
 }
+
+

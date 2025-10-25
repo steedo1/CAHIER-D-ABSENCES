@@ -59,3 +59,5 @@ export async function POST(req: Request) {
   // On NE renvoie PAS le mot de passe (sÃ©curitÃ©). Tu le connais via l'env.
   return NextResponse.json({ ok: true, user: { id: uid, email } }, { status: 200 });
 }
+
+

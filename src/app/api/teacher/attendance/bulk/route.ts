@@ -1,6 +1,6 @@
 // src/app/api/teacher/attendance/bulk/route.ts
 import { NextResponse } from "next/server";
-import { getSupabaseServerClient } from "@/lib/supabaseServer";
+import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 
 type Mark = {
@@ -81,3 +81,5 @@ export async function POST(req: Request) {
 
   return NextResponse.json({ ok: true, upserted, deleted });
 }
+
+

@@ -7,3 +7,5 @@ export async function GET() {
   res.cookies.set("csrf", token, { httpOnly: true, sameSite: "lax", path: "/" });
   return res;
 }
+
+

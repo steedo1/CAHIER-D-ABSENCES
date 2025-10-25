@@ -1,6 +1,6 @@
 // src/app/api/parent/notifications/route.ts
 import { NextResponse } from "next/server";
-import { getSupabaseServerClient } from "@/lib/supabaseServer";
+import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 
 export async function GET(req: Request) {
@@ -87,3 +87,5 @@ export async function PATCH(req: Request) {
 
   return NextResponse.json({ ok: true });
 }
+
+

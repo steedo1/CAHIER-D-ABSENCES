@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getSupabaseServerClient } from "@/lib/supabaseServer";
+import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 
 export async function GET() {
@@ -26,3 +26,5 @@ export async function POST(req: Request) {
 
   return NextResponse.json({ ok: true });
 }
+
+

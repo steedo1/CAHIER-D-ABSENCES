@@ -1,6 +1,6 @@
 // src/app/api/teacher/classes/route.ts
 import { NextResponse } from "next/server";
-import { getSupabaseServerClient } from "@/lib/supabaseServer";
+import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 // On ne se bat pas avec les types gÃ©nÃ©rÃ©s par Supabase pour les relations : on lit en `any`.
 type ItemOut = {

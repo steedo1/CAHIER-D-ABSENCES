@@ -1,6 +1,6 @@
 // app/api/admin/classes/[id]/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import { getSupabaseServerClient } from "@/lib/supabaseServer";
+import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 
 /** Récupère l'institution du user courant, sinon 401/400 */

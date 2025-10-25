@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getSupabaseServerClient } from "@/lib/supabaseServer";
+import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 export async function GET() {
   const supabase = await getSupabaseServerClient();
@@ -10,3 +10,5 @@ export async function GET() {
     email: user?.email ?? null,
   });
 }
+
+

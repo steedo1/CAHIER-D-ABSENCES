@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getSupabaseServerClient } from "@/lib/supabaseServer";
+import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 /**
  * GET /api/teacher/roster?class_id=UUID
@@ -79,3 +79,5 @@ export async function GET(req: Request) {
 
   return NextResponse.json({ items });
 }
+
+

@@ -57,3 +57,5 @@ export function getSupabaseBrowserClient(): SupabaseClient {
 
   return client;
 }
+
+

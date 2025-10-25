@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getSupabaseServerClient } from "@/lib/supabaseServer";
+import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 export async function GET(req: Request) {
   const supabase = await getSupabaseServerClient();
@@ -20,3 +20,5 @@ export async function GET(req: Request) {
   const items = (data ?? []).map(c => ({ id: c.id, name: (c as any).label, level: (c as any).level }));
   return NextResponse.json({ items });
 }
+
+

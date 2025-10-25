@@ -24,3 +24,5 @@ export function getSupabaseServiceClient(): SupabaseClient {
 
   return _admin;
 }
+
+

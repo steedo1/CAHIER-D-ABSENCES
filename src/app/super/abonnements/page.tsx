@@ -1,6 +1,6 @@
 // src/app/super/abonnements/page.tsx
 import { redirect } from "next/navigation";
-import { getSupabaseServerClient } from "@/lib/supabaseServer";
+import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { revalidatePath } from "next/cache";
 
 type Institution = { id: string; name: string; code_unique: string; subscription_expires_at: string; };
@@ -83,3 +83,5 @@ function diffDays(dateISO: string) {
   const ms = d.getTime() - new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
   return Math.ceil(ms / (1000 * 60 * 60 * 24));
 }
+
+

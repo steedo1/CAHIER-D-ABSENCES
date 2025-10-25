@@ -1,6 +1,6 @@
 // src/app/api/super/stats/route.ts
 import { NextResponse } from "next/server";
-import { getSupabaseServerClient } from "@/lib/supabaseServer";
+import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 export const dynamic = "force-dynamic";
 
@@ -43,3 +43,5 @@ export async function GET() {
     expiringIn30d: exp.count ?? 0,
   });
 }
+
+

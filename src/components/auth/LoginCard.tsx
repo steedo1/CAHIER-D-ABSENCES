@@ -368,3 +368,5 @@ export default function LoginCard({ redirectTo = "/redirect", compactHeader }: P
     </div>
   );
 }
+
+

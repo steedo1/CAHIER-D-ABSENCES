@@ -1,6 +1,6 @@
 //src/app/api/admin/parents/links/routes.ts
 import { NextResponse } from "next/server";
-import { getSupabaseServerClient } from "@/lib/supabaseServer";
+import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 
 export async function GET(req: Request) {
@@ -90,5 +90,7 @@ export async function GET(req: Request) {
 
   return NextResponse.json({ items: Array.from(byStudent.values()) });
 }
+
+
 
 

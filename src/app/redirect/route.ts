@@ -40,3 +40,5 @@ export async function GET(req: Request) {
   const dest = await routeForUser(user.id, supabase);
   return NextResponse.redirect(new URL(dest || "/profile", url));
 }
+
+

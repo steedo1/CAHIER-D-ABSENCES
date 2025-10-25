@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getSupabaseServerClient } from "@/lib/supabaseServer";
+import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 export async function GET() {
   const supa = await getSupabaseServerClient();
@@ -44,3 +44,5 @@ export async function GET() {
 
   return NextResponse.json({ item });
 }
+
+

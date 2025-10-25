@@ -1,6 +1,6 @@
 // src/app/super/parametres/page.tsx
 import { redirect } from "next/navigation";
-import { getSupabaseServerClient } from "@/lib/supabaseServer";
+import { getSupabaseServerClient } from "@/lib/supabase-server";
 import SettingsPanel from "./ui/SettingsPanel";
 
 export const dynamic = "force-dynamic";
@@ -19,3 +19,5 @@ export default async function SettingsPage() {
     </div>
   );
 }
+
+

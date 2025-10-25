@@ -1,6 +1,6 @@
 // src/app/super/etablissements/liste/page.tsx
 import { redirect } from "next/navigation";
-import { getSupabaseServerClient } from "@/lib/supabaseServer";
+import { getSupabaseServerClient } from "@/lib/supabase-server";
 import ListInstitutions from "./ui/ListInstitutions";
 
 export const dynamic = "force-dynamic";
@@ -19,3 +19,5 @@ export default async function EtabsListPage() {
     </div>
   );
 }
+
+

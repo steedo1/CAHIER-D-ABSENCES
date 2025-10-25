@@ -86,3 +86,5 @@ async function run(req: Request) {
 
 export async function GET(req: Request)  { return run(req); } // appelé par Vercel Cron
 export async function POST(req: Request) { return run(req); } // manuel si besoin
+
+

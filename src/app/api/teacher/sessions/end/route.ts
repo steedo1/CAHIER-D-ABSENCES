@@ -1,6 +1,6 @@
 // src/app/api/teacher/sessions/end/route.ts
 import { NextResponse } from "next/server";
-import { getSupabaseServerClient } from "@/lib/supabaseServer";
+import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 
 export async function PATCH() {
@@ -39,3 +39,5 @@ export async function PATCH() {
     return NextResponse.json({ error: e?.message || "end_failed" }, { status: 400 });
   }
 }
+
+

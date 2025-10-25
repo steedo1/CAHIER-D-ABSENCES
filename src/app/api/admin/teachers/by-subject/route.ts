@@ -1,6 +1,6 @@
 // src/app/api/admin/teachers/by-subject/route.ts
 import { NextResponse } from "next/server";
-import { getSupabaseServerClient } from "@/lib/supabaseServer";
+import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 // petit helper : essaye une requÃªte; si la table n'existe pas (ou autre), renvoie null
 async function trySelect<T>(fn: () => any): Promise<T | null> {
@@ -82,3 +82,5 @@ export async function GET(req: Request) {
     })),
   });
 }
+
+

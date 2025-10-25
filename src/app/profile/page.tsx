@@ -1,4 +1,4 @@
-import { getSupabaseServerClient } from "@/lib/supabaseServer";
+import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { redirect } from "next/navigation";
 
 export default async function ProfilePage() {
@@ -32,3 +32,5 @@ export default async function ProfilePage() {
     </main>
   );
 }
+
+

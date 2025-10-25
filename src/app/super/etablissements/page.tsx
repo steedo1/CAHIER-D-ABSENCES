@@ -1,6 +1,6 @@
 // src/app/super/etablissements/page.tsx
 import { redirect } from "next/navigation";
-import { getSupabaseServerClient } from "@/lib/supabaseServer";
+import { getSupabaseServerClient } from "@/lib/supabase-server";
 import InstitutionsAndAdmins from "./ui/SuperConsole";
 
 export const dynamic = "force-dynamic";
@@ -23,3 +23,5 @@ export default async function SuperEtablissementsPage() {
     </div>
   );
 }
+
+

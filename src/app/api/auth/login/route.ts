@@ -1,6 +1,6 @@
 // src/app/api/auth/login/route.ts
 import { NextResponse } from "next/server";
-import { getSupabaseServerClient } from "@/lib/supabaseServer";
+import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { normalizePhone } from "@/lib/phone"; // attend (raw: string, defaultCountryAlpha2?: string)
 
 export async function POST(req: Request) {
@@ -65,3 +65,5 @@ export async function POST(req: Request) {
     );
   }
 }
+
+
