@@ -1,7 +1,10 @@
+// src/app/providers.tsx
 "use client";
+
 import React, { createContext, useEffect, useRef, useState, useContext } from "react";
 import type { Session } from "@supabase/supabase-js";
-import { getSupabaseBrowserClient } from "@/lib/supabaseClient";
+// ✅ Assure-toi que ce module retourne bien le client navigateur Supabase
+import { getSupabaseBrowserClient } from "@/lib/supabase-browser";
 
 const AuthContext = createContext<{ session: Session | null; loading: boolean }>({
   session: null,
@@ -18,13 +21,13 @@ export default function Providers({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
   const didInitialSyncRef = useRef(false);
 
+  /** Sync cookies SSR (compatible Android/WebView) */
   const syncSsrCookies = async (s: Session | null) => {
     if (!s?.access_token || !s?.refresh_token) return;
     try {
       await fetch("/api/auth/sync", {
         method: "POST",
-        credentials: "include", // ðŸ‘ˆ important
-        headers: { "Content-Type": "application/json" },
+        headers: new Headers({ "Content-Type": "application/json" }),
         body: JSON.stringify({
           access_token: s.access_token,
           refresh_token: s.refresh_token,
@@ -62,8 +65,7 @@ export default function Providers({ children }: { children: React.ReactNode }) {
         if ((event === "SIGNED_IN" || event === "TOKEN_REFRESHED") && s?.access_token && s?.refresh_token) {
           await fetch("/api/auth/sync", {
             method: "POST",
-            credentials: "include", // ðŸ‘ˆ important
-            headers: { "Content-Type": "application/json" },
+            headers: new Headers({ "Content-Type": "application/json" }),
             body: JSON.stringify({
               access_token: s.access_token,
               refresh_token: s.refresh_token,
@@ -71,7 +73,9 @@ export default function Providers({ children }: { children: React.ReactNode }) {
           });
         }
         if (event === "SIGNED_OUT") {
-          await fetch("/api/auth/sync", { method: "DELETE", credentials: "include" });
+          await fetch("/api/auth/sync", {
+            method: "DELETE",
+          });
         }
       } catch (e) {
         console.warn("[providers] sync cookies failed:", (e as any)?.message);
@@ -80,6 +84,7 @@ export default function Providers({ children }: { children: React.ReactNode }) {
 
     return () => {
       active = false;
+      // sub contient { subscription }, on se désabonne proprement
       sub.subscription.unsubscribe();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps

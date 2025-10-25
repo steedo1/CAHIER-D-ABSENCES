@@ -7,21 +7,20 @@ export function middleware(req: NextRequest) {
   const url = req.nextUrl.clone();
   const { pathname } = url;
 
-  // Laisser passer les routes publiques
+  // Public
   if (PUBLIC.has(pathname)) return NextResponse.next();
 
-  // ProtÃ©ger uniquement les prÃ©fixes dÃ©clarÃ©s
+  // Ne protéger que certains préfixes
   const isProtected = PROTECTED_PREFIXES.some(
     (p) => pathname === p || pathname.startsWith(p + "/")
   );
   if (!isProtected) return NextResponse.next();
 
-  // DÃ©tection des cookies Supabase
+  // Cookies Supabase
   const c = req.cookies;
   const hasSbAccess = !!c.get("sb-access-token");
   const hasSbRefresh = !!c.get("sb-refresh-token");
 
-  // Optionnel : cookie sb-<projectRef>-auth-token
   const projectRef = process.env.NEXT_PUBLIC_SUPABASE_URL
     ?.match(/^https:\/\/([^.]+)\.supabase\.co/i)?.[1];
   const authTokenName = projectRef ? `sb-${projectRef}-auth-token` : null;
@@ -37,6 +36,7 @@ export function middleware(req: NextRequest) {
   return NextResponse.next();
 }
 
+// Exclure _next, assets statiques ET /api
 export const config = {
-  matcher: ["/((?!_next|.*\\..*).*)"], // on laisse passer les assets
+  matcher: ["/((?!_next|api|.*\\..*).*)"],
 };

@@ -12,7 +12,14 @@ function projectRefFromUrl(url?: string | null) {
 type Body = { access_token?: string; refresh_token?: string };
 
 export async function POST(req: Request) {
-  const { access_token, refresh_token }: Body = await req.json();
+  let payload: Body | null = null;
+  try {
+    payload = await req.json();
+  } catch {
+    return NextResponse.json({ ok: false, error: "BAD_JSON" }, { status: 400 });
+  }
+
+  const { access_token, refresh_token } = payload ?? {};
   if (!access_token || !refresh_token) {
     return NextResponse.json({ ok: false, error: "TOKENS_REQUIRED" }, { status: 400 });
   }
@@ -32,6 +39,7 @@ export async function POST(req: Request) {
 
   const projectRef = projectRefFromUrl(process.env.NEXT_PUBLIC_SUPABASE_URL);
   if (projectRef) {
+    // httpOnly autorisé (on lit côté middleware). Si tu veux que le SDK web y accède, retire httpOnly.
     res.cookies.set({
       name: `sb-${projectRef}-auth-token`,
       value: JSON.stringify({ currentSession: { access_token, refresh_token }, currentUser: null }),
