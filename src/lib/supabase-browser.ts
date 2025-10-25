@@ -2,7 +2,46 @@
 import { createBrowserClient } from "@supabase/ssr";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-declare global { var __supabase__: SupabaseClient | undefined } // cache HMR
+// Cache HMR en dev
+declare global {
+  // eslint-disable-next-line no-var
+  var __supabase__: SupabaseClient | undefined;
+}
+
+function assertClientEnv() {
+  const url  = (process.env.NEXT_PUBLIC_SUPABASE_URL ?? "").trim();
+  const anon = (process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "").trim();
+
+  if (!url || !anon) {
+    throw new Error("Config Supabase manquante : NEXT_PUBLIC_SUPABASE_URL et NEXT_PUBLIC_SUPABASE_ANON_KEY.");
+  }
+  try {
+    const u = new URL(url);
+    if (!/^https?:$/.test(u.protocol)) throw new Error("URL doit commencer par http(s)://");
+  } catch {
+    throw new Error(`NEXT_PUBLIC_SUPABASE_URL invalide: "${url}"`);
+  }
+  if (anon.length < 20) {
+    throw new Error("NEXT_PUBLIC_SUPABASE_ANON_KEY semble invalide (trop courte).");
+  }
+  return { url, anon };
+}
+
+/** Patch fetch: toujours donner une string à window.fetch (évite “Invalid value” sur Edge) */
+function safeFetch(input: any, init?: RequestInit) {
+  try {
+    // si input est un Request/url-objet d’une autre “realm”, prends .url ou cast en string
+    const url =
+      typeof input === "string"
+        ? input
+        : (input && typeof input.url === "string")
+          ? input.url
+          : String(input);
+    return fetch(url, init as any);
+  } catch {
+    return fetch(String(input), init as any);
+  }
+}
 
 export function getSupabaseBrowserClient(): SupabaseClient {
   if (typeof window === "undefined") {
@@ -10,28 +49,24 @@ export function getSupabaseBrowserClient(): SupabaseClient {
   }
   if (globalThis.__supabase__) return globalThis.__supabase__;
 
-  const rawUrl  = (process.env.NEXT_PUBLIC_SUPABASE_URL ?? "").trim();
-  const rawAnon = (process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "").trim();
-  if (!rawUrl || !rawAnon) throw new Error("Config Supabase manquante côté client.");
+  const { url, anon } = assertClientEnv();
 
-  let base: string;
-  try {
-    const u = new URL(rawUrl);
-    if (!/^https?:$/.test(u.protocol)) throw new Error("URL doit commencer par http(s)://");
-    base = u.origin; // ex: https://xxxxx.supabase.co
-  } catch {
-    throw new Error(`NEXT_PUBLIC_SUPABASE_URL invalide: "${rawUrl}"`);
-  }
-  if (rawAnon.length < 20) throw new Error("NEXT_PUBLIC_SUPABASE_ANON_KEY semble invalide.");
-
-  const client = createBrowserClient(base, rawAnon, {
-    auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true },
+  const client = createBrowserClient(url, anon, {
+    auth: {
+      persistSession: true,
+      autoRefreshToken: true,
+      detectSessionInUrl: true,
+    },
+    // forcer l'usage de notre fetch patché
+    global: { fetch: safeFetch as any },
   });
 
-  if (process.env.NODE_ENV !== "production") globalThis.__supabase__ = client;
-  try { (window as any).__SUPA_DBG__ = { supabaseUrl: base, anonLen: rawAnon.length }; } catch {}
+  if (process.env.NODE_ENV !== "production") {
+    globalThis.__supabase__ = client;
+  }
+
+  // Petit debug
+  try { (window as any).__SUPA_DBG__ = { supabaseUrl: url, anonLen: anon.length }; } catch {}
 
   return client;
 }
-
-
