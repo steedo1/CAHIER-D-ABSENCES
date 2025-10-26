@@ -2,33 +2,39 @@
 import { createBrowserClient } from "@supabase/ssr";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-// Singleton (partagé par tous les composants du même onglet)
-let _browserClient: SupabaseClient | null = null;
+let _client: SupabaseClient | null = null;
+
+function clean(v?: string | null) {
+  return (v ?? "").replace(/[\r\n]/g, "").trim();
+}
 
 export function getSupabaseBrowserClient(): SupabaseClient {
   if (typeof window === "undefined") {
-    throw new Error("getSupabaseBrowserClient() doit être appelé dans le navigateur.");
+    throw new Error("getSupabaseBrowserClient() ne peut être appelé que dans le navigateur.");
   }
-  if (_browserClient) return _browserClient;
+  if (_client) return _client;
 
-  const url  = (process.env.NEXT_PUBLIC_SUPABASE_URL || "").trim();
-  const anon = (process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "").trim();
-  if (!url || !anon) {
+  const rawUrl  = clean(process.env.NEXT_PUBLIC_SUPABASE_URL);
+  const rawAnon = clean(process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY);
+  if (!rawUrl || !rawAnon) {
     throw new Error("Config Supabase manquante: NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY.");
   }
 
-  // ⚠️ Pas de global.headers personnalisés : Supabase gère apikey/Authorization.
-  _browserClient = createBrowserClient(url, anon, {
+  let base: string;
+  try { base = new URL(rawUrl).origin; }
+  catch { throw new Error(`NEXT_PUBLIC_SUPABASE_URL invalide: "${rawUrl}"`); }
+
+  // ⚠️ PAS de global.headers ici : le SDK gère apikey/Authorization.
+  _client = createBrowserClient(base, rawAnon, {
     auth: {
       persistSession: true,
       autoRefreshToken: true,
       detectSessionInUrl: true,
-      // Clé de stockage dédiée pour éviter toute collision
-      storageKey: "mca-auth-v1",
+      storageKey: "mca-auth-v1", // clé stable pour éviter les collisions
     },
   });
 
-  try { (window as any).__SUPA_DBG__ = { supabaseUrl: url, anonLen: anon.length }; } catch {}
-
-  return _browserClient;
+  // petit debug utile
+  try { (window as any).__SUPA_DBG__ = { supabaseUrl: base, anonLen: rawAnon.length }; } catch {}
+  return _client;
 }
