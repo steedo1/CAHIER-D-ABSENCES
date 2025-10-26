@@ -26,7 +26,7 @@ export async function POST(req: Request) {
   if (!session_id)
     return NextResponse.json({ error: "missing_session" }, { status: 400 });
 
-  // vÃ©rifier propriÃ©taire de la sÃ©ance
+  // vérifier propriétaire de la séance
   const { data: sess } = await supa
     .from("teacher_sessions")
     .select("id,teacher_id,class_id")
@@ -35,7 +35,7 @@ export async function POST(req: Request) {
   if (!sess || (sess as any).teacher_id !== user.id)
     return NextResponse.json({ error: "forbidden" }, { status: 403 });
 
-  // onUpsert pour absent/late ; onDelete si prÃ©sent
+  // onUpsert pour absent/late ; onDelete si présent
   const toUpsert: any[] = [];
   const toDelete: string[] = []; // student_id list
 

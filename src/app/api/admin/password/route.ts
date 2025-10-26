@@ -58,7 +58,7 @@ export async function POST(req: Request) {
     }
 
     const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return NextResponse.json({ error: "Non authentifiÃ©." }, { status: 401 });
+    if (!user) return NextResponse.json({ error: "Non authentifié." }, { status: 401 });
 
     const { error } = await supabase.auth.updateUser({ password: new_password });
     if (error) return NextResponse.json({ error: error.message }, { status: 400 });

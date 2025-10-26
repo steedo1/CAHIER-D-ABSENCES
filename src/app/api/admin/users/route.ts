@@ -33,7 +33,7 @@ const lc = (s: string | null | undefined) => (s ?? "").toLowerCase();
 /** ne garde que les chiffres */
 const digits = (s: string | null | undefined) => (s ?? "").replace(/\D+/g, "");
 
-/** prioritÃ© dâ€™affichage si plusieurs rÃ´les */
+/** priorité d’affichage si plusieurs rôles */
 const ROLE_ORDER = ["super_admin", "admin", "teacher", "educator", "parent", "user"] as const;
 function pickRole(roles: string[]) {
   for (const r of ROLE_ORDER) if (roles.includes(r)) return r;
@@ -58,9 +58,9 @@ export async function GET(req: Request) {
       try { await supabase.auth.setSession({ access_token: access, refresh_token: refresh }); } catch {}
     }
     const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return NextResponse.json({ error: "Non authentifiÃ©." }, { status: 401 });
+    if (!user) return NextResponse.json({ error: "Non authentifié." }, { status: 401 });
 
-    // 2) VÃ©rif admin & scope Ã©tablissement via user_roles (service role)
+    // 2) Vérif admin & scope établissement via user_roles (service role)
     const svc = createClient(SUPABASE_URL, SERVICE_KEY, {
       auth: { autoRefreshToken: false, persistSession: false },
     });
@@ -74,13 +74,13 @@ export async function GET(req: Request) {
     const myRoleList = (myRoles || []).map((r) => String(r.role));
     const isSuper    = myRoleList.includes("super_admin");
     const isAdmin    = isSuper || myRoleList.includes("admin");
-    if (!isAdmin) return NextResponse.json({ error: "AccÃ¨s refusÃ© (admin requis)." }, { status: 403 });
+    if (!isAdmin) return NextResponse.json({ error: "Accès refusé (admin requis)." }, { status: 403 });
 
     const adminScopes = (myRoles || [])
       .filter((r) => r.institution_id && (r.role === "admin" || r.role === "super_admin"))
       .map((r) => r.institution_id as string);
 
-    // 3) Population visible = profils reliÃ©s Ã  user_roles dans ton/tes Ã©tablissements
+    // 3) Population visible = profils reliés Ã  user_roles dans ton/tes établissements
     let roleQuery = svc.from("user_roles").select("profile_id, role, institution_id");
     if (!isSuper && adminScopes.length > 0) roleQuery = roleQuery.in("institution_id", adminScopes);
 
@@ -88,7 +88,7 @@ export async function GET(req: Request) {
     if (visErr) return NextResponse.json({ error: visErr.message }, { status: 400 });
     if (!visibleRoles || visibleRoles.length === 0) return NextResponse.json({ items: [] });
 
-    // RÃ´les par profil
+    // Rôles par profil
     const rolesByProfile = new Map<string, string[]>();
     const profileIds: string[] = [];
     for (const r of visibleRoles) {
@@ -99,7 +99,7 @@ export async function GET(req: Request) {
       rolesByProfile.set(pid, list);
     }
 
-    // 4) Charge les profils concernÃ©s
+    // 4) Charge les profils concernés
     const ids = Array.from(new Set(profileIds));
     const { data: profs, error: pErr } = await svc
       .from("profiles")
@@ -108,14 +108,14 @@ export async function GET(req: Request) {
       .limit(1000);
     if (pErr) return NextResponse.json({ error: pErr.message }, { status: 400 });
 
-    // 5) Filtre cÃ´tÃ© serveur
+    // 5) Filtre côté serveur
     const filtered = (profs || []).filter((p) => {
       if (!qRaw) return true; // sans filtre â†’ tout visible
 
       // match texte (nom/email)
       const matchText = lc(p.display_name).includes(qText) || lc(p.email).includes(qText);
 
-      // match tÃ©lÃ©phone : on fabrique des candidats cÃ´tÃ© serveur pour couvrir tous les cas
+      // match téléphone : on fabrique des candidats côté serveur pour couvrir tous les cas
       const phoneDigits = digits(p.phone); // ex: "+2250202020202" -> "2250202020202"
       const cands = new Set<string>();
       if (qNum) {

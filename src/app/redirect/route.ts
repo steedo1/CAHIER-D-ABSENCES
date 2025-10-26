@@ -36,7 +36,7 @@ export async function GET(req: Request) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.redirect(new URL("/login", url));
 
-  // ROLE_PRIORITY (teacher > parent) dÃ©jÃ  gÃ©rÃ©e par routeForUser
+  // ROLE_PRIORITY (teacher > parent) déjÃ  gérée par routeForUser
   const dest = await routeForUser(user.id, supabase);
   return NextResponse.redirect(new URL(dest || "/profile", url));
 }

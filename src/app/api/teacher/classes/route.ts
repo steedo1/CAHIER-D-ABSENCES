@@ -2,7 +2,7 @@
 import { NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
-// On ne se bat pas avec les types gÃ©nÃ©rÃ©s par Supabase pour les relations : on lit en `any`.
+// On ne se bat pas avec les types générés par Supabase pour les relations : on lit en `any`.
 type ItemOut = {
   class_id: string;
   class_label: string;
@@ -17,7 +17,7 @@ export async function GET() {
     const { data: { user } } = await supa.auth.getUser();
     if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
 
-    // classes affectÃ©es au prof (+ matiÃ¨re Ã©ventuelle)
+    // classes affectées au prof (+ matière éventuelle)
     const { data, error } = await supa
       .from("class_teachers")
       .select("class_id, subject_id, classes:class_id(label,level)")
@@ -40,7 +40,7 @@ export async function GET() {
           .limit(1)
           .maybeSingle();
 
-        // isub?.subjects peut Ãªtre typÃ© comme tableau â†’ on force en any
+        // isub?.subjects peut être typé comme tableau â†’ on force en any
         subject_name =
           (isub as any)?.custom_name ??
           (isub as any)?.subjects?.name ??
@@ -49,14 +49,14 @@ export async function GET() {
 
       items.push({
         class_id: raw.class_id as string,
-        class_label: String(cls.label ?? "â€”"),
-        level: String(cls.level ?? "â€”"),
+        class_label: String(cls.label ?? "—"),
+        level: String(cls.level ?? "—"),
         subject_id: (raw.subject_id ?? null) as string | null,
         subject_name,
       });
     }
 
-    // dÃ©doublonner (class_id + subject_id)
+    // dédoublonner (class_id + subject_id)
     const seen = new Set<string>();
     const uniq = items
       .filter((it) => {

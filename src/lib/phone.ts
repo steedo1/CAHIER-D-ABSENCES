@@ -1,14 +1,14 @@
 // src/lib/phone.ts
 
 /**
- * Outils de normalisation de numÃ©ros (multi-pays) sans dÃ©pendance externe.
- * Objectif : produire un E.164 propre (ex: "+22501020304") Ã  partir d'entrÃ©es variÃ©es :
+ * Outils de normalisation de numéros (multi-pays) sans dépendance externe.
+ * Objectif : produire un E.164 propre (ex: "+22501020304") Ã  partir d'entrées variées :
  *  - "+225 01 02 03 04"
  *  - "00225 01020304"
  *  - "22501020304"
- *  - "01020304"  (prÃ©fixe pays par dÃ©faut ajoutÃ©)
+ *  - "01020304"  (préfixe pays par défaut ajouté)
  *
- * Par dÃ©faut, le prÃ©fixe pays utilisÃ© est lu dans :
+ * Par défaut, le préfixe pays utilisé est lu dans :
  * - process.env.NEXT_PUBLIC_DEFAULT_PHONE_PREFIX
  * - sinon process.env.DEFAULT_PHONE_PREFIX
  * - sinon "+225"
@@ -24,7 +24,7 @@ const ENV_DEFAULT =
 const E164_MIN_DIGITS = 6;  // limite basse "raisonnable"
 const E164_MAX_DIGITS = 15; // limite E.164
 
-/** Quelques indicatifs courants pour reconnaÃ®tre les entrÃ©es sans "+" ni "00". */
+/** Quelques indicatifs courants pour reconnaître les entrées sans "+" ni "00". */
 const KNOWN_CALLING_CODES = new Set([
   // Afrique de l'Ouest & proches
   "221","222","223","224","225","226","227","228","229",
@@ -36,7 +36,7 @@ const KNOWN_CALLING_CODES = new Set([
   "30","31","32","33","34","36","39","40","41","44","45","46","47","48","49",
   "351","352","353","354","355","356","357","358","359",
   "370","371","372","373","374","375","376","377","378","380","381","382","385","386","387","389",
-  // AmÃ©riques & APAC (sÃ©lection)
+  // Amériques & APAC (sélection)
   "1","52","54","55","56","57","58",
   "60","61","62","63","64","65","66",
   "81","82","84","86","90","91","92","93","94","95","98",
@@ -45,7 +45,7 @@ const KNOWN_CALLING_CODES = new Set([
 
 /** Map minimal alpha-2 â†’ indicatif pour le `defaultCountryAlpha2` */
 const A2_TO_CC: Record<string, string> = {
-  // Afrique de lâ€™Ouest (cÅ“ur de ton use-case)
+  // Afrique de l’Ouest (cÅ“ur de ton use-case)
   CI: "225", ML: "223", BJ: "229", BF: "226", SN: "221", TG: "228",
   GN: "224", NE: "227", NG: "234", GH: "233", CM: "237",
   // Maghreb
@@ -57,35 +57,35 @@ const A2_TO_CC: Record<string, string> = {
 };
 
 export type ToE164Options = {
-  /** PrÃ©fixe pays par dÃ©faut (ex: "+225" ou "225"). */
+  /** Préfixe pays par défaut (ex: "+225" ou "225"). */
   defaultPrefix?: string;
   /**
-   * Si true (dÃ©faut), on autorise des numÃ©ros "locaux" commenÃ§ant par "0"
-   * â†’ on enlÃ¨ve le 0 et on prÃ©fixe avec defaultPrefix.
+   * Si true (défaut), on autorise des numéros "locaux" commençant par "0"
+   * â†’ on enlève le 0 et on préfixe avec defaultPrefix.
    */
   acceptLocal?: boolean;
-  /** Si true (dÃ©faut), on valide longueur 6..15, sinon on retourne null. */
+  /** Si true (défaut), on valide longueur 6..15, sinon on retourne null. */
   strict?: boolean;
 };
 
 export type NormalizePhoneCompatOptions = {
   /** Code pays ISO alpha-2, ex: "CI", "ML", "BJ", "BF" */
   defaultCountryAlpha2?: string;
-  /** PrÃ©fixe explicite (ex: "+225"). Si fourni, il prime sur `defaultCountryAlpha2`. */
+  /** Préfixe explicite (ex: "+225"). Si fourni, il prime sur `defaultCountryAlpha2`. */
   defaultPrefix?: string;
 };
 
-/** Nettoie : garde seulement le '+' de tÃªte (si prÃ©sent) et les chiffres. */
+/** Nettoie : garde seulement le '+' de tête (si présent) et les chiffres. */
 export function sanitize(raw: string): string {
   const s = (raw || "").trim();
   if (!s) return "";
-  // Conserver uniquement le '+' en tÃªte, puis chiffres
+  // Conserver uniquement le '+' en tête, puis chiffres
   const headPlus = s[0] === "+";
   const digits = s.replace(/[^\d+]/g, "");
   return headPlus ? "+" + digits.slice(1).replace(/[^\d]/g, "") : digits.replace(/[^\d]/g, "");
 }
 
-/** Normalise un prÃ©fixe pays en "+XYZ". */
+/** Normalise un préfixe pays en "+XYZ". */
 export function canonicalPrefix(prefix?: string): string {
   let p = (prefix || ENV_DEFAULT || "+225").trim();
   if (!p) p = "+225";
@@ -97,14 +97,14 @@ export function canonicalPrefix(prefix?: string): string {
   return p;
 }
 
-/** DÃ©tecte si la chaÃ®ne ressemble dÃ©jÃ  Ã  un E.164 valide. */
+/** Détecte si la chaîne ressemble déjÃ  Ã  un E.164 valide. */
 export function isValidE164(s: string): boolean {
   if (!s || s[0] !== "+") return false;
   const digits = s.slice(1);
   return /^\d{6,15}$/.test(digits);
 }
 
-/** Tente de reconnaÃ®tre un indicatif pays au dÃ©but d'une chaÃ®ne numÃ©rique. */
+/** Tente de reconnaître un indicatif pays au début d'une chaîne numérique. */
 function startsWithKnownCallingCode(num: string): string | null {
   // On teste 1, 2 et 3 chiffres (la plupart des indicatifs font 1 Ã  3).
   for (const len of [3, 2, 1]) {
@@ -114,7 +114,7 @@ function startsWithKnownCallingCode(num: string): string | null {
   return null;
 }
 
-/** Convertit un alpha-2 en prÃ©fixe "+CC". */
+/** Convertit un alpha-2 en préfixe "+CC". */
 function alpha2ToPrefix(a2?: string | null): string | null {
   if (!a2) return null;
   const k = a2.trim().toUpperCase();
@@ -124,10 +124,10 @@ function alpha2ToPrefix(a2?: string | null): string | null {
 
 /**
  * Convertit vers E.164 (ou null si impossible en mode strict).
- * - GÃ¨re "00" â†’ "+"
- * - GÃ¨re entrÃ©e dÃ©jÃ  en "+â€¦"
- * - GÃ¨re "225â€¦" â†’ "+225â€¦"
- * - GÃ¨re "0â€¦" (local) â†’ "<defaultPrefix>â€¦"
+ * - Gère "00" â†’ "+"
+ * - Gère entrée déjÃ  en "+…"
+ * - Gère "225…" â†’ "+225…"
+ * - Gère "0…" (local) â†’ "<defaultPrefix>…"
  */
 export function toE164(
   raw?: string | null,
@@ -147,7 +147,7 @@ export function toE164(
   // "00" â†’ "+"
   if (s.startsWith("00")) s = "+" + s.slice(2);
 
-  // DÃ©jÃ  "+â€¦" : vÃ©rifier longueur
+  // DéjÃ  "+…" : vérifier longueur
   if (s.startsWith("+")) {
     const onlyDigits = s.slice(1);
     if (!/^\d+$/.test(onlyDigits)) return strict ? null : "+" + onlyDigits.replace(/[^\d]/g, "");
@@ -155,7 +155,7 @@ export function toE164(
     return "+" + onlyDigits;
   }
 
-  // "225â€¦", "223â€¦", "1â€¦", etc. â†’ "+â€¦"
+  // "225…", "223…", "1…", etc. â†’ "+…"
   const cc = startsWithKnownCallingCode(s);
   if (cc) {
     const rest = s.slice(cc.length);
@@ -165,9 +165,9 @@ export function toE164(
     return len >= E164_MIN_DIGITS && len <= E164_MAX_DIGITS ? candidate : null;
   }
 
-  // "0â€¦" (local) â†’ defaultPrefix + (num sans 0)
+  // "0…" (local) â†’ defaultPrefix + (num sans 0)
   if (acceptLocal && s.startsWith("0")) {
-    const without0 = s.replace(/^0+/, ""); // supprime 1+ zÃ©ros de tÃªte
+    const without0 = s.replace(/^0+/, ""); // supprime 1+ zéros de tête
     const pref = canonicalPrefix(defaultPrefix);
     const candidate = pref + without0;
     if (!strict) return candidate;
@@ -175,7 +175,7 @@ export function toE164(
     return digitsLen >= E164_MIN_DIGITS && digitsLen <= E164_MAX_DIGITS ? candidate : null;
   }
 
-  // Sinon : on applique simplement le prÃ©fixe par dÃ©faut
+  // Sinon : on applique simplement le préfixe par défaut
   const pref = canonicalPrefix(defaultPrefix);
   const candidate = pref + s;
   if (!strict) return candidate;
@@ -207,13 +207,13 @@ export function normalizePhone(
 ): string | null {
   if (raw == null) return null;
 
-  // Valeurs par dÃ©faut
+  // Valeurs par défaut
   let chosenPrefix: string | null = null;
 
   if (typeof opts === "string") {
     chosenPrefix = opts || null;
   } else if (opts && typeof opts === "object") {
-    // prioritÃ© au defaultPrefix explicite
+    // priorité au defaultPrefix explicite
     if (opts.defaultPrefix) {
       chosenPrefix = opts.defaultPrefix;
     } else if (opts.defaultCountryAlpha2) {
@@ -226,7 +226,7 @@ export function normalizePhone(
   return toE164(raw, { defaultPrefix: finalPrefix, strict: true });
 }
 
-/** Compare deux entrÃ©es en se basant sur lâ€™E.164 calculÃ©. */
+/** Compare deux entrées en se basant sur l’E.164 calculé. */
 export function isSamePhone(
   a?: string | null,
   b?: string | null,
@@ -238,9 +238,9 @@ export function isSamePhone(
 }
 
 /**
- * Format dâ€™affichage simple (insertion dâ€™espaces) Ã  partir dâ€™un E.164.
- * - On laisse le "+CC", puis on espace tous les 2 chiffres (usage courant en Afrique de lâ€™Ouest).
- * - Si non E.164, on retourne la chaÃ®ne dâ€™origine.
+ * Format d’affichage simple (insertion d’espaces) Ã  partir d’un E.164.
+ * - On laisse le "+CC", puis on espace tous les 2 chiffres (usage courant en Afrique de l’Ouest).
+ * - Si non E.164, on retourne la chaîne d’origine.
  */
 export function formatInternational(e164?: string | null): string {
   if (!e164 || !isValidE164(e164)) return e164 || "";
@@ -256,19 +256,19 @@ export function formatInternational(e164?: string | null): string {
   return `+${cc} ${groups.join(" ")}`.trim();
 }
 
-/** Masque une partie du numÃ©ro pour lâ€™affichage (ex: "+225 ** ** 12 34"). */
+/** Masque une partie du numéro pour l’affichage (ex: "+225 ** ** 12 34"). */
 export function maskPhone(e164?: string | null): string {
   if (!e164 || !isValidE164(e164)) return e164 || "";
   const formatted = formatInternational(e164);
-  // Remplace les 4 premiers groupes de 2 chiffres (si prÃ©sents) par "**"
+  // Remplace les 4 premiers groupes de 2 chiffres (si présents) par "**"
   return formatted.replace(/\b(\d{2})\b/g, (_m, _g, idx) => (idx < 4 ? "**" : _m));
 }
 
-/** Extrait lâ€™indicatif pays Ã  partir dâ€™un E.164. */
+/** Extrait l’indicatif pays Ã  partir d’un E.164. */
 export function getCountryCallingCode(e164?: string | null): string | null {
   if (!e164 || !isValidE164(e164)) return null;
   const digits = e164.slice(1);
-  // Cherche 1..3 chiffres prÃ©sents dans la table
+  // Cherche 1..3 chiffres présents dans la table
   for (const len of [3, 2, 1]) {
     const cc = digits.slice(0, len);
     if (KNOWN_CALLING_CODES.has(cc)) return cc;

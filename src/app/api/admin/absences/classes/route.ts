@@ -30,7 +30,7 @@ export async function GET(req: Request) {
   const institution_id = me?.institution_id as string | null;
   if (!institution_id) return NextResponse.json({ items: [] });
 
-  // Marques (absences/retards) sur la pÃ©riode
+  // Marques (absences/retards) sur la période
   const { data: marks, error } = await srv
     .from("v_mark_minutes")
     .select("class_id, minutes, started_at")
@@ -50,10 +50,10 @@ export async function GET(req: Request) {
     .in("id", classIds.length ? classIds : ["00000000-0000-0000-0000-000000000000"]);
 
   const meta = new Map<string, { label: string; level: string }>(
-    (classes || []).map(c => [c.id as string, { label: String((c as any).label ?? "â€”"), level: String((c as any).level ?? "") }])
+    (classes || []).map(c => [c.id as string, { label: String((c as any).label ?? "—"), level: String((c as any).level ?? "") }])
   );
 
-  // AgrÃ©gat par classe
+  // Agrégat par classe
   const agg = new Map<string, { absents: number; minutes: number }>();
   for (const m of marks || []) {
     const cm = meta.get(m.class_id!);
@@ -61,14 +61,14 @@ export async function GET(req: Request) {
     if (level && cm.level !== level) continue;
 
     const a = agg.get(m.class_id!) || { absents: 0, minutes: 0 };
-    a.absents += 1;                // 1 Ã©vÃ©nement = 1 ligne (absence ou retard)
+    a.absents += 1;                // 1 événement = 1 ligne (absence ou retard)
     a.minutes += (m as any).minutes || 0;
     agg.set(m.class_id!, a);
   }
 
   const items = Array.from(agg.entries()).map(([class_id, v]) => ({
     class_id,
-    class_label: meta.get(class_id)?.label || "â€”",
+    class_label: meta.get(class_id)?.label || "—",
     absents: v.absents,
     minutes: v.minutes,
   }));

@@ -6,7 +6,7 @@ export async function GET() {
 
   const envOK = !!url && !!anon && url.startsWith("https://") && url.includes(".supabase.co");
 
-  // Petit test rÃ©seau cÃ´tÃ© serveur (on sâ€™en fiche du 200/404, on veut Ã©viter â€œFailed to fetchâ€)
+  // Petit test réseau côté serveur (on s’en fiche du 200/404, on veut éviter “Failed to fetchâ€)
   let serverFetchOK = false;
   let status: number | null = null;
   let err: string | null = null;
@@ -14,7 +14,7 @@ export async function GET() {
     try {
       const r = await fetch(url + "/rest/v1/", { headers: { apikey: anon } });
       status = r.status || null;
-      serverFetchOK = true; // si on arrive ici, la rÃ©solution DNS + TLS ont marchÃ©
+      serverFetchOK = true; // si on arrive ici, la résolution DNS + TLS ont marché
     } catch (e: any) {
       err = e?.message || String(e);
     }
@@ -27,7 +27,7 @@ export async function GET() {
     serverFetchOK,
     status,
     err,
-    hint: "Si serverFetchOK=true mais le client Ã©choue, câ€™est un blocage cÃ´tÃ© navigateur (ad-block, proxy).",
+    hint: "Si serverFetchOK=true mais le client échoue, c’est un blocage côté navigateur (ad-block, proxy).",
   });
 }
 

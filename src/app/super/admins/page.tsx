@@ -13,7 +13,7 @@ export default async function AdminsPage() {
 
   return (
     <div className="space-y-4">
-      <h1 className="text-2xl font-semibold">Admins dâ€™Ã©tablissement</h1>
+      <h1 className="text-2xl font-semibold">Admins d’établissement</h1>
       <AdminsTable />
     </div>
   );

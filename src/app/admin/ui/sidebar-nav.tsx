@@ -31,7 +31,7 @@ const NAV: NavItem[] = [
   { href: "/admin/parents", label: "Parents", Icon: UserRoundCheck },
   { href: "/admin/import", label: "Import", Icon: Inbox, badge: "OCT" },
   { href: "/admin/statistiques", label: "Statistiques", Icon: BarChart3 },
-  { href: "/admin/parametres", label: "ParamÃ¨tres", Icon: Settings },
+  { href: "/admin/parametres", label: "Paramètres", Icon: Settings },
 ];
 
 export default function SidebarNav() {
@@ -46,8 +46,8 @@ export default function SidebarNav() {
             MCA
           </div>
           <div className="leading-tight">
-            <div className="text-sm font-semibold text-white">Mon Cahier dâ€™Absences</div>
-            <div className="text-[11px] text-slate-400">Admin Ã©tablissement</div>
+            <div className="text-sm font-semibold text-white">Mon Cahier d’Absences</div>
+            <div className="text-[11px] text-slate-400">Admin établissement</div>
           </div>
         </div>
       </div>

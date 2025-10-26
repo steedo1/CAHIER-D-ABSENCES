@@ -56,7 +56,7 @@ export async function POST(req: Request) {
       );
     }
 
-    // Cookies HttpOnly posÃ©s via le client serveur
+    // Cookies HttpOnly posés via le client serveur
     return NextResponse.json({ ok: true });
   } catch (e: any) {
     return NextResponse.json(

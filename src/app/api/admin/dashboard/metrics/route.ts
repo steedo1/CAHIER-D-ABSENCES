@@ -17,7 +17,7 @@ export async function GET() {
   const institution_id = me?.institution_id as string | null;
   if (!institution_id) return NextResponse.json({ ok:false, error:"NO_INSTITUTION" }, { status:400 });
 
-  // Compteurs (Ã©lÃ¨ves via vue dÃ©dupliquÃ©e)
+  // Compteurs (élèves via vue dédupliquée)
   const [classesQ, teachersQ, parentsQ, studentsQ] = await Promise.all([
     srv.from("classes")
        .select("id", { count: "exact", head: true })
@@ -31,13 +31,13 @@ export async function GET() {
        .select("profile_id", { count: "exact", head: true })
        .eq("institution_id", institution_id).eq("role","parent"),
 
-    // â‡’ compte 1 ligne par â€œpersonne Ã©lÃ¨veâ€
+    // â‡’ compte 1 ligne par “personne élèveâ€
     srv.from("v_student_person")
        .select("*", { count: "exact", head: true })
        .eq("institution_id", institution_id),
   ]);
 
-  // KPIs 30 jours (via vue normalisÃ©e)
+  // KPIs 30 jours (via vue normalisée)
   const since = new Date(Date.now() - 30*24*3600*1000).toISOString();
 
   const absencesQ = await srv
@@ -60,7 +60,7 @@ export async function GET() {
       classes:  classesQ.count  ?? 0,
       teachers: teachersQ.count ?? 0,
       parents:  parentsQ.count  ?? 0,
-      students: studentsQ.count ?? 0,   // â† dÃ©doublonnÃ©
+      students: studentsQ.count ?? 0,   // â† dédoublonné
     },
     kpis: {
       absences: absencesQ.count ?? 0,

@@ -27,7 +27,7 @@ export default function SettingsPanel() {
 
   const currentInst = useMemo(() => insts.find(i => i.id === inst), [insts, inst]);
 
-  // champs Ã©dition Ã©tablissement
+  // champs édition établissement
   const [name, setName] = useState("");
   const [code, setCode] = useState("");
   const [expires, setExpires] = useState("");
@@ -94,9 +94,9 @@ export default function SettingsPanel() {
     const r = await fetch(`/api/super/admins/${admin}/password`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mode: "link" }) });
     const j = await r.json();
     setBusy(false);
-    if (!r.ok) { setMsg(j?.error || "Ã‰chec gÃ©nÃ©ration lien"); return; }
+    if (!r.ok) { setMsg(j?.error || "Ã‰chec génération lien"); return; }
     setLink(j?.action_link || null);
-    setMsg("Lien de rÃ©cupÃ©ration gÃ©nÃ©rÃ©.");
+    setMsg("Lien de récupération généré.");
   }
 
   async function setTempPassword() {
@@ -107,20 +107,20 @@ export default function SettingsPanel() {
     const j = await r.json();
     setBusy(false);
     if (!r.ok) { setMsg(j?.error || "Ã‰chec changement mot de passe"); return; }
-    setMsg(`Mot de passe temporaire dÃ©fini.`);
-    setTemp(pwd); // on lâ€™affiche pour lâ€™admin
+    setMsg(`Mot de passe temporaire défini.`);
+    setTemp(pwd); // on l’affiche pour l’admin
   }
 
   return (
     <div className="space-y-6">
-      {/* Bloc Ã©dition Ã©tablissement */}
+      {/* Bloc édition établissement */}
       <div className="rounded-2xl border bg-white p-4">
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-700">Modifier un Ã©tablissement</h2>
+        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-700">Modifier un établissement</h2>
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
           <div>
             <div className="mb-1 text-xs text-slate-500">Ã‰tablissement</div>
             <select value={inst} onChange={(e) => setInst(e.target.value)} className="w-full rounded-lg border bg-white px-3 py-2 text-sm">
-              <option value="">â€” Choisir â€”</option>
+              <option value="">— Choisir —</option>
               {insts.map(i => <option key={i.id} value={i.id}>{i.name} ({i.code_unique})</option>)}
             </select>
           </div>
@@ -140,19 +140,19 @@ export default function SettingsPanel() {
         </div>
         <div className="mt-3">
           <button onClick={saveInst} disabled={!inst || busy} className="rounded-xl bg-violet-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50">
-            {busy ? "Enregistrementâ€¦" : "Enregistrer"}
+            {busy ? "Enregistrement…" : "Enregistrer"}
           </button>
         </div>
       </div>
 
-      {/* Bloc rÃ©initialisation mot de passe admin */}
+      {/* Bloc réinitialisation mot de passe admin */}
       <div className="rounded-2xl border bg-white p-4">
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-700">RÃ©initialiser mot de passe (admin)</h2>
+        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-700">Réinitialiser mot de passe (admin)</h2>
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
           <div>
-            <div className="mb-1 text-xs text-slate-500">Admin de lâ€™Ã©tablissement</div>
+            <div className="mb-1 text-xs text-slate-500">Admin de l’établissement</div>
             <select disabled={!inst} value={admin} onChange={(e) => setAdmin(e.target.value)} className="w-full rounded-lg border bg-white px-3 py-2 text-sm">
-              <option value="">â€” Choisir â€”</option>
+              <option value="">— Choisir —</option>
               {adminsOfInst.map(a => (
                 <option key={a.profile_id} value={a.profile_id}>
                   {a.profiles?.display_name || a.profiles?.email || a.profile_id}
@@ -163,21 +163,21 @@ export default function SettingsPanel() {
           <div />
           <div className="md:col-span-2 flex flex-wrap gap-2">
             <button onClick={genLink} disabled={!admin || busy} className="rounded-xl border px-4 py-2 text-sm">
-              GÃ©nÃ©rer un lien de rÃ©cupÃ©ration
+              Générer un lien de récupération
             </button>
             <input
-              placeholder="Mot de passe temporaire (sinon gÃ©nÃ©rÃ©)"
+              placeholder="Mot de passe temporaire (sinon généré)"
               value={temp}
               onChange={(e) => setTemp(e.target.value)}
               className="w-64 rounded-lg border px-3 py-2 text-sm"
             />
             <button onClick={setTempPassword} disabled={!admin || busy} className="rounded-xl bg-violet-600 px-4 py-2 text-sm font-medium text-white">
-              DÃ©finir un mot de passe temporaire
+              Définir un mot de passe temporaire
             </button>
           </div>
           {link && (
             <div className="md:col-span-2">
-              <div className="mb-1 text-xs text-slate-500">Lien de rÃ©cupÃ©ration</div>
+              <div className="mb-1 text-xs text-slate-500">Lien de récupération</div>
               <input value={link} readOnly className="w-full rounded-lg border px-3 py-2 text-sm" onFocus={(e) => e.currentTarget.select()} />
             </div>
           )}

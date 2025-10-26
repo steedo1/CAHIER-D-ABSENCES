@@ -17,7 +17,7 @@ export default async function SuperEtablissementsPage() {
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-semibold">Ã‰tablissements</h1>
-        <p className="text-sm text-slate-600">CrÃ©er et gÃ©rer les Ã©tablissements et leurs administrateurs.</p>
+        <p className="text-sm text-slate-600">Créer et gérer les établissements et leurs administrateurs.</p>
       </div>
       <InstitutionsAndAdmins />
     </div>

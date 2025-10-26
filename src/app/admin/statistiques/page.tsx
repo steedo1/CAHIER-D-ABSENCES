@@ -19,7 +19,7 @@ type SummaryRow = {
   teacher_id: string;
   teacher_name: string;
   total_minutes: number;
-  /** Nouveau : liste des disciplines rattachÃ©es Ã  cet enseignant (pivot et/ou sÃ©ances) */
+  /** Nouveau : liste des disciplines rattachées Ã  cet enseignant (pivot et/ou séances) */
   subject_names?: string[];
 };
 
@@ -92,7 +92,7 @@ export default function AdminStatistiquesPage() {
   const [teachers, setTeachers] = useState<Teacher[]>([]);
   const [loadingTeachers, setLoadingTeachers] = useState(false);
 
-  // DonnÃ©es
+  // Données
   const [summary, setSummary] = useState<FetchState<SummaryRow[]>>({
     loading: false, error: null, data: null,
   });
@@ -116,7 +116,7 @@ export default function AdminStatistiquesPage() {
     })();
   }, []);
 
-  // Charger enseignants via la route alignÃ©e sur Affectations
+  // Charger enseignants via la route alignée sur Affectations
   useEffect(() => {
     (async () => {
       setLoadingTeachers(true);
@@ -142,7 +142,7 @@ export default function AdminStatistiquesPage() {
     })();
   }, [subjectId]);
 
-  // Charger donnÃ©es (summary ou detail)
+  // Charger données (summary ou detail)
   async function loadData() {
     if (!from || !to) return;
     if (showDetail) {
@@ -189,15 +189,15 @@ export default function AdminStatistiquesPage() {
     const items = summary.data || [];
     const header = [
       "Enseignant",
-      subjectId === "ALL" ? "Discipline(s)" : "Discipline (filtrÃ©e)",
+      subjectId === "ALL" ? "Discipline(s)" : "Discipline (filtrée)",
       "Total minutes",
-      "Total heures (dÃ©cimal)",
+      "Total heures (décimal)",
     ];
     const lines = [header.join(";")];
     for (const it of items) {
       const disciplineCell =
         subjectId === "ALL"
-          ? (it.subject_names && it.subject_names.length ? it.subject_names.join(", ") : "â€“")
+          ? (it.subject_names && it.subject_names.length ? it.subject_names.join(", ") : "–")
           : (subjects.find(s => s.id === subjectId)?.name || "");
       const cols = [
         it.teacher_name,
@@ -213,7 +213,7 @@ export default function AdminStatistiquesPage() {
   function exportDetailCSV() {
     const d = detail.data;
     if (!d) return;
-    const header = ["Date", "Heure dÃ©but", "Plage horaire", "Discipline", "Minutes", "Heures (dÃ©cimal)"];
+    const header = ["Date", "Heure début", "Plage horaire", "Discipline", "Minutes", "Heures (décimal)"];
     const lines = [header.join(";")];
     for (const r of d.rows) {
       const start = formatHHmm(r.dateISO);
@@ -221,8 +221,8 @@ export default function AdminStatistiquesPage() {
       const cols = [
         formatDateFR(r.dateISO),
         start,
-        `${start}â€“${end}`,
-        r.subject_name || "Discipline non renseignÃ©e",
+        `${start}–${end}`,
+        r.subject_name || "Discipline non renseignée",
         String(r.expected_minutes ?? 0),
         String(minutesToDecimalHours(r.expected_minutes ?? 0)),
       ];
@@ -237,7 +237,7 @@ export default function AdminStatistiquesPage() {
     return summary.data.reduce((acc, it) => acc + (it.total_minutes || 0), 0);
   }, [summary.data]);
 
-  const disciplineHeader = subjectId === "ALL" ? "Discipline(s)" : "Discipline (filtrÃ©e)";
+  const disciplineHeader = subjectId === "ALL" ? "Discipline(s)" : "Discipline (filtrée)";
 
   return (
     <main className="p-4 md:p-6">
@@ -246,7 +246,7 @@ export default function AdminStatistiquesPage() {
       {/* Filtres */}
       <section className="grid md:grid-cols-4 gap-3 mb-6">
         <div className="space-y-1">
-          <label className="text-sm font-medium">Date de dÃ©but</label>
+          <label className="text-sm font-medium">Date de début</label>
           <input type="date" value={from} onChange={e => setFrom(e.target.value)} className="w-full border rounded-xl p-2" />
         </div>
         <div className="space-y-1">
@@ -273,31 +273,31 @@ export default function AdminStatistiquesPage() {
               <option key={t.id} value={t.id}>{teacherLabel(t)}</option>
             ))}
           </select>
-          {loadingTeachers && <p className="text-xs text-gray-500">Chargement des enseignantsâ€¦</p>}
+          {loadingTeachers && <p className="text-xs text-gray-500">Chargement des enseignants…</p>}
         </div>
       </section>
 
-      {/* RÃ©sultats */}
+      {/* Résultats */}
       {teacherId === "ALL" ? (
         <section className="space-y-3">
           <div className="flex items-center justify-between">
-            <h2 className="text-lg font-semibold">SynthÃ¨se par enseignant</h2>
+            <h2 className="text-lg font-semibold">Synthèse par enseignant</h2>
             <div className="flex items-center gap-2">
               <div className="text-sm">
-                Total pÃ©riode: <strong>{minutesToHourLabel(totalMinutesSummary)}</strong> ({minutesToDecimalHours(totalMinutesSummary)} h)
+                Total période: <strong>{minutesToHourLabel(totalMinutesSummary)}</strong> ({minutesToDecimalHours(totalMinutesSummary)} h)
               </div>
               <button
                 className="px-3 py-2 rounded-xl border text-sm hover:bg-gray-50"
                 onClick={exportSummaryCSV}
                 disabled={summary.loading || !summary.data}
               >
-                Export CSV (SynthÃ¨se)
+                Export CSV (Synthèse)
               </button>
             </div>
           </div>
 
           {summary.loading ? (
-            <div className="p-4 border rounded-xl">Chargementâ€¦</div>
+            <div className="p-4 border rounded-xl">Chargement…</div>
           ) : summary.error ? (
             <div className="p-4 border rounded-xl text-red-600">Erreur : {summary.error}</div>
           ) : (
@@ -315,7 +315,7 @@ export default function AdminStatistiquesPage() {
                   {(summary.data || []).map((row) => {
                     const disciplineCell =
                       subjectId === "ALL"
-                        ? (row.subject_names && row.subject_names.length ? row.subject_names.join(", ") : "â€“")
+                        ? (row.subject_names && row.subject_names.length ? row.subject_names.join(", ") : "–")
                         : (subjects.find(s => s.id === subjectId)?.name || "");
                     return (
                       <tr key={row.teacher_id} className="border-t">
@@ -328,7 +328,7 @@ export default function AdminStatistiquesPage() {
                   })}
                   {(!summary.data || summary.data.length === 0) && (
                     <tr>
-                      <td colSpan={4} className="px-3 py-4 text-center text-gray-500">Aucune donnÃ©e sur la pÃ©riode.</td>
+                      <td colSpan={4} className="px-3 py-4 text-center text-gray-500">Aucune donnée sur la période.</td>
                     </tr>
                   )}
                 </tbody>
@@ -339,11 +339,11 @@ export default function AdminStatistiquesPage() {
       ) : (
         <section className="space-y-3">
           <div className="flex items-center justify-between">
-            <h2 className="text-lg font-semibold">DÃ©tails de lâ€™enseignant</h2>
+            <h2 className="text-lg font-semibold">Détails de l’enseignant</h2>
             <div className="flex items-center gap-2">
               {detail.data && (
                 <div className="text-sm">
-                  {detail.data.count} sÃ©ance(s) â€¢ Total : <strong>{minutesToHourLabel(detail.data.total_minutes)}</strong> ({minutesToDecimalHours(detail.data.total_minutes)} h)
+                  {detail.data.count} séance(s) â€¢ Total : <strong>{minutesToHourLabel(detail.data.total_minutes)}</strong> ({minutesToDecimalHours(detail.data.total_minutes)} h)
                 </div>
               )}
               <button
@@ -351,13 +351,13 @@ export default function AdminStatistiquesPage() {
                 onClick={exportDetailCSV}
                 disabled={detail.loading || !detail.data}
               >
-                Export CSV (DÃ©tail)
+                Export CSV (Détail)
               </button>
             </div>
           </div>
 
           {detail.loading ? (
-            <div className="p-4 border rounded-xl">Chargementâ€¦</div>
+            <div className="p-4 border rounded-xl">Chargement…</div>
           ) : detail.error ? (
             <div className="p-4 border rounded-xl text-red-600">Erreur : {detail.error}</div>
           ) : (
@@ -379,8 +379,8 @@ export default function AdminStatistiquesPage() {
                     return (
                       <tr key={r.id} className="border-t">
                         <td className="px-3 py-2">{formatDateFR(r.dateISO)}</td>
-                        <td className="px-3 py-2">{start}â€“{end}</td>
-                        <td className="px-3 py-2">{r.subject_name || "Discipline non renseignÃ©e"}</td>
+                        <td className="px-3 py-2">{start}–{end}</td>
+                        <td className="px-3 py-2">{r.subject_name || "Discipline non renseignée"}</td>
                         <td className="px-3 py-2 text-right">{r.expected_minutes ?? 0}</td>
                         <td className="px-3 py-2 text-right">{minutesToDecimalHours(r.expected_minutes ?? 0)}</td>
                       </tr>
@@ -388,7 +388,7 @@ export default function AdminStatistiquesPage() {
                   })}
                   {(!detail.data || detail.data.rows.length === 0) && (
                     <tr>
-                      <td colSpan={5} className="px-3 py-4 text-center text-gray-500">Aucune donnÃ©e pour cet enseignant sur la pÃ©riode.</td>
+                      <td colSpan={5} className="px-3 py-4 text-center text-gray-500">Aucune donnée pour cet enseignant sur la période.</td>
                     </tr>
                   )}
                 </tbody>

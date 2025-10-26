@@ -77,13 +77,13 @@ export default function AdminSettingsPage() {
   const [busyMine, setBusyMine] = useState(false);
   const [msgMine, setMsgMine] = useState<string | null>(null);
 
-  /* ----- RÃ©initialiser mot de passe dâ€™un user ----- */
+  /* ----- Réinitialiser mot de passe d’un user ----- */
   const [q, setQ] = useState("");
   const [users, setUsers] = useState<Profile[]>([]);
   const [loadingUsers, setLoadingUsers] = useState(false);
   const [errUsers, setErrUsers] = useState<string | null>(null);
 
-  // Modal pour dÃ©finir un mot de passe personnalisÃ©
+  // Modal pour définir un mot de passe personnalisé
   const [modalOpen, setModalOpen] = useState(false);
   const [targetUser, setTargetUser] = useState<Profile | null>(null);
   const [customPwd, setCustomPwd] = useState("");
@@ -96,7 +96,7 @@ export default function AdminSettingsPage() {
   /* ====== Actions : mon mot de passe ====== */
   async function changeMyPassword() {
     setMsgMine(null);
-    if (!pwd1 || pwd1.length < 6) return setMsgMine("Mot de passe trop court (6 caractÃ¨res minimum).");
+    if (!pwd1 || pwd1.length < 6) return setMsgMine("Mot de passe trop court (6 caractères minimum).");
     if (pwd1 !== pwd2) return setMsgMine("La confirmation ne correspond pas.");
     setBusyMine(true);
     try {
@@ -137,25 +137,25 @@ export default function AdminSettingsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /* ====== RÃ©init temporaire ====== */
+  /* ====== Réinit temporaire ====== */
   async function resetTemp(user: Profile) {
     if (!user?.id) return;
-    if (!confirm(`RÃ©initialiser le mot de passe de ${user.display_name || user.email || user.phone} ?`)) return;
+    if (!confirm(`Réinitialiser le mot de passe de ${user.display_name || user.email || user.phone} ?`)) return;
     try {
       const r = await fetch("/api/admin/users/reset-password", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ user_id: user.id }), // mot de passe temporaire cÃ´tÃ© serveur
+        body: JSON.stringify({ user_id: user.id }), // mot de passe temporaire côté serveur
       });
       const j = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(j?.error || "Ã‰chec de rÃ©initialisation");
-      alert("Mot de passe rÃ©initialisÃ© (temporaire). Communiquez-le Ã  l'utilisateur.");
+      if (!r.ok) throw new Error(j?.error || "Ã‰chec de réinitialisation");
+      alert("Mot de passe réinitialisé (temporaire). Communiquez-le Ã  l'utilisateur.");
     } catch (e: any) {
       alert(e?.message || "Erreur");
     }
   }
 
-  /* ====== RÃ©init personnalisÃ© (modal) ====== */
+  /* ====== Réinit personnalisé (modal) ====== */
   function openCustom(user: Profile) {
     setTargetUser(user);
     setCustomPwd("");
@@ -176,7 +176,7 @@ export default function AdminSettingsPage() {
         body: JSON.stringify({ user_id: targetUser.id, new_password: customPwd }),
       });
       const j = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(j?.error || "Ã‰chec de rÃ©initialisation");
+      if (!r.ok) throw new Error(j?.error || "Ã‰chec de réinitialisation");
       setCustomMsg("Mot de passe mis Ã  jour âœ…");
       setTimeout(() => setModalOpen(false), 600);
     } catch (e: any) {
@@ -195,8 +195,8 @@ export default function AdminSettingsPage() {
   return (
     <main className="mx-auto max-w-6xl p-4 md:p-6 space-y-6">
       <header className="mb-2">
-        <h1 className="text-2xl font-semibold text-slate-900">ParamÃ¨tres</h1>
-        <p className="text-sm text-slate-600">GÃ©rez votre mot de passe et ceux de vos utilisateurs.</p>
+        <h1 className="text-2xl font-semibold text-slate-900">Paramètres</h1>
+        <p className="text-sm text-slate-600">Gérez votre mot de passe et ceux de vos utilisateurs.</p>
       </header>
 
       {/* =======================
@@ -256,7 +256,7 @@ export default function AdminSettingsPage() {
               disabled={disableMine}
               className="rounded-xl bg-sky-700 text-white px-4 py-2 text-sm font-medium shadow disabled:opacity-60 hover:bg-sky-800"
             >
-              {busyMine ? "Mise Ã  jourâ€¦" : "Changer mon mot de passe"}
+              {busyMine ? "Mise Ã  jour…" : "Changer mon mot de passe"}
             </button>
           </div>
         </div>
@@ -265,16 +265,16 @@ export default function AdminSettingsPage() {
       </section>
 
       {/* ==========================================
-          2) RÃ©initialiser le mot de passe d'un user
+          2) Réinitialiser le mot de passe d'un user
       =========================================== */}
       <section className="rounded-2xl border bg-white p-5">
         <div className="mb-3 flex items-center justify-between">
           <div className="text-sm font-semibold uppercase tracking-wide text-slate-700">
-            RÃ©initialiser le mot de passe dâ€™un utilisateur
+            Réinitialiser le mot de passe d’un utilisateur
           </div>
           <div className="flex items-center gap-2">
             <input
-              placeholder="Recherche : nom, email, tÃ©lÃ©phoneâ€¦"
+              placeholder="Recherche : nom, email, téléphone…"
               className="w-64 rounded-lg border px-3 py-1.5 text-sm"
               value={q}
               onChange={(e) => setQ(e.target.value)}
@@ -286,7 +286,7 @@ export default function AdminSettingsPage() {
               disabled={loadingUsers}
               title="Rechercher"
             >
-              {loadingUsers ? "Rechercheâ€¦" : "Rechercher"}
+              {loadingUsers ? "Recherche…" : "Rechercher"}
             </button>
           </div>
         </div>
@@ -294,9 +294,9 @@ export default function AdminSettingsPage() {
         {errUsers && <div className="mb-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{errUsers}</div>}
 
         {loadingUsers ? (
-          <div className="text-sm text-slate-500">Chargement des utilisateursâ€¦</div>
+          <div className="text-sm text-slate-500">Chargement des utilisateurs…</div>
         ) : users.length === 0 ? (
-          <div className="text-sm text-slate-500">Aucun utilisateur trouvÃ©.</div>
+          <div className="text-sm text-slate-500">Aucun utilisateur trouvé.</div>
         ) : (
           <div className="overflow-x-auto">
             <table className="min-w-full text-sm">
@@ -304,7 +304,7 @@ export default function AdminSettingsPage() {
                 <tr className="border-b bg-slate-50 text-slate-600">
                   <th className="px-3 py-2 text-left">Utilisateur</th>
                   <th className="px-3 py-2 text-left">Contact</th>
-                  <th className="px-3 py-2 text-left">RÃ´le</th>
+                  <th className="px-3 py-2 text-left">Rôle</th>
                   <th className="px-3 py-2 text-right">Actions</th>
                 </tr>
               </thead>
@@ -312,31 +312,31 @@ export default function AdminSettingsPage() {
                 {users.map((u) => (
                   <tr key={u.id} className="border-b">
                     <td className="px-3 py-2">
-                      <div className="font-medium text-slate-800">{u.display_name || "â€”"}</div>
+                      <div className="font-medium text-slate-800">{u.display_name || "—"}</div>
                       <div className="text-[11px] text-slate-500">{u.id}</div>
                     </td>
                     <td className="px-3 py-2">
-                      <div className="text-slate-700">{u.email || "â€”"}</div>
+                      <div className="text-slate-700">{u.email || "—"}</div>
                       <div className="text-[12px] text-slate-500">{u.phone || ""}</div>
                     </td>
                     <td className="px-3 py-2">
-                      <Badge color={roleColor(u.role || undefined)}>{u.role || "â€”"}</Badge>
+                      <Badge color={roleColor(u.role || undefined)}>{u.role || "—"}</Badge>
                     </td>
                     <td className="px-3 py-2">
                       <div className="flex items-center justify-end gap-2">
                         <button
                           onClick={() => resetTemp(u)}
                           className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-1.5 text-xs font-medium text-amber-800 hover:bg-amber-100"
-                          title="RÃ©initialiser avec mot de passe temporaire"
+                          title="Réinitialiser avec mot de passe temporaire"
                         >
-                          RÃ©init. temporaire
+                          Réinit. temporaire
                         </button>
                         <button
                           onClick={() => openCustom(u)}
                           className="rounded-lg border border-sky-300 bg-sky-50 px-3 py-1.5 text-xs font-medium text-sky-800 hover:bg-sky-100"
-                          title="DÃ©finir un mot de passe"
+                          title="Définir un mot de passe"
                         >
-                          DÃ©finirâ€¦
+                          Définir…
                         </button>
                       </div>
                     </td>
@@ -348,10 +348,10 @@ export default function AdminSettingsPage() {
         )}
       </section>
 
-      {/* Modal mot de passe personnalisÃ© */}
+      {/* Modal mot de passe personnalisé */}
       <Modal
         open={modalOpen}
-        title={`DÃ©finir un mot de passe â€” ${(targetUser?.display_name || targetUser?.email || targetUser?.phone || "Utilisateur")}`}
+        title={`Définir un mot de passe — ${(targetUser?.display_name || targetUser?.email || targetUser?.phone || "Utilisateur")}`}
         onClose={() => setModalOpen(false)}
         actions={
           <>
@@ -360,7 +360,7 @@ export default function AdminSettingsPage() {
               disabled={disableCustom}
               className="rounded-lg bg-sky-700 px-3 py-1.5 text-sm font-medium text-white hover:bg-sky-800 disabled:opacity-60"
             >
-              {busyCustom ? "Mise Ã  jourâ€¦" : "Valider"}
+              {busyCustom ? "Mise Ã  jour…" : "Valider"}
             </button>
           </>
         }
@@ -411,8 +411,8 @@ export default function AdminSettingsPage() {
           {customMsg && <div className="text-sm text-slate-700">{customMsg}</div>}
 
           <div className="rounded-lg border border-yellow-200 bg-yellow-50 px-3 py-2 text-[12px] text-yellow-800">
-            Astuce : laissez ce modal et utilisez <b>â€œRÃ©init. temporaireâ€</b> si vous prÃ©fÃ©rez
-            gÃ©nÃ©rer un mot de passe provisoire : Pass2025.
+            Astuce : laissez ce modal et utilisez <b>“Réinit. temporaireâ€</b> si vous préférez
+            générer un mot de passe provisoire : Pass2025.
           </div>
         </div>
       </Modal>

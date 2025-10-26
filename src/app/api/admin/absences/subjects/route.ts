@@ -28,7 +28,7 @@ export async function GET(req: Request) {
   const institution_id = me?.institution_id as string | null;
   if (!institution_id) return NextResponse.json({ items: [] });
 
-  // Marques de la pÃ©riode
+  // Marques de la période
   let mq = srv
     .from("v_mark_minutes")
     .select("class_id, subject_id, started_at")
@@ -52,7 +52,7 @@ export async function GET(req: Request) {
     marks = marks.filter(m => lvlMap.get(m.class_id!) === level);
   }
 
-  // IDs de matiÃ¨re
+  // IDs de matière
   const subjIds = Array.from(new Set(marks.map(m => m.subject_id).filter(Boolean))) as string[];
   const nameMap = new Map<string,string>();
   if (subjIds.length) {
@@ -92,11 +92,11 @@ export async function GET(req: Request) {
         .from("subjects")
         .select("id, name")
         .in("id", missing);
-      for (const s of plain || []) nameMap.set(s.id as string, String((s as any).name ?? "â€”"));
+      for (const s of plain || []) nameMap.set(s.id as string, String((s as any).name ?? "—"));
     }
   }
 
-  // AgrÃ©gat par matiÃ¨re
+  // Agrégat par matière
   const agg = new Map<string, number>();
   for (const m of marks) {
     if (!m.subject_id) continue;
@@ -104,7 +104,7 @@ export async function GET(req: Request) {
   }
 
   const items = Array.from(agg.entries())
-    .map(([id, abs]) => ({ name: nameMap.get(id) || "â€”", absents: abs }))
+    .map(([id, abs]) => ({ name: nameMap.get(id) || "—", absents: abs }))
     .sort((a, b) => a.name.localeCompare(b.name, "fr", { sensitivity: "base" }));
 
   return NextResponse.json({ items });

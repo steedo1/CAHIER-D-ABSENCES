@@ -3,7 +3,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Mail, Phone, MessageSquare, Copy, Check } from "lucide-react";
-// Si tu as dÃ©jÃ  un Button shadcn, tu peux le garder.
+// Si tu as déjÃ  un Button shadcn, tu peux le garder.
 // Sinon, on fournit un petit fallback propre.
 let ExternalButton: any;
 try {
@@ -26,7 +26,7 @@ const Button: React.FC<React.ButtonHTMLAttributes<HTMLButtonElement>> = (props) 
 
 /* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
    Mini Dialog (portal + overlay)
-   â”€ aucune dÃ©pendance externe
+   â”€ aucune dépendance externe
 â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 function LightDialog({
   open,
@@ -43,7 +43,7 @@ function LightDialog({
 }) {
   const ref = useRef<HTMLDivElement | null>(null);
 
-  // Ferme avec ESC et clic sur lâ€™overlay
+  // Ferme avec ESC et clic sur l’overlay
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
@@ -84,7 +84,7 @@ function LightDialog({
 }
 
 /* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-   DonnÃ©es de contact
+   Données de contact
 â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 const CONTACTS = {
   phones: [
@@ -125,7 +125,7 @@ export default function ContactUsButton({ variant = "chip" }: { variant?: "chip"
         open={open}
         onClose={() => setOpen(false)}
         title="Nous contacter"
-        description="Besoin dâ€™aide ? Joignez-nous par tÃ©lÃ©phone ou email."
+        description="Besoin d’aide ? Joignez-nous par téléphone ou email."
       >
         <div className="space-y-3">
           {CONTACTS.phones.map((p) => {
@@ -161,7 +161,7 @@ export default function ContactUsButton({ variant = "chip" }: { variant?: "chip"
                     {copied === p.value ? (
                       <>
                         <Check className="mr-1 inline h-3.5 w-3.5" />
-                        CopiÃ©
+                        Copié
                       </>
                     ) : (
                       <>
@@ -196,7 +196,7 @@ export default function ContactUsButton({ variant = "chip" }: { variant?: "chip"
                 {copied === CONTACTS.email ? (
                   <>
                     <Check className="mr-1 inline h-3.5 w-3.5" />
-                    CopiÃ©
+                    Copié
                   </>
                 ) : (
                   <>

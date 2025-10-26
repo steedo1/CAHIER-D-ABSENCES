@@ -7,7 +7,7 @@ type Body = {
   class_id: string;
   subject_id?: string | null;
   started_at?: string;            // ISO (UTC) optionnel, sinon maintenant
-  expected_minutes?: number | null; // âš ï¸ dÃ©sormais OBLIGATOIRE (> 0)
+  expected_minutes?: number | null; // âš ï¸ désormais OBLIGATOIRE (> 0)
 };
 
 export async function POST(req: Request) {
@@ -32,17 +32,17 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "class_id_required" }, { status: 400 });
     }
 
-    // Heure de dÃ©but (par dÃ©faut: maintenant)
+    // Heure de début (par défaut: maintenant)
     const startedAt = b?.started_at ? new Date(b.started_at) : new Date();
 
-    // âš ï¸ DurÃ©e attendue OBLIGATOIRE (> 0)
+    // âš ï¸ Durée attendue OBLIGATOIRE (> 0)
     const expected_raw = b?.expected_minutes;
     const expected_minutes = Number.isFinite(expected_raw) ? Math.floor(Number(expected_raw)) : NaN;
     if (!expected_minutes || expected_minutes <= 0) {
       return NextResponse.json({ error: "expected_minutes_required" }, { status: 400 });
     }
 
-    // 3) RÃ©cupÃ©rer l'Ã©tablissement du prof
+    // 3) Récupérer l'établissement du prof
     const { data: me, error: meErr } = await supa
       .from("profiles")
       .select("institution_id")
@@ -56,7 +56,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "no_institution" }, { status: 400 });
     }
 
-    // 4) VÃ©rifier que la classe appartient bien Ã  cet Ã©tablissement
+    // 4) Vérifier que la classe appartient bien Ã  cet établissement
     const { data: cls, error: clsErr } = await srv
       .from("classes")
       .select("id,institution_id,label")
@@ -68,7 +68,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "invalid_class" }, { status: 400 });
     }
 
-    // 5) Insertion de la sÃ©ance
+    // 5) Insertion de la séance
     const payload = {
       institution_id,
       teacher_id: user.id,

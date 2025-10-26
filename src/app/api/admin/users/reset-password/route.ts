@@ -9,7 +9,7 @@ export const dynamic = "force-dynamic";
 
 const SUPABASE_URL  = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_ANON = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-const SERVICE_KEY   = process.env.SUPABASE_SERVICE_ROLE_KEY!; // âš ï¸ secret cÃ´tÃ© serveur
+const SERVICE_KEY   = process.env.SUPABASE_SERVICE_ROLE_KEY!; // âš ï¸ secret côté serveur
 const DEFAULT_TEMP_PASSWORD = process.env.DEFAULT_TEMP_PASSWORD || "";
 
 /* ---------- helpers ---------- */
@@ -40,9 +40,9 @@ function randomPass(len = 10) {
 /**
  * Body attendu:
  *   { user_id: string, new_password?: string }
- * Si new_password est absent â†’ mot de passe temporaire gÃ©nÃ©rÃ© (ou DEFAULT_TEMP_PASSWORD si configurÃ©).
- * RÃ¨gles:
- *   - super_admin : peut rÃ©initialiser tout le monde
+ * Si new_password est absent â†’ mot de passe temporaire généré (ou DEFAULT_TEMP_PASSWORD si configuré).
+ * Règles:
+ *   - super_admin : peut réinitialiser tout le monde
  *   - admin       : uniquement les profils appartenant Ã  son/ses institution(s) (via table public.user_roles)
  */
 export async function POST(req: Request) {
@@ -52,7 +52,7 @@ export async function POST(req: Request) {
     let   new_password = (body?.new_password ? String(body.new_password) : "").trim();
 
     if (!user_id) {
-      return NextResponse.json({ error: "ParamÃ¨tre user_id manquant." }, { status: 400 });
+      return NextResponse.json({ error: "Paramètre user_id manquant." }, { status: 400 });
     }
     if (new_password && new_password.length < 6) {
       return NextResponse.json({ error: "Mot de passe trop court (6+)." }, { status: 400 });
@@ -69,14 +69,14 @@ export async function POST(req: Request) {
     }
 
     const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return NextResponse.json({ error: "Non authentifiÃ©." }, { status: 401 });
+    if (!user) return NextResponse.json({ error: "Non authentifié." }, { status: 401 });
 
-    // 2) VÃ©rif rÃ´le & pÃ©rimÃ¨tre via user_roles (service role â†’ pas de RLS)
+    // 2) Vérif rôle & périmètre via user_roles (service role â†’ pas de RLS)
     const svc = createClient(SUPABASE_URL, SERVICE_KEY, {
       auth: { autoRefreshToken: false, persistSession: false },
     });
 
-    // rÃ´les de l'appelant
+    // rôles de l'appelant
     const { data: myRoles, error: rolesErr } = await svc
       .from("user_roles")
       .select("role, institution_id")
@@ -86,13 +86,13 @@ export async function POST(req: Request) {
     const roleList = (myRoles || []).map((r) => String(r.role));
     const isSuper  = roleList.includes("super_admin");
     const isAdmin  = isSuper || roleList.includes("admin");
-    if (!isAdmin) return NextResponse.json({ error: "AccÃ¨s refusÃ© (admin requis)." }, { status: 403 });
+    if (!isAdmin) return NextResponse.json({ error: "Accès refusé (admin requis)." }, { status: 403 });
 
     const adminScopes = (myRoles || [])
       .filter((r) => r.institution_id && (r.role === "admin" || r.role === "super_admin"))
       .map((r) => r.institution_id as string);
 
-    // pÃ©rimÃ¨tre du profil cible
+    // périmètre du profil cible
     const { data: targetRoles, error: tErr } = await svc
       .from("user_roles")
       .select("institution_id")
@@ -104,7 +104,7 @@ export async function POST(req: Request) {
       const targetInst = new Set((targetRoles || []).map((r) => String(r.institution_id)));
       const allowed    = adminScopes.some((i) => targetInst.has(i));
       if (!allowed) {
-        return NextResponse.json({ error: "Utilisateur hors pÃ©rimÃ¨tre de votre Ã©tablissement." }, { status: 403 });
+        return NextResponse.json({ error: "Utilisateur hors périmètre de votre établissement." }, { status: 403 });
       }
     }
 

@@ -67,7 +67,7 @@ export async function GET(req: Request) {
 
   for (const r of (enrolls || [])) {
     const s = (r as any).students;
-    const full = `${s?.first_name ?? ""} ${s?.last_name ?? ""}`.trim() || "â€”";
+    const full = `${s?.first_name ?? ""} ${s?.last_name ?? ""}`.trim() || "—";
     byStudent.set(r.student_id, { student_id: r.student_id, student_name: full, guardians: [] });
   }
 

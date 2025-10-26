@@ -32,7 +32,7 @@ export default function ListInstitutions() {
       setItems(list);
       setTotal(j.total || 0);
 
-      // Charger les compteurs Ã‰lÃ¨ves pour les IDs de la page courante
+      // Charger les compteurs Ã‰lèves pour les IDs de la page courante
       const ids = list.map(i => i.id).join(",");
       setCounts({});
       if (ids) {
@@ -53,7 +53,7 @@ export default function ListInstitutions() {
   const pages = Math.max(1, Math.ceil(total / limit));
 
   async function onDelete(id: string) {
-    if (!confirm("Supprimer cet Ã©tablissement ? Cette action est irrÃ©versible.")) return;
+    if (!confirm("Supprimer cet établissement ? Cette action est irréversible.")) return;
     const r = await fetch(`/api/super/institutions/${id}`, { method: "DELETE" });
     const j = await r.json();
     if (!r.ok) {
@@ -87,7 +87,7 @@ export default function ListInstitutions() {
               <th className="px-4 py-2 text-left">Ã‰tablissement</th>
               <th className="px-4 py-2 text-left">Code</th>
               <th className="px-4 py-2 text-left">Expire le</th>
-              <th className="px-4 py-2 text-left">Ã‰lÃ¨ves</th>{/* â¬…ï¸ nouveau */}
+              <th className="px-4 py-2 text-left">Ã‰lèves</th>{/* â¬…ï¸ nouveau */}
               <th className="px-4 py-2 text-left">Actions</th>
             </tr>
           </thead>
@@ -97,10 +97,10 @@ export default function ListInstitutions() {
                 <td className="px-4 py-2">{i.name}</td>
                 <td className="px-4 py-2">{i.code_unique}</td>
                 <td className="px-4 py-2">
-                  {i.subscription_expires_at || "â€”"}
+                  {i.subscription_expires_at || "—"}
                 </td>
                 <td className="px-4 py-2">
-                  {loadingCounts ? "â€¦" : (counts[i.id] ?? 0)}
+                  {loadingCounts ? "…" : (counts[i.id] ?? 0)}
                 </td>
                 <td className="px-4 py-2 space-x-2">
                   <Link
@@ -121,7 +121,7 @@ export default function ListInstitutions() {
             {items.length === 0 && (
               <tr>
                 <td className="px-4 py-6 text-slate-500" colSpan={5}>
-                  Aucun rÃ©sultat.
+                  Aucun résultat.
                 </td>
               </tr>
             )}
@@ -130,7 +130,7 @@ export default function ListInstitutions() {
       </div>
 
       <div className="flex items-center justify-between text-sm">
-        <div>Page {page} / {pages} â€” {total} rÃ©sultat(s)</div>
+        <div>Page {page} / {pages} — {total} résultat(s)</div>
         <div className="space-x-2">
           <button
             disabled={page <= 1}
@@ -139,7 +139,7 @@ export default function ListInstitutions() {
             }}
             className="rounded border px-3 py-1 disabled:opacity-50"
           >
-            PrÃ©c.
+            Préc.
           </button>
           <button
             disabled={page >= pages}

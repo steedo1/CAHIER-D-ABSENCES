@@ -8,7 +8,7 @@ const items = [
   { href: "/super/etablissements", icon: "ðŸ«", label: "Ã‰tablissements" },
   { href: "/super/abonnements", icon: "ðŸ§¾", label: "Abonnements" },
   { href: "/super/admins", icon: "ðŸ§‘â€ðŸ’¼", label: "Admins" },       // (page Ã  venir)
-  { href: "/super/parametres", icon: "âš™ï¸", label: "ParamÃ¨tres" }, // (page Ã  venir)
+  { href: "/super/parametres", icon: "âš™ï¸", label: "Paramètres" }, // (page Ã  venir)
 ];
 
 export default function SidebarNav() {

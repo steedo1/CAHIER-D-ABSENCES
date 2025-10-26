@@ -3,9 +3,9 @@ import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 /**
  * GET /api/teacher/roster?class_id=UUID
- * Retourne la liste des Ã©lÃ¨ves de la classe (triÃ©s), avec { id, full_name, matricule }.
- * AccÃ¨s autorisÃ© si l'enseignant a une sÃ©ance ouverte sur cette classe
- * ou s'il est affectÃ© Ã  cette classe dans l'Ã©tablissement.
+ * Retourne la liste des élèves de la classe (triés), avec { id, full_name, matricule }.
+ * Accès autorisé si l'enseignant a une séance ouverte sur cette classe
+ * ou s'il est affecté Ã  cette classe dans l'établissement.
  */
 export async function GET(req: Request) {
   const supa = await getSupabaseServerClient();
@@ -16,7 +16,7 @@ export async function GET(req: Request) {
   const class_id = url.searchParams.get("class_id") || "";
   if (!class_id) return NextResponse.json({ error: "missing_class_id" }, { status: 400 });
 
-  // Ã©tablissement de l'enseignant
+  // établissement de l'enseignant
   const { data: me } = await supa
     .from("profiles")
     .select("institution_id")
@@ -26,7 +26,7 @@ export async function GET(req: Request) {
   if (!inst) return NextResponse.json({ items: [] });
 
   // autorisation :
-  // 1) sÃ©ance ouverte sur cette classe
+  // 1) séance ouverte sur cette classe
   const { data: os } = await supa
     .from("teacher_sessions")
     .select("id,class_id")
@@ -50,7 +50,7 @@ export async function GET(req: Request) {
   }
   if (!allowed) return NextResponse.json({ error: "forbidden" }, { status: 403 });
 
-  // Ã©lÃ¨ves inscrits (actifs)
+  // élèves inscrits (actifs)
   const { data, error } = await supa
     .from("class_enrollments")
     .select(`
@@ -62,11 +62,11 @@ export async function GET(req: Request) {
 
   if (error) return NextResponse.json({ error: error.message }, { status: 400 });
 
-  // map + tri "Nom puis PrÃ©nom"
+  // map + tri "Nom puis Prénom"
   const items = (data ?? [])
     .map((row: any) => {
       const s = row.students || {};
-      const full = [s.last_name, s.first_name].filter(Boolean).join(" ").trim() || "â€”";
+      const full = [s.last_name, s.first_name].filter(Boolean).join(" ").trim() || "—";
       return {
         id: s.id as string,
         full_name: full,

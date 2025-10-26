@@ -52,7 +52,7 @@ export async function PATCH(
 
 /**
  * DELETE /api/super/institutions/[id]
- * Supprime une institution (protÃ©gÃ©: super_admin).
+ * Supprime une institution (protégé: super_admin).
  */
 export async function DELETE(
   _req: NextRequest,
@@ -60,7 +60,7 @@ export async function DELETE(
 ) {
   const { id } = await context.params;
 
-  // ðŸ” Auth + rÃ´le super_admin (client "writable" pour cookies cÃ´tÃ© route handler)
+  // ðŸ” Auth + rôle super_admin (client "writable" pour cookies côté route handler)
   const s = await getSupabaseActionClient();
   const {
     data: { user },
@@ -84,11 +84,11 @@ export async function DELETE(
   if (error) {
     const code = (error as any)?.code;
     if (code === "23503") {
-      // FK violation: Ã©lÃ©ments rattachÃ©s
+      // FK violation: éléments rattachés
       return NextResponse.json(
         {
           error:
-            "Suppression impossible : des Ã©lÃ©ments sont encore rattachÃ©s Ã  cet Ã©tablissement (admins, classes, etc.). DÃ©tache/supprime-les dâ€™abord.",
+            "Suppression impossible : des éléments sont encore rattachés Ã  cet établissement (admins, classes, etc.). Détache/supprime-les d’abord.",
           code,
         },
         { status: 409 }

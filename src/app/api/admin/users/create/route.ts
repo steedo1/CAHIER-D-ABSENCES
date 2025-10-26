@@ -23,7 +23,7 @@ export async function POST(req: Request) {
   const { data: { user } } = await supa.auth.getUser();
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
 
-  // Ã‰tablissement courant de lâ€™admin
+  // Ã‰tablissement courant de l’admin
   const { data: me, error: meErr } = await supa
     .from("profiles")
     .select("institution_id")
@@ -46,13 +46,13 @@ export async function POST(req: Request) {
   const email = (emailRaw || "").trim().toLowerCase() || null;
 
   if (!role) return NextResponse.json({ error: "role_required" }, { status: 400 });
-  // On garde la rÃ¨gle produit : le parent doit avoir un tÃ©lÃ©phone
+  // On garde la règle produit : le parent doit avoir un téléphone
   if (role === "parent" && !phone) {
     return NextResponse.json({ error: "phone_required" }, { status: 400 });
   }
 
   // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-  // 1) RÃ©soudre / crÃ©er lâ€™utilisateur (idempotent)
+  // 1) Résoudre / créer l’utilisateur (idempotent)
   // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   let uid: string | null = null;
 
@@ -84,7 +84,7 @@ export async function POST(req: Request) {
     uid = await findInAuth();
   }
 
-  // c) crÃ©er si toujours introuvable (avec fallback course/doublon)
+  // c) créer si toujours introuvable (avec fallback course/doublon)
   if (!uid) {
     const { data: created, error: cErr } = await supaSrv.auth.admin.createUser({
       email: email || undefined,
@@ -105,7 +105,7 @@ export async function POST(req: Request) {
   }
 
   // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-  // 2) Upsert profil SANS Ã©craser institution_id
+  // 2) Upsert profil SANS écraser institution_id
   // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const { data: existingProfile } = await supaSrv
     .from("profiles")
@@ -114,7 +114,7 @@ export async function POST(req: Request) {
     .maybeSingle();
 
   if (!existingProfile) {
-    // premiÃ¨re insertion â†’ on dÃ©finit institution_id
+    // première insertion â†’ on définit institution_id
     const { error: pInsErr } = await supaSrv.from("profiles").insert({
       id: uid,
       institution_id: inst,
@@ -137,7 +137,7 @@ export async function POST(req: Request) {
   }
 
   // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-  // 3) Upsert du rÃ´le (idempotent)
+  // 3) Upsert du rôle (idempotent)
   // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const { error: rErr } = await supaSrv
     .from("user_roles")
@@ -145,7 +145,7 @@ export async function POST(req: Request) {
   if (rErr) return NextResponse.json({ error: rErr.message }, { status: 400 });
 
   // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-  // 4) MatiÃ¨re optionnelle (enseignant)
+  // 4) Matière optionnelle (enseignant)
   // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   if (role === "teacher" && subjectName) {
     const code = slug(subjectName).slice(0, 12).toUpperCase();

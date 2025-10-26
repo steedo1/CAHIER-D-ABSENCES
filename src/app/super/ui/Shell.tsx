@@ -6,13 +6,13 @@ import { usePathname } from "next/navigation";
 
 const NAV = [
   { href: "/super/dashboard", label: "Tableau de bord", icon: "ðŸ " },
-  // on garde cette page comme outil de crÃ©ation (ton Ã©cran actuel)
-  { href: "/super/etablissements", label: "CrÃ©er un abonnement", icon: "ðŸ§©" },
-  // âž• nouvel onglet : liste paginÃ©e + suppression
-  { href: "/super/etablissements/liste", label: "Liste des Ã©tablissements", icon: "ðŸ“‹" },
+  // on garde cette page comme outil de création (ton écran actuel)
+  { href: "/super/etablissements", label: "Créer un abonnement", icon: "ðŸ§©" },
+  // âž• nouvel onglet : liste paginée + suppression
+  { href: "/super/etablissements/liste", label: "Liste des établissements", icon: "ðŸ“‹" },
   { href: "/super/abonnements", label: "Mes abonnements", icon: "ðŸ§¾" },
   { href: "/super/admins", label: "Liste des admins", icon: "ðŸ§‘â€ðŸ’¼" },
-  { href: "/super/parametres", label: "ParamÃ¨tres", icon: "âš™ï¸" },
+  { href: "/super/parametres", label: "Paramètres", icon: "âš™ï¸" },
 ];
 
 export default function Shell({ children }: { children: React.ReactNode }) {
@@ -22,13 +22,13 @@ export default function Shell({ children }: { children: React.ReactNode }) {
       <header className="sticky top-0 z-30 border-b bg-white">
         <div className="mx-auto flex max-w-7xl items-center justify-between px-4 py-3">
           <div className="flex items-center gap-3">
-            <span className="text-sm font-medium text-slate-700">Mon Cahier dâ€™Absences</span>
+            <span className="text-sm font-medium text-slate-700">Mon Cahier d’Absences</span>
             <span className="rounded-full bg-violet-100 px-2 py-0.5 text-xs font-semibold text-violet-700">
               Super Admin
             </span>
           </div>
           <Link href="/logout" className="rounded-lg border border-slate-200 px-3 py-1.5 text-sm hover:bg-slate-50">
-            Se dÃ©connecter
+            Se déconnecter
           </Link>
         </div>
       </header>

@@ -56,7 +56,7 @@ export default function AdminsTable() {
     <div className="space-y-3">
       <div className="flex items-center gap-2">
         <input
-          placeholder="Rechercher (nom admin, email, tÃ©lÃ©phone, Ã©tablissement ou code)"
+          placeholder="Rechercher (nom admin, email, téléphone, établissement ou code)"
           value={q}
           onChange={(e) => setQ(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && load(1, q)}
@@ -73,25 +73,25 @@ export default function AdminsTable() {
             <tr className="border-b text-left text-slate-600">
               <th className="px-4 py-2">Nom</th>
               <th className="px-4 py-2">Email</th>
-              <th className="px-4 py-2">TÃ©lÃ©phone</th>
+              <th className="px-4 py-2">Téléphone</th>
               <th className="px-4 py-2">Ã‰tablissement</th>
-              <th className="px-4 py-2">RÃ´le</th>
+              <th className="px-4 py-2">Rôle</th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
-              <tr><td className="px-4 py-6 text-slate-500" colSpan={5}>Chargementâ€¦</td></tr>
+              <tr><td className="px-4 py-6 text-slate-500" colSpan={5}>Chargement…</td></tr>
             ) : items.length === 0 ? (
-              <tr><td className="px-4 py-6 text-slate-500" colSpan={5}>Aucun rÃ©sultat.</td></tr>
+              <tr><td className="px-4 py-6 text-slate-500" colSpan={5}>Aucun résultat.</td></tr>
             ) : items.map((a) => (
               <tr key={`${a.profile_id}-${a.institution_id}`} className="border-b last:border-0">
-                <td className="px-4 py-2">{a.profiles?.display_name || "â€”"}</td>
-                <td className="px-4 py-2">{a.profiles?.email || "â€”"}</td>
-                <td className="px-4 py-2">{a.profiles?.phone || "â€”"}</td>
+                <td className="px-4 py-2">{a.profiles?.display_name || "—"}</td>
+                <td className="px-4 py-2">{a.profiles?.email || "—"}</td>
+                <td className="px-4 py-2">{a.profiles?.phone || "—"}</td>
                 <td className="px-4 py-2">
                   {a.institutions?.name
                     ? `${a.institutions.name} (${a.institutions.code_unique})`
-                    : a.institution_id || "â€”"}
+                    : a.institution_id || "—"}
                 </td>
                 <td className="px-4 py-2">{a.role}</td>
               </tr>
@@ -101,14 +101,14 @@ export default function AdminsTable() {
       </div>
 
       <div className="flex items-center justify-between text-sm">
-        <div>Page {page} / {pages} â€” {total} rÃ©sultat(s)</div>
+        <div>Page {page} / {pages} — {total} résultat(s)</div>
         <div className="space-x-2">
           <button
             disabled={page <= 1}
             onClick={() => { const n = Math.max(1, page - 1); setPage(n); load(n, q); }}
             className="rounded border px-3 py-1 disabled:opacity-50"
           >
-            PrÃ©c.
+            Préc.
           </button>
           <button
             disabled={page >= pages}
