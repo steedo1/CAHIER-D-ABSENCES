@@ -5,7 +5,7 @@ import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-/** Ligne brute pouvant remonter students/classes en objet OU tableau. */
+/** Ligne brute pouvant remonter students/classes/subjects en objet OU tableau. */
 type RawRow = {
   id: string;
   student_id: string;
@@ -24,9 +24,12 @@ type RawRow = {
     | { label: string | null; level: string | null; institution_id: string }
     | { label: string | null; level: string | null; institution_id: string }[]
     | null;
+  subjects?:
+    | { name?: string | null; label?: string | null }
+    | { name?: string | null; label?: string | null }[]
+    | null;
 };
 
-/* ---------- helpers formatage ---------- */
 function fmtDate(dISO: string) {
   return dISO.slice(0, 10);
 }
@@ -45,7 +48,10 @@ function addMinutes(dISO: string, mins: number) {
 function fmtHM(m: number) {
   return `${Math.floor(m / 60)}h ${m % 60}m`;
 }
-/** Forcer texte dans Excel & empêcher l’auto-format (ex: 5e01 -> 5,00E+01) + neutraliser formules. */
+function fmtUnitsFR(units: number) {
+  const r = Math.round(units * 100) / 100;
+  return String(r).replace(".", ",");
+}
 function excelText(s: string) {
   const v = String(s ?? "");
   const danger = /^[-+=@].*/.test(v);
@@ -55,8 +61,6 @@ function csvEscape(s: string) {
   const v = String(s ?? "");
   return /[;"\n\r]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
 }
-
-/* ---------- pickers robustes (objet | tableau | null) ---------- */
 function pickStudent(
   s: RawRow["students"]
 ): { first_name: string | null; last_name: string | null } | null {
@@ -68,6 +72,12 @@ function pickClass(
 ): { label: string | null; level: string | null; institution_id: string } | null {
   if (!c) return null;
   return Array.isArray(c) ? c[0] ?? null : c;
+}
+function pickSubject(
+  s: RawRow["subjects"]
+): { name?: string | null; label?: string | null } | null {
+  if (!s) return null;
+  return Array.isArray(s) ? s[0] ?? null : s;
 }
 
 export async function GET(
@@ -115,7 +125,8 @@ export async function GET(
       teacher_id,
       class_id,
       students:student_id(first_name,last_name),
-      classes:class_id(label,level,institution_id)
+      classes:class_id(label,level,institution_id),
+      subjects:subject_id(name,label)
     `
     )
     .eq("classes.institution_id", inst)
@@ -140,6 +151,7 @@ export async function GET(
       class_label: string;
       level: string;
       minutes: number;
+      units: number; // NOMBRE_ABSCENCE_RETARDS
     };
     const byKey = new Map<string, Agg>(); // student_id|class_label
 
@@ -147,10 +159,12 @@ export async function GET(
       const st = pickStudent(r.students);
       const cl = pickClass(r.classes);
 
-      // minutes corrigées (retard vs absence)
-      let m = 0;
-      if (r.status === "late") m = Number(r.minutes_late ?? 0);
-      else m = Number(r.minutes ?? 0) || Number(r.expected_minutes ?? 0);
+      const minutes =
+        r.status === "late"
+          ? Number(r.minutes_late ?? 0)
+          : Number(r.minutes ?? 0) || Number(r.expected_minutes ?? 0);
+
+      const units = minutes / 60;
 
       const student = `${st?.first_name ?? ""} ${st?.last_name ?? ""}`.trim() || "—";
       const class_label = cl?.label ?? "—";
@@ -158,8 +172,19 @@ export async function GET(
       const key = `${r.student_id}|${class_label}`;
 
       const cur = byKey.get(key);
-      if (cur) cur.minutes += m;
-      else byKey.set(key, { student_id: r.student_id, student, class_label, level: lvl, minutes: m });
+      if (cur) {
+        cur.minutes += minutes;
+        cur.units += units;
+      } else {
+        byKey.set(key, {
+          student_id: r.student_id,
+          student,
+          class_label,
+          level: lvl,
+          minutes,
+          units,
+        });
+      }
     }
 
     // Tri : Classe → Élève
@@ -170,15 +195,16 @@ export async function GET(
     );
 
     const fileBase = `absences_niveau_${encodeURIComponent(level)}_${from || "debut"}_${to || "fin"}_resume`;
-    const header = ["Niveau", "Classe", "Élève", "Total minutes", "Total (h m)"];
+    const header = ["Niveau", "Classe", "Élève", "Total minutes", "NOMBRE_ABSCENCE_RETARDS", "Total (h m)"];
     const lines = [header.join(";")].concat(
       list.map((i) =>
         [
           csvEscape(i.level),
           csvEscape(excelText(i.class_label)),
           csvEscape(i.student),
-          String(i.minutes),
-          csvEscape(fmtHM(i.minutes)),
+          String(Math.round(i.minutes)),
+          fmtUnitsFR(i.units),
+          csvEscape(fmtHM(Math.round(i.minutes))),
         ].join(";")
       )
     );
@@ -198,6 +224,7 @@ export async function GET(
   const items = rows.map((r) => {
     const st = pickStudent(r.students);
     const cl = pickClass(r.classes);
+    const sb = pickSubject(r.subjects);
 
     const startISO = r.started_at;
     const endISO =
@@ -205,11 +232,16 @@ export async function GET(
         ? addMinutes(startISO, r.expected_minutes)
         : startISO;
 
-    let minutes = 0;
-    if (r.status === "late") minutes = Number(r.minutes_late ?? 0);
-    else minutes = Number(r.minutes ?? 0) || Number(r.expected_minutes ?? 0);
+    const minutes =
+      r.status === "late"
+        ? Number(r.minutes_late ?? 0)
+        : Number(r.minutes ?? 0) || Number(r.expected_minutes ?? 0);
+
+    const units = minutes / 60;
 
     const fullName = `${st?.first_name ?? ""} ${st?.last_name ?? ""}`.trim() || "—";
+    const subject =
+      (sb?.name ?? "") || (sb?.label ?? "") ? String((sb?.name ?? sb?.label) || "—") : "—";
 
     return {
       level: cl?.level ?? level,
@@ -218,9 +250,10 @@ export async function GET(
       date: fmtDate(startISO),
       startISO,
       endISO,
-      subject: "—", // (peut être résolu si nécessaire)
+      subject,
       status: r.status,
       minutes,
+      units,
     };
   });
 
@@ -233,7 +266,18 @@ export async function GET(
   const fileBase = `absences_niveau_${encodeURIComponent(level)}_${from || "debut"}_${to || "fin"}`;
 
   if (format === "csv") {
-    const header = ["Niveau", "Classe", "Élève", "Date", "Début", "Fin", "Discipline", "Statut", "Minutes"];
+    const header = [
+      "Niveau",
+      "Classe",
+      "Élève",
+      "Date",
+      "Début",
+      "Fin",
+      "Discipline",
+      "Statut",
+      "Minutes",
+      "NOMBRE_ABSCENCE_RETARDS",
+    ];
     const lines = [header.join(";")].concat(
       items.map((i) =>
         [
@@ -245,7 +289,8 @@ export async function GET(
           csvEscape(fmtTime(i.endISO)),
           csvEscape(i.subject),
           csvEscape(i.status),
-          String(i.minutes),
+          String(Math.round(i.minutes)),
+          fmtUnitsFR(i.units),
         ].join(";")
       )
     );

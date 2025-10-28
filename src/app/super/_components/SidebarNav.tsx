@@ -1,21 +1,20 @@
-// src/app/super/_components/SidebarNav.tsx
 "use client";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 const items = [
-  { href: "/super/dashboard", icon: "ðŸ ", label: "Tableau de bord" },
-  { href: "/super/etablissements", icon: "ðŸ«", label: "Ã‰tablissements" },
-  { href: "/super/abonnements", icon: "ðŸ§¾", label: "Abonnements" },
-  { href: "/super/admins", icon: "ðŸ§‘â€ðŸ’¼", label: "Admins" },       // (page Ã  venir)
-  { href: "/super/parametres", icon: "âš™ï¸", label: "Paramètres" }, // (page Ã  venir)
+  { href: "/super/dashboard",      icon: "🏠",  label: "Tableau de bord" },
+  { href: "/super/etablissements", icon: "🏫",  label: "Établissements" },
+  { href: "/super/abonnements",    icon: "🧾",  label: "Abonnements" },
+  { href: "/super/admins",         icon: "🧑‍💼", label: "Admins" },       // (page à venir)
+  { href: "/super/parametres",     icon: "⚙️",  label: "Paramètres" },    // (page à venir)
 ];
 
 export default function SidebarNav() {
   const pathname = usePathname();
   return (
     <nav className="rounded-2xl border bg-white p-3">
-      <div className="text-xs font-semibold text-slate-500 px-2 mb-2">NAVIGATION</div>
+      <div className="px-2 mb-2 text-xs font-semibold text-slate-500">NAVIGATION</div>
       <div className="space-y-1">
         {items.map((it) => {
           const active = pathname.startsWith(it.href);
@@ -28,7 +27,7 @@ export default function SidebarNav() {
                 (active ? "bg-violet-600 text-white" : "hover:bg-slate-50")
               }
             >
-              <span>{it.icon}</span>
+              <span aria-hidden="true">{it.icon}</span>
               <span>{it.label}</span>
             </Link>
           );
@@ -37,5 +36,3 @@ export default function SidebarNav() {
     </nav>
   );
 }
-
-

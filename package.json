@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "fix:mojibake": "node scripts/fix-mojibake.mjs",
+    "fix:utf8": "node scripts/force-utf8-and-rename.mjs",
     "predev": "node scripts/fix-mojibake.mjs",
     "prebuild": "node scripts/fix-mojibake.mjs"
   },

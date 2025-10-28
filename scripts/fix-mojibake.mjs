@@ -1,96 +1,74 @@
 // scripts/fix-mojibake.mjs
-import fs from "node:fs/promises";
+// Corrige les séquences d’encodage foireuses (Ã, â€¦, ðŸ…) en re-décodant latin1 -> utf8.
+// S’applique aux fichiers texte usuels. Exclut node_modules, .next, etc.
+
+import fs from "node:fs";
 import path from "node:path";
 
-/** Dossiers à scanner (on tolère qu'ils n'existent pas). */
-const CANDIDATE_DIRS = [
-  "src/app",
-  "src",
-  "app",
-  "components",
-  "public",
-  "scripts",
-];
+const ROOT = process.cwd();
+const DRY = process.env.DRY === "1";
 
-/** Extensions ciblées (texte). */
-const FILE_RE = /\.(tsx?|jsx?|mjs|cjs|json|md|css|scss|html?|sql|ya?ml)$/i;
+const EXTS = new Set([
+  ".ts", ".tsx", ".js", ".jsx",
+  ".json", ".md", ".mdx",
+  ".css", ".scss", ".html",
+  ".txt", ".yml", ".yaml"
+]);
 
-/** Remplacements simples des séquences mojibake courantes. */
-function fixText(s) {
-  return s
-    .replaceAll("é", "é")
-    .replaceAll("è", "è")
-    .replaceAll("ê", "ê")
-    .replaceAll("ë", "ë")
-    .replaceAll("â", "â")
-    .replaceAll("î", "î")
-    .replaceAll("ô", "ô")
-    .replaceAll("ï", "ï")
-    .replaceAll("ü", "ü")
-    .replaceAll("à", "à")
-    .replaceAll("ç", "ç")
-    .replaceAll("’", "’")
-    .replaceAll("“", "“")
-    .replaceAll("”", "”")
-    .replaceAll("–", "–")
-    .replaceAll("—", "—")
-    .replaceAll("…", "…");
+const IGNORE_DIRS = new Set(["node_modules", ".next", ".git", "dist", "build", "out"]);
+
+// motifs typiques du mojibake UTF-8 mal décodé
+const BAD_PATTERN = /Ã.|â€|â€¢|â€“|â€”|Â |Â$|ðŸ/;
+
+function decodeLatin1ToUtf8(s) {
+  return Buffer.from(s, "latin1").toString("utf8");
 }
 
-/** Utilitaires sûrs (ne jettent pas en cas d’absence). */
-async function safeReaddir(dir) {
-  try {
-    return await fs.readdir(dir, { withFileTypes: true });
-  } catch {
-    return [];
+function maybeFix(content) {
+  if (!BAD_PATTERN.test(content)) return null;
+
+  // jusqu’à 3 passes pour rattraper les doubles/triples décodages
+  let prev = content;
+  for (let i = 0; i < 3; i++) {
+    const next = decodeLatin1ToUtf8(prev);
+    if (next === prev) break;
+    prev = next;
   }
-}
-async function walk(dir, out = []) {
-  for (const e of await safeReaddir(dir)) {
-    const p = path.join(dir, e.name);
-    if (e.isDirectory()) await walk(p, out);
-    else if (FILE_RE.test(e.name)) out.push(p);
-  }
-  return out;
+
+  // si après correction on a toujours des marqueurs, on garde quand même la dernière version
+  return prev;
 }
 
-async function main() {
-  const roots = [];
-  for (const r of CANDIDATE_DIRS) {
-    const abs = path.resolve(process.cwd(), r);
-    try {
-      await fs.access(abs);
-      roots.push(abs);
-    } catch {
-      // ignore
-    }
-  }
+function walk(dir) {
+  const entries = fs.readdirSync(dir, { withFileTypes: true });
+  for (const e of entries) {
+    if (e.isDirectory()) {
+      if (IGNORE_DIRS.has(e.name)) continue;
+      walk(path.join(dir, e.name));
+    } else {
+      const ext = path.extname(e.name).toLowerCase();
+      if (!EXTS.has(ext)) continue;
 
-  if (roots.length === 0) {
-    console.log("[fix-mojibake] Aucun dossier source trouvé (src/app, src, app…). Skip.");
-    process.exit(0); // NE FAIT PAS ÉCHEC
-  }
-
-  let files = [];
-  for (const r of roots) files = files.concat(await walk(r));
-
-  let changed = 0;
-  for (const f of files) {
-    try {
-      const buf = await fs.readFile(f);
-      const txt = buf.toString("utf8");
-      const fixed = fixText(txt);
-      if (fixed !== txt) {
-        await fs.writeFile(f, fixed, "utf8");
-        changed++;
+      const file = path.join(dir, e.name);
+      const raw = fs.readFileSync(file, "utf8");
+      const fixed = maybeFix(raw);
+      if (fixed && fixed !== raw) {
+        const rel = path.relative(ROOT, file);
+        if (DRY) {
+          console.log(`[DRY] would fix: ${rel}`);
+        } else {
+          fs.writeFileSync(file, fixed, "utf8");
+          console.log(`fixed: ${rel}`);
+        }
       }
-    } catch {
-      // ignore file errors
     }
   }
-
-  console.log(`[fix-mojibake] Terminé. Fichiers modifiés: ${changed}/${files.length}`);
-  process.exit(0); // toujours succès (cross-platform)
 }
 
-main();
+try {
+  walk(ROOT);
+  console.log("✓ mojibake scan done.");
+} catch (err) {
+  console.error("fix-mojibake error:", err);
+  process.exitCode = 1;
+}

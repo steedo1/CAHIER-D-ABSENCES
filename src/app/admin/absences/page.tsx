@@ -53,11 +53,19 @@ function Card({
   );
 }
 
-/* Types */
+/* Types (inchangés côté API ; on calcule l'unité au rendu) */
 type ClassItem = { id: string; name: string; level: string };
 type LevelAgg = { level: string; absents: number; minutes: number };
 type ClassAgg = { class_id: string; class_label: string; absents: number; minutes: number };
 type StudentAbs = { student_id: string; full_name: string; minutes: number };
+
+/* Helpers d'affichage */
+function fmtUnitsFR(units: number) {
+  // 2 décimales max, virgule française, sans traîner des zéros inutiles
+  const r = Math.round(units * 100) / 100;
+  const s = r.toFixed(2).replace(".", ",");
+  return s.replace(/,00$/, "").replace(/,(\d)0$/, ",$1");
+}
 
 export default function AbsencesDashboard() {
   const [from, setFrom] = useState("");
@@ -113,7 +121,7 @@ export default function AbsencesDashboard() {
       );
       setClassesAgg(cl.items || []);
 
-      // disciplines : si une classe est déjÃ  choisie, on filtre aussi par class_id
+      // disciplines : si une classe est déjà choisie, on filtre aussi par class_id
       const qSub = new URLSearchParams(qLevel);
       if (selectedClassId) qSub.set("class_id", selectedClassId);
       const sb = await fetch("/api/admin/absences/subjects?" + qSub.toString(), { cache: "no-store" }).then((r) =>
@@ -177,7 +185,7 @@ export default function AbsencesDashboard() {
       <div>
         <h1 className="text-2xl font-semibold">Absences — Dashboard</h1>
         <p className="text-slate-600">
-          Sélectionne une période, puis un niveau â†’ une classe. Vue élèves et disciplines. Export CSV.
+          Sélectionne une période, puis un niveau → une classe. Vue élèves et disciplines. Export CSV.
         </p>
       </div>
 
@@ -229,7 +237,7 @@ export default function AbsencesDashboard() {
 
       {/* Carte NIVEAU / CLASSES */}
       <Card
-        title={selectedLevel ? `CLASSES — niveau ${selectedLevel}` : "RÃ‰SUMÃ‰ PAR NIVEAU (période)"}
+        title={selectedLevel ? `CLASSES — niveau ${selectedLevel}` : "RÉSUMÉ PAR NIVEAU (période)"}
         actions={
           selectedLevel ? (
             <a
@@ -248,41 +256,49 @@ export default function AbsencesDashboard() {
             <div className="text-sm text-slate-600">Aucune donnée pour la période.</div>
           ) : (
             <ul className="divide-y">
-              {levelsAgg.map((l) => (
-                <li
-                  key={l.level}
-                  className="flex cursor-pointer items-center justify-between py-2 text-slate-700 hover:text-emerald-700"
-                  onClick={() => setSelectedLevel(l.level)}
-                >
-                  <span>{l.level}</span>
-                  <span className="text-sm">
-                    {l.absents} élève(s) — {Math.floor(l.minutes / 60)}h {l.minutes % 60}min
-                  </span>
-                </li>
-              ))}
+              {levelsAgg.map((l) => {
+                const units = (Number(l.minutes || 0) / 60) || 0;
+                return (
+                  <li
+                    key={l.level}
+                    className="flex cursor-pointer items-center justify-between py-2 text-slate-700 hover:text-emerald-700"
+                    onClick={() => setSelectedLevel(l.level)}
+                  >
+                    <span>{l.level}</span>
+                    <span className="text-sm">
+                      {l.absents} élève(s) — {Math.floor(l.minutes / 60)}h {l.minutes % 60}min ·{" "}
+                      <span className="tabular-nums">NOMBRE_ABSCENCE_RETARDS: {fmtUnitsFR(units)}</span>
+                    </span>
+                  </li>
+                );
+              })}
             </ul>
           )
         ) : classesAgg.length === 0 ? (
           <div className="text-sm text-slate-600">Aucune absence pour {selectedLevel} sur la période.</div>
         ) : (
           <ul className="divide-y">
-            {classesAgg.map((c) => (
-              <li
-                key={c.class_id}
-                className={
-                  "flex cursor-pointer items-center justify-between py-2 " +
-                  (selectedClassId === c.class_id
-                    ? "font-semibold text-emerald-700"
-                    : "text-slate-700 hover:text-emerald-700")
-                }
-                onClick={() => setSelectedClassId(c.class_id)}
-              >
-                <span>{c.class_label}</span>
-                <span className="text-sm">
-                  {c.absents} élève(s) — {Math.floor(c.minutes / 60)}h {c.minutes % 60}min
-                </span>
-              </li>
-            ))}
+            {classesAgg.map((c) => {
+              const units = (Number(c.minutes || 0) / 60) || 0;
+              return (
+                <li
+                  key={c.class_id}
+                  className={
+                    "flex cursor-pointer items-center justify-between py-2 " +
+                    (selectedClassId === c.class_id
+                      ? "font-semibold text-emerald-700"
+                      : "text-slate-700 hover:text-emerald-700")
+                  }
+                  onClick={() => setSelectedClassId(c.class_id)}
+                >
+                  <span>{c.class_label}</span>
+                  <span className="text-sm">
+                    {c.absents} élève(s) — {Math.floor(c.minutes / 60)}h {c.minutes % 60}min ·{" "}
+                    <span className="tabular-nums">NOMBRE_ABSCENCE_RETARDS: {fmtUnitsFR(units)}</span>
+                  </span>
+                </li>
+              );
+            })}
           </ul>
         )}
       </Card>
@@ -291,9 +307,9 @@ export default function AbsencesDashboard() {
         <Card
           title={
             selectedClassId
-              ? "DISCIPLINES (CLASSE SÃ‰LECTIONNÃ‰E)"
+              ? "DISCIPLINES (CLASSE SÉLECTIONNÉE)"
               : selectedLevel
-              ? "DISCIPLINES (NIVEAU SÃ‰LECTIONNÃ‰)"
+              ? "DISCIPLINES (NIVEAU SÉLECTIONNÉ)"
               : "DISCIPLINES"
           }
         >
@@ -312,7 +328,7 @@ export default function AbsencesDashboard() {
         </Card>
 
         <Card
-          title="Ã‰LÃˆVES (SÃ‰LECTIONNE UNE CLASSE)"
+          title="ÉLÈVES (SÉLECTIONNE UNE CLASSE)"
           actions={
             selectedClassId ? (
               <a
@@ -335,19 +351,25 @@ export default function AbsencesDashboard() {
               <table className="min-w-full text-sm">
                 <thead className="bg-slate-50">
                   <tr>
-                    <th className="px-3 py-2 text-left">Ã‰lève</th>
+                    <th className="px-3 py-2 text-left">Élève</th>
                     <th className="px-3 py-2 text-left">Heures d’absence</th>
+                    <th className="px-3 py-2 text-left">NOMBRE_ABSCENCE_RETARDS</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {students.map((s: any) => (
-                    <tr key={s.student_id} className="border-t">
-                      <td className="px-3 py-2">{s.full_name}</td>
-                      <td className="px-3 py-2">
-                        {Math.floor(s.minutes / 60)} h {s.minutes % 60} min
-                      </td>
-                    </tr>
-                  ))}
+                  {students.map((s: any) => {
+                    const minutes = Number(s.minutes || 0);
+                    const units = minutes / 60;
+                    return (
+                      <tr key={s.student_id} className="border-t">
+                        <td className="px-3 py-2">{s.full_name}</td>
+                        <td className="px-3 py-2">
+                          {Math.floor(minutes / 60)} h {minutes % 60} min
+                        </td>
+                        <td className="px-3 py-2 tabular-nums">{fmtUnitsFR(units)}</td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -357,5 +379,3 @@ export default function AbsencesDashboard() {
     </div>
   );
 }
-
-

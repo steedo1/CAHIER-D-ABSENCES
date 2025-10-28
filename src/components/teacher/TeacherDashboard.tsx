@@ -1,7 +1,7 @@
 // src/components/teacher/TeacherDashboard.tsx
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   Users,
   BookOpen,
@@ -10,16 +10,15 @@ import {
   Play,
   StepForward,
   Square,
-  Settings,
   LogOut,
   Bell,
   ChevronDown,
   ChevronUp,
 } from "lucide-react";
 
-/* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+/* ─────────────────────────────────────────
    Types
-â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+────────────────────────────────────────── */
 type TeachClass = {
   class_id: string;
   class_label: string;
@@ -38,23 +37,21 @@ type OpenSession = {
   expected_minutes?: number | null;
 };
 
-/* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+/* ─────────────────────────────────────────
    UI helpers
-â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+────────────────────────────────────────── */
 function Input(p: React.InputHTMLAttributes<HTMLInputElement>) {
   return (
     <input
       {...p}
-      className={
-        [
-          "w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm",
-          "shadow-sm outline-none transition",
-          "placeholder:text-slate-400",
-          "focus:border-emerald-400 focus:ring-4 focus:ring-emerald-500/20",
-          "disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400",
-          p.className ?? "",
-        ].join(" ")
-      }
+      className={[
+        "w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm",
+        "shadow-sm outline-none transition",
+        "placeholder:text-slate-400",
+        "focus:border-emerald-400 focus:ring-4 focus:ring-emerald-500/20",
+        "disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400",
+        p.className ?? "",
+      ].join(" ")}
     />
   );
 }
@@ -62,19 +59,19 @@ function Select(p: React.SelectHTMLAttributes<HTMLSelectElement>) {
   return (
     <select
       {...p}
-      className={
-        [
-          "w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm",
-          "shadow-sm outline-none transition",
-          "focus:border-emerald-400 focus:ring-4 focus:ring-emerald-500/20",
-          "disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400",
-          p.className ?? "",
-        ].join(" ")
-      }
+      className={[
+        "w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm",
+        "shadow-sm outline-none transition",
+        "focus:border-emerald-400 focus:ring-4 focus:ring-emerald-500/20",
+        "disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400",
+        p.className ?? "",
+      ].join(" ")}
     />
   );
 }
-function Button(p: React.ButtonHTMLAttributes<HTMLButtonElement> & { tone?: "emerald" | "slate" }) {
+function Button(
+  p: React.ButtonHTMLAttributes<HTMLButtonElement> & { tone?: "emerald" | "slate" }
+) {
   const tone = p.tone ?? "emerald";
   const base =
     "inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-medium shadow transition focus:outline-none focus:ring-4 disabled:opacity-60 disabled:cursor-not-allowed";
@@ -90,7 +87,7 @@ function GhostButton(
   p: React.ButtonHTMLAttributes<HTMLButtonElement> & { tone?: "red" | "slate" | "emerald" }
 ) {
   const tone = p.tone ?? "slate";
-  const map: Record<typeof tone, string> = {
+  const map: Record<"red" | "slate" | "emerald", string> = {
     red: "border-red-300 text-red-700 hover:bg-red-50 focus:ring-red-500/20",
     slate: "border-slate-300 text-slate-700 hover:bg-slate-50 focus:ring-slate-500/20",
     emerald: "border-emerald-300 text-emerald-700 hover:bg-emerald-50 focus:ring-emerald-500/20",
@@ -113,7 +110,7 @@ function TabButton({
   onClick,
 }: {
   active: boolean;
-  children: any;
+  children: React.ReactNode;
   onClick: () => void;
 }) {
   return (
@@ -130,22 +127,33 @@ function TabButton({
     </button>
   );
 }
-function Chip({ children, tone = "emerald" }: { children: React.ReactNode; tone?: "emerald" | "slate" | "amber" }) {
+function Chip({
+  children,
+  tone = "emerald",
+}: {
+  children: React.ReactNode;
+  tone?: "emerald" | "slate" | "amber";
+}) {
   const map = {
     emerald: "bg-emerald-50 text-emerald-800 ring-emerald-200",
     slate: "bg-slate-50 text-slate-800 ring-slate-200",
     amber: "bg-amber-50 text-amber-800 ring-amber-200",
   } as const;
   return (
-    <span className={["inline-flex items-center rounded-full px-2 py-0.5 text-xs ring-1", map[tone]].join(" ")}>
+    <span
+      className={[
+        "inline-flex items-center rounded-full px-2 py-0.5 text-xs ring-1",
+        map[tone],
+      ].join(" ")}
+    >
       {children}
     </span>
   );
 }
 
-/* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+/* ─────────────────────────────────────────
    Helpers parent (dates + grouping)
-â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+────────────────────────────────────────── */
 const fmt = (iso: string) =>
   new Date(iso).toLocaleString([], {
     hour: "2-digit",
@@ -167,15 +175,21 @@ function dayLabel(iso: string) {
   const today = new Date();
   const yday = new Date(today.getTime() - 24 * 3600 * 1000);
   const same = (a: Date, b: Date) =>
-    a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+    a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate();
   if (same(d, today)) return "Aujourd’hui";
   if (same(d, yday)) return "Hier";
-  return d.toLocaleDateString([], { day: "2-digit", month: "2-digit", year: "numeric" });
+  return d.toLocaleDateString([], {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  });
 }
 
-/* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+/* ─────────────────────────────────────────
    Push helper (VAPID)
-â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+────────────────────────────────────────── */
 function urlBase64ToUint8Array(base64: string) {
   const padding = "=".repeat((4 - (base64.length % 4)) % 4);
   const base64url = (base64 + padding).replace(/-/g, "+").replace(/_/g, "/");
@@ -185,9 +199,9 @@ function urlBase64ToUint8Array(base64: string) {
   return out;
 }
 
-/* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+/* ─────────────────────────────────────────
    Component
-â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+────────────────────────────────────────── */
 export default function TeacherDashboard() {
   const [tab, setTab] = useState<"classes" | "parent">("classes");
 
@@ -205,11 +219,18 @@ export default function TeacherDashboard() {
 
   // sélection classe
   const [selKey, setSelKey] = useState<string>("");
-  const sel = useMemo(() => options.find((o) => o.key === selKey)?.value || null, [options, selKey]);
+  const sel = useMemo(
+    () => options.find((o) => o.key === selKey)?.value || null,
+    [options, selKey]
+  );
 
   // saisie horaire
   const now = new Date();
-  const defTime = new Date(now.getTime() - now.getMinutes() * 60000).toTimeString().slice(0, 5);
+  const defTime = new Date(
+    now.getTime() - now.getMinutes() * 60000
+  )
+    .toTimeString()
+    .slice(0, 5);
   const [startTime, setStartTime] = useState<string>(defTime);
   const [duration, setDuration] = useState<number>(60);
 
@@ -223,11 +244,14 @@ export default function TeacherDashboard() {
   const [msg, setMsg] = useState<string | null>(null);
 
   const changedCount = useMemo(
-    () => Object.values(rows).filter((r) => r.absent || (r.late && (r.lateMin || 0) > 0)).length,
+    () =>
+      Object.values(rows).filter(
+        (r) => r.absent || (r.late && (r.lateMin || 0) > 0)
+      ).length,
     [rows]
   );
 
-  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ Espace parent (aperçu avancé) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ───────────── Espace parent (aperçu avancé) ─────────────
   type Kid = { id: string; full_name: string; class_label: string | null };
   type KidEvent = {
     id: string;
@@ -278,8 +302,12 @@ export default function TeacherDashboard() {
     (async () => {
       try {
         const [cl, os] = await Promise.all([
-          fetch("/api/teacher/classes", { cache: "no-store" }).then((r) => r.json()).catch(() => ({ items: [] })),
-          fetch("/api/teacher/sessions/open", { cache: "no-store" }).then((r) => r.json()).catch(() => ({ item: null })),
+          fetch("/api/teacher/classes", { cache: "no-store" })
+            .then((r) => r.json())
+            .catch(() => ({ items: [] })),
+          fetch("/api/teacher/sessions/open", { cache: "no-store" })
+            .then((r) => r.json())
+            .catch(() => ({ item: null })),
         ]);
         setTeachClasses((cl.items || []) as TeachClass[]);
         setOpen((os.item as OpenSession) || null);
@@ -299,7 +327,9 @@ export default function TeacherDashboard() {
     }
     (async () => {
       setLoadingRoster(true);
-      const j = await fetch(`/api/teacher/roster?class_id=${open.class_id}`, { cache: "no-store" }).then((r) => r.json());
+      const j = await fetch(`/api/teacher/roster?class_id=${open.class_id}`, {
+        cache: "no-store",
+      }).then((r) => r.json());
       setRoster((j.items || []) as RosterItem[]);
       setRows({});
       setLoadingRoster(false);
@@ -311,13 +341,17 @@ export default function TeacherDashboard() {
     if (tab !== "parent") return;
     (async () => {
       try {
-        const j = await fetch("/api/teacher/children", { cache: "no-store" }).then((r) => r.json());
+        const j = await fetch("/api/teacher/children", {
+          cache: "no-store",
+        }).then((r) => r.json());
         const items = (j.items || []) as Kid[];
         setKids(items);
 
         const feeds: Record<string, KidEvent[]> = {};
         for (const k of items) {
-          const f = await fetch(`/api/teacher/children/events?student_id=${k.id}`).then((r) => r.json());
+          const f = await fetch(
+            `/api/teacher/children/events?student_id=${k.id}`
+          ).then((r) => r.json());
           feeds[k.id] = (f.items || []) as KidEvent[];
         }
         setKidFeed(feeds);
@@ -350,7 +384,12 @@ export default function TeacherDashboard() {
   function toggleLate(id: string, v: boolean) {
     setRows((prev) => {
       const cur = prev[id] || {};
-      const next: Row = { ...cur, late: v, lateMin: v ? cur.lateMin ?? 5 : undefined, absent: v ? false : cur.absent };
+      const next: Row = {
+        ...cur,
+        late: v,
+        lateMin: v ? cur.lateMin ?? 5 : undefined,
+        absent: v ? false : cur.absent,
+      };
       return { ...prev, [id]: next };
     });
   }
@@ -376,7 +415,15 @@ export default function TeacherDashboard() {
     try {
       const today = new Date();
       const [hh, mm] = (startTime || "08:00").split(":").map((x) => +x);
-      const started = new Date(today.getFullYear(), today.getMonth(), today.getDate(), hh, mm, 0, 0);
+      const started = new Date(
+        today.getFullYear(),
+        today.getMonth(),
+        today.getDate(),
+        hh,
+        mm,
+        0,
+        0
+      );
       const payload = {
         class_id: sel.class_id,
         subject_id: sel.subject_id,
@@ -389,11 +436,11 @@ export default function TeacherDashboard() {
         body: JSON.stringify(payload),
       });
       const j = await r.json();
-      if (!r.ok) throw new Error(j?.error || "Ã‰chec démarrage séance");
+      if (!r.ok) throw new Error(j?.error || "Échec démarrage séance");
       setOpen(j.item as OpenSession);
       setMsg("Séance démarrée.");
     } catch (e: any) {
-      setMsg(e?.message || "Ã‰chec démarrage séance");
+      setMsg(e?.message || "Échec démarrage séance");
     } finally {
       setBusy(false);
     }
@@ -407,7 +454,12 @@ export default function TeacherDashboard() {
       const marks = Object.entries(rows).map(([student_id, r]) => {
         if (r.absent) return { student_id, status: "absent" as const, reason: r.reason ?? null };
         if (r.late && (r.lateMin || 0) > 0)
-          return { student_id, status: "late" as const, minutes_late: r.lateMin || 0, reason: r.reason ?? null };
+          return {
+            student_id,
+            status: "late" as const,
+            minutes_late: r.lateMin || 0,
+            reason: r.reason ?? null,
+          };
         return { student_id, status: "present" as const };
       });
 
@@ -417,10 +469,10 @@ export default function TeacherDashboard() {
         body: JSON.stringify({ session_id: open.id, marks }),
       });
       const j = await r.json();
-      if (!r.ok) throw new Error(j?.error || "Ã‰chec enregistrement");
+      if (!r.ok) throw new Error(j?.error || "Échec enregistrement");
       setMsg(`Enregistré : ${j.upserted} abs./ret. — ${j.deleted} suppressions (présent).`);
     } catch (e: any) {
-      setMsg(e?.message || "Ã‰chec enregistrement");
+      setMsg(e?.message || "Échec enregistrement");
     } finally {
       setBusy(false);
     }
@@ -433,13 +485,13 @@ export default function TeacherDashboard() {
     try {
       const r = await fetch("/api/teacher/sessions/end", { method: "PATCH" });
       const j = await r.json();
-      if (!r.ok) throw new Error(j?.error || "Ã‰chec fin de séance");
+      if (!r.ok) throw new Error(j?.error || "Échec fin de séance");
       setOpen(null);
       setRoster([]);
       setRows({});
       setMsg("Séance terminée.");
     } catch (e: any) {
-      setMsg(e?.message || "Ã‰chec fin de séance");
+      setMsg(e?.message || "Échec fin de séance");
     } finally {
       setBusy(false);
     }
@@ -468,11 +520,11 @@ export default function TeacherDashboard() {
         body: JSON.stringify(payload),
       });
       const j2 = await r2.json();
-      if (!r2.ok) throw new Error(j2?.error || "Ã‰chec prochaine heure");
+      if (!r2.ok) throw new Error(j2?.error || "Échec prochaine heure");
       setOpen(j2.item as OpenSession);
       setMsg("Nouvelle heure démarrée.");
     } catch (e: any) {
-      setMsg(e?.message || "Ã‰chec enchaînement");
+      setMsg(e?.message || "Échec enchaînement");
     } finally {
       setBusy(false);
     }
@@ -493,17 +545,21 @@ export default function TeacherDashboard() {
       const applicationServerKey = urlBase64ToUint8Array(String(key));
       const reg = await navigator.serviceWorker.register("/sw.js");
       let sub = await reg.pushManager.getSubscription();
-      if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey });
+      if (!sub)
+        sub = await reg.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey,
+        });
       const res = await fetch("/api/push/subscribe", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ subscription: sub }),
       });
       const j = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(j?.error || "Ã‰chec enregistrement push");
-      setMsg("Notifications push activées âœ…");
+      if (!res.ok) throw new Error(j?.error || "Échec enregistrement push");
+      setMsg("Notifications push activées ✅");
     } catch (e: any) {
-      setMsg(e?.message || "Ã‰chec d’activation des push");
+      setMsg(e?.message || "Échec d’activation des push");
     }
   }
 
@@ -557,11 +613,6 @@ export default function TeacherDashboard() {
           <TabButton active={tab === "parent"} onClick={() => setTab("parent")}>
             <BookOpen className="mr-1 h-4 w-4" /> Espace parent
           </TabButton>
-          <a href="/account" className="sr-only md:not-sr-only">
-            <GhostButton>
-              <Settings className="h-4 w-4" /> Paramètres
-            </GhostButton>
-          </a>
           <a href="/logout" className="sr-only md:not-sr-only">
             <GhostButton tone="red">
               <LogOut className="h-4 w-4" /> Déconnexion
@@ -573,7 +624,7 @@ export default function TeacherDashboard() {
       {tab === "classes" ? (
         <>
           {/* Sélection + paramètres horaire */}
-          <div className="rounded-2xl border border-emerald-200 bg-gradient-to-b from-emerald-50/60 to-white p-5 space-y-4 ring-1 ring-emerald-100">
+          <div className="rounded-2xl border border-emerald-200 bg-linear-to-b from-emerald-50/60 to-white p-5 space-y-4 ring-1 ring-emerald-100">
             <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
               <div>
                 <div className="mb-1 flex items-center gap-2 text-xs text-slate-500">
@@ -589,7 +640,7 @@ export default function TeacherDashboard() {
                   ))}
                 </Select>
                 <div className="mt-1 text-[11px] text-slate-500">
-                  <Chip tone="amber">Astuce</Chip> Seules les classes oÃ¹ vous êtes affecté(e) apparaissent.
+                  <Chip tone="amber">Astuce</Chip> Seules les classes où vous êtes affecté(e) apparaissent.
                 </div>
               </div>
               <div>
@@ -650,22 +701,20 @@ export default function TeacherDashboard() {
             <div className="rounded-2xl border bg-white p-5 shadow-sm">
               <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                 <div className="text-sm font-semibold text-slate-700">
-                  Appel — {open.class_label} {open.subject_name ? `â€¢ ${open.subject_name}` : ""} â€¢{" "}
+                  Appel — {open.class_label} {open.subject_name ? `• ${open.subject_name}` : ""} •{" "}
                   {new Date(open.started_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                   {open.expected_minutes
-                    ? ` â†’ ${new Date(new Date(open.started_at).getTime() + open.expected_minutes * 60000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
+                    ? ` → ${new Date(new Date(open.started_at).getTime() + open.expected_minutes * 60000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
                     : ""}
                 </div>
-                <Chip>
-                  {changedCount} modif{changedCount > 1 ? "s" : ""} en cours
-                </Chip>
+                <Chip>{changedCount} modif{changedCount > 1 ? "s" : ""} en cours</Chip>
               </div>
 
               <div className="overflow-x-auto rounded-xl border">
                 <table className="min-w-full text-sm">
                   <thead className="bg-slate-50 sticky top-0 z-10">
                     <tr className="text-left text-slate-600">
-                      <th className="px-3 py-2 w-12">NÂ°</th>
+                      <th className="px-3 py-2 w-12">N°</th>
                       <th className="px-3 py-2 w-40">Matricule</th>
                       <th className="px-3 py-2">Nom et prénoms</th>
                       <th className="px-3 py-2">Absent</th>
@@ -747,7 +796,7 @@ export default function TeacherDashboard() {
           {mobileBar}
         </>
       ) : (
-        // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ Espace parent (aperçu résumé + accordéon) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        // ───────────── Espace parent (aperçu résumé + accordéon) ─────────────
         <div className="rounded-2xl border bg-white p-5 shadow-sm">
           <div className="mb-3 flex items-center justify-between">
             <div className="text-sm font-semibold uppercase tracking-wide text-slate-700">
@@ -758,17 +807,11 @@ export default function TeacherDashboard() {
                 <Bell className="h-4 w-4" />
                 Activer les push
               </GhostButton>
-              <a href="/account">
-                <GhostButton>
-                  <Settings className="h-4 w-4" />
-                  Paramètres du compte
-                </GhostButton>
-              </a>
             </div>
           </div>
 
           {kids.length === 0 ? (
-            <div className="text-sm text-slate-500">Aucun enfant lié Ã  votre compte pour l’instant.</div>
+            <div className="text-sm text-slate-500">Aucun enfant lié à votre compte pour l’instant.</div>
           ) : (
             <div className="space-y-4">
               {kids.map((k) => {
@@ -785,7 +828,9 @@ export default function TeacherDashboard() {
                       </div>
                       {groups.length > 3 && (
                         <button
-                          onClick={() => setShowAllDaysForKid((m) => ({ ...m, [k.id]: !m[k.id] }))}
+                          onClick={() =>
+                            setShowAllDaysForKid((m) => ({ ...m, [k.id]: !m[k.id] }))
+                          }
                           className="text-xs text-slate-700 underline-offset-2 hover:underline"
                         >
                           {showAll ? "Réduire" : "Voir plus"}
@@ -801,7 +846,7 @@ export default function TeacherDashboard() {
                         const parts: string[] = [];
                         if (g.absentCount) parts.push(`${g.absentCount} absence${g.absentCount > 1 ? "s" : ""}`);
                         if (g.lateCount) parts.push(`${g.lateCount} retard${g.lateCount > 1 ? "s" : ""}`);
-                        const summary = parts.length ? parts.join(" â€¢ ") : "Aucun événement";
+                        const summary = parts.length ? parts.join(" • ") : "Aucun évènement";
 
                         return (
                           <li key={g.day} className="rounded-lg border p-3">
@@ -812,7 +857,9 @@ export default function TeacherDashboard() {
 
                               {g.items.length > 0 && (
                                 <button
-                                  onClick={() => setExpanded((m) => ({ ...m, [key]: !m[key] }))}
+                                  onClick={() =>
+                                    setExpanded((m) => ({ ...m, [key]: !m[key] }))
+                                  }
                                   className="inline-flex items-center gap-1 text-xs text-emerald-700 underline-offset-2 hover:underline"
                                 >
                                   {isOpen || hasSingle ? (
@@ -839,7 +886,8 @@ export default function TeacherDashboard() {
                                         {ev.type === "absent" ? "Absence" : "Retard"} — {ev.subject_name || "—"}
                                       </div>
                                       <div className="text-xs text-slate-500">
-                                        {fmt(ev.when)} {ev.type === "late" && ev.minutes_late ? `â€¢ ${ev.minutes_late} min` : ""}
+                                        {fmt(ev.when)}{" "}
+                                        {ev.type === "late" && ev.minutes_late ? `• ${ev.minutes_late} min` : ""}
                                       </div>
                                     </div>
                                     <div className="text-xs text-slate-400">{ev.class_label || ""}</div>
@@ -850,7 +898,9 @@ export default function TeacherDashboard() {
                           </li>
                         );
                       })}
-                      {visibleGroups.length === 0 && <li className="py-2 text-sm text-slate-500">Aucun événement récent.</li>}
+                      {visibleGroups.length === 0 && (
+                        <li className="py-2 text-sm text-slate-500">Aucun évènement récent.</li>
+                      )}
                     </ul>
                   </div>
                 );
@@ -868,5 +918,3 @@ export default function TeacherDashboard() {
     </div>
   );
 }
-
-

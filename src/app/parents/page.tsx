@@ -3,7 +3,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 
-/* â”€â”€â”€â”€â”€â”€â”€â”€â”€ helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ������������������ helpers ������������������ */
 function urlBase64ToUint8Array(base64: string) {
   const padding = "=".repeat((4 - (base64.length % 4)) % 4);
   const base64url = (base64 + padding).replace(/-/g, "+").replace(/_/g, "/");
@@ -21,7 +21,7 @@ const fmt = (iso: string) =>
     year: "numeric",
   });
 
-/** YYYY-MM-DD (UTC-safe pour notre usage d’affichage) */
+/** YYYY-MM-DD (UTC-safe pour notre usage daffichage) */
 function dayKey(iso: string) {
   const d = new Date(iso);
   const y = d.getFullYear();
@@ -37,12 +37,12 @@ function dayLabel(iso: string) {
     a.getFullYear() === b.getFullYear() &&
     a.getMonth() === b.getMonth() &&
     a.getDate() === b.getDate();
-  if (same(d, today)) return "Aujourd’hui";
+  if (same(d, today)) return "Aujourdhui";
   if (same(d, yday)) return "Hier";
   return d.toLocaleDateString([], { day: "2-digit", month: "2-digit", year: "numeric" });
 }
 
-/* â”€â”€â”€â”€â”€â”€â”€â”€â”€ types â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ������������������ types ������������������ */
 type Kid = { id: string; full_name: string; class_label: string | null };
 type Ev = {
   id: string;
@@ -62,7 +62,7 @@ type Notif = {
   payload?: Record<string, any>;
 };
 
-/* â”€â”€â”€â”€â”€â”€â”€â”€â”€ petites icônes inline (aucune dépendance externe) â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ������������������ petites ic�nes inline (aucune d�pendance externe) ������������������ */
 function BellIcon(p: { className?: string }) {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} className={p.className}>
@@ -87,7 +87,7 @@ function ClockIcon(p: { className?: string }) {
   );
 }
 
-/* â”€â”€â”€â”€â”€â”€â”€â”€â”€ UI helpers (inputs/boutons pro & accessibles) â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ������������������ UI helpers (inputs/boutons pro & accessibles) ������������������ */
 function Input(p: React.InputHTMLAttributes<HTMLInputElement>) {
   return (
     <input
@@ -159,7 +159,7 @@ function Chip({ children, tone = "emerald" }: { children: React.ReactNode; tone?
   );
 }
 
-/* â”€â”€â”€â”€â”€â”€â”€â”€â”€ thèmes de couleur â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ������������������ th�mes de couleur ������������������ */
 const TONES = {
   red: { bg: "bg-rose-50/60", text: "text-rose-700", ring: "border-rose-200" },
   amber: { bg: "bg-amber-50/60", text: "text-amber-700", ring: "border-amber-200" },
@@ -167,7 +167,7 @@ const TONES = {
 } as const;
 type NotifTone = keyof typeof TONES;
 
-/** Déduit l’apparence Ã  partir de severity et du contenu (fallback robuste) */
+/** D�duit lapparence � partir de severity et du contenu (fallback robuste) */
 function getNotifMeta(
   n: Notif
 ): {
@@ -185,13 +185,13 @@ function getNotifMeta(
   return { tone: "sky", Icon: BellIcon, label: "Notification" };
 }
 
-/* â”€â”€â”€â”€â”€â”€â”€â”€â”€ regroupement des événements par jour â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ������������������ regroupement des �v�nements par jour ������������������ */
 type DayGroup = {
   day: string;      // "YYYY-MM-DD"
-  label: string;    // "Aujourd’hui" / "Hier" / "23/10/2025"
+  label: string;    // "Aujourdhui" / "Hier" / "23/10/2025"
   absentCount: number;
   lateCount: number;
-  items: Ev[];      // triés du plus récent au plus ancien
+  items: Ev[];      // tri�s du plus r�cent au plus ancien
 };
 function groupByDay(events: Ev[]): DayGroup[] {
   const buckets = new Map<string, Ev[]>();
@@ -211,7 +211,7 @@ function groupByDay(events: Ev[]): DayGroup[] {
   return groups;
 }
 
-/* â”€â”€â”€â”€â”€â”€â”€â”€â”€ composant â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ������������������ composant ������������������ */
 export default function ParentPage() {
   const [kids, setKids] = useState<Kid[]>([]);
   const [feed, setFeed] = useState<Record<string, Ev[]>>({});
@@ -226,7 +226,7 @@ export default function ParentPage() {
   const [pwdMsg, setPwdMsg] = useState<string | null>(null);
   const [pwdBusy, setPwdBusy] = useState(false);
 
-  // état UI résumé â†’ détails
+  // �tat UI r�sum� �  d�tails
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [showAllDaysForKid, setShowAllDaysForKid] = useState<Record<string, boolean>>({});
 
@@ -306,7 +306,7 @@ export default function ParentPage() {
       }
       const { key } = await fetch("/api/push/vapid", { cache: "no-store" }).then((r) => r.json());
       if (!key) {
-        setMsg("Clé VAPID indisponible.");
+        setMsg("Cl� VAPID indisponible.");
         return;
       }
       const applicationServerKey = urlBase64ToUint8Array(String(key));
@@ -321,9 +321,9 @@ export default function ParentPage() {
       });
       if (!res.ok) {
         const j = await res.json().catch(() => ({}));
-        throw new Error(j?.error || "Ã‰chec enregistrement push");
+        throw new Error(j?.error || "�0chec enregistrement push");
       }
-      setMsg("Notifications push activées âœ…");
+      setMsg("Notifications push activ�es �S&");
     } catch (e: any) {
       setMsg(e?.message || "Activation push impossible");
     }
@@ -348,8 +348,8 @@ export default function ParentPage() {
         body: JSON.stringify({ new_password: newPwd }),
       });
       const j = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(j?.error || "Ã‰chec");
-      setPwdMsg("Mot de passe mis Ã  jour âœ…");
+      if (!r.ok) throw new Error(j?.error || "�0chec");
+      setPwdMsg("Mot de passe mis � jour �S&");
       setNewPwd("");
       setNewPwd2("");
     } catch (e: any) {
@@ -361,10 +361,10 @@ export default function ParentPage() {
 
   const hasUnread = useMemo(() => notifs.some((n) => !n.read_at), [notifs]);
 
-  /* â”€â”€â”€â”€â”€â”€â”€â”€â”€ rendu â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+  /* ������������������ rendu ������������������ */
   return (
     <main className="mx-auto max-w-5xl p-4 md:p-6 space-y-6 scroll-smooth">
-      {/* Bande d’en-tête BLEU NUIT (locale Ã  la page, ne casse rien au layout) */}
+      {/* Bande den-t�te BLEU NUIT (locale � la page, ne casse rien au layout) */}
       <header
         className={[
           "flex items-center justify-between rounded-2xl px-5 py-4 shadow-sm",
@@ -382,16 +382,16 @@ export default function ParentPage() {
           <a
             href="#mon-compte"
             className="rounded-full bg-white/10 px-3 py-1.5 text-sm text-white ring-1 ring-white/30 hover:bg-white/15 hover:ring-white/50"
-            title="Accéder Ã  la section Mon compte"
+            title="Acc�der � la section Mon compte"
           >
             Mon compte
           </a>
           <a
             href="/logout"
             className="rounded-full bg-white/10 px-3 py-1.5 text-sm text-white ring-1 ring-white/30 hover:bg-white/15 hover:ring-white/50"
-            title="Se déconnecter"
+            title="Se d�connecter"
           >
-            Déconnexion
+            D�connexion
           </a>
           <button
             onClick={enablePush}
@@ -411,9 +411,9 @@ export default function ParentPage() {
             <button
               onClick={loadNotifs}
               className="text-xs text-slate-700 underline-offset-2 hover:underline"
-              title="Rafraîchir"
+              title="Rafra�chir"
             >
-              Rafraîchir
+              Rafra�chir
             </button>
             <button
               className="text-xs text-emerald-700 underline-offset-2 hover:underline disabled:opacity-40"
@@ -426,7 +426,7 @@ export default function ParentPage() {
         </div>
 
         {loadingNotifs ? (
-          <div className="text-sm text-slate-500">Chargement…</div>
+          <div className="text-sm text-slate-500">Chargement&</div>
         ) : notifs.length === 0 ? (
           <div className="text-sm text-slate-500">Aucune notification.</div>
         ) : (
@@ -467,7 +467,7 @@ export default function ParentPage() {
 
                       {n.body && <div className="mt-0.5 text-sm text-slate-700">{n.body}</div>}
                       <div className="mt-1 text-[11px] text-slate-500">
-                        {fmt(n.created_at)} {n.read_at ? "Â· lu" : "Â· non lu"}
+                        {fmt(n.created_at)} {n.read_at ? "� lu" : "� non lu"}
                       </div>
                     </div>
                   </div>
@@ -478,16 +478,16 @@ export default function ParentPage() {
         )}
       </section>
 
-      {/* Mes enfants — avec résumé/accordéon par jour */}
+      {/* Mes enfants  avec r�sum�/accord�on par jour */}
       <section className="rounded-2xl border bg-white p-5 shadow-sm">
         <div className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-700">
-          Mes enfants — Absences/retards récents
+          Mes enfants  Absences/retards r�cents
         </div>
 
         {loadingKids ? (
-          <div className="text-sm text-slate-500">Chargement…</div>
+          <div className="text-sm text-slate-500">Chargement&</div>
         ) : kids.length === 0 ? (
-          <div className="text-sm text-slate-500">Aucun enfant lié Ã  votre compte pour l’instant.</div>
+          <div className="text-sm text-slate-500">Aucun enfant li� � votre compte pour linstant.</div>
         ) : (
           <div className="space-y-4">
             {kids.map((k) => {
@@ -499,19 +499,19 @@ export default function ParentPage() {
                 <div key={k.id} className="rounded-xl border p-4">
                   <div className="flex items-center justify-between">
                     <div className="font-medium">
-                      {k.full_name} <span className="text-xs text-slate-500">({k.class_label || "—"})</span>
+                      {k.full_name} <span className="text-xs text-slate-500">({k.class_label || ""})</span>
                     </div>
                     {groups.length > 3 && (
                       <button
                         onClick={() => setShowAllDaysForKid((m) => ({ ...m, [k.id]: !m[k.id] }))}
                         className="text-xs text-slate-700 underline-offset-2 hover:underline"
                       >
-                        {showAll ? "Réduire" : "Voir plus"}
+                        {showAll ? "R�duire" : "Voir plus"}
                       </button>
                     )}
                   </div>
 
-                  {/* Groupes par jour (résumé â†’ accordéon) */}
+                  {/* Groupes par jour (r�sum� �  accord�on) */}
                   <ul className="mt-2 space-y-2">
                     {visibleGroups.map((g) => {
                       const key = `${k.id}|${g.day}`;
@@ -521,7 +521,7 @@ export default function ParentPage() {
                       const parts: string[] = [];
                       if (g.absentCount) parts.push(`${g.absentCount} absence${g.absentCount > 1 ? "s" : ""}`);
                       if (g.lateCount) parts.push(`${g.lateCount} retard${g.lateCount > 1 ? "s" : ""}`);
-                      const summary = parts.length ? parts.join(" â€¢ ") : "Aucun événement";
+                      const summary = parts.length ? parts.join(" " ") : "Aucun �v�nement";
 
                       return (
                         <li key={g.day} className="rounded-lg border p-3">
@@ -535,7 +535,7 @@ export default function ParentPage() {
                                 onClick={() => setExpanded((m) => ({ ...m, [key]: !m[key] }))}
                                 className="text-xs text-emerald-700 underline-offset-2 hover:underline"
                               >
-                                {isOpen || hasSingle ? "Masquer" : "Voir détails"}
+                                {isOpen || hasSingle ? "Masquer" : "Voir d�tails"}
                               </button>
                             )}
                           </div>
@@ -546,10 +546,10 @@ export default function ParentPage() {
                                 <li key={ev.id} className="py-2 flex items-center justify-between text-sm">
                                   <div>
                                     <div className="text-slate-800">
-                                      {ev.type === "absent" ? "Absence" : "Retard"} — {ev.subject_name || "—"}
+                                      {ev.type === "absent" ? "Absence" : "Retard"}  {ev.subject_name || ""}
                                     </div>
                                     <div className="text-xs text-slate-500">
-                                      {fmt(ev.when)} {ev.type === "late" && ev.minutes_late ? `â€¢ ${ev.minutes_late} min` : ""}
+                                      {fmt(ev.when)} {ev.type === "late" && ev.minutes_late ? `" ${ev.minutes_late} min` : ""}
                                     </div>
                                   </div>
                                   <div className="text-xs text-slate-400">{ev.class_label || ""}</div>
@@ -562,7 +562,7 @@ export default function ParentPage() {
                     })}
 
                     {visibleGroups.length === 0 && (
-                      <li className="py-2 text-sm text-slate-500">Aucun événement récent.</li>
+                      <li className="py-2 text-sm text-slate-500">Aucun �v�nement r�cent.</li>
                     )}
                   </ul>
                 </div>
@@ -576,7 +576,7 @@ export default function ParentPage() {
       <section id="mon-compte" className="rounded-2xl border bg-white p-5 shadow-sm scroll-mt-24">
         <div className="mb-2 flex items-center justify-between">
           <div className="text-sm font-semibold uppercase tracking-wide text-slate-700">Mon compte</div>
-          <Chip tone="slate">Sécurité</Chip>
+          <Chip tone="slate">S�curit�</Chip>
         </div>
         <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
           <div>
@@ -585,7 +585,7 @@ export default function ParentPage() {
               type="password"
               value={newPwd}
               onChange={(e) => setNewPwd(e.target.value)}
-              placeholder="â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢"
+              placeholder=""""""""""
             />
           </div>
           <div>
@@ -594,12 +594,12 @@ export default function ParentPage() {
               type="password"
               value={newPwd2}
               onChange={(e) => setNewPwd2(e.target.value)}
-              placeholder="â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢"
+              placeholder=""""""""""
             />
           </div>
           <div className="flex items-end">
             <Button onClick={changePassword} disabled={pwdBusy}>
-              {pwdBusy ? "Mise Ã  jour…" : "Changer mon mot de passe"}
+              {pwdBusy ? "Mise � jour&" : "Changer mon mot de passe"}
             </Button>
           </div>
         </div>

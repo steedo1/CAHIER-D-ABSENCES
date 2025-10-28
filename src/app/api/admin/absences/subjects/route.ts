@@ -22,13 +22,13 @@ export async function GET(req: Request) {
   const level    = searchParams.get("level")     || "";
   const class_id = searchParams.get("class_id")  || "";
 
-  // Ã‰tablissement
+  // �0tablissement
   const { data: me } = await supa
     .from("profiles").select("institution_id").eq("id", user.id).maybeSingle();
   const institution_id = me?.institution_id as string | null;
   if (!institution_id) return NextResponse.json({ items: [] });
 
-  // Marques de la période
+  // Marques de la p�riode
   let mq = srv
     .from("v_mark_minutes")
     .select("class_id, subject_id, started_at")
@@ -52,7 +52,7 @@ export async function GET(req: Request) {
     marks = marks.filter(m => lvlMap.get(m.class_id!) === level);
   }
 
-  // IDs de matière
+  // IDs de mati�re
   const subjIds = Array.from(new Set(marks.map(m => m.subject_id).filter(Boolean))) as string[];
   const nameMap = new Map<string,string>();
   if (subjIds.length) {
@@ -92,11 +92,11 @@ export async function GET(req: Request) {
         .from("subjects")
         .select("id, name")
         .in("id", missing);
-      for (const s of plain || []) nameMap.set(s.id as string, String((s as any).name ?? "—"));
+      for (const s of plain || []) nameMap.set(s.id as string, String((s as any).name ?? ""));
     }
   }
 
-  // Agrégat par matière
+  // Agr�gat par mati�re
   const agg = new Map<string, number>();
   for (const m of marks) {
     if (!m.subject_id) continue;
@@ -104,7 +104,7 @@ export async function GET(req: Request) {
   }
 
   const items = Array.from(agg.entries())
-    .map(([id, abs]) => ({ name: nameMap.get(id) || "—", absents: abs }))
+    .map(([id, abs]) => ({ name: nameMap.get(id) || "", absents: abs }))
     .sort((a, b) => a.name.localeCompare(b.name, "fr", { sensitivity: "base" }));
 
   return NextResponse.json({ items });

@@ -12,7 +12,7 @@ function addMonthsISO(dateISO: string, months: number) {
 }
 
 export async function GET(req: Request) {
-  // ðŸ” vérifie super_admin
+  // �x� v�rifie super_admin
   const s = await getSupabaseServerClient();
   const { data: { user } } = await s.auth.getUser();
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });

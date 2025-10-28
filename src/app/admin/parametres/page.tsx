@@ -1,7 +1,7 @@
 // src/app/admin/parametres/page.tsx
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 
 /* =========================
    Types
@@ -18,17 +18,35 @@ type Profile = {
 /* =========================
    Mini UI helpers
 ========================= */
-function Badge({ children, color = "sky" }: { children: React.ReactNode; color?: "sky" | "violet" | "rose" | "slate" }) {
+function Badge({
+  children,
+  color = "sky",
+}: {
+  children: React.ReactNode;
+  color?: "sky" | "violet" | "rose" | "slate";
+}) {
   const map: Record<string, string> = {
     sky: "bg-sky-50 text-sky-700 border-sky-200",
     violet: "bg-violet-50 text-violet-700 border-violet-200",
     rose: "bg-rose-50 text-rose-700 border-rose-200",
     slate: "bg-slate-50 text-slate-700 border-slate-200",
   };
-  return <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium ${map[color]}`}>{children}</span>;
+  return (
+    <span
+      className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium ${map[color]}`}
+    >
+      {children}
+    </span>
+  );
 }
 
-function Modal(props: { open: boolean; title: string; onClose: () => void; children: React.ReactNode; actions?: React.ReactNode }) {
+function Modal(props: {
+  open: boolean;
+  title: string;
+  onClose: () => void;
+  children: React.ReactNode;
+  actions?: React.ReactNode;
+}) {
   if (!props.open) return null;
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/30 px-4">
@@ -39,7 +57,10 @@ function Modal(props: { open: boolean; title: string; onClose: () => void; child
         <div className="p-4">{props.children}</div>
         <div className="flex items-center justify-end gap-2 border-t p-3">
           {props.actions}
-          <button onClick={props.onClose} className="rounded-lg border px-3 py-1.5 text-sm hover:bg-slate-50">
+          <button
+            onClick={props.onClose}
+            className="rounded-lg border px-3 py-1.5 text-sm hover:bg-slate-50"
+          >
             Fermer
           </button>
         </div>
@@ -106,8 +127,8 @@ export default function AdminSettingsPage() {
         body: JSON.stringify({ new_password: pwd1 }),
       });
       const j = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(j?.error || "Ã‰chec de mise Ã  jour");
-      setMsgMine("Mot de passe mis Ã  jour âœ…");
+      if (!r.ok) throw new Error(j?.error || "Échec de mise à jour");
+      setMsgMine("Mot de passe mis à jour ✅");
       setPwd1("");
       setPwd2("");
     } catch (e: any) {
@@ -148,8 +169,8 @@ export default function AdminSettingsPage() {
         body: JSON.stringify({ user_id: user.id }), // mot de passe temporaire côté serveur
       });
       const j = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(j?.error || "Ã‰chec de réinitialisation");
-      alert("Mot de passe réinitialisé (temporaire). Communiquez-le Ã  l'utilisateur.");
+      if (!r.ok) throw new Error(j?.error || "Échec de réinitialisation");
+      alert("Mot de passe réinitialisé (temporaire). Communiquez-le à l'utilisateur.");
     } catch (e: any) {
       alert(e?.message || "Erreur");
     }
@@ -176,8 +197,8 @@ export default function AdminSettingsPage() {
         body: JSON.stringify({ user_id: targetUser.id, new_password: customPwd }),
       });
       const j = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(j?.error || "Ã‰chec de réinitialisation");
-      setCustomMsg("Mot de passe mis Ã  jour âœ…");
+      if (!r.ok) throw new Error(j?.error || "Échec de réinitialisation");
+      setCustomMsg("Mot de passe mis à jour ✅");
       setTimeout(() => setModalOpen(false), 600);
     } catch (e: any) {
       setCustomMsg(e?.message || "Erreur");
@@ -186,14 +207,14 @@ export default function AdminSettingsPage() {
     }
   }
 
-  const roleColor = (r?: Role | null) =>
+  const roleColor = (r?: Role | null): "violet" | "sky" | "rose" | "slate" =>
     r === "super_admin" ? "violet" : r === "admin" ? "sky" : r === "teacher" ? "rose" : "slate";
 
   const disableMine = busyMine;
   const disableCustom = busyCustom;
 
   return (
-    <main className="mx-auto max-w-6xl p-4 md:p-6 space-y-6">
+    <main className="mx-auto max-w-6xl space-y-6 p-4 md:p-6">
       <header className="mb-2">
         <h1 className="text-2xl font-semibold text-slate-900">Paramètres</h1>
         <p className="text-sm text-slate-600">Gérez votre mot de passe et ceux de vos utilisateurs.</p>
@@ -225,7 +246,7 @@ export default function AdminSettingsPage() {
               value={pwd1}
               onChange={(e) => setPwd1(e.target.value)}
               disabled={disableMine}
-              placeholder="â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢"
+              placeholder="••••••••"
             />
           </div>
 
@@ -246,7 +267,7 @@ export default function AdminSettingsPage() {
               value={pwd2}
               onChange={(e) => setPwd2(e.target.value)}
               disabled={disableMine}
-              placeholder="â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢"
+              placeholder="••••••••"
             />
           </div>
 
@@ -254,9 +275,9 @@ export default function AdminSettingsPage() {
             <button
               onClick={changeMyPassword}
               disabled={disableMine}
-              className="rounded-xl bg-sky-700 text-white px-4 py-2 text-sm font-medium shadow disabled:opacity-60 hover:bg-sky-800"
+              className="rounded-xl bg-sky-700 px-4 py-2 text-sm font-medium text-white shadow hover:bg-sky-800 disabled:opacity-60"
             >
-              {busyMine ? "Mise Ã  jour…" : "Changer mon mot de passe"}
+              {busyMine ? "Mise à jour…" : "Changer mon mot de passe"}
             </button>
           </div>
         </div>
@@ -291,7 +312,11 @@ export default function AdminSettingsPage() {
           </div>
         </div>
 
-        {errUsers && <div className="mb-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{errUsers}</div>}
+        {errUsers && (
+          <div className="mb-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+            {errUsers}
+          </div>
+        )}
 
         {loadingUsers ? (
           <div className="text-sm text-slate-500">Chargement des utilisateurs…</div>
@@ -351,7 +376,7 @@ export default function AdminSettingsPage() {
       {/* Modal mot de passe personnalisé */}
       <Modal
         open={modalOpen}
-        title={`Définir un mot de passe — ${(targetUser?.display_name || targetUser?.email || targetUser?.phone || "Utilisateur")}`}
+        title={`Définir un mot de passe — ${targetUser?.display_name || targetUser?.email || targetUser?.phone || "Utilisateur"}`}
         onClose={() => setModalOpen(false)}
         actions={
           <>
@@ -360,7 +385,7 @@ export default function AdminSettingsPage() {
               disabled={disableCustom}
               className="rounded-lg bg-sky-700 px-3 py-1.5 text-sm font-medium text-white hover:bg-sky-800 disabled:opacity-60"
             >
-              {busyCustom ? "Mise Ã  jour…" : "Valider"}
+              {busyCustom ? "Mise à jour…" : "Valider"}
             </button>
           </>
         }
@@ -383,7 +408,7 @@ export default function AdminSettingsPage() {
               value={customPwd}
               onChange={(e) => setCustomPwd(e.target.value)}
               disabled={disableCustom}
-              placeholder="â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢"
+              placeholder="••••••••"
             />
           </div>
 
@@ -404,20 +429,18 @@ export default function AdminSettingsPage() {
               value={customPwd2}
               onChange={(e) => setCustomPwd2(e.target.value)}
               disabled={disableCustom}
-              placeholder="â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢"
+              placeholder="••••••••"
             />
           </div>
 
           {customMsg && <div className="text-sm text-slate-700">{customMsg}</div>}
 
           <div className="rounded-lg border border-yellow-200 bg-yellow-50 px-3 py-2 text-[12px] text-yellow-800">
-            Astuce : laissez ce modal et utilisez <b>“Réinit. temporaireâ€</b> si vous préférez
-            générer un mot de passe provisoire : Pass2025.
+            Astuce : laissez ce modal et utilisez <b>“Réinit. temporaire”</b> si vous préférez
+            générer un mot de passe provisoire (par défaut côté serveur).
           </div>
         </div>
       </Modal>
     </main>
   );
 }
-
-

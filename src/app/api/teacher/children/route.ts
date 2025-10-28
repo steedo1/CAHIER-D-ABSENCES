@@ -4,10 +4,10 @@ import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 
 export async function GET() {
-  const supa = await getSupabaseServerClient();   // RLS (pour connaître l'utilisateur et son établissement)
+  const supa = await getSupabaseServerClient();   // RLS (pour conna�tre l'utilisateur et son �tablissement)
   const srv  = getSupabaseServiceClient();        // service (pas de RLS) pour faire les jointures simplement
 
-  // Utilisateur connecté
+  // Utilisateur connect�
   const { data: { user } } = await supa.auth.getUser();
   if (!user) return NextResponse.json({ items: [] }, { status: 401 });
 
@@ -20,7 +20,7 @@ export async function GET() {
   const inst = (me?.institution_id as string) || null;
   if (!inst) return NextResponse.json({ items: [] });
 
-  // 1) Tous les student_id liés Ã  ce parent
+  // 1) Tous les student_id li�s � ce parent
   const { data: links, error: lErr } = await srv
     .from("student_guardians")
     .select("student_id")
@@ -31,7 +31,7 @@ export async function GET() {
   const studentIds = Array.from(new Set((links || []).map(r => String(r.student_id))));
   if (!studentIds.length) return NextResponse.json({ items: [] });
 
-  // 2) Noms des élèves
+  // 2) Noms des �l�ves
   const { data: studs } = await srv
     .from("students")
     .select("id, first_name, last_name")
@@ -51,7 +51,7 @@ export async function GET() {
 
   const items = (studs || []).map(s => ({
     id: String(s.id),
-    full_name: `${s.first_name ?? ""} ${s.last_name ?? ""}`.trim() || "—",
+    full_name: `${s.first_name ?? ""} ${s.last_name ?? ""}`.trim() || "",
     class_label: classLabelByStudent.get(String(s.id)) || null,
   }));
 

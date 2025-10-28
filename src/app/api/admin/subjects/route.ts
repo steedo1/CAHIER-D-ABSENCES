@@ -2,7 +2,7 @@
 import { NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
-/** Renvoie les matières disponibles pour l'établissement courant (triées par nom). */
+/** Renvoie les mati�res disponibles pour l'�tablissement courant (tri�es par nom). */
 export async function GET() {
   const supa = await getSupabaseServerClient();
 
@@ -14,7 +14,7 @@ export async function GET() {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
 
-  // 2) Récupération de l'établissement de l'admin courant
+  // 2) R�cup�ration de l'�tablissement de l'admin courant
   const { data: me, error: meErr } = await supa
     .from("profiles")
     .select("institution_id")
@@ -30,12 +30,12 @@ export async function GET() {
     return NextResponse.json({ items: [] });
   }
 
-  // 3) Lecture principale via la table de liaison institution_subjects â†’ subjects
+  // 3) Lecture principale via la table de liaison institution_subjects �  subjects
   try {
     const { data, error } = await supa
       .from("institution_subjects")
-      // NOTE : selon la définition de la relation, Supabase peut renvoyer
-      // subjects comme objet OU comme tableau. On gère les deux.
+      // NOTE : selon la d�finition de la relation, Supabase peut renvoyer
+      // subjects comme objet OU comme tableau. On g�re les deux.
       .select("subject_id, subjects:subject_id(name)")
       .eq("institution_id", institutionId)
       .eq("is_active", true);
@@ -45,7 +45,7 @@ export async function GET() {
       return NextResponse.json({ items: fallback });
     }
 
-    // On traite de façon sÃ»re, sans assertions de types fragiles
+    // On traite de fa�on s�re, sans assertions de types fragiles
     const rows: any[] = data ?? [];
 
     const map = new Map<string, string>();
@@ -55,17 +55,17 @@ export async function GET() {
 
       const s = r?.subjects;
       if (Array.isArray(s)) {
-        // Relation renvoyée sous forme de tableau
+        // Relation renvoy�e sous forme de tableau
         if (s.length > 0) nm = String(s[0]?.name ?? "").trim();
       } else if (s && typeof s === "object") {
-        // Relation renvoyée sous forme d'objet
+        // Relation renvoy�e sous forme d'objet
         nm = String((s as any)?.name ?? "").trim();
       }
 
       if (id && nm) map.set(id, nm);
     }
 
-    // Tableau typé puis tri (évite les erreurs d'inférence)
+    // Tableau typ� puis tri (�vite les erreurs d'inf�rence)
     const items: Array<{ id: string; name: string }> = [];
     for (const [id, nm] of map.entries()) items.push({ id, name: nm });
     items.sort((a, b) => a.name.localeCompare(b.name, "fr"));
@@ -77,11 +77,11 @@ export async function GET() {
   }
 }
 
-/* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+/* ��������������������������������������������������������������������������������������������������������������������
    Fallback : si institution_subjects indisponible,
    on renvoie (si possible) la table subjects globale.
-   On garde la même forme { id, name } et tri par nom.
-â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+   On garde la m�me forme { id, name } et tri par nom.
+�������������������������������������������������������������������������������������������������������������������� */
 async function tryFallbackSubjects(supa: any) {
   try {
     const { data, error } = await supa
@@ -96,7 +96,7 @@ async function tryFallbackSubjects(supa: any) {
       const nm = s?.name ? String(s.name) : "";
       if (id && nm) list.push({ id, name: nm });
     }
-    // DéjÃ  trié en SQL ; tri JS par sécurité
+    // D�j� tri� en SQL ; tri JS par s�curit�
     list.sort((a, b) => a.name.localeCompare(b.name, "fr"));
     return list;
   } catch {

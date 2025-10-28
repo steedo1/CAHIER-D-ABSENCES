@@ -92,12 +92,12 @@ export default function SuperConsole() {
         body: JSON.stringify(body),
       });
       const j = await r.json();
-      if (!r.ok) throw new Error(j?.error || "Ã‰chec création établissement");
+      if (!r.ok) throw new Error(j?.error || "Échec création établissement");
       setName("");
       setCode("");
       setDuration(12);
       setSettings("{}");
-      setOkMsg("Ã‰tablissement créé.");
+      setOkMsg("Établissement créé.");
       await reloadInstitutions();
     } catch (e: any) {
       setError(e.message || String(e));
@@ -123,7 +123,7 @@ export default function SuperConsole() {
         }),
       });
       const j = await r.json();
-      if (!r.ok) throw new Error(j?.error || "Ã‰chec création admin");
+      if (!r.ok) throw new Error(j?.error || "Échec création admin");
 
       // On n’affiche pas de MDP ici : c’est DEFAULT_TEMP_PASSWORD côté serveur
       setOkMsg(
@@ -214,7 +214,7 @@ export default function SuperConsole() {
 
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
           <div>
-            <div className="mb-1 text-xs text-slate-500">Ã‰tablissement</div>
+            <div className="mb-1 text-xs text-slate-500">Établissement</div>
             <select
               value={adminInst}
               onChange={(e) => setAdminInst(e.target.value)}
@@ -270,5 +270,3 @@ export default function SuperConsole() {
     </div>
   );
 }
-
-

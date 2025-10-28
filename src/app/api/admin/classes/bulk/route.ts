@@ -5,13 +5,13 @@ import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 
 type Body = {
   level: string;
-  format: "none" | "numeric" | "alpha";   // â¬…ï¸ supporte aussi "none"
+  format: "none" | "numeric" | "alpha";   // �& supporte aussi "none"
   count: number;
   academic_year?: string | null;
-  codePrefix?: string | null; // ex: "LYC-ABJ" â†’ LYC-ABJ-6e1
+  codePrefix?: string | null; // ex: "LYC-ABJ" �  LYC-ABJ-6e1
 };
 
-// slugify simple et déterministe
+// slugify simple et d�terministe
 function slug(s: string) {
   return s
     .normalize("NFD")
@@ -21,7 +21,7 @@ function slug(s: string) {
     .replace(/^-+|-+$/g, "");
 }
 
-// Année scolaire par défaut avec pivot en aoÃ»t
+// Ann�e scolaire par d�faut avec pivot en ao�t
 function computeAcademicYear(d = new Date()) {
   const m = d.getUTCMonth() + 1; // 1..12
   const y = d.getUTCFullYear();
@@ -37,7 +37,7 @@ export async function POST(req: Request) {
   const academic_year = (body.academic_year ?? computeAcademicYear()) as string; // jamais null
   const codePrefix = body.codePrefix ?? null;
 
-  // Validation robuste : "none" autorisé et on forcera count=1
+  // Validation robuste : "none" autoris� et on forcera count=1
   const formatOk = format === "none" || format === "numeric" || format === "alpha";
   const countOk = Number.isFinite(count) && (format === "none" ? true : count >= 1 && count <= 30);
 
@@ -45,7 +45,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "bad_payload" }, { status: 400 });
   }
 
-  // 1) institution du user connecté
+  // 1) institution du user connect�
   const supabaseAuth = await getSupabaseServerClient();
   const {
     data: { user },
@@ -63,7 +63,7 @@ export async function POST(req: Request) {
 
   const institution_id = me.institution_id as string;
 
-  // 2) labels : pour "none", on crée exactement le niveau (ex: "CM2")
+  // 2) labels : pour "none", on cr�e exactement le niveau (ex: "CM2")
   const effectiveCount = format === "none" ? 1 : count;
   let labels: string[] = [];
 
@@ -75,7 +75,7 @@ export async function POST(req: Request) {
     labels = Array.from({ length: effectiveCount }, (_, i) => `${level}${String.fromCharCode(65 + i)}`); // 65='A'
   }
 
-  // 3) payload avec code toujours non-null + academic_year toujours renseigné
+  // 3) payload avec code toujours non-null + academic_year toujours renseign�
   const rows = labels.map((label) => {
     const base = slug(label); // ex: "cm2", "6e1", "6ea"
     const code = codePrefix ? `${codePrefix}-${base}` : base;
@@ -92,7 +92,7 @@ export async function POST(req: Request) {
   const supabaseAdmin = getSupabaseServiceClient();
   const { data, error } = await supabaseAdmin
     .from("classes")
-    .upsert(rows, { onConflict: "institution_id,label" }) // nécessite unique (institution_id,label)
+    .upsert(rows, { onConflict: "institution_id,label" }) // n�cessite unique (institution_id,label)
     .select("id,label,level,code,academic_year");
 
   if (error) return NextResponse.json({ error: error.message }, { status: 400 });

@@ -5,18 +5,19 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 const NAV = [
-  { href: "/super/dashboard", label: "Tableau de bord", icon: "ðŸ " },
+  { href: "/super/dashboard", label: "Tableau de bord", icon: "🏠" },
   // on garde cette page comme outil de création (ton écran actuel)
-  { href: "/super/etablissements", label: "Créer un abonnement", icon: "ðŸ§©" },
-  // âž• nouvel onglet : liste paginée + suppression
-  { href: "/super/etablissements/liste", label: "Liste des établissements", icon: "ðŸ“‹" },
-  { href: "/super/abonnements", label: "Mes abonnements", icon: "ðŸ§¾" },
-  { href: "/super/admins", label: "Liste des admins", icon: "ðŸ§‘â€ðŸ’¼" },
-  { href: "/super/parametres", label: "Paramètres", icon: "âš™ï¸" },
+  { href: "/super/etablissements", label: "Créer un abonnement", icon: "🧩" },
+  // ➤ nouvel onglet : liste paginée + suppression
+  { href: "/super/etablissements/liste", label: "Liste des établissements", icon: "📋" },
+  { href: "/super/abonnements", label: "Mes abonnements", icon: "🧾" },
+  { href: "/super/admins", label: "Liste des admins", icon: "🧑‍💼" },
+  { href: "/super/parametres", label: "Paramètres", icon: "⚙️" },
 ];
 
 export default function Shell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+
   return (
     <div className="min-h-screen bg-slate-50">
       <header className="sticky top-0 z-30 border-b bg-white">
@@ -36,7 +37,9 @@ export default function Shell({ children }: { children: React.ReactNode }) {
       <div className="mx-auto grid max-w-7xl grid-cols-12 gap-6 px-4 py-6">
         <aside className="col-span-12 md:col-span-3">
           <nav className="rounded-xl border bg-white p-3">
-            <div className="px-2 pb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Navigation</div>
+            <div className="px-2 pb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+              Navigation
+            </div>
             <ul className="space-y-1">
               {NAV.map((item) => {
                 const active = pathname === item.href || pathname.startsWith(item.href + "/");
@@ -49,7 +52,9 @@ export default function Shell({ children }: { children: React.ReactNode }) {
                         active ? "bg-violet-600 text-white" : "text-slate-700 hover:bg-slate-50",
                       ].join(" ")}
                     >
-                      <span className="text-base">{item.icon}</span>
+                      <span className="text-base" aria-hidden="true">
+                        {item.icon}
+                      </span>
                       <span>{item.label}</span>
                     </Link>
                   </li>
@@ -64,5 +69,3 @@ export default function Shell({ children }: { children: React.ReactNode }) {
     </div>
   );
 }
-
-

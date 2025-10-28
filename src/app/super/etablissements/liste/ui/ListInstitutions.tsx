@@ -1,3 +1,4 @@
+// src/app/super/etablissements/ui/ListInstitutions.tsx
 "use client";
 
 import { useEffect, useState } from "react";
@@ -32,8 +33,8 @@ export default function ListInstitutions() {
       setItems(list);
       setTotal(j.total || 0);
 
-      // Charger les compteurs Ã‰lèves pour les IDs de la page courante
-      const ids = list.map(i => i.id).join(",");
+      // Charger les compteurs élèves pour les IDs de la page courante
+      const ids = list.map((i) => i.id).join(",");
       setCounts({});
       if (ids) {
         setLoadingCounts(true);
@@ -48,7 +49,9 @@ export default function ListInstitutions() {
     }
   }
 
-  useEffect(() => { load(1, ""); }, []);
+  useEffect(() => {
+    load(1, "");
+  }, []);
 
   const pages = Math.max(1, Math.ceil(total / limit));
 
@@ -57,7 +60,7 @@ export default function ListInstitutions() {
     const r = await fetch(`/api/super/institutions/${id}`, { method: "DELETE" });
     const j = await r.json();
     if (!r.ok) {
-      alert(j?.error || "Ã‰chec de suppression");
+      alert(j?.error || "Échec de suppression");
       return;
     }
     await load();
@@ -73,7 +76,10 @@ export default function ListInstitutions() {
           className="w-full rounded-lg border px-3 py-2 text-sm"
         />
         <button
-          onClick={() => { setPage(1); load(1, q); }}
+          onClick={() => {
+            setPage(1);
+            load(1, q);
+          }}
           className="rounded-lg bg-violet-600 px-3 py-2 text-sm text-white"
         >
           Rechercher
@@ -84,10 +90,10 @@ export default function ListInstitutions() {
         <table className="min-w-full text-sm">
           <thead className="bg-slate-50 text-slate-600">
             <tr>
-              <th className="px-4 py-2 text-left">Ã‰tablissement</th>
+              <th className="px-4 py-2 text-left">Établissement</th>
               <th className="px-4 py-2 text-left">Code</th>
               <th className="px-4 py-2 text-left">Expire le</th>
-              <th className="px-4 py-2 text-left">Ã‰lèves</th>{/* â¬…ï¸ nouveau */}
+              <th className="px-4 py-2 text-left">Élèves</th>
               <th className="px-4 py-2 text-left">Actions</th>
             </tr>
           </thead>
@@ -96,23 +102,13 @@ export default function ListInstitutions() {
               <tr key={i.id} className="border-t">
                 <td className="px-4 py-2">{i.name}</td>
                 <td className="px-4 py-2">{i.code_unique}</td>
-                <td className="px-4 py-2">
-                  {i.subscription_expires_at || "—"}
-                </td>
-                <td className="px-4 py-2">
-                  {loadingCounts ? "…" : (counts[i.id] ?? 0)}
-                </td>
+                <td className="px-4 py-2">{i.subscription_expires_at || "—"}</td>
+                <td className="px-4 py-2">{loadingCounts ? "…" : counts[i.id] ?? 0}</td>
                 <td className="px-4 py-2 space-x-2">
-                  <Link
-                    href={`/super/parametres?inst=${i.id}`}
-                    className="text-violet-700 hover:underline"
-                  >
+                  <Link href={`/super/parametres?inst=${i.id}`} className="text-violet-700 hover:underline">
                     Modifier
                   </Link>
-                  <button
-                    onClick={() => onDelete(i.id)}
-                    className="text-red-600 hover:underline"
-                  >
+                  <button onClick={() => onDelete(i.id)} className="text-red-600 hover:underline">
                     Supprimer
                   </button>
                 </td>
@@ -130,12 +126,18 @@ export default function ListInstitutions() {
       </div>
 
       <div className="flex items-center justify-between text-sm">
-        <div>Page {page} / {pages} — {total} résultat(s)</div>
+        <div>
+          Page {page} / {pages} • {total} résultat(s)
+        </div>
         <div className="space-x-2">
           <button
             disabled={page <= 1}
             onClick={() => {
-              setPage((p) => { const n = Math.max(1, p - 1); load(n, q); return n; });
+              setPage((p) => {
+                const n = Math.max(1, p - 1);
+                load(n, q);
+                return n;
+              });
             }}
             className="rounded border px-3 py-1 disabled:opacity-50"
           >
@@ -144,7 +146,11 @@ export default function ListInstitutions() {
           <button
             disabled={page >= pages}
             onClick={() => {
-              setPage((p) => { const n = Math.min(pages, p + 1); load(n, q); return n; });
+              setPage((p) => {
+                const n = Math.min(pages, p + 1);
+                load(n, q);
+                return n;
+              });
             }}
             className="rounded border px-3 py-1 disabled:opacity-50"
           >
@@ -155,5 +161,3 @@ export default function ListInstitutions() {
     </div>
   );
 }
-
-

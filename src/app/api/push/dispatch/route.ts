@@ -1,90 +1,33 @@
-// src/app/api/push/dispatch/route.ts
 import { NextResponse } from "next/server";
-import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
-import webpush from "web-push";
 
-export const runtime = "nodejs"; // requis pour web-push & clé service
-
-function checkCronAuth(req: Request) {
-  const sec = (process.env.CRON_PUSH_SECRET || "").trim();
-  const hdr = (req.headers.get("x-cron-secret") || "").trim();
-  const fromVercelCron = req.headers.has("x-vercel-cron"); // appel programmé par Vercel
-  // Autorise si appel Vercel Cron OU si secret fourni
-  return fromVercelCron || (!!sec && hdr === sec);
+function hourCIV() {
+  // Abidjan = UTC
+  return new Date().getUTCHours();
 }
 
-function configureWebPush() {
-  const pub = process.env.VAPID_PUBLIC_KEY!;
-  const prv = process.env.VAPID_PRIVATE_KEY!;
-  webpush.setVapidDetails(`mailto:no-reply@example.com`, pub, prv);
-}
-
-async function run(req: Request) {
-  if (!checkCronAuth(req)) {
-    return NextResponse.json({ error: "forbidden" }, { status: 403 });
+export async function POST(req: Request) {
+  // Auth simple via Bearer
+  const auth = req.headers.get("authorization") || "";
+  const token = auth.startsWith("Bearer ") ? auth.slice(7) : null;
+  if (!token || token !== process.env.CRON_SECRET) {
+    return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
   }
 
-  configureWebPush();
-  const srv = getSupabaseServiceClient();
-
-  const { data: rows, error: pickErr } = await srv
-    .from("notifications_queue")
-    .select("id, parent_id, channels, payload, status, attempts")
-    .eq("status", "pending")
-    .contains("channels", ["push"])
-    .order("created_at", { ascending: true })
-    .limit(200);
-
-  if (pickErr) return NextResponse.json({ error: pickErr.message }, { status: 400 });
-  if (!rows?.length) return NextResponse.json({ ok: true, sent: 0 });
-
-  const userIds = Array.from(new Set(rows.map((r: any) => String(r.parent_id))));
-  const { data: subs } = await srv
-    .from("push_subscriptions")
-    .select("user_id, subscription_json")
-    .in("user_id", userIds);
-
-  const byUser = new Map<string, any>((subs || []).map((s: any) => [String(s.user_id), s.subscription_json]));
-
-  let sent = 0, dropped = 0;
-
-  for (const n of rows as any[]) {
-    const sub = byUser.get(String(n.parent_id));
-    if (!sub) continue;
-
-    const title = n.payload?.title || (n.payload?.event === "absent" ? "Absence" : "Notification");
-    const body  = n.payload?.body  || "";
-    const url   = "/parents";
-
-    const pushPayload = JSON.stringify({ title, body, url, data: n.payload || {} });
-
-    try {
-      await webpush.sendNotification(sub, pushPayload);
-      sent++;
-      await srv.from("notifications_queue").update({
-        status: "sent",
-        sent_at: new Date().toISOString(),
-        attempts: (Number(n.attempts) || 0) + 1,
-        last_error: null,
-      }).eq("id", n.id);
-    } catch (err: any) {
-      const msg = String(err?.message || "");
-      if (msg.includes("410") || msg.includes("404") || msg.includes("not a valid") || msg.includes("unsubscribe")) {
-        dropped++;
-        await srv.from("push_subscriptions").delete().eq("user_id", n.parent_id);
-      }
-      await srv.from("notifications_queue").update({
-        status: "pending",
-        attempts: (Number(n.attempts) || 0) + 1,
-        last_error: msg.slice(0, 300),
-      }).eq("id", n.id);
-    }
+  // Garde-fou horaire (07h–18h CIV)
+  const h = hourCIV();
+  if (h < 7 || h > 18) {
+    return NextResponse.json({ ok: true, skipped: "outside CIV window", hour: h }, { status: 200 });
   }
 
-  return NextResponse.json({ ok: true, attempted: rows.length, sent, dropped });
+  // TODO: ta logique de dispatch push ici
+  // Exemple minimal pour voir que ça marche :
+  const startedAt = new Date().toISOString();
+  // const result = await doDispatch(); // ← ta fonction
+  const summary = { sent: 0, queued: 0 }; // remplace par tes stats réelles
+
+  return NextResponse.json({ ok: true, startedAt, summary }, { status: 200 });
 }
 
-export async function GET(req: Request)  { return run(req); } // appelé par Vercel Cron
-export async function POST(req: Request) { return run(req); } // manuel si besoin
-
-
+export async function GET() {
+  return NextResponse.json({ ok: true, hint: "Use POST with Bearer token" }, { status: 200 });
+}
