@@ -12,15 +12,20 @@ function getBaseUrl() {
 export const dynamic = "force-dynamic";
 
 export default async function SuperDashboardPage() {
-  // S�curit� c�t� serveur (auth + r�le)
+  // Securite cote serveur (auth + role)
   const supabase = await getSupabaseServerClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
   if (!user) redirect("/login");
-  const { data: roles } = await supabase.from("user_roles").select("role").eq("profile_id", user.id);
-  const isSuper = (roles ?? []).some(r => r.role === "super_admin");
+  const { data: roles } = await supabase
+    .from("user_roles")
+    .select("role")
+    .eq("profile_id", user.id);
+  const isSuper = (roles ?? []).some((r) => r.role === "super_admin");
   if (!isSuper) redirect("/(errors)/forbidden");
 
-  // ---- FIX: headers() est async dans ton setup
+  // headers() selon ton setup
   const h = await headers();
   const cookie = h.get("cookie") ?? "";
 
@@ -29,24 +34,31 @@ export default async function SuperDashboardPage() {
     headers: { cookie },
   });
   if (!res.ok) throw new Error(`Stats API error: ${res.status}`);
-  const stats = await res.json(); // { institutions, admins, users, expiringIn30d }
+  const stats = await res.json() as {
+    institutions?: number;
+    admins?: number;
+    users?: number;
+    expiringIn30d?: number;
+  };
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-semibold">Tableau de bord</h1>
-          <p className="text-sm text-slate-600">Vue d�"ensemble des abonnements et utilisateurs.</p>
+          <p className="text-sm text-slate-600">
+            Vue d'ensemble des abonnements et utilisateurs.
+          </p>
         </div>
       </div>
 
       {/* Cartes de stats */}
       <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {[
-          { label: "�0tablissements", value: stats.institutions, icon: "�x��" },
-          { label: "Admins d�"�tablissement", value: stats.admins, icon: "�x��x�" },
-          { label: "Utilisateurs (profils)", value: stats.users, icon: "�x�" },
-          { label: "Abonnements expirant �0� 30 j", value: stats.expiringIn30d, icon: "�" },
+          { label: "Etablissements", value: stats.institutions, icon: "🏫" },
+          { label: "Admins d'etablissement", value: stats.admins, icon: "👤" },
+          { label: "Utilisateurs (profils)", value: stats.users, icon: "👥" },
+          { label: "Abonnements expirant <= 30 j", value: stats.expiringIn30d, icon: "⏳" },
         ].map((c) => (
           <div key={c.label} className="rounded-xl border bg-white p-4">
             <div className="flex items-center justify-between">
@@ -63,23 +75,39 @@ export default async function SuperDashboardPage() {
         <div className="rounded-xl border bg-white p-4">
           <h3 className="mb-2 text-sm font-semibold text-slate-700">Actions rapides</h3>
           <ul className="text-sm leading-7">
-            <li><a className="text-violet-700 hover:underline" href="/super/etablissements">Cr�er un �tablissement</a></li>
-            <li><a className="text-violet-700 hover:underline" href="/super/admins">Ajouter un admin</a></li>
-            <li><a className="text-violet-700 hover:underline" href="/super/abonnements">Voir les abonnements</a></li>
+            <li>
+              <a className="text-violet-700 hover:underline" href="/super/etablissements">
+                Creer un etablissement
+              </a>
+            </li>
+            <li>
+              <a className="text-violet-700 hover:underline" href="/super/admins">
+                Ajouter un admin
+              </a>
+            </li>
+            <li>
+              <a className="text-violet-700 hover:underline" href="/super/abonnements">
+                Voir les abonnements
+              </a>
+            </li>
           </ul>
         </div>
 
         <div className="rounded-xl border bg-white p-4 lg:col-span-2">
           <h3 className="mb-2 text-sm font-semibold text-slate-700">Aide rapide</h3>
           <ul className="list-disc pl-5 text-sm text-slate-700">
-            <li>Les abonnements se d�finissent par une <b>dur�e (mois)</b>, la date d�"expiration est calcul�e automatiquement.</li>
-            <li>Un <b>admin d�"�tablissement</b> est cr�� � partir de son email (profil + r�le + rattachement).</li>
-            <li>Les r�glages JSON sont optionnels (th�me/quotas/toggles).</li>
+            <li>
+              Les abonnements se definissent par une <b>duree (mois)</b>, la date d'expiration est calculee automatiquement.
+            </li>
+            <li>
+              Un <b>admin d'etablissement</b> est cree a partir de son email (profil + role + rattachement).
+            </li>
+            <li>
+              Les reglages JSON sont optionnels (theme/quotas/toggles).
+            </li>
           </ul>
         </div>
       </section>
     </div>
   );
 }
-
-
