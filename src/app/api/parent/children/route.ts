@@ -10,7 +10,7 @@ export async function GET() {
   const { data: { user } } = await supa.auth.getUser();
   if (!user) return NextResponse.json({ items: [] }, { status: 401 });
 
-  // 1) liens parent -> Ã©lÃ¨ves
+  // 1) liens parent -> élèves
   const { data: links, error: lErr } = await srv
     .from("student_guardians")
     .select("student_id")
@@ -21,7 +21,7 @@ export async function GET() {
   const studentIds = Array.from(new Set((links || []).map(r => String(r.student_id))));
   if (!studentIds.length) return NextResponse.json({ items: [] });
 
-  // 2) Ã©lÃ¨ves
+  // 2) élèves
   const { data: studs } = await srv
     .from("students")
     .select("id, first_name, last_name")
@@ -42,7 +42,7 @@ export async function GET() {
   const items = (studs || [])
     .map(s => ({
       id: String(s.id),
-      full_name: `${s.first_name ?? ""} ${s.last_name ?? ""}`.trim() || "â€”",
+      full_name: `${s.first_name ?? ""} ${s.last_name ?? ""}`.trim() || "—",
       class_label: clsByStudent.get(String(s.id)) || null,
     }))
     .sort((a, b) => a.full_name.localeCompare(b.full_name, "fr"));

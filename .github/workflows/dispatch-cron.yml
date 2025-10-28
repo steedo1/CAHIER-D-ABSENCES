@@ -1,34 +1,52 @@
 name: Dispatch Push Cron (CIV 07h–18h)
 
 on:
-  workflow_dispatch:   # déclenchement manuel possible
   schedule:
-    - cron: "*/5 7-17 * * *"  # toutes les 5 min de 07:00 à 17:55 (UTC = heure Côte d'Ivoire)
-    - cron: "0 18 * * *"      # un dernier passage à 18:00 pile
+    # GitHub Actions = UTC ; Abidjan = UTC → 07-18 direct
+    - cron: "*/15 7-18 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cron-dispatch-push
+  cancel-in-progress: false
 
 jobs:
-  trigger:
+  call-dispatch:
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    timeout-minutes: 2
-    concurrency:
-      group: dispatch-push
-      cancel-in-progress: false
+    timeout-minutes: 3
+    env:
+      PROD_CRON_URL: ${{ secrets.PROD_CRON_URL }} # ex: https://mon-cahier.com/api/cron/push/dispatch
+      CRON_SECRET:   ${{ secrets.CRON_SECRET }}
     steps:
-      - name: Appel de l’endpoint Vercel (avec retries)
-        env:
-          DISPATCH_URL: ${{ vars.DISPATCH_URL }}         # ex: https://www.mon-cahier.com ou https://<ton-projet>.vercel.app
-          CRON_PUSH_SECRET: ${{ secrets.CRON_PUSH_SECRET }}
+      - name: Check secrets presence
         run: |
+          test -n "$PROD_CRON_URL" || { echo "Missing PROD_CRON_URL secret"; exit 1; }
+          test -n "$CRON_SECRET"   || { echo "Missing CRON_SECRET secret"; exit 1; }
+
+      - name: Call cron endpoint (with debug)
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "POST $PROD_CRON_URL"
           for i in 1 2 3; do
-            echo "Tentative $i..."
-            code=$(curl -sS -o /tmp/res.txt -w "%{http_code}" \
-              -H "x-cron-secret: ${CRON_PUSH_SECRET}" \
-              "${DISPATCH_URL%/}/api/push/dispatch")
-            echo "HTTP ${code}"
-            cat /tmp/res.txt || true
-            if [ "$code" = "200" ]; then
-              echo "OK"; exit 0
+            CODE=$(curl -sS -o /tmp/resp.txt -w "%{http_code}" \
+              -X POST "$PROD_CRON_URL" \
+              -H "Authorization: Bearer $CRON_SECRET" \
+              -H "Content-Type: application/json" \
+              --data '{"source":"github-actions"}' || true)
+
+            echo "Attempt #$i → HTTP $CODE"
+            echo "----- Response body -----"
+            cat /tmp/resp.txt || true
+            echo "-------------------------"
+
+            if [[ "$CODE" -ge 200 && "$CODE" -lt 400 ]]; then
+              exit 0
             fi
             sleep 5
           done
-          echo "Echec après 3 tentatives"; exit 1
+          echo "Failed after retries (see body above)"; exit 1

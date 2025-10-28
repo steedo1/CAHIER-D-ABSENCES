@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 
-/** RÃ©sout un tableau d'IDs de matiÃ¨re (subjects.id OU institution_subjects.id) â†’ libellÃ©s */
+/** R�sout un tableau d'IDs de mati�re (subjects.id OU institution_subjects.id) �  libell�s */
 async function resolveSubjectNames(srv: any, ids: string[]) {
   const map = new Map<string, string>();
   if (!ids.length) return map;
@@ -26,14 +26,14 @@ async function resolveSubjectNames(srv: any, ids: string[]) {
   const missingBase = ids.filter(x => !map.has(x));
   if (missingBase.length) {
     const { data: subs } = await srv.from("subjects").select("id,name").in("id", missingBase);
-    for (const s of subs || []) map.set(String(s.id), String((s as any).name ?? "â€”"));
+    for (const s of subs || []) map.set(String(s.id), String((s as any).name ?? ""));
   }
   return map;
 }
 
 export async function GET(req: Request) {
-  const supa = await getSupabaseServerClient();   // RLS (user + Ã©tablissement)
-  const srv  = getSupabaseServiceClient();        // service (requÃªtes libres)
+  const supa = await getSupabaseServerClient();   // RLS (user + �tablissement)
+  const srv  = getSupabaseServiceClient();        // service (requ�tes libres)
 
   const { data: { user } } = await supa.auth.getUser();
   if (!user) return NextResponse.json({ items: [] }, { status: 401 });
@@ -48,11 +48,11 @@ export async function GET(req: Request) {
 
   const url = new URL(req.url);
   const student_id = url.searchParams.get("student_id") || "";
-  const days = Math.max(1, Math.min(120, parseInt(url.searchParams.get("days") || "45", 10))); // fenÃªtre rÃ©cente
+  const days = Math.max(1, Math.min(120, parseInt(url.searchParams.get("days") || "45", 10))); // fen�tre r�cente
 
   if (!student_id) return NextResponse.json({ items: [], error: "student_id required" }, { status: 400 });
 
-  // Autorisation : ce parent doit Ãªtre liÃ© Ã  l'Ã©lÃ¨ve
+  // Autorisation : ce parent doit �tre li� � l'�l�ve
   const { data: link } = await srv
     .from("student_guardians")
     .select("student_id")
@@ -61,13 +61,13 @@ export async function GET(req: Request) {
     .eq("student_id", student_id)
     .maybeSingle();
 
-  if (!link) return NextResponse.json({ items: [] }); // pas liÃ© â†’ rien
+  if (!link) return NextResponse.json({ items: [] }); // pas li� �  rien
 
-  // FenÃªtre temporelle
+  // Fen�tre temporelle
   const now = new Date();
   const from = new Date(now.getTime() - days * 24 * 3600 * 1000).toISOString();
 
-  // On lit directement les marques + leur session (pour rÃ©cupÃ©rer date/discipline/classe)
+  // On lit directement les marques + leur session (pour r�cup�rer date/discipline/classe)
   const { data: rows, error } = await srv
     .from("attendance_marks")
     .select(`
@@ -89,16 +89,16 @@ export async function GET(req: Request) {
   // On garde uniquement absences & retards
   const useful = (rows || []).filter(r => (r as any).status === "absent" || (r as any).status === "late");
 
-  // LibellÃ©s classes
+  // Libell�s classes
   const classIds = Array.from(new Set(useful.map(r => String((r as any).session?.class_id)).filter(Boolean)));
   const { data: classes } = await srv.from("classes").select("id,label").in("id", classIds.length ? classIds : ["00000000-0000-0000-0000-000000000000"]);
   const className = new Map<string, string>((classes || []).map(c => [String(c.id), String((c as any).label ?? "")]));
 
-  // LibellÃ©s matiÃ¨res
+  // Libell�s mati�res
   const subjIds = Array.from(new Set(useful.map(r => String((r as any).session?.subject_id)).filter(Boolean)));
   const subjName = await resolveSubjectNames(srv, subjIds);
 
-  // Mapping final (tri recent â†’ ancien)
+  // Mapping final (tri recent �  ancien)
   const items = useful
     .map(r => {
       const s = (r as any).session || {};

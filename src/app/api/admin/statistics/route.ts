@@ -6,14 +6,14 @@ import { getSupabaseServerClient } from "@/lib/supabase-server";
 /* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
    Helpers
 â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
-/** InterprÃ¨te les YYYY-MM-DD venant de <input type="date"> en heure locale.
- *  Renvoie [fromISO inclusif ; toISOExclusive exclusif] pour la requÃªte SQL.
+/** Interprète les YYYY-MM-DD venant de <input type="date"> en heure locale.
+ *  Renvoie [fromISO inclusif ; toISOExclusive exclusif] pour la requête SQL.
  */
 function toDayRange(from: string, to: string) {
   const [fy, fm, fd] = from.split("-").map(Number);
   const [ty, tm, td] = to.split("-").map(Number);
 
-  // Minuit local du jour de dÃ©but (inclusif)
+  // Minuit local du jour de début (inclusif)
   const fromLocal = new Date(fy, fm - 1, fd, 0, 0, 0, 0);
   // Minuit local du lendemain du jour de fin (exclusif)
   const toLocalNext = new Date(ty, tm - 1, td + 1, 0, 0, 0, 0);
@@ -40,9 +40,9 @@ async function tableExists(db: any, name: string) {
   return !error;
 }
 
-/** Pour un subjects.id, renvoie tous les IDs susceptibles dâ€™apparaÃ®tre dans sessions.subject_id :
- *  - le subjects.id lui-mÃªme
- *  - les institution_subjects.id correspondants (dans lâ€™Ã©tablissement courant si fourni)
+/** Pour un subjects.id, renvoie tous les IDs susceptibles d’apparaître dans sessions.subject_id :
+ *  - le subjects.id lui-même
+ *  - les institution_subjects.id correspondants (dans l’établissement courant si fourni)
  */
 async function resolveSessionSubjectIds(
   db: any,
@@ -64,7 +64,7 @@ async function resolveSessionSubjectIds(
 â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 export async function GET(req: NextRequest) {
   const srv = getSupabaseServiceClient(); // service client (no RLS)
-  const rls = await getSupabaseServerClient(); // RLS pour connaÃ®tre l'Ã©tablissement
+  const rls = await getSupabaseServerClient(); // RLS pour connaître l'établissement
 
   try {
     const { searchParams } = new URL(req.url);
@@ -89,13 +89,13 @@ export async function GET(req: NextRequest) {
       inst = (me?.institution_id as string) || null;
     }
 
-    // â”€â”€ 1) Base enseignants (de lâ€™Ã©tablissement)
+    // â”€â”€ 1) Base enseignants (de l’établissement)
     let qUR = srv.from("user_roles").select("profile_id").eq("role", "teacher");
     if (inst) qUR = qUR.eq("institution_id", inst);
     const { data: ur } = await qUR;
     const allTeacherIds = Array.from(new Set((ur || []).map((r: any) => String(r.profile_id))));
 
-    // â”€â”€ 2) Noms & disciplines dÃ©normalisÃ©s depuis teacher_subjects
+    // â”€â”€ 2) Noms & disciplines dénormalisés depuis teacher_subjects
     let qTS = srv
       .from("teacher_subjects")
       .select("profile_id, subject_id, teacher_name, subject_name, institution_id");
@@ -121,7 +121,7 @@ export async function GET(req: NextRequest) {
       for (const p of profs || []) teacherNameById.set(String(p.id), niceName(p));
     }
 
-    // map teacher_id -> [subject_names] (distinct triÃ©s)
+    // map teacher_id -> [subject_names] (distinct triés)
     const subjectNamesPerTeacher: Record<string, string[]> = {};
     for (const r of tsRows || []) {
       const tid = String(r.profile_id);
@@ -134,14 +134,14 @@ export async function GET(req: NextRequest) {
       subjectNamesPerTeacher[k].sort((a, b) => a.localeCompare(b, "fr"));
     }
 
-    // Si on a filtrÃ© par discipline, ne garder que les profs qui ont cette discipline dans teacher_subjects
+    // Si on a filtré par discipline, ne garder que les profs qui ont cette discipline dans teacher_subjects
     let teacherScope: string[] = allTeacherIds;
     if (subject_id) {
       const allowed = new Set((tsRows || []).map((r: any) => String(r.profile_id)));
       teacherScope = teacherScope.filter((id) => allowed.has(id));
     }
 
-    // â”€â”€ 3) SÃ©ances de la pÃ©riode (pour minutes)
+    // â”€â”€ 3) Séances de la période (pour minutes)
     const sessionsTable =
       (await tableExists(srv, "teacher_sessions")) ? "teacher_sessions" :
       (await tableExists(srv, "class_sessions")) ? "class_sessions" : "sessions";
@@ -184,7 +184,7 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    // dÃ©doublonnage
+    // dédoublonnage
     const seen = new Set<string>();
     const sessions = (sessRows || [])
       .filter((r: any) => (seen.has(r.id) ? false : (seen.add(r.id), true)))
@@ -221,7 +221,7 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ items });
     }
 
-    // â”€â”€ 5) DETAIL (libellÃ© de discipline par sÃ©ance)
+    // â”€â”€ 5) DETAIL (libellé de discipline par séance)
     const subIds = Array.from(new Set(sessions.map((s) => s.subject_id).filter(Boolean))) as string[];
 
     // 5.a) map raw subject_id -> subject_name via subjects
@@ -250,7 +250,7 @@ export async function GET(req: NextRequest) {
       .map((r) => ({
         id: r.id,
         dateISO: r.started_at,
-        subject_name: r.subject_id ? subjectNameById[r.subject_id] || "Discipline non renseignÃ©e" : "Discipline non renseignÃ©e",
+        subject_name: r.subject_id ? subjectNameById[r.subject_id] || "Discipline non renseignée" : "Discipline non renseignée",
         expected_minutes: r.expected_minutes || 0,
       }));
 

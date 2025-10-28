@@ -14,7 +14,7 @@ export default function LoginPage() {
   }, []);
 
   return (
-    <main className="min-h-screen bg-gradient-to-b from-sky-50 via-white to-white">
+    <main className="min-h-screen bg-linear-to-b from-sky-50 via-white to-white">
       <header className="mx-auto flex max-w-6xl items-center justify-between px-4 py-6">
         <div className="flex items-center gap-3">
           <div className="grid h-9 w-9 place-items-center rounded-xl bg-sky-700 text-white shadow-sm">
@@ -44,5 +44,3 @@ export default function LoginPage() {
     </main>
   );
 }
-
-

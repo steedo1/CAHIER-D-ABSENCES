@@ -103,7 +103,7 @@ function StatCard({
               {loading ? <Skeleton className="h-8 w-16" /> : <CountUp value={value} />}
             </div>
           </div>
-          <div className="rounded-xl bg-gradient-to-br from-white to-slate-50 p-3 ring-1 ring-slate-200">
+          <div className="rounded-xl bg-linear-to-br from-white to-slate-50 p-3 ring-1 ring-slate-200">
             <Icon className="h-6 w-6 text-slate-600" />
           </div>
         </div>
@@ -152,7 +152,7 @@ function KpiCard({
   const t = tones[tone];
 
   return (
-    <Card className={`rounded-2xl shadow-sm ring-1 ${t.ring} ${t.border} border bg-gradient-to-b ${t.bg}`}>
+    <Card className={`rounded-2xl shadow-sm ring-1 ${t.ring} ${t.border} border bg-linear-to-b ${t.bg}`}>
       <CardHeader className="pb-3">
         <CardTitle className="flex items-center gap-2 text-sm text-slate-600">
           <span className={`inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs ${t.chip}`}>
@@ -288,7 +288,7 @@ export default function AdminDashboardClient() {
   return (
     <div className="space-y-6">
       {/* En-tête gradient (section héro) */}
-      <div className="relative overflow-hidden rounded-3xl bg-gradient-to-r from-emerald-600 via-lime-500 to-amber-500 p-6 text-white">
+      <div className="relative overflow-hidden rounded-3xl bg-linear-to-r from-emerald-600 via-lime-500 to-amber-500 p-6 text-white">
         <div
           className="pointer-events-none absolute inset-0 opacity-20"
           style={{

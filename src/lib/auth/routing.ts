@@ -24,7 +24,7 @@ export function routeForRole(role: AppRole): string {
 
 /**
  * Ne throw jamais : renvoie toujours une route.
- * Logique : rÃ´les d'abord ; si aucun rÃ´le lisible â†’ fallback "parent"
+ * Logique : rôles d'abord ; si aucun rôle lisible â†’ fallback "parent"
  * s'il existe un lien dans student_guardians.
  */
 export async function routeForUser(
@@ -32,7 +32,7 @@ export async function routeForUser(
   supabase: SupabaseClient
 ): Promise<string> {
   try {
-    // 1) RÃ´les (toutes Ã©coles) â€” nÃ©cessite la policy SELECT sur user_roles
+    // 1) Rôles (toutes écoles) — nécessite la policy SELECT sur user_roles
     const { data: rows, error } = await supabase
       .from("user_roles")
       .select("role")
@@ -46,8 +46,8 @@ export async function routeForUser(
       console.error("[routeForUser] user_roles error:", error.message || error);
     }
 
-    // 2) Fallback "parent" : s'il a au moins un lien parentâ†”Ã©lÃ¨ve
-    // (nÃ©cessite la policy SELECT sur student_guardians: parent_id = auth.uid())
+    // 2) Fallback "parent" : s'il a au moins un lien parentâ†”élève
+    // (nécessite la policy SELECT sur student_guardians: parent_id = auth.uid())
     const { data: g } = await supabase
       .from("student_guardians")
       .select("student_id")
@@ -58,7 +58,7 @@ export async function routeForUser(
       return "/parents";
     }
 
-    // 3) Sinonâ€¦
+    // 3) Sinon…
     return "/profile";
   } catch (e: any) {
     console.error("[routeForUser] exception:", e?.message || e);

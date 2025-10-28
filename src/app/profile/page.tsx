@@ -25,9 +25,9 @@ export default async function ProfilePage() {
       <div className="rounded border bg-white p-4 space-y-2">
         <div><b>Nom :</b> {profile?.display_name || "-"}</div>
         <div><b>Email :</b> {profile?.email || user.email}</div>
-        <div><b>TÃ©lÃ©phone :</b> {profile?.phone || "-"}</div>
+        <div><b>Téléphone :</b> {profile?.phone || "-"}</div>
         <div><b>Institution :</b> {profile?.institution_id || "-"}</div>
-        <div><b>RÃ´les :</b> {(roles || []).map((r) => r.role).join(", ") || "-"}</div>
+        <div><b>Rôles :</b> {(roles || []).map((r) => r.role).join(", ") || "-"}</div>
       </div>
     </main>
   );

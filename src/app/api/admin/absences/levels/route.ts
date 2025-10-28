@@ -48,7 +48,7 @@ export async function GET(req: Request) {
 
   const agg = new Map<string, { absents: number; minutes: number }>();
   for (const m of marks || []) {
-    const lvl = levelOf.get(m.class_id!) || "â€”";
+    const lvl = levelOf.get(m.class_id!) || "—";
     const a = agg.get(lvl) || { absents: 0, minutes: 0 };
     a.absents += 1;
     a.minutes += (m as any).minutes || 0;

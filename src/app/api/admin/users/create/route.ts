@@ -2,7 +2,7 @@
 import { NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
-import { normalizePhone } from "@/lib/phone"; // âœ… source unique
+import { normalizePhone } from "@/lib/phone"; // �S& source unique
 
 const DEFAULT_TEMP_PASSWORD = process.env.DEFAULT_TEMP_PASSWORD || "Pass2025";
 
@@ -23,7 +23,7 @@ export async function POST(req: Request) {
   const { data: { user } } = await supa.auth.getUser();
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
 
-  // Ã‰tablissement courant de lâ€™admin
+  // �0tablissement courant de ladmin
   const { data: me, error: meErr } = await supa
     .from("profiles")
     .select("institution_id")
@@ -46,17 +46,17 @@ export async function POST(req: Request) {
   const email = (emailRaw || "").trim().toLowerCase() || null;
 
   if (!role) return NextResponse.json({ error: "role_required" }, { status: 400 });
-  // On garde la rÃ¨gle produit : le parent doit avoir un tÃ©lÃ©phone
+  // On garde la r�gle produit : le parent doit avoir un t�l�phone
   if (role === "parent" && !phone) {
     return NextResponse.json({ error: "phone_required" }, { status: 400 });
   }
 
-  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-  // 1) RÃ©soudre / crÃ©er lâ€™utilisateur (idempotent)
-  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ������������������������������������������������������������������������������������������
+  // 1) R�soudre / cr�er lutilisateur (idempotent)
+  // ������������������������������������������������������������������������������������������
   let uid: string | null = null;
 
-  // a) profiles â†’ id
+  // a) profiles �  id
   if (phone) {
     const { data } = await supaSrv.from("profiles").select("id").eq("phone", phone).maybeSingle();
     if (data?.id) uid = String(data.id);
@@ -79,12 +79,12 @@ export async function POST(req: Request) {
     return null;
   };
 
-  // b) auth.users â†’ id
+  // b) auth.users �  id
   if (!uid) {
     uid = await findInAuth();
   }
 
-  // c) crÃ©er si toujours introuvable (avec fallback course/doublon)
+  // c) cr�er si toujours introuvable (avec fallback course/doublon)
   if (!uid) {
     const { data: created, error: cErr } = await supaSrv.auth.admin.createUser({
       email: email || undefined,
@@ -104,9 +104,9 @@ export async function POST(req: Request) {
     }
   }
 
-  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-  // 2) Upsert profil SANS Ã©craser institution_id
-  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ������������������������������������������������������������������������������������������
+  // 2) Upsert profil SANS �craser institution_id
+  // ������������������������������������������������������������������������������������������
   const { data: existingProfile } = await supaSrv
     .from("profiles")
     .select("id,institution_id,display_name,email,phone")
@@ -114,7 +114,7 @@ export async function POST(req: Request) {
     .maybeSingle();
 
   if (!existingProfile) {
-    // premiÃ¨re insertion â†’ on dÃ©finit institution_id
+    // premi�re insertion �  on d�finit institution_id
     const { error: pInsErr } = await supaSrv.from("profiles").insert({
       id: uid,
       institution_id: inst,
@@ -136,17 +136,17 @@ export async function POST(req: Request) {
     if (pUpdErr) return NextResponse.json({ error: pUpdErr.message }, { status: 400 });
   }
 
-  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-  // 3) Upsert du rÃ´le (idempotent)
-  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ������������������������������������������������������������������������������������������
+  // 3) Upsert du r�le (idempotent)
+  // ������������������������������������������������������������������������������������������
   const { error: rErr } = await supaSrv
     .from("user_roles")
     .upsert({ profile_id: uid, institution_id: inst, role }, { onConflict: "profile_id,institution_id,role" });
   if (rErr) return NextResponse.json({ error: rErr.message }, { status: 400 });
 
-  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-  // 4) MatiÃ¨re optionnelle (enseignant)
-  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ������������������������������������������������������������������������������������������
+  // 4) Mati�re optionnelle (enseignant)
+  // ������������������������������������������������������������������������������������������
   if (role === "teacher" && subjectName) {
     const code = slug(subjectName).slice(0, 12).toUpperCase();
     const { data: subj1 } = await supaSrv

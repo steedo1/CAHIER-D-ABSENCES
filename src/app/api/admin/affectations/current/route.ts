@@ -77,7 +77,7 @@ export async function GET(req: Request) {
     const subjectLabel =
       (is?.custom_name as string) ||
       (is?.subj?.name as string) ||
-      "â€”";
+      "—";
 
     if (!groups.has(key)) {
       groups.set(key, {

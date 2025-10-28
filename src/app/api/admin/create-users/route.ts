@@ -23,11 +23,11 @@ export async function POST(req: Request) {
   const results: Array<{ email: string; ok: boolean; user_id?: string; error?: string }> = [];
 
   for (const u of users) {
-    // 1) crÃ©er l'utilisateur Auth (email confirmÃ©)
+    // 1) créer l'utilisateur Auth (email confirmé)
     const { data: created, error: aErr } = await supabase.auth.admin.createUser({
       email: u.email,
       email_confirm: true,
-      // si tu veux gÃ©nÃ©rer un mot de passe:
+      // si tu veux générer un mot de passe:
       // password: crypto.randomUUID(),
     });
 
@@ -49,7 +49,7 @@ export async function POST(req: Request) {
       { onConflict: "id" }
     );
 
-    // 3) insÃ©rer le rÃ´le
+    // 3) insérer le rôle
     const { error: rErr } = await supabase.from("user_roles").insert({
       profile_id: uid,
       institution_id,

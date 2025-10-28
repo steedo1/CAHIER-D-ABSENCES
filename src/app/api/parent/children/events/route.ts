@@ -23,11 +23,11 @@ async function resolveSubjectNames(srv: any, ids: string[]) {
     if (baseId && nm && !map.has(baseId)) map.set(baseId, nm);
   }
 
-  // ComplÃ¨te avec subjects si besoin
+  // Complète avec subjects si besoin
   const missingBase = ids.filter((x) => !map.has(x));
   if (missingBase.length) {
     const { data: subs } = await srv.from("subjects").select("id,name").in("id", missingBase);
-    for (const s of subs || []) map.set(String(s.id), String((s as any).name ?? "â€”"));
+    for (const s of subs || []) map.set(String(s.id), String((s as any).name ?? "—"));
   }
   return map;
 }
@@ -44,7 +44,7 @@ export async function GET(req: Request) {
   const days = Math.max(1, Math.min(120, parseInt(url.searchParams.get("days") || "45", 10)));
   if (!student_id) return NextResponse.json({ items: [], error: "student_id required" }, { status: 400 });
 
-  // Autorisation : le user doit Ãªtre parent de lâ€™Ã©lÃ¨ve
+  // Autorisation : le user doit être parent de l’élève
   const { data: ok } = await srv
     .from("student_guardians")
     .select("student_id")
@@ -53,10 +53,10 @@ export async function GET(req: Request) {
     .limit(1);
   if (!ok || ok.length === 0) return NextResponse.json({ items: [] }, { status: 403 });
 
-  // FenÃªtre temporelle
+  // Fenêtre temporelle
   const from = new Date(Date.now() - days * 24 * 3600 * 1000).toISOString();
 
-  // RÃ©cupÃ¨re directement les marques + session
+  // Récupère directement les marques + session
   const { data: rows, error } = await srv
     .from("attendance_marks")
     .select(`
@@ -80,7 +80,7 @@ export async function GET(req: Request) {
     (r: any) => r.status === "absent" || r.status === "late"
   );
 
-  // LibellÃ©s classes
+  // Libellés classes
   const classIds = Array.from(new Set(useful.map((r: any) => String(r.session?.class_id)).filter(Boolean)));
   const { data: classes } = await srv
     .from("classes")
@@ -88,11 +88,11 @@ export async function GET(req: Request) {
     .in("id", classIds.length ? classIds : ["00000000-0000-0000-0000-000000000000"]);
   const className = new Map<string, string>((classes || []).map((c: any) => [String(c.id), String(c.label ?? "")]));
 
-  // LibellÃ©s matiÃ¨res
+  // Libellés matières
   const subjIds = Array.from(new Set(useful.map((r: any) => String(r.session?.subject_id)).filter(Boolean)));
   const subjName = await resolveSubjectNames(srv, subjIds);
 
-  // Mapping final (du plus rÃ©cent au plus ancien)
+  // Mapping final (du plus récent au plus ancien)
   const items = useful
     .map((r: any) => {
       const s = r.session || {};

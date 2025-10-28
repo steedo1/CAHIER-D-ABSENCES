@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
-import AdminShell from "./ui/shell"; // âš  casse correcte
+import AdminShell from "./ui/shell"; // �a� casse correcte
 
-export const metadata: Metadata = { title: "Espace Ã‰tablissement â€” Admin" };
+export const metadata: Metadata = { title: "Espace �0tablissement  Admin" };
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 

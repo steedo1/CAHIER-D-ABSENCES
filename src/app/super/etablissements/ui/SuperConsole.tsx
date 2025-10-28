@@ -39,14 +39,14 @@ function Button(p: React.ButtonHTMLAttributes<HTMLButtonElement>) {
 }
 
 export default function SuperConsole() {
-  // CrÃ©ation dâ€™Ã©tablissement
+  // Création d’établissement
   const [name, setName] = useState("");
   const [code, setCode] = useState("");
   const [duration, setDuration] = useState<number>(12);
   const [settings, setSettings] = useState<string>("{}");
   const [creatingInst, setCreatingInst] = useState(false);
 
-  // CrÃ©ation dâ€™admin (email + tÃ©lÃ©phone uniquement)
+  // Création d’admin (email + téléphone uniquement)
   const [institutions, setInstitutions] = useState<Institution[]>([]);
   const [adminInst, setAdminInst] = useState("");
   const [adminEmail, setAdminEmail] = useState("");
@@ -65,7 +65,7 @@ export default function SuperConsole() {
     });
     const j = await r.json();
     if (!r.ok) {
-      setError(j?.error || "Chargement des Ã©tablissements Ã©chouÃ©.");
+      setError(j?.error || "Chargement des établissements échoué.");
       return;
     }
     setInstitutions(j.items || []);
@@ -92,12 +92,12 @@ export default function SuperConsole() {
         body: JSON.stringify(body),
       });
       const j = await r.json();
-      if (!r.ok) throw new Error(j?.error || "Ã‰chec crÃ©ation Ã©tablissement");
+      if (!r.ok) throw new Error(j?.error || "Échec création établissement");
       setName("");
       setCode("");
       setDuration(12);
       setSettings("{}");
-      setOkMsg("Ã‰tablissement crÃ©Ã©.");
+      setOkMsg("Établissement créé.");
       await reloadInstitutions();
     } catch (e: any) {
       setError(e.message || String(e));
@@ -111,7 +111,7 @@ export default function SuperConsole() {
     setError(null);
     setOkMsg(null);
     try {
-      if (!adminInst) throw new Error("Choisis un Ã©tablissement.");
+      if (!adminInst) throw new Error("Choisis un établissement.");
       if (!adminEmail) throw new Error("Email requis.");
       const r = await fetch("/api/super/create-admin", {
         method: "POST",
@@ -123,11 +123,11 @@ export default function SuperConsole() {
         }),
       });
       const j = await r.json();
-      if (!r.ok) throw new Error(j?.error || "Ã‰chec crÃ©ation admin");
+      if (!r.ok) throw new Error(j?.error || "Échec création admin");
 
-      // On nâ€™affiche pas de MDP ici : câ€™est DEFAULT_TEMP_PASSWORD cÃ´tÃ© serveur
+      // On n’affiche pas de MDP ici : c’est DEFAULT_TEMP_PASSWORD côté serveur
       setOkMsg(
-        "Admin crÃ©Ã©. Utilisez le mot de passe temporaire par dÃ©faut configurÃ© cÃ´tÃ© serveur."
+        "Admin créé. Utilisez le mot de passe temporaire par défaut configuré côté serveur."
       );
       setAdminEmail("");
       setAdminPhone("");
@@ -140,10 +140,10 @@ export default function SuperConsole() {
 
   return (
     <div className="space-y-6">
-      {/* CrÃ©er un Ã©tablissement */}
+      {/* Créer un établissement */}
       <div className="rounded-2xl border bg-white p-5">
         <div className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-700">
-          CrÃ©er un Ã©tablissement
+          Créer un établissement
         </div>
 
         <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
@@ -152,7 +152,7 @@ export default function SuperConsole() {
             <Input
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="LycÃ©e Exemple"
+              placeholder="Lycée Exemple"
             />
           </div>
 
@@ -167,7 +167,7 @@ export default function SuperConsole() {
 
           <div>
             <div className="mb-1 text-xs text-slate-500">
-              DurÃ©e dâ€™abonnement (mois)
+              Durée d’abonnement (mois)
             </div>
             <Input
               type="number"
@@ -183,7 +183,7 @@ export default function SuperConsole() {
           <div className="lg:col-span-3">
             <details className="rounded-lg border bg-slate-50 p-3">
               <summary className="cursor-pointer text-sm font-medium">
-                Options avancÃ©es (JSON)
+                Options avancées (JSON)
               </summary>
               <Textarea
                 className="mt-2"
@@ -199,28 +199,28 @@ export default function SuperConsole() {
             onClick={onCreateInstitution}
             disabled={creatingInst || !name || !code}
           >
-            {creatingInst ? "CrÃ©ationâ€¦" : "CrÃ©er lâ€™Ã©tablissement"}
+            {creatingInst ? "Création…" : "Créer l’établissement"}
           </Button>
           {okMsg && <div className="text-sm text-green-700">{okMsg}</div>}
           {error && <div className="text-sm text-red-600">{error}</div>}
         </div>
       </div>
 
-      {/* CrÃ©er un admin (email + tÃ©lÃ©phone) */}
+      {/* Créer un admin (email + téléphone) */}
       <div className="rounded-2xl border bg-white p-5">
         <div className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-700">
-          CrÃ©er un admin dâ€™Ã©tablissement
+          Créer un admin d’établissement
         </div>
 
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
           <div>
-            <div className="mb-1 text-xs text-slate-500">Ã‰tablissement</div>
+            <div className="mb-1 text-xs text-slate-500">Établissement</div>
             <select
               value={adminInst}
               onChange={(e) => setAdminInst(e.target.value)}
               className="w-full rounded-lg border bg-white px-3 py-2 text-sm"
             >
-              <option value="">â€” Choisir â€”</option>
+              <option value="">— Choisir —</option>
               {institutions.map((i) => (
                 <option key={i.id} value={i.id}>
                   {i.name} ({i.code_unique})
@@ -241,7 +241,7 @@ export default function SuperConsole() {
 
           <div>
             <div className="mb-1 text-xs text-slate-500">
-              TÃ©lÃ©phone (optionnel)
+              Téléphone (optionnel)
             </div>
             <Input
               value={adminPhone}
@@ -256,19 +256,17 @@ export default function SuperConsole() {
             onClick={onCreateAdmin}
             disabled={creatingAdmin || !adminInst || !adminEmail}
           >
-            {creatingAdmin ? "CrÃ©ationâ€¦" : "Ajouter lâ€™admin"}
+            {creatingAdmin ? "Création…" : "Ajouter l’admin"}
           </Button>
           {okMsg && <div className="text-sm text-green-700">{okMsg}</div>}
           {error && <div className="text-sm text-red-600">{error}</div>}
         </div>
 
         <p className="mt-2 text-xs text-slate-500">
-          Le mot de passe temporaire est dÃ©fini cÃ´tÃ© serveur via
+          Le mot de passe temporaire est défini côté serveur via
           <code className="ml-1 rounded bg-slate-100 px-1">DEFAULT_TEMP_PASSWORD</code>.
         </p>
       </div>
     </div>
   );
 }
-
-

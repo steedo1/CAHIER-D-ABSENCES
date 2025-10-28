@@ -3,7 +3,7 @@ import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 
 /**
  * PATCH /api/sessions/:id/end
- * Marque la fin dâ€™une session dâ€™appel.
+ * Marque la fin d’une session d’appel.
  */
 export async function PATCH(_req: NextRequest, context: { params: Promise<{ id: string }> }) {
   const { id } = await context.params;
