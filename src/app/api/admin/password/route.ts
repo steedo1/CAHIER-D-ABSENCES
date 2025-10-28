@@ -9,7 +9,9 @@ export const dynamic = "force-dynamic";
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_ANON = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 
-function extractTokensFromJar(jar: ReturnType<typeof cookies> extends Promise<infer T> ? T : any) {
+function extractTokensFromJar(
+  jar: ReturnType<typeof cookies> extends Promise<infer T> ? T : any
+) {
   let access: string | null = jar.get("sb-access-token")?.value || null;
   let refresh: string | null = jar.get("sb-refresh-token")?.value || null;
 
@@ -40,7 +42,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Mot de passe trop court (6+)." }, { status: 400 });
     }
 
-    const jar = await cookies();
+    const jar = cookies();
     const supabase = createServerClient(SUPABASE_URL, SUPABASE_ANON, {
       cookies: {
         get: (name) => jar.get(name)?.value,
@@ -57,8 +59,10 @@ export async function POST(req: Request) {
       } catch {}
     }
 
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return NextResponse.json({ error: "Non authentifiÃ©." }, { status: 401 });
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) return NextResponse.json({ error: "Non authentifié." }, { status: 401 });
 
     const { error } = await supabase.auth.updateUser({ password: new_password });
     if (error) return NextResponse.json({ error: error.message }, { status: 400 });
@@ -68,5 +72,3 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: e?.message || "Erreur serveur." }, { status: 500 });
   }
 }
-
-

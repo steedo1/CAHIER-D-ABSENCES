@@ -2,7 +2,7 @@
 import { NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
-/** Renvoie les matiÃ¨res disponibles pour l'Ã©tablissement courant (triÃ©es par nom). */
+/** Renvoie les matières disponibles pour l’établissement courant (triées par nom). */
 export async function GET() {
   const supa = await getSupabaseServerClient();
 
@@ -14,7 +14,7 @@ export async function GET() {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
 
-  // 2) RÃ©cupÃ©ration de l'Ã©tablissement de l'admin courant
+  // 2) Récupération de l’établissement de l’admin courant
   const { data: me, error: meErr } = await supa
     .from("profiles")
     .select("institution_id")
@@ -30,12 +30,12 @@ export async function GET() {
     return NextResponse.json({ items: [] });
   }
 
-  // 3) Lecture principale via la table de liaison institution_subjects â†’ subjects
+  // 3) Lecture principale via la table de liaison institution_subjects → subjects
   try {
     const { data, error } = await supa
       .from("institution_subjects")
-      // NOTE : selon la dÃ©finition de la relation, Supabase peut renvoyer
-      // subjects comme objet OU comme tableau. On gÃ¨re les deux.
+      // NOTE : selon la définition de la relation, Supabase peut renvoyer
+      // subjects comme objet OU comme tableau. On gère les deux.
       .select("subject_id, subjects:subject_id(name)")
       .eq("institution_id", institutionId)
       .eq("is_active", true);
@@ -45,7 +45,7 @@ export async function GET() {
       return NextResponse.json({ items: fallback });
     }
 
-    // On traite de faÃ§on sÃ»re, sans assertions de types fragiles
+    // Traitement sûr, sans assertions de types fragiles
     const rows: any[] = data ?? [];
 
     const map = new Map<string, string>();
@@ -55,17 +55,17 @@ export async function GET() {
 
       const s = r?.subjects;
       if (Array.isArray(s)) {
-        // Relation renvoyÃ©e sous forme de tableau
+        // Relation renvoyée sous forme de tableau
         if (s.length > 0) nm = String(s[0]?.name ?? "").trim();
       } else if (s && typeof s === "object") {
-        // Relation renvoyÃ©e sous forme d'objet
+        // Relation renvoyée sous forme d’objet
         nm = String((s as any)?.name ?? "").trim();
       }
 
       if (id && nm) map.set(id, nm);
     }
 
-    // Tableau typÃ© puis tri (Ã©vite les erreurs d'infÃ©rence)
+    // Tableau typé puis tri (évite les erreurs d’inférence)
     const items: Array<{ id: string; name: string }> = [];
     for (const [id, nm] of map.entries()) items.push({ id, name: nm });
     items.sort((a, b) => a.name.localeCompare(b.name, "fr"));
@@ -77,11 +77,11 @@ export async function GET() {
   }
 }
 
-/* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+/* ────────────────────────────────────────────────────────────────────────────
    Fallback : si institution_subjects indisponible,
    on renvoie (si possible) la table subjects globale.
-   On garde la mÃªme forme { id, name } et tri par nom.
-â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+   On garde la même forme { id, name } et tri par nom.
+──────────────────────────────────────────────────────────────────────────── */
 async function tryFallbackSubjects(supa: any) {
   try {
     const { data, error } = await supa
@@ -96,12 +96,10 @@ async function tryFallbackSubjects(supa: any) {
       const nm = s?.name ? String(s.name) : "";
       if (id && nm) list.push({ id, name: nm });
     }
-    // DÃ©jÃ  triÃ© en SQL ; tri JS par sÃ©curitÃ©
+    // Déjà trié en SQL ; tri JS par sécurité
     list.sort((a, b) => a.name.localeCompare(b.name, "fr"));
     return list;
   } catch {
     return [];
   }
 }
-
-

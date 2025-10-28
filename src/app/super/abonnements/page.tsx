@@ -1,31 +1,40 @@
-// src/app/super/abonnements/page.tsx
 import { redirect } from "next/navigation";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { revalidatePath } from "next/cache";
 
-type Institution = { id: string; name: string; code_unique: string; subscription_expires_at: string; };
+type Institution = {
+  id: string;
+  name: string;
+  code_unique: string;
+  subscription_expires_at: string;
+};
 
 export const dynamic = "force-dynamic";
 
 async function renewAction(formData: FormData) {
   "use server";
   const id = formData.get("id") as string;
-  await fetch(`${process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000"}/api/super/institutions/${id}/renew`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ months: 12 }),
-    cache: "no-store",
-  });
+  await fetch(
+    `${process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000"}/api/super/institutions/${id}/renew`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ months: 12 }),
+      cache: "no-store",
+    }
+  );
   revalidatePath("/super/abonnements");
 }
 
 export default async function AbonnementsPage() {
   const supabase = await getSupabaseServerClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
   if (!user) redirect("/login");
 
   const { data: roles } = await supabase.from("user_roles").select("role").eq("profile_id", user.id);
-  const isSuper = (roles ?? []).some(r => r.role === "super_admin");
+  const isSuper = (roles ?? []).some((r) => r.role === "super_admin");
   if (!isSuper) redirect("/(errors)/forbidden");
 
   const { data } = await supabase
@@ -43,7 +52,7 @@ export default async function AbonnementsPage() {
         <table className="min-w-full text-sm">
           <thead className="bg-slate-50 text-slate-600">
             <tr>
-              <th className="px-4 py-2 text-left">Ã‰tablissement</th>
+              <th className="px-4 py-2 text-left">Établissement</th>
               <th className="px-4 py-2 text-left">Code</th>
               <th className="px-4 py-2 text-left">Expire le</th>
               <th className="px-4 py-2 text-left">Jours restants</th>
@@ -80,8 +89,7 @@ export default async function AbonnementsPage() {
 function diffDays(dateISO: string) {
   const today = new Date();
   const d = new Date(dateISO + "T00:00:00");
-  const ms = d.getTime() - new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
+  const ms =
+    d.getTime() - new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
   return Math.ceil(ms / (1000 * 60 * 60 * 24));
 }
-
-

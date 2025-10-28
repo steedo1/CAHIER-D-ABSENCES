@@ -6,14 +6,14 @@ export const dynamic = "force-dynamic";
 
 /**
  * GET /api/super/institutions/students-count?ids=uuid1,uuid2,...
- * RÃ©ponse: { counts: { [institution_id]: number } }
+ * R�ponse: { counts: { [institution_id]: number } }
  *
  * - Auth: super_admin
  * - Compte via v_student_person (si dispo), sinon fallback sur students.
- * - OptimisÃ© pour Ãªtre appelÃ© page par page (20 IDs max typiquement).
+ * - Optimis� pour �tre appel� page par page (20 IDs max typiquement).
  */
 export async function GET(req: NextRequest) {
-  // ðŸ” Auth + super_admin
+  // �x� Auth + super_admin
   const s = await getSupabaseServerClient();
   const { data: { user } } = await s.auth.getUser();
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
@@ -26,9 +26,9 @@ export async function GET(req: NextRequest) {
   const idsParam = (url.searchParams.get("ids") ?? "").trim();
   const ids = idsParam ? idsParam.split(",").map(x => x.trim()).filter(Boolean) : [];
 
-  // Compte pour 1 Ã©tablissement (view v_student_person puis fallback students)
+  // Compte pour 1 �tablissement (view v_student_person puis fallback students)
   const countFor = async (instId: string): Promise<number> => {
-    // 1) vue dÃ©doublonnÃ©e (si tu lâ€™as)
+    // 1) vue d�doublonn�e (si tu l�"as)
     const v = await srv
       .from("v_student_person")
       .select("*", { head: true, count: "exact" })

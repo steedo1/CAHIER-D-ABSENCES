@@ -5,8 +5,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 let _admin: SupabaseClient | null = null;
 
 /**
- * Client "service role" (clÃ© SERVICE_ROLE) pour l'admin.
- * âš ï¸ Serveur uniquement. Pas de session persistÃ©e.
+ * Client "service role" (cl� SERVICE_ROLE) pour l'admin.
+ * �a� Serveur uniquement. Pas de session persist�e.
  */
 export function getSupabaseServiceClient(): SupabaseClient {
   if (_admin) return _admin;

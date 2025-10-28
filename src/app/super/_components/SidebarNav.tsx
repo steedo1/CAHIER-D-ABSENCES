@@ -4,11 +4,11 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 const items = [
-  { href: "/super/dashboard", icon: "ðŸ ", label: "Tableau de bord" },
-  { href: "/super/etablissements", icon: "ðŸ«", label: "Ã‰tablissements" },
-  { href: "/super/abonnements", icon: "ðŸ§¾", label: "Abonnements" },
-  { href: "/super/admins", icon: "ðŸ§‘â€ðŸ’¼", label: "Admins" },       // (page Ã  venir)
-  { href: "/super/parametres", icon: "âš™ï¸", label: "ParamÃ¨tres" }, // (page Ã  venir)
+  { href: "/super/dashboard", icon: "�x��", label: "Tableau de bord" },
+  { href: "/super/etablissements", icon: "�x��", label: "�0tablissements" },
+  { href: "/super/abonnements", icon: "�x��", label: "Abonnements" },
+  { href: "/super/admins", icon: "�x��x�", label: "Admins" },       // (page � venir)
+  { href: "/super/parametres", icon: "�a"", label: "Param�tres" }, // (page � venir)
 ];
 
 export default function SidebarNav() {

@@ -1,4 +1,4 @@
-//src/app/admin/ui/sidebar-nav.tsx
+// src/app/admin/ui/sidebar-nav.tsx
 "use client";
 
 import Link from "next/link";
@@ -14,6 +14,7 @@ import {
   BarChart3,
   Settings,
 } from "lucide-react";
+import type React from "react";
 
 type NavItem = {
   href: string;
@@ -31,7 +32,7 @@ const NAV: NavItem[] = [
   { href: "/admin/parents", label: "Parents", Icon: UserRoundCheck },
   { href: "/admin/import", label: "Import", Icon: Inbox, badge: "OCT" },
   { href: "/admin/statistiques", label: "Statistiques", Icon: BarChart3 },
-  { href: "/admin/parametres", label: "ParamÃ¨tres", Icon: Settings },
+  { href: "/admin/parametres", label: "Paramètres", Icon: Settings },
 ];
 
 export default function SidebarNav() {
@@ -46,8 +47,8 @@ export default function SidebarNav() {
             MCA
           </div>
           <div className="leading-tight">
-            <div className="text-sm font-semibold text-white">Mon Cahier dâ€™Absences</div>
-            <div className="text-[11px] text-slate-400">Admin Ã©tablissement</div>
+            <div className="text-sm font-semibold text-white">Mon Cahier d'Absences</div>
+            <div className="text-[11px] text-slate-400">Admin établissement</div>
           </div>
         </div>
       </div>
@@ -67,7 +68,7 @@ export default function SidebarNav() {
                   active ? "bg-slate-800 text-white" : "text-slate-200",
                 ].join(" ")}
               >
-                {/* indicateur vertical Ã  gauche */}
+                {/* indicateur vertical à gauche */}
                 <span
                   className={[
                     "absolute left-0 my-1 h-[calc(100%-0.5rem)] w-1.5 rounded-r-full",
@@ -89,11 +90,8 @@ export default function SidebarNav() {
 
       {/* pied du sidebar (optionnel) */}
       <div className="px-4 py-3 text-[11px] text-slate-500">
-        Â© {new Date().getFullYear()}
+        © {new Date().getFullYear()}
       </div>
     </nav>
   );
 }
-
-
-

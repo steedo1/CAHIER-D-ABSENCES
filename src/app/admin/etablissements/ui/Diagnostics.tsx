@@ -37,12 +37,12 @@ export default function Diagnostics() {
             className="text-xs px-2 py-1 rounded border border-slate-200 hover:bg-slate-50"
             disabled={loading}
           >
-            {loading ? "â€¦" : "RafraÃ®chir"}
+            {loading ? "&" : "Rafra�chir"}
           </button>
         </div>
         {err && <div className="text-sm text-red-600 mb-2">{err}</div>}
         {!data ? (
-          <div className="text-sm text-slate-500">Chargementâ€¦</div>
+          <div className="text-sm text-slate-500">Chargement&</div>
         ) : (
           <pre className="text-xs bg-slate-50 p-2 rounded overflow-auto">
 {JSON.stringify(data, null, 2)}

@@ -14,7 +14,7 @@ export default async function SettingsPage() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-semibold">ParamÃ¨tres</h1>
+      <h1 className="text-2xl font-semibold">Param�tres</h1>
       <SettingsPanel />
     </div>
   );

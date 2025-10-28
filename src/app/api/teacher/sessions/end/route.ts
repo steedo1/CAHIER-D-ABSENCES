@@ -11,7 +11,7 @@ export async function PATCH() {
     const { data: { user } } = await supa.auth.getUser();
     if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
 
-    // SÃ©ance ouverte la plus rÃ©cente
+    // S�ance ouverte la plus r�cente
     const { data: open, error: qErr } = await srv
       .from("teacher_sessions")
       .select("id")
@@ -24,12 +24,12 @@ export async function PATCH() {
     if (qErr) return NextResponse.json({ error: qErr.message }, { status: 400 });
     if (!open) return NextResponse.json({ ok: true, item: null });
 
-    // ClÃ´ture (aucun write sur 'status')
+    // Cl�ture (aucun write sur 'status')
     const { data: closed, error } = await srv
       .from("teacher_sessions")
       .update({ ended_at: new Date().toISOString() })
       .eq("id", open.id)
-      .is("ended_at", null)     // Ã©vite de fermer 2x
+      .is("ended_at", null)     // �vite de fermer 2x
       .select("id")
       .maybeSingle();
 

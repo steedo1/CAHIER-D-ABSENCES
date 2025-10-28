@@ -36,7 +36,7 @@ export async function GET(req: Request) {
   const q = norm(qRaw);
   const subjectFilter = (subjectRaw || "").trim();
 
-  // Query (no hard-coded class columns â†’ schema tolerant)
+  // Query (no hard-coded class columns �  schema tolerant)
   const { data, error } = await srv
     .from("class_teachers")
     .select(`
@@ -77,7 +77,7 @@ export async function GET(req: Request) {
     const subjectLabel =
       (is?.custom_name as string) ||
       (is?.subj?.name as string) ||
-      "â€”";
+      "�";
 
     if (!groups.has(key)) {
       groups.set(key, {

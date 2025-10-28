@@ -19,10 +19,10 @@ export async function POST(req: Request) {
 
   const supabase = getSupabaseServiceClient();
 
-  // Mot de passe temporaire = DEFAULT_TEMP_PASSWORD (sinon fallback gÃ©nÃ©rÃ©)
+  // Mot de passe temporaire = DEFAULT_TEMP_PASSWORD (sinon fallback g�n�r�)
   const password = process.env.DEFAULT_TEMP_PASSWORD || genTempPass(12);
 
-  // 1) CrÃ©e l'utilisateur Auth avec mot de passe (email dÃ©jÃ  confirmÃ©)
+  // 1) Cr�e l'utilisateur Auth avec mot de passe (email d�j� confirm�)
   const { data: created, error: createErr } = await supabase.auth.admin.createUser({
     email,
     password,
@@ -49,14 +49,14 @@ export async function POST(req: Request) {
   );
   if (pErr) return NextResponse.json({ error: pErr.message }, { status: 400 });
 
-  // 3) RÃ´le admin (idempotent)
+  // 3) R�le admin (idempotent)
   const { error: rErr } = await supabase.from("user_roles").upsert(
     { profile_id: uid, institution_id, role: "admin" as const },
     { onConflict: "profile_id,institution_id,role" }
   );
   if (rErr) return NextResponse.json({ error: rErr.message }, { status: 400 });
 
-  // On NE renvoie PAS le mot de passe (sÃ©curitÃ©). Tu le connais via l'env.
+  // On NE renvoie PAS le mot de passe (s�curit�). Tu le connais via l'env.
   return NextResponse.json({ ok: true, user: { id: uid, email } }, { status: 200 });
 }
 

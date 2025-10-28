@@ -53,11 +53,19 @@ function Card({
   );
 }
 
-/* Types */
+/* Types (inchangés côté API ; on calcule l'unité au rendu) */
 type ClassItem = { id: string; name: string; level: string };
 type LevelAgg = { level: string; absents: number; minutes: number };
 type ClassAgg = { class_id: string; class_label: string; absents: number; minutes: number };
 type StudentAbs = { student_id: string; full_name: string; minutes: number };
+
+/* Helpers d'affichage */
+function fmtUnitsFR(units: number) {
+  // 2 décimales max, virgule française, sans traîner des zéros inutiles
+  const r = Math.round(units * 100) / 100;
+  const s = r.toFixed(2).replace(".", ",");
+  return s.replace(/,00$/, "").replace(/,(\d)0$/, ",$1");
+}
 
 export default function AbsencesDashboard() {
   const [from, setFrom] = useState("");
@@ -72,7 +80,7 @@ export default function AbsencesDashboard() {
   const [students, setStudents] = useState<StudentAbs[]>([]);
   const [subjects, setSubjects] = useState<{ name: string; absents: number }[]>([]);
 
-  // charge la liste des classes (pour les listes dÃ©roulantes)
+  // charge la liste des classes (pour les listes déroulantes)
   useEffect(() => {
     fetch("/api/admin/classes?limit=500", { cache: "no-store" })
       .then((r) => r.json())
@@ -98,7 +106,7 @@ export default function AbsencesDashboard() {
     if (from) qs.set("from", from);
     if (to) qs.set("to", to);
 
-    // rÃ©sumÃ© par niveau
+    // résumé par niveau
     const lv = await fetch("/api/admin/absences/levels?" + qs.toString(), { cache: "no-store" }).then((r) =>
       r.json()
     );
@@ -113,7 +121,7 @@ export default function AbsencesDashboard() {
       );
       setClassesAgg(cl.items || []);
 
-      // disciplines : si une classe est dÃ©jÃ  choisie, on filtre aussi par class_id
+      // disciplines : si une classe est déjà choisie, on filtre aussi par class_id
       const qSub = new URLSearchParams(qLevel);
       if (selectedClassId) qSub.set("class_id", selectedClassId);
       const sb = await fetch("/api/admin/absences/subjects?" + qSub.toString(), { cache: "no-store" }).then((r) =>
@@ -148,7 +156,7 @@ export default function AbsencesDashboard() {
     setSubjects([]);
   }
 
-  // rÃ©-initialiser la classe si on change de niveau
+  // ré-initialiser la classe si on change de niveau
   useEffect(() => {
     setSelectedClassId("");
   }, [selectedLevel]);
@@ -175,9 +183,9 @@ export default function AbsencesDashboard() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-semibold">Absences â€” Dashboard</h1>
+        <h1 className="text-2xl font-semibold">Absences — Dashboard</h1>
         <p className="text-slate-600">
-          SÃ©lectionne une pÃ©riode, puis un niveau â†’ une classe. Vue Ã©lÃ¨ves et disciplines. Export CSV.
+          Sélectionne une période, puis un niveau → une classe. Vue élèves et disciplines. Export CSV.
         </p>
       </div>
 
@@ -195,7 +203,7 @@ export default function AbsencesDashboard() {
           <div className="md:col-span-2">
             <div className="mb-1 text-xs text-slate-500">Niveau</div>
             <Select value={selectedLevel} onChange={(e) => setSelectedLevel(e.target.value)}>
-              <option value="">â€” SÃ©lectionner un niveau â€”</option>
+              <option value="">— Sélectionner un niveau —</option>
               {levelsFromClasses.map((l) => (
                 <option key={l} value={l}>
                   {l}
@@ -210,7 +218,7 @@ export default function AbsencesDashboard() {
               onChange={(e) => setSelectedClassId(e.target.value)}
               disabled={!selectedLevel}
             >
-              <option value="">â€” SÃ©lectionner une classe â€”</option>
+              <option value="">— Sélectionner une classe —</option>
               {classesOfLevel.map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.name}
@@ -222,14 +230,14 @@ export default function AbsencesDashboard() {
         <div className="mt-4 flex items-center gap-2">
           <Button onClick={refreshAll}>Actualiser</Button>
           <button onClick={resetAll} className="rounded-xl border px-4 py-2 text-sm hover:bg-slate-50">
-            RÃ©initialiser
+            Réinitialiser
           </button>
         </div>
       </div>
 
       {/* Carte NIVEAU / CLASSES */}
       <Card
-        title={selectedLevel ? `CLASSES â€” niveau ${selectedLevel}` : "RÃ‰SUMÃ‰ PAR NIVEAU (pÃ©riode)"}
+        title={selectedLevel ? `CLASSES — niveau ${selectedLevel}` : "RÉSUMÉ PAR NIVEAU (période)"}
         actions={
           selectedLevel ? (
             <a
@@ -245,44 +253,52 @@ export default function AbsencesDashboard() {
       >
         {!selectedLevel ? (
           levelsAgg.length === 0 ? (
-            <div className="text-sm text-slate-600">Aucune donnÃ©e pour la pÃ©riode.</div>
+            <div className="text-sm text-slate-600">Aucune donnée pour la période.</div>
           ) : (
             <ul className="divide-y">
-              {levelsAgg.map((l) => (
-                <li
-                  key={l.level}
-                  className="flex cursor-pointer items-center justify-between py-2 text-slate-700 hover:text-emerald-700"
-                  onClick={() => setSelectedLevel(l.level)}
-                >
-                  <span>{l.level}</span>
-                  <span className="text-sm">
-                    {l.absents} Ã©lÃ¨ve(s) â€” {Math.floor(l.minutes / 60)}h {l.minutes % 60}min
-                  </span>
-                </li>
-              ))}
+              {levelsAgg.map((l) => {
+                const units = (Number(l.minutes || 0) / 60) || 0;
+                return (
+                  <li
+                    key={l.level}
+                    className="flex cursor-pointer items-center justify-between py-2 text-slate-700 hover:text-emerald-700"
+                    onClick={() => setSelectedLevel(l.level)}
+                  >
+                    <span>{l.level}</span>
+                    <span className="text-sm">
+                      {l.absents} élève(s) — {Math.floor(l.minutes / 60)}h {l.minutes % 60}min ·{" "}
+                      <span className="tabular-nums">NOMBRE_ABSCENCE_RETARDS: {fmtUnitsFR(units)}</span>
+                    </span>
+                  </li>
+                );
+              })}
             </ul>
           )
         ) : classesAgg.length === 0 ? (
-          <div className="text-sm text-slate-600">Aucune absence pour {selectedLevel} sur la pÃ©riode.</div>
+          <div className="text-sm text-slate-600">Aucune absence pour {selectedLevel} sur la période.</div>
         ) : (
           <ul className="divide-y">
-            {classesAgg.map((c) => (
-              <li
-                key={c.class_id}
-                className={
-                  "flex cursor-pointer items-center justify-between py-2 " +
-                  (selectedClassId === c.class_id
-                    ? "font-semibold text-emerald-700"
-                    : "text-slate-700 hover:text-emerald-700")
-                }
-                onClick={() => setSelectedClassId(c.class_id)}
-              >
-                <span>{c.class_label}</span>
-                <span className="text-sm">
-                  {c.absents} Ã©lÃ¨ve(s) â€” {Math.floor(c.minutes / 60)}h {c.minutes % 60}min
-                </span>
-              </li>
-            ))}
+            {classesAgg.map((c) => {
+              const units = (Number(c.minutes || 0) / 60) || 0;
+              return (
+                <li
+                  key={c.class_id}
+                  className={
+                    "flex cursor-pointer items-center justify-between py-2 " +
+                    (selectedClassId === c.class_id
+                      ? "font-semibold text-emerald-700"
+                      : "text-slate-700 hover:text-emerald-700")
+                  }
+                  onClick={() => setSelectedClassId(c.class_id)}
+                >
+                  <span>{c.class_label}</span>
+                  <span className="text-sm">
+                    {c.absents} élève(s) — {Math.floor(c.minutes / 60)}h {c.minutes % 60}min ·{" "}
+                    <span className="tabular-nums">NOMBRE_ABSCENCE_RETARDS: {fmtUnitsFR(units)}</span>
+                  </span>
+                </li>
+              );
+            })}
           </ul>
         )}
       </Card>
@@ -291,14 +307,14 @@ export default function AbsencesDashboard() {
         <Card
           title={
             selectedClassId
-              ? "DISCIPLINES (CLASSE SÃ‰LECTIONNÃ‰E)"
+              ? "DISCIPLINES (CLASSE SÉLECTIONNÉE)"
               : selectedLevel
-              ? "DISCIPLINES (NIVEAU SÃ‰LECTIONNÃ‰)"
+              ? "DISCIPLINES (NIVEAU SÉLECTIONNÉ)"
               : "DISCIPLINES"
           }
         >
           {subjects.length === 0 ? (
-            <div className="text-sm text-slate-600">â€”</div>
+            <div className="text-sm text-slate-600">—</div>
           ) : (
             <ul className="divide-y">
               {subjects.map((s) => (
@@ -312,7 +328,7 @@ export default function AbsencesDashboard() {
         </Card>
 
         <Card
-          title="Ã‰LÃˆVES (SÃ‰LECTIONNE UNE CLASSE)"
+          title="ÉLÈVES (SÉLECTIONNE UNE CLASSE)"
           actions={
             selectedClassId ? (
               <a
@@ -327,27 +343,33 @@ export default function AbsencesDashboard() {
           }
         >
           {!selectedClassId ? (
-            <div className="text-sm text-slate-600">â€”</div>
+            <div className="text-sm text-slate-600">—</div>
           ) : students.length === 0 ? (
-            <div className="text-sm text-slate-600">Aucune absence dans cette classe pour la pÃ©riode.</div>
+            <div className="text-sm text-slate-600">Aucune absence dans cette classe pour la période.</div>
           ) : (
             <div className="overflow-x-auto">
               <table className="min-w-full text-sm">
                 <thead className="bg-slate-50">
                   <tr>
-                    <th className="px-3 py-2 text-left">Ã‰lÃ¨ve</th>
-                    <th className="px-3 py-2 text-left">Heures dâ€™absence</th>
+                    <th className="px-3 py-2 text-left">Élève</th>
+                    <th className="px-3 py-2 text-left">Heures d’absence</th>
+                    <th className="px-3 py-2 text-left">NOMBRE_ABSCENCE_RETARDS</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {students.map((s: any) => (
-                    <tr key={s.student_id} className="border-t">
-                      <td className="px-3 py-2">{s.full_name}</td>
-                      <td className="px-3 py-2">
-                        {Math.floor(s.minutes / 60)} h {s.minutes % 60} min
-                      </td>
-                    </tr>
-                  ))}
+                  {students.map((s: any) => {
+                    const minutes = Number(s.minutes || 0);
+                    const units = minutes / 60;
+                    return (
+                      <tr key={s.student_id} className="border-t">
+                        <td className="px-3 py-2">{s.full_name}</td>
+                        <td className="px-3 py-2">
+                          {Math.floor(minutes / 60)} h {minutes % 60} min
+                        </td>
+                        <td className="px-3 py-2 tabular-nums">{fmtUnitsFR(units)}</td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -357,5 +379,3 @@ export default function AbsencesDashboard() {
     </div>
   );
 }
-
-

@@ -18,7 +18,7 @@ export async function GET(req: Request) {
 
   const inst = me?.institution_id as string | null;
 
-  // âœ… durcissement : institution obligatoire
+  // �S& durcissement : institution obligatoire
   if (!inst) return NextResponse.json({ error: "no_institution" }, { status: 400 });
 
   const url = new URL(req.url);
@@ -67,7 +67,7 @@ export async function GET(req: Request) {
 
   for (const r of (enrolls || [])) {
     const s = (r as any).students;
-    const full = `${s?.first_name ?? ""} ${s?.last_name ?? ""}`.trim() || "â€”";
+    const full = `${s?.first_name ?? ""} ${s?.last_name ?? ""}`.trim() || "�";
     byStudent.set(r.student_id, { student_id: r.student_id, student_name: full, guardians: [] });
   }
 
@@ -76,7 +76,7 @@ export async function GET(req: Request) {
     if (!byStudent.has(stId)) continue;
 
     const p = (ln as any).profiles || {};
-    // âœ… durcissement : ignorer un lien orphelin sans profil parent
+    // �S& durcissement : ignorer un lien orphelin sans profil parent
     if (!p?.id) continue;
 
     byStudent.get(stId)!.guardians.push({

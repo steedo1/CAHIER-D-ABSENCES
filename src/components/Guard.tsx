@@ -11,7 +11,7 @@ export default function Guard({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
 
-  // Si connectÃ© et sur /login â‡’ bascule vers /redirect
+  // Si connect� et sur /login �! bascule vers /redirect
   useEffect(() => {
     if (loading) return;
     if (session && pathname === "/login") {
@@ -19,7 +19,7 @@ export default function Guard({ children }: { children: React.ReactNode }) {
     }
   }, [loading, session, pathname, router]);
 
-  // âœ… On laisse le middleware protÃ©ger le reste (pas de double redirection ici)
+  // �S& On laisse le middleware prot�ger le reste (pas de double redirection ici)
   if (loading) return null;
 
   return <>{children}</>;

@@ -14,7 +14,7 @@ export default async function EtabsListPage() {
 
   return (
     <div className="space-y-4">
-      <h1 className="text-2xl font-semibold">Liste des Ã©tablissements</h1>
+      <h1 className="text-2xl font-semibold">Liste des �tablissements</h1>
       <ListInstitutions />
     </div>
   );

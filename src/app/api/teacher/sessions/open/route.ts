@@ -6,7 +6,7 @@ export async function GET() {
   const { data: { user } } = await supa.auth.getUser();
   if (!user) return NextResponse.json({ item: null });
 
-  // RÃ©cupÃ¨re lâ€™Ã©tablissement du prof
+  // R�cup�re l�"�tablissement du prof
   const { data: me } = await supa
     .from("profiles")
     .select("institution_id")
@@ -23,7 +23,7 @@ export async function GET() {
       subj:subject_id(custom_name)
     `)
     .eq("teacher_id", user.id)
-    .eq(inst ? "institution_id" : "teacher_id", inst ?? user.id) // filtre Ã©tablissement si dispo
+    .eq(inst ? "institution_id" : "teacher_id", inst ?? user.id) // filtre �tablissement si dispo
     .is("ended_at", null)
     .order("started_at", { ascending: false })
     .limit(1)

@@ -2,7 +2,7 @@
 import { NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
-// petit helper : essaye une requÃªte; si la table n'existe pas (ou autre), renvoie null
+// petit helper : essaye une requ�te; si la table n'existe pas (ou autre), renvoie null
 async function trySelect<T>(fn: () => any): Promise<T | null> {
   try {
     const { data, error } = await fn();
@@ -27,7 +27,7 @@ export async function GET(req: Request) {
   const url = new URL(req.url);
   const subject_id = url.searchParams.get("subject_id") || "";
 
-  // Tous les profs de l'Ã©tablissement
+  // Tous les profs de l'�tablissement
   const { data: roleRows, error: rErr } = await supa
     .from("user_roles")
     .select("profile_id")
@@ -37,7 +37,7 @@ export async function GET(req: Request) {
 
   let teacherIds = new Set((roleRows ?? []).map(r => r.profile_id as string));
 
-  // Filtre par matiÃ¨re si demandÃ©
+  // Filtre par mati�re si demand�
   if (subject_id) {
     // (a) premier choix : teacher_subjects
     const ts = await trySelect<any[]>(() =>
@@ -76,7 +76,7 @@ export async function GET(req: Request) {
   return NextResponse.json({
     items: (profs ?? []).map(p => ({
       id: p.id,
-      display_name: (p as any).display_name ?? "â€”",
+      display_name: (p as any).display_name ?? "�",
       email: (p as any).email ?? null,
       phone: (p as any).phone ?? null,
     })),

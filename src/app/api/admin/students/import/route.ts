@@ -12,7 +12,7 @@ function normHeader(s: string) {
   return stripAccents(String(s).toLowerCase()).replace(/\s+/g, " ").trim();
 }
 
-/** DÃ©tection du sÃ©parateur + guillemets */
+/** Détection du séparateur + guillemets */
 function parseCSV(raw: string) {
   const firstNonEmpty = (raw.split(/\r?\n/).find(l => l.trim().length > 0) ?? "");
   const sep =
@@ -42,7 +42,7 @@ function parseCSV(raw: string) {
   return rows.filter(r => r.some(c => String(c).trim() !== ""));
 }
 
-/** "NOM Prenoms" â†’ { last_name, first_name } */
+/** "NOM Prenoms" → { last_name, first_name } */
 function splitFullName(v: string) {
   const s = (v || "").replace(/\s+/g, " ").trim();
   if (!s) return { last_name: "", first_name: "" };
@@ -53,7 +53,7 @@ function splitFullName(v: string) {
   return { last_name: parts[0] || "", first_name: parts.slice(1).join(" ") || "" };
 }
 
-/** Parsing flexible des Ã©lÃ¨ves */
+/** Parsing flexible des élèves */
 function parseCsvStudentsFlexible(raw: string) {
   const rows = parseCSV(raw);
   if (!rows.length) return [];
@@ -62,9 +62,9 @@ function parseCsvStudentsFlexible(raw: string) {
   const H = Hraw.map(normHeader).map(h => h.replace(/[._-]/g, " ").replace(/\s+/g, " ").trim());
   const hCompact = (h: string) => h.replace(/[ .]/g, "");
 
-  // Expressions ANCRÃ‰ES pour Ã©viter "no" âŸ‚ "nom"
+  // Expressions ANCRÉES pour éviter "no" ≠ "nom"
   const idx = {
-    numero:   H.findIndex(h => /^(nÂ°|nÂº|no|numero|num|#)$/i.test(hCompact(h))),
+    numero:   H.findIndex(h => /^(n°|nº|no|numero|num|#)$/i.test(hCompact(h))),
     matric:   H.findIndex(h => /^(matricule|matr|code|id|identifiant|matric)$/i.test(hCompact(h))),
     nom:      H.findIndex(h => /^(nom|last|surname)$/i.test(hCompact(h))),
     prenom:   H.findIndex(h => /^(prenom|prenoms|first|given)$/i.test(hCompact(h))),
@@ -84,14 +84,14 @@ function parseCsvStudentsFlexible(raw: string) {
     }
 
     return {
-      _row: i, // ordre dâ€™origine pour garder lâ€™ordre du fichier
+      _row: i, // ordre d’origine pour garder l’ordre du fichier
       numero:    cell(idx.numero),
       matricule: cell(idx.matric) || null,
       last_name, first_name,
     };
   });
 
-  // On garde lâ€™ordre dâ€™origine, on filtre les lignes vides
+  // On garde l’ordre d’origine, on filtre les lignes vides
   return body.filter(r => (r.last_name || r.first_name || r.matricule));
 }
 
@@ -133,7 +133,7 @@ export async function POST(req: Request) {
     if (!inst) return NextResponse.json({ error: "no_institution" }, { status: 400 });
     if (!class_id) return NextResponse.json({ error: "class_id_required" }, { status: 400 });
 
-    // Classe dans mon Ã©tablissement ?
+    // Classe dans mon établissement ?
     const { data: cls } = await srv
       .from("classes")
       .select("id,institution_id")
@@ -144,7 +144,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "invalid_class" }, { status: 400 });
     }
 
-    // Insert Ã©lÃ¨ves
+    // Insert élèves
     const students = parsed.map(r => ({
       institution_id: inst,
       first_name: r.first_name,
@@ -159,12 +159,12 @@ export async function POST(req: Request) {
 
     if (e1) return NextResponse.json({ error: e1.message }, { status: 400 });
 
-    // Inscriptions : respecter NOT NULL sur start_date (et institution_id si prÃ©sent)
+    // Inscriptions : respecter NOT NULL sur start_date (et institution_id si présent)
     const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
     const enrollRows = (created || []).map(s => ({
       class_id,
       student_id: s.id,
-      institution_id: inst, // si la colonne existe (ne gÃªne pas si elle y est)
+      institution_id: inst, // si la colonne existe
       start_date: today,    // satisfait NOT NULL
       end_date: null,       // si la colonne existe
     }));
@@ -172,7 +172,7 @@ export async function POST(req: Request) {
     if (enrollRows.length) {
       const { error: e2 } = await srv
         .from("class_enrollments")
-        // nÃ©cessite une contrainte UNIQUE (class_id, student_id)
+        // nécessite une contrainte UNIQUE (class_id, student_id)
         .upsert(enrollRows, { onConflict: "class_id,student_id" });
 
       if (e2) return NextResponse.json({ error: e2.message }, { status: 400 });
@@ -183,5 +183,3 @@ export async function POST(req: Request) {
 
   return NextResponse.json({ error: "bad_action" }, { status: 400 });
 }
-
-

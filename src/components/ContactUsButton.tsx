@@ -3,8 +3,8 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Mail, Phone, MessageSquare, Copy, Check } from "lucide-react";
-// Si tu as dÃ©jÃ  un Button shadcn, tu peux le garder.
-// Sinon, on fournit un petit fallback propre.
+
+// Si tu as déjà un Button shadcn, on l’utilise. Sinon, on fournit un petit fallback.
 let ExternalButton: any;
 try {
   // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -24,10 +24,9 @@ const Button: React.FC<React.ButtonHTMLAttributes<HTMLButtonElement>> = (props) 
   <ExternalButton {...props} />
 );
 
-/* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-   Mini Dialog (portal + overlay)
-   â”€ aucune dÃ©pendance externe
-â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ─────────────────────────────────────────────────────────────
+   Mini Dialog (portal + overlay) — aucune dépendance externe
+───────────────────────────────────────────────────────────── */
 function LightDialog({
   open,
   onClose,
@@ -43,7 +42,7 @@ function LightDialog({
 }) {
   const ref = useRef<HTMLDivElement | null>(null);
 
-  // Ferme avec ESC et clic sur lâ€™overlay
+  // Ferme avec ESC et clic sur l’overlay
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
@@ -83,9 +82,9 @@ function LightDialog({
   );
 }
 
-/* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-   DonnÃ©es de contact
-â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ─────────────────────────────────────────────────────────────
+   Données de contact
+───────────────────────────────────────────────────────────── */
 const CONTACTS = {
   phones: [
     { label: "WhatsApp", value: "+2250748613990" },
@@ -125,12 +124,12 @@ export default function ContactUsButton({ variant = "chip" }: { variant?: "chip"
         open={open}
         onClose={() => setOpen(false)}
         title="Nous contacter"
-        description="Besoin dâ€™aide ? Joignez-nous par tÃ©lÃ©phone ou email."
+        description="Besoin d'aide ? Joignez-nous par téléphone ou email."
       >
         <div className="space-y-3">
           {CONTACTS.phones.map((p) => {
-            const telHref = p.value.replace(/\s+/g, "");
-            const wa = p.value.replace(/[^\d]/g, "");
+            const telHref = p.value.replace(/[^\d+]/g, ""); // conserve + et chiffres
+            const wa = p.value.replace(/[^\d]/g, ""); // wa.me exige uniquement les chiffres
             return (
               <div key={p.value} className="flex items-center justify-between rounded-lg border p-3">
                 <div className="flex items-center gap-3">
@@ -161,7 +160,7 @@ export default function ContactUsButton({ variant = "chip" }: { variant?: "chip"
                     {copied === p.value ? (
                       <>
                         <Check className="mr-1 inline h-3.5 w-3.5" />
-                        CopiÃ©
+                        Copié
                       </>
                     ) : (
                       <>
@@ -187,7 +186,7 @@ export default function ContactUsButton({ variant = "chip" }: { variant?: "chip"
             </div>
             <div className="flex items-center gap-2">
               <a href={`mailto:${CONTACTS.email}`} className="rounded-md border px-2 py-1 text-xs hover:bg-slate-50">
-                Ã‰crire
+                Écrire
               </a>
               <button
                 onClick={() => copy(CONTACTS.email)}
@@ -196,7 +195,7 @@ export default function ContactUsButton({ variant = "chip" }: { variant?: "chip"
                 {copied === CONTACTS.email ? (
                   <>
                     <Check className="mr-1 inline h-3.5 w-3.5" />
-                    CopiÃ©
+                    Copié
                   </>
                 ) : (
                   <>
@@ -221,5 +220,3 @@ export default function ContactUsButton({ variant = "chip" }: { variant?: "chip"
     </>
   );
 }
-
-

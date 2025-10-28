@@ -4,13 +4,13 @@ import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 
 type Body = {
-  /** ID du profil enseignant Ã  retirer (obligatoire) */
+  /** ID du profil enseignant � retirer (obligatoire) */
   profile_id: string;
-  /** Termine les sÃ©ances ouvertes dans lâ€™Ã©tablissement (par dÃ©faut: true) */
+  /** Termine les s�ances ouvertes dans l�"�tablissement (par d�faut: true) */
   end_open_sessions?: boolean;
   /**
-   * Met profiles.institution_id Ã  NULL si Ã©gal Ã  lâ€™Ã©tablissement admin courant
-   * (par dÃ©faut: true)
+   * Met profiles.institution_id � NULL si �gal � l�"�tablissement admin courant
+   * (par d�faut: true)
    */
   unset_profile_institution?: boolean;
 };
@@ -24,7 +24,7 @@ export async function POST(req: Request) {
     const { data: { user } } = await supa.auth.getUser();
     if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
 
-    // RÃ©cupÃ¨re lâ€™Ã©tablissement de lâ€™admin (scope par dÃ©faut)
+    // R�cup�re l�"�tablissement de l�"admin (scope par d�faut)
     const { data: me, error: meErr } = await supa
       .from("profiles")
       .select("institution_id")
@@ -37,7 +37,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "no_institution_for_admin" }, { status: 400 });
     }
 
-    // VÃ©rifie que l'appelant est admin/super_admin sur cet Ã©tablissement
+    // V�rifie que l'appelant est admin/super_admin sur cet �tablissement
     const { data: myRoles, error: rolesErr } = await srv
       .from("user_roles")
       .select("role,institution_id")
@@ -65,7 +65,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "cannot_remove_yourself" }, { status: 400 });
     }
 
-    // VÃ©rifie que lâ€™utilisateur cible existe
+    // V�rifie que l�"utilisateur cible existe
     const { data: target, error: tErr } = await srv
       .from("profiles")
       .select("id,institution_id,display_name")
@@ -74,7 +74,7 @@ export async function POST(req: Request) {
     if (tErr) return NextResponse.json({ error: tErr.message }, { status: 400 });
     if (!target) return NextResponse.json({ error: "user_not_found" }, { status: 404 });
 
-    // VÃ©rifie qu'il est bien 'teacher' dans cet Ã©tablissement
+    // V�rifie qu'il est bien 'teacher' dans cet �tablissement
     const { data: teacherRole } = await srv
       .from("user_roles")
       .select("profile_id")
@@ -83,7 +83,7 @@ export async function POST(req: Request) {
       .eq("role", "teacher")
       .maybeSingle();
     if (!teacherRole) {
-      // Rien Ã  retirer : on rÃ©pond ok=false mais sans erreur bloquante
+      // Rien � retirer : on r�pond ok=false mais sans erreur bloquante
       return NextResponse.json({
         ok: true,
         removed_role: 0,
@@ -93,7 +93,7 @@ export async function POST(req: Request) {
       });
     }
 
-    // 1) supprime le rÃ´le 'teacher' pour cet Ã©tablissement
+    // 1) supprime le r�le 'teacher' pour cet �tablissement
     const { error: delErr } = await srv
       .from("user_roles")
       .delete()
@@ -102,7 +102,7 @@ export async function POST(req: Request) {
       .eq("role", "teacher");
     if (delErr) return NextResponse.json({ error: delErr.message }, { status: 400 });
 
-    // 2) clÃ´ture les sÃ©ances ouvertes dans cet Ã©tablissement (optionnel)
+    // 2) cl�ture les s�ances ouvertes dans cet �tablissement (optionnel)
     let ended = 0;
     if (endOpen) {
       const { data: openRows, error: qOpenErr } = await srv
@@ -125,7 +125,7 @@ export async function POST(req: Request) {
       }
     }
 
-    // 3) nettoie profiles.institution_id si Ã§a pointe sur lâ€™ancien Ã©tablissement (optionnel)
+    // 3) nettoie profiles.institution_id si �a pointe sur l�"ancien �tablissement (optionnel)
     let cleared = false;
     if (unsetInst && String(target.institution_id || "") === adminInst) {
       const { error: upErr } = await srv

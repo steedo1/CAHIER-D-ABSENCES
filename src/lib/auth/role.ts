@@ -6,12 +6,12 @@ export const ROLE_PRIORITY: AppRole[] = [
 ];
 
 export function normalize(role: AppRole): AppRole {
-  // Ã©ducateur = admin pour l'UI/navigation
+  // �ducateur = admin pour l'UI/navigation
   return role === "educator" ? "admin" : role;
 }
 
 export function pickSingleRole(roles: AppRole[]): AppRole {
-  if (!roles?.length) throw new Error("Aucun rÃ´le");
+  if (!roles?.length) throw new Error("Aucun r�le");
   const found = ROLE_PRIORITY.find((r) => roles.includes(r));
   return normalize(found || roles[0]);
 }

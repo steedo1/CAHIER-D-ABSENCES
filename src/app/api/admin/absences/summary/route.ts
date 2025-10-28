@@ -22,7 +22,7 @@ export async function GET(req: Request) {
     teacher_id = t?.id;
   }
 
-  // jointure marks -> sessions (filtrage par pÃ©riode/classe/teacher)
+  // jointure marks -> sessions (filtrage par p�riode/classe/teacher)
   let q = supa.from("attendance_marks")
     .select("status, session_id, minutes_late, session:teacher_sessions!inner(class_id,teacher_id,started_at)");
 
