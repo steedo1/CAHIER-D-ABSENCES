@@ -1,4 +1,3 @@
-// src/components/auth/LoginCard.tsx
 "use client";
 
 import { useEffect, useRef, useState } from "react";
@@ -6,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useAuth } from "@/app/providers";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getSupabaseBrowserClient } from "@/lib/supabase-browser";
-import { normalizePhone } from "@/lib/phone";
+import { normalizePhone, canonicalPrefix, sanitize } from "@/lib/phone";
 import { Mail, Phone as PhoneIcon, Lock, Eye, EyeOff, Loader2, ShieldAlert } from "lucide-react";
 
 type Props = { redirectTo?: string; compactHeader?: boolean };
@@ -96,10 +95,25 @@ export default function LoginCard({ redirectTo = "/redirect", compactHeader }: P
         const { error } = await supabase.auth.signInWithPassword({ email, password: pwdEmail });
         if (error) throw new Error(error.message || "Identifiants invalides.");
       } else {
-        const phoneNorm = normalizePhone(phone) || "";
-        if (!phoneNorm) throw new Error("Numéro de téléphone invalide.");
-        const { error } = await supabase.auth.signInWithPassword({ phone: phoneNorm, password: pwdPhone });
-        if (error) throw new Error(error.message || "Identifiants invalides.");
+        // Candidats : normalisation standard + variante "conserver le 0"
+        const n1 = normalizePhone(phone) || "";
+        const pref = canonicalPrefix(undefined);
+        const digitsOnly = sanitize(phone).replace(/^\+/, "");
+        const n2 = digitsOnly ? pref + digitsOnly : "";
+
+        const tries = [n1, n2].filter((v, i, a) => !!v && a.indexOf(v) === i);
+        if (tries.length === 0) throw new Error("Numéro de téléphone invalide.");
+
+        let lastErr: any = null;
+        for (const candidate of tries) {
+          const { error } = await supabase.auth.signInWithPassword({ phone: candidate, password: pwdPhone });
+          if (!error) {
+            lastErr = null;
+            break;
+          }
+          lastErr = error;
+        }
+        if (lastErr) throw new Error(lastErr.message || "Identifiants invalides.");
       }
     } catch (authErr: any) {
       setSubmitting(false);
@@ -253,7 +267,7 @@ export default function LoginCard({ redirectTo = "/redirect", compactHeader }: P
                   type="tel"
                   inputMode="tel"
                   className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm outline-none transition placeholder:text-slate-400 focus:border-blue-400 focus:ring-4 focus:ring-blue-500/20"
-                  placeholder="Ex. 07 08 09 10"
+                  placeholder="Ex. 01 02 03 04 05"
                   value={phone}
                   onChange={(e) => setPhone(e.target.value)}
                   required
@@ -368,5 +382,3 @@ export default function LoginCard({ redirectTo = "/redirect", compactHeader }: P
     </div>
   );
 }
-
-

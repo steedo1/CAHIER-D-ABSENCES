@@ -11,7 +11,6 @@ function endISO(d?: string) {
 }
 
 export async function GET(req: Request) {
-  // ✅ ICI: on attend le client, sinon 'supa' est une Promise
   const supa = await getSupabaseServerClient();
   const srv  = getSupabaseServiceClient();
 
@@ -29,10 +28,11 @@ export async function GET(req: Request) {
     .eq("id", user.id)
     .maybeSingle();
 
-  const institution_id = me?.institution_id as string | null;
+  const institution_id = (me?.institution_id as string) ?? null;
   if (!institution_id || !class_id) return NextResponse.json({ items: [] });
 
-  const { data: marks, error } = await srv
+  // --- Absences (minutes) depuis v_mark_minutes
+  const { data: absMarks, error: absErr } = await srv
     .from("v_mark_minutes")
     .select("student_id, minutes, started_at")
     .eq("institution_id", institution_id)
@@ -40,34 +40,68 @@ export async function GET(req: Request) {
     .gte("started_at", startISO(from))
     .lte("started_at", endISO(to));
 
-  if (error) {
-    return NextResponse.json({ items: [], error: error.message }, { status: 400 });
+  if (absErr) {
+    return NextResponse.json({ items: [], error: absErr.message }, { status: 400 });
   }
 
-  const stuIds = Array.from(new Set((marks || []).map(m => m.student_id).filter(Boolean)));
+  const absAgg = new Map<string, number>();
+  for (const m of absMarks || []) {
+    const sid = String((m as any).student_id);
+    const v   = Number((m as any).minutes || 0);
+    absAgg.set(sid, (absAgg.get(sid) || 0) + v);
+  }
+
+  // --- Retards (minutes) depuis v_tardy_minutes (si la vue existe)
+  const tarAgg = new Map<string, number>();
+  try {
+    const { data: tardy } = await srv
+      .from("v_tardy_minutes")
+      .select("student_id, minutes, started_at")
+      .eq("institution_id", institution_id)
+      .eq("class_id", class_id)
+      .gte("started_at", startISO(from))
+      .lte("started_at", endISO(to));
+
+    for (const t of tardy || []) {
+      const sid = String((t as any).student_id);
+      const v   = Number((t as any).minutes || 0);
+      tarAgg.set(sid, (tarAgg.get(sid) || 0) + v);
+    }
+  } catch {
+    // Vue absente → on laisse tarAgg à 0
+  }
+
+  // --- Élèves (union des ids présents dans absences/retards)
+  const stuIds = Array.from(new Set([...absAgg.keys(), ...tarAgg.keys()]));
+  if (stuIds.length === 0) return NextResponse.json({ items: [] });
+
   const { data: students } = await srv
     .from("students")
     .select("id, first_name, last_name")
     .in("id", stuIds.length ? stuIds : ["00000000-0000-0000-0000-000000000000"]);
 
   const nameOf = new Map<string, string>(
-    (students || []).map(s => [s.id as string, [s.last_name, s.first_name].filter(Boolean).join(" ")])
+    (students || []).map(s => [
+      s.id as string,
+      [s.last_name, s.first_name].filter(Boolean).join(" ").trim() || "—",
+    ])
   );
 
-  const agg = new Map<string, number>();
-  for (const m of marks || []) {
-    agg.set(m.student_id!, (agg.get(m.student_id!) || 0) + ((m as any).minutes || 0));
-  }
+  // --- Assemblage (compat: minutes = absence_minutes)
+  const items = stuIds.map((student_id) => {
+    const absence_minutes = Number(absAgg.get(student_id) || 0);
+    const tardy_minutes   = Number(tarAgg.get(student_id) || 0);
+    const minutes_total   = absence_minutes + tardy_minutes;
 
-  const items = Array.from(agg.entries())
-    .map(([student_id, minutes]) => ({
+    return {
       student_id,
       full_name: nameOf.get(student_id) || "—",
-      minutes,
-    }))
-    .sort((a, b) => b.minutes - a.minutes);
+      minutes: absence_minutes,           // compat ancien champ
+      absence_minutes,
+      tardy_minutes,
+      minutes_total,
+    };
+  }).sort((a, b) => b.minutes_total - a.minutes_total);
 
   return NextResponse.json({ items });
 }
-
-

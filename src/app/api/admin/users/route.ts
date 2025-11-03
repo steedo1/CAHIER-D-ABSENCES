@@ -1,4 +1,3 @@
-// src/app/api/admin/users/route.ts
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { createServerClient } from "@supabase/ssr";
@@ -9,7 +8,14 @@ export const dynamic = "force-dynamic";
 
 const SUPABASE_URL  = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_ANON = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-const SERVICE_KEY   = process.env.SUPABASE_SERVICE_ROLE_KEY!; // requis
+const SERVICE_KEY   = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+
+// Préfixe par défaut pour la recherche téléphone (extrait des env)
+const DEFAULT_CC = String(
+  process.env.NEXT_PUBLIC_DEFAULT_PHONE_PREFIX ||
+  process.env.DEFAULT_PHONE_PREFIX ||
+  "+225"
+).replace(/[^\d]/g, ""); // => "225"
 
 /* ---------- helpers ---------- */
 function extractTokens(jar: Awaited<ReturnType<typeof cookies>>) {
@@ -30,10 +36,10 @@ function extractTokens(jar: Awaited<ReturnType<typeof cookies>>) {
   return { access, refresh };
 }
 const lc = (s: string | null | undefined) => (s ?? "").toLowerCase();
-/** ne garde que les chiffres */
+/** garde uniquement les chiffres */
 const digits = (s: string | null | undefined) => (s ?? "").replace(/\D+/g, "");
 
-/** priorit� d�"affichage si plusieurs r�les */
+/** priorité d’affichage si plusieurs rôles */
 const ROLE_ORDER = ["super_admin", "admin", "teacher", "educator", "parent", "user"] as const;
 function pickRole(roles: string[]) {
   for (const r of ROLE_ORDER) if (roles.includes(r)) return r;
@@ -46,7 +52,7 @@ export async function GET(req: Request) {
     const { searchParams } = new URL(req.url);
     const qRaw  = (searchParams.get("q") || "").trim();
     const qText = lc(qRaw);
-    const qNum  = digits(qRaw);               // <= on cherche sur les CHIFFRES uniquement
+    const qNum  = digits(qRaw); // <= on cherche sur les CHIFFRES uniquement
 
     // 1) Auth appelant (cookies du SDK navigateur)
     const jar = await cookies();
@@ -58,9 +64,9 @@ export async function GET(req: Request) {
       try { await supabase.auth.setSession({ access_token: access, refresh_token: refresh }); } catch {}
     }
     const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return NextResponse.json({ error: "Non authentifi�." }, { status: 401 });
+    if (!user) return NextResponse.json({ error: "Non authentifié." }, { status: 401 });
 
-    // 2) V�rif admin & scope �tablissement via user_roles (service role)
+    // 2) Vérif admin & scope établissement via user_roles (service role)
     const svc = createClient(SUPABASE_URL, SERVICE_KEY, {
       auth: { autoRefreshToken: false, persistSession: false },
     });
@@ -74,13 +80,13 @@ export async function GET(req: Request) {
     const myRoleList = (myRoles || []).map((r) => String(r.role));
     const isSuper    = myRoleList.includes("super_admin");
     const isAdmin    = isSuper || myRoleList.includes("admin");
-    if (!isAdmin) return NextResponse.json({ error: "Acc�s refus� (admin requis)." }, { status: 403 });
+    if (!isAdmin) return NextResponse.json({ error: "Accès refusé (admin requis)." }, { status: 403 });
 
     const adminScopes = (myRoles || [])
       .filter((r) => r.institution_id && (r.role === "admin" || r.role === "super_admin"))
       .map((r) => r.institution_id as string);
 
-    // 3) Population visible = profils reli�s � user_roles dans ton/tes �tablissements
+    // 3) Population visible = profils reliés à user_roles dans ton/tes établissements
     let roleQuery = svc.from("user_roles").select("profile_id, role, institution_id");
     if (!isSuper && adminScopes.length > 0) roleQuery = roleQuery.in("institution_id", adminScopes);
 
@@ -88,7 +94,7 @@ export async function GET(req: Request) {
     if (visErr) return NextResponse.json({ error: visErr.message }, { status: 400 });
     if (!visibleRoles || visibleRoles.length === 0) return NextResponse.json({ items: [] });
 
-    // R�les par profil
+    // Rôles par profil
     const rolesByProfile = new Map<string, string[]>();
     const profileIds: string[] = [];
     for (const r of visibleRoles) {
@@ -99,7 +105,7 @@ export async function GET(req: Request) {
       rolesByProfile.set(pid, list);
     }
 
-    // 4) Charge les profils concern�s
+    // 4) Charge les profils concernés
     const ids = Array.from(new Set(profileIds));
     const { data: profs, error: pErr } = await svc
       .from("profiles")
@@ -108,21 +114,26 @@ export async function GET(req: Request) {
       .limit(1000);
     if (pErr) return NextResponse.json({ error: pErr.message }, { status: 400 });
 
-    // 5) Filtre c�t� serveur
+    // 5) Filtre côté serveur
     const filtered = (profs || []).filter((p) => {
-      if (!qRaw) return true; // sans filtre �  tout visible
+      if (!qRaw) return true; // sans filtre => tout visible
 
       // match texte (nom/email)
-      const matchText = lc(p.display_name).includes(qText) || lc(p.email).includes(qText);
+      const matchText =
+        lc(p.display_name).includes(qText) ||
+        lc(p.email).includes(qText);
 
-      // match t�l�phone : on fabrique des candidats c�t� serveur pour couvrir tous les cas
+      // match téléphone : on fabrique des candidats côté serveur
       const phoneDigits = digits(p.phone); // ex: "+2250202020202" -> "2250202020202"
       const cands = new Set<string>();
       if (qNum) {
-        cands.add(qNum);                                // "0202020202"
-        cands.add(qNum.replace(/^0+/, ""));             // "202020202" (au cas o�)
-        cands.add("225" + qNum);                        // "2250202020202"
-        cands.add("225" + qNum.replace(/^0+/, ""));     // "225202020202"
+        const no0 = qNum.replace(/^0+/, "");
+        cands.add(qNum);            // "0102030405" => "0102030405"
+        cands.add(no0);             // "102030405"
+        if (DEFAULT_CC) {
+          cands.add(DEFAULT_CC + qNum);  // "2250102030405"
+          cands.add(DEFAULT_CC + no0);   // "225102030405"
+        }
       }
 
       const matchPhone =
@@ -145,5 +156,3 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: e?.message || "Erreur serveur." }, { status: 500 });
   }
 }
-
-

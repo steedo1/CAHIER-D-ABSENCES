@@ -1,3 +1,4 @@
+//src/app/api/teacher/sessions/open/route.ts
 import { NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 

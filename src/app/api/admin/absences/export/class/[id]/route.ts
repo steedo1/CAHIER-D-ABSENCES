@@ -1,3 +1,4 @@
+//src/app/api/admin/absences/export/class/[id]/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
@@ -24,65 +25,33 @@ type RawRow = {
     | { label: string | null; level: string | null; institution_id: string }
     | { label: string | null; level: string | null; institution_id: string }[]
     | null;
-  subjects?:
-    | { name?: string | null; label?: string | null }
-    | { name?: string | null; label?: string | null }[]
-    | null;
+  subjects?: any;
 };
 
 /* ---------- helpers formatage ---------- */
-function fmtDate(dISO: string) {
-  return dISO.slice(0, 10);
-}
+function fmtDate(dISO: string) { return dISO.slice(0, 10); }
 function fmtTime(dISO: string) {
-  return new Date(dISO).toLocaleTimeString("fr-FR", {
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  });
+  return new Date(dISO).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit", hour12: false });
 }
-function addMinutes(dISO: string, mins: number) {
-  const d = new Date(dISO);
-  d.setMinutes(d.getMinutes() + mins);
-  return d.toISOString();
-}
-function fmtHM(m: number) {
-  return `${Math.floor(m / 60)}h ${m % 60}m`;
-}
-/** 1 unité = 60 minutes ; format FR (2,5 ; 4 ; etc.) */
-function fmtUnitsFR(units: number) {
-  const r = Math.round(units * 100) / 100;
-  return String(r).replace(".", ",");
-}
-/** Forcer texte dans Excel & empêcher formules. */
-function excelText(s: string) {
-  const v = String(s ?? "");
-  const danger = /^[-+=@].*/.test(v);
-  return "'" + (danger ? " " + v : v);
-}
-function csvEscape(s: string) {
-  const v = String(s ?? "");
-  return /[;"\n\r]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
-}
+function addMinutes(dISO: string, mins: number) { const d = new Date(dISO); d.setMinutes(d.getMinutes() + mins); return d.toISOString(); }
+function fmtHM(m: number) { return `${Math.floor(m / 60)}h ${m % 60}m`; }
+function fmtUnitsFR(units: number) { const r = Math.round(units * 100) / 100; return String(r).replace(".", ","); }
+function excelText(s: string) { const v = String(s ?? ""); const danger = /^[-+=@].*/.test(v); return "'" + (danger ? " " + v : v); }
+function csvEscape(s: string) { const v = String(s ?? ""); return /[;"\n\r]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v; }
 
-/* ---------- pickers robustes (objet | tableau | null) ---------- */
-function pickStudent(
-  s: RawRow["students"]
-): { first_name: string | null; last_name: string | null } | null {
-  if (!s) return null;
-  return Array.isArray(s) ? s[0] ?? null : s;
-}
-function pickClass(
-  c: RawRow["classes"]
-): { label: string | null; level: string | null; institution_id: string } | null {
-  if (!c) return null;
-  return Array.isArray(c) ? c[0] ?? null : c;
-}
-function pickSubject(
-  s: RawRow["subjects"]
-): { name?: string | null; label?: string | null } | null {
-  if (!s) return null;
-  return Array.isArray(s) ? s[0] ?? null : s;
+/* ---------- pickers robustes ---------- */
+function pickStudent(s: RawRow["students"]) { if (!s) return null; return Array.isArray(s) ? s[0] ?? null : s; }
+function pickClass(c: RawRow["classes"]) { if (!c) return null; return Array.isArray(c) ? c[0] ?? null : c; }
+function subjectText(sb: any): string {
+  const o = Array.isArray(sb) ? sb[0] : sb;
+  const v =
+    o?.custom_name ??
+    o?.name ??
+    o?.label ??
+    o?.base?.name ??
+    o?.base?.label ??
+    null;
+  return v ? String(v) : "—";
 }
 
 export async function GET(
@@ -94,9 +63,7 @@ export async function GET(
   const supa = await getSupabaseServerClient();
   const srv = getSupabaseServiceClient();
 
-  const {
-    data: { user },
-  } = await supa.auth.getUser();
+  const { data: { user } } = await supa.auth.getUser();
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
 
   const { data: me } = await supa
@@ -112,12 +79,12 @@ export async function GET(
   const format = (searchParams.get("format") || "csv").toLowerCase();
   const from = searchParams.get("from") || undefined;
   const to = searchParams.get("to") || undefined;
-  const group = (searchParams.get("group") || "").toLowerCase(); // "student" ou vide
+  const group = (searchParams.get("group") || "").toLowerCase();
 
+  // subject_id -> institution_subjects (custom_name) -> subjects (name)
   let q = srv
     .from("marks_expanded")
-    .select(
-      `
+    .select(`
       id,
       student_id,
       status,
@@ -129,9 +96,8 @@ export async function GET(
       class_id,
       students:student_id(first_name,last_name),
       classes:class_id(label,level,institution_id),
-      subjects:subject_id(name,label)
-    `
-    )
+      subjects:subject_id(custom_name, base:subject_id(name))
+    `)
     .eq("classes.institution_id", inst)
     .eq("class_id", class_id)
     .in("status", ["absent", "late"]);
@@ -144,14 +110,9 @@ export async function GET(
 
   const rows = (data ?? []) as RawRow[];
 
-  /* ============================
-     MODE RÉSUMÉ PAR ÉLÈVE
-  ============================ */
+  // ====== MODE RÉSUMÉ PAR ÉLÈVE ======
   if (group === "student") {
-    const byId = new Map<
-      string,
-      { student_id: string; student: string; class_label: string; minutes: number; units: number }
-    >();
+    const byId = new Map<string, { student_id: string; student: string; class_label: string; minutes: number; units: number }>();
     let classLabel = "Classe";
 
     for (const r of rows) {
@@ -163,16 +124,13 @@ export async function GET(
         r.status === "late"
           ? Number(r.minutes_late ?? 0)
           : Number(r.minutes ?? 0) || Number(r.expected_minutes ?? 0);
-
       const units = minutes / 60;
 
       const student = `${st?.first_name ?? ""} ${st?.last_name ?? ""}`.trim() || "—";
 
       const cur = byId.get(r.student_id);
-      if (cur) {
-        cur.minutes += minutes;
-        cur.units += units;
-      } else {
+      if (cur) { cur.minutes += minutes; cur.units += units; }
+      else {
         byId.set(r.student_id, {
           student_id: r.student_id,
           student,
@@ -203,37 +161,26 @@ export async function GET(
     const csv = "\ufeff" + lines.join("\r\n");
     return new Response(csv, {
       status: 200,
-      headers: {
-        "Content-Type": "text/csv; charset=utf-8",
-        "Content-Disposition": `attachment; filename="${fileBase}.csv"`,
-      },
+      headers: { "Content-Type": "text/csv; charset=utf-8", "Content-Disposition": `attachment; filename="${fileBase}.csv"` },
     });
   }
 
-  /* ============================
-     MODE DÉTAILLÉ (CSV)
-  ============================ */
+  // ====== MODE DÉTAILLÉ (CSV) ======
   const items = rows.map((r) => {
     const st = pickStudent(r.students);
     const cl = pickClass(r.classes);
-    const sb = pickSubject(r.subjects);
 
     const startISO = r.started_at;
-    const endISO =
-      r.expected_minutes && r.expected_minutes > 0
-        ? addMinutes(startISO, r.expected_minutes)
-        : startISO;
+    const endISO = r.expected_minutes && r.expected_minutes > 0 ? addMinutes(startISO, r.expected_minutes) : startISO;
 
     const minutes =
       r.status === "late"
         ? Number(r.minutes_late ?? 0)
         : Number(r.minutes ?? 0) || Number(r.expected_minutes ?? 0);
-
     const units = minutes / 60;
 
     const fullName = `${st?.first_name ?? ""} ${st?.last_name ?? ""}`.trim() || "—";
-    const subject =
-      (sb?.name ?? "") || (sb?.label ?? "") ? String((sb?.name ?? sb?.label) || "—") : "—";
+    const subject = subjectText((r as any).subjects);
 
     return {
       class_label: cl?.label ?? "—",
@@ -256,17 +203,7 @@ export async function GET(
   const fileBase = `absences_classe_${encodeURIComponent(class_id)}_${from || "debut"}_${to || "fin"}`;
 
   if (format === "csv") {
-    const header = [
-      "Classe",
-      "Élève",
-      "Date",
-      "Début",
-      "Fin",
-      "Discipline",
-      "Statut",
-      "Minutes",
-      "NOMBRE_ABSCENCE_RETARDS",
-    ];
+    const header = ["Classe","Élève","Date","Début","Fin","Discipline","Statut","Minutes","NOMBRE_ABSCENCE_RETARDS"];
     const lines = [header.join(";")].concat(
       items.map((i) =>
         [
@@ -285,10 +222,7 @@ export async function GET(
     const csv = "\ufeff" + lines.join("\r\n");
     return new Response(csv, {
       status: 200,
-      headers: {
-        "Content-Type": "text/csv; charset=utf-8",
-        "Content-Disposition": `attachment; filename="${fileBase}.csv"`,
-      },
+      headers: { "Content-Type": "text/csv; charset=utf-8", "Content-Disposition": `attachment; filename="${fileBase}.csv"` },
     });
   }
 

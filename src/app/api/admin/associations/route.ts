@@ -7,14 +7,6 @@ import { normalizePhone as toE164 } from "@/lib/phone";
 const DEFAULT_TEMP_PASSWORD = process.env.DEFAULT_TEMP_PASSWORD || "Pass2025";
 
 /* ---------------------- Helpers ---------------------- */
-/**
- * Résout ou crée un parent :
- * - normalise le téléphone,
- * - cherche d'abord dans profiles (par phone/email),
- * - sinon dans auth.users,
- * - sinon crée le compte,
- * - upsert le profil avec whatsapp_opt_in = true (numéro considéré WhatsApp).
- */
 async function resolveOrCreateParent(
   srv: any,
   opts: { phone?: string | null; email?: string | null; display_name?: string | null }
@@ -23,24 +15,14 @@ async function resolveOrCreateParent(
   const email = (opts.email ?? null) || null;
   const display_name = (opts.display_name ?? null) || null;
 
-  // 1) profiles par téléphone / email
+  // 1) profiles par tÃ©lÃ©phone / email
   if (phoneNorm) {
     const { data } = await srv.from("profiles").select("id").eq("phone", phoneNorm).maybeSingle();
-    if (data?.id) {
-      // Active l'opt-in WhatsApp sans casser le reste
-      await srv.from("profiles").update({ whatsapp_opt_in: true }).eq("id", data.id);
-      return data.id as string;
-    }
+    if (data?.id) return data.id as string;
   }
   if (email) {
     const { data } = await srv.from("profiles").select("id").eq("email", email).maybeSingle();
-    if (data?.id) {
-      await srv
-        .from("profiles")
-        .update({ phone: phoneNorm ?? undefined, whatsapp_opt_in: true })
-        .eq("id", data.id);
-      return data.id as string;
-    }
+    if (data?.id) return data.id as string;
   }
 
   // Helper : lookup auth.users
@@ -60,7 +42,7 @@ async function resolveOrCreateParent(
   let uid = await findInAuth();
   if (uid) {
     await srv.from("profiles").upsert(
-      { id: uid, display_name, email: email ?? null, phone: phoneNorm ?? null, whatsapp_opt_in: true },
+      { id: uid, display_name, email: email ?? null, phone: phoneNorm ?? null },
       { onConflict: "id" }
     );
     return uid;
@@ -89,7 +71,7 @@ async function resolveOrCreateParent(
 
   // 4) upsert profil
   const { error: pErr } = await srv.from("profiles").upsert(
-    { id: uid, display_name, email: email ?? null, phone: phoneNorm ?? null, whatsapp_opt_in: true },
+    { id: uid, display_name, email: email ?? null, phone: phoneNorm ?? null },
     { onConflict: "id" }
   );
   if (pErr) {
@@ -126,15 +108,15 @@ export async function POST(req: Request) {
     | "teacher_classes"
     | "teacher_class_remove"
     | "teacher_classes_clear"
-    | "teacher_classes_clear_all" // NEW (reset global)
+    | "teacher_classes_clear_all" // ðŸ‘ˆ NEW (reset global)
     | "parent_student"
     | "parent_students"
     | "guardian_notifications"
     | "teacher_discipline";
 
-  /* ──────────────────────────────────────────────────────────
+  /* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
      AFFECTATIONS / INSERT (existant)
-  ─────────────────────────────────────────────────────────── */
+  â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
   if (type === "teacher_classes") {
     const teacher_id: string | null = body?.teacher_id ?? null;
     const email: string | null = body?.email ?? null;
@@ -158,7 +140,7 @@ export async function POST(req: Request) {
     }
     if (!tid) return NextResponse.json({ error: "teacher_not_found" }, { status: 404 });
 
-    // Optionnelle: matière (tolère institution_subjects.id ou subjects.id)
+    // Optionnelle: matiÃ¨re (tolÃ¨re institution_subjects.id ou subjects.id)
     let instSubjectId: string | null = null;
     if (subject_id_raw) {
       const { data: link } = await srv
@@ -202,9 +184,9 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: true, inserted: count ?? class_ids.length });
   }
 
-  /* ──────────────────────────────────────────────────────────
-     Retirer UNE classe (existant étendu)
-  ─────────────────────────────────────────────────────────── */
+  /* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+     Retirer UNE classe (existant Ã©tendu)
+  â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
   if (type === "teacher_class_remove") {
     const teacher_id: string = body?.teacher_id;
     const class_id: string   = body?.class_id;
@@ -236,9 +218,9 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: true, removed: count ?? 1 });
   }
 
-  /* ──────────────────────────────────────────────────────────
-     Retirer TOUTES les classes d’un enseignant
-  ─────────────────────────────────────────────────────────── */
+  /* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+     Retirer TOUTES les classes dâ€™un enseignant
+  â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
   if (type === "teacher_classes_clear") {
     const teacher_id: string = body?.teacher_id;
     const subject_id_raw: string | null = body?.subject_id ?? null;
@@ -266,13 +248,13 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: true, removed: count ?? 0 });
   }
 
-  /* ──────────────────────────────────────────────────────────
-     NEW : Retirer pour TOUS les enseignants (reset global)
+  /* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+     ðŸ‘‡ NEW : Retirer pour TOUS les enseignants (reset global)
      Options:
        - subject_id (facultatif) : institution_subjects.id OU subjects.id
-       - class_ids (facultatif)  : restreindre à une liste de classes
+       - class_ids (facultatif)  : restreindre Ã  une liste de classes
        - level (facultatif)      : restreindre aux classes d'un niveau
-  ─────────────────────────────────────────────────────────── */
+  â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
   if (type === "teacher_classes_clear_all") {
     const subject_id_raw: string | null = body?.subject_id ?? null;
     const class_ids: string[] | null = Array.isArray(body?.class_ids) ? body.class_ids : null;
@@ -305,6 +287,7 @@ export async function POST(req: Request) {
       const ids = (cls || []).map((c: any) => c.id);
       if (ids.length) del = del.in("class_id", ids);
       else {
+        // Rien Ã  supprimer si aucune classe ne matche le niveau
         return NextResponse.json({ ok: true, removed: 0 });
       }
     }
@@ -314,9 +297,9 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: true, removed: count ?? 0 });
   }
 
-  /* ──────────────────────────────────────────────────────────
-     Liens parents (avec opt-in WhatsApp automatique)
-  ─────────────────────────────────────────────────────────── */
+  /* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+     Liens parents (inchangÃ©s)
+  â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
   if (type === "parent_students") {
     const student_ids: string[] = Array.isArray(body?.student_ids) ? body.student_ids : [];
     if (!student_ids.length) return NextResponse.json({ error: "no_students" }, { status: 400 });
@@ -324,7 +307,7 @@ export async function POST(req: Request) {
     let parent_id: string;
     try {
       parent_id = await resolveOrCreateParent(srv, {
-        phone: body?.phone ?? null,          // ← numéro WhatsApp à utiliser
+        phone: body?.phone ?? null,
         email: body?.email ?? null,
         display_name: body?.display_name ?? null,
       });
@@ -379,7 +362,7 @@ export async function POST(req: Request) {
     let parent_id: string;
     try {
       parent_id = await resolveOrCreateParent(srv, {
-        phone: body?.phone ?? null,      // ← numéro WhatsApp
+        phone: body?.phone ?? null,
         email: body?.email ?? null,
         display_name: body?.display_name ?? null,
       });
@@ -462,3 +445,5 @@ export async function POST(req: Request) {
 
   return NextResponse.json({ error: "bad_type" }, { status: 400 });
 }
+
+

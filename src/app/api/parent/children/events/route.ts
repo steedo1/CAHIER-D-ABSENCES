@@ -1,4 +1,3 @@
-// src/app/api/parent/children/route.ts
 // src/app/api/parent/children/events/route.ts
 import { NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
@@ -51,29 +50,70 @@ export async function GET(req: Request) {
     .eq("parent_id", user.id)
     .eq("student_id", student_id)
     .limit(1);
+
   if (!ok || ok.length === 0) return NextResponse.json({ items: [] }, { status: 403 });
 
-  // Fenêtre temporelle
-  const from = new Date(Date.now() - days * 24 * 3600 * 1000).toISOString();
+  // Fenêtre temporelle (UTC ISO)
+  const fromIso = new Date(Date.now() - days * 24 * 3600 * 1000).toISOString();
 
-  // Récupère directement les marques + session
-  const { data: rows, error } = await srv
-    .from("attendance_marks")
-    .select(`
-      id,
-      status,
-      minutes_late,
-      session:session_id (
-        started_at,
-        class_id,
-        subject_id,
-        institution_id
-      )
-    `)
-    .eq("student_id", student_id)
-    .gte("session.started_at", from);
+  // ------- 1) Tentative avec filtre imbriqué (rapide quand ça marche)
+  let rows: any[] = [];
+  {
+    const { data, error } = await srv
+      .from("attendance_marks")
+      .select(`
+        id,
+        status,
+        minutes_late,
+        session:session_id (
+          started_at,
+          expected_minutes,
+          class_id,
+          subject_id,
+          institution_id
+        )
+      `)
+      .eq("student_id", student_id)
+      .gte("session.started_at", fromIso)          // <-- peut échouer selon cas
+      .order("id", { ascending: false })
+      .limit(400);
 
-  if (error) return NextResponse.json({ items: [], error: error.message }, { status: 400 });
+    if (error) {
+      // on ne bloque pas : on passera par le fallback (2)
+    } else {
+      rows = data || [];
+    }
+  }
+
+  // ------- 2) Fallback si rien trouvé (ou relation session absente)
+  if (!rows.length) {
+    const { data: data2, error: e2 } = await srv
+      .from("attendance_marks")
+      .select(`
+        id,
+        status,
+        minutes_late,
+        session:session_id (
+          started_at,
+          expected_minutes,
+          class_id,
+          subject_id,
+          institution_id
+        )
+      `)
+      .eq("student_id", student_id)
+      .order("id", { ascending: false })
+      .limit(800); // on filtre en JS juste après
+
+    if (e2) return NextResponse.json({ items: [], error: e2.message }, { status: 400 });
+
+    // Garde uniquement celles dont la session a un started_at >= fromIso
+    rows = (data2 || []).filter((r: any) => {
+      const s = r.session;
+      if (!s || !s.started_at) return false;
+      return String(s.started_at) >= fromIso;
+    });
+  }
 
   // Garde absences/retards
   const useful = (rows || []).filter(
@@ -100,7 +140,8 @@ export async function GET(req: Request) {
       const type = r.status === "absent" ? "absent" : "late";
       return {
         id: String(r.id),
-        when: started,
+        when: started,                                   // session.started_at
+        expected_minutes: Number(s.expected_minutes ?? 60) || 60, // pour former la plage
         type,
         minutes_late: type === "late" ? Number(r.minutes_late || 0) : null,
         class_label: s.class_id ? (className.get(String(s.class_id)) || null) : null,

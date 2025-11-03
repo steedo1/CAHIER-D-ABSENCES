@@ -2,7 +2,13 @@
 import { NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
-/** Renvoie les matières disponibles pour l’établissement courant (triées par nom). */
+/**
+ * Renvoie UNIQUEMENT les disciplines ACTIVÉES dans l’établissement courant,
+ * pas tout le catalogue global.
+ *
+ * Format attendu par le front:
+ *   { id: subjects.id, name: string, inst_subject_id: string }
+ */
 export async function GET() {
   const supa = await getSupabaseServerClient();
 
@@ -14,7 +20,7 @@ export async function GET() {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
 
-  // 2) Récupération de l’établissement de l’admin courant
+  // 2) Récupérer l’établissement de l’utilisateur courant
   const { data: me, error: meErr } = await supa
     .from("profiles")
     .select("institution_id")
@@ -30,76 +36,44 @@ export async function GET() {
     return NextResponse.json({ items: [] });
   }
 
-  // 3) Lecture principale via la table de liaison institution_subjects → subjects
-  try {
-    const { data, error } = await supa
-      .from("institution_subjects")
-      // NOTE : selon la définition de la relation, Supabase peut renvoyer
-      // subjects comme objet OU comme tableau. On gère les deux.
-      .select("subject_id, subjects:subject_id(name)")
-      .eq("institution_id", institutionId)
-      .eq("is_active", true);
+  // 3) On ne prend que les matières de CET établissement
+  //    institution_subjects (1 par matière activée) -> subjects
+  const { data, error } = await supa
+    .from("institution_subjects")
+    .select(
+      `
+      id,
+      is_active,
+      subject_id,
+      subjects:subject_id (id, name)
+    `
+    )
+    .eq("institution_id", institutionId)
+    // si tu veux VRAIMENT n’afficher que celles actives
+    .eq("is_active", true)
+    .order("subject_id", { ascending: true });
 
-    if (error) {
-      const fallback = await tryFallbackSubjects(supa);
-      return NextResponse.json({ items: fallback });
-    }
-
-    // Traitement sûr, sans assertions de types fragiles
-    const rows: any[] = data ?? [];
-
-    const map = new Map<string, string>();
-    for (const r of rows) {
-      const id = String(r?.subject_id ?? "");
-      let nm = "";
-
-      const s = r?.subjects;
-      if (Array.isArray(s)) {
-        // Relation renvoyée sous forme de tableau
-        if (s.length > 0) nm = String(s[0]?.name ?? "").trim();
-      } else if (s && typeof s === "object") {
-        // Relation renvoyée sous forme d’objet
-        nm = String((s as any)?.name ?? "").trim();
-      }
-
-      if (id && nm) map.set(id, nm);
-    }
-
-    // Tableau typé puis tri (évite les erreurs d’inférence)
-    const items: Array<{ id: string; name: string }> = [];
-    for (const [id, nm] of map.entries()) items.push({ id, name: nm });
-    items.sort((a, b) => a.name.localeCompare(b.name, "fr"));
-
-    return NextResponse.json({ items });
-  } catch {
-    const fallback = await tryFallbackSubjects(supa);
-    return NextResponse.json({ items: fallback });
+  if (error) {
+    return NextResponse.json({ items: [] });
   }
-}
 
-/* ────────────────────────────────────────────────────────────────────────────
-   Fallback : si institution_subjects indisponible,
-   on renvoie (si possible) la table subjects globale.
-   On garde la même forme { id, name } et tri par nom.
-──────────────────────────────────────────────────────────────────────────── */
-async function tryFallbackSubjects(supa: any) {
-  try {
-    const { data, error } = await supa
-      .from("subjects")
-      .select("id, name")
-      .order("name", { ascending: true });
+  const items: Array<{ id: string; name: string; inst_subject_id: string | null }> = [];
 
-    if (error) return [];
-    const list: Array<{ id: string; name: string }> = [];
-    for (const s of data ?? []) {
-      const id = s?.id ? String(s.id) : "";
-      const nm = s?.name ? String(s.name) : "";
-      if (id && nm) list.push({ id, name: nm });
-    }
-    // Déjà trié en SQL ; tri JS par sécurité
-    list.sort((a, b) => a.name.localeCompare(b.name, "fr"));
-    return list;
-  } catch {
-    return [];
+  for (const row of data ?? []) {
+    const instId = String(row.id); // institution_subjects.id
+    const subj = (row as any).subjects;
+    const subjId = subj?.id ? String(subj.id) : String(row.subject_id);
+    const subjName = subj?.name ? String(subj.name).trim() : "Matière";
+
+    items.push({
+      id: subjId,                 // <- subjects.id (global)
+      name: subjName,
+      inst_subject_id: instId,    // <- institution_subjects.id (ce que ton front attend)
+    });
   }
+
+  // Tri par nom pour l’affichage
+  items.sort((a, b) => a.name.localeCompare(b.name, "fr"));
+
+  return NextResponse.json({ items });
 }

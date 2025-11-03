@@ -1,4 +1,4 @@
-// src/app/admin/classes/page.tsx (ou le bon chemin)
+// src/app/admin/classes/page.tsx
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
@@ -6,7 +6,7 @@ import { useEffect, useMemo, useState } from "react";
 /* ─────────────────────────────
    Types
 ───────────────────────────── */
-type ClassRow = { id: string; name: string; level: string };
+type ClassRow = { id: string; name: string; level: string; class_phone_e164?: string | null };
 
 /* ─────────────────────────────
    UI helpers
@@ -32,17 +32,23 @@ function IconButton({
   title,
   onClick,
   children,
+  disabled,
 }: {
   title: string;
   onClick: () => void;
   children: any;
+  disabled?: boolean;
 }) {
   return (
     <button
       type="button"
       title={title}
       onClick={onClick}
-      className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium border hover:bg-slate-50"
+      disabled={disabled}
+      className={
+        "inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium border " +
+        (disabled ? "opacity-50 cursor-not-allowed" : "hover:bg-slate-50")
+      }
     >
       {children}
     </button>
@@ -84,7 +90,7 @@ function Modal({
 export default function ClassesPage() {
   // Génération
   const [level, setLevel] = useState("6e");
-  const [format, setFormat] = useState<"none" | "numeric" | "alpha">("numeric"); // ← ajoute "none"
+  const [format, setFormat] = useState<"none" | "numeric" | "alpha">("numeric");
   const [count, setCount] = useState<number>(5);
   const [preview, setPreview] = useState<string[]>([]);
 
@@ -92,14 +98,20 @@ export default function ClassesPage() {
   const [items, setItems] = useState<ClassRow[]>([]);
   const [loading, setLoading] = useState(true);
 
+  // Drafts de numéros (édition rapide par carte)
+  const [phoneDraft, setPhoneDraft] = useState<Record<string, string>>({});
+  const [savingPhoneId, setSavingPhoneId] = useState<string | null>(null);
+  const [msgPhone, setMsgPhone] = useState<string | null>(null);
+
   // Accordéon des groupes
   const [openLevel, setOpenLevel] = useState<string | null>(null);
 
-  // Édition
+  // Édition (modal)
   const [editOpen, setEditOpen] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
   const [eLabel, setELabel] = useState("");
   const [eLevel, setELevel] = useState("");
+  const [ePhone, setEPhone] = useState(""); // numéro optionnel
   const [saving, setSaving] = useState(false);
 
   // Suppression
@@ -124,10 +136,10 @@ export default function ClassesPage() {
     if (!level || count < 1) return setPreview([]);
     const p: string[] = [];
     if (format === "none") {
-      p.push(level); // ex: "CM2"
+      p.push(level);
     } else {
       for (let i = 1; i <= count; i++) {
-        p.push(format === "numeric" ? `${level}${i}` : `${level}${String.fromCharCode(64 + i)}`); // A=65
+        p.push(format === "numeric" ? `${level}${i}` : `${level}${String.fromCharCode(64 + i)}`);
       }
     }
     setPreview(p);
@@ -144,7 +156,16 @@ export default function ClassesPage() {
         return;
       }
       const j = await r.json().catch(() => ({}));
-      setItems(j.items || []);
+      const rows: ClassRow[] = (j.items || []).map((x: any) => {
+        // compat : accepte class_phone_e164 OU (ancien) device_phone_e164
+        const phone = x.class_phone_e164 ?? x.device_phone_e164 ?? null;
+        return { id: x.id, name: x.name, level: x.level, class_phone_e164: phone };
+      });
+      setItems(rows);
+      // initialise les drafts à partir de la donnée
+      const init: Record<string, string> = {};
+      for (const it of rows) init[it.id] = it.class_phone_e164 ?? "";
+      setPhoneDraft(init);
     } finally {
       setLoading(false);
     }
@@ -154,7 +175,7 @@ export default function ClassesPage() {
     const r = await fetch("/api/admin/classes/bulk", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ level, format, count }), // "none" possible
+      body: JSON.stringify({ level, format, count }),
     });
     if (r.status === 401) {
       setAuthErr(true);
@@ -166,8 +187,9 @@ export default function ClassesPage() {
       return;
     }
     await refresh();
-    // Après création, on ouvre le groupe du niveau courant
     setOpenLevel(level);
+    setMsgPhone("Classes créées. Vous pouvez maintenant attribuer un numéro à chaque classe depuis la liste.");
+    setTimeout(() => setMsgPhone(null), 3000);
   }
 
   // Groupage des classes par niveau
@@ -177,7 +199,6 @@ export default function ClassesPage() {
       if (!m.has(c.level)) m.set(c.level, []);
       m.get(c.level)!.push(c);
     }
-    // tri simple par libellé
     for (const [k, arr] of m) {
       arr.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
       m.set(k, arr);
@@ -185,7 +206,6 @@ export default function ClassesPage() {
     return m;
   }, [items]);
 
-  // Quand le niveau saisi change, on affiche par défaut ce groupe
   useEffect(() => {
     setOpenLevel(level);
   }, [level]);
@@ -194,15 +214,20 @@ export default function ClassesPage() {
     setEditId(row.id);
     setELabel(row.name);
     setELevel(row.level);
+    setEPhone(row.class_phone_e164 ?? "");
     setEditOpen(true);
   }
+
   async function saveEdit() {
     if (!editId) return;
     setSaving(true);
+    setMsgPhone(null);
+    // ✅ l’API PATCH attend `class_phone`, pas `class_phone_e164`
+    const body: any = { label: eLabel, level: eLevel, class_phone: ePhone.trim() || null };
     const r = await fetch(`/api/admin/classes/${editId}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ label: eLabel, level: eLevel }),
+      body: JSON.stringify(body),
     });
     setSaving(false);
     if (r.status === 401) {
@@ -212,7 +237,9 @@ export default function ClassesPage() {
     if (!r.ok) {
       const t = await r.json().catch(() => ({}));
       if (r.status === 409) {
-        alert("Ce libellé existe déjà pour votre établissement.");
+        alert("Ce numéro est déjà utilisé par une autre classe de votre établissement.");
+      } else if (r.status === 400) {
+        alert("Numéro invalide. Saisissez un local ou un international : il sera normalisé.");
       } else {
         alert("Échec de mise à jour" + (t?.error ? ` : ${t.error}` : ""));
       }
@@ -221,12 +248,15 @@ export default function ClassesPage() {
     setEditOpen(false);
     setEditId(null);
     await refresh();
+    setMsgPhone("Classe mise à jour.");
+    setTimeout(() => setMsgPhone(null), 2000);
   }
 
   function openDelete(row: ClassRow) {
     setDelId(row.id);
     setDelOpen(true);
   }
+
   async function confirmDelete() {
     if (!delId) return;
     setDeleting(true);
@@ -246,6 +276,41 @@ export default function ClassesPage() {
     await refresh();
   }
 
+  // Éditeur rapide du téléphone par carte
+  function setDraft(id: string, v: string) {
+    setPhoneDraft((m) => ({ ...m, [id]: v }));
+  }
+  async function savePhone(id: string) {
+    setSavingPhoneId(id);
+    setMsgPhone(null);
+    // ✅ envoie `class_phone` (UI accepte local ou international)
+    const body: any = { class_phone: (phoneDraft[id] || "").trim() || null };
+    const r = await fetch(`/api/admin/classes/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    setSavingPhoneId(null);
+    if (r.status === 401) {
+      setAuthErr(true);
+      return;
+    }
+    if (!r.ok) {
+      const t = await r.json().catch(() => ({}));
+      if (r.status === 409) {
+        alert("Ce numéro est déjà utilisé par une autre classe de votre établissement.");
+      } else if (r.status === 400) {
+        alert("Numéro invalide. Saisissez un local ou un international : il sera normalisé.");
+      } else {
+        alert("Échec de mise à jour" + (t?.error ? ` : ${t.error}` : ""));
+      }
+      return;
+    }
+    await refresh();
+    setMsgPhone("Numéro enregistré.");
+    setTimeout(() => setMsgPhone(null), 1500);
+  }
+
   if (authErr) {
     return (
       <div className="rounded-xl border bg-white p-5">
@@ -263,7 +328,10 @@ export default function ClassesPage() {
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-semibold">Classes</h1>
-        <p className="text-slate-600">Créer, éditer et supprimer des classes de l’établissement.</p>
+        <p className="text-slate-600">
+          Créer, éditer et supprimer des classes de l’établissement. Vous pouvez aussi <b>attribuer un numéro de
+          téléphone</b> (optionnel) par classe.
+        </p>
       </div>
 
       {/* Génération rapide */}
@@ -288,7 +356,14 @@ export default function ClassesPage() {
           </div>
           <div>
             <div className="mb-1 text-xs text-slate-500">Nombre</div>
-            <Input type="number" min={1} max={30} value={count} disabled={format === "none"} onChange={(e) => setCount(parseInt(e.target.value || "1", 10))} />
+            <Input
+              type="number"
+              min={1}
+              max={30}
+              value={count}
+              disabled={format === "none"}
+              onChange={(e) => setCount(parseInt(e.target.value || "1", 10))}
+            />
           </div>
           <div className="flex items-end">
             <Button onClick={create}>Créer</Button>
@@ -329,37 +404,79 @@ export default function ClassesPage() {
 
                   {opened && (
                     <div className="grid grid-cols-1 gap-3 p-3 md:grid-cols-2">
-                      {arr.map((c) => (
-                        <div key={c.id} className="rounded-xl border p-3">
-                          <div className="flex items-start justify-between gap-3">
-                            <div>
-                              <div className="font-medium">{c.name}</div>
-                              <div className="text-xs text-slate-500">Niveau : {c.level}</div>
+                      {arr.map((c) => {
+                        const draft = phoneDraft[c.id] ?? c.class_phone_e164 ?? "";
+                        const unchanged = (draft || "") === (c.class_phone_e164 || "");
+                        return (
+                          <div key={c.id} className="rounded-xl border p-3">
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="min-w-0">
+                                <div className="font-medium truncate">{c.name}</div>
+                                <div className="text-xs text-slate-500">Niveau : {c.level}</div>
+                                <div className="mt-2 text-xs text-slate-600">
+                                  <span className="inline-block min-w-[140px] font-medium">Téléphone (optionnel)</span>
+                                </div>
+                                <div className="mt-1 flex items-center gap-2">
+                                  <Input
+                                    placeholder="+2250701020304"
+                                    value={draft}
+                                    onChange={(e) => setDraft(c.id, e.target.value)}
+                                    className="w-56"
+                                  />
+                                  <IconButton
+                                    title="Enregistrer le numéro"
+                                    onClick={() => savePhone(c.id)}
+                                    disabled={savingPhoneId === c.id || unchanged}
+                                  >
+                                    {savingPhoneId === c.id ? (
+                                      <svg className="h-3.5 w-3.5 animate-spin" viewBox="0 0 24 24" fill="none">
+                                        <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" opacity="0.25"></circle>
+                                        <path d="M22 12a10 10 0 0 1-10 10" stroke="currentColor" strokeWidth="4"></path>
+                                      </svg>
+                                    ) : (
+                                      <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor">
+                                        <path d="M17 10a7 7 0 1 1-14 0 7 7 0 0 1 14 0Zm-8 2.5 5-5L15.5 9 9 15.5 5.5 12 7 10.5l2 2Z" />
+                                      </svg>
+                                    )}
+                                    Enregistrer
+                                  </IconButton>
+                                </div>
+                                <div className="mt-1 text-[11px] text-slate-500">
+                                  Saisissez un <i>numéro local</i> (ex: 07…) <b>ou</b> international (ex: +225…).
+                                  Il sera <b>normalisé automatiquement</b>.
+                                </div>
+                              </div>
+                              <div className="flex items-start gap-2">
+                                <IconButton title="Éditer" onClick={() => openEdit(c)}>
+                                  <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor">
+                                    <path d="M17.414 2.586a2 2 0 0 0-2.828 0L6 11.172V14h2.828l8.586-8.586a2 2 0 0 0 0-2.828z" />
+                                    <path fillRule="evenodd" d="M4 16a2 2 0 0 0 2 2h8a1 1 0 1 0 0-2H6a1 1 0 0 1-1-1V5a1 1 0 1 0-2 0v10z" />
+                                  </svg>
+                                  Éditer
+                                </IconButton>
+                                <IconButton title="Supprimer" onClick={() => openDelete(c)}>
+                                  <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor">
+                                    <path d="M6 7a1 1 0 0 1 1 1v7a1 1 0 1 1-2 0V8a1 1 0 0 1 1-1zm4 0a1 1 0 0 1 1 1v7a1 1 0 1 1-2 0V8a1 1 0 0 1 1-1zm5-3h-3.5l-1-1h-3l-1 1H2v2h16V4z" />
+                                  </svg>
+                                  Supprimer
+                                </IconButton>
+                              </div>
                             </div>
-                            <div className="flex items-center gap-2">
-                              <IconButton title="Éditer" onClick={() => openEdit(c)}>
-                                <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor">
-                                  <path d="M17.414 2.586a2 2 0 0 0-2.828 0L6 11.172V14h2.828l8.586-8.586a2 2 0 0 0 0-2.828z" />
-                                  <path fillRule="evenodd" d="M4 16a2 2 0 0 0 2 2h8a1 1 0 1 0 0-2H6a1 1 0 0 1-1-1V5a1 1 0 1 0-2 0v10z" />
-                                </svg>
-                                Éditer
-                              </IconButton>
-                              <IconButton title="Supprimer" onClick={() => openDelete(c)}>
-                                <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor">
-                                  <path d="M6 7a1 1 0 0 1 1 1v7a1 1 0 1 1-2 0V8a1 1 0 0 1 1-1zm4 0a1 1 0 0 1 1 1v7a1 1 0 1 1-2 0V8a1 1 0 0 1 1-1zm5-3h-3.5l-1-1h-3l-1 1H2v2h16V4z" />
-                                </svg>
-                                Supprimer
-                              </IconButton>
-                            </div>
+                            {c.class_phone_e164 && (
+                              <div className="mt-2 text-xs text-emerald-700">
+                                Numéro en vigueur : <b>{c.class_phone_e164}</b>
+                              </div>
+                            )}
                           </div>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   )}
                 </div>
               );
             })
         )}
+        {msgPhone && <div className="mt-2 text-sm text-slate-700" aria-live="polite">{msgPhone}</div>}
       </div>
 
       {/* Modal Édition */}
@@ -386,6 +503,19 @@ export default function ClassesPage() {
           <div>
             <div className="mb-1 text-xs text-slate-500">Niveau</div>
             <Input value={eLevel} onChange={(e) => setELevel(e.target.value)} placeholder="ex: CM2 / 6e / 2nde" />
+          </div>
+          <div>
+            <div className="mb-1 text-xs text-slate-500">Téléphone de la classe (optionnel)</div>
+            <Input
+              value={ePhone}
+              onChange={(e) => setEPhone(e.target.value)}
+              placeholder="+2250701020304"
+              inputMode="tel"
+              autoComplete="tel"
+            />
+            <div className="mt-1 text-[11px] text-slate-500">
+              Saisissez un <i>numéro local</i> (ex: 07…) <b>ou</b> international (ex: +225…). Il sera normalisé automatiquement.
+            </div>
           </div>
         </div>
       </Modal>
@@ -418,5 +548,3 @@ export default function ClassesPage() {
     </div>
   );
 }
-
-

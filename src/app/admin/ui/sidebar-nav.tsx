@@ -13,6 +13,7 @@ import {
   Inbox,
   BarChart3,
   Settings,
+  ShieldCheck, // ✅ icône
 } from "lucide-react";
 import type React from "react";
 
@@ -20,7 +21,7 @@ type NavItem = {
   href: string;
   label: string;
   Icon: React.ComponentType<React.SVGProps<SVGSVGElement>>;
-  badge?: string; // ex: "NEW", "OCT", "TRY"
+  badge?: string;
 };
 
 const NAV: NavItem[] = [
@@ -32,27 +33,15 @@ const NAV: NavItem[] = [
   { href: "/admin/parents", label: "Parents", Icon: UserRoundCheck },
   { href: "/admin/import", label: "Import", Icon: Inbox, badge: "OCT" },
   { href: "/admin/statistiques", label: "Statistiques", Icon: BarChart3 },
+  { href: "/admin/conduite", label: "Conduite", Icon: ShieldCheck }, // ✅ nouveau
   { href: "/admin/parametres", label: "Paramètres", Icon: Settings },
 ];
 
 export default function SidebarNav() {
   const pathname = usePathname();
-
   return (
     <nav className="flex h-full flex-col">
-      {/* petite zone "logo" */}
-      <div className="px-4 pb-3 pt-4">
-        <div className="flex items-center gap-2">
-          <div className="grid h-8 w-8 place-items-center rounded-lg bg-emerald-500 text-white font-bold">
-            MCA
-          </div>
-          <div className="leading-tight">
-            <div className="text-sm font-semibold text-white">Mon Cahier d'Absences</div>
-            <div className="text-[11px] text-slate-400">Admin établissement</div>
-          </div>
-        </div>
-      </div>
-
+      {/* ... entête inchangé ... */}
       <ul className="mt-2 flex-1 space-y-1 px-2">
         {NAV.map(({ href, label, Icon, badge }) => {
           const active = pathname === href || pathname.startsWith(href + "/");
@@ -68,7 +57,6 @@ export default function SidebarNav() {
                   active ? "bg-slate-800 text-white" : "text-slate-200",
                 ].join(" ")}
               >
-                {/* indicateur vertical à gauche */}
                 <span
                   className={[
                     "absolute left-0 my-1 h-[calc(100%-0.5rem)] w-1.5 rounded-r-full",
@@ -87,11 +75,7 @@ export default function SidebarNav() {
           );
         })}
       </ul>
-
-      {/* pied du sidebar (optionnel) */}
-      <div className="px-4 py-3 text-[11px] text-slate-500">
-        © {new Date().getFullYear()}
-      </div>
+      <div className="px-4 py-3 text-[11px] text-slate-500">© {new Date().getFullYear()}</div>
     </nav>
   );
 }

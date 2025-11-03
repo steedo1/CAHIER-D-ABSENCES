@@ -1,33 +1,56 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 
-/* ��������������������������������������������������������������������������������������������������������������������
+/* ─────────────────────────────────────────
    Types
-�������������������������������������������������������������������������������������������������������������������� */
+────────────────────────────────────────── */
 type Subject = { id: string; name: string };
-type Teacher = { id: string; display_name?: string | null; full_name?: string | null; email?: string | null; phone?: string | null };
+type Teacher = {
+  id: string;
+  display_name?: string | null;
+  full_name?: string | null;
+  email?: string | null;
+  phone?: string | null;
+};
 
 type DetailRow = {
   id: string;
   dateISO: string;
   subject_name: string | null;
   expected_minutes: number;
+  class_id?: string | null;     // ✅ récupéré par l’API
+  class_label?: string | null;  // ✅ récupéré par l’API
 };
 
 type SummaryRow = {
   teacher_id: string;
   teacher_name: string;
   total_minutes: number;
-  /** Nouveau : liste des disciplines rattach�es � cet enseignant (pivot et/ou s�ances) */
   subject_names?: string[];
 };
 
 type FetchState<T> = { loading: boolean; error: string | null; data: T | null };
 
-/* ��������������������������������������������������������������������������������������������������������������������
+/* Timesheet */
+type TimesheetClass = { id: string; label: string };
+type TimesheetSlot = { start: string; end: string };
+type CellsMetaItem = { hhmm: string; origin?: "class_device" | "teacher" | string };
+
+type TimesheetPayload = {
+  teacher: { id: string; name: string; subjects: string[]; total_minutes: number };
+  dates: string[];               // "YYYY-MM-DD"
+  classes: TimesheetClass[];     // classes du prof
+  slots: TimesheetSlot[];        // créneaux (lignes)
+  // key = `${date}|${slotStart}|${classId}` → ["08:13","08:55", ...] (heures du clic)
+  cells: Record<string, string[]>;
+  // (optionnel) même clé → [{ hhmm:"08:13", origin:"class_device" }, ...]
+  cellsMeta?: Record<string, CellsMetaItem[]>;
+};
+
+/* ─────────────────────────────────────────
    Utils
-�������������������������������������������������������������������������������������������������������������������� */
+────────────────────────────────────────── */
 function toLocalDateInputValue(d: Date) {
   const yyyy = d.getFullYear();
   const mm = String(d.getMonth() + 1).padStart(2, "0");
@@ -71,28 +94,129 @@ function downloadText(filename: string, content: string, mime = "text/csv;charse
   URL.revokeObjectURL(url);
 }
 const teacherLabel = (t: Teacher) =>
-  (t.display_name?.trim() || t.full_name?.trim() || t.email?.trim() || t.phone?.trim() || "(enseignant)");
+  (t.display_name?.trim() ||
+    t.full_name?.trim() ||
+    t.email?.trim() ||
+    t.phone?.trim() ||
+    "(enseignant)");
 
-/* ��������������������������������������������������������������������������������������������������������������������
-   Composant principal
-�������������������������������������������������������������������������������������������������������������������� */
+function rangeDates(from: string, to: string): string[] {
+  const [fy, fm, fd] = from.split("-").map(Number);
+  const [ty, tm, td] = to.split("-").map(Number);
+  const cur = new Date(fy, fm - 1, fd, 12, 0, 0, 0);
+  const end = new Date(ty, tm - 1, td, 12, 0, 0, 0);
+  const out: string[] = [];
+  while (cur.getTime() <= end.getTime()) {
+    const y = cur.getFullYear();
+    const m = String(cur.getMonth() + 1).padStart(2, "0");
+    const d = String(cur.getDate()).padStart(2, "0");
+    out.push(`${y}-${m}-${d}`);
+    cur.setDate(cur.getDate() + 1);
+  }
+  return out;
+}
+function dateHumanFR(ymd: string) {
+  const [y, m, d] = ymd.split("-").map(Number);
+  const dt = new Date(y, m - 1, d);
+  return dt.toLocaleDateString([], { weekday: "short", day: "2-digit", month: "2-digit" });
+}
+function isWeekday(ymd: string) {
+  const [y, m, d] = ymd.split("-").map(Number);
+  const dt = new Date(y, m - 1, d);
+  const day = dt.getDay(); // 0=dim … 6=sam
+  return day >= 1 && day <= 5;
+}
+// diff (minutes) entre une heure "HH:MM" et le début de créneau "HH:MM"
+function hhmmToMinutes(hhmm: string) {
+  const [h, m] = hhmm.split(":").map((x) => parseInt(x, 10));
+  return (isFinite(h) ? h : 0) * 60 + (isFinite(m) ? m : 0);
+}
+function diffToSlotStart(hhmm: string, slotStart: string) {
+  return hhmmToMinutes(hhmm) - hhmmToMinutes(slotStart);
+}
+// classe CSS pour la pastille selon l’écart (-5 … +10 = vert)
+function clickBadgeClass(deltaMin: number) {
+  if (deltaMin >= -5 && deltaMin <= 10) {
+    return "bg-emerald-50 border-emerald-200 text-emerald-800";
+  }
+  return "bg-amber-50 border-amber-200 text-amber-800";
+}
+function originEmoji(o?: string) {
+  if (o === "class_device") return "🖥️";
+  if (o === "teacher") return "📱";
+  return "";
+}
+
+/* ─────────────────────────────────────────
+   UI atoms
+────────────────────────────────────────── */
+function Input(p: React.InputHTMLAttributes<HTMLInputElement>) {
+  return (
+    <input
+      {...p}
+      className={[
+        "w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm",
+        "shadow-sm outline-none transition",
+        "focus:border-emerald-400 focus:ring-4 focus:ring-emerald-500/20",
+        "disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400",
+        p.className ?? "",
+      ].join(" ")}
+    />
+  );
+}
+function Select(p: React.SelectHTMLAttributes<HTMLSelectElement>) {
+  return (
+    <select
+      {...p}
+      className={[
+        "w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm",
+        "shadow-sm outline-none transition",
+        "focus:border-emerald-400 focus:ring-4 focus:ring-emerald-500/20",
+        "disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400",
+        p.className ?? "",
+      ].join(" ")}
+    />
+  );
+}
+function Button(p: React.ButtonHTMLAttributes<HTMLButtonElement>) {
+  return (
+    <button
+      {...p}
+      className={[
+        "inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-medium",
+        "bg-emerald-600 text-white shadow hover:bg-emerald-700",
+        "focus:outline-none focus:ring-4 focus:ring-emerald-500/30",
+        "disabled:opacity-60 disabled:cursor-not-allowed",
+        p.className ?? "",
+      ].join(" ")}
+    />
+  );
+}
+
+/* ─────────────────────────────────────────
+   Page
+────────────────────────────────────────── */
+type ViewMode = "tableau" | "timesheet";
+
 export default function AdminStatistiquesPage() {
-  // Filtres
+  /* Onglets */
+  const [view, setView] = useState<ViewMode>("tableau");
+
+  /* Filtres communs */
   const [from, setFrom] = useState<string>(() => {
     const d = new Date();
     d.setDate(d.getDate() - 30);
     return toLocalDateInputValue(d);
   });
   const [to, setTo] = useState<string>(() => toLocalDateInputValue(new Date()));
+
+  /* ====== Tableau (synthèse/détail) ====== */
   const [subjectId, setSubjectId] = useState<string>("ALL");
   const [teacherId, setTeacherId] = useState<string>("ALL");
-
-  // Listes
   const [subjects, setSubjects] = useState<Subject[]>([]);
   const [teachers, setTeachers] = useState<Teacher[]>([]);
   const [loadingTeachers, setLoadingTeachers] = useState(false);
 
-  // Donn�es
   const [summary, setSummary] = useState<FetchState<SummaryRow[]>>({
     loading: false, error: null, data: null,
   });
@@ -101,36 +225,36 @@ export default function AdminStatistiquesPage() {
   });
 
   const showDetail = teacherId !== "ALL";
+  const totalMinutesSummary = useMemo(() => {
+    if (!summary.data) return 0;
+    return summary.data.reduce((acc, it) => acc + (it.total_minutes || 0), 0);
+  }, [summary.data]);
+  const disciplineHeader = subjectId === "ALL" ? "Discipline(s)" : "Discipline (filtrée)";
 
-  // Charger disciplines
+  /* Charger disciplines */
   useEffect(() => {
     (async () => {
       try {
         const res = await fetch(`/api/admin/subjects`, { cache: "no-store" });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const json = (await res.json()) as { items: Subject[] };
-        setSubjects([{ id: "ALL", name: "Toutes les disciplines" }, ...json.items]);
+        setSubjects([{ id: "ALL", name: "Toutes les disciplines" }, ...(json.items || [])]);
       } catch {
         setSubjects([{ id: "ALL", name: "Toutes les disciplines" }]);
       }
     })();
   }, []);
 
-  // Charger enseignants via la route align�e sur Affectations
+  /* Charger enseignants (selon filtre discipline) */
   useEffect(() => {
     (async () => {
       setLoadingTeachers(true);
       try {
         const url =
           subjectId === "ALL"
-            ? `/api/admin/teachers/by-subject` // retourne tous les enseignants
+            ? `/api/admin/teachers/by-subject`
             : `/api/admin/teachers/by-subject?subject_id=${encodeURIComponent(subjectId)}`;
-
         const res = await fetch(url, { cache: "no-store" });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const json = (await res.json()) as { items: Teacher[] };
-
-        // Option "Tous"
         setTeachers([{ id: "ALL", display_name: "Tous les enseignants" }, ...(json.items || [])]);
         setTeacherId("ALL");
       } catch {
@@ -142,8 +266,8 @@ export default function AdminStatistiquesPage() {
     })();
   }, [subjectId]);
 
-  // Charger donn�es (summary ou detail)
-  async function loadData() {
+  /* Charger données (tableau) */
+  async function loadTableData() {
     if (!from || !to) return;
     if (showDetail) {
       setDetail({ loading: true, error: null, data: null });
@@ -151,12 +275,11 @@ export default function AdminStatistiquesPage() {
         const qs = new URLSearchParams({ mode: "detail", from, to, teacher_id: teacherId });
         if (subjectId !== "ALL") qs.set("subject_id", subjectId);
         const res = await fetch(`/api/admin/statistics?${qs.toString()}`, { cache: "no-store" });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const json = (await res.json()) as { rows: DetailRow[]; total_minutes: number; count: number };
         setDetail({ loading: false, error: null, data: json });
         setSummary({ loading: false, error: null, data: null });
       } catch (e: any) {
-        setDetail({ loading: false, error: e.message || "Erreur", data: null });
+        setDetail({ loading: false, error: e?.message || "Erreur", data: null });
       }
     } else {
       setSummary({ loading: true, error: null, data: null });
@@ -164,40 +287,27 @@ export default function AdminStatistiquesPage() {
         const qs = new URLSearchParams({ mode: "summary", from, to });
         if (subjectId !== "ALL") qs.set("subject_id", subjectId);
         const res = await fetch(`/api/admin/statistics?${qs.toString()}`, { cache: "no-store" });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const json = (await res.json()) as { items: SummaryRow[] };
-        setSummary({ loading: false, error: null, data: json.items });
+        const json = (await res.json()) as { items?: SummaryRow[]; rows?: SummaryRow[] };
+        const items = (json.items ?? json.rows ?? []) as SummaryRow[];
+        setSummary({ loading: false, error: null, data: items });
         setDetail({ loading: false, error: null, data: null });
       } catch (e: any) {
-        setSummary({ loading: false, error: e.message || "Erreur", data: null });
+        setSummary({ loading: false, error: e?.message || "Erreur", data: null });
       }
     }
   }
+  useEffect(() => { if (view === "tableau") loadTableData(); /* eslint-disable-next-line */ }, [view]);
+  useEffect(() => { if (view === "tableau") loadTableData(); /* eslint-disable-next-line */ }, [from, to, subjectId, teacherId]);
 
-  useEffect(() => {
-    loadData();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  useEffect(() => {
-    loadData();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [from, to, subjectId, teacherId]);
-
-  /* �������������������������� Export CSV �������������������������� */
+  /* Exports CSV (tableau) */
   function exportSummaryCSV() {
     const items = summary.data || [];
-    const header = [
-      "Enseignant",
-      subjectId === "ALL" ? "Discipline(s)" : "Discipline (filtr�e)",
-      "Total minutes",
-      "Total heures (d�cimal)",
-    ];
+    const header = ["Enseignant", subjectId === "ALL" ? "Discipline(s)" : "Discipline (filtrée)", "Total minutes", "Total heures (décimal)"];
     const lines = [header.join(";")];
     for (const it of items) {
       const disciplineCell =
         subjectId === "ALL"
-          ? (it.subject_names && it.subject_names.length ? it.subject_names.join(", ") : "�")
+          ? (it.subject_names && it.subject_names.length ? it.subject_names.join(", ") : "")
           : (subjects.find(s => s.id === subjectId)?.name || "");
       const cols = [
         it.teacher_name,
@@ -209,11 +319,10 @@ export default function AdminStatistiquesPage() {
     }
     downloadText(`synthese_enseignants_${from}_${to}.csv`, lines.join("\n"));
   }
-
   function exportDetailCSV() {
     const d = detail.data;
     if (!d) return;
-    const header = ["Date", "Heure d�but", "Plage horaire", "Discipline", "Minutes", "Heures (d�cimal)"];
+    const header = ["Date", "Heure début", "Plage horaire", "Discipline", "Classe", "Minutes", "Heures (décimal)"];
     const lines = [header.join(";")];
     for (const r of d.rows) {
       const start = formatHHmm(r.dateISO);
@@ -221,8 +330,9 @@ export default function AdminStatistiquesPage() {
       const cols = [
         formatDateFR(r.dateISO),
         start,
-        `${start}�${end}`,
-        r.subject_name || "Discipline non renseign�e",
+        `${start} → ${end}`,
+        r.subject_name || "Discipline non renseignée",
+        r.class_label || "",
         String(r.expected_minutes ?? 0),
         String(minutesToDecimalHours(r.expected_minutes ?? 0)),
       ];
@@ -231,174 +341,488 @@ export default function AdminStatistiquesPage() {
     downloadText(`detail_${teacherId}_${from}_${to}.csv`, lines.join("\n"));
   }
 
-  /* �������������������������� Totaux / UI helpers �������������������������� */
-  const totalMinutesSummary = useMemo(() => {
-    if (!summary.data) return 0;
-    return summary.data.reduce((acc, it) => acc + (it.total_minutes || 0), 0);
-  }, [summary.data]);
+  /* ====== Timesheet (emploi du temps d’appel) ====== */
+  const [tsTeacherId, setTsTeacherId] = useState<string>("");
+  const [tsTeachers, setTsTeachers] = useState<{ id: string; label: string }[]>([]);
+  const [slot, setSlot] = useState<number>(60);
+  const [startHour, setStartHour] = useState<number>(7);
+  const [endHour, setEndHour] = useState<number>(18);
+  const [tsData, setTsData] = useState<FetchState<TimesheetPayload>>({
+    loading: false, error: null, data: null,
+  });
 
-  const disciplineHeader = subjectId === "ALL" ? "Discipline(s)" : "Discipline (filtr�e)";
+  // ✅ Sélection de classe (boutons) + mémo
+  const [selectedClassId, setSelectedClassId] = useState<string>(() => {
+    if (typeof window === "undefined") return "";
+    return localStorage.getItem("timesheet.selectedClassId") || "";
+  });
+  useEffect(() => {
+    if (selectedClassId) localStorage.setItem("timesheet.selectedClassId", selectedClassId);
+  }, [selectedClassId]);
 
+  // ✅ Jours scolaires uniquement
+  const [onlyWeekdays, setOnlyWeekdays] = useState<boolean>(false);
+
+  /* Charger liste enseignants pour le timesheet */
+  useEffect(() => {
+    if (view !== "timesheet") return;
+    (async () => {
+      try {
+        const res = await fetch(`/api/admin/teachers/by-subject`, { cache: "no-store" });
+        const j = await res.json();
+        const items: Teacher[] = (j?.items || []) as Teacher[];
+        const opts = items.map((t) => ({ id: String(t.id), label: teacherLabel(t) }));
+        setTsTeachers(opts);
+        if (!tsTeacherId && opts[0]) setTsTeacherId(opts[0].id);
+      } catch {
+        setTsTeachers([]);
+        setTsTeacherId("");
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view]);
+
+  async function loadTimesheet() {
+    if (view !== "timesheet") return;
+    if (!tsTeacherId || !from || !to) return;
+    setTsData({ loading: true, error: null, data: null });
+    const qs = new URLSearchParams({
+      mode: "timesheet",
+      teacher_id: tsTeacherId,
+      from, to,
+      slot: String(slot),
+      start_hour: String(startHour),
+      end_hour: String(endHour),
+    });
+    try {
+      const res = await fetch(`/api/admin/statistics?${qs.toString()}`, { cache: "no-store" });
+      const j = await res.json();
+      if (!res.ok) throw new Error(j?.error || `HTTP ${res.status}`);
+      setTsData({ loading: false, error: null, data: j as TimesheetPayload });
+
+      // ✅ Initialiser/valider la classe sélectionnée
+      const cls: TimesheetClass[] = (j?.classes || []) as TimesheetClass[];
+      if (cls.length) {
+        const exists = cls.some(c => c.id === selectedClassId);
+        if (!exists) setSelectedClassId(cls[0].id);
+      } else {
+        setSelectedClassId("");
+      }
+    } catch (e: any) {
+      setTsData({ loading: false, error: e?.message || "Erreur", data: null });
+      setSelectedClassId("");
+    }
+  }
+  useEffect(() => { loadTimesheet(); /* eslint-disable-next-line */ }, [view, tsTeacherId, from, to, slot, startHour, endHour]);
+
+  const td = tsData.data;
+
+  // ✅ Dates actives pour la classe sélectionnée (et filtre jours scolaires)
+  const activeDatesForClass = useMemo(() => {
+    if (!td || !selectedClassId) return [] as string[];
+    const out: string[] = [];
+    for (const d of td.dates) {
+      if (onlyWeekdays && !isWeekday(d)) continue;
+      let has = false;
+      for (const sl of td.slots) {
+        const key = `${d}|${sl.start}|${selectedClassId}`;
+        if ((td.cells[key] || []).length > 0) { has = true; break; }
+      }
+      if (has) out.push(d);
+    }
+    return out;
+  }, [td, selectedClassId, onlyWeekdays]);
+
+  // ✅ Compteur par date (total de clics pour la classe)
+  const clicksPerDate = useMemo(() => {
+    const map = new Map<string, number>();
+    if (!td || !selectedClassId) return map;
+    for (const d of td.dates) {
+      let c = 0;
+      for (const sl of td.slots) {
+        const key = `${d}|${sl.start}|${selectedClassId}`;
+        c += (td.cells[key] || []).length;
+      }
+      map.set(d, c);
+    }
+    return map;
+  }, [td, selectedClassId]);
+
+  /* ─────────────────────────────────────────
+     Rendu
+  ────────────────────────────────────────── */
   return (
-    <main className="p-4 md:p-6">
-      <h1 className="text-2xl font-semibold mb-4">Statistiques</h1>
+    <main className="p-4 md:p-6 space-y-6">
+      <header className="flex items-center justify-between">
+        <h1 className="text-2xl font-semibold">Statistiques</h1>
+        <div className="flex gap-2">
+          <button
+            onClick={() => setView("tableau")}
+            className={[
+              "rounded-full px-3 py-1.5 text-sm transition",
+              view === "tableau" ? "bg-emerald-600 text-white shadow" : "border border-slate-200 text-slate-700 hover:bg-slate-50",
+           ].join(" ")}
+          >
+            Tableau (synthèse/détail)
+          </button>
+          <button
+            onClick={() => setView("timesheet")}
+            className={[
+              "rounded-full px-3 py-1.5 text-sm transition",
+              view === "timesheet" ? "bg-emerald-600 text-white shadow" : "border border-slate-200 text-slate-700 hover:bg-slate-50",
+            ].join(" ")}
+          >
+            Emploi du temps d’appel
+          </button>
+        </div>
+      </header>
 
-      {/* Filtres */}
-      <section className="grid md:grid-cols-4 gap-3 mb-6">
+      {/* Filtres de période (communs) */}
+      <section className="grid md:grid-cols-4 gap-3">
         <div className="space-y-1">
-          <label className="text-sm font-medium">Date de d�but</label>
-          <input type="date" value={from} onChange={e => setFrom(e.target.value)} className="w-full border rounded-xl p-2" />
+          <label className="text-sm font-medium">Date de début</label>
+          <Input type="date" value={from} onChange={e => setFrom(e.target.value)} />
         </div>
         <div className="space-y-1">
           <label className="text-sm font-medium">Date de fin</label>
-          <input type="date" value={to} onChange={e => setTo(e.target.value)} className="w-full border rounded-xl p-2" />
+          <Input type="date" value={to} onChange={e => setTo(e.target.value)} />
         </div>
-        <div className="space-y-1">
-          <label className="text-sm font-medium">Discipline</label>
-          <select value={subjectId} onChange={e => setSubjectId(e.target.value)} className="w-full border rounded-xl p-2">
-            {subjects.map(s => (
-              <option key={s.id} value={s.id}>{s.name}</option>
-            ))}
-          </select>
-        </div>
-        <div className="space-y-1">
-          <label className="text-sm font-medium">Enseignant</label>
-          <select
-            value={teacherId}
-            onChange={e => setTeacherId(e.target.value)}
-            className="w-full border rounded-xl p-2"
-            disabled={loadingTeachers}
-          >
-            {teachers.map(t => (
-              <option key={t.id} value={t.id}>{teacherLabel(t)}</option>
-            ))}
-          </select>
-          {loadingTeachers && <p className="text-xs text-gray-500">Chargement des enseignants&</p>}
-        </div>
+
+        {view === "tableau" ? (
+          <>
+            <div className="space-y-1">
+              <label className="text-sm font-medium">Discipline</label>
+              <Select value={subjectId} onChange={e => setSubjectId(e.target.value)}>
+                {subjects.map(s => (
+                  <option key={s.id} value={s.id}>{s.name}</option>
+                ))}
+              </Select>
+            </div>
+            <div className="space-y-1">
+              <label className="text-sm font-medium">Enseignant</label>
+              <Select value={teacherId} onChange={e => setTeacherId(e.target.value)} disabled={loadingTeachers}>
+                {teachers.map(t => (
+                  <option key={t.id} value={t.id}>{teacherLabel(t)}</option>
+                ))}
+              </Select>
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="space-y-1">
+              <label className="text-sm font-medium">Enseignant</label>
+              <Select value={tsTeacherId} onChange={e => setTsTeacherId(e.target.value)}>
+                {!tsTeacherId && <option value="">— Sélectionner —</option>}
+                {tsTeachers.map(t => <option key={t.id} value={t.id}>{t.label}</option>)}
+              </Select>
+            </div>
+            <div className="grid grid-cols-3 gap-2">
+              <div className="space-y-1">
+                <label className="text-sm font-medium">Créneau (min)</label>
+                <Select value={String(slot)} onChange={e => setSlot(parseInt(e.target.value, 10))}>
+                  {[30, 45, 60, 90, 120].map((m) => <option key={m} value={m}>{m}</option>)}
+                </Select>
+              </div>
+              <div className="space-y-1">
+                <label className="text-sm font-medium">Début (h)</label>
+                <Select value={String(startHour)} onChange={e => setStartHour(parseInt(e.target.value, 10))}>
+                  {Array.from({ length: 24 }, (_, h) => h).map((h) => <option key={h} value={h}>{h}</option>)}
+                </Select>
+              </div>
+              <div className="space-y-1">
+                <label className="text-sm font-medium">Fin (h)</label>
+                <Select value={String(endHour)} onChange={e => setEndHour(parseInt(e.target.value, 10))}>
+                  {Array.from({ length: 24 }, (_, h) => h).map((h) => <option key={h} value={h}>{h}</option>)}
+                </Select>
+              </div>
+            </div>
+          </>
+        )}
       </section>
 
-      {/* R�sultats */}
-      {teacherId === "ALL" ? (
-        <section className="space-y-3">
-          <div className="flex items-center justify-between">
-            <h2 className="text-lg font-semibold">Synth�se par enseignant</h2>
-            <div className="flex items-center gap-2">
-              <div className="text-sm">
-                Total p�riode: <strong>{minutesToHourLabel(totalMinutesSummary)}</strong> ({minutesToDecimalHours(totalMinutesSummary)} h)
-              </div>
-              <button
-                className="px-3 py-2 rounded-xl border text-sm hover:bg-gray-50"
-                onClick={exportSummaryCSV}
-                disabled={summary.loading || !summary.data}
-              >
-                Export CSV (Synth�se)
-              </button>
-            </div>
-          </div>
-
-          {summary.loading ? (
-            <div className="p-4 border rounded-xl">Chargement&</div>
-          ) : summary.error ? (
-            <div className="p-4 border rounded-xl text-red-600">Erreur : {summary.error}</div>
-          ) : (
-            <div className="overflow-auto border rounded-xl">
-              <table className="min-w-full text-sm">
-                <thead className="bg-gray-50">
-                  <tr>
-                    <th className="text-left px-3 py-2">Enseignant</th>
-                    <th className="text-left px-3 py-2">{disciplineHeader}</th>
-                    <th className="text-right px-3 py-2">Total minutes</th>
-                    <th className="text-right px-3 py-2">Total heures</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {(summary.data || []).map((row) => {
-                    const disciplineCell =
-                      subjectId === "ALL"
-                        ? (row.subject_names && row.subject_names.length ? row.subject_names.join(", ") : "�")
-                        : (subjects.find(s => s.id === subjectId)?.name || "");
-                    return (
-                      <tr key={row.teacher_id} className="border-t">
-                        <td className="px-3 py-2">{row.teacher_name}</td>
-                        <td className="px-3 py-2">{disciplineCell}</td>
-                        <td className="px-3 py-2 text-right">{row.total_minutes}</td>
-                        <td className="px-3 py-2 text-right">{minutesToDecimalHours(row.total_minutes)}</td>
-                      </tr>
-                    );
-                  })}
-                  {(!summary.data || summary.data.length === 0) && (
-                    <tr>
-                      <td colSpan={4} className="px-3 py-4 text-center text-gray-500">Aucune donn�e sur la p�riode.</td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </section>
-      ) : (
-        <section className="space-y-3">
-          <div className="flex items-center justify-between">
-            <h2 className="text-lg font-semibold">D�tails de l�"enseignant</h2>
-            <div className="flex items-center gap-2">
-              {detail.data && (
+      {view === "tableau" ? (
+        /* ====== Tableau : synthèse/détail ====== */
+        (teacherId === "ALL" ? (
+          <section className="space-y-3">
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-semibold">Synthèse par enseignant</h2>
+              <div className="flex items-center gap-2">
                 <div className="text-sm">
-                  {detail.data.count} s�ance(s) " Total : <strong>{minutesToHourLabel(detail.data.total_minutes)}</strong> ({minutesToDecimalHours(detail.data.total_minutes)} h)
+                  Total période: <strong>{minutesToHourLabel(totalMinutesSummary)}</strong> ({minutesToDecimalHours(totalMinutesSummary)} h)
                 </div>
-              )}
-              <button
-                className="px-3 py-2 rounded-xl border text-sm hover:bg-gray-50"
-                onClick={exportDetailCSV}
-                disabled={detail.loading || !detail.data}
-              >
-                Export CSV (D�tail)
-              </button>
+                <Button onClick={exportSummaryCSV} disabled={summary.loading || !summary.data}>Export CSV</Button>
+              </div>
             </div>
-          </div>
 
-          {detail.loading ? (
-            <div className="p-4 border rounded-xl">Chargement&</div>
-          ) : detail.error ? (
-            <div className="p-4 border rounded-xl text-red-600">Erreur : {detail.error}</div>
-          ) : (
-            <div className="overflow-auto border rounded-xl">
-              <table className="min-w-full text-sm">
-                <thead className="bg-gray-50">
-                  <tr>
-                    <th className="text-left px-3 py-2">Date</th>
-                    <th className="text-left px-3 py-2">Plage horaire</th>
-                    <th className="text-left px-3 py-2">Discipline</th>
-                    <th className="text-right px-3 py-2">Minutes</th>
-                    <th className="text-right px-3 py-2">Heures</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {(detail.data?.rows || []).map((r) => {
-                    const start = formatHHmm(r.dateISO);
-                    const end = formatHHmm(addMinutesISO(r.dateISO, r.expected_minutes || 0));
-                    return (
-                      <tr key={r.id} className="border-t">
-                        <td className="px-3 py-2">{formatDateFR(r.dateISO)}</td>
-                        <td className="px-3 py-2">{start}�{end}</td>
-                        <td className="px-3 py-2">{r.subject_name || "Discipline non renseign�e"}</td>
-                        <td className="px-3 py-2 text-right">{r.expected_minutes ?? 0}</td>
-                        <td className="px-3 py-2 text-right">{minutesToDecimalHours(r.expected_minutes ?? 0)}</td>
+            {summary.loading ? (
+              <div className="p-4 border rounded-xl">Chargement…</div>
+            ) : summary.error ? (
+              <div className="p-4 border rounded-xl text-red-600">Erreur : {summary.error}</div>
+            ) : (
+              <div className="overflow-auto border rounded-xl">
+                <table className="min-w-full text-sm">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="text-left px-3 py-2">Enseignant</th>
+                      <th className="text-left px-3 py-2">{disciplineHeader}</th>
+                      <th className="text-right px-3 py-2">Total minutes</th>
+                      <th className="text-right px-3 py-2">Total heures</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(summary.data || []).map((row) => {
+                      const disciplineCell =
+                        subjectId === "ALL"
+                          ? (row.subject_names && row.subject_names.length ? row.subject_names.join(", ") : "")
+                          : (subjects.find(s => s.id === subjectId)?.name || "");
+                      return (
+                        <tr key={row.teacher_id} className="border-t">
+                          <td className="px-3 py-2">{row.teacher_name}</td>
+                          <td className="px-3 py-2">{disciplineCell}</td>
+                          <td className="px-3 py-2 text-right">{row.total_minutes}</td>
+                          <td className="px-3 py-2 text-right">{minutesToDecimalHours(row.total_minutes)}</td>
+                        </tr>
+                      );
+                    })}
+                    {(!summary.data || summary.data.length === 0) && (
+                      <tr>
+                        <td colSpan={4} className="px-3 py-4 text-center text-gray-500">Aucune donnée sur la période.</td>
                       </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
+        ) : (
+          <section className="space-y-3">
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-semibold">Détails de l’enseignant</h2>
+              <div className="flex items-center gap-2">
+                {detail.data && (
+                  <div className="text-sm">
+                    {detail.data.count} séance(s) • Total : <strong>{minutesToHourLabel(detail.data.total_minutes)}</strong> ({minutesToDecimalHours(detail.data.total_minutes)} h)
+                  </div>
+                )}
+                <Button onClick={exportDetailCSV} disabled={detail.loading || !detail.data}>Export CSV</Button>
+              </div>
+            </div>
+
+            {detail.loading ? (
+              <div className="p-4 border rounded-xl">Chargement…</div>
+            ) : detail.error ? (
+              <div className="p-4 border rounded-xl text-red-600">Erreur : {detail.error}</div>
+            ) : (
+              <div className="overflow-auto border rounded-xl">
+                <table className="min-w-full text-sm">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="text-left px-3 py-2">Date</th>
+                      <th className="text-left px-3 py-2">Plage horaire</th>
+                      <th className="text-left px-3 py-2">Discipline</th>
+                      <th className="text-left px-3 py-2">Classe</th>
+                      <th className="text-right px-3 py-2">Minutes</th>
+                      <th className="text-right px-3 py-2">Heures</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(detail.data?.rows || []).map((r) => {
+                      const start = formatHHmm(r.dateISO);
+                      const end = formatHHmm(addMinutesISO(r.dateISO, r.expected_minutes || 0));
+                      return (
+                        <tr key={r.id} className="border-t">
+                          <td className="px-3 py-2">{formatDateFR(r.dateISO)}</td>
+                          <td className="px-3 py-2">{start} → {end}</td>
+                          <td className="px-3 py-2">{r.subject_name || "Discipline non renseignée"}</td>
+                          <td className="px-3 py-2">{r.class_label || "—"}</td>
+                          <td className="px-3 py-2 text-right">{r.expected_minutes ?? 0}</td>
+                          <td className="px-3 py-2 text-right">{minutesToDecimalHours(r.expected_minutes ?? 0)}</td>
+                        </tr>
+                      );
+                    })}
+                    {(!detail.data || detail.data.rows.length === 0) && (
+                      <tr>
+                        <td colSpan={6} className="px-3 py-4 text-center text-gray-500">Aucune donnée pour cet enseignant sur la période.</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
+        ))
+      ) : (
+        /* ====== Emploi du temps d’appel ====== */
+        <section className="space-y-4">
+          {/* Bandeau enseignant + total */}
+          {tsData.loading ? (
+            <div className="p-4 border rounded-xl">Chargement…</div>
+          ) : tsData.error ? (
+            <div className="p-4 border rounded-xl text-red-600">Erreur : {tsData.error}</div>
+          ) : td ? (
+            <>
+              <div className="rounded-2xl border border-emerald-200 bg-gradient-to-b from-emerald-50/60 to-white p-5 ring-1 ring-emerald-100">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="text-lg font-semibold truncate">{td.teacher.name}</div>
+                    <div className="mt-1 flex flex-wrap gap-2">
+                      {(td.teacher.subjects || []).length > 0 ? (
+                        td.teacher.subjects.map((s) => (
+                          <span key={s} className="inline-flex items-center rounded-full bg-emerald-50 px-2 py-0.5 text-xs text-emerald-800 ring-1 ring-emerald-200">
+                            {s}
+                          </span>
+                        ))
+                      ) : (
+                        <span className="text-xs text-slate-500">Discipline non renseignée</span>
+                      )}
+                    </div>
+                  </div>
+                  <div className="text-sm">
+                    Total période : <strong>{minutesToHourLabel(td.teacher.total_minutes)}</strong> ({minutesToDecimalHours(td.teacher.total_minutes)} h)
+                  </div>
+                </div>
+
+                {/* ✅ Sélecteur de classe sous forme de boutons */}
+                <div className="mt-4 flex flex-wrap items-center gap-2">
+                  {td.classes.map((c) => {
+                    const active = c.id === selectedClassId;
+                    return (
+                      <button
+                        key={c.id}
+                        onClick={() => setSelectedClassId(c.id)}
+                        aria-pressed={active}
+                        className={[
+                          "px-3 py-1.5 rounded-full text-sm transition",
+                          active
+                            ? "bg-emerald-600 text-white shadow"
+                            : "border border-emerald-200 text-emerald-800 hover:bg-emerald-50",
+                        ].join(" ")}
+                        title={c.label}
+                      >
+                        {c.label}
+                      </button>
                     );
                   })}
-                  {(!detail.data || detail.data.rows.length === 0) && (
-                    <tr>
-                      <td colSpan={5} className="px-3 py-4 text-center text-gray-500">Aucune donn�e pour cet enseignant sur la p�riode.</td>
-                    </tr>
+                  {td.classes.length === 0 && (
+                    <span className="text-sm text-slate-500">Aucune classe attribuée.</span>
                   )}
-                </tbody>
-              </table>
-            </div>
+
+                  <label className="ml-auto inline-flex select-none items-center gap-2 text-sm text-slate-700">
+                    <input
+                      type="checkbox"
+                      className="h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                      checked={onlyWeekdays}
+                      onChange={(e) => setOnlyWeekdays(e.target.checked)}
+                    />
+                    Jours scolaires (lun-ven)
+                  </label>
+                </div>
+              </div>
+
+              {/* ✅ Tableau : LIGNES = créneaux ; COLONNES = dates actives pour la classe sélectionnée */}
+              <div className="rounded-2xl border bg-white p-5 shadow-sm">
+                {!selectedClassId ? (
+                  <div className="p-4 border rounded-xl text-slate-600">Choisissez une classe ci-dessus.</div>
+                ) : activeDatesForClass.length === 0 ? (
+                  <div className="p-4 border rounded-xl text-slate-600">
+                    Aucune date avec séance pour <strong>{td.classes.find(c => c.id === selectedClassId)?.label || "la classe"}</strong> sur la période.
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto rounded-xl border">
+                    <table className="min-w-full text-sm">
+                      <thead className="bg-slate-50 sticky top-0 z-10">
+                        <tr className="text-left text-slate-600">
+                          {/* Colonne créneau STICKY */}
+                          <th className="px-3 py-2 w-44 whitespace-nowrap sticky left-0 z-20 bg-slate-50">
+                            Créneau
+                          </th>
+                          {activeDatesForClass.map((d) => (
+                            <th key={d} className="px-3 py-2 whitespace-nowrap">
+                              <div className="flex flex-col">
+                                <span>{dateHumanFR(d)}</span>
+                                <span className="text-[11px] text-slate-500">
+                                  {(clicksPerDate.get(d) || 0)} clic(s)
+                                </span>
+                              </div>
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y">
+                        {td.slots.map((sl) => (
+                          <tr key={sl.start}>
+                            {/* Cellule créneau STICKY */}
+                            <td className="px-3 py-2 font-medium text-slate-700 whitespace-nowrap sticky left-0 z-10 bg-white">
+                              {sl.start} – {sl.end}
+                            </td>
+                            {activeDatesForClass.map((d) => {
+                              const key = `${d}|${sl.start}|${selectedClassId}`;
+                              // heures simples
+                              const times = td.cells[key] || [];
+                              // meta si dispo (pour origine)
+                              const metas = td.cellsMeta?.[key];
+
+                              // compactage: on montre 2 items + “+N”
+                              const MAX = 2;
+                              const head = times.slice(0, MAX);
+                              const rest = times.slice(MAX);
+                              const tooltip = times.length ? times.join(", ") : "";
+
+                              return (
+                                <td key={key} className="px-3 py-2 align-top">
+                                  {times.length === 0 ? (
+                                    <span className="text-slate-300">—</span>
+                                  ) : (
+                                    <div className="flex flex-wrap gap-1">
+                                      {head.map((t, i) => {
+                                        const delta = diffToSlotStart(t, sl.start);
+                                        const badge = clickBadgeClass(delta);
+                                        const origin = metas?.find(m => m.hhmm === t)?.origin;
+                                        const hint = `${d} • ${sl.start} → ${t} (${delta >= 0 ? "+" : ""}${delta} min)${origin ? ` • ${origin}` : ""}`;
+                                        return (
+                                          <span
+                                            key={`${t}-${i}`}
+                                            title={hint}
+                                            className={[
+                                              "inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-xs",
+                                              badge,
+                                            ].join(" ")}
+                                          >
+                                            {originEmoji(origin)} {t}
+                                          </span>
+                                        );
+                                      })}
+                                      {rest.length > 0 && (
+                                        <span
+                                          title={tooltip}
+                                          className="inline-flex items-center rounded-md border border-slate-200 bg-slate-50 px-2 py-0.5 text-xs text-slate-700"
+                                        >
+                                          +{rest.length}
+                                        </span>
+                                      )}
+                                    </div>
+                                  )}
+                                </td>
+                              );
+                            })}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+                <p className="mt-3 text-xs text-slate-500">
+                  Les dates affichées sont uniquement celles de la période {from} → {to} qui comportent au moins une séance pour la classe sélectionnée.
+                  Chaque cellule liste l’<em>heure du clic</em> (une ou plusieurs) tombant dans le créneau.
+                  Pastilles vertes : dans la fenêtre [–5 min, +10 min] du début de créneau ; orange : en dehors.
+                </p>
+              </div>
+            </>
+          ) : (
+            <div className="p-4 border rounded-xl text-slate-600">Sélectionnez un enseignant pour afficher le tableau.</div>
           )}
         </section>
       )}
     </main>
   );
 }
-
-

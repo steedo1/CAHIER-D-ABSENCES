@@ -33,6 +33,7 @@ function Help({ children }: { children: any }) {
 }
 
 type SubjectItem = { id: string; name: string };
+type TeacherRow = { id: string; display_name: string | null; email: string | null; phone: string | null };
 
 // Réponse /api/admin/users (recherche)
 type AdminUserItem = {
@@ -104,6 +105,17 @@ export default function UsersPage() {
       setTPhone("");
       setTName("");
       setTSubject("");
+
+      // Recharger les suggestions de disciplines (au cas où on en a créé une)
+      try {
+        const r2 = await fetch("/api/admin/subjects", { cache: "no-store" });
+        const j2 = await r2.json().catch(() => ({}));
+        setSubjects(j2.items || []);
+      } catch {}
+      // Recharger la liste des enseignants pour la carte “Ajouter une discipline”
+      try {
+        await loadTeachersForAdd();
+      } catch {}
     } catch {
       setSubmitting(false);
       setMsg("Erreur réseau.");
@@ -172,10 +184,77 @@ export default function UsersPage() {
       const cleared = j?.cleared_institution ? " — institution active nettoyée" : "";
       setRmMsg(`Enseignant retiré de l’établissement${ended}${cleared}.`);
       setResults((prev) => prev.filter((u) => u.id !== profile_id));
+
+      // Recharger liste enseignants pour carte “Ajouter une discipline”
+      try {
+        await loadTeachersForAdd();
+      } catch {}
     } catch (e: any) {
       setRmMsg(e?.message || "Erreur réseau.");
     } finally {
       setRemovingId(null);
+    }
+  }
+
+  // ──────────────── Ajouter une discipline à un enseignant (NOUVEAU) ────────────────
+  const [teachersForAdd, setTeachersForAdd] = useState<TeacherRow[]>([]);
+  const [teacherIdForAdd, setTeacherIdForAdd] = useState<string>("");
+  const [newSubjectName, setNewSubjectName] = useState("");
+  const [addingSubject, setAddingSubject] = useState(false);
+  const [addMsg, setAddMsg] = useState<string | null>(null);
+
+  async function loadTeachersForAdd() {
+    // Liste de tous les enseignants de l’établissement (endpoint existant, sans filtre subject)
+    const r = await fetch("/api/admin/teachers/by-subject", { cache: "no-store" });
+    if (r.status === 401) {
+      setAuthErr(true);
+      return;
+    }
+    const j = await r.json().catch(() => ({}));
+    setTeachersForAdd(j.items || []);
+  }
+
+  useEffect(() => {
+    // Charger dès l’ouverture de la page
+    loadTeachersForAdd().catch(() => {});
+  }, []);
+
+  async function addSubjectToTeacher() {
+    if (!teacherIdForAdd || !newSubjectName.trim()) return;
+    setAddingSubject(true);
+    setAddMsg(null);
+    try {
+      const r = await fetch("/api/admin/teachers/subjects/add", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          profile_id: teacherIdForAdd,
+          subject: newSubjectName.trim(),
+        }),
+      });
+      const j = await r.json().catch(() => ({}));
+      setAddingSubject(false);
+      if (r.status === 401) {
+        setAuthErr(true);
+        return;
+      }
+      if (!r.ok) {
+        setAddMsg(j?.error || "Échec.");
+        return;
+      }
+
+      // Rafraîchir suggestions de disciplines (au cas où on vient d’en créer une)
+      try {
+        const r2 = await fetch("/api/admin/subjects", { cache: "no-store" });
+        const j2 = await r2.json().catch(() => ({}));
+        setSubjects(j2.items || []);
+      } catch {}
+
+      setAddMsg("Discipline ajoutée à l’enseignant.");
+      setNewSubjectName("");
+    } catch (e: any) {
+      setAddingSubject(false);
+      setAddMsg(e?.message || "Erreur réseau.");
     }
   }
 
@@ -209,7 +288,7 @@ export default function UsersPage() {
         </div>
         <Help>
           Téléphone <b>obligatoire</b> (pour la connexion). Email <b>facultatif</b>.
-          La discipline est <b>optionnelle</b> (utile surtout au secondaire).
+          La discipline est <b>optionnelle</b> (utile surtout au PRIMAIRE).
         </Help>
 
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
@@ -273,6 +352,57 @@ export default function UsersPage() {
         )}
       </div>
 
+      {/* Carte 1bis : Ajouter une discipline à un enseignant (NOUVEAU) */}
+      <div className="rounded-2xl border bg-white p-5">
+        <div className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-700">
+          Ajouter une discipline à un enseignant
+        </div>
+        <Help>
+          Permet d’associer <b>plusieurs matières</b> au <b>même enseignant</b> dans cet établissement.
+          
+        </Help>
+
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+          <div className="md:col-span-1">
+            <div className="mb-1 text-xs text-slate-500">Enseignant</div>
+            <select
+              className="w-full rounded-lg border bg-white px-3 py-2 text-sm"
+              value={teacherIdForAdd}
+              onChange={(e) => setTeacherIdForAdd(e.target.value)}
+            >
+              <option value="">— Choisir —</option>
+              {teachersForAdd.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.display_name || "(Sans nom)"} {t.phone ? `— ${t.phone}` : t.email ? `— ${t.email}` : ""}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="md:col-span-1">
+            <div className="mb-1 text-xs text-slate-500">Discipline</div>
+            <Input
+              list="subjects-list"
+              value={newSubjectName}
+              onChange={(e) => setNewSubjectName(e.target.value)}
+              placeholder="Ex: Mathématiques"
+            />
+          </div>
+
+          <div className="md:col-span-1 flex items-end">
+            <Button
+              onClick={addSubjectToTeacher}
+              disabled={addingSubject || !teacherIdForAdd || !newSubjectName.trim()}
+              title={!teacherIdForAdd ? "Choisissez d’abord un enseignant" : "Ajouter la discipline"}
+            >
+              {addingSubject ? "Ajout…" : "Ajouter la discipline"}
+            </Button>
+          </div>
+        </div>
+
+        {addMsg && <div className="mt-2 text-sm text-emerald-700">{addMsg}</div>}
+      </div>
+
       {/* Carte 2 : Retirer un enseignant */}
       <div className="rounded-2xl border bg-white p-5">
         <div className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-700">
@@ -280,10 +410,7 @@ export default function UsersPage() {
         </div>
         <Help>
           Recherchez l’utilisateur par <b>nom</b>, <b>email</b> ou <b>téléphone</b>,
-          puis cliquez sur <b>Retirer</b>. L’action enlève le rôle <code>teacher</code> pour
-          votre établissement, clôture les séances ouvertes et, si besoin, met{" "}
-          <code>profiles.institution_id</code> à <code>NULL</code> lorsqu’il pointait
-          encore sur votre établissement (ainsi, il ne voit plus vos classes).
+          puis cliquez sur <b>Retirer</b>.
         </Help>
 
         <div className="flex items-end gap-2">
@@ -340,5 +467,3 @@ export default function UsersPage() {
     </div>
   );
 }
-
-

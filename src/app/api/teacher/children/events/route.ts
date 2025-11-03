@@ -1,4 +1,4 @@
-// src/api/teacher/children/events/route.ts
+// src/app/api/teacher/children/events/route.ts
 import { NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
@@ -48,11 +48,11 @@ export async function GET(req: Request) {
 
   const url = new URL(req.url);
   const student_id = url.searchParams.get("student_id") || "";
-  const days = Math.max(1, Math.min(120, parseInt(url.searchParams.get("days") || "45", 10))); // fenêtre récente
+  const days = Math.max(1, Math.min(120, parseInt(url.searchParams.get("days") || "45", 10)));
 
   if (!student_id) return NextResponse.json({ items: [], error: "student_id required" }, { status: 400 });
 
-  // Autorisation : ce parent doit être lié à l’élève
+  // Autorisation : ce parent (profil courant) doit être lié à l’élève
   const { data: link } = await srv
     .from("student_guardians")
     .select("student_id")
@@ -61,13 +61,13 @@ export async function GET(req: Request) {
     .eq("student_id", student_id)
     .maybeSingle();
 
-  if (!link) return NextResponse.json({ items: [] }); // pas lié → rien
+  if (!link) return NextResponse.json({ items: [] });
 
   // Fenêtre temporelle
   const now = new Date();
   const from = new Date(now.getTime() - days * 24 * 3600 * 1000).toISOString();
 
-  // On lit directement les marques + leur session (pour récupérer date/discipline/classe)
+  // Marques + session (inclut expected_minutes pour le créneau)
   const { data: rows, error } = await srv
     .from("attendance_marks")
     .select(`
@@ -76,6 +76,7 @@ export async function GET(req: Request) {
       minutes_late,
       session:session_id (
         started_at,
+        expected_minutes,
         class_id,
         subject_id,
         institution_id
@@ -86,7 +87,6 @@ export async function GET(req: Request) {
 
   if (error) return NextResponse.json({ items: [], error: error.message }, { status: 400 });
 
-  // On garde uniquement absences & retards
   const useful = (rows || []).filter(
     (r: any) => r.status === "absent" || r.status === "late"
   );
@@ -118,6 +118,7 @@ export async function GET(req: Request) {
       return {
         id: String(r.id),
         when: started,
+        expected_minutes: typeof s.expected_minutes === "number" ? Number(s.expected_minutes) : null,
         type,
         minutes_late: type === "late" ? Number(r.minutes_late || 0) : null,
         class_label: s.class_id ? (className.get(String(s.class_id)) || null) : null,

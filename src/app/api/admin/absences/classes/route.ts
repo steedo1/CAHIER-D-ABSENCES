@@ -1,3 +1,4 @@
+//src/app/api/admin/absences/classes/.route.ts
 import { NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";

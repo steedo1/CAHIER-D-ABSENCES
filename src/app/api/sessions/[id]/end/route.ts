@@ -1,3 +1,4 @@
+//src/app/api/sessions/[id]/end/route.ts
 import { NextResponse, type NextRequest } from "next/server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 

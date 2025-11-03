@@ -1,17 +1,17 @@
-// src/app/admin/affectations/page.tsx (ou le bon chemin)
- "use client";
+// src/app/admin/affectations/page.tsx
+"use client";
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 
 type ClassRow   = { id: string; name: string; level?: string | null };
-type SubjectRow = { id: string; name: string };
+type SubjectRow = { id: string; name: string; inst_subject_id: string | null }; // id = subjects.id, inst_subject_id = institution_subjects.id
 type TeacherRow = { id: string; display_name: string | null; email: string | null; phone: string | null };
 
 // Pour la vue de gestion
 type CurrentItem = {
   teacher: { id: string; display_name: string | null; email: string | null; phone: string | null };
-  subject: { id: string | null; label: string };
+  subject: { id: string | null; label: string }; // ici subject.id = institution_subjects.id (ou null)
   classes: Array<{ id: string; name: string; level: string | null }>;
 };
 
@@ -50,7 +50,13 @@ export default function AffectationsPage() {
   const [teachers, setTeachers] = useState<TeacherRow[]>([]);
 
   // Sélections (affecter)
+  // subjectId = subjects.id (global). Sert pour filtrer les enseignants.
   const [subjectId,  setSubjectId]  = useState<string>("");
+  // instSubjectId = institution_subjects.id (FK exigée par class_teachers.subject_id)
+  const instSubjectId = useMemo(
+    () => (subjects.find(s => s.id === subjectId)?.inst_subject_id ?? null),
+    [subjects, subjectId]
+  );
   const [teacherId,  setTeacherId]  = useState<string>("");
   const [classIds,   setClassIds]   = useState<string[]>([]);
   const [levelsFilter, setLevelsFilter] = useState<string>("");
@@ -61,6 +67,7 @@ export default function AffectationsPage() {
   const [authErr, setAuthErr] = useState(false);
 
   // Gestion (liste actuelle)
+  // manageSubject = institution_subjects.id (filtre sur les affectations existantes)
   const [q, setQ] = useState("");
   const [manageSubject, setManageSubject] = useState<string>("");
   const [current, setCurrent] = useState<CurrentItem[]>([]);
@@ -85,7 +92,7 @@ export default function AffectationsPage() {
     })();
   }, []);
 
-  // Charger enseignants : SI discipline → filtre, SINON → tous
+  // Charger enseignants : SI discipline → filtre via subjects.id, SINON → tous
   useEffect(() => {
     (async () => {
       try {
@@ -94,7 +101,7 @@ export default function AffectationsPage() {
           : `/api/admin/teachers/by-subject`;
         const j = await fetchJSON<{ items: TeacherRow[] }>(url);
         setTeachers(j.items || []);
-        setTeacherId(""); // reset
+        setTeacherId(""); // reset à chaque changement de discipline
       } catch (e: any) {
         if (e.message === "unauthorized") setAuthErr(true);
         else alert(e.message || "Erreur");
@@ -127,6 +134,13 @@ export default function AffectationsPage() {
 
   async function save() {
     if (!teacherId || classIds.length === 0) return;
+    // Si une discipline a été choisie mais qu'elle n'est pas activée dans l'établissement,
+    // on bloque pour éviter la violation de contrainte FK (class_teachers.subject_id → institution_subjects.id).
+    if (subjectId && !instSubjectId) {
+      alert("Cette discipline n’est pas activée dans cet établissement. Active-la d’abord puis réessaie.");
+      return;
+    }
+
     setSaving(true);
     setMsg(null);
     try {
@@ -136,7 +150,8 @@ export default function AffectationsPage() {
         body: JSON.stringify({
           type: "teacher_classes",
           teacher_id: teacherId,
-          subject_id: subjectId || null, // peut être null au primaire
+          // IMPORTANT: envoyer institution_subjects.id (et non subjects.id)
+          subject_id: instSubjectId || null, // peut être null au primaire
           class_ids: classIds,
         }),
       });
@@ -166,7 +181,7 @@ export default function AffectationsPage() {
     try {
       const url = new URL(`${location.origin}/api/admin/affectations/current`);
       if (q.trim()) url.searchParams.set("q", q.trim());
-      if (manageSubject) url.searchParams.set("subject_id", manageSubject);
+      if (manageSubject) url.searchParams.set("subject_id", manageSubject); // attend institution_subjects.id
       const j = await fetchJSON<{ items: CurrentItem[] }>(url.toString());
       setCurrent(j.items || []);
     } catch (e: any) {
@@ -196,7 +211,7 @@ export default function AffectationsPage() {
           type: "teacher_class_remove",
           teacher_id,
           class_id,
-          subject_id, // peut être null
+          subject_id, // ici on envoie l’inst_subject_id (peut être null)
         }),
       });
       const j = await r.json().catch(() => ({}));
@@ -232,7 +247,7 @@ export default function AffectationsPage() {
     }
   }
 
-  // NEW : reset global (tous les enseignants)
+  // Reset global (tous les enseignants)
   async function clearAllInstitution(subject_id: string | null) {
     if (!confirm(`Confirmer la réinitialisation pour TOUS les enseignants${subject_id ? " (discipline filtrée)" : ""} ?`)) return;
     setManageBusy(true);
@@ -243,7 +258,7 @@ export default function AffectationsPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           type: "teacher_classes_clear_all",
-          subject_id: subject_id || null, // optionnel
+          subject_id: subject_id || null, // optionnel, attend inst_subject_id
         }),
       });
       const j = await r.json().catch(() => ({}));
@@ -287,6 +302,7 @@ export default function AffectationsPage() {
         <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
           <div>
             <div className="mb-1 text-xs text-slate-500">Discipline (facultatif)</div>
+            {/* value = subjects.id (global). On en déduit inst_subject_id côté JS */}
             <Select value={subjectId} onChange={(e) => setSubjectId(e.target.value)}>
               <option value="">— Toutes les disciplines —</option>
               {subjects.map((s) => (
@@ -295,6 +311,11 @@ export default function AffectationsPage() {
                 </option>
               ))}
             </Select>
+            {subjectId && !instSubjectId && (
+              <div className="mt-1 text-[12px] text-rose-700">
+                Cette discipline n’est pas activée pour cet établissement. Active-la d’abord dans le catalogue.
+              </div>
+            )}
           </div>
 
           <div>
@@ -361,7 +382,15 @@ export default function AffectationsPage() {
         )}
 
         <div className="mt-4">
-          <Button onClick={save} disabled={!teacherId || classIds.length === 0 || saving}>
+          <Button
+            onClick={save}
+            disabled={
+              !teacherId ||
+              classIds.length === 0 ||
+              saving ||
+              (subjectId !== "" && !instSubjectId) // bloque si discipline choisie sans inst_subject_id
+            }
+          >
             {saving ? "Enregistrement…" : "Enregistrer les affectations"}
           </Button>
           {msg && <span className="ml-3 text-sm text-slate-600">{msg}</span>}
@@ -378,13 +407,16 @@ export default function AffectationsPage() {
             <div className="w-56">
               <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Rechercher (enseignant, classe, discipline)…" />
             </div>
+            {/* Filtre par discipline existante → utiliser institution_subjects.id */}
             <Select value={manageSubject} onChange={(e) => setManageSubject(e.target.value)}>
               <option value="">Toutes disciplines</option>
-              {subjects.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.name}
-                </option>
-              ))}
+              {subjects
+                .filter((s) => !!s.inst_subject_id)
+                .map((s) => (
+                  <option key={s.inst_subject_id!} value={s.inst_subject_id!}>
+                    {s.name}
+                  </option>
+                ))}
             </Select>
           </div>
         </div>
@@ -455,13 +487,16 @@ export default function AffectationsPage() {
               </div>
             </div>
             <div className="flex items-center gap-2">
+              {/* même select que ci-dessus (inst_subject_id) */}
               <Select value={manageSubject} onChange={(e) => setManageSubject(e.target.value)}>
                 <option value="">Toutes disciplines</option>
-                {subjects.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.name}
-                  </option>
-                ))}
+                {subjects
+                  .filter((s) => !!s.inst_subject_id)
+                  .map((s) => (
+                    <option key={s.inst_subject_id!} value={s.inst_subject_id!}>
+                      {s.name}
+                    </option>
+                  ))}
               </Select>
               <button
                 onClick={() => clearAllInstitution(manageSubject || null)}
@@ -478,5 +513,3 @@ export default function AffectationsPage() {
     </div>
   );
 }
-
-

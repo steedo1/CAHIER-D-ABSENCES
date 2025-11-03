@@ -1,4 +1,4 @@
-// src/app/api/admin/affectations/current/route.ts
+//src/app/api/admin/affectations/current/route.t
 import { NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
@@ -6,7 +6,7 @@ import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 type CurrentItem = {
   teacher: { id: string; display_name: string | null; email: string | null; phone: string | null };
   subject: { id: string | null; label: string };
-  classes: Array<{ id: string; name: string; level: string | null }>;
+  classes: Array<{ id: string; name: string | null; level: string | null }>;
 };
 
 const lc = (s: string | null | undefined) => (s ?? "").toLowerCase().trim();
@@ -15,15 +15,20 @@ const norm = (s: string | null | undefined) =>
 
 export async function GET(req: Request) {
   const supa = await getSupabaseServerClient();
-  const srv  = getSupabaseServiceClient();
+  const srv = getSupabaseServiceClient();
 
   // Auth
-  const { data: { user } } = await supa.auth.getUser();
+  const {
+    data: { user },
+  } = await supa.auth.getUser();
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
 
   // Institution
   const { data: me, error: meErr } = await supa
-    .from("profiles").select("institution_id").eq("id", user.id).maybeSingle();
+    .from("profiles")
+    .select("institution_id")
+    .eq("id", user.id)
+    .maybeSingle();
   if (meErr) return NextResponse.json({ error: meErr.message }, { status: 400 });
 
   const institution_id = (me?.institution_id as string) || null;
@@ -31,15 +36,16 @@ export async function GET(req: Request) {
 
   // Filters
   const { searchParams } = new URL(req.url);
-  const qRaw       = searchParams.get("q") || "";
+  const qRaw = searchParams.get("q") || "";
   const subjectRaw = searchParams.get("subject_id") || ""; // institution_subjects.id OU subjects.id
   const q = norm(qRaw);
   const subjectFilter = (subjectRaw || "").trim();
 
-  // Query (no hard-coded class columns �  schema tolerant)
+  // Query (schema-tolerant)
   const { data, error } = await srv
     .from("class_teachers")
-    .select(`
+    .select(
+      `
       teacher_id,
       subject_id,
       end_date,
@@ -50,7 +56,8 @@ export async function GET(req: Request) {
         custom_name,
         subj:subjects(id,name,code)
       )
-    `)
+    `
+    )
     .eq("institution_id", institution_id)
     .is("end_date", null)
     .limit(5000);
@@ -64,20 +71,20 @@ export async function GET(req: Request) {
   >();
 
   for (const row of data || []) {
-    const t  = (row as any).teacher;
-    const c  = (row as any).class || {};
+    const t = (row as any).teacher;
+    const c = (row as any).class || {};
     const is = (row as any).instsub;
 
     const teacher_id = t?.id as string;
-    const instSubId  = (is?.id as string) ?? null;
-    const subjId     = (is?.subj?.id as string) ?? null;
+    const instSubId = (is?.id as string) ?? null;
+    const subjId = (is?.subj?.id as string) ?? null;
     const subjectKey = instSubId || "NULL";
     const key = `${teacher_id}::${subjectKey}`;
 
     const subjectLabel =
       (is?.custom_name as string) ||
       (is?.subj?.name as string) ||
-      "�";
+      "—";
 
     if (!groups.has(key)) {
       groups.set(key, {
@@ -95,40 +102,44 @@ export async function GET(req: Request) {
 
     const g = groups.get(key)!;
 
-    // Pick class name & level robustly (whatever exists in your schema)
-    const clsId    = c?.id as string | undefined;
-    const clsName  =
+    // Pick class name & level robustly
+    const clsId = (c?.id as string) || undefined;
+    const clsName =
       c?.name ??
       c?.label ??
       c?.class_name ??
       c?.code ??
       c?.short_name ??
       c?.short_label ??
-      "(sans nom)";
+      null;
     const clsLevel = c?.level ?? c?.grade ?? c?.niveau ?? null;
 
-    if (clsId && !g.classes.some(x => x.id === clsId)) {
-      g.classes.push({ id: clsId, name: String(clsName), level: clsLevel ? String(clsLevel) : null });
+    if (clsId && !g.classes.some((x) => x.id === clsId)) {
+      g.classes.push({
+        id: clsId,
+        name: clsName ? String(clsName) : null,
+        level: clsLevel ? String(clsLevel) : null,
+      });
     }
   }
 
   // Filter by subject (accepts institution_subjects.id OR subjects.id)
   let items = Array.from(groups.values());
   if (subjectFilter) {
-    items = items.filter(g =>
-      g._subjectIds.instSubId === subjectFilter || g._subjectIds.subjId === subjectFilter
+    items = items.filter(
+      (g) => g._subjectIds.instSubId === subjectFilter || g._subjectIds.subjId === subjectFilter
     );
   }
 
   // Text filter
   if (q) {
-    items = items.filter(g => {
+    items = items.filter((g) => {
       const hay = [
         norm(g.teacher.display_name),
         norm(g.teacher.email),
         norm(g.teacher.phone),
         norm(g.subject.label),
-        ...g.classes.map(cl => norm(cl.name)),
+        ...g.classes.map((cl) => norm(cl.name)),
       ].join(" ");
       return hay.includes(q);
     });
@@ -147,5 +158,3 @@ export async function GET(req: Request) {
 
   return NextResponse.json({ items: out });
 }
-
-
