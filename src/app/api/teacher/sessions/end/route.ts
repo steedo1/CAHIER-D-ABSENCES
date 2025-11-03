@@ -7,62 +7,47 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function PATCH(_req: NextRequest) {
-  const supa = await getSupabaseServerClient();
-  const srv  = getSupabaseServiceClient();
+  const supa = await getSupabaseServerClient(); // RLS
+  const srv  = getSupabaseServiceClient();      // service (no RLS)
 
   try {
+    // 1) Auth
     const { data: { user } } = await supa.auth.getUser();
     if (!user) {
-      console.warn("[sessions.end] unauthorized");
       return NextResponse.json({ error: "unauthorized" }, { status: 401 });
     }
 
-    // Cherche la dernière séance non terminée par cet utilisateur
+    // 2) Dernière séance OUVERTE (sur teacher_sessions)
     const { data: sess, error: sErr } = await srv
-      .from("attendance_sessions")
+      .from("teacher_sessions")
       .select("id, status, started_at, ended_at")
-      .eq("started_by", user.id)
+      .eq("teacher_id", user.id)
       .is("ended_at", null)
       .order("started_at", { ascending: false })
       .limit(1)
       .maybeSingle();
 
-    if (sErr) {
-      console.error("[sessions.end] lookup error", sErr);
-      return NextResponse.json({ error: sErr.message }, { status: 400 });
-    }
-    if (!sess?.id) {
-      console.warn("[sessions.end] no_open_session");
-      return NextResponse.json({ error: "no_open_session" }, { status: 404 });
-    }
+    if (sErr)   return NextResponse.json({ error: sErr.message }, { status: 400 });
+    if (!sess)  return NextResponse.json({ error: "no_open_session" }, { status: 404 });
 
+    // 3) Clôture
     const nowIso = new Date().toISOString();
-    console.log("[sessions.end] closing", {
-      session_id: sess.id,
-      prev_status: sess.status,
-      set_status: "submitted", // ENUM actuel: open | submitted | validated | cancelled
-      nowIso,
-    });
 
     const { data: updated, error: uErr } = await srv
-      .from("attendance_sessions")
+      .from("teacher_sessions")
       .update({
         ended_at: nowIso,
+        // ENUM actuel déclaré chez toi : open | submitted | validated | cancelled
         status: "submitted",
       })
       .eq("id", sess.id)
       .select("id, status, started_at, ended_at")
       .maybeSingle();
 
-    if (uErr) {
-      console.error("[sessions.end] update error", uErr);
-      return NextResponse.json({ error: uErr.message }, { status: 400 });
-    }
+    if (uErr) return NextResponse.json({ error: uErr.message }, { status: 400 });
 
-    console.log("[sessions.end] closed_ok", updated);
     return NextResponse.json({ ok: true, item: updated }, { status: 200 });
   } catch (e: any) {
-    console.error("[sessions.end] fatal", e);
     return NextResponse.json({ error: e?.message || "end_failed" }, { status: 500 });
   }
 }
