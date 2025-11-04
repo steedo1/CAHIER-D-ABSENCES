@@ -2,6 +2,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
+// ✨ temps réel
+import { triggerDispatchInline } from "@/lib/push-dispatch";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -46,17 +48,16 @@ function buildPhoneVariants(raw: string) {
 async function resolveContext(
   srv: ReturnType<typeof getSupabaseServiceClient>,
   class_id: string,
-  subject_any: string | null,         // peut être institution_subjects.id OU subjects.id
+  subject_any: string | null,
   atIso: string
 ): Promise<{
   subjectCanonicalId: string | null;
   subjectDisplayName: string | null;
-  teacherProfileId: string | null;    // prof unique pour (classe, matière) sinon null
+  teacherProfileId: string | null;
 }> {
   let subjectCanonicalId: string | null = null;
   let subjectDisplayName: string | null = null;
 
-  // 1) Tenter institution_subjects par id
   let instSubj: any = null;
   if (subject_any) {
     const { data: isRow } = await srv
@@ -67,10 +68,8 @@ async function resolveContext(
     instSubj = isRow ?? null;
   }
 
-  // 2) Si institution_subjects trouvé → canonical = subjects.id ; display = custom_name || subjects.name
   if (instSubj?.subject_id) {
     subjectCanonicalId = instSubj.subject_id as string;
-    // récupérer nom du subject si besoin
     const { data: sRow } = await srv
       .from("subjects")
       .select("id,name,code,subject_key")
@@ -81,7 +80,6 @@ async function resolveContext(
       ?? (sRow?.name || sRow?.code || sRow?.subject_key || null);
   }
 
-  // 3) Sinon tenter directement subjects.id
   if (!subjectCanonicalId && subject_any) {
     const { data: sRow } = await srv
       .from("subjects")
@@ -94,13 +92,10 @@ async function resolveContext(
     }
   }
 
-  // 4) Si toujours aucun displayName mais on avait instSubj → prendre custom_name
   if (!subjectDisplayName && instSubj?.custom_name) {
     subjectDisplayName = String(instSubj.custom_name);
   }
 
-  // 5) Chercher le prof actif pour cette classe/matière.
-  //    ⚠ class_teachers.subject_id peut contenir un subjects.id OU un institution_subjects.id selon les données.
   const candidates: string[] = uniq<string>([
     subject_any || "",
     subjectCanonicalId || "",
@@ -135,7 +130,7 @@ export async function POST(req: NextRequest) {
       class_id: string;
       rubric: Rubric | string;
       items: Item[];
-      subject_id?: string | null;    // peut être institution_subjects.id OU subjects.id
+      subject_id?: string | null;
     };
 
     const class_id = String(body?.class_id || "").trim();
@@ -174,7 +169,6 @@ export async function POST(req: NextRequest) {
     const { subjectCanonicalId, subjectDisplayName, teacherProfileId } =
       await resolveContext(srv, class_id, subject_any, nowIso);
 
-    // Filtrer items valides (élève inscrit dans la classe — optionnel: on peut rajouter le check enrollments)
     const clean = items
       .filter(Boolean)
       .map((it) => ({
@@ -188,26 +182,22 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "no_valid_items" }, { status: 400 });
     }
 
-    // Attribution :
-    // - si prof identifié → auteur = prof, label "Enseignant", et on met la matière dans author_subject_name
-    // - sinon → auteur = user (compte classe), label "Administration"
     const author_role_label = teacherProfileId ? "Enseignant" : "Administration";
     const author_profile_id = teacherProfileId ?? null;
-    const author_id = teacherProfileId ?? user.id; // on crédite le prof si trouvé, sinon le compte classe
+    const author_id = teacherProfileId ?? user.id;
 
-    // IMPORTANT: subject_id (FK → subjects.id) POSÉ UNIQUEMENT SI ON A LE CANONICAL (subjects.id)
     const rows = clean.map((it) => ({
       institution_id: cls.institution_id,
       class_id,
-      subject_id: subjectCanonicalId ?? null,       // ✅ jamais un id d'institution_subjects ici
+      subject_id: subjectCanonicalId ?? null,       // ✅ canonique
       student_id: it.student_id,
       rubric,
       points: it.points,
       reason: it.reason,
       author_id,
-      author_profile_id,                            // aide la lecture côté /children/penalties
-      author_role_label,                            // direct pour le front
-      author_subject_name: subjectDisplayName ?? null, // “prof de Mathématiques”
+      author_profile_id,
+      author_role_label,
+      author_subject_name: subjectDisplayName ?? null,
       occurred_at: nowIso,
       created_at: nowIso,
     }));
@@ -219,7 +209,14 @@ export async function POST(req: NextRequest) {
 
     if (error) return NextResponse.json({ error: error.message }, { status: 400 });
 
-    return NextResponse.json({ ok: true, inserted: inserted?.length || rows.length });
+    const insertedCount = inserted?.length || rows.length;
+
+    // ✨ temps réel — fire-and-forget pour ne pas bloquer la réponse
+    if (insertedCount > 0) {
+      void triggerDispatchInline("class-penalties-bulk");
+    }
+
+    return NextResponse.json({ ok: true, inserted: insertedCount });
   } catch (e: any) {
     return NextResponse.json({ error: e?.message || "penalties_failed" }, { status: 400 });
   }

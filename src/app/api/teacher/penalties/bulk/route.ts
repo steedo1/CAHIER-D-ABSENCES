@@ -2,6 +2,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
+// ✨ temps réel
+import { triggerDispatchInline } from "@/lib/push-dispatch";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -249,8 +251,15 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    console.log("[penalties.bulk] inserted_ok", { count: inserted?.length || 0 });
-    return NextResponse.json({ ok: true, inserted: inserted?.length || 0 }, { status: 200 });
+    const count = inserted?.length || 0;
+    console.log("[penalties.bulk] inserted_ok", { count });
+
+    // ✨ temps réel — déclenche immédiatement si on a inséré des sanctions
+    if (count > 0) {
+      void triggerDispatchInline("teacher-penalties-bulk");
+    }
+
+    return NextResponse.json({ ok: true, inserted: count }, { status: 200 });
   } catch (e: any) {
     console.error("[penalties.bulk] fatal", e);
     return NextResponse.json({ ok: false, error: e?.message || "penalties_failed" }, { status: 500 });

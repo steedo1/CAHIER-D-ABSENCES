@@ -2,6 +2,8 @@
 import { NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
+// ✨ temps réel
+import { triggerDispatchInline } from "@/lib/push-dispatch";
 
 /* ───────────────── helpers ───────────────── */
 type Mark = {
@@ -43,7 +45,7 @@ export async function POST(req: Request) {
   const marks: Mark[] = Array.isArray(body?.marks) ? body.marks : [];
   if (!session_id) return NextResponse.json({ error: "missing_session" }, { status: 400 });
 
-  // 1) Charger la séance (classe, prof, durée)
+  // 1) Charger la séance
   const { data: sess, error: sErr } = await srv
     .from("teacher_sessions")
     .select("id, class_id, teacher_id, expected_minutes, actual_call_at")
@@ -52,11 +54,9 @@ export async function POST(req: Request) {
   if (sErr) return NextResponse.json({ error: sErr.message }, { status: 400 });
   if (!sess) return NextResponse.json({ error: "session_not_found" }, { status: 404 });
 
-  // 2) Autorisation : prof propriétaire OU téléphone de classe correspondant
+  // 2) Autorisation
   let allowed = sess.teacher_id === user.id;
-
   if (!allowed) {
-    // téléphone du user (compte-classe)
     let phone = String(user.phone || "").trim();
     if (!phone) {
       const { data: au } = await srv.schema("auth").from("users").select("phone").eq("id", user.id).maybeSingle();
@@ -96,7 +96,7 @@ export async function POST(req: Request) {
         student_id: m.student_id,
         status: "absent",
         minutes_late: 0,
-        hours_absent: absentHours,          // ✅ plein créneau en heures
+        hours_absent: absentHours,
         reason,
       });
       continue;
@@ -108,8 +108,8 @@ export async function POST(req: Request) {
         session_id,
         student_id: m.student_id,
         status: "late",
-        minutes_late: minLate,              // ✅ clamp
-        hours_absent: 0,                    // ✅ jamais d’heures d’absence ici
+        minutes_late: minLate,
+        hours_absent: 0,
         reason,
       });
       continue;
@@ -142,6 +142,11 @@ export async function POST(req: Request) {
       .update({ actual_call_at: new Date().toISOString() })
       .eq("id", session_id)
       .is("actual_call_at", null);
+  }
+
+  // ✨ temps réel — déclenche le dispatch si des changements ont eu lieu
+  if (upserted > 0 || deleted > 0) {
+    void triggerDispatchInline("attendance-bulk");
   }
 
   return NextResponse.json({ ok: true, upserted, deleted });
