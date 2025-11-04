@@ -4,7 +4,7 @@ on:
   schedule:
     # UTC == Abidjan → 07h–18h UTC
     - cron: "*/15 7-18 * * *"
-  workflow_dispatch:
+  workflow_dispatch: {}
 
 permissions:
   contents: read
@@ -19,7 +19,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 3
     env:
-      # Exemple: https://mon-cahier.com/api/push/dispatch
+      # DOIT pointer vers https://www.mon-cahier.com/api/push/dispatch (avec www)
       PROD_CRON_URL: ${{ secrets.PROD_CRON_URL }}
       CRON_SECRET:   ${{ secrets.CRON_SECRET }}
     steps:
@@ -32,7 +32,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          set +x  # éviter d'imprimer les secrets
+          set +x
           URL="$(echo "$PROD_CRON_URL" | tr -d '[:space:]')"
           HDR_X="x-cron-secret: $CRON_SECRET"
           PAYLOAD='{"source":"github-actions"}'
@@ -53,8 +53,7 @@ jobs:
             head -c 2048 /tmp/resp.txt || true; echo
             echo "-----------------------------------"
 
-            # Succès uniquement si 2xx
-            if [[ "$CODE" -ge 200 && "$CODE" -lt 300 ]]; then exit 0; fi
+            [[ "$CODE" =~ ^2..$ ]] && exit 0
             sleep 5
           done
 
