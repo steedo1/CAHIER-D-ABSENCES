@@ -1,4 +1,3 @@
-// src/app/api/push/dispatch/route.ts
 import { NextResponse } from "next/server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import webpush from "web-push";
@@ -6,101 +5,107 @@ import webpush from "web-push";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-/* ───────── Auth ───────── */
+/* ───────────────── Auth ───────────────── */
 function okAuth(req: Request) {
   const secret = (process.env.CRON_SECRET || process.env.CRON_PUSH_SECRET || "").trim();
-  const xCron = (req.headers.get("x-cron-secret") || "").trim();
-  const auth = (req.headers.get("authorization") || "").trim();
+  const xCron  = (req.headers.get("x-cron-secret") || "").trim();
+  const auth   = (req.headers.get("authorization") || "").trim();
   const bearer = auth.toLowerCase().startsWith("bearer ") ? auth.slice(7).trim() : "";
   const fromVercelCron = req.headers.has("x-vercel-cron");
   return fromVercelCron || (!!secret && (xCron === secret || bearer === secret));
 }
 
-/* ───────── WebPush (VAPID) ───────── */
+/* ──────────────── WebPush (VAPID) ──────────────── */
 function ensureWebPushConfigured() {
-  const pub = process.env.VAPID_PUBLIC_KEY || process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
+  const pub = process.env.VAPID_PUBLIC_KEY;
   const prv = process.env.VAPID_PRIVATE_KEY;
   if (!pub || !prv) throw new Error("Missing VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY");
   webpush.setVapidDetails("mailto:no-reply@example.com", pub, prv);
 }
 
-/* ───────── FCM (optionnel mobiles) ───────── */
+/* ──────────────── FCM mobile (optionnel) ──────────────── */
 const FCM_KEY = process.env.FCM_SERVER_KEY || "";
 async function sendFCM(to: string, title: string, body: string, url: string, data: any) {
   if (!FCM_KEY) throw new Error("missing FCM_SERVER_KEY");
   const res = await fetch("https://fcm.googleapis.com/fcm/send", {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `key=${FCM_KEY}` },
-    body: JSON.stringify({
-      to,
-      notification: { title, body, click_action: url },
-      data: { url, ...data },
-      priority: "high",
-    }),
+    body: JSON.stringify({ to, notification: { title, body, click_action: url }, data: { url, ...data }, priority: "high" }),
   });
   if (!res.ok) throw new Error(`FCM ${res.status} ${await res.text()}`);
 }
 
-/* ───────── Main ───────── */
+/* ──────────────── Types & helpers ──────────────── */
+type QueueRow = {
+  id: string; parent_id: string; channels: any; payload: any;
+  title: string | null; body: string | null; status: string;
+  attempts: number | null; created_at: string;
+};
+type SubRow = {
+  user_id: string; platform: string | null; device_id: string | null;
+  subscription_json: any; fcm_token: string | null;
+};
+
 const WAIT_STATUS = (process.env.PUSH_WAIT_STATUS || "pending").trim();
 
+function hasPushChannel(row: QueueRow) {
+  try {
+    const raw = row.channels;
+    const arr = Array.isArray(raw) ? raw : (raw ? JSON.parse(String(raw)) : []);
+    return Array.isArray(arr) && arr.includes("push");
+  } catch { return false; }
+}
+
+/* ──────────────── Main ──────────────── */
 async function run(req: Request) {
   if (!okAuth(req)) return NextResponse.json({ ok: false, error: "forbidden" }, { status: 403 });
-
-  console.info("[push/dispatch] start", new Date().toISOString(), "method=" + req.method, "WAIT_STATUS=" + WAIT_STATUS);
+  console.info("[push/dispatch] start", { when: new Date().toISOString(), method: req.method });
 
   try { ensureWebPushConfigured(); }
   catch (e: any) { return NextResponse.json({ ok: false, error: String(e?.message || e) }, { status: 500 }); }
 
   const srv = getSupabaseServiceClient();
 
-  const { data: rows, error: pickErr } = await srv
+  // 1) Récupérer les items en attente (sans contains → filtre en mémoire)
+  const { data: raw, error: pickErr } = await srv
     .from("notifications_queue")
-    .select("id, parent_id, channels, payload, title, body, status, attempts, created_at")
+    .select("id,parent_id,channels,payload,title,body,status,attempts,created_at")
     .eq("status", WAIT_STATUS)
-    .contains("channels", ["push"])
     .order("created_at", { ascending: true })
-    .limit(200);
+    .limit(400);
 
-  if (pickErr) return NextResponse.json({ ok: false, error: pickErr.message }, { status: 400 });
-  console.info("[push/dispatch] picked", rows?.length || 0);
+  if (pickErr) {
+    console.error("[push/dispatch] select error:", pickErr.message);
+    return NextResponse.json({ ok: false, error: pickErr.message, stage: "select" }, { status: 200 });
+  }
 
-  if (!rows?.length) {
+  const rows: QueueRow[] = (raw || []).filter(hasPushChannel);
+  console.info("[push/dispatch] picked", rows.length);
+
+  if (!rows.length) {
     return NextResponse.json({ ok: true, attempted: 0, sent_device_sends: 0, dropped: 0 });
   }
 
-  const userIds = Array.from(new Set((rows as any[]).map((r) => String(r.parent_id))));
-  console.info("[push/dispatch] distinct_users", userIds.length);
-
+  // 2) Subscriptions (web + mobile)
+  const userIds = Array.from(new Set(rows.map(r => String(r.parent_id))));
   const { data: subs } = await srv
     .from("push_subscriptions")
-    .select("user_id, platform, device_id, subscription_json, fcm_token")
+    .select("user_id,platform,device_id,subscription_json,fcm_token")
     .in("user_id", userIds);
-
-  console.info("[push/dispatch] subscriptions", (subs || []).length);
-
-  type SubRow = {
-    user_id: string;
-    platform: string | null;
-    device_id: string | null;
-    subscription_json: any;
-    fcm_token: string | null;
-  };
 
   const subsByUser = new Map<string, SubRow[]>();
   for (const s of (subs || []) as SubRow[]) {
-    let json = s.subscription_json as any;
-    if (json && typeof json === "string") { try { json = JSON.parse(json); } catch {} }
+    let subJson = s.subscription_json as any;
+    if (subJson && typeof subJson === "string") { try { subJson = JSON.parse(subJson); } catch {} }
     const k = String(s.user_id);
-    const arr = subsByUser.get(k) || [];
-    arr.push({ ...s, subscription_json: json });
-    subsByUser.set(k, arr);
+    subsByUser.set(k, [...(subsByUser.get(k) || []), { ...s, subscription_json: subJson }]);
   }
+  console.info("[push/dispatch] subscriptions", subs?.length || 0);
 
-  let sentDeviceSends = 0;
-  let dropped = 0;
+  // 3) Envois
+  let sentDeviceSends = 0, dropped = 0;
 
-  for (const n of rows as any[]) {
+  for (const n of rows) {
     const list = subsByUser.get(String(n.parent_id)) || [];
 
     let coreData: any = n?.payload;
@@ -111,39 +116,25 @@ async function run(req: Request) {
     const title =
       coreData?.title || n?.title ||
       (typ === "conduct_penalty" || typ === "penalty" ? "Sanction"
-       : (typ === "attendance" || typ === "absent" || typ === "late") ? "Absence / Retard"
-       : "Notification");
+        : (typ === "attendance" || typ === "absent" || typ === "late") ? "Absence / Retard"
+        : "Notification");
     const body = coreData?.body || n?.body || "";
-    const url = "/parents";
+    const url  = "/parents";
 
-    console.info("[push/dispatch] trying", {
-      notif_id: n.id,
-      parent_id: n.parent_id,
-      devices: list.map((s) => ({
-        platform: s.platform,
-        endpoint: (s as any)?.subscription_json?.endpoint?.slice(0, 80),
-        has_fcm: !!s.fcm_token,
-      })),
-    });
-
-    const payloadStr = JSON.stringify({ title, body, url, data: coreData });
+    const payload = JSON.stringify({ title, body, url, data: coreData });
 
     let successes = 0;
-    let lastError = "";
-    if (list.length === 0) lastError = "no_subscriptions";
+    let lastError = list.length ? "" : "no_subscriptions";
 
     for (const s of list) {
       const platform = (s.platform || "").toLowerCase();
 
-      // WEB
+      // WEB via WebPush
       if (s.subscription_json && platform === "web") {
-        try {
-          await webpush.sendNotification(s.subscription_json, payloadStr);
-          successes++; sentDeviceSends++;
-        } catch (err: any) {
+        try { await webpush.sendNotification(s.subscription_json, payload); successes++; sentDeviceSends++; }
+        catch (err: any) {
           const msg = String(err?.message || "");
-          lastError = msg;
-          console.warn("[push/dispatch] webpush error", msg);
+          lastError = msg; console.warn("[push/dispatch] webpush error", msg);
           if (/(410|404|not a valid|unsubscribe)/i.test(msg)) {
             dropped++;
             let q = srv.from("push_subscriptions").delete().eq("user_id", n.parent_id).eq("platform", s.platform);
@@ -154,15 +145,12 @@ async function run(req: Request) {
         continue;
       }
 
-      // MOBILES (si FCM_TOKEN présent)
+      // MOBILE via FCM
       if (s.fcm_token) {
-        try {
-          await sendFCM(s.fcm_token, title, body, url, coreData);
-          successes++; sentDeviceSends++;
-        } catch (err: any) {
+        try { await sendFCM(s.fcm_token, title, body, url, coreData); successes++; sentDeviceSends++; }
+        catch (err: any) {
           const msg = String(err?.message || "");
-          lastError = msg;
-          console.warn("[push/dispatch] fcm error", msg);
+          lastError = msg; console.warn("[push/dispatch] fcm error", msg);
           if (/(NotRegistered|InvalidRegistration|410|404)/i.test(msg)) {
             dropped++;
             let q = srv.from("push_subscriptions").delete().eq("user_id", n.parent_id);
@@ -173,24 +161,20 @@ async function run(req: Request) {
       }
     }
 
+    const attempts = (Number(n.attempts) || 0) + 1;
     if (successes > 0) {
-      await srv.from("notifications_queue").update({
-        status: "sent",
-        sent_at: new Date().toISOString(),
-        attempts: (Number(n.attempts) || 0) + 1,
-        last_error: null,
-      }).eq("id", n.id);
+      await srv.from("notifications_queue")
+        .update({ status: "sent", sent_at: new Date().toISOString(), attempts, last_error: null })
+        .eq("id", n.id);
     } else {
-      await srv.from("notifications_queue").update({
-        status: WAIT_STATUS,
-        attempts: (Number(n.attempts) || 0) + 1,
-        last_error: (lastError || "").slice(0, 300),
-      }).eq("id", n.id);
+      await srv.from("notifications_queue")
+        .update({ status: WAIT_STATUS, attempts, last_error: (lastError || "").slice(0, 300) })
+        .eq("id", n.id);
     }
   }
 
   return NextResponse.json({ ok: true, attempted: rows.length, sent_device_sends: sentDeviceSends, dropped });
 }
 
-export const GET = run;
+export const GET  = run;
 export const POST = run;
