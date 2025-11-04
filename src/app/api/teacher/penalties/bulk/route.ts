@@ -3,13 +3,15 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { triggerPushDispatch } from "@/lib/push-dispatch"; // ✅ déclencheur temps réel (fire-and-forget)
+import { queuePenaltyNotifications } from "@/lib/notifications";
+
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 type Body = {
   class_id: string;
   subject_id?: string | null; // peut être subjects.id OU institution_subjects.id
-  rubric: string;             // 'discipline' | 'tenue' | 'moralite'
+  rubric: string; // 'discipline' | 'tenue' | 'moralite'
   items: Array<{ student_id: string; points: number; reason?: string | null }>;
 };
 
@@ -40,7 +42,11 @@ function clamp(n: number, lo: number, hi: number) {
 async function resolveCanonicalSubject(
   srv: ReturnType<typeof getSupabaseServiceClient>,
   maybeId: string | null
-): Promise<{ canonicalId: string | null; displayName: string | null; origin: "subjects" | "institution_subjects" | "none" }> {
+): Promise<{
+  canonicalId: string | null;
+  displayName: string | null;
+  origin: "subjects" | "institution_subjects" | "none";
+}> {
   if (!maybeId) return { canonicalId: null, displayName: null, origin: "none" };
 
   // Essai direct sur subjects
@@ -88,7 +94,11 @@ async function fallbackCanonicalFromClassTeacher(
   srv: ReturnType<typeof getSupabaseServiceClient>,
   class_id: string,
   teacher_profile_id: string
-): Promise<{ canonicalId: string | null; displayName: string | null; origin: "subjects" | "institution_subjects" | "none" }> {
+): Promise<{
+  canonicalId: string | null;
+  displayName: string | null;
+  origin: "subjects" | "institution_subjects" | "none";
+}> {
   const nowIso = new Date().toISOString();
   const { data: ct, error: ctErr } = await srv
     .from("class_teachers")
@@ -109,10 +119,12 @@ async function fallbackCanonicalFromClassTeacher(
 
 export async function POST(req: NextRequest) {
   const supa = await getSupabaseServerClient(); // RLS
-  const srv  = getSupabaseServiceClient();      // service
+  const srv = getSupabaseServiceClient(); // service
 
   try {
-    const { data: { user } } = await supa.auth.getUser();
+    const {
+      data: { user },
+    } = await supa.auth.getUser();
     if (!user) {
       console.warn("[teacher.penalties.bulk] unauthorized");
       return NextResponse.json({ error: "unauthorized" }, { status: 401 });
@@ -127,7 +139,8 @@ export async function POST(req: NextRequest) {
     }
 
     const class_id = String(body?.class_id || "").trim();
-    const requested_subject_id = (body?.subject_id ? String(body.subject_id) : null) || null;
+    const requested_subject_id =
+      (body?.subject_id ? String(body.subject_id) : null) || null;
     const rubric = coerceRubric(body?.rubric);
     const rawItems = Array.isArray(body?.items) ? body.items : [];
 
@@ -152,8 +165,13 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "missing_class_id" }, { status: 400 });
     }
     if (items.length === 0) {
-      console.log("[teacher.penalties.bulk] no positive items to insert", { dropped: rawItems.length });
-      return NextResponse.json({ ok: true, inserted: 0, dropped: rawItems.length }, { status: 200 });
+      console.log("[teacher.penalties.bulk] no positive items to insert", {
+        dropped: rawItems.length,
+      });
+      return NextResponse.json(
+        { ok: true, inserted: 0, dropped: rawItems.length },
+        { status: 200 }
+      );
     }
 
     // Classe -> institution
@@ -163,11 +181,20 @@ export async function POST(req: NextRequest) {
       .eq("id", class_id)
       .maybeSingle();
     if (kErr || !klass?.institution_id) {
-      console.error("[teacher.penalties.bulk] classes lookup failed", { kErr, klass });
-      return NextResponse.json({ error: "class_or_institution_missing" }, { status: 400 });
+      console.error("[teacher.penalties.bulk] classes lookup failed", {
+        kErr,
+        klass,
+      });
+      return NextResponse.json(
+        { error: "class_or_institution_missing" },
+        { status: 400 }
+      );
     }
     const institution_id = String(klass.institution_id);
-    console.log("[teacher.penalties.bulk] class_ok", { institution_id, class_label: klass.label });
+    console.log("[teacher.penalties.bulk] class_ok", {
+      institution_id,
+      class_label: klass.label,
+    });
 
     // Auteur (profile = même id que user dans ton schéma)
     const { data: prof, error: profErr } = await srv
@@ -183,24 +210,29 @@ export async function POST(req: NextRequest) {
 
     // Résolution canonique de la matière demandée
     const resolved = await resolveCanonicalSubject(srv, requested_subject_id);
-    let subject_id: string | null = resolved.canonicalId;      // ✅ toujours subjects.id si trouvé
+    let subject_id: string | null = resolved.canonicalId; // ✅ toujours subjects.id si trouvé
     let author_subject_name: string | null = resolved.displayName;
 
     // Fallback via class_teachers si rien
     if (!subject_id) {
-      const fb = await fallbackCanonicalFromClassTeacher(srv, class_id, author_profile_id);
+      const fb = await fallbackCanonicalFromClassTeacher(
+        srv,
+        class_id,
+        author_profile_id
+      );
       if (fb.canonicalId) subject_id = fb.canonicalId;
       if (fb.displayName) author_subject_name = fb.displayName || author_subject_name;
       console.log("[teacher.penalties.bulk] subject fallback", fb);
     }
 
     // Libellé de rôle (juste pour le front)
-    const author_role_label = (subject_id || author_subject_name) ? "Enseignant" : "Administration";
+    const author_role_label =
+      subject_id || author_subject_name ? "Enseignant" : "Administration";
     console.log("[teacher.penalties.bulk] author labels", {
       author_role_label,
       author_profile_id,
       author_display_name,
-      subject_id,                  // 👈 DOIT être rempli si resolve OK
+      subject_id, // 👈 DOIT être rempli si resolve OK
       author_subject_name,
     });
 
@@ -209,7 +241,7 @@ export async function POST(req: NextRequest) {
     const rows = items.map((v) => ({
       institution_id,
       class_id,
-      subject_id,                // ✅ CANONIQUE (subjects.id) ou NULL si introuvable
+      subject_id, // ✅ CANONIQUE (subjects.id) ou NULL si introuvable
       student_id: v.student_id,
       rubric,
       points: v.points,
@@ -224,13 +256,15 @@ export async function POST(req: NextRequest) {
 
     console.log("[teacher.penalties.bulk] insert attempt", {
       row_count: rows.length,
-      sample: rows[0] ? {
-        class_id: rows[0].class_id,
-        student_id: rows[0].student_id,
-        rubric: rows[0].rubric,
-        points: rows[0].points,
-        subject_id: rows[0].subject_id,
-      } : null,
+      sample: rows[0]
+        ? {
+            class_id: rows[0].class_id,
+            student_id: rows[0].student_id,
+            rubric: rows[0].rubric,
+            points: rows[0].points,
+            subject_id: rows[0].subject_id,
+          }
+        : null,
     });
 
     const { data: inserted, error: insErr } = await srv
@@ -241,16 +275,43 @@ export async function POST(req: NextRequest) {
     if (insErr) {
       console.error("[teacher.penalties.bulk] insert error", insErr);
       if ((insErr as any)?.message?.toString?.().includes("s.full_name")) {
-        console.error("[teacher.penalties.bulk] HINT: trigger/function in DB uses alias 's' without FROM");
+        console.error(
+          "[teacher.penalties.bulk] HINT: trigger/function in DB uses alias 's' without FROM"
+        );
       }
       return NextResponse.json(
-        { ok: false, inserted: 0, error: insErr.message, code: (insErr as any)?.code ?? null },
+        {
+          ok: false,
+          inserted: 0,
+          error: insErr.message,
+          code: (insErr as any)?.code ?? null,
+        },
         { status: 400 }
       );
     }
 
     const count = inserted?.length || 0;
     console.log("[teacher.penalties.bulk] inserted_ok", { count });
+
+    // ✅ QUEUE des notifs sanctions
+    try {
+      const { queued } = await queuePenaltyNotifications({
+        srv,
+        institution_id,
+        class_label: klass.label || null,
+        rubric,
+        subject_name: author_subject_name || null,
+        items, // même shape {student_id, points, reason}
+        whenIso: nowIso,
+      });
+      console.log("[teacher.penalties.bulk] queued_penalty_notifications", {
+        queued,
+      });
+    } catch (e: any) {
+      console.warn("[teacher.penalties.bulk] queue_penalty_notifications_fail", {
+        err: String(e?.message || e),
+      });
+    }
 
     // ✅ temps réel — déclenche immédiatement si on a inséré des sanctions
     if (count > 0) {
@@ -260,6 +321,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true, inserted: count }, { status: 200 });
   } catch (e: any) {
     console.error("[teacher.penalties.bulk] fatal", e);
-    return NextResponse.json({ ok: false, error: e?.message || "penalties_failed" }, { status: 500 });
+    return NextResponse.json(
+      { ok: false, error: e?.message || "penalties_failed" },
+      { status: 500 }
+    );
   }
 }

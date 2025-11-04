@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { triggerPushDispatch } from "@/lib/push-dispatch"; // ✅ helper unique temps réel
+import { queuePenaltyNotifications } from "@/lib/notifications";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -20,7 +21,9 @@ function coerceRubric(x: unknown): Rubric {
 
 type Item = { student_id: string; points: number; reason?: string | null };
 
-function uniq<T>(arr: T[]) { return Array.from(new Set((arr || []).filter(Boolean))) as T[]; }
+function uniq<T>(arr: T[]) {
+  return Array.from(new Set((arr || []).filter(Boolean))) as T[];
+}
 function buildPhoneVariants(raw: string) {
   const t = String(raw || "").trim();
   const digits = t.replace(/\D/g, "");
@@ -29,12 +32,18 @@ function buildPhoneVariants(raw: string) {
   const local10 = digits.slice(-10);
   const localNo0 = local10.replace(/^0/, "");
   const variants = uniq<string>([
-    t, t.replace(/\s+/g, ""),
-    digits, `+${digits}`,
-    `+${cc}${local10}`, `+${cc}${localNo0}`,
-    `00${cc}${local10}`, `00${cc}${localNo0}`,
-    `${cc}${local10}`, `${cc}${localNo0}`,
-    local10, localNo0 ? `0${localNo0}` : "",
+    t,
+    t.replace(/\s+/g, ""),
+    digits,
+    `+${digits}`,
+    `+${cc}${local10}`,
+    `+${cc}${localNo0}`,
+    `00${cc}${local10}`,
+    `00${cc}${localNo0}`,
+    `${cc}${local10}`,
+    `${cc}${localNo0}`,
+    local10,
+    localNo0 ? `0${localNo0}` : "",
   ]);
   return { variants };
 }
@@ -76,8 +85,8 @@ async function resolveContext(
       .eq("id", instSubj.subject_id)
       .maybeSingle();
     subjectDisplayName =
-      (instSubj.custom_name as string | null)
-      ?? (sRow?.name || sRow?.code || sRow?.subject_key || null);
+      (instSubj.custom_name as string | null) ??
+      (sRow?.name || sRow?.code || sRow?.subject_key || null);
   }
 
   if (!subjectCanonicalId && subject_any) {
@@ -111,7 +120,9 @@ async function resolveContext(
       .lte("start_date", atIso)
       .or(`end_date.is.null,end_date.gt.${atIso}`);
 
-    const profs = uniq<string>((aff || []).map(a => a.teacher_id).filter(Boolean) as string[]);
+    const profs = uniq<string>(
+      (aff || []).map((a) => a.teacher_id).filter(Boolean) as string[]
+    );
     if (profs.length === 1) teacherProfileId = profs[0]!;
   }
 
@@ -121,9 +132,11 @@ async function resolveContext(
 export async function POST(req: NextRequest) {
   try {
     const supa = await getSupabaseServerClient(); // RLS
-    const srv  = getSupabaseServiceClient();      // service
+    const srv = getSupabaseServiceClient(); // service
 
-    const { data: { user } } = await supa.auth.getUser();
+    const {
+      data: { user },
+    } = await supa.auth.getUser();
     if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
 
     const body = (await req.json().catch(() => ({}))) as {
@@ -144,7 +157,12 @@ export async function POST(req: NextRequest) {
     // Auth téléphone de classe (class device)
     let phone = String((user as any).phone || "").trim();
     if (!phone) {
-      const { data: au, error: auErr } = await srv.schema("auth").from("users").select("phone").eq("id", user.id).maybeSingle();
+      const { data: au, error: auErr } = await srv
+        .schema("auth")
+        .from("users")
+        .select("phone")
+        .eq("id", user.id)
+        .maybeSingle();
       if (auErr) return NextResponse.json({ error: auErr.message }, { status: 400 });
       phone = String(au?.phone || "").trim();
     }
@@ -189,7 +207,7 @@ export async function POST(req: NextRequest) {
     const rows = clean.map((it) => ({
       institution_id: cls.institution_id,
       class_id,
-      subject_id: subjectCanonicalId ?? null,       // ✅ canonique
+      subject_id: subjectCanonicalId ?? null, // ✅ canonique
       student_id: it.student_id,
       rubric,
       points: it.points,
@@ -210,6 +228,24 @@ export async function POST(req: NextRequest) {
     if (error) return NextResponse.json({ error: error.message }, { status: 400 });
 
     const insertedCount = inserted?.length || rows.length;
+
+    // ✅ QUEUE des notifs sanctions
+    try {
+      const { queued } = await queuePenaltyNotifications({
+        srv,
+        institution_id: String(cls.institution_id),
+        class_label: cls.label || null,
+        rubric,
+        subject_name: subjectDisplayName || null,
+        items: clean,
+        whenIso: nowIso,
+      });
+      console.log("[class.penalties.bulk] queued_penalty_notifications", { queued });
+    } catch (e: any) {
+      console.warn("[class.penalties.bulk] queue_penalty_notifications_fail", {
+        err: String(e?.message || e),
+      });
+    }
 
     // ✅ temps réel — fire-and-forget (ne bloque pas la réponse)
     if (insertedCount > 0) {

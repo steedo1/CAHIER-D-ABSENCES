@@ -1,3 +1,4 @@
+//src/app/api/push/dispatch/route.ts
 import { NextResponse } from "next/server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import webpush from "web-push";
