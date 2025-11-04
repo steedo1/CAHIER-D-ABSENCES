@@ -4,7 +4,7 @@ on:
   schedule:
     # UTC == Abidjan → 07h–18h UTC
     - cron: "*/15 7-18 * * *"
-  workflow_dispatch: {}
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -19,31 +19,43 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 3
     env:
-      # Exemple: https://ton-domaine.xyz/api/push/dispatch
+      # Exemple: https://mon-cahier.com/api/push/dispatch
       PROD_CRON_URL: ${{ secrets.PROD_CRON_URL }}
       CRON_SECRET:   ${{ secrets.CRON_SECRET }}
     steps:
       - name: Check secrets presence
         run: |
-          test -n "$PROD_CRON_URL" || { echo "Missing PROD_CRON_URL secret"; exit 1; }
-          test -n "$CRON_SECRET"   || { echo "Missing CRON_SECRET secret"; exit 1; }
+          test -n "$PROD_CRON_URL" || { echo "::error::Missing PROD_CRON_URL secret"; exit 1; }
+          test -n "$CRON_SECRET"   || { echo "::error::Missing CRON_SECRET secret"; exit 1; }
 
-      - name: Call cron endpoint (with debug)
+      - name: Call cron endpoint (follow redirects, 2xx only)
         shell: bash
         run: |
           set -euo pipefail
-          echo "POST $PROD_CRON_URL"
+          set +x  # éviter d'imprimer les secrets
+          URL="$(echo "$PROD_CRON_URL" | tr -d '[:space:]')"
+          HDR_X="x-cron-secret: $CRON_SECRET"
+          PAYLOAD='{"source":"github-actions"}'
+
+          echo "POST $URL (redirections autorisées)"
           for i in 1 2 3; do
-            CODE=$(curl -sS -o /tmp/resp.txt -w "%{http_code}" \
-              -X POST "$PROD_CRON_URL" \
-              -H "x-cron-secret: $CRON_SECRET" \
+            CODE=$(curl -sS -L \
+              --connect-timeout 10 --max-time 25 \
+              -o /tmp/resp.txt -w "%{http_code}" \
+              -X POST "$URL" \
+              -H "$HDR_X" \
               -H "Content-Type: application/json" \
-              --data '{"source":"github-actions"}' || true)
+              -H "User-Agent: gh-actions-push-cron" \
+              --data "$PAYLOAD" || true)
+
             echo "Attempt #$i → HTTP $CODE"
-            echo "----- Response body -----"
-            cat /tmp/resp.txt || true
-            echo "-------------------------"
-            if [[ "$CODE" -ge 200 && "$CODE" -lt 400 ]]; then exit 0; fi
+            echo "----- Response body (2KB max) -----"
+            head -c 2048 /tmp/resp.txt || true; echo
+            echo "-----------------------------------"
+
+            # Succès uniquement si 2xx
+            if [[ "$CODE" -ge 200 && "$CODE" -lt 300 ]]; then exit 0; fi
             sleep 5
           done
-          echo "Failed after retries (see body above)"; exit 1
+
+          echo "::error::Failed after retries (see body above)"; exit 1
