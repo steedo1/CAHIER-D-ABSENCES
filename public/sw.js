@@ -1,18 +1,31 @@
 ﻿/* ─────────────────────────────────────────
-   Service Worker - Push (verbose)
-   Version horodatée pour vérifier le bon SW
+   Service Worker - Push (amélioré, rétro-compatible)
+   Bumper la version pour forcer l'update
 ────────────────────────────────────────── */
-const SW_VERSION = "2025-11-04T23:00:00Z";
+const SW_VERSION = "2025-11-04T23:59:59Z"; // ← change à chaque déploiement
 const VERBOSE = true;
 
 function log(stage, meta = {}) {
   if (!VERBOSE) return;
-  // Les logs du SW apparaissent dans DevTools > Application > Service Workers (ou la console avec [SW])
   try { console.info(`[SW push] ${stage}`, { v: SW_VERSION, ...meta }); } catch {}
 }
 function shortId(s, n = 16) {
   s = String(s || "");
   return s.length <= n ? s : `${s.slice(0, Math.max(4, Math.floor(n / 2)))}…${s.slice(-Math.max(4, Math.floor(n / 2)))}`;
+}
+const TZ = "Africa/Abidjan";
+function isUuidLike(s) { return /^[0-9a-f-]{32,36}$/i.test(String(s||"").trim()); }
+function fmtDateTimeFR(iso) {
+  try { return new Date(iso).toLocaleString("fr-FR", { timeZone: TZ, hour12: false }); } catch { return iso || ""; }
+}
+function fmtHM(x) {
+  try { return new Date(x).toLocaleTimeString("fr-FR", { timeZone: TZ, hour: "2-digit", minute: "2-digit", hour12: false }); } catch { return ""; }
+}
+function fmtSlot(startIso, minutes = 60) {
+  if (!startIso) return "";
+  const st = new Date(startIso);
+  const en = new Date(st.getTime() + (Number(minutes)||60) * 60000);
+  return `${fmtHM(st)}–${fmtHM(en)}`;
 }
 
 /* ───────────────── install / activate ───────────────── */
@@ -29,7 +42,6 @@ self.addEventListener("activate", (e) => {
 self.addEventListener("push", (event) => {
   const hasData = !!event.data;
   log("push_received", { hasData });
-
   if (!event.data) return;
 
   let data = {};
@@ -48,9 +60,71 @@ self.addEventListener("push", (event) => {
     }
   }
 
-  const title = data.title || "Nouvelle notification";
+  // Le dispatcher envoie { title, body, url, data: core }.
+  // On prend en charge les 2 formats: champs au top-level OU dans data.data.
+  const core = (data && typeof data === "object" && data.data && typeof data.data === "object")
+    ? data.data
+    : data;
+
+  // Champs communs
+  const kind = String(core.kind || core.type || core.event || "").toLowerCase();
+  const ev   = String(core.event || "").toLowerCase();
+
+  // Élève (évite les UUID en titre)
+  const studentRaw = core?.student?.name || core?.student?.display_name || core?.student?.full_name || core?.student?.matricule || "";
+  const student = (!studentRaw || isUuidLike(studentRaw))
+    ? (core?.student?.matricule || "Élève")
+    : studentRaw;
+
+  const subj  = (core?.subject && (core.subject.name || core.subject.label)) || "";
+  const klass = (core?.class   && (core.class.label   || core.class.name))   || "";
+
+  // Créneau / datation
+  const startedAt = core?.session?.started_at || core?.started_at || core?.occurred_at || "";
+  const expectedMin = Number(core?.session?.expected_minutes || core?.expected_minutes || 60) || 60;
+  const slot = startedAt ? fmtSlot(startedAt, expectedMin) : "";
+  const whenIso = core?.occurred_at || startedAt || core?.created_at || "";
+  const whenText = whenIso ? fmtDateTimeFR(whenIso) : "";
+
+  // Par défaut: reprendre ce qui vient du backend
+  let title = data.title || "Nouvelle notification";
+  let body  = data.body  || "";
+
+  // ───────── Sanctions
+  if (kind === "conduct_penalty" || kind === "penalty") {
+    const rubric = String(core.rubric || "discipline").toLowerCase();
+    const rubricFR = rubric === "tenue" ? "Tenue" : rubric === "moralite" ? "Moralité" : "Discipline";
+    const pts = Number(core.points || 0);
+    const reason = (core.reason || "").toString().trim();
+
+    title = `Sanction — ${student} (${rubricFR})`;
+    body = [
+      subj || "Discipline",
+      klass,
+      whenText,
+      `−${pts} pt${pts > 1 ? "s" : ""}`,
+      reason ? reason : ""
+    ].filter(Boolean).join(" • ");
+  }
+
+  // ───────── Absences / Retards
+  else if (kind === "attendance" || ev === "absent" || ev === "late") {
+    if (ev === "late") {
+      const ml = Number(core.minutes_late || core.minutesLate || 0);
+      title = `Retard — ${student}`;
+      body  = [subj, klass, slot || whenText, ml ? `${ml} min` : ""].filter(Boolean).join(" • ");
+    } else if (ev === "absent") {
+      title = `Absence — ${student}`;
+      body  = [subj, klass, slot || whenText].filter(Boolean).join(" • ");
+    } else {
+      // autre évolution éventuelle du payload "attendance"
+      title = title || "Présence";
+      body  = [subj, klass, slot || whenText].filter(Boolean).join(" • ");
+    }
+  }
+
   const options = {
-    body: data.body || "",
+    body,
     icon: data.icon || "/icons/icon-192.png",
     badge: data.badge || "/icons/badge-72.png",
     tag: data.tag,
@@ -58,16 +132,19 @@ self.addEventListener("push", (event) => {
     requireInteraction: !!data.requireInteraction,
     data: {
       url: data.url || "/",
-      ...(data.data || {}),
+      ...(data.data || {}), // on conserve le payload brut pour la page
     },
   };
 
   log("push_parsed", {
     parseMode,
+    kind,
+    ev,
     title,
     hasBody: !!options.body,
     url: options.data?.url,
     tag: options.tag,
+    slot: slot || null,
     requireInteraction: options.requireInteraction,
   });
 
@@ -98,9 +175,7 @@ self.addEventListener("notificationclick", (event) => {
             log("client_focus", { matched: client.url });
             return;
           }
-        } catch (e) {
-          // ignore parse errors
-        }
+        } catch { /* ignore */ }
       }
       await clients.openWindow(url);
       log("openWindow_ok", { url });
