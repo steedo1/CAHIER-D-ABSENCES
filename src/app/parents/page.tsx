@@ -231,6 +231,71 @@ function tryNotifSlotPayload(payload?: Record<string, unknown>): string | null {
   return null;
 }
 
+/* ───────── PUSH: ensure registration + subscribe + server upsert ───────── */
+async function ensurePushSubscription() {
+  if (typeof window === "undefined") return { ok: false, reason: "ssr" };
+  if (!("serviceWorker" in navigator) || !("PushManager" in window))
+    return { ok: false, reason: "browser_no_push" };
+
+  // Permission
+  const perm = await Notification.requestPermission();
+  if (perm !== "granted") return { ok: false, reason: "denied" };
+
+  // Service worker registration (register if missing)
+  let reg = await navigator.serviceWorker.getRegistration();
+  if (!reg) {
+    try {
+      reg = await navigator.serviceWorker.register("/sw.js", { scope: "/" });
+    } catch (e: any) {
+      return { ok: false, reason: "sw_register_failed:" + (e?.message || e) };
+    }
+  }
+  // Ensure ready
+  reg = await navigator.serviceWorker.ready;
+
+  // VAPID key
+  let key = "";
+  try {
+    const r = await fetch("/api/push/vapid", { cache: "no-store" });
+    const j = await r.json();
+    key = String(j?.key || "");
+  } catch {}
+  if (!key) return { ok: false, reason: "no_vapid_key" };
+
+  // Subscription
+  let sub = await reg.pushManager.getSubscription();
+  if (!sub) {
+    try {
+      sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(key),
+      });
+    } catch (e: any) {
+      return { ok: false, reason: "subscribe_failed:" + (e?.message || e) };
+    }
+  }
+
+  // Upsert server-side
+  const res = await fetch("/api/push/subscribe", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify({
+      platform: "web",
+      device_id: sub.endpoint,
+      subscription: sub.toJSON(),
+    }),
+  });
+  let body: any = null;
+  try { body = await res.json(); } catch {}
+  if (!res.ok) {
+    const err = `${res.status} ${body?.error || ""}${body?.stage ? ` [${body.stage}]` : ""}`;
+    return { ok: false, reason: "server_upsert_failed:" + err };
+  }
+
+  return { ok: true };
+}
+
 /* ───────── group by day ───────── */
 type DayGroup = { day: string; label: string; absentCount: number; lateCount: number; items: Ev[] };
 function groupByDay(events: Ev[]): DayGroup[] {
@@ -367,6 +432,10 @@ export default function ParentPage() {
   useEffect(() => {
     loadKids();
     loadNotifs();
+    // tentative auto d'abonnement push si possible
+    ensurePushSubscription().then((r) => {
+      if (r.ok) setGranted(true);
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -386,46 +455,13 @@ export default function ParentPage() {
 
   /* Push */
   async function enablePush() {
-    try {
-      setMsg(null);
-      if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
-        setMsg("Votre navigateur ne supporte pas les notifications push.");
-        return;
-      }
-      const { key } = await fetch("/api/push/vapid", { cache: "no-store" }).then((r) => r.json());
-      if (!key) { setMsg("Clé VAPID indisponible."); return; }
-
-      const perm = await Notification.requestPermission();
-      if (perm !== "granted") { setMsg("Permission refusée."); return; }
-
-      const reg = await navigator.serviceWorker.ready;
-      let sub = await reg.pushManager.getSubscription();
-      if (!sub) {
-        sub = await reg.pushManager.subscribe({
-          userVisibleOnly: true,
-          applicationServerKey: urlBase64ToUint8Array(String(key)),
-        });
-      }
-      const res = await fetch("/api/push/subscribe", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ subscription: sub }),
-      });
-
-      let payload: any = null;
-      try { payload = await res.json(); } catch {}
-
-      if (!res.ok) {
-        console.error("subscribe_fail", { status: res.status, body: payload });
-        setMsg(`Push KO (${res.status}) — ${payload?.error || "?"}${payload?.stage ? ` [${payload.stage}]` : ""}`);
-        return;
-      }
-      console.info("subscribe_ok", payload);
-      setMsg("Notifications push activées ✓");
+    setMsg(null);
+    const r = await ensurePushSubscription();
+    if (r.ok) {
       setGranted(true);
-    } catch (e: any) {
-      setMsg(e?.message || "Activation push impossible");
+      setMsg("Notifications push activées ✓");
+    } else {
+      setMsg("Activation push impossible: " + r.reason);
     }
   }
 

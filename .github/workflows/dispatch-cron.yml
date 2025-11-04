@@ -2,7 +2,7 @@ name: Dispatch Push Cron (tests toutes les 5 min)
 
 on:
   schedule:
-    - cron: "*/5 * * * *"   # ⬅️ élargie pour les tests
+    - cron: "*/5 * * * *"   # tests fréquents
   workflow_dispatch: {}
 
 permissions:
@@ -18,7 +18,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 3
     env:
-      # Exemple attendu: https://mon-cahier.com/api/push/dispatch   (⚠️ sans www)
+      # Exemple: https://mon-cahier.com/api/push/dispatch   (idéalement sans "www")
       PROD_CRON_URL: ${{ secrets.PROD_CRON_URL }}
       CRON_SECRET:   ${{ secrets.CRON_SECRET }}
     steps:
@@ -27,38 +27,78 @@ jobs:
           test -n "$PROD_CRON_URL" || { echo "::error::Missing PROD_CRON_URL secret"; exit 1; }
           test -n "$CRON_SECRET"   || { echo "::error::Missing CRON_SECRET secret"; exit 1; }
 
+      - name: Resolve host (DNS) for visibility
+        shell: bash
+        run: |
+          set -euo pipefail
+          URL="$(echo "$PROD_CRON_URL" | tr -d '[:space:]')"
+          HOST="${URL#*://}"; HOST="${HOST%%/*}"
+          echo "URL : $URL"
+          echo "Host: $HOST"
+          getent hosts "$HOST" || echo "No getent record for $HOST"
+
       - name: Call cron endpoint (follow redirects, keep POST)
         shell: bash
         run: |
           set -euo pipefail
-          set +x  # éviter d'imprimer les secrets
+          set +x  # ne pas afficher les secrets
+          URL="$(echo "$PROD_CRON_URL" | tr -d '[:space:]')"
+
           call() {
             local URL="$1"
-            echo "POST $URL"
-            CODE=$(curl -sS -L --post301 --post302 \
-              --connect-timeout 10 --max-time 25 \
-              -o /tmp/resp.txt -w "%{http_code}" \
-              -X POST "$URL" \
-              -H "x-cron-secret: $CRON_SECRET" \
-              -H "Content-Type: application/json" \
-              -H "User-Agent: gh-actions-push-cron" \
-              --data '{"source":"github-actions"}' || true)
+            local MODE="${2:-x-cron}"  # x-cron | bearer
+            echo "POST $URL (mode=$MODE)"
+
+            # Construire l'entête d'auth selon le mode
+            local -a AUTH
+            if [ "$MODE" = "bearer" ]; then
+              AUTH=(-H "Authorization: Bearer $CRON_SECRET")
+            else
+              AUTH=(-H "x-cron-secret: $CRON_SECRET")
+            fi
+
+            CODE=$(
+              curl -sS -L --post301 --post302 --post303 \
+                --retry 3 --retry-delay 2 --retry-connrefused \
+                --connect-timeout 10 --max-time 25 \
+                -o /tmp/resp.txt -w "%{http_code}" \
+                -X POST "$URL" \
+                "${AUTH[@]}" \
+                -H "x-vercel-cron: 1" \
+                -H "Content-Type: application/json" \
+                -H "User-Agent: gh-actions-push-cron" \
+                --data '{"source":"github-actions"}' \
+              || true
+            )
+
             echo "HTTP $CODE"
             echo "----- Response body (2KB max) -----"
             head -c 2048 /tmp/resp.txt || true; echo
             echo "-----------------------------------"
+
             [[ "$CODE" -ge 200 && "$CODE" -lt 300 ]]
           }
 
-          URL="$(echo "$PROD_CRON_URL" | tr -d '[:space:]')"
-          # 1) essai direct
-          if call "$URL"; then exit 0; fi
+          # 1) essai direct (x-cron-secret)
+          if call "$URL" x-cron; then exit 0; fi
 
-          # 2) fallback apex<->www (si mauvais host)
-          SWAP="$URL"
-          SWAP="${SWAP/https:\/\/www./https:\/\/}"
-          if [ "$SWAP" = "$URL" ]; then SWAP="${URL/https:\/\/https:\/\//https:\/\/www.}"; fi
+          # 2) fallback même URL avec Authorization: Bearer
+          echo "Retry with Authorization: Bearer"
+          if call "$URL" bearer; then exit 0; fi
+
+          # 3) fallback apex <-> www (corrigé)
+          HOST="${URL#*://}"; HOST="${HOST%%/*}"
+          if [[ "$HOST" == www.* ]]; then
+            ALT_HOST="${HOST#www.}"
+          else
+            ALT_HOST="www.$HOST"
+          fi
+          SWAP="${URL/$HOST/$ALT_HOST}"
           echo "Retry with swapped host: $SWAP"
-          if call "$SWAP"; then exit 0; fi
+          if call "$SWAP" x-cron; then exit 0; fi
+
+          # 4) dernier essai: swapped host + bearer
+          echo "Retry swapped host with Authorization: Bearer"
+          if call "$SWAP" bearer; then exit 0; fi
 
           echo "::error::Failed after retries (see body above)"; exit 1
