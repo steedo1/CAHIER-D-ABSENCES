@@ -2,8 +2,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
-// ✨ temps réel
-import { triggerDispatchInline } from "@/lib/push-dispatch";
+import { triggerPushDispatch } from "@/lib/push-dispatch"; // ✅ helper unique temps réel
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -35,12 +34,13 @@ function buildPhoneVariants(raw: string) {
     `+${cc}${local10}`, `+${cc}${localNo0}`,
     `00${cc}${local10}`, `00${cc}${localNo0}`,
     `${cc}${local10}`, `${cc}${localNo0}`,
-    local10, `0${localNo0}`,
+    local10, localNo0 ? `0${localNo0}` : "",
   ]);
   return { variants };
 }
 
-/** Essaie de résoudre:
+/**
+ * Essaie de résoudre:
  *  - subjectCanonicalId (→ subjects.id ou null)
  *  - subjectDisplayName (custom_name de l'établissement sinon subjects.name)
  *  - teacherProfileId unique via class_teachers (actif au moment t)
@@ -141,8 +141,8 @@ export async function POST(req: NextRequest) {
     if (!class_id) return NextResponse.json({ error: "class_id_required" }, { status: 400 });
     if (items.length === 0) return NextResponse.json({ error: "empty_items" }, { status: 400 });
 
-    // Auth téléphone de classe
-    let phone = String(user.phone || "").trim();
+    // Auth téléphone de classe (class device)
+    let phone = String((user as any).phone || "").trim();
     if (!phone) {
       const { data: au, error: auErr } = await srv.schema("auth").from("users").select("phone").eq("id", user.id).maybeSingle();
       if (auErr) return NextResponse.json({ error: auErr.message }, { status: 400 });
@@ -152,7 +152,7 @@ export async function POST(req: NextRequest) {
 
     const { variants } = buildPhoneVariants(phone);
 
-    // Vérif classe + institution
+    // Vérif classe + institution via class_phone_e164 ∈ variants
     const { data: cls, error: clsErr } = await srv
       .from("classes")
       .select("id,label,institution_id,class_phone_e164")
@@ -211,9 +211,9 @@ export async function POST(req: NextRequest) {
 
     const insertedCount = inserted?.length || rows.length;
 
-    // ✨ temps réel — fire-and-forget pour ne pas bloquer la réponse
+    // ✅ temps réel — fire-and-forget (ne bloque pas la réponse)
     if (insertedCount > 0) {
-      void triggerDispatchInline("class-penalties-bulk");
+      void triggerPushDispatch({ req, reason: "class_penalties_bulk" });
     }
 
     return NextResponse.json({ ok: true, inserted: insertedCount });

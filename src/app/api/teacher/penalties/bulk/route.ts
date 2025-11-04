@@ -2,9 +2,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
-// ✨ temps réel
-import { triggerDispatchInline } from "@/lib/push-dispatch";
-
+import { triggerPushDispatch } from "@/lib/push-dispatch"; // ✅ déclencheur temps réel (fire-and-forget)
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
@@ -35,8 +33,8 @@ function clamp(n: number, lo: number, hi: number) {
 
 /**
  * Résout un identifiant “souple” vers l’ID canonique subjects.id
- * - Cas 1: maybeId est déjà un subjects.id -> retourne {canonicalId=subjects.id, displayName}
- * - Cas 2: maybeId est un institution_subjects.id -> retourne {canonicalId=subject_id, displayName=custom_name || subjects.name}
+ * - Cas 1: maybeId est déjà un subjects.id -> {canonicalId=subjects.id, displayName}
+ * - Cas 2: maybeId est un institution_subjects.id -> {canonicalId=subject_id, displayName=custom_name || subjects.name}
  * - Cas 3: rien trouvé -> {null, null}
  */
 async function resolveCanonicalSubject(
@@ -51,7 +49,7 @@ async function resolveCanonicalSubject(
     .select("id,name,code,subject_key")
     .eq("id", maybeId)
     .maybeSingle();
-  if (subjErr) console.warn("[penalties.bulk] resolveCanonicalSubject subjects error", subjErr);
+  if (subjErr) console.warn("[teacher.penalties.bulk] resolveCanonicalSubject subjects error", subjErr);
   if (subj?.id) {
     const nm = subj.name || subj.code || subj.subject_key || null;
     return { canonicalId: subj.id, displayName: nm, origin: "subjects" };
@@ -63,7 +61,7 @@ async function resolveCanonicalSubject(
     .select("id, custom_name, subject_id")
     .eq("id", maybeId)
     .maybeSingle();
-  if (instErr) console.warn("[penalties.bulk] resolveCanonicalSubject inst error", instErr);
+  if (instErr) console.warn("[teacher.penalties.bulk] resolveCanonicalSubject inst error", instErr);
 
   if (inst?.id) {
     let nm: string | null = inst.custom_name || null;
@@ -75,7 +73,7 @@ async function resolveCanonicalSubject(
         .select("id,name,code,subject_key")
         .eq("id", inst.subject_id)
         .maybeSingle();
-      if (baseErr) console.warn("[penalties.bulk] resolveCanonicalSubject base subject error", baseErr);
+      if (baseErr) console.warn("[teacher.penalties.bulk] resolveCanonicalSubject base subject error", baseErr);
       canonicalId = base?.id ?? canonicalId;
       if (!nm) nm = base?.name || base?.code || base?.subject_key || null;
     }
@@ -102,7 +100,7 @@ async function fallbackCanonicalFromClassTeacher(
     .limit(1)
     .maybeSingle();
   if (ctErr) {
-    console.warn("[penalties.bulk] fallback class_teachers error", ctErr);
+    console.warn("[teacher.penalties.bulk] fallback class_teachers error", ctErr);
     return { canonicalId: null, displayName: null, origin: "none" };
   }
   if (!ct?.subject_id) return { canonicalId: null, displayName: null, origin: "none" };
@@ -116,7 +114,7 @@ export async function POST(req: NextRequest) {
   try {
     const { data: { user } } = await supa.auth.getUser();
     if (!user) {
-      console.warn("[penalties.bulk] unauthorized");
+      console.warn("[teacher.penalties.bulk] unauthorized");
       return NextResponse.json({ error: "unauthorized" }, { status: 401 });
     }
 
@@ -124,7 +122,7 @@ export async function POST(req: NextRequest) {
     try {
       body = (await req.json()) as Body;
     } catch (e) {
-      console.error("[penalties.bulk] invalid_json", e);
+      console.error("[teacher.penalties.bulk] invalid_json", e);
       return NextResponse.json({ error: "invalid_json" }, { status: 400 });
     }
 
@@ -133,7 +131,7 @@ export async function POST(req: NextRequest) {
     const rubric = coerceRubric(body?.rubric);
     const rawItems = Array.isArray(body?.items) ? body.items : [];
 
-    console.log("[penalties.bulk] payload", {
+    console.log("[teacher.penalties.bulk] payload", {
       class_id,
       requested_subject_id,
       rubric,
@@ -150,11 +148,11 @@ export async function POST(req: NextRequest) {
       .filter((it) => it.student_id && it.points > 0);
 
     if (!class_id) {
-      console.warn("[penalties.bulk] missing_class_id");
+      console.warn("[teacher.penalties.bulk] missing_class_id");
       return NextResponse.json({ error: "missing_class_id" }, { status: 400 });
     }
     if (items.length === 0) {
-      console.log("[penalties.bulk] no positive items to insert", { dropped: rawItems.length });
+      console.log("[teacher.penalties.bulk] no positive items to insert", { dropped: rawItems.length });
       return NextResponse.json({ ok: true, inserted: 0, dropped: rawItems.length }, { status: 200 });
     }
 
@@ -165,19 +163,19 @@ export async function POST(req: NextRequest) {
       .eq("id", class_id)
       .maybeSingle();
     if (kErr || !klass?.institution_id) {
-      console.error("[penalties.bulk] classes lookup failed", { kErr, klass });
+      console.error("[teacher.penalties.bulk] classes lookup failed", { kErr, klass });
       return NextResponse.json({ error: "class_or_institution_missing" }, { status: 400 });
     }
     const institution_id = String(klass.institution_id);
-    console.log("[penalties.bulk] class_ok", { institution_id, class_label: klass.label });
+    console.log("[teacher.penalties.bulk] class_ok", { institution_id, class_label: klass.label });
 
-    // Auteur
+    // Auteur (profile = même id que user dans ton schéma)
     const { data: prof, error: profErr } = await srv
       .from("profiles")
       .select("id, display_name")
       .eq("id", user.id)
       .maybeSingle();
-    if (profErr) console.warn("[penalties.bulk] profiles lookup warn", profErr);
+    if (profErr) console.warn("[teacher.penalties.bulk] profiles lookup warn", profErr);
 
     const author_id = user.id;
     const author_profile_id = prof?.id ?? user.id;
@@ -193,12 +191,12 @@ export async function POST(req: NextRequest) {
       const fb = await fallbackCanonicalFromClassTeacher(srv, class_id, author_profile_id);
       if (fb.canonicalId) subject_id = fb.canonicalId;
       if (fb.displayName) author_subject_name = fb.displayName || author_subject_name;
-      console.log("[penalties.bulk] subject fallback", fb);
+      console.log("[teacher.penalties.bulk] subject fallback", fb);
     }
 
     // Libellé de rôle (juste pour le front)
     const author_role_label = (subject_id || author_subject_name) ? "Enseignant" : "Administration";
-    console.log("[penalties.bulk] author labels", {
+    console.log("[teacher.penalties.bulk] author labels", {
       author_role_label,
       author_profile_id,
       author_display_name,
@@ -224,7 +222,7 @@ export async function POST(req: NextRequest) {
       created_at: nowIso,
     }));
 
-    console.log("[penalties.bulk] insert attempt", {
+    console.log("[teacher.penalties.bulk] insert attempt", {
       row_count: rows.length,
       sample: rows[0] ? {
         class_id: rows[0].class_id,
@@ -241,9 +239,9 @@ export async function POST(req: NextRequest) {
       .select("id");
 
     if (insErr) {
-      console.error("[penalties.bulk] insert error", insErr);
+      console.error("[teacher.penalties.bulk] insert error", insErr);
       if ((insErr as any)?.message?.toString?.().includes("s.full_name")) {
-        console.error("[penalties.bulk] HINT: trigger/function in DB uses alias 's' without FROM");
+        console.error("[teacher.penalties.bulk] HINT: trigger/function in DB uses alias 's' without FROM");
       }
       return NextResponse.json(
         { ok: false, inserted: 0, error: insErr.message, code: (insErr as any)?.code ?? null },
@@ -252,16 +250,16 @@ export async function POST(req: NextRequest) {
     }
 
     const count = inserted?.length || 0;
-    console.log("[penalties.bulk] inserted_ok", { count });
+    console.log("[teacher.penalties.bulk] inserted_ok", { count });
 
-    // ✨ temps réel — déclenche immédiatement si on a inséré des sanctions
+    // ✅ temps réel — déclenche immédiatement si on a inséré des sanctions
     if (count > 0) {
-      void triggerDispatchInline("teacher-penalties-bulk");
+      void triggerPushDispatch({ req, reason: "teacher_penalties_bulk" });
     }
 
     return NextResponse.json({ ok: true, inserted: count }, { status: 200 });
   } catch (e: any) {
-    console.error("[penalties.bulk] fatal", e);
+    console.error("[teacher.penalties.bulk] fatal", e);
     return NextResponse.json({ ok: false, error: e?.message || "penalties_failed" }, { status: 500 });
   }
 }

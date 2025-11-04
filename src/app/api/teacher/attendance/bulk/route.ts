@@ -3,7 +3,10 @@ import { NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 // ✨ temps réel
-import { triggerDispatchInline } from "@/lib/push-dispatch";
+import { triggerPushDispatch } from "@/lib/push-dispatch";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 /* ───────────────── helpers ───────────────── */
 type Mark = {
@@ -40,7 +43,7 @@ export async function POST(req: Request) {
   const { data: { user } } = await supa.auth.getUser();
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
 
-  const body = await req.json().catch(() => ({}));
+  const body = await req.json().catch(() => ({} as any));
   const session_id = String(body?.session_id || "");
   const marks: Mark[] = Array.isArray(body?.marks) ? body.marks : [];
   if (!session_id) return NextResponse.json({ error: "missing_session" }, { status: 400 });
@@ -57,7 +60,7 @@ export async function POST(req: Request) {
   // 2) Autorisation
   let allowed = sess.teacher_id === user.id;
   if (!allowed) {
-    let phone = String(user.phone || "").trim();
+    let phone = String((user as any).phone || "").trim();
     if (!phone) {
       const { data: au } = await srv.schema("auth").from("users").select("phone").eq("id", user.id).maybeSingle();
       phone = String(au?.phone || "").trim();
@@ -144,9 +147,9 @@ export async function POST(req: Request) {
       .is("actual_call_at", null);
   }
 
-  // ✨ temps réel — déclenche le dispatch si des changements ont eu lieu
+  // ✨ temps réel — déclenche le dispatch si des changements ont eu lieu (non bloquant)
   if (upserted > 0 || deleted > 0) {
-    void triggerDispatchInline("attendance-bulk");
+    void triggerPushDispatch({ req, reason: "teacher_attendance_bulk" });
   }
 
   return NextResponse.json({ ok: true, upserted, deleted });
