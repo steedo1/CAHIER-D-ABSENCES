@@ -116,15 +116,27 @@ self.addEventListener("push", (event) => {
     const rubric = String(core.rubric || "discipline").toLowerCase();
     const rubricFR = rubric === "tenue" ? "Tenue" : rubric === "moralite" ? "Moralité" : "Discipline";
     const pts = Number(core.points || 0);
-    const reason = (core.reason || "").toString().trim();
+    const reason = (core.reason || core.motif || "").toString().trim();
+
+    // ✨ auteur & matière → "Par le prof de <matière>" ou "Par l’administration"
+    const role =
+      String(core?.author?.role_label || core?.author_role_label || "")
+        .normalize("NFKC")
+        .toLowerCase();
+    let byline = "";
+    if (subj) {
+      byline = `Par le prof de ${subj}`;
+    } else if (role === "administration" || role === "admin") {
+      byline = "Par l’administration";
+    }
 
     title = `Sanction — ${student} (${rubricFR})`;
     body = [
-      subj || "Discipline",
+      byline || rubricFR,
       klass,
       whenText,
       `−${pts} pt${pts > 1 ? "s" : ""}`,
-      reason ? reason : ""
+      reason ? `Motif : ${reason}` : ""
     ].filter(Boolean).join(" • ");
   }
 

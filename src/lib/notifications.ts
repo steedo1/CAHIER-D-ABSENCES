@@ -1,5 +1,4 @@
 // src/lib/notifications.ts
-
 import { SupabaseClient } from "@supabase/supabase-js";
 
 /** ISO arrondi à la seconde, sans .SSS (aligne indexes/dédoublon) */
@@ -63,7 +62,7 @@ export async function fetchStudentNames(
         .select("student_id, students!inner(*)")
         .in("student_id", missing);
 
-      if (!error) {
+    if (!error) {
         for (const r of data || []) {
           const st = (r as any).students || {};
           put(String((r as any).student_id), st);
@@ -97,6 +96,8 @@ export async function queuePenaltyNotifications(opts: {
   subject_name: string | null;
   items: Array<{ student_id: string; points: number; reason?: string | null }>;
   whenIso: string;
+  /** Optionnel : utile si la sanction provient de l’administration */
+  author?: { role_label?: string | null } | null;
 }) {
   const {
     srv,
@@ -106,6 +107,7 @@ export async function queuePenaltyNotifications(opts: {
     subject_name,
     items,
     whenIso,
+    author,
   } = opts;
 
   if (!items?.length) return { queued: 0 };
@@ -134,6 +136,13 @@ export async function queuePenaltyNotifications(opts: {
   const occurred_at = isoNoMsZ(whenIso);
   const seen = new Set<string>();
 
+  // Ligne "auteur" pour la lisibilité du body (fallback — le SW reconstruit aussi côté client)
+  const authorRole = (author?.role_label || "").toString().normalize("NFKC").toLowerCase();
+  const byline =
+    subject_name ? `Par le prof de ${subject_name}` :
+    authorRole === "administration" || authorRole === "admin" ? "Par l’administration" :
+    "Discipline";
+
   for (const it of items) {
     const parents = linksByStudent.get(it.student_id) || [];
     if (!parents.length) continue;
@@ -141,11 +150,11 @@ export async function queuePenaltyNotifications(opts: {
     const studentName = names[it.student_id] || "Élève";
     const title = `Sanction — ${studentName}`;
     const body = [
-      subject_name || "Discipline",
+      byline,                                   // ← “Par le prof de <matière>”
       class_label || "",
       new Date(occurred_at).toLocaleString("fr-FR", { hour12: false }),
       `−${it.points} pt${it.points > 1 ? "s" : ""}`,
-      it.reason ? String(it.reason) : "",
+      it.reason ? `Motif : ${String(it.reason).trim()}` : "", // ← préfixe “Motif :”
     ].filter(Boolean).join(" • ");
 
     const payload = {
@@ -153,9 +162,10 @@ export async function queuePenaltyNotifications(opts: {
       rubric,
       points: it.points,
       reason: it.reason ?? null,
-      class: { label: class_label },
-      subject: { name: subject_name },
+      class:   { label: class_label },
+      subject: { name: subject_name, label: subject_name ?? undefined },
       student: { id: it.student_id, name: studentName },
+      author:  { role_label: author?.role_label ?? null },
       occurred_at,
       severity: it.points >= 5 ? "high" : it.points >= 3 ? "medium" : "low",
       title,
@@ -163,6 +173,7 @@ export async function queuePenaltyNotifications(opts: {
     };
 
     for (const parent_id of parents) {
+      // Clé de dédoublonnage stable (on garde le même format qu’avant pour ne rien casser)
       const key = `${parent_id}|${it.student_id}|${occurred_at}|${rubric}|${it.points}|${it.reason ?? ""}`;
       if (seen.has(key)) continue;
       seen.add(key);
@@ -177,7 +188,7 @@ export async function queuePenaltyNotifications(opts: {
         body,
         status: WAIT,
         send_after: occurred_at,
-        meta: { src: "api:queuePenaltyNotifications", v: "4" },
+        meta: { src: "api:queuePenaltyNotifications", v: "5" },
       });
     }
   }
