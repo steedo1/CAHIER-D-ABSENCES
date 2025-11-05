@@ -2,14 +2,25 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
-import { triggerPushDispatch } from "@/lib/push-dispatch"; // ✅ helper unique temps réel
+import { triggerPushDispatch } from "@/lib/push-dispatch"; // déclencheur temps réel (fire-and-forget)
 import { queuePenaltyNotifications } from "@/lib/notifications";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 const ALLOWED = ["discipline", "tenue", "moralite"] as const;
 type Rubric = (typeof ALLOWED)[number];
+
+const RUBRIC_MAX: Record<Rubric, number> = {
+  discipline: 7,
+  tenue: 3,
+  moralite: 4,
+};
+
+function clamp(n: number, lo: number, hi: number) {
+  return Math.max(lo, Math.min(hi, n));
+}
 
 function coerceRubric(x: unknown): Rubric {
   let s = String(x ?? "").normalize("NFKC").toLowerCase().trim();
@@ -24,6 +35,7 @@ type Item = { student_id: string; points: number; reason?: string | null };
 function uniq<T>(arr: T[]) {
   return Array.from(new Set((arr || []).filter(Boolean))) as T[];
 }
+
 function buildPhoneVariants(raw: string) {
   const t = String(raw || "").trim();
   const digits = t.replace(/\D/g, "");
@@ -55,7 +67,7 @@ function buildPhoneVariants(raw: string) {
  *  - teacherProfileId unique via class_teachers (actif au moment t)
  */
 async function resolveContext(
-  srv: ReturnType<typeof getSupabaseServiceClient>,
+  srv: SupabaseClient,
   class_id: string,
   subject_any: string | null,
   atIso: string
@@ -143,7 +155,7 @@ export async function POST(req: NextRequest) {
       class_id: string;
       rubric: Rubric | string;
       items: Item[];
-      subject_id?: string | null;
+      subject_id?: string | null; // peut être subjects.id OU institution_subjects.id
     };
 
     const class_id = String(body?.class_id || "").trim();
@@ -185,13 +197,13 @@ export async function POST(req: NextRequest) {
 
     // Résolution matière + prof
     const { subjectCanonicalId, subjectDisplayName, teacherProfileId } =
-      await resolveContext(srv, class_id, subject_any, nowIso);
+      await resolveContext(srv as unknown as SupabaseClient, class_id, subject_any, nowIso);
 
     const clean = items
       .filter(Boolean)
       .map((it) => ({
         student_id: String(it.student_id || "").trim(),
-        points: Math.max(0, Number(it.points || 0)),
+        points: clamp(Math.floor(Number(it.points || 0)), 0, RUBRIC_MAX[rubric]),
         reason: (it.reason ?? "").toString().trim() || null,
       }))
       .filter((it) => it.student_id && it.points > 0);
@@ -207,7 +219,7 @@ export async function POST(req: NextRequest) {
     const rows = clean.map((it) => ({
       institution_id: cls.institution_id,
       class_id,
-      subject_id: subjectCanonicalId ?? null, // ✅ canonique
+      subject_id: subjectCanonicalId ?? null, // canonique
       student_id: it.student_id,
       rubric,
       points: it.points,
@@ -229,7 +241,7 @@ export async function POST(req: NextRequest) {
 
     const insertedCount = inserted?.length || rows.length;
 
-    // ✅ QUEUE des notifs sanctions
+    // Queue des notifs sanctions
     try {
       const { queued } = await queuePenaltyNotifications({
         srv,
@@ -247,7 +259,7 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // ✅ temps réel — fire-and-forget (ne bloque pas la réponse)
+    // temps réel — fire-and-forget
     if (insertedCount > 0) {
       void triggerPushDispatch({ req, reason: "class_penalties_bulk" });
     }

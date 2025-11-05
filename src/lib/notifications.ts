@@ -1,13 +1,14 @@
 // src/lib/notifications.ts
 import { SupabaseClient } from "@supabase/supabase-js";
 
+/** ISO arrondi à la seconde, sans .SSS (aligne indexes/dédoublon) */
 function isoNoMsZ(x: string) {
-  // arrondit à la seconde et supprime ".SSS"
   const d = new Date(x);
   d.setMilliseconds(0);
   return d.toISOString().replace(/\.\d{3}Z$/, "Z");
 }
 
+/** Map student_id -> nom lisible (full/display > first+last > matricule > "Élève") */
 async function fetchStudentNames(
   srv: SupabaseClient,
   ids: string[]
@@ -28,10 +29,13 @@ async function fetchStudentNames(
         "Élève";
       out[r.id] = name;
     }
-  } catch {}
+  } catch {
+    /* noop */
+  }
   return out;
 }
 
+/** Choisit une colonne “parent” tolérante au schéma */
 function pickParentId(row: any): string | null {
   return (
     row?.parent_id ||
@@ -67,6 +71,7 @@ export async function queuePenaltyNotifications(opts: {
   const studentIds = Array.from(new Set(items.map((i) => i.student_id)));
   const names = await fetchStudentNames(srv, studentIds);
 
+  // Liens élève → responsables (tolérant) + filtre notifications_enabled==true si présent
   const { data: sg } = await srv
     .from("student_guardians")
     .select("*")
@@ -74,9 +79,13 @@ export async function queuePenaltyNotifications(opts: {
 
   const linksByStudent = new Map<string, string[]>();
   for (const row of sg || []) {
+    // si la colonne existe et que c'est false, on saute
+    if ("notifications_enabled" in row && row.notifications_enabled === false) continue;
+
     const sid = String(row.student_id);
     const pid = pickParentId(row);
     if (!pid) continue;
+
     const arr = linksByStudent.get(sid) || [];
     arr.push(String(pid));
     linksByStudent.set(sid, Array.from(new Set(arr)));
@@ -84,7 +93,10 @@ export async function queuePenaltyNotifications(opts: {
 
   const WAIT = (process.env.PUSH_WAIT_STATUS || "pending").trim();
   const rows: any[] = [];
-  const occurred_at = isoNoMsZ(whenIso); // ✅ aligne sur le trigger/Index
+  const occurred_at = isoNoMsZ(whenIso);
+
+  // Anti-doublon intra-batch (clé locale seulement)
+  const seen = new Set<string>();
 
   for (const it of items) {
     const parents = linksByStudent.get(it.student_id) || [];
@@ -110,18 +122,22 @@ export async function queuePenaltyNotifications(opts: {
       class: { label: class_label },
       subject: { name: subject_name },
       student: { id: it.student_id, name: studentName },
-      occurred_at,                              // ✅ sans ms
+      occurred_at, // sans ms
       severity: it.points >= 5 ? "high" : it.points >= 3 ? "medium" : "low",
       title,
       body,
     };
 
     for (const parent_id of parents) {
+      const key = `${parent_id}|${it.student_id}|${occurred_at}|${rubric}|${it.points}|${it.reason ?? ""}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+
       rows.push({
         institution_id,
         student_id: it.student_id,
         parent_id,
-        channels: ["inapp", "push"],            // JS array → JSONB côté PG
+        channels: ["inapp", "push"], // JSONB côté PG via supabase-js
         payload,
         title,
         body,
