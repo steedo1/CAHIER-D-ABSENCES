@@ -877,7 +877,7 @@ export default function TeacherDashboard() {
           <TabButton active={tab === "parent"} onClick={() => setTab("parent")}>
             <BookOpen className="mr-1 h-4 w-4" /> Espace parent
           </TabButton>
-          <a href="/logout" className="sr-only md:not-sr-only">
+          <a href="/logout" >
             <GhostButton tone="red">
               <LogOut className="h-4 w-4" /> Déconnexion
             </GhostButton>

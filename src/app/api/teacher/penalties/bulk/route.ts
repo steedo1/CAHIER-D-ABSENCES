@@ -315,7 +315,7 @@ export async function POST(req: NextRequest) {
 
     // ✅ temps réel — déclenche immédiatement si on a inséré des sanctions
     if (count > 0) {
-      void triggerPushDispatch({ req, reason: "teacher_penalties_bulk" });
+      await triggerPushDispatch({ req, reason: "teacher_penalties_bulk" });
     }
 
     return NextResponse.json({ ok: true, inserted: count }, { status: 200 });

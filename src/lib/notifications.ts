@@ -1,4 +1,5 @@
 // src/lib/notifications.ts
+
 import { SupabaseClient } from "@supabase/supabase-js";
 
 /** ISO arrondi à la seconde, sans .SSS (aligne indexes/dédoublon) */
@@ -8,30 +9,71 @@ function isoNoMsZ(x: string) {
   return d.toISOString().replace(/\.\d{3}Z$/, "Z");
 }
 
-/** Map student_id -> nom lisible (full/display > first+last > matricule > "Élève") */
-async function fetchStudentNames(
+/** Heuristique: première chaîne non vide */
+function firstNonEmpty(...vals: (string | null | undefined)[]) {
+  for (const v of vals) {
+    const s = (v ?? "").toString().trim();
+    if (s) return s;
+  }
+  return "";
+}
+
+/** Construit un nom lisible à partir d’un enregistrement quelconque de “student” */
+function computeStudentName(r: any): string {
+  // Variantes possibles courantes (FR/EN)
+  const full      = (r?.full_name ?? r?.fullname ?? r?.student_full_name ?? r?.display_name ?? r?.student_display_name ?? r?.name ?? r?.student_name) as string | undefined;
+  const first     = (r?.first_name ?? r?.firstname ?? r?.given_name ?? r?.prenom) as string | undefined;
+  const last      = (r?.last_name ?? r?.lastname ?? r?.family_name ?? r?.nom) as string | undefined;
+  const pair      = [first, last].filter(Boolean).join(" ").trim();
+  const matricule = (r?.matricule ?? r?.student_code ?? r?.code ?? r?.register_id) as string | undefined;
+
+  return firstNonEmpty(full, pair, matricule, "Élève");
+}
+
+/** Map student_id -> nom lisible, sans supposer le schéma exact */
+export async function fetchStudentNames(
   srv: SupabaseClient,
   ids: string[]
 ): Promise<Record<string, string>> {
   const out: Record<string, string> = {};
-  if (!ids.length) return out;
+  const wanted = Array.from(new Set((ids || []).filter(Boolean)));
+  if (!wanted.length) return out;
+
+  const put = (id: string, row: any) => {
+    if (!id || out[id]) return;
+    out[id] = computeStudentName(row);
+  };
+
+  // 1) Essai direct sur students (toutes colonnes)
   try {
-    const { data } = await srv
+    const { data, error } = await srv
       .from("students")
-      .select("id, first_name, last_name, matricule, full_name, display_name")
-      .in("id", ids);
-    for (const r of data || []) {
-      const name =
-        r.full_name ||
-        r.display_name ||
-        [r.first_name, r.last_name].filter(Boolean).join(" ").trim() ||
-        r.matricule ||
-        "Élève";
-      out[r.id] = name;
-    }
-  } catch {
-    /* noop */
+      .select("*")
+      .in("id", wanted);
+
+    if (!error) for (const r of data || []) put(String(r.id), r);
+  } catch { /* ignore */ }
+
+  // 2) Fallback via class_enrollments → students!inner(*) (si certains manquent)
+  const missing = wanted.filter((id) => !out[id]);
+  if (missing.length) {
+    try {
+      const { data, error } = await srv
+        .from("class_enrollments")
+        .select("student_id, students!inner(*)")
+        .in("student_id", missing);
+
+      if (!error) {
+        for (const r of data || []) {
+          const st = (r as any).students || {};
+          put(String((r as any).student_id), st);
+        }
+      }
+    } catch { /* ignore */ }
   }
+
+  // 3) Sécurisation finale
+  for (const id of wanted) if (!out[id]) out[id] = "Élève";
   return out;
 }
 
@@ -71,7 +113,6 @@ export async function queuePenaltyNotifications(opts: {
   const studentIds = Array.from(new Set(items.map((i) => i.student_id)));
   const names = await fetchStudentNames(srv, studentIds);
 
-  // Liens élève → responsables (tolérant) + filtre notifications_enabled==true si présent
   const { data: sg } = await srv
     .from("student_guardians")
     .select("*")
@@ -79,13 +120,10 @@ export async function queuePenaltyNotifications(opts: {
 
   const linksByStudent = new Map<string, string[]>();
   for (const row of sg || []) {
-    // si la colonne existe et que c'est false, on saute
     if ("notifications_enabled" in row && row.notifications_enabled === false) continue;
-
     const sid = String(row.student_id);
     const pid = pickParentId(row);
     if (!pid) continue;
-
     const arr = linksByStudent.get(sid) || [];
     arr.push(String(pid));
     linksByStudent.set(sid, Array.from(new Set(arr)));
@@ -94,8 +132,6 @@ export async function queuePenaltyNotifications(opts: {
   const WAIT = (process.env.PUSH_WAIT_STATUS || "pending").trim();
   const rows: any[] = [];
   const occurred_at = isoNoMsZ(whenIso);
-
-  // Anti-doublon intra-batch (clé locale seulement)
   const seen = new Set<string>();
 
   for (const it of items) {
@@ -110,9 +146,7 @@ export async function queuePenaltyNotifications(opts: {
       new Date(occurred_at).toLocaleString("fr-FR", { hour12: false }),
       `−${it.points} pt${it.points > 1 ? "s" : ""}`,
       it.reason ? String(it.reason) : "",
-    ]
-      .filter(Boolean)
-      .join(" • ");
+    ].filter(Boolean).join(" • ");
 
     const payload = {
       kind: "conduct_penalty",
@@ -122,7 +156,7 @@ export async function queuePenaltyNotifications(opts: {
       class: { label: class_label },
       subject: { name: subject_name },
       student: { id: it.student_id, name: studentName },
-      occurred_at, // sans ms
+      occurred_at,
       severity: it.points >= 5 ? "high" : it.points >= 3 ? "medium" : "low",
       title,
       body,
@@ -137,23 +171,19 @@ export async function queuePenaltyNotifications(opts: {
         institution_id,
         student_id: it.student_id,
         parent_id,
-        channels: ["inapp", "push"], // JSONB côté PG via supabase-js
+        channels: ["inapp", "push"],
         payload,
         title,
         body,
         status: WAIT,
         send_after: occurred_at,
-        meta: { src: "api:queuePenaltyNotifications", v: "3" },
+        meta: { src: "api:queuePenaltyNotifications", v: "4" },
       });
     }
   }
 
   if (!rows.length) return { queued: 0 };
-
-  const { error, count } = await srv
-    .from("notifications_queue")
-    .insert(rows, { count: "exact" });
-
+  const { error, count } = await srv.from("notifications_queue").insert(rows, { count: "exact" });
   if (error) throw error;
   return { queued: count || rows.length };
 }

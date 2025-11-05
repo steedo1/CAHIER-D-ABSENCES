@@ -2,7 +2,7 @@
    Service Worker - Push (amélioré, rétro-compatible)
    Bumper la version pour forcer l'update
 ────────────────────────────────────────── */
-const SW_VERSION = "2025-11-04T23:59:59Z"; // ← change à chaque déploiement
+const SW_VERSION = "2025-11-05T19:59:59Z"; // ← change à chaque déploiement
 const VERBOSE = true;
 
 function log(stage, meta = {}) {
@@ -26,6 +26,30 @@ function fmtSlot(startIso, minutes = 60) {
   const st = new Date(startIso);
   const en = new Date(st.getTime() + (Number(minutes)||60) * 60000);
   return `${fmtHM(st)}–${fmtHM(en)}`;
+}
+
+/* Robustifier l'extraction du nom élève depuis différents schémas de payload */
+function pickStudentName(core) {
+  const s = (core && core.student) || {};
+  const pieces = [];
+  const join = (a,b) => [a,b].filter(Boolean).join(" ").trim();
+
+  pieces.push(s.name);
+  pieces.push(s.display_name);
+  pieces.push(s.full_name);
+  pieces.push(s.label);
+  pieces.push(join(s.first_name, s.last_name));
+  pieces.push(join(s.firstName, s.lastName));
+  pieces.push(s.first_name);
+  pieces.push(s.last_name);
+  pieces.push(s.firstName);
+  pieces.push(s.lastName);
+  pieces.push(s.matricule);
+
+  let cand = (pieces.find(x => String(x||"").trim()) || "").toString().trim();
+  if (!cand || isUuidLike(cand)) cand = (s.matricule || "").toString().trim();
+  if (!cand) cand = "Élève";
+  return cand;
 }
 
 /* ───────────────── install / activate ───────────────── */
@@ -68,13 +92,10 @@ self.addEventListener("push", (event) => {
 
   // Champs communs
   const kind = String(core.kind || core.type || core.event || "").toLowerCase();
-  const ev   = String(core.event || "").toLowerCase();
+  const ev   = String(core.event || core.status || "").toLowerCase();
 
   // Élève (évite les UUID en titre)
-  const studentRaw = core?.student?.name || core?.student?.display_name || core?.student?.full_name || core?.student?.matricule || "";
-  const student = (!studentRaw || isUuidLike(studentRaw))
-    ? (core?.student?.matricule || "Élève")
-    : studentRaw;
+  const student = pickStudentName(core);
 
   const subj  = (core?.subject && (core.subject.name || core.subject.label)) || "";
   const klass = (core?.class   && (core.class.label   || core.class.name))   || "";
@@ -118,16 +139,21 @@ self.addEventListener("push", (event) => {
       body  = [subj, klass, slot || whenText].filter(Boolean).join(" • ");
     } else {
       // autre évolution éventuelle du payload "attendance"
-      title = title || "Présence";
+      title = title || `Présence — ${student}`;
       body  = [subj, klass, slot || whenText].filter(Boolean).join(" • ");
     }
   }
+
+  // Tag pour limiter les doublons de même élève/événement
+  const tag =
+    data.tag ||
+    `${kind || "notification"}:${core?.student?.id || ""}:${whenIso || ""}:${subj || ""}:${klass || ""}`;
 
   const options = {
     body,
     icon: data.icon || "/icons/icon-192.png",
     badge: data.badge || "/icons/badge-72.png",
-    tag: data.tag,
+    tag,
     renotify: !!data.renotify,
     requireInteraction: !!data.requireInteraction,
     data: {

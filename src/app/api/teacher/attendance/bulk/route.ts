@@ -149,7 +149,7 @@ export async function POST(req: Request) {
 
   // ✨ temps réel — déclenche le dispatch si des changements ont eu lieu (non bloquant)
   if (upserted > 0 || deleted > 0) {
-    void triggerPushDispatch({ req, reason: "teacher_attendance_bulk" });
+    await triggerPushDispatch({ req, reason: "teacher_attendance_bulk" });
   }
 
   return NextResponse.json({ ok: true, upserted, deleted });

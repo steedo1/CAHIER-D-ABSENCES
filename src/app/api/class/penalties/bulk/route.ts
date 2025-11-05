@@ -261,7 +261,7 @@ export async function POST(req: NextRequest) {
 
     // temps réel — fire-and-forget
     if (insertedCount > 0) {
-      void triggerPushDispatch({ req, reason: "class_penalties_bulk" });
+      await triggerPushDispatch({ req, reason: "class_penalties_bulk" });
     }
 
     return NextResponse.json({ ok: true, inserted: insertedCount });
