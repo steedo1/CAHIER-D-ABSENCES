@@ -1,46 +1,34 @@
 // src/lib/notifications.ts
 import { SupabaseClient } from "@supabase/supabase-js";
 
-function isUuidLike(s: string | null | undefined) {
-  return !!String(s || "").trim().match(/^[0-9a-f-]{32,36}$/i);
+function isoNoMsZ(x: string) {
+  // arrondit à la seconde et supprime ".SSS"
+  const d = new Date(x);
+  d.setMilliseconds(0);
+  return d.toISOString().replace(/\.\d{3}Z$/, "Z");
 }
 
-// Construit un libellé fiable
-function makeStudentLabel(row: {
-  id: string;
-  full_name?: string | null;
-  display_name?: string | null;
-  first_name?: string | null;
-  last_name?: string | null;
-  matricule?: string | null;
-}) {
-  const byNames =
-    row.full_name ||
-    row.display_name ||
-    [row.first_name, row.last_name].filter(Boolean).join(" ").trim();
-
-  if (byNames && !isUuidLike(byNames)) return byNames;
-  if (row.matricule && !isUuidLike(row.matricule)) return row.matricule;
-  return row.id; // dernier recours (le SW masquera les UUID et montrera “Élève”)
-}
-
-// Récupère (id → {name, matricule})
-async function fetchStudentIdents(
+async function fetchStudentNames(
   srv: SupabaseClient,
   ids: string[]
-): Promise<Record<string, { name: string; matricule: string | null }>> {
-  const out: Record<string, { name: string; matricule: string | null }> = {};
+): Promise<Record<string, string>> {
+  const out: Record<string, string> = {};
   if (!ids.length) return out;
-
-  const { data } = await srv
-    .from("students")
-    .select("id, full_name, display_name, first_name, last_name, matricule")
-    .in("id", ids);
-
-  for (const r of data || []) {
-    const name = makeStudentLabel(r as any);
-    out[r.id] = { name, matricule: (r as any).matricule ?? null };
-  }
+  try {
+    const { data } = await srv
+      .from("students")
+      .select("id, first_name, last_name, matricule, full_name, display_name")
+      .in("id", ids);
+    for (const r of data || []) {
+      const name =
+        r.full_name ||
+        r.display_name ||
+        [r.first_name, r.last_name].filter(Boolean).join(" ").trim() ||
+        r.matricule ||
+        "Élève";
+      out[r.id] = name;
+    }
+  } catch {}
   return out;
 }
 
@@ -64,13 +52,21 @@ export async function queuePenaltyNotifications(opts: {
   items: Array<{ student_id: string; points: number; reason?: string | null }>;
   whenIso: string;
 }) {
-  const { srv, institution_id, class_label, rubric, subject_name, items, whenIso } = opts;
+  const {
+    srv,
+    institution_id,
+    class_label,
+    rubric,
+    subject_name,
+    items,
+    whenIso,
+  } = opts;
+
   if (!items?.length) return { queued: 0 };
 
-  const studentIds = Array.from(new Set(items.map(i => i.student_id)));
-  const idents = await fetchStudentIdents(srv, studentIds);
+  const studentIds = Array.from(new Set(items.map((i) => i.student_id)));
+  const names = await fetchStudentNames(srv, studentIds);
 
-  // Liens élève → parent(s)
   const { data: sg } = await srv
     .from("student_guardians")
     .select("*")
@@ -88,21 +84,23 @@ export async function queuePenaltyNotifications(opts: {
 
   const WAIT = (process.env.PUSH_WAIT_STATUS || "pending").trim();
   const rows: any[] = [];
+  const occurred_at = isoNoMsZ(whenIso); // ✅ aligne sur le trigger/Index
 
   for (const it of items) {
     const parents = linksByStudent.get(it.student_id) || [];
     if (!parents.length) continue;
 
-    const meta = idents[it.student_id] || { name: it.student_id, matricule: null };
-    const studentName = meta.name;
+    const studentName = names[it.student_id] || "Élève";
     const title = `Sanction — ${studentName}`;
-    const pieces = [
+    const body = [
       subject_name || "Discipline",
       class_label || "",
-      new Date(whenIso).toLocaleString("fr-FR", { hour12: false }),
-      `−${it.points} pt${it.points > 1 ? "s" : ""}`
-    ].filter(Boolean);
-    const body = pieces.join(" • ");
+      new Date(occurred_at).toLocaleString("fr-FR", { hour12: false }),
+      `−${it.points} pt${it.points > 1 ? "s" : ""}`,
+      it.reason ? String(it.reason) : "",
+    ]
+      .filter(Boolean)
+      .join(" • ");
 
     const payload = {
       kind: "conduct_penalty",
@@ -111,8 +109,8 @@ export async function queuePenaltyNotifications(opts: {
       reason: it.reason ?? null,
       class: { label: class_label },
       subject: { name: subject_name },
-      student: { id: it.student_id, name: studentName, matricule: meta.matricule },
-      occurred_at: whenIso,
+      student: { id: it.student_id, name: studentName },
+      occurred_at,                              // ✅ sans ms
       severity: it.points >= 5 ? "high" : it.points >= 3 ? "medium" : "low",
       title,
       body,
@@ -123,18 +121,23 @@ export async function queuePenaltyNotifications(opts: {
         institution_id,
         student_id: it.student_id,
         parent_id,
-        channels: ["inapp", "push"], // jsonb côté DB → PostgREST/pg convertit proprement depuis un array JS
+        channels: ["inapp", "push"],            // JS array → JSONB côté PG
         payload,
         title,
         body,
         status: WAIT,
-        send_after: whenIso,
+        send_after: occurred_at,
+        meta: { src: "api:queuePenaltyNotifications", v: "3" },
       });
     }
   }
 
   if (!rows.length) return { queued: 0 };
-  const { error, count } = await srv.from("notifications_queue").insert(rows, { count: "exact" });
+
+  const { error, count } = await srv
+    .from("notifications_queue")
+    .insert(rows, { count: "exact" });
+
   if (error) throw error;
   return { queued: count || rows.length };
 }
