@@ -2,23 +2,27 @@
 
 import { useEffect } from "react";
 
+/** ⚠️ Doit correspondre STRICTEMENT au SW_VERSION dans /public/sw.js */
+const SW_BUILD = "2025-11-05T19:59:59Z";
+
 export default function ServiceWorkerRegistrar() {
   useEffect(() => {
     if (!("serviceWorker" in navigator)) return;
 
-    const register = async () => {
-      try {
-        await navigator.serviceWorker.register("/sw.js", { scope: "/" });
-        // Très important : attendre l'activation
-        await navigator.serviceWorker.ready;
-        // Optionnel : console.log("SW prêt");
-      } catch (err) {
-        console.error("SW register failed:", err);
-      }
-    };
+    const url = `/sw.js?v=${encodeURIComponent(SW_BUILD)}`;
 
-    // On enregistre dès que possible (pas au clic du bouton)
-    register();
+    (async () => {
+      try {
+        const reg = await navigator.serviceWorker.register(url, { scope: "/" });
+        console.info("[SW] registered", { url, scope: reg.scope });
+
+        // Attendre l’activation pour garantir showNotification, etc.
+        await navigator.serviceWorker.ready;
+        console.info("[SW] ready");
+      } catch (err) {
+        console.warn("[SW] register_failed", err);
+      }
+    })();
   }, []);
 
   return null;
