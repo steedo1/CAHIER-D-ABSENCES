@@ -10,21 +10,28 @@ export default function ParentsLoginPage() {
     e.preventDefault();
     setMsg(null);
     setBusy(true);
+    const _rid = Math.random().toString(36).slice(2, 8);
     try {
+      console.info(`[parents.login:${_rid}] submit`, { matricule });
       const res = await fetch("/api/parent/children/attach", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ matricule }),
       });
-      const j = await res.json().catch(() => ({} as any));
+      let j: any = {};
+      try { j = await res.json(); } catch {}
+      console.info(`[parents.login:${_rid}] response`, { status: res.status, body: j });
+
       if (!res.ok) {
         const err = String(j?.error || "ATTACH_FAILED");
         setMsg(err === "MATRICULE_NOT_FOUND" ? "Matricule introuvable." : err);
         return;
       }
+      // OK → redirection
       window.location.href = "/parents";
     } catch (e: any) {
-      setMsg("Échec de connexion.");
+      console.error(`[parents.login:${_rid}] fatal`, e);
+      setMsg("Échec de connexion. Réessayez.");
     } finally {
       setBusy(false);
     }
