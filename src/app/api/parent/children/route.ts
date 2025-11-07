@@ -1,79 +1,70 @@
 // src/app/api/parent/children/route.ts
-import { NextResponse } from "next/server";
-import { getSupabaseServerClient } from "@/lib/supabase-server";
+import { NextRequest, NextResponse } from "next/server";
+import { cookies } from "next/headers";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
-import { readParentSessionFromReq } from "@/lib/parent-session";
 
-// Handle both array/object shapes for joined classes
-function firstLabel(classes: any): string | null {
-  if (!classes) return null;
-  if (Array.isArray(classes)) return classes[0]?.label ?? null;
-  return classes.label ?? null;
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+function rid() { return Math.random().toString(36).slice(2, 8); }
+function full(first?: string|null, last?: string|null) {
+  const f = String(first || "").trim();
+  const l = String(last || "").trim();
+  return (f && l) ? `${l} ${f}` : (f || l || "—");
 }
 
-export async function GET(req: Request) {
-  const supa = await getSupabaseServerClient(); // RLS (cookies)
-  const srv  = getSupabaseServiceClient();      // service (no RLS)
+export async function GET(_req: NextRequest) {
+  const id = rid();
+  const srv = getSupabaseServiceClient();
+  try {
+    // 1) Lire le cookie (Next 15 : cookies() est async)
+    const jar = await cookies();
+    const deviceId = jar.get("parent_device")?.value || "";
+    console.info(`[parent.children:${id}] cookie`, { deviceId });
 
-  const { data: { user } } = await supa.auth.getUser().catch(() => ({ data: { user: null } } as any));
-
-  if (user) {
-    // ── Mode A: liste multi-enfants liée à ce parent Supabase
-    const { data: links, error: lErr } = await srv
-      .from("student_guardians")
-      .select("student_id")
-      .eq("parent_id", user.id);
-
-    if (lErr) return NextResponse.json({ items: [], error: lErr.message }, { status: 400 });
-
-    const studentIds = Array.from(new Set((links || []).map((r: any) => String(r.student_id))));
-    if (!studentIds.length) return NextResponse.json({ items: [] });
-
-    const [{ data: studs }, { data: enrolls }] = await Promise.all([
-      srv.from("students").select("id, first_name, last_name").in("id", studentIds),
-      srv
-        .from("class_enrollments")
-        .select("student_id, classes:class_id(label)")
-        .in("student_id", studentIds)
-        .is("end_date", null),
-    ]);
-
-    const clsByStudent = new Map<string, string>();
-    for (const e of enrolls || []) {
-      const label = firstLabel((e as any).classes) ?? "";
-      clsByStudent.set(String((e as any).student_id), String(label));
+    if (!deviceId) {
+      console.warn(`[parent.children:${id}] NO_DEVICE_ID`);
+      return NextResponse.json({ items: [] });
     }
 
-    const items = (studs || [])
-      .map((s: any) => {
-        const full = `${s.first_name ?? ""} ${s.last_name ?? ""}`.trim() || "(inconnu)";
-        return { id: String(s.id), full_name: full, class_label: clsByStudent.get(String(s.id)) || null };
-      })
-      .sort((a, b) => a.full_name.localeCompare(b.full_name, "fr"));
+    // 2) Récupérer les associations device → student
+    const { data: links, error: lErr } = await srv
+      .from("parent_device_children")
+      .select("student_id,institution_id")
+      .eq("device_id", deviceId);
 
+    if (lErr) {
+      console.error(`[parent.children:${id}] select links error`, lErr);
+      return NextResponse.json({ error: lErr.message }, { status: 400 });
+    }
+    const studentIds = (links ?? []).map(r => r.student_id).filter(Boolean);
+    console.info(`[parent.children:${id}] links`, { count: studentIds.length });
+
+    if (studentIds.length === 0) return NextResponse.json({ items: [] });
+
+    // 3) Charger les élèves
+    const { data: studs, error: sErr } = await srv
+      .from("students")
+      .select("id, first_name, last_name, matricule")
+      .in("id", studentIds);
+
+    if (sErr) {
+      console.error(`[parent.children:${id}] select students error`, sErr);
+      return NextResponse.json({ error: sErr.message }, { status: 400 });
+    }
+
+    // 4) Formater pour le dashboard parent
+    const items = (studs ?? []).map(s => ({
+      id: s.id,
+      full_name: full(s.first_name, s.last_name),
+      class_label: null as string | null, // (facultatif) si tu veux, on branchera plus tard
+      matricule: s.matricule ?? null,
+    }));
+
+    console.info(`[parent.children:${id}] ok`, { items: items.length });
     return NextResponse.json({ items });
+  } catch (e: any) {
+    console.error(`[parent.children:${id}] fatal`, e);
+    return NextResponse.json({ error: String(e?.message || e) }, { status: 500 });
   }
-
-  // ── Mode B: session parent (matricule) → un seul élève = sid
-  const claims = readParentSessionFromReq(req);
-  if (!claims) return NextResponse.json({ items: [] }, { status: 401 });
-  const { sid } = claims;
-
-  const [{ data: s }, { data: enr }] = await Promise.all([
-    srv.from("students").select("id, first_name, last_name").eq("id", sid).maybeSingle(),
-    srv
-      .from("class_enrollments")
-      .select("student_id, classes:class_id(label)")
-      .eq("student_id", sid)
-      .is("end_date", null),
-  ]);
-
-  if (!s) return NextResponse.json({ items: [] });
-
-  const full = `${(s as any).first_name ?? ""} ${(s as any).last_name ?? ""}`.trim() || "(inconnu)";
-  const class_label = firstLabel(enr?.[0]?.classes) ?? null;
-
-  return NextResponse.json({
-    items: [{ id: String((s as any).id), full_name: full, class_label }],
-  });
 }
