@@ -18,7 +18,6 @@ function urlBase64ToUint8Array(base64: string) {
   for (let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
   return out;
 }
-
 const fmt = (iso: string) =>
   new Date(iso).toLocaleString([], {
     hour: "2-digit",
@@ -27,8 +26,6 @@ const fmt = (iso: string) =>
     month: "2-digit",
     year: "numeric",
   });
-
-/** Ex: "10h-11h" si minutes = 00; sinon "10h15-11h" / "10h-11h30" */
 function slotLabel(iso: string, expectedMinutes?: number | null): string {
   const start = new Date(iso);
   const minutes = Number.isFinite(Number(expectedMinutes)) ? Number(expectedMinutes) : 60;
@@ -43,7 +40,6 @@ function slotLabel(iso: string, expectedMinutes?: number | null): string {
   const right = em === "00" ? `${eh}h` : `${eh}h${em}`;
   return `${left}-${right}`;
 }
-
 function dayKey(iso: string) {
   const d = new Date(iso);
   const y = d.getFullYear();
@@ -67,6 +63,12 @@ function rubricLabel(r: "discipline" | "tenue" | "moralite") {
   if (r === "tenue") return "Tenue";
   if (r === "moralite") return "Moralité";
   return "Discipline";
+}
+function yyyyMMdd(d: Date) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${dd}`;
 }
 
 /* ───────── types ───────── */
@@ -237,9 +239,7 @@ async function ensurePushSubscription() {
     }),
   });
   let body: any = null;
-  try {
-    body = await res.json();
-  } catch {}
+  try { body = await res.json(); } catch {}
   if (!res.ok) {
     const err = `${res.status} ${body?.error || ""}${body?.stage ? ` [${body.stage}]` : ""}`;
     return { ok: false, reason: "server_upsert_failed:" + err };
@@ -261,13 +261,7 @@ function groupByDay(events: Ev[]): DayGroup[] {
     const ordered = [...arr].sort((a, b) => b.when.localeCompare(a.when));
     const absentCount = ordered.filter((e) => e.type === "absent").length;
     const lateCount = ordered.filter((e) => e.type === "late").length;
-    groups.push({
-      day: k,
-      label: dayLabel(ordered[0].when),
-      absentCount,
-      lateCount,
-      items: ordered,
-    });
+    groups.push({ day: k, label: dayLabel(ordered[0].when), absentCount, lateCount, items: ordered });
   }
   groups.sort((a, b) => b.day.localeCompare(a.day));
   return groups;
@@ -283,7 +277,7 @@ export default function ParentPage() {
   const [loadingConduct, setLoadingConduct] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
 
-  // Filtre période pour la conduite
+  // Filtre période pour la conduite (par défaut : 90 jours glissants)
   const [conductFrom, setConductFrom] = useState<string>("");
   const [conductTo, setConductTo] = useState<string>("");
 
@@ -301,7 +295,17 @@ export default function ParentPage() {
   // ⛔ État de déconnexion
   const [loggingOut, setLoggingOut] = useState(false);
 
+  // — init des dates par défaut + états push
   useEffect(() => {
+    // Dates par défaut : aujourd’hui et J-90
+    const today = new Date();
+    const start = new Date();
+    start.setDate(start.getDate() - 90);
+    const f = yyyyMMdd(start);
+    const t = yyyyMMdd(today);
+    setConductFrom(f);
+    setConductTo(t);
+
     const refresh = () =>
       setGranted(typeof Notification !== "undefined" && Notification.permission === "granted");
     refresh();
@@ -314,26 +318,31 @@ export default function ParentPage() {
     return () => document.removeEventListener("visibilitychange", refresh);
   }, []);
 
-  async function loadKids() {
+  async function loadKids(from?: string, to?: string) {
     setLoadingKids(true);
     try {
-      const j = await fetch("/api/parent/children", { cache: "no-store" }).then((r) => r.json());
+      // 1) enfants
+      const j = await fetch("/api/parent/children", {
+        cache: "no-store",
+        credentials: "include",
+      }).then((r) => r.json());
       const ks = (j.items || []) as Kid[];
       setKids(ks);
 
+      // 2) événements + sanctions
       const feedEntries: Array<[string, Ev[]]> = [];
       const penEntries: Array<[string, KidPenalty[]]> = [];
 
       for (const k of ks) {
         const f = await fetch(
-          `/api/parent/children/events?student_id=${encodeURIComponent(k.id)}`,
-          { cache: "no-store" }
+          `/api/parent/children/events?student_id=${encodeURIComponent(k.id)}&limit=50`,
+          { cache: "no-store", credentials: "include" }
         ).then((r) => r.json());
         feedEntries.push([k.id, (f.items || []) as Ev[]]);
 
         const p = await fetch(
           `/api/parent/children/penalties?student_id=${encodeURIComponent(k.id)}&limit=20`,
-          { cache: "no-store" }
+          { cache: "no-store", credentials: "include" }
         )
           .then((r) => r.json())
           .catch(() => ({ items: [] }));
@@ -343,6 +352,7 @@ export default function ParentPage() {
       setFeed(Object.fromEntries(feedEntries));
       setKidPenalties(Object.fromEntries(penEntries));
 
+      // 3) expand auto si une seule ligne dans une journée
       const initialExpanded: Record<string, boolean> = {};
       for (const [kidId, list] of feedEntries) {
         const groups = groupByDay(list);
@@ -350,7 +360,10 @@ export default function ParentPage() {
       }
       setExpanded(initialExpanded);
 
-      await loadConductForAll(ks, conductFrom, conductTo);
+      // 4) conduite avec intervalle (par défaut 90j)
+      const useFrom = from || conductFrom;
+      const useTo = to || conductTo;
+      await loadConductForAll(ks, useFrom, useTo);
     } catch (e: any) {
       setMsg(e?.message || "Erreur de chargement.");
     } finally {
@@ -368,6 +381,7 @@ export default function ParentPage() {
         if (to) qs.set("to", to);
         const c = await fetch(`/api/parent/children/conduct?${qs.toString()}`, {
           cache: "no-store",
+          credentials: "include",
         })
           .then((r) => r.json())
           .catch(() => ({}));
@@ -383,13 +397,15 @@ export default function ParentPage() {
     await loadConductForAll(kids, conductFrom, conductTo);
   }
 
+  // premier chargement (après que les dates par défaut aient été posées)
   useEffect(() => {
-    loadKids();
+    if (!conductFrom || !conductTo) return; // attend l'init des dates
+    loadKids(conductFrom, conductTo);
     ensurePushSubscription().then((r) => {
       if (r.ok) setGranted(true);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [conductFrom, conductTo]);
 
   async function enablePush() {
     setMsg(null);
@@ -408,14 +424,12 @@ export default function ParentPage() {
     setLoggingOut(true);
     setMsg("Déconnexion en cours…");
 
-    // 1) Désinscription push côté serveur (si endpoint dispo) + côté client
     try {
       if ("serviceWorker" in navigator) {
         const reg = await navigator.serviceWorker.getRegistration();
         const sub = await reg?.pushManager.getSubscription();
         const device_id = sub?.endpoint || "";
 
-        // Tentatives API (options, ignorer si non présentes)
         if (device_id) {
           try {
             await fetch("/api/push/subscribe", {
@@ -434,20 +448,15 @@ export default function ParentPage() {
             });
           } catch {}
         }
-
         try { await sub?.unsubscribe(); } catch {}
       }
     } catch {}
 
-    // 2) Sync auth côté API si utilisé
     try { await fetch("/api/auth/sync", { method: "DELETE", credentials: "include" }); } catch {}
 
-    // 3) Redirection : priorité au logout Parents
     try {
       const target = `${LOGOUT_PARENTS}?from=parents`;
       window.location.assign(target);
-
-      // Si la nav n'a pas démarré, fallback login parents puis générique
       setTimeout(() => {
         if (document.visibilityState === "visible") {
           window.location.replace(LOGIN_PARENTS);
@@ -464,7 +473,6 @@ export default function ParentPage() {
         }
       }, 1200);
     } catch {
-      // Dernier recours
       window.location.href = LOGOUT_GENERIC;
     }
   }
@@ -498,8 +506,6 @@ export default function ParentPage() {
               enfants.
             </p>
           </div>
-
-          {/* Actions entête */}
           <div className="flex items-center gap-2 shrink-0">
             {!granted ? (
               <Button tone="white" onClick={enablePush} title="Activer les notifications push">
@@ -535,7 +541,7 @@ export default function ParentPage() {
           <div className="text-sm font-semibold uppercase tracking-wide text-slate-700">
             Conduite — Moyenne par enfant
           </div>
-        <div className="hidden md:flex items-center gap-2">
+          <div className="hidden md:flex items-center gap-2">
             <Input type="date" value={conductFrom} onChange={(e) => setConductFrom(e.target.value)} />
             <span className="text-slate-600 text-xs">au</span>
             <Input type="date" value={conductTo} onChange={(e) => setConductTo(e.target.value)} />
