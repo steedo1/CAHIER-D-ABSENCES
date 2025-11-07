@@ -1,7 +1,7 @@
-// src/app/api/push/subscribe/route.ts
 import { NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
+import { readParentSessionFromReq } from "@/lib/parent-session";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -21,9 +21,13 @@ function log(stage: string, meta: Record<string, unknown>) {
 type Body = {
   platform?: string;       // "web" | "android" | "ios"
   device_id?: string;      // endpoint (web) ou device id (mobile)
-  subscription?: any;      // webpush subscription JSON
-  fcm_token?: string;      // FCM token mobile
+  subscription?: any;      // webpush subscription JSON (web)
+  fcm_token?: string;      // FCM token (mobile)
 };
+
+type Identity =
+  | { mode: "supabase"; userId: string; studentId: null }
+  | { mode: "parent";   userId: string; studentId: string };
 
 /* ─────────────── Route ─────────────── */
 export async function POST(req: Request) {
@@ -32,13 +36,22 @@ export async function POST(req: Request) {
   const startedAt = new Date().toISOString();
 
   try {
-    /* Auth */
-    const { data: { user } } = await supa.auth.getUser();
-    if (!user) {
+    /* 🔐 Auth: priorité à l'auth Supabase (profs/admins), sinon cookie parent `psess` */
+    const { data: { user: supaUser } } = await supa.auth.getUser().catch(() => ({ data: { user: null } as any }));
+    let ident: Identity | null = null;
+
+    if (supaUser?.id) {
+      ident = { mode: "supabase", userId: supaUser.id, studentId: null };
+    } else {
+      const claims = readParentSessionFromReq(req); // { uid, sid, m, exp } ou null
+      if (claims) ident = { mode: "parent", userId: claims.uid, studentId: claims.sid };
+    }
+
+    if (!ident) {
       log("auth_fail", { startedAt });
       return NextResponse.json({ error: "unauthorized", stage: "auth" }, { status: 401 });
     }
-    log("auth_ok", { userId: user.id, startedAt });
+    log("auth_ok", { mode: ident.mode, userId: shortId(ident.userId), studentId: ident.studentId ? shortId(ident.studentId) : null, startedAt });
 
     /* Body parsing */
     let body: Body | null = null;
@@ -53,7 +66,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "empty_body", stage: "parse" }, { status: 400 });
     }
 
-    /* Plateforme déduite */
+    /* Plateforme */
     const platformRaw = String(body.platform || "").toLowerCase().trim();
     let platform = platformRaw;
     if (!platform) {
@@ -67,10 +80,16 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "unknown_platform", stage: "preflight" }, { status: 400 });
     }
 
-    /* Construction de la row à upserter */
+    /* Construction row à upserter */
     const now = new Date().toISOString();
     let deviceId = String(body.device_id || "").trim();
-    const row: any = { user_id: user.id, platform, last_seen_at: now };
+    const row: any = {
+      user_id: ident.userId,
+      platform,
+      last_seen_at: now,
+      // ⬇️ Important : si session parent → on enregistre aussi l'élève
+      student_id: ident.mode === "parent" ? ident.studentId : null,
+    };
 
     if (platform === "web") {
       const sub = body.subscription;
@@ -85,7 +104,7 @@ export async function POST(req: Request) {
       }
       deviceId = deviceId || String(sub.endpoint);
       row.device_id = deviceId;
-      row.subscription_json = sub; // on garde l’objet tel quel (pas de log complet)
+      row.subscription_json = sub; // conserve l’objet tel quel (stringifiable côté PG)
     } else {
       const token = String(body.fcm_token || "").trim();
       log("fcm_preflight", { token: shortId(token) });
@@ -96,12 +115,20 @@ export async function POST(req: Request) {
       row.device_id = deviceId || token;
     }
 
-    /* Upsert principal */
+    /* Upsert principal
+       NB: on garde le même onConflict → (user_id, platform, device_id)
+       `student_id` est une info supplémentaire (indexée) mais non conflictuelle.
+    */
     const onConflict = "user_id,platform,device_id";
-    log("upsert_try", { onConflict, user_id: user.id, platform, device_id: shortId(row.device_id) });
-    const up = await srv
-      .from("push_subscriptions")
-      .upsert(row, { onConflict, ignoreDuplicates: false });
+    log("upsert_try", {
+      onConflict,
+      user_id: shortId(row.user_id),
+      platform,
+      device_id: shortId(row.device_id),
+      student_id: row.student_id ? shortId(row.student_id) : null,
+    });
+
+    const up = await srv.from("push_subscriptions").upsert(row, { onConflict, ignoreDuplicates: false });
 
     if (up.error) {
       log("upsert_fail", { code: up.error.code, message: up.error.message, details: up.error.details, hint: up.error.hint });
@@ -110,7 +137,7 @@ export async function POST(req: Request) {
       const upd = await srv
         .from("push_subscriptions")
         .update(row)
-        .match({ user_id: user.id, platform, device_id: row.device_id })
+        .match({ user_id: ident.userId, platform, device_id: row.device_id })
         .select("user_id");
 
       if (upd.error || !upd.data?.length) {
@@ -130,16 +157,16 @@ export async function POST(req: Request) {
           return NextResponse.json({ error: ins.error.message, stage: "insert" }, { status: 400 });
         }
 
-        log("insert_ok", { platform, device_id: shortId(row.device_id) });
-        return NextResponse.json({ ok: true, mode: "insert", platform, device_id: row.device_id });
+        log("insert_ok", { platform, device_id: shortId(row.device_id), student_id: row.student_id ? shortId(row.student_id) : null });
+        return NextResponse.json({ ok: true, mode: "insert", platform, device_id: row.device_id, student_id: row.student_id ?? null });
       }
 
-      log("update_ok", { platform, device_id: shortId(row.device_id) });
-      return NextResponse.json({ ok: true, mode: "update", platform, device_id: row.device_id });
+      log("update_ok", { platform, device_id: shortId(row.device_id), student_id: row.student_id ? shortId(row.student_id) : null });
+      return NextResponse.json({ ok: true, mode: "update", platform, device_id: row.device_id, student_id: row.student_id ?? null });
     }
 
-    log("upsert_ok", { platform, device_id: shortId(row.device_id) });
-    return NextResponse.json({ ok: true, mode: "upsert", platform, device_id: row.device_id });
+    log("upsert_ok", { platform, device_id: shortId(row.device_id), student_id: row.student_id ? shortId(row.student_id) : null });
+    return NextResponse.json({ ok: true, mode: "upsert", platform, device_id: row.device_id, student_id: row.student_id ?? null });
   } catch (e: any) {
     log("unhandled_error", { error: String(e?.message || e) });
     return NextResponse.json({ error: String(e?.message || e), stage: "unhandled" }, { status: 500 });

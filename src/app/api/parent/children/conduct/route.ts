@@ -1,28 +1,14 @@
-//src/app/api/parent/children/conduct/route.ts
 import { NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
+import { readParentSessionFromReq } from "@/lib/parent-session";
 
 const RUBRIC_MAX = { assiduite: 6, tenue: 3, moralite: 4, discipline: 7 } as const;
 const clamp = (n: number, min: number, max: number) => Math.max(min, Math.min(max, n));
 
-function startISO(d?: string) {
-  return d ? new Date(`${d}T00:00:00.000Z`).toISOString() : "0001-01-01T00:00:00.000Z";
-}
-function endISO(d?: string) {
-  return d ? new Date(`${d}T23:59:59.999Z`).toISOString() : "9999-12-31T23:59:59.999Z";
-}
+function startISO(d?: string) { return d ? new Date(`${d}T00:00:00.000Z`).toISOString() : "0001-01-01T00:00:00.000Z"; }
+function endISO(d?: string)   { return d ? new Date(`${d}T23:59:59.999Z`).toISOString() : "9999-12-31T23:59:59.999Z"; }
 
-/** Appréciation selon la grille demandée.
- * Couverture continue :
- *  - total <= 5                        → Blâme
- *  - 5 < total < 8                    → Mauvaise conduite
- *  - 8 ≤ total < 10                   → Conduite médiocre
- *  - 10 ≤ total < 12                  → Conduite passable
- *  - 12 ≤ total < 16                  → Bonne conduite
- *  - 16 ≤ total < 18                  → Très bonne conduite
- *  - 18 ≤ total ≤ 20                  → Excellente conduite
- */
 function appreciationFromTotal(total: number): string {
   if (total <= 5) return "Blâme";
   if (total < 8) return "Mauvaise conduite";
@@ -37,26 +23,52 @@ export async function GET(req: Request) {
   const supa = await getSupabaseServerClient();
   const srv  = getSupabaseServiceClient();
 
-  const { data: { user } } = await supa.auth.getUser();
-  if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-
+  const { data: { user } } = await supa.auth.getUser().catch(() => ({ data: { user: null } } as any));
   const { searchParams } = new URL(req.url);
-  const student_id = String(searchParams.get("student_id") || "");
+  const qStudent = String(searchParams.get("student_id") || "");
   const from = searchParams.get("from") || "";
   const to   = searchParams.get("to")   || "";
-  if (!student_id) return NextResponse.json({ error: "student_id_required" }, { status: 400 });
 
-  // 🔐 Vérifie que ce parent est bien tuteur de cet élève, récupère l’établissement
-  const { data: link } = await srv
-    .from("student_guardians")
-    .select("institution_id")
-    .eq("guardian_profile_id", user.id)
-    .eq("student_id", student_id)
-    .maybeSingle();
-  const institution_id = (link as any)?.institution_id as string | undefined;
-  if (!institution_id) return NextResponse.json({ error: "forbidden" }, { status: 403 });
+  let student_id = qStudent;
+  let institution_id: string | undefined;
 
-  // Absences en minutes
+  if (user) {
+    if (!student_id) return NextResponse.json({ error: "student_id_required" }, { status: 400 });
+    const { data: link } = await srv
+      .from("student_guardians")
+      .select("institution_id")
+      .eq("guardian_profile_id", user.id)
+      .eq("student_id", student_id)
+      .maybeSingle();
+    institution_id = (link as any)?.institution_id as string | undefined;
+    if (!institution_id) return NextResponse.json({ error: "forbidden" }, { status: 403 });
+  } else {
+    const claims = readParentSessionFromReq(req);
+    if (!claims) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+    if (student_id && student_id !== claims.sid) return NextResponse.json({ error: "forbidden" }, { status: 403 });
+    student_id = claims.sid;
+
+    // institution_id via dernière inscription active
+    const { data: enr } = await srv
+      .from("class_enrollments")
+      .select("institution_id")
+      .eq("student_id", student_id)
+      .is("end_date", null)
+      .limit(1);
+    institution_id = enr?.[0]?.institution_id as string | undefined;
+    if (!institution_id) {
+      // fallback: chercher la plus récente
+      const { data: anyEnr } = await srv
+        .from("class_enrollments")
+        .select("institution_id, start_date")
+        .eq("student_id", student_id)
+        .order("start_date", { ascending: false })
+        .limit(1);
+      institution_id = anyEnr?.[0]?.institution_id as string | undefined;
+    }
+    if (!institution_id) return NextResponse.json({ error: "institution_not_found" }, { status: 404 });
+  }
+
   const { data: absRows } = await srv
     .from("v_mark_minutes")
     .select("minutes, started_at")
@@ -65,7 +77,6 @@ export async function GET(req: Request) {
     .gte("started_at", startISO(from))
     .lte("started_at", endISO(to));
 
-  // Retards en minutes (si vue présente)
   let tardyRows: Array<{ minutes: number; started_at: string }> = [];
   try {
     const { data: tRows } = await srv
@@ -83,7 +94,6 @@ export async function GET(req: Request) {
   const minutes_total   = absence_minutes + tardy_minutes;
   const hours           = minutes_total / 60;
 
-  // Évènements de conduite
   type Ev = {
     rubric: "assiduite" | "tenue" | "moralite" | "discipline";
     event_type:
@@ -108,7 +118,6 @@ export async function GET(req: Request) {
     events.sort((a, b) => a.occurred_at.localeCompare(b.occurred_at));
   }
 
-  // Pénalités libres
   type Pen = { rubric: "tenue" | "moralite" | "discipline"; points: number; occurred_at: string };
   let penalties: Pen[] = [];
   {
@@ -125,7 +134,6 @@ export async function GET(req: Request) {
       .map((p) => ({ rubric: p.rubric as Pen["rubric"], points: Number(p.points || 0), occurred_at: p.occurred_at }));
   }
 
-  // Calcul barème (identique à l’admin)
   let assiduite = hours > 10 ? 0 : clamp(RUBRIC_MAX.assiduite - 0.5 * hours, 0, RUBRIC_MAX.assiduite);
 
   const tenueWarn = events.filter((e) => e.event_type === "uniform_warning").length;
@@ -143,7 +151,6 @@ export async function GET(req: Request) {
   }
   let discipline = clamp(RUBRIC_MAX.discipline - 1 * discN, 0, RUBRIC_MAX.discipline);
 
-  // Pénalités libres
   const p = penalties.reduce(
     (acc, x) => ({ ...acc, [x.rubric]: (acc as any)[x.rubric] + x.points }),
     { tenue: 0, moralite: 0, discipline: 0 } as any,

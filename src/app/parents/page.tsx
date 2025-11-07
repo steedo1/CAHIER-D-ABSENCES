@@ -68,7 +68,7 @@ type Kid = { id: string; full_name: string; class_label: string | null };
 type Ev = {
   id: string;
   when: string;                         // session.started_at
-  expected_minutes?: number | null;     // ⬅️ ajouté
+  expected_minutes?: number | null;
   type: "absent" | "late";
   minutes_late?: number | null;
   class_label?: string | null;
@@ -82,7 +82,7 @@ type KidPenalty = {
   reason?: string | null;
   class_label?: string | null;
   subject_name?: string | null;
-  author_subject_name?: string | null; // ✅
+  author_subject_name?: string | null;
   author_name?: string | null;
   author_role?: string | null;
   author_role_label?: string | null;
@@ -237,9 +237,11 @@ async function ensurePushSubscription() {
   if (!("serviceWorker" in navigator) || !("PushManager" in window))
     return { ok: false, reason: "browser_no_push" };
 
-  // Permission
-  const perm = await Notification.requestPermission();
-  if (perm !== "granted") return { ok: false, reason: "denied" };
+  // Si déjà accordé, ne redemande pas
+  if (typeof Notification !== "undefined" && Notification.permission !== "granted") {
+    const perm = await Notification.requestPermission();
+    if (perm !== "granted") return { ok: false, reason: "denied" };
+  }
 
   // Service worker registration (register if missing)
   let reg = await navigator.serviceWorker.getRegistration();
@@ -250,7 +252,6 @@ async function ensurePushSubscription() {
       return { ok: false, reason: "sw_register_failed:" + (e?.message || e) };
     }
   }
-  // Ensure ready
   reg = await navigator.serviceWorker.ready;
 
   // VAPID key
@@ -339,7 +340,7 @@ export default function ParentPage() {
   // 🔔 Permission de notification déjà accordée ?
   const [granted, setGranted] = useState(false);
 
-  // 📱 iOS + mode standalone (PWA installée) → utile pour expliquer la contrainte iOS
+  // 📱 iOS + mode standalone (PWA installée)
   const [isiOS, setIsiOS] = useState(false);
   const [isStandalone, setIsStandalone] = useState(false);
 
@@ -475,7 +476,12 @@ export default function ParentPage() {
           <p className="text-white/80 text-sm">Suivez les absences, retards et sanctions récentes de vos enfants. Activez les push pour être alerté.</p>
         </div>
         <div className="flex items-center gap-2">
-          <a href="/logout" className="rounded-full bg-white/10 px-3 py-1.5 text-sm text-white ring-1 ring-white/30 hover:bg-white/15 hover:ring-white/50" title="Se déconnecter">
+          {/* 🔒 utilise notre nouveau endpoint côté parent */}
+          <a
+            href="/api/parent/logout"
+            className="rounded-full bg-white/10 px-3 py-1.5 text-sm text-white ring-1 ring-white/30 hover:bg-white/15 hover:ring-white/50"
+            title="Se déconnecter"
+          >
             Déconnexion
           </a>
           {granted ? (
@@ -495,7 +501,7 @@ export default function ParentPage() {
       </header>
 
       {/* iOS hint (seulement si non installé + non autorisé) */}
-      {isiOS && !isStandalone && !granted && (
+      {typeof window !== "undefined" && isiOS && !isStandalone && !granted && (
         <div className="rounded-xl border p-3 bg-amber-50 text-amber-900">
           <div className="text-sm">
             <b>iPhone/iPad :</b> pour recevoir les notifications, ajoutez d’abord l’app à l’écran d’accueil :
@@ -681,7 +687,7 @@ export default function ParentPage() {
                       return (
                         <li key={g.day} className="rounded-lg border p-3">
                           <div className="flex items-center justify-between">
-                            <div className="text-sm font-medium text-slate-800">
+                            <div className="text-sm font-medium text-slate-8 00">
                               {g.label} : <span className="font-normal text-slate-700">{summary}</span>
                             </div>
                             {g.items.length > 0 && (
@@ -744,7 +750,7 @@ export default function ParentPage() {
                                 </span>
                                 −{Number(p.points || 0).toFixed(2)} pt
                                 {(() => {
-                                  const subj = p.author_subject_name || p.subject_name; // ✅ fallback correct
+                                  const subj = p.author_subject_name || p.subject_name;
                                   if (p.author_role_label === "Enseignant") {
                                     return subj ? ` — par le prof de ${subj}` : " — par un enseignant";
                                   }

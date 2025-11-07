@@ -1,4 +1,4 @@
-//src/app/api/push/dispatch/route.ts
+// src/app/api/push/dispatch/route.ts
 import { NextResponse } from "next/server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import webpush from "web-push";
@@ -101,29 +101,25 @@ type QueueRow = {
   created_at: string;
 };
 type SubRow = {
-  user_id: string;
+  user_id?: string;          // parent route
+  student_id?: string;       // élève (matricule)
   platform: string | null;
   device_id: string | null;
   subscription_json: any;
   fcm_token: string | null;
+  __source?: "parent" | "student"; // pour la suppression au cleanup
 };
 
-function hasPushChannel(row: QueueRow) {
-  try {
-    const raw = row.channels;
-    const arr = Array.isArray(raw) ? raw : raw ? JSON.parse(String(raw)) : [];
-    const ok = Array.isArray(arr) && arr.includes("push");
-    if (!ok) {
-      console.debug("[push/dispatch] skip_no_push_channel", {
-        id: row.id,
-        channels: raw,
-      });
-    }
-    return ok;
-  } catch (e: any) {
-    console.warn("[push/dispatch] channels_parse_error", { id: row.id, error: String(e?.message || e) });
-    return false;
-  }
+/** Essaie de récupérer un student_id depuis la payload */
+function extractStudentId(core: any): string | null {
+  if (!core) return null;
+  // chemins possibles
+  if (typeof core.student_id === "string") return core.student_id;
+  if (core.student?.id) return String(core.student.id);
+  if (core.mark?.student_id) return String(core.mark.student_id);
+  if (core.attendance?.student_id) return String(core.attendance.student_id);
+  if (core.payload?.student_id) return String(core.payload.student_id);
+  return null;
 }
 
 /* ──────────────── Main ──────────────── */
@@ -184,9 +180,9 @@ async function run(req: Request) {
     return NextResponse.json({ ok: true, id, attempted: 0, sent_device_sends: 0, dropped: 0, ms });
   }
 
-  // 2) Subscriptions (web + mobile)
+  // 2) Subscriptions (web + mobile) — parents
   const userIds = Array.from(new Set(rows.map((r) => String(r.parent_id))));
-  console.info("[push/dispatch] subs_fetch", { id, userCount: userIds.length });
+  console.info("[push/dispatch] subs_fetch_parents", { id, userCount: userIds.length });
 
   const { data: subs, error: subsErr } = await srv
     .from("push_subscriptions")
@@ -198,8 +194,8 @@ async function run(req: Request) {
   }
 
   const subsByUser = new Map<string, SubRow[]>();
-  for (const s of (subs || []) as SubRow[]) {
-    let subJson = s.subscription_json as any;
+  for (const s of (subs || []) as any[]) {
+    let subJson = s.subscription_json;
     if (subJson && typeof subJson === "string") {
       try {
         subJson = JSON.parse(subJson);
@@ -207,11 +203,11 @@ async function run(req: Request) {
     }
     const k = String(s.user_id);
     const arr = subsByUser.get(k) || [];
-    arr.push({ ...s, subscription_json: subJson });
+    arr.push({ user_id: k, platform: s.platform, device_id: s.device_id, subscription_json: subJson, fcm_token: s.fcm_token, __source: "parent" });
     subsByUser.set(k, arr);
   }
 
-  console.info("[push/dispatch] subs_indexed", {
+  console.info("[push/dispatch] subs_indexed_parents", {
     id,
     totalSubs: subs?.length || 0,
     sample: Array.from(subsByUser.entries())
@@ -223,13 +219,64 @@ async function run(req: Request) {
       })),
   });
 
+  // 2bis) Subscriptions — élèves (matricule)
+  const studentIds = Array.from(
+    new Set(
+      rows
+        .map((r) => extractStudentId(safeParse<any>(r.payload) || {}))
+        .filter(Boolean) as string[],
+    ),
+  );
+  console.info("[push/dispatch] subs_fetch_students", { id, studentCount: studentIds.length });
+
+  let subsStudentByKid = new Map<string, SubRow[]>();
+  if (studentIds.length) {
+    try {
+      const { data: subsKid, error: subsKidErr } = await srv
+        .from("push_subscriptions_student")
+        .select("student_id,platform,device_id,subscription_json,fcm_token")
+        .in("student_id", studentIds);
+
+      if (subsKidErr) {
+        console.warn("[push/dispatch] subs_student_select_error", { id, error: subsKidErr.message });
+      } else {
+        for (const s of (subsKid || []) as any[]) {
+          let subJson = s.subscription_json;
+          if (subJson && typeof subJson === "string") {
+            try {
+              subJson = JSON.parse(subJson);
+            } catch {}
+          }
+          const k = String(s.student_id);
+          const arr = subsStudentByKid.get(k) || [];
+          arr.push({
+            student_id: k,
+            platform: s.platform,
+            device_id: s.device_id,
+            subscription_json: subJson,
+            fcm_token: s.fcm_token,
+            __source: "student",
+          });
+          subsStudentByKid.set(k, arr);
+        }
+      }
+    } catch (e: any) {
+      console.warn("[push/dispatch] subs_student_unavailable", { id, error: String(e?.message || e) });
+    }
+  }
+
   // 3) Envois
   let sentDeviceSends = 0,
     dropped = 0;
 
   for (const n of rows) {
-    const list = subsByUser.get(String(n.parent_id)) || [];
     const core = safeParse<any>(n.payload) || {};
+    const kid = extractStudentId(core);
+
+    const listParent = subsByUser.get(String(n.parent_id)) || [];
+    const listKid = kid ? subsStudentByKid.get(String(kid)) || [] : [];
+    const list = [...listParent, ...listKid];
+
     const typ = core?.type || core?.kind || core?.event || "notification";
     const title =
       core?.title ||
@@ -240,16 +287,19 @@ async function run(req: Request) {
         ? "Absence / Retard"
         : "Notification");
     const body = core?.body || n?.body || "";
-    const url = "/parents";
+    const url = "/parents"; // page front existante
 
     console.info("[push/dispatch] item_begin", {
       id,
       qid: n.id,
       parent: shortId(n.parent_id),
+      kid: kid ? shortId(kid) : null,
       typ,
       title,
       bodyLen: (body || "").length,
-      subs: list.length,
+      subs_parents: listParent.length,
+      subs_students: listKid.length,
+      subs_total: list.length,
     });
 
     const payload = JSON.stringify({ title, body, url, data: core });
@@ -258,7 +308,12 @@ async function run(req: Request) {
     let lastError = list.length ? "" : "no_subscriptions";
 
     if (!list.length) {
-      console.warn("[push/dispatch] no_subscriptions_for_parent", { id, qid: n.id, parent: shortId(n.parent_id) });
+      console.warn("[push/dispatch] no_subscriptions_for_item", {
+        id,
+        qid: n.id,
+        parent: shortId(n.parent_id),
+        kid: kid ? shortId(kid) : null,
+      });
     }
 
     for (const s of list) {
@@ -268,15 +323,15 @@ async function run(req: Request) {
 
       // WEB via WebPush
       if (s.subscription_json && platform === "web") {
-        console.info("[push/dispatch] web_send_try", { id, qid: n.id, platform, endpoint: endpointShort });
+        console.info("[push/dispatch] web_send_try", { id, qid: n.id, platform, endpoint: endpointShort, src: s.__source });
         try {
           const res: any = await webpush.sendNotification(s.subscription_json, payload);
-          // web-push may or may not expose details; we just log we got here
           console.info("[push/dispatch] web_send_ok", {
             id,
             qid: n.id,
             endpoint: endpointShort,
             statusCode: res?.statusCode ?? null,
+            src: s.__source,
           });
           successes++;
           sentDeviceSends++;
@@ -288,25 +343,42 @@ async function run(req: Request) {
             qid: n.id,
             endpoint: endpointShort,
             error: msg.slice(0, 500),
+            src: s.__source,
           });
           if (/(410|404|not a valid|unsubscribe|expired|Gone)/i.test(msg)) {
             dropped++;
-            let q = srv
-              .from("push_subscriptions")
-              .delete()
-              .eq("user_id", n.parent_id)
-              .eq("platform", s.platform);
-            if (s.device_id) q = q.eq("device_id", s.device_id);
-            const { error: delErr } = await q;
-            if (delErr) {
-              console.warn("[push/dispatch] sub_delete_fail", {
-                id,
-                qid: n.id,
-                endpoint: endpointShort,
-                error: delErr.message,
-              });
+            // cleanup selon la source
+            if (s.__source === "student") {
+              let q = srv.from("push_subscriptions_student").delete();
+              if (s.student_id) q = q.eq("student_id", s.student_id);
+              if (s.platform) q = q.eq("platform", s.platform);
+              if (s.device_id) q = q.eq("device_id", s.device_id);
+              const { error: delErr } = await q;
+              if (delErr) {
+                console.warn("[push/dispatch] sub_student_delete_fail", {
+                  id,
+                  qid: n.id,
+                  endpoint: endpointShort,
+                  error: delErr.message,
+                });
+              } else {
+                console.info("[push/dispatch] sub_student_deleted", { id, qid: n.id, endpoint: endpointShort });
+              }
             } else {
-              console.info("[push/dispatch] sub_deleted", { id, qid: n.id, endpoint: endpointShort });
+              let q = srv.from("push_subscriptions").delete().eq("user_id", n.parent_id);
+              if (s.platform) q = q.eq("platform", s.platform);
+              if (s.device_id) q = q.eq("device_id", s.device_id);
+              const { error: delErr } = await q;
+              if (delErr) {
+                console.warn("[push/dispatch] sub_delete_fail", {
+                  id,
+                  qid: n.id,
+                  endpoint: endpointShort,
+                  error: delErr.message,
+                });
+              } else {
+                console.info("[push/dispatch] sub_deleted", { id, qid: n.id, endpoint: endpointShort });
+              }
             }
           }
         }
@@ -315,7 +387,7 @@ async function run(req: Request) {
 
       // MOBILE via FCM
       if (s.fcm_token) {
-        console.info("[push/dispatch] fcm_try", { id, qid: n.id, token: shortId(s.fcm_token, 20) });
+        console.info("[push/dispatch] fcm_try", { id, qid: n.id, token: shortId(s.fcm_token, 20), src: s.__source });
         try {
           await sendFCM(s.fcm_token, title, body, url, core);
           successes++;
@@ -328,16 +400,29 @@ async function run(req: Request) {
             qid: n.id,
             token: shortId(s.fcm_token, 20),
             error: msg.slice(0, 500),
+            src: s.__source,
           });
           if (/(NotRegistered|InvalidRegistration|410|404)/i.test(msg)) {
             dropped++;
-            let q = srv.from("push_subscriptions").delete().eq("user_id", n.parent_id);
-            if (s.device_id) q = q.eq("device_id", s.device_id);
-            const { error: delErr } = await q;
-            if (delErr) {
-              console.warn("[push/dispatch] sub_delete_fail", { id, qid: n.id, error: delErr.message });
+            if (s.__source === "student") {
+              let q = srv.from("push_subscriptions_student").delete();
+              if (s.student_id) q = q.eq("student_id", s.student_id);
+              if (s.device_id) q = q.eq("device_id", s.device_id);
+              const { error: delErr } = await q;
+              if (delErr) {
+                console.warn("[push/dispatch] sub_student_delete_fail", { id, qid: n.id, error: delErr.message });
+              } else {
+                console.info("[push/dispatch] sub_student_deleted", { id, qid: n.id, token: shortId(s.fcm_token, 20) });
+              }
             } else {
-              console.info("[push/dispatch] sub_deleted", { id, qid: n.id, token: shortId(s.fcm_token, 20) });
+              let q = srv.from("push_subscriptions").delete().eq("user_id", n.parent_id);
+              if (s.device_id) q = q.eq("device_id", s.device_id);
+              const { error: delErr } = await q;
+              if (delErr) {
+                console.warn("[push/dispatch] sub_delete_fail", { id, qid: n.id, error: delErr.message });
+              } else {
+                console.info("[push/dispatch] sub_deleted", { id, qid: n.id, token: shortId(s.fcm_token, 20) });
+              }
             }
           }
         }
@@ -350,6 +435,7 @@ async function run(req: Request) {
         platform,
         hasWebSub: !!s.subscription_json,
         hasFcm: !!s.fcm_token,
+        src: s.__source,
       });
     }
 
@@ -392,6 +478,24 @@ async function run(req: Request) {
   console.info("[push/dispatch] done", { id, attempted: rows.length, sentDeviceSends, dropped, ms });
 
   return NextResponse.json({ ok: true, id, attempted: rows.length, sent_device_sends: sentDeviceSends, dropped, ms });
+}
+
+function hasPushChannel(row: QueueRow) {
+  try {
+    const raw = row.channels;
+    const arr = Array.isArray(raw) ? raw : raw ? JSON.parse(String(raw)) : [];
+    const ok = Array.isArray(arr) && arr.includes("push");
+    if (!ok) {
+      console.debug("[push/dispatch] skip_no_push_channel", {
+        id: row.id,
+        channels: raw,
+      });
+    }
+    return ok;
+  } catch (e: any) {
+    console.warn("[push/dispatch] channels_parse_error", { id: row.id, error: String(e?.message || e) });
+    return false;
+  }
 }
 
 export const GET = run;
