@@ -11,18 +11,22 @@ type ServerSupa = Awaited<ReturnType<typeof getSupabaseServerClient>>;
 async function guardAnyRole(supa: ServerSupa) {
   const {
     data: { user },
+    error: userErr,
   } = await supa.auth.getUser();
-  if (!user) return { error: "unauthorized" as const };
+  if (userErr) return { error: String(userErr.message) };
+  if (!user) return { error: "unauthorized" };
 
-  const { data: me } = await supa
+  const { data: me, error: meErr } = await supa
     .from("profiles")
     .select("id, role, institution_id")
     .eq("id", user.id)
     .maybeSingle();
 
-  if (!me?.institution_id) return { error: "no_institution" as const };
-  // Prof/Classe/Admin/Super -> tous OK pour lire
-  return { user, instId: me.institution_id as string };
+  if (meErr) return { error: String(meErr.message) };
+  if (!me?.institution_id) return { error: "no_institution" };
+
+  // Prof / Classe / Admin / Super -> tous OK pour lire
+  return { user, instId: String(me.institution_id) };
 }
 
 function hhmm(hms: string | null | undefined) {
@@ -33,6 +37,7 @@ function hhmm(hms: string | null | undefined) {
 export async function GET(req: NextRequest) {
   const supa = await getSupabaseServerClient();
   const srv = getSupabaseServiceClient();
+
   const g = await guardAnyRole(supa);
   if ("error" in g) return NextResponse.json({ error: g.error }, { status: 403 });
 
@@ -48,15 +53,16 @@ export async function GET(req: NextRequest) {
 
   if (error) return NextResponse.json({ error: error.message }, { status: 400 });
 
-  const items =
-    (data || []).map((p) => ({
-      id: p.id,
-      label: p.label ?? `Séance ${p.period_no}`,
-      start_hm: hhmm(p.start_time),
-      duration_minutes: p["duration_min"] ?? 60,
-      weekday: p.weekday,
-      period_no: p.period_no,
-    })) ?? [];
+  const items = (data ?? []).map((p) => ({
+    id: p.id,
+    label: p.label ?? `Séance ${p.period_no}`,
+    start_hm: hhmm(p.start_time),
+    duration_minutes: Number.isFinite(p?.["duration_min"] as any)
+      ? Number(p["duration_min"])
+      : 60,
+    weekday: p.weekday,
+    period_no: p.period_no,
+  }));
 
   return NextResponse.json({ items });
 }
