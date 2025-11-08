@@ -23,7 +23,7 @@ export async function PATCH(
   const inst = me?.institution_id as string | null;
   if (!inst) return NextResponse.json({ error: "no_institution" }, { status: 400 });
 
-  const id = params.id;
+  const id = (await params).id;
   const body = await req.json().catch(() => ({}));
   const patch: Record<string, any> = {};
 
