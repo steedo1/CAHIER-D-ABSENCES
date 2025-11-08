@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import {
   signParentJWT,
@@ -157,7 +157,7 @@ async function linkParentToStudent(srv: any, parentId: string, studentId: string
 }
 
 /* ───────────────────────────── Route ───────────────────────────── */
-export async function POST(req: Request) {
+export async function POST(req: NextRequest) {
   const srv = getSupabaseServiceClient();
 
   let body: { matricule?: string; pin?: string | null } = {};

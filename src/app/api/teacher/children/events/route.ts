@@ -1,5 +1,5 @@
 // src/app/api/teacher/children/events/route.ts
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 
@@ -31,7 +31,7 @@ async function resolveSubjectNames(srv: any, ids: string[]) {
   return map;
 }
 
-export async function GET(req: Request) {
+export async function GET(req: NextRequest) {
   const supa = await getSupabaseServerClient(); // RLS (user + établissement)
   const srv  = getSupabaseServiceClient();      // service (requêtes libres)
 

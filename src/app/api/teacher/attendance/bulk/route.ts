@@ -1,5 +1,5 @@
 // src/app/api/teacher/attendance/bulk/route.ts
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 // ✨ temps réel
@@ -83,7 +83,7 @@ function localHMAndWeekday(iso: string, tz: string) {
 }
 
 /* ───────────────── handler ───────────────── */
-export async function POST(req: Request) {
+export async function POST(req: NextRequest) {
   const supa = await getSupabaseServerClient();
   const srv = getSupabaseServiceClient();
 

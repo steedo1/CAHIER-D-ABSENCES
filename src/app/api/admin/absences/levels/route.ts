@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 
@@ -20,7 +20,7 @@ function sanitizeLevel(s: unknown): string {
   return raw || DEFAULT_LEVEL;
 }
 
-export async function GET(req: Request) {
+export async function GET(req: NextRequest) {
   const supa = await getSupabaseServerClient();
   const srv = getSupabaseServiceClient();
 

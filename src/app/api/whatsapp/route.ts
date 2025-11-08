@@ -1,5 +1,5 @@
 // src/app/api/whatsapp/compact/route.ts
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -7,7 +7,7 @@ export const dynamic = "force-dynamic";
 /* ─────────────────────────────────────────
    Auth Cron (inchangé)
 ────────────────────────────────────────── */
-function okFromCron(req: Request) {
+function okFromCron(req: NextRequest) {
   const sec = (process.env.CRON_WHATSAPP_SECRET || "").trim();
   const hdr = (req.headers.get("x-cron-secret") || "").trim();
   const fromVercel = req.headers.has("x-vercel-cron");
@@ -20,7 +20,7 @@ function okFromCron(req: Request) {
    – Plus d’accès à whatsapp_outbox
    – Réponse no-op compatible avec l’existant
 ────────────────────────────────────────── */
-export async function POST(req: Request) {
+export async function POST(req: NextRequest) {
   if (!okFromCron(req)) {
     return NextResponse.json({ error: "forbidden" }, { status: 403 });
   }

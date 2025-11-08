@@ -1,5 +1,5 @@
 // src/app/api/super/create-admin/route.ts
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 
 function genTempPass(len = 12) {
@@ -7,7 +7,7 @@ function genTempPass(len = 12) {
   return Array.from({ length: len }, () => chars[Math.floor(Math.random() * chars.length)]).join("");
 }
 
-export async function POST(req: Request) {
+export async function POST(req: NextRequest) {
   const { institution_id, email, phone } = await req.json();
 
   if (!institution_id || !email) {

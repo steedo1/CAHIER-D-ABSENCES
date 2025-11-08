@@ -1,5 +1,5 @@
 //src/app/api/admin/affectations/current/route.t
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 
@@ -13,7 +13,7 @@ const lc = (s: string | null | undefined) => (s ?? "").toLowerCase().trim();
 const norm = (s: string | null | undefined) =>
   (s ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
 
-export async function GET(req: Request) {
+export async function GET(req: NextRequest) {
   const supa = await getSupabaseServerClient();
   const srv = getSupabaseServiceClient();
 

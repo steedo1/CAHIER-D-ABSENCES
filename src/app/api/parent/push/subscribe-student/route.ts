@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { readParentSessionFromReq } from "@/lib/parent-session";
 
@@ -10,7 +10,7 @@ function shortId(x: unknown, n = 16) {
   return !s ? s : s.length <= n ? s : `${s.slice(0, Math.max(4, n/2))}…${s.slice(-Math.max(4, n/2))}`;
 }
 
-export async function POST(req: Request) {
+export async function POST(req: NextRequest) {
   const claims = readParentSessionFromReq(req);
   if (!claims?.sid) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   const student_id = claims.sid;

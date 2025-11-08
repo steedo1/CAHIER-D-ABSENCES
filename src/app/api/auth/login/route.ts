@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { normalizePhone, canonicalPrefix, sanitize } from "@/lib/phone";
 
@@ -29,7 +29,7 @@ function phoneCandidates(raw: string, country?: string): string[] {
   return candidates;
 }
 
-export async function POST(req: Request) {
+export async function POST(req: NextRequest) {
   try {
     const { email, phone, password, country } = await req.json();
 

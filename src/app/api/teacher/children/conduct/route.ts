@@ -1,5 +1,5 @@
 // src/app/api/teacher/children/conduct/route.ts
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 
@@ -26,7 +26,7 @@ function appreciationFromTotal(total: number): string {
   return "Excellente conduite";
 }
 
-export async function GET(req: Request) {
+export async function GET(req: NextRequest) {
   const supa = await getSupabaseServerClient();
   const srv  = getSupabaseServiceClient();
 

@@ -1,8 +1,8 @@
 // src/app/api/admin/students/route.ts
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
-export async function GET(req: Request) {
+export async function GET(req: NextRequest) {
   const supa = await getSupabaseServerClient();
 
   const { data: { user } } = await supa.auth.getUser();

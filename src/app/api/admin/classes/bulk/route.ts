@@ -1,5 +1,5 @@
 // app/api/admin/classes/bulk/route.ts
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 
@@ -28,7 +28,7 @@ function computeAcademicYear(d = new Date()) {
   return m >= 8 ? `${y}-${y + 1}` : `${y - 1}-${y}`;
 }
 
-export async function POST(req: Request) {
+export async function POST(req: NextRequest) {
   const body = (await req.json().catch(() => ({}))) as Body;
 
   const level = (body.level ?? "").trim();

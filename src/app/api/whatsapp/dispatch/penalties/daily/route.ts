@@ -1,5 +1,5 @@
 // src/app/api/whatsapp/dispatch/penalties/daily/route.ts
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 
 export const runtime = "nodejs";
@@ -10,7 +10,7 @@ const waDisabled = () => {
   return v === "" || v === "0" || v === "false" || v === "off" || v === "no";
 };
 
-function reqOk(req: Request) {
+function reqOk(req: NextRequest) {
   const sec = (process.env.CRON_WHATSAPP_SECRET || "").trim();
   const hdr = (req.headers.get("x-cron-secret") || "").trim();
   const fromVercelCron = req.headers.has("x-vercel-cron");
@@ -31,7 +31,7 @@ function toWhatsAppAddr(e164: string) {
   return `whatsapp:${n}`;
 }
 
-export async function POST(req: Request) {
+export async function POST(req: NextRequest) {
   try {
     if (!reqOk(req)) return NextResponse.json({ error: "forbidden" }, { status: 403 });
 

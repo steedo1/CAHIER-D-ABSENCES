@@ -1,5 +1,5 @@
 // src/app/api/admin/users/reset-password/route.ts
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { createServerClient } from "@supabase/ssr";
 import { createClient } from "@supabase/supabase-js";
@@ -45,7 +45,7 @@ function randomPass(len = 10) {
  *   - super_admin : peut r�initialiser tout le monde
  *   - admin       : uniquement les profils appartenant � son/ses institution(s) (via table public.user_roles)
  */
-export async function POST(req: Request) {
+export async function POST(req: NextRequest) {
   try {
     const body = await req.json().catch(() => ({}));
     const user_id = String(body?.user_id || "").trim();

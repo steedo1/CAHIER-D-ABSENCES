@@ -1,5 +1,5 @@
 // src/app/api/cron/whatsapp/send/route.ts
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -7,7 +7,7 @@ export const dynamic = "force-dynamic";
 /* ─────────────────────────────────────────
    Auth Cron (on garde la même convention)
 ────────────────────────────────────────── */
-function assertCronAuth(req: Request) {
+function assertCronAuth(req: NextRequest) {
   const key = process.env.CRON_SECRET || "";
   const h   = req.headers.get("x-cron-key") || "";
   if (!key || h !== key) throw Object.assign(new Error("forbidden"), { status: 403 });
@@ -19,7 +19,7 @@ function assertCronAuth(req: Request) {
    – Plus d’accès à whatsapp_outbox
    – Réponse no-op compatible avec l’existant
 ────────────────────────────────────────── */
-export async function POST(req: Request) {
+export async function POST(req: NextRequest) {
   try { assertCronAuth(req); } catch (e: any) {
     return NextResponse.json({ error: e.message }, { status: e.status || 403 });
   }

@@ -1,5 +1,5 @@
 // src/app/api/admin/teachers/by-subject/route.ts
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 
@@ -16,7 +16,7 @@ async function trySelect<T>(
   }
 }
 
-export async function GET(req: Request) {
+export async function GET(req: NextRequest) {
   const supa = await getSupabaseServerClient();
   const srv  = getSupabaseServiceClient();
 

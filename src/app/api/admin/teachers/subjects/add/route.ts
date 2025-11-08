@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 
@@ -8,7 +8,7 @@ function subjectKey(name: string): string {
   return ascii.replace(/\s+/g, " ").trim().toLowerCase();
 }
 
-export async function POST(req: Request) {
+export async function POST(req: NextRequest) {
   const supa = await getSupabaseServerClient();
   const srv = getSupabaseServiceClient();
 

@@ -1,5 +1,5 @@
 // src/app/api/parent/children/events/route.ts
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
@@ -52,7 +52,7 @@ type TimelineItem = {
   author_subject_name?: string | null;
 };
 
-export async function GET(req: Request) {
+export async function GET(req: NextRequest) {
   const supa = await getSupabaseServerClient();
   const srv  = getSupabaseServiceClient();
 

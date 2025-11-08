@@ -1,5 +1,5 @@
 //src/app/api/class/roster/route.ts
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 
@@ -41,7 +41,7 @@ function buildPhoneVariants(raw: string) {
   return { variants, likePatterns };
 }
 
-export async function GET(req: Request) {
+export async function GET(req: NextRequest) {
   const supa = await getSupabaseServerClient();
   const srv  = getSupabaseServiceClient();
 

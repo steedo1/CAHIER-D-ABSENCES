@@ -1,5 +1,5 @@
 // src/app/api/admin/absences/matrix/route.ts
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 
@@ -69,7 +69,7 @@ async function buildSubjectNameMap(
   return map;
 }
 
-export async function GET(req: Request) {
+export async function GET(req: NextRequest) {
   const url = new URL(req.url);
   const class_id = String(url.searchParams.get("class_id") || "");
   const from = ymd(url.searchParams.get("from") || undefined);

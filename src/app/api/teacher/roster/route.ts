@@ -1,5 +1,5 @@
 //src/app/api/teacher/roster/route.ts
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 /**
@@ -8,7 +8,7 @@ import { getSupabaseServerClient } from "@/lib/supabase-server";
  * Acc�s autoris� si l'enseignant a une s�ance ouverte sur cette classe
  * ou s'il est affect� � cette classe dans l'�tablissement.
  */
-export async function GET(req: Request) {
+export async function GET(req: NextRequest) {
   const supa = await getSupabaseServerClient();
   const { data: { user } } = await supa.auth.getUser();
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });

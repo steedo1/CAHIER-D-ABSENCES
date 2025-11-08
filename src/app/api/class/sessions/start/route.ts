@@ -1,5 +1,5 @@
 // src/app/api/class/sessions/start/route.ts
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 
@@ -85,7 +85,7 @@ function localHMAndWeekday(iso: string, tz: string) {
   return { hm, weekday: map[wdStr] ?? 0 };
 }
 
-export async function POST(req: Request) {
+export async function POST(req: NextRequest) {
   try {
     const supa = await getSupabaseServerClient();
     const srv = getSupabaseServiceClient();

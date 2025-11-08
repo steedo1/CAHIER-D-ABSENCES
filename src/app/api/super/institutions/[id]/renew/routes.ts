@@ -1,5 +1,5 @@
 // src/app/api/super/institutions/[id]/renew/route.ts
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 
 function addMonthsISO(dateISO: string, months: number) {
@@ -10,7 +10,7 @@ function addMonthsISO(dateISO: string, months: number) {
   return d.toISOString().slice(0, 10);
 }
 
-export async function POST(req: Request, { params }: { params: { id: string } }) {
+export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
   const supabase = getSupabaseServiceClient();
   const { months, to } = await req.json();
 

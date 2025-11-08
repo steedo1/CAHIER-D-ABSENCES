@@ -1,5 +1,5 @@
 // src/app/api/admin/teachers/import/route.ts
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { normalizePhone } from "@/lib/phone";
@@ -134,7 +134,7 @@ function canonicalizeSubject(raw: string): { code?: string; name: string } {
 /* ======================================================================
    Route
 ====================================================================== */
-export async function POST(req: Request) {
+export async function POST(req: NextRequest) {
   const supa = await getSupabaseServerClient(); // user-scoped (RLS)
   const srv = getSupabaseServiceClient();       // service (bypass RLS)
 

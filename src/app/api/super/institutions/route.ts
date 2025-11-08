@@ -1,5 +1,5 @@
 // src/app/api/super/institutions/route.ts
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 
@@ -11,7 +11,7 @@ function addMonthsISO(dateISO: string, months: number) {
   return d.toISOString().slice(0, 10);
 }
 
-export async function GET(req: Request) {
+export async function GET(req: NextRequest) {
   // �x� v�rifie super_admin
   const s = await getSupabaseServerClient();
   const { data: { user } } = await s.auth.getUser();
@@ -40,7 +40,7 @@ export async function GET(req: Request) {
   return NextResponse.json({ items: data ?? [], total: count ?? 0 });
 }
 
-export async function POST(req: Request) {
+export async function POST(req: NextRequest) {
   const supabase = getSupabaseServiceClient();
   const { name, code_unique, subscription_expires_at, settings_json, duration_months, start_date } = await req.json();
 

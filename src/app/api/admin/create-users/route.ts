@@ -1,5 +1,5 @@
 // src/app/api/admin/create-users/route.ts
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 
 type NewUserInput = {
@@ -13,7 +13,7 @@ type Body = {
   users: NewUserInput[];
 };
 
-export async function POST(req: Request) {
+export async function POST(req: NextRequest) {
   const supabase = getSupabaseServiceClient();
   const { institution_id, users }: Body = await req.json();
 

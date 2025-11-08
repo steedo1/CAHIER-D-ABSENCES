@@ -1,5 +1,5 @@
 // src/app/api/admin/teachers/remove/route.ts
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 
@@ -15,7 +15,7 @@ type Body = {
   unset_profile_institution?: boolean;
 };
 
-export async function POST(req: Request) {
+export async function POST(req: NextRequest) {
   try {
     const supa = await getSupabaseServerClient();   // RLS (cookie admin)
     const srv  = getSupabaseServiceClient();        // service (no RLS)

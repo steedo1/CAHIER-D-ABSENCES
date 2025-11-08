@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 
 const SECURE = process.env.NODE_ENV === "production";
 export const runtime = "nodejs";
@@ -11,7 +11,7 @@ function projectRefFromUrl(url?: string | null) {
 
 type Body = { access_token?: string; refresh_token?: string };
 
-export async function POST(req: Request) {
+export async function POST(req: NextRequest) {
   let payload: Body | null = null;
   try {
     payload = await req.json();

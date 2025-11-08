@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { clearParentSessionCookie } from "@/lib/parent-session";
 
 export const runtime = "nodejs";
@@ -16,7 +16,7 @@ export async function POST() {
 }
 
 /** Pratique si on visite l’URL depuis la barre d’adresse */
-export async function GET(req: Request) {
+export async function GET(req: NextRequest) {
   const url = new URL("/parents/login", req.url);
   return NextResponse.redirect(url, {
     headers: { "Set-Cookie": clearParentSessionCookie() },

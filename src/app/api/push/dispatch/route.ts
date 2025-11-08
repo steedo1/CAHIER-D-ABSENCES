@@ -1,5 +1,5 @@
 // src/app/api/push/dispatch/route.ts
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import webpush from "web-push";
 
@@ -27,7 +27,7 @@ function safeParse<T = any>(x: any): T | null {
 const WAIT_STATUS = (process.env.PUSH_WAIT_STATUS || "pending").trim();
 
 /* ───────────────── Auth ───────────────── */
-function okAuth(req: Request) {
+function okAuth(req: NextRequest) {
   const secret = (process.env.CRON_SECRET || process.env.CRON_PUSH_SECRET || "").trim();
   const xCron = (req.headers.get("x-cron-secret") || "").trim();
   const auth = (req.headers.get("authorization") || "").trim();
@@ -123,7 +123,7 @@ function extractStudentId(core: any): string | null {
 }
 
 /* ──────────────── Main ──────────────── */
-async function run(req: Request) {
+async function run(req: NextRequest) {
   const id = rid();
   const t0 = Date.now();
   console.info("[push/dispatch] start", { id, when: new Date().toISOString(), method: req.method, waitStatus: WAIT_STATUS });

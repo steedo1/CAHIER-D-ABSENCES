@@ -1,5 +1,5 @@
 // src/app/api/admin/associations/route.ts
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { normalizePhone as toE164 } from "@/lib/phone";
@@ -83,7 +83,7 @@ async function resolveOrCreateParent(
   return uid;
 }
 
-export async function POST(req: Request) {
+export async function POST(req: NextRequest) {
   const supa = await getSupabaseServerClient();
   const srv  = getSupabaseServiceClient();
 

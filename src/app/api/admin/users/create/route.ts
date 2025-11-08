@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { normalizePhone } from "@/lib/phone";
@@ -14,7 +14,7 @@ function slug(s: string) {
     .replace(/^-+|-+$/g, "");
 }
 
-export async function POST(req: Request) {
+export async function POST(req: NextRequest) {
   const supaSrv = getSupabaseServiceClient(); // service (no RLS)
   const supa = await getSupabaseServerClient(); // user-scoped (RLS)
 

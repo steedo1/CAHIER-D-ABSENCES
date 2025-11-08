@@ -1,9 +1,9 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 
 export const runtime = "nodejs";
 
-export async function POST(req: Request) {
+export async function POST(req: NextRequest) {
   const sec = (process.env.CRON_WHATSAPP_SECRET || "").trim();
   const hdr = (req.headers.get("x-cron-secret") || "").trim();
   if (sec && hdr !== sec) return NextResponse.json({ error: "forbidden" }, { status: 403 });

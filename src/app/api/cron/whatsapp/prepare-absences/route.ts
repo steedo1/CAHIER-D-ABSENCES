@@ -1,12 +1,12 @@
 // src/app/api/cron/whatsapp/prepare-absences/route.ts
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 // import { normalizePhone } from "@/lib/phone"; // [WHATSAPP OFF] non utilisé
 
 // ─────────────────────────────────────────
 // Auth Cron (header x-cron-key)
 // ─────────────────────────────────────────
-function assertCronAuth(req: Request) {
+function assertCronAuth(req: NextRequest) {
   const key = (process.env.CRON_SECRET || "").trim();
   const h   = (req.headers.get("x-cron-key") || "").trim();
   if (!key || h !== key) throw Object.assign(new Error("forbidden"), { status: 403 });
@@ -21,7 +21,7 @@ const isoDateOnly = (d: Date) => d.toISOString().slice(0, 10);
 // ─────────────────────────────────────────
 export const dynamic = "force-dynamic";
 
-export async function POST(req: Request) {
+export async function POST(req: NextRequest) {
   // 0) Auth
   try { assertCronAuth(req); }
   catch (e: any) { return NextResponse.json({ error: e.message }, { status: e.status || 403 }); }

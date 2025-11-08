@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { readParentSessionFromReq } from "@/lib/parent-session";
@@ -30,7 +30,7 @@ type Identity =
   | { mode: "parent";   userId: string; studentId: string };
 
 /* ─────────────── Route ─────────────── */
-export async function POST(req: Request) {
+export async function POST(req: NextRequest) {
   const supa = await getSupabaseServerClient();
   const srv  = getSupabaseServiceClient();
   const startedAt = new Date().toISOString();

@@ -1,5 +1,5 @@
 // src/app/api/admin/password/route.ts
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { createServerClient } from "@supabase/ssr";
 
@@ -39,7 +39,7 @@ function extractTokensFromJar(jar: CookieJar) {
   return { access, refresh };
 }
 
-export async function POST(req: Request) {
+export async function POST(req: NextRequest) {
   try {
     const body = await req.json().catch(() => ({}));
     const new_password = String(body?.new_password || "").trim();
