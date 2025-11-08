@@ -84,6 +84,25 @@ type OpenSession = {
   expected_minutes?: number | null;
 };
 
+type InstCfg = { tz: string; default_session_minutes: number; auto_lateness: boolean };
+type Period = { weekday: number; label: string; start_time: string; end_time: string };
+
+/* ───────── Utils (périodes) ───────── */
+const hhmm = (d: Date) => d.toTimeString().slice(0, 5);
+function toMinutes(hm: string) {
+  const [h, m] = (hm || "00:00").split(":").map((x) => +x);
+  return h * 60 + m;
+}
+function minutesDiff(a: string, b: string) {
+  return Math.max(0, toMinutes(b) - toMinutes(a));
+}
+function jsWeekday1to6(date: Date): number {
+  // JS: 0=dim,1=lun,…,6=sam  → on utilise 1..6 (lun..sam)
+  const d = date.getDay();
+  if (d === 0) return 6;
+  return d;
+}
+
 /* Sanctions */
 const ALLOWED_RUBRICS = ["discipline", "tenue", "moralite"] as const;
 type Rubric = (typeof ALLOWED_RUBRICS)[number];
@@ -103,24 +122,32 @@ export default function ClassDevicePage() {
   const [classId, setClassId] = useState<string>("");
   const [subjectId, setSubjectId] = useState<string>("");
 
+  // paramètres établissement & périodes
+  const [inst, setInst] = useState<InstCfg>({
+    tz: "Africa/Abidjan",
+    default_session_minutes: 60,
+    auto_lateness: true,
+  });
+  const [periodsByDay, setPeriodsByDay] = useState<Record<number, Period[]>>({});
+  const [slotLabel, setSlotLabel] = useState<string>("Aucun créneau configuré (fallback automatique)");
+
+  // horaire (verrouillé par l’établissement)
   const now = new Date();
-  const defTime = new Date(now.getTime() - now.getMinutes() * 60000)
-    .toTimeString()
-    .slice(0, 5);
+  const defTime = hhmm(new Date(now.getFullYear(), now.getMonth(), now.getDate(), now.getHours(), 0));
   const [startTime, setStartTime] = useState<string>(defTime);
   const [duration, setDuration] = useState<number>(60);
+  const [locked, setLocked] = useState<boolean>(true);
 
   const [open, setOpen] = useState<OpenSession | null>(null);
   const [roster, setRoster] = useState<RosterItem[]>([]);
-  const [rows, setRows] = useState<
-    Record<string, { absent?: boolean; late?: boolean; lateMin?: number; reason?: string }>
-  >({});
+  type Row = { absent?: boolean; late?: boolean; reason?: string };
+  const [rows, setRows] = useState<Record<string, Row>>({});
   const [msg, setMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [loadingRoster, setLoadingRoster] = useState(false);
 
   const changedCount = useMemo(
-    () => Object.values(rows).filter((r) => r.absent || (r.late && (r.lateMin || 0) > 0)).length,
+    () => Object.values(rows).filter((r) => r.absent || r.late).length,
     [rows]
   );
 
@@ -130,19 +157,14 @@ export default function ClassDevicePage() {
   const [penBusy, setPenBusy] = useState(false);
   const [penRows, setPenRows] = useState<Record<string, { points: number; reason?: string }>>({});
   const [penMsg, setPenMsg] = useState<string | null>(null);
-  const hasPenChanges = useMemo(
-    () => Object.values(penRows).some((v) => (v.points || 0) > 0),
-    [penRows]
-  );
+  const hasPenChanges = useMemo(() => Object.values(penRows).some((v) => (v.points || 0) > 0), [penRows]);
 
   async function ensureRosterForPenalty() {
     const cid = open?.class_id || classId;
     if (!cid || roster.length > 0) return;
     try {
       setLoadingRoster(true);
-      const j = await fetch(`/api/class/roster?class_id=${cid}`, { cache: "no-store" }).then((r) =>
-        r.json()
-      );
+      const j = await fetch(`/api/class/roster?class_id=${cid}`, { cache: "no-store" }).then((r) => r.json());
       setRoster((j.items || []) as RosterItem[]);
     } finally {
       setLoadingRoster(false);
@@ -238,6 +260,117 @@ export default function ClassDevicePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  /* 1bis) charger paramètres + périodes (endpoints multiples tolérés) */
+  async function loadInstitutionBasics() {
+    async function getJson(url: string) {
+      try {
+        const r = await fetch(url, { cache: "no-store" });
+        if (!r.ok) throw new Error("not ok");
+        return await r.json();
+      } catch {
+        return null;
+      }
+    }
+
+    // Route combinée (préférée)
+    const all =
+      (await getJson("/api/teacher/institution/basics")) ||
+      (await getJson("/api/institution/basics"));
+
+    if (all?.periods) {
+      const grouped: Record<number, Period[]> = {};
+      (all.periods as any[]).forEach((row: any) => {
+        const w = Number(row.weekday || 1);
+        if (!grouped[w]) grouped[w] = [];
+        grouped[w].push({
+          weekday: w,
+          label: row.label || "Séance",
+          start_time: String(row.start_time || "08:00").slice(0, 5),
+          end_time: String(row.end_time || "09:00").slice(0, 5),
+        });
+      });
+      Object.values(grouped).forEach((arr) =>
+        arr.sort((a, b) => toMinutes(a.start_time) - toMinutes(b.start_time))
+      );
+
+      setInst({
+        tz: all?.tz || "Africa/Abidjan",
+        default_session_minutes: Number(all?.default_session_minutes || 60),
+        auto_lateness: !!all?.auto_lateness,
+      });
+      setPeriodsByDay(grouped);
+      return;
+    }
+
+    // Fallback: routes séparées
+    const settings =
+      (await getJson("/api/teacher/institution/settings")) ||
+      (await getJson("/api/institution/settings")) || {
+        tz: "Africa/Abidjan",
+        default_session_minutes: 60,
+        auto_lateness: true,
+      };
+
+    const per =
+      (await getJson("/api/teacher/institution/periods")) ||
+      (await getJson("/api/institution/periods")) || { periods: [] };
+
+    const grouped: Record<number, Period[]> = {};
+    (Array.isArray(per?.periods) ? per.periods : []).forEach((row: any) => {
+      const w = Number(row.weekday || 1);
+      if (!grouped[w]) grouped[w] = [];
+      grouped[w].push({
+        weekday: w,
+        label: row.label || "Séance",
+        start_time: String(row.start_time || "08:00").slice(0, 5),
+        end_time: String(row.end_time || "09:00").slice(0, 5),
+      });
+    });
+    Object.values(grouped).forEach((arr) =>
+      arr.sort((a, b) => toMinutes(a.start_time) - toMinutes(b.start_time))
+    );
+
+    setInst({
+      tz: settings?.tz || "Africa/Abidjan",
+      default_session_minutes: Number(settings?.default_session_minutes || 60),
+      auto_lateness: !!settings?.auto_lateness,
+    });
+    setPeriodsByDay(grouped);
+  }
+
+  useEffect(() => {
+    loadInstitutionBasics();
+  }, []);
+
+  // Calcul du créneau par défaut « du moment »
+  function computeDefaultsForNow() {
+    const today = new Date();
+    const wd = jsWeekday1to6(today);
+    const slots = periodsByDay[wd] || [];
+
+    if (slots.length === 0) {
+      setStartTime(defTime);
+      setDuration(inst.default_session_minutes || 60);
+      setSlotLabel("Aucun créneau configuré (fallback automatique)");
+      setLocked(true);
+      return;
+    }
+
+    const nowMin = toMinutes(hhmm(today));
+    let pick = slots.find((s) => nowMin >= toMinutes(s.start_time) && nowMin < toMinutes(s.end_time));
+    if (!pick) pick = slots.find((s) => nowMin <= toMinutes(s.start_time)) || slots[slots.length - 1];
+
+    setStartTime(pick.start_time);
+    setDuration(Math.max(1, minutesDiff(pick.start_time, pick.end_time) || inst.default_session_minutes || 60));
+    setSlotLabel(`${pick.label} • ${pick.start_time} → ${pick.end_time}`);
+    setLocked(true);
+  }
+
+  useEffect(() => {
+    computeDefaultsForNow();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [JSON.stringify(periodsByDay), inst.default_session_minutes, classId]);
+
   /* 2) charger les matières quand la classe change */
   useEffect(() => {
     if (!classId) {
@@ -246,9 +379,7 @@ export default function ClassDevicePage() {
       return;
     }
     (async () => {
-      const j = await fetch(`/api/class/subjects?class_id=${classId}`, {
-        cache: "no-store",
-      }).then((r) => r.json());
+      const j = await fetch(`/api/class/subjects?class_id=${classId}`, { cache: "no-store" }).then((r) => r.json());
       const list = (j.items || []) as Subject[];
       setSubjects(list);
       setSubjectId(list[0]?.id || "");
@@ -264,9 +395,7 @@ export default function ClassDevicePage() {
     }
     (async () => {
       setLoadingRoster(true);
-      const j = await fetch(`/api/class/roster?class_id=${open.class_id}`, {
-        cache: "no-store",
-      }).then((r) => r.json());
+      const j = await fetch(`/api/class/roster?class_id=${open.class_id}`, { cache: "no-store" }).then((r) => r.json());
       setRoster((j.items || []) as RosterItem[]);
       setRows({});
       setLoadingRoster(false);
@@ -277,30 +406,16 @@ export default function ClassDevicePage() {
   function toggleAbsent(id: string, v: boolean) {
     setRows((prev) => {
       const cur = prev[id] || {};
-      const next: any = { ...cur, absent: v };
-      if (v) {
-        next.late = false;
-        next.lateMin = undefined;
-      }
+      const next: Row = { ...cur, absent: v };
+      if (v) next.late = false;
       return { ...prev, [id]: next };
     });
   }
   function toggleLate(id: string, v: boolean) {
     setRows((prev) => {
       const cur = prev[id] || {};
-      const next: any = {
-        ...cur,
-        late: v,
-        lateMin: v ? cur.lateMin ?? 5 : undefined,
-        absent: v ? false : cur.absent,
-      };
+      const next: Row = { ...cur, late: v, absent: v ? false : cur.absent };
       return { ...prev, [id]: next };
-    });
-  }
-  function setLateMin(id: string, m: number) {
-    setRows((prev) => {
-      const cur = prev[id] || {};
-      return { ...prev, [id]: { ...cur, late: true, lateMin: Math.max(0, m || 0) } };
     });
   }
   function setReason(id: string, s: string) {
@@ -324,7 +439,7 @@ export default function ClassDevicePage() {
           class_id: classId,
           subject_id: subjectId || null,
           started_at: started.toISOString(),
-          expected_minutes: duration,
+          expected_minutes: duration, // verrouillé par l’établissement
         }),
       });
       const j = await r.json();
@@ -345,16 +460,11 @@ export default function ClassDevicePage() {
     try {
       const marks = Object.entries(rows).map(([student_id, r]) => {
         if (r.absent) return { student_id, status: "absent" as const, reason: r.reason ?? null };
-        if (r.late && (r.lateMin || 0) > 0)
-          return {
-            student_id,
-            status: "late" as const,
-            minutes_late: r.lateMin || 0,
-            reason: r.reason ?? null,
-          };
+        if (r.late) return { student_id, status: "late" as const, reason: r.reason ?? null }; // minutes auto
         return { student_id, status: "present" as const };
       });
 
+      // on garde l’endpoint existant pour ne rien casser
       const r = await fetch("/api/teacher/attendance/bulk", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -375,7 +485,6 @@ export default function ClassDevicePage() {
     setBusy(true);
     setMsg(null);
     try {
-      // ✨ use class-device endpoint (teacher_sessions) instead of legacy teacher endpoint
       const r = await fetch("/api/class/sessions/end", { method: "PATCH" });
       const j = await r.json();
       if (!r.ok) throw new Error(j?.error || "Échec fin de séance");
@@ -383,6 +492,7 @@ export default function ClassDevicePage() {
       setRoster([]);
       setRows({});
       setMsg("Séance terminée.");
+      computeDefaultsForNow();
     } catch (e: any) {
       setMsg(e?.message || "Échec fin de séance");
     } finally {
@@ -399,7 +509,6 @@ export default function ClassDevicePage() {
       const exp = open.expected_minutes ?? duration;
       const nextStart = new Date(base.getTime() + (exp || 60) * 60000);
 
-      // ✨ close with class-device endpoint
       await fetch("/api/class/sessions/end", { method: "PATCH" });
 
       const r2 = await fetch("/api/class/sessions/start", {
@@ -444,8 +553,8 @@ export default function ClassDevicePage() {
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Classe — Démarrer l’appel</h1>
           <p className="text-slate-600 text-sm">
-            Choisissez votre discipline et démarrez l’appel. À la fin de votre cours, cliquez sur
-            <b> Terminer</b>.
+            Choisissez votre discipline et démarrez l’appel. Les minutes de retard sont{" "}
+            <b>calculées automatiquement</b>. À la fin du cours, cliquez sur <b>Terminer</b>.
           </p>
         </div>
         <GhostButton onClick={logout} className="shrink-0">
@@ -493,23 +602,22 @@ export default function ClassDevicePage() {
                 <Clock className="h-3.5 w-3.5" />
                 Début
               </div>
-              <Input type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} />
+              <Input type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} disabled={locked} />
+              <div className="mt-1 text-[11px] text-slate-500">{slotLabel}</div>
             </div>
             <div>
               <div className="mb-1 flex items-center gap-2 text-xs text-slate-500">
                 <Clock className="h-3.5 w-3.5" />
                 Durée (min)
               </div>
-              <Select
-                value={String(duration)}
-                onChange={(e) => setDuration(parseInt(e.target.value, 10))}
-              >
-                {[30, 45, 60, 90, 120].map((m) => (
+              <Select value={String(duration)} onChange={(e) => setDuration(parseInt(e.target.value, 10))} disabled={locked}>
+                {[duration].map((m) => (
                   <option key={m} value={m}>
                     {m}
                   </option>
                 ))}
               </Select>
+              <div className="mt-1 text-[11px] text-slate-500">Verrouillée par l’établissement.</div>
             </div>
           </div>
         </div>
@@ -566,8 +674,7 @@ export default function ClassDevicePage() {
             <div>
               <div className="text-lg font-semibold">Autres sanctions</div>
               <div className="text-xs text-slate-500">
-                Rubriques: Discipline (max 7), Tenue (max 3), Moralité (max 4). L’assiduité est
-                calculée via les absences.
+                Rubriques: Discipline (max 7), Tenue (max 3), Moralité (max 4). L’assiduité est calculée via les absences.
               </div>
             </div>
             <div className="flex items-center gap-2">
@@ -583,11 +690,7 @@ export default function ClassDevicePage() {
           <div className="grid gap-3 md:grid-cols-3 mb-3">
             <div className="md:col-span-1">
               <div className="mb-1 text-xs text-slate-500">Rubrique impactée</div>
-              <Select
-                value={penRubric}
-                onChange={(e) => setPenRubric(coerceRubric(e.target.value))}
-                disabled={penBusy}
-              >
+              <Select value={penRubric} onChange={(e) => setPenRubric(coerceRubric(e.target.value))} disabled={penBusy}>
                 <option value="discipline">Discipline (max 7)</option>
                 <option value="tenue">Tenue (max 3)</option>
                 <option value="moralite">Moralité (max 4)</option>
@@ -674,7 +777,7 @@ export default function ClassDevicePage() {
         </div>
       )}
 
-      {/* Liste élèves (roster) */}
+      {/* Liste élèves (appel) */}
       {open && (
         <div className="rounded-2xl border bg-white p-5 shadow-sm">
           <div className="mb-3 text-sm font-semibold text-slate-700">
@@ -690,21 +793,20 @@ export default function ClassDevicePage() {
                   <th className="px-3 py-2 w-40">Matricule</th>
                   <th className="px-3 py-2">Nom et prénoms</th>
                   <th className="px-3 py-2">Absent</th>
-                  <th className="px-3 py-2">Retard</th>
-                  <th className="px-3 py-2 w-24">Minutes</th>
+                  <th className="px-3 py-2">Retard (minutes auto)</th>
                   <th className="px-3 py-2">Motif</th>
                 </tr>
               </thead>
               <tbody className="divide-y">
                 {loadingRoster ? (
                   <tr>
-                    <td className="px-3 py-4 text-slate-500" colSpan={7}>
+                    <td className="px-3 py-4 text-slate-500" colSpan={6}>
                       Chargement…
                     </td>
                   </tr>
                 ) : roster.length === 0 ? (
                   <tr>
-                    <td className="px-3 py-4 text-slate-500" colSpan={7}>
+                    <td className="px-3 py-4 text-slate-500" colSpan={6}>
                       Aucun élève.
                     </td>
                   </tr>
@@ -731,16 +833,6 @@ export default function ClassDevicePage() {
                             checked={!!r.late}
                             onChange={(e) => toggleLate(st.id, e.target.checked)}
                             disabled={!!r.absent}
-                          />
-                        </td>
-                        <td className="px-3 py-2">
-                          <Input
-                            type="number"
-                            min={0}
-                            value={r.late ? r.lateMin || 0 : 0}
-                            onChange={(e) => setLateMin(st.id, parseInt(e.target.value || "0", 10))}
-                            disabled={!r.late || !!r.absent}
-                            className="w-24"
                           />
                         </td>
                         <td className="px-3 py-2">

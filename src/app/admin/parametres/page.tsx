@@ -87,9 +87,60 @@ function EyeOffIcon(props: { className?: string }) {
 }
 
 /* =========================
+   Toasts (feedback)
+========================= */
+type ToastKind = "success" | "error" | "info";
+type Toast = { id: string; kind: ToastKind; text: string };
+
+const rid = () => Math.random().toString(36).slice(2, 8);
+
+function ToastItem({ t, onClose }: { t: Toast; onClose: (id: string) => void }) {
+  useEffect(() => {
+    const id = setTimeout(() => onClose(t.id), 4200);
+    return () => clearTimeout(id);
+  }, [t.id, onClose]);
+  const styles =
+    t.kind === "success"
+      ? "border-emerald-200 bg-emerald-50 text-emerald-900"
+      : t.kind === "error"
+      ? "border-rose-200 bg-rose-50 text-rose-900"
+      : "border-slate-200 bg-white text-slate-900";
+  const icon = t.kind === "success" ? "✅" : t.kind === "error" ? "⚠️" : "ℹ️";
+  return (
+    <div className={`pointer-events-auto flex items-start gap-2 rounded-xl border px-3 py-2 shadow ${styles}`}>
+      <span className="select-none text-base leading-5">{icon}</span>
+      <div className="text-sm">{t.text}</div>
+      <button
+        className="ml-2 rounded p-1 text-xs text-slate-500 hover:bg-black/5"
+        onClick={() => onClose(t.id)}
+        aria-label="Fermer"
+      >
+        ✕
+      </button>
+    </div>
+  );
+}
+
+function ToastHost({ toasts, onClose }: { toasts: Toast[]; onClose: (id: string) => void }) {
+  return (
+    <div className="pointer-events-none fixed right-4 top-4 z-[60] flex w-[min(92vw,360px)] flex-col gap-2">
+      {toasts.map((t) => (
+        <ToastItem key={t.id} t={t} onClose={onClose} />
+      ))}
+    </div>
+  );
+}
+
+/* =========================
    Page
 ========================= */
 export default function AdminSettingsPage() {
+  /* ---------- Toast manager ---------- */
+  const [toasts, setToasts] = useState<Toast[]>([]);
+  const pushToast = (kind: ToastKind, text: string) =>
+    setToasts((l) => [...l, { id: rid(), kind, text }]);
+  const closeToast = (id: string) => setToasts((l) => l.filter((t) => t.id !== id));
+
   /* ----- Mon mot de passe ----- */
   const [pwd1, setPwd1] = useState("");
   const [pwd2, setPwd2] = useState("");
@@ -117,8 +168,18 @@ export default function AdminSettingsPage() {
   /* ====== Actions : mon mot de passe ====== */
   async function changeMyPassword() {
     setMsgMine(null);
-    if (!pwd1 || pwd1.length < 6) return setMsgMine("Mot de passe trop court (6 caractères minimum).");
-    if (pwd1 !== pwd2) return setMsgMine("La confirmation ne correspond pas.");
+    if (!pwd1 || pwd1.length < 6) {
+      const m = "Mot de passe trop court (6 caractères minimum).";
+      setMsgMine(m);
+      pushToast("error", m);
+      return;
+    }
+    if (pwd1 !== pwd2) {
+      const m = "La confirmation ne correspond pas.";
+      setMsgMine(m);
+      pushToast("error", m);
+      return;
+    }
     setBusyMine(true);
     try {
       const r = await fetch("/api/admin/password", {
@@ -128,11 +189,15 @@ export default function AdminSettingsPage() {
       });
       const j = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(j?.error || "Échec de mise à jour");
-      setMsgMine("Mot de passe mis à jour ✅");
+      const ok = "Mot de passe mis à jour ✅";
+      setMsgMine(ok);
       setPwd1("");
       setPwd2("");
+      pushToast("success", ok);
     } catch (e: any) {
-      setMsgMine(e?.message || "Erreur");
+      const m = e?.message || "Erreur";
+      setMsgMine(m);
+      pushToast("error", m);
     } finally {
       setBusyMine(false);
     }
@@ -146,8 +211,11 @@ export default function AdminSettingsPage() {
       const r = await fetch(`/api/admin/users?q=${encodeURIComponent(q)}`, { cache: "no-store" });
       const j = await r.json();
       setUsers(Array.isArray(j.items) ? j.items : []);
+      pushToast("info", `Utilisateurs chargés (${Array.isArray(j.items) ? j.items.length : 0})`);
     } catch (e: any) {
-      setErrUsers(e?.message || "Impossible de charger les utilisateurs.");
+      const m = e?.message || "Impossible de charger les utilisateurs.";
+      setErrUsers(m);
+      pushToast("error", m);
     } finally {
       setLoadingUsers(false);
     }
@@ -171,8 +239,11 @@ export default function AdminSettingsPage() {
       const j = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(j?.error || "Échec de réinitialisation");
       alert("Mot de passe réinitialisé (temporaire). Communiquez-le à l'utilisateur.");
+      pushToast("success", "Réinitialisation temporaire effectuée.");
     } catch (e: any) {
-      alert(e?.message || "Erreur");
+      const m = e?.message || "Erreur";
+      alert(m);
+      pushToast("error", m);
     }
   }
 
@@ -186,9 +257,24 @@ export default function AdminSettingsPage() {
   }
   async function submitCustom() {
     setCustomMsg(null);
-    if (!targetUser?.id) return setCustomMsg("Utilisateur invalide.");
-    if (!customPwd || customPwd.length < 6) return setCustomMsg("Mot de passe trop court (6+).");
-    if (customPwd !== customPwd2) return setCustomMsg("La confirmation ne correspond pas.");
+    if (!targetUser?.id) {
+      const m = "Utilisateur invalide.";
+      setCustomMsg(m);
+      pushToast("error", m);
+      return;
+    }
+    if (!customPwd || customPwd.length < 6) {
+      const m = "Mot de passe trop court (6+).";
+      setCustomMsg(m);
+      pushToast("error", m);
+      return;
+    }
+    if (customPwd !== customPwd2) {
+      const m = "La confirmation ne correspond pas.";
+      setCustomMsg(m);
+      pushToast("error", m);
+      return;
+    }
     setBusyCustom(true);
     try {
       const r = await fetch("/api/admin/users/reset-password", {
@@ -198,10 +284,14 @@ export default function AdminSettingsPage() {
       });
       const j = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(j?.error || "Échec de réinitialisation");
-      setCustomMsg("Mot de passe mis à jour ✅");
+      const ok = "Mot de passe mis à jour ✅";
+      setCustomMsg(ok);
+      pushToast("success", ok);
       setTimeout(() => setModalOpen(false), 600);
     } catch (e: any) {
-      setCustomMsg(e?.message || "Erreur");
+      const m = e?.message || "Erreur";
+      setCustomMsg(m);
+      pushToast("error", m);
     } finally {
       setBusyCustom(false);
     }
@@ -213,234 +303,562 @@ export default function AdminSettingsPage() {
   const disableMine = busyMine;
   const disableCustom = busyCustom;
 
+  /* =======================
+     3) Horaires & séances
+  ======================== */
+  const [cfg, setCfg] = useState({
+    tz: "Africa/Abidjan",
+    auto_lateness: true,
+    default_session_minutes: 60,
+  });
+  const [savingCfg, setSavingCfg] = useState(false);
+
+  type Period = { weekday: number; label: string; start_time: string; end_time: string };
+  const [curDay, setCurDay] = useState<number>(1); // 1=Lundi … 6=Samedi
+  const [byDay, setByDay] = useState<Record<number, Period[]>>({});
+  const [loadingCfg, setLoadingCfg] = useState(false);
+  const [savingPeriods, setSavingPeriods] = useState(false);
+  const [msgSched, setMsgSched] = useState<string | null>(null);
+
+  async function loadInstitutionConfig() {
+    setLoadingCfg(true);
+    setMsgSched(null);
+    try {
+      const [c, p] = await Promise.all([
+        fetch("/api/admin/institution/settings", { cache: "no-store" }).then(r => r.json()),
+        fetch("/api/admin/institution/periods", { cache: "no-store" }).then(r => r.json()),
+      ]);
+      setCfg({
+        tz: c?.tz || "Africa/Abidjan",
+        auto_lateness: !!c?.auto_lateness,
+        default_session_minutes: Number(c?.default_session_minutes || 60),
+      });
+      const grouped: Record<number, Period[]> = {};
+      (Array.isArray(p?.periods) ? p.periods : []).forEach((row: any) => {
+        const w = Number(row.weekday || 1);
+        if (!grouped[w]) grouped[w] = [];
+        grouped[w].push({
+          weekday: w,
+          label: row.label || "Séance",
+          start_time: String(row.start_time || "08:00").slice(0, 5),
+          end_time: String(row.end_time || "09:00").slice(0, 5),
+        });
+      });
+      setByDay(grouped);
+      pushToast("info", "Paramètres établissement chargés.");
+    } catch (e: any) {
+      pushToast("error", e?.message || "Chargement des paramètres impossible.");
+    } finally {
+      setLoadingCfg(false);
+    }
+  }
+  useEffect(() => {
+    loadInstitutionConfig();
+  }, []);
+
+  function addRow(day: number) {
+    setByDay(m => {
+      const list = (m[day] || []).slice();
+      list.push({ weekday: day, label: "Séance", start_time: "08:00", end_time: "08:55" });
+      return { ...m, [day]: list };
+    });
+    pushToast("info", "Créneau ajouté (non enregistré).");
+  }
+  function removeRow(day: number, idx: number) {
+    setByDay(m => {
+      const list = (m[day] || []).slice();
+      list.splice(idx, 1);
+      return { ...m, [day]: list };
+    });
+    pushToast("info", "Créneau supprimé (non enregistré).");
+  }
+  function setCell(day: number, idx: number, patch: Partial<Period>) {
+    setByDay(m => {
+      const list = (m[day] || []).slice();
+      const cur = list[idx] || { weekday: day, label: "Séance", start_time: "08:00", end_time: "08:55" };
+      list[idx] = { ...cur, ...patch, weekday: day };
+      return { ...m, [day]: list };
+    });
+  }
+
+  async function saveConfig() {
+    setSavingCfg(true);
+    try {
+      const r = await fetch("/api/admin/institution/settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(cfg),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j?.error || "Échec mise à jour paramètres");
+      const ok = "Paramètres d’établissement enregistrés ✅";
+      setMsgSched(ok);
+      pushToast("success", ok);
+    } catch (e: any) {
+      const m = e?.message || "Erreur enregistrement paramètres";
+      setMsgSched(m);
+      pushToast("error", m);
+    } finally {
+      setSavingCfg(false);
+    }
+  }
+
+  async function savePeriods() {
+    setSavingPeriods(true);
+    setMsgSched(null);
+    try {
+      const all: Period[] = [];
+      Object.keys(byDay).forEach(k => {
+        const d = Number(k);
+        (byDay[d] || []).forEach(p => {
+          if (p.start_time && p.end_time) all.push({ ...p, weekday: d });
+        });
+      });
+      const r = await fetch("/api/admin/institution/periods", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ periods: all }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j?.error || "Échec enregistrement créneaux");
+      const ok = `Créneaux enregistrés ✅ (${j?.inserted ?? all.length})`;
+      setMsgSched(ok);
+      pushToast("success", ok);
+      await loadInstitutionConfig();
+    } catch (e: any) {
+      const m = e?.message || "Erreur enregistrement créneaux";
+      setMsgSched(m);
+      pushToast("error", m);
+    } finally {
+      setSavingPeriods(false);
+    }
+  }
+
   return (
-    <main className="mx-auto max-w-6xl space-y-6 p-4 md:p-6">
-      <header className="mb-2">
-        <h1 className="text-2xl font-semibold text-slate-900">Paramètres</h1>
-        <p className="text-sm text-slate-600">Gérez votre mot de passe et ceux de vos utilisateurs.</p>
-      </header>
+    <>
+      <ToastHost toasts={toasts} onClose={closeToast} />
 
-      {/* =======================
-          1) Mon mot de passe
-      ======================== */}
-      <section className="rounded-2xl border bg-white p-5">
-        <div className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-700">
-          Mon mot de passe
-        </div>
+      <main className="mx-auto max-w-6xl space-y-6 p-4 md:p-6">
+        <header className="mb-2">
+          <h1 className="text-2xl font-semibold text-slate-900">Paramètres</h1>
+          <p className="text-sm text-slate-600">Gérez votre mot de passe, vos utilisateurs, et les horaires de l’établissement.</p>
+        </header>
 
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-          <div>
-            <div className="mb-1 flex items-center justify-between text-xs text-slate-500">
-              <span>Nouveau mot de passe</span>
+        {/* =======================
+            1) Mon mot de passe
+        ======================== */}
+        <section className="rounded-2xl border bg-white p-5">
+          <div className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-700">
+            Mon mot de passe
+          </div>
+
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+            <div>
+              <div className="mb-1 flex items-center justify-between text-xs text-slate-500">
+                <span>Nouveau mot de passe</span>
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-1 text-[11px] text-sky-700 hover:underline"
+                  onClick={() => setShow1(v => !v)}
+                >
+                  {show1 ? <EyeOffIcon className="h-4 w-4" /> : <EyeIcon className="h-4 w-4" />} {show1 ? "Masquer" : "Afficher"}
+                </button>
+              </div>
+              <input
+                type={show1 ? "text" : "password"}
+                className="w-full rounded-lg border px-3 py-2 text-sm"
+                value={pwd1}
+                onChange={e => setPwd1(e.target.value)}
+                disabled={disableMine}
+                placeholder="••••••••"
+              />
+            </div>
+
+            <div>
+              <div className="mb-1 flex items-center justify-between text-xs text-slate-500">
+                <span>Confirmer</span>
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-1 text-[11px] text-sky-700 hover:underline"
+                  onClick={() => setShow2(v => !v)}
+                >
+                  {show2 ? <EyeOffIcon className="h-4 w-4" /> : <EyeIcon className="h-4 w-4" />} {show2 ? "Masquer" : "Afficher"}
+                </button>
+              </div>
+              <input
+                type={show2 ? "text" : "password"}
+                className="w-full rounded-lg border px-3 py-2 text-sm"
+                value={pwd2}
+                onChange={e => setPwd2(e.target.value)}
+                disabled={disableMine}
+                placeholder="••••••••"
+              />
+            </div>
+
+            <div className="flex items-end">
               <button
-                type="button"
-                className="inline-flex items-center gap-1 text-[11px] text-sky-700 hover:underline"
-                onClick={() => setShow1((v) => !v)}
+                onClick={changeMyPassword}
+                disabled={disableMine}
+                className="rounded-xl bg-sky-700 px-4 py-2 text-sm font-medium text-white shadow hover:bg-sky-800 disabled:opacity-60"
               >
-                {show1 ? <EyeOffIcon className="h-4 w-4" /> : <EyeIcon className="h-4 w-4" />} {show1 ? "Masquer" : "Afficher"}
+                {busyMine ? "Mise à jour…" : "Changer mon mot de passe"}
               </button>
             </div>
-            <input
-              type={show1 ? "text" : "password"}
-              className="w-full rounded-lg border px-3 py-2 text-sm"
-              value={pwd1}
-              onChange={(e) => setPwd1(e.target.value)}
-              disabled={disableMine}
-              placeholder="••••••••"
-            />
           </div>
 
-          <div>
-            <div className="mb-1 flex items-center justify-between text-xs text-slate-500">
-              <span>Confirmer</span>
+          {msgMine && <div className="mt-2 text-sm text-slate-700">{msgMine}</div>}
+        </section>
+
+        {/* ==========================================
+            2) Réinitialiser le mot de passe d'un user
+        =========================================== */}
+        <section className="rounded-2xl border bg-white p-5">
+          <div className="mb-3 flex items-center justify-between">
+            <div className="text-sm font-semibold uppercase tracking-wide text-slate-700">
+              Réinitialiser le mot de passe d’un utilisateur
+            </div>
+            <div className="flex items-center gap-2">
+              <input
+                placeholder="Recherche : nom, email, téléphone…"
+                className="w-64 rounded-lg border px-3 py-1.5 text-sm"
+                value={q}
+                onChange={e => setQ(e.target.value)}
+                onKeyDown={e => e.key === "Enter" && loadUsers()}
+              />
               <button
-                type="button"
-                className="inline-flex items-center gap-1 text-[11px] text-sky-700 hover:underline"
-                onClick={() => setShow2((v) => !v)}
+                onClick={loadUsers}
+                className="rounded-lg border px-3 py-1.5 text-sm hover:bg-slate-50"
+                disabled={loadingUsers}
+                title="Rechercher"
               >
-                {show2 ? <EyeOffIcon className="h-4 w-4" /> : <EyeIcon className="h-4 w-4" />} {show2 ? "Masquer" : "Afficher"}
+                {loadingUsers ? "Recherche…" : "Rechercher"}
               </button>
             </div>
-            <input
-              type={show2 ? "text" : "password"}
-              className="w-full rounded-lg border px-3 py-2 text-sm"
-              value={pwd2}
-              onChange={(e) => setPwd2(e.target.value)}
-              disabled={disableMine}
-              placeholder="••••••••"
-            />
           </div>
 
-          <div className="flex items-end">
+          {errUsers && (
+            <div className="mb-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+              {errUsers}
+            </div>
+          )}
+
+          {loadingUsers ? (
+            <div className="text-sm text-slate-500">Chargement des utilisateurs…</div>
+          ) : users.length === 0 ? (
+            <div className="text-sm text-slate-500">Aucun utilisateur trouvé.</div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="min-w-full text-sm">
+                <thead>
+                  <tr className="border-b bg-slate-50 text-slate-600">
+                    <th className="px-3 py-2 text-left">Utilisateur</th>
+                    <th className="px-3 py-2 text-left">Contact</th>
+                    <th className="px-3 py-2 text-left">Rôle</th>
+                    <th className="px-3 py-2 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {users.map(u => (
+                    <tr key={u.id} className="border-b">
+                      <td className="px-3 py-2">
+                        <div className="font-medium text-slate-800">{u.display_name || "—"}</div>
+                        <div className="text-[11px] text-slate-500">{u.id}</div>
+                      </td>
+                      <td className="px-3 py-2">
+                        <div className="text-slate-700">{u.email || "—"}</div>
+                        <div className="text-[12px] text-slate-500">{u.phone || ""}</div>
+                      </td>
+                      <td className="px-3 py-2">
+                        <Badge color={roleColor(u.role || undefined)}>{u.role || "—"}</Badge>
+                      </td>
+                      <td className="px-3 py-2">
+                        <div className="flex items-center justify-end gap-2">
+                          <button
+                            onClick={() => resetTemp(u)}
+                            className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-1.5 text-xs font-medium text-amber-800 hover:bg-amber-100"
+                            title="Réinitialiser avec mot de passe temporaire"
+                          >
+                            Réinit. temporaire
+                          </button>
+                          <button
+                            onClick={() => openCustom(u)}
+                            className="rounded-lg border border-sky-300 bg-sky-50 px-3 py-1.5 text-xs font-medium text-sky-800 hover:bg-sky-100"
+                            title="Définir un mot de passe"
+                          >
+                            Définir…
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+
+        {/* =======================
+            3) Horaires & séances
+        ======================== */}
+        <section className="rounded-2xl border bg-white p-5">
+          <div className="mb-3 flex items-center justify-between">
+            <div>
+              <div className="text-sm font-semibold uppercase tracking-wide text-slate-700">
+                Horaires & séances de l’établissement
+              </div>
+              <p className="text-xs text-slate-500">
+                Définissez le fuseau horaire, la durée par séance et les créneaux journaliers. Ces paramètres pilotent le calcul automatique des retards.
+              </p>
+            </div>
             <button
-              onClick={changeMyPassword}
-              disabled={disableMine}
-              className="rounded-xl bg-sky-700 px-4 py-2 text-sm font-medium text-white shadow hover:bg-sky-800 disabled:opacity-60"
-            >
-              {busyMine ? "Mise à jour…" : "Changer mon mot de passe"}
-            </button>
-          </div>
-        </div>
-
-        {msgMine && <div className="mt-2 text-sm text-slate-700">{msgMine}</div>}
-      </section>
-
-      {/* ==========================================
-          2) Réinitialiser le mot de passe d'un user
-      =========================================== */}
-      <section className="rounded-2xl border bg-white p-5">
-        <div className="mb-3 flex items-center justify-between">
-          <div className="text-sm font-semibold uppercase tracking-wide text-slate-700">
-            Réinitialiser le mot de passe d’un utilisateur
-          </div>
-          <div className="flex items-center gap-2">
-            <input
-              placeholder="Recherche : nom, email, téléphone…"
-              className="w-64 rounded-lg border px-3 py-1.5 text-sm"
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && loadUsers()}
-            />
-            <button
-              onClick={loadUsers}
+              onClick={loadInstitutionConfig}
               className="rounded-lg border px-3 py-1.5 text-sm hover:bg-slate-50"
-              disabled={loadingUsers}
-              title="Rechercher"
+              title="Rafraîchir"
             >
-              {loadingUsers ? "Recherche…" : "Rechercher"}
+              Rafraîchir
             </button>
           </div>
-        </div>
 
-        {errUsers && (
-          <div className="mb-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
-            {errUsers}
+          {/* Paramètres d’établissement */}
+          <div className="mb-4 grid grid-cols-1 gap-3 md:grid-cols-3">
+            <div>
+              <div className="mb-1 text-xs text-slate-500">Fuseau horaire</div>
+              <select
+                className="w-full rounded-lg border px-3 py-2 text-sm"
+                value={cfg.tz}
+                onChange={e => setCfg(s => ({ ...s, tz: e.target.value }))}
+                disabled={loadingCfg || savingCfg}
+              >
+                <option value="Africa/Abidjan">Africa/Abidjan (UTC+0)</option>
+                <option value="Africa/Lagos">Africa/Lagos (UTC+1)</option>
+                <option value="Africa/Dakar">Africa/Dakar (UTC+0)</option>
+                <option value="UTC">UTC</option>
+              </select>
+            </div>
+            <div>
+              <div className="mb-1 text-xs text-slate-500">Durée par séance (minutes)</div>
+              <input
+                type="number"
+                min={1}
+                className="w-full rounded-lg border px-3 py-2 text-sm"
+                value={cfg.default_session_minutes}
+                onChange={e =>
+                  setCfg(s => ({
+                    ...s,
+                    default_session_minutes: Math.max(1, parseInt(e.target.value || "60", 10)),
+                  }))
+                }
+                disabled={loadingCfg || savingCfg}
+              />
+              <div className="mt-1 text-[11px] text-slate-500">
+                Utilisée comme valeur par défaut lors de l’ouverture de séance (UI), sans forcer vos créneaux ci-dessous.
+              </div>
+            </div>
+            <div className="flex items-end">
+              <label className="inline-flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={!!cfg.auto_lateness}
+                  onChange={e => setCfg(s => ({ ...s, auto_lateness: e.target.checked }))}
+                  disabled={loadingCfg || savingCfg}
+                />
+                <span className="text-sm text-slate-700">Calcul automatique des retards (par créneau)</span>
+              </label>
+            </div>
           </div>
-        )}
 
-        {loadingUsers ? (
-          <div className="text-sm text-slate-500">Chargement des utilisateurs…</div>
-        ) : users.length === 0 ? (
-          <div className="text-sm text-slate-500">Aucun utilisateur trouvé.</div>
-        ) : (
-          <div className="overflow-x-auto">
+          <div className="mb-3 flex items-center gap-2">
+            <button
+              onClick={saveConfig}
+              disabled={savingCfg || loadingCfg}
+              className="rounded-lg bg-sky-700 px-3 py-1.5 text-sm font-medium text-white hover:bg-sky-800 disabled:opacity-60"
+            >
+              {savingCfg ? "Enregistrement…" : "Enregistrer les paramètres"}
+            </button>
+            {msgSched && <span className="text-sm text-slate-700">{msgSched}</span>}
+          </div>
+
+          {/* Onglets jours */}
+          <div className="mb-2 flex flex-wrap gap-2">
+            {[
+              { d: 1, n: "Lun" },
+              { d: 2, n: "Mar" },
+              { d: 3, n: "Mer" },
+              { d: 4, n: "Jeu" },
+              { d: 5, n: "Ven" },
+              { d: 6, n: "Sam" },
+            ].map(w => (
+              <button
+                key={w.d}
+                onClick={() => setCurDay(w.d)}
+                className={`rounded-lg border px-3 py-1.5 text-sm ${
+                  curDay === w.d ? "bg-slate-900 text-white" : "hover:bg-slate-50"
+                }`}
+              >
+                {w.n}
+              </button>
+            ))}
+          </div>
+
+          {/* Tableau créneaux pour le jour courant */}
+          <div className="overflow-x-auto rounded-xl border">
             <table className="min-w-full text-sm">
-              <thead>
-                <tr className="border-b bg-slate-50 text-slate-600">
-                  <th className="px-3 py-2 text-left">Utilisateur</th>
-                  <th className="px-3 py-2 text-left">Contact</th>
-                  <th className="px-3 py-2 text-left">Rôle</th>
-                  <th className="px-3 py-2 text-right">Actions</th>
+              <thead className="bg-slate-50">
+                <tr className="text-left text-slate-600">
+                  <th className="px-3 py-2 w-12">#</th>
+                  <th className="px-3 py-2 w-36">Début</th>
+                  <th className="px-3 py-2 w-36">Fin</th>
+                  <th className="px-3 py-2">Libellé</th>
+                  <th className="px-3 py-2 w-24 text-right">Actions</th>
                 </tr>
               </thead>
-              <tbody>
-                {users.map((u) => (
-                  <tr key={u.id} className="border-b">
-                    <td className="px-3 py-2">
-                      <div className="font-medium text-slate-800">{u.display_name || "—"}</div>
-                      <div className="text-[11px] text-slate-500">{u.id}</div>
-                    </td>
-                    <td className="px-3 py-2">
-                      <div className="text-slate-700">{u.email || "—"}</div>
-                      <div className="text-[12px] text-slate-500">{u.phone || ""}</div>
-                    </td>
-                    <td className="px-3 py-2">
-                      <Badge color={roleColor(u.role || undefined)}>{u.role || "—"}</Badge>
-                    </td>
-                    <td className="px-3 py-2">
-                      <div className="flex items-center justify-end gap-2">
-                        <button
-                          onClick={() => resetTemp(u)}
-                          className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-1.5 text-xs font-medium text-amber-800 hover:bg-amber-100"
-                          title="Réinitialiser avec mot de passe temporaire"
-                        >
-                          Réinit. temporaire
-                        </button>
-                        <button
-                          onClick={() => openCustom(u)}
-                          className="rounded-lg border border-sky-300 bg-sky-50 px-3 py-1.5 text-xs font-medium text-sky-800 hover:bg-sky-100"
-                          title="Définir un mot de passe"
-                        >
-                          Définir…
-                        </button>
-                      </div>
+              <tbody className="divide-y">
+                {loadingCfg ? (
+                  <tr>
+                    <td className="px-3 py-3 text-slate-500" colSpan={5}>
+                      Chargement…
                     </td>
                   </tr>
-                ))}
+                ) : (byDay[curDay] || []).length === 0 ? (
+                  <tr>
+                    <td className="px-3 py-3 text-slate-500" colSpan={5}>
+                      Aucun créneau pour ce jour.
+                    </td>
+                  </tr>
+                ) : (
+                  (byDay[curDay] || []).map((row, i) => (
+                    <tr key={i}>
+                      <td className="px-3 py-2">{i + 1}</td>
+                      <td className="px-3 py-2">
+                        <input
+                          type="time"
+                          value={row.start_time}
+                          onChange={e => setCell(curDay, i, { start_time: e.target.value })}
+                          className="w-36 rounded-lg border px-3 py-1.5 text-sm"
+                        />
+                      </td>
+                      <td className="px-3 py-2">
+                        <input
+                          type="time"
+                          value={row.end_time}
+                          onChange={e => setCell(curDay, i, { end_time: e.target.value })}
+                          className="w-36 rounded-lg border px-3 py-1.5 text-sm"
+                        />
+                      </td>
+                      <td className="px-3 py-2">
+                        <input
+                          value={row.label}
+                          onChange={e => setCell(curDay, i, { label: e.target.value })}
+                          className="w-full rounded-lg border px-3 py-1.5 text-sm"
+                          placeholder="1ère heure / Pause / …"
+                        />
+                      </td>
+                      <td className="px-3 py-2 text-right">
+                        <button
+                          onClick={() => removeRow(curDay, i)}
+                          className="rounded-lg border border-rose-300 bg-rose-50 px-3 py-1.5 text-xs font-medium text-rose-800 hover:bg-rose-100"
+                        >
+                          Supprimer
+                        </button>
+                      </td>
+                    </tr>
+                  ))
+                )}
               </tbody>
             </table>
           </div>
-        )}
-      </section>
 
-      {/* Modal mot de passe personnalisé */}
-      <Modal
-        open={modalOpen}
-        title={`Définir un mot de passe — ${targetUser?.display_name || targetUser?.email || targetUser?.phone || "Utilisateur"}`}
-        onClose={() => setModalOpen(false)}
-        actions={
-          <>
+          <div className="mt-3 flex items-center justify-between">
             <button
-              onClick={submitCustom}
-              disabled={disableCustom}
-              className="rounded-lg bg-sky-700 px-3 py-1.5 text-sm font-medium text-white hover:bg-sky-800 disabled:opacity-60"
+              onClick={() => addRow(curDay)}
+              className="rounded-lg border px-3 py-1.5 text-sm hover:bg-slate-50"
             >
-              {busyCustom ? "Mise à jour…" : "Valider"}
+              + Ajouter un créneau
             </button>
-          </>
-        }
-      >
-        <div className="space-y-3">
-          <div>
-            <div className="mb-1 flex items-center justify-between text-xs text-slate-500">
-              <span>Nouveau mot de passe</span>
+
+            <button
+              onClick={savePeriods}
+              disabled={savingPeriods || loadingCfg}
+              className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white shadow hover:bg-emerald-700 disabled:opacity-60"
+            >
+              {savingPeriods ? "Enregistrement…" : "Enregistrer les créneaux"}
+            </button>
+          </div>
+
+          <div className="mt-2 text-[12px] text-slate-500">
+            Astuce : si vous laissez des jours vides, ils ne seront pas pris en compte. Le calcul de retard se base sur le créneau du jour le plus proche de l’heure de début de séance.
+          </div>
+        </section>
+
+        {/* Modal mot de passe personnalisé */}
+        <Modal
+          open={modalOpen}
+          title={`Définir un mot de passe — ${targetUser?.display_name || targetUser?.email || targetUser?.phone || "Utilisateur"}`}
+          onClose={() => setModalOpen(false)}
+          actions={
+            <>
               <button
-                type="button"
-                className="inline-flex items-center gap-1 text-[11px] text-sky-700 hover:underline"
-                onClick={() => setShowCP1((v) => !v)}
+                onClick={submitCustom}
+                disabled={disableCustom}
+                className="rounded-lg bg-sky-700 px-3 py-1.5 text-sm font-medium text-white hover:bg-sky-800 disabled:opacity-60"
               >
-                {showCP1 ? <EyeOffIcon className="h-4 w-4" /> : <EyeIcon className="h-4 w-4" />} {showCP1 ? "Masquer" : "Afficher"}
+                {busyCustom ? "Mise à jour…" : "Valider"}
               </button>
+            </>
+          }
+        >
+          <div className="space-y-3">
+            <div>
+              <div className="mb-1 flex items-center justify-between text-xs text-slate-500">
+                <span>Nouveau mot de passe</span>
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-1 text-[11px] text-sky-700 hover:underline"
+                  onClick={() => setShowCP1(v => !v)}
+                >
+                  {showCP1 ? <EyeOffIcon className="h-4 w-4" /> : <EyeIcon className="h-4 w-4" />} {showCP1 ? "Masquer" : "Afficher"}
+                </button>
+              </div>
+              <input
+                type={showCP1 ? "text" : "password"}
+                className="w-full rounded-lg border px-3 py-2 text-sm"
+                value={customPwd}
+                onChange={e => setCustomPwd(e.target.value)}
+                disabled={disableCustom}
+                placeholder="••••••••"
+              />
             </div>
-            <input
-              type={showCP1 ? "text" : "password"}
-              className="w-full rounded-lg border px-3 py-2 text-sm"
-              value={customPwd}
-              onChange={(e) => setCustomPwd(e.target.value)}
-              disabled={disableCustom}
-              placeholder="••••••••"
-            />
-          </div>
 
-          <div>
-            <div className="mb-1 flex items-center justify-between text-xs text-slate-500">
-              <span>Confirmer</span>
-              <button
-                type="button"
-                className="inline-flex items-center gap-1 text-[11px] text-sky-700 hover:underline"
-                onClick={() => setShowCP2((v) => !v)}
-              >
-                {showCP2 ? <EyeOffIcon className="h-4 w-4" /> : <EyeIcon className="h-4 w-4" />} {showCP2 ? "Masquer" : "Afficher"}
-              </button>
+            <div>
+              <div className="mb-1 flex items-center justify-between text-xs text-slate-500">
+                <span>Confirmer</span>
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-1 text-[11px] text-sky-700 hover:underline"
+                  onClick={() => setShowCP2(v => !v)}
+                >
+                  {showCP2 ? <EyeOffIcon className="h-4 w-4" /> : <EyeIcon className="h-4 w-4" />} {showCP2 ? "Masquer" : "Afficher"}
+                </button>
+              </div>
+              <input
+                type={showCP2 ? "text" : "password"}
+                className="w-full rounded-lg border px-3 py-2 text-sm"
+                value={customPwd2}
+                onChange={e => setCustomPwd2(e.target.value)}
+                disabled={disableCustom}
+                placeholder="••••••••"
+              />
             </div>
-            <input
-              type={showCP2 ? "text" : "password"}
-              className="w-full rounded-lg border px-3 py-2 text-sm"
-              value={customPwd2}
-              onChange={(e) => setCustomPwd2(e.target.value)}
-              disabled={disableCustom}
-              placeholder="••••••••"
-            />
-          </div>
 
-          {customMsg && <div className="text-sm text-slate-700">{customMsg}</div>}
+            {customMsg && <div className="text-sm text-slate-700">{customMsg}</div>}
 
-          <div className="rounded-lg border border-yellow-200 bg-yellow-50 px-3 py-2 text-[12px] text-yellow-800">
-            Astuce : laissez ce modal et utilisez <b>“Réinit. temporaire”</b> si vous préférez
-            générer un mot de passe provisoire (par défaut côté serveur).
+            <div className="rounded-lg border border-yellow-200 bg-yellow-50 px-3 py-2 text-[12px] text-yellow-800">
+              Astuce : laissez ce modal et utilisez <b>“Réinit. temporaire”</b> si vous préférez
+              générer un mot de passe provisoire (par défaut côté serveur).
+            </div>
           </div>
-        </div>
-      </Modal>
-    </main>
+        </Modal>
+      </main>
+    </>
   );
 }

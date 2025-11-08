@@ -6,9 +6,39 @@ import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 type Body = {
   class_id: string;
   subject_id?: string | null;        // optionnel (peut être null)
-  started_at?: string;               // ISO optionnel, utilisé pour le créneau
-  expected_minutes?: number | null;  // OBLIGATOIRE (>= 1)
+  started_at?: string;               // ISO optionnel (proposé par l'UI)
+  expected_minutes?: number | null;  // optionnel : null => Auto (établissement)
 };
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+/* ───────── helpers horaires (sans lib externe) ───────── */
+function hmsToMin(hms: string | null | undefined) {
+  const s = String(hms || "00:00:00").slice(0, 8);
+  const [h, m] = s.split(":").map((n) => parseInt(n, 10));
+  return (isNaN(h) ? 0 : h) * 60 + (isNaN(m) ? 0 : m);
+}
+function hmToMin(hm: string) {
+  const [h, m] = hm.split(":").map((n) => parseInt(n, 10));
+  return (isNaN(h) ? 0 : h) * 60 + (isNaN(m) ? 0 : m);
+}
+/** Retourne "HH:MM" local + weekday 0..6 pour un ISO donné dans un fuseau */
+function localHMAndWeekday(iso: string, tz: string) {
+  const d = new Date(iso);
+  const hm = new Intl.DateTimeFormat("en-GB", {
+    timeZone: tz,
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(d); // "HH:MM"
+  const wdStr = new Intl.DateTimeFormat("en-US", {
+    timeZone: tz,
+    weekday: "short",
+  }).format(d).toLowerCase(); // "sun".."sat"
+  const map: Record<string, number> = { sun: 0, mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6 };
+  return { hm, weekday: map[wdStr] ?? 0 };
+}
 
 export async function POST(req: Request) {
   try {
@@ -30,19 +60,12 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "class_id_required" }, { status: 400 });
     }
 
-    // Heure de début (créneau) : si fournie par l'UI, on la garde ; sinon maintenant.
+    // Heure proposée par l’UI (créneau) sinon maintenant
     const startedAtRaw = b?.started_at ? new Date(b.started_at) : new Date();
     const startedAt = isNaN(startedAtRaw.getTime()) ? new Date() : startedAtRaw;
 
-    // Heure réelle du clic (indépendante de l'horloge du téléphone)
+    // Heure réelle du clic (référence d'appel)
     const clickNow = new Date();
-
-    // Durée attendue obligatoire (arrondie et clampée à >= 1)
-    const raw = Number(b?.expected_minutes);
-    const expected_minutes = Number.isFinite(raw) ? Math.max(1, Math.floor(raw)) : NaN;
-    if (!Number.isFinite(expected_minutes)) {
-      return NextResponse.json({ error: "expected_minutes_required" }, { status: 400 });
-    }
 
     // 3) Établissement du prof
     const { data: me, error: meErr } = await supa
@@ -68,15 +91,68 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "invalid_class" }, { status: 400 });
     }
 
-    // 5) Insertion séance
+    // 5) Paramètres & créneaux de l’établissement
+    const { data: inst, error: iErr } = await srv
+      .from("institutions")
+      .select("tz, default_session_minutes")
+      .eq("id", institution_id)
+      .maybeSingle();
+    if (iErr) return NextResponse.json({ error: iErr.message }, { status: 400 });
+
+    const tz = String(inst?.tz || "Africa/Abidjan");
+    const defSessionMin =
+      Number.isFinite(Number(inst?.default_session_minutes)) &&
+      Number(inst?.default_session_minutes) > 0
+        ? Math.floor(Number(inst?.default_session_minutes))
+        : 60;
+
+    const { hm: startedHM, weekday } = localHMAndWeekday(startedAt.toISOString(), tz);
+    const callMin = hmToMin(startedHM);
+
+    const { data: periods, error: pErr } = await srv
+      .from("institution_periods")
+      .select("id, weekday, period_no, label, start_time, end_time, duration_min")
+      .eq("institution_id", institution_id)
+      .eq("weekday", weekday)
+      .order("period_no", { ascending: true });
+    if (pErr) return NextResponse.json({ error: pErr.message }, { status: 400 });
+
+    let periodDuration: number | null = null;
+    if (Array.isArray(periods) && periods.length) {
+      const expanded = periods.map((p: any) => ({
+        startMin: hmsToMin(p.start_time),
+        endMin: hmsToMin(p.end_time),
+        durationMin:
+          typeof p.duration_min === "number" && p.duration_min > 0
+            ? Math.floor(p.duration_min)
+            : Math.max(1, hmsToMin(p.end_time) - hmsToMin(p.start_time)),
+      }));
+      const cur =
+        expanded.find((p: any) => callMin >= p.startMin && callMin < p.endMin) ??
+        [...expanded].reverse().find((p: any) => callMin >= p.startMin) ??
+        null;
+      periodDuration = cur?.durationMin ?? null;
+    }
+
+    // 6) expected_minutes : priorité à la valeur fournie ; null => Auto ; sinon calcul établissement
+    let expected_minutes: number | null;
+    if (b?.expected_minutes === null) {
+      expected_minutes = null; // Auto (établissement)
+    } else if (Number.isFinite(Number(b?.expected_minutes))) {
+      expected_minutes = Math.max(1, Math.floor(Number(b!.expected_minutes)));
+    } else {
+      expected_minutes = periodDuration ?? defSessionMin; // calcul par créneau ou fallback
+    }
+
+    // 7) Insertion séance
     const insertRow = {
       institution_id,
       teacher_id: user.id,
       class_id,
       subject_id, // nullable
-      started_at: startedAt.toISOString(),     // sert au créneau (rangement)
-      actual_call_at: clickNow.toISOString(),  // heure du clic (affichage)
-      expected_minutes,
+      started_at: startedAt.toISOString(),     // utilisé pour tri/affichage ; le calcul de retard se base sur les créneaux
+      actual_call_at: clickNow.toISOString(),  // heure réelle du clic
+      expected_minutes,                        // peut être null (auto)
       status: "open" as const,
       created_by: user.id,
     };
@@ -88,7 +164,7 @@ export async function POST(req: Request) {
       .maybeSingle();
     if (insErr) return NextResponse.json({ error: insErr.message }, { status: 400 });
 
-    // 6) Enrichissement (facultatif mais utile côté UI)
+    // 8) Enrichissement (pour l’UI)
     const class_label = cls.label ?? null;
     let subject_name: string | null = null;
     if (inserted?.subject_id) {
@@ -108,7 +184,7 @@ export async function POST(req: Request) {
         subject_id: (inserted!.subject_id as string) ?? null,
         subject_name,
         started_at: inserted!.started_at as string,
-        expected_minutes: (inserted!.expected_minutes as number) ?? null,
+        expected_minutes: (inserted!.expected_minutes as number | null) ?? null,
       },
     });
   } catch (e: any) {

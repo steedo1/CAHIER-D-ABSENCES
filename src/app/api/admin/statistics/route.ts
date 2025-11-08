@@ -1,4 +1,3 @@
-// src/app/api/admin/statistics/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
@@ -36,9 +35,19 @@ async function resolveSessionSubjectIds(db: any, baseSubjectId: string, institut
   } catch {}
   return Array.from(ids);
 }
-
-/* ───────── helpers timesheet ───────── */
 const pad2 = (n: number) => String(n).padStart(2, "0");
+const uniq = <T,>(arr: T[]) => Array.from(new Set((arr || []).filter(Boolean))) as T[];
+
+/* ───────── helpers HH:MM / dates (Abidjan) ───────── */
+function hmToMin(hhmm: string) {
+  const [h, m] = (hhmm || "00:00").split(":").map((x) => parseInt(x, 10));
+  return (isFinite(h) ? h : 0) * 60 + (isFinite(m) ? m : 0);
+}
+function minToHM(min: number) {
+  const h = Math.floor(min / 60);
+  const m = min % 60;
+  return `${pad2(h)}:${pad2(m)}`;
+}
 function rangeDates(from: string, to: string): string[] {
   const [fy, fm, fd] = from.split("-").map(Number);
   const [ty, tm, td] = to.split("-").map(Number);
@@ -54,16 +63,18 @@ function rangeDates(from: string, to: string): string[] {
   }
   return out;
 }
-function buildSlots(startHour: number, endHour: number, slotMin: number) {
-  const slots: { start: string; end: string }[] = [];
-  const first = startHour * 60;
-  const last = endHour * 60;
-  for (let m = first; m + slotMin <= last; m += slotMin) {
-    const sh = Math.floor(m / 60), sm = m % 60;
-    const eh = Math.floor((m + slotMin) / 60), em = (m + slotMin) % 60;
-    slots.push({ start: `${pad2(sh)}:${pad2(sm)}`, end: `${pad2(eh)}:${pad2(em)}` });
+
+/* ───────── slots manuels ───────── */
+function buildUniformSlots(startHour: number, endHour: number, slotMin: number) {
+  const out: { start: string; end: string }[] = [];
+  let cur = startHour * 60;
+  const end = endHour * 60;
+  while (cur < end) {
+    const next = Math.min(cur + slotMin, end);
+    out.push({ start: minToHM(cur), end: minToHM(next) });
+    cur = next;
   }
-  return slots;
+  return out;
 }
 /** ancre l’arrondi sur startHour et coupe hors plage */
 function bucketToSlotStartAligned(h: number, min: number, slotMin: number, startHour: number, endHour: number): string | null {
@@ -73,7 +84,27 @@ function bucketToSlotStartAligned(h: number, min: number, slotMin: number, start
   if (t < first || t >= last) return null;
   const k = Math.floor((t - first) / slotMin);
   const v = first + k * slotMin;
-  return `${pad2(Math.floor(v / 60))}:${pad2(v % 60)}`;
+  return minToHM(v);
+}
+
+/* ───────── slots établissement (institution_periods) ───────── */
+async function buildInstitutionSlots(srv: ReturnType<typeof getSupabaseServiceClient>, institutionId: string) {
+  const { data: per, error } = await srv
+    .from("institution_periods")
+    .select("weekday, period_no, label, start_time, end_time")
+    .eq("institution_id", institutionId)
+    .order("weekday",{ascending:true})
+    .order("period_no",{ascending:true});
+  if (error) throw new Error(error.message);
+
+  // Unifie par heure de début (HH:MM) — on conserve le premier end rencontré
+  const firstForStart = new Map<string, { start: string; end: string }>();
+  for (const p of per || []) {
+    const s = String(p.start_time || "08:00:00").slice(0,5);
+    const e = String(p.end_time   || "09:00:00").slice(0,5);
+    if (!firstForStart.has(s)) firstForStart.set(s, { start: s, end: e });
+  }
+  return Array.from(firstForStart.values()).sort((a,b)=>a.start.localeCompare(b.start));
 }
 
 /* ───────────────────────────────────── */
@@ -104,14 +135,22 @@ export async function GET(req: NextRequest) {
     if (mode === "timesheet") {
       if (!teacher_id) return NextResponse.json({ error: "teacher_id requis pour mode=timesheet" }, { status: 400 });
 
+      const usePeriods = searchParams.get("use_periods") === "1";
       const slotMin   = Math.max(1, parseInt(searchParams.get("slot") || "60", 10));
       const startHour = Math.min(23, Math.max(0, parseInt(searchParams.get("start_hour") || "7", 10)));
       const endHour   = Math.min(24, Math.max(1, parseInt(searchParams.get("end_hour") || "18", 10)));
 
       const dates = rangeDates(from, to);
-      const slots = buildSlots(startHour, endHour, slotMin);
 
-      // Nom + disciplines
+      // Institution à utiliser pour les créneaux établissement :
+      // priorité à l’institution de l’admin courant ; sinon celle du prof ciblé
+      let instForSlots = inst;
+      if (usePeriods && !instForSlots) {
+        const { data: profInst } = await srv.from("profiles").select("institution_id").eq("id", teacher_id).maybeSingle();
+        instForSlots = (profInst?.institution_id as string) || null;
+      }
+
+      // Nom du prof + disciplines (si disponibles dans teacher_subjects)
       const subjectsSet = new Set<string>();
       let teacherName: string | null = null;
       {
@@ -135,12 +174,12 @@ export async function GET(req: NextRequest) {
         }
       }
 
-      // tables
+      // Table des sessions
       const sessionsTable =
         (await tableExists(srv, "teacher_sessions")) ? "teacher_sessions" :
         (await tableExists(srv, "class_sessions"))   ? "class_sessions"   : "sessions";
 
-      // ➤ Paires (class_id, subject_id) attribuées à CE prof
+      // Paires (class_id, subject_id) attribuées à CE prof
       let qCT = srv.from("class_teachers").select("class_id, subject_id").eq("teacher_id", teacher_id);
       if (inst) qCT = qCT.eq("institution_id", inst);
       const { data: ctPairs } = await qCT;
@@ -149,7 +188,7 @@ export async function GET(req: NextRequest) {
 
       // 1) séances où teacher_id == prof
       let q1 = srv.from(sessionsTable)
-        .select("id, teacher_id, class_id, subject_id, started_at, actual_call_at, expected_minutes, institution_id")
+        .select("id, teacher_id, class_id, subject_id, started_at, actual_call_at, expected_minutes, institution_id, created_by")
         .eq("teacher_id", teacher_id)
         .gte("started_at", fromISO)
         .lt("started_at", toISOExclusive);
@@ -183,6 +222,8 @@ export async function GET(req: NextRequest) {
         started_at: String(s.started_at),
         actual_call_at: s.actual_call_at ? String(s.actual_call_at) : null,
         expected_minutes: Number(s.expected_minutes || 0),
+        teacher_id: s.teacher_id ? String(s.teacher_id) : null,
+        created_by: s.created_by ? String(s.created_by) : null,
       }));
 
       // Colonnes = classes pivot ∪ classes vues
@@ -201,10 +242,15 @@ export async function GET(req: NextRequest) {
       }
       classes.sort((a, b) => a.label.localeCompare(b.label, "fr"));
 
-      // === Placement en cellules ===
-      // Règle : le BUCKET (créneau) est basé sur started_at (horaire prévu),
-      //         l'heure affichée dans la cellule est actual_call_at (heure du clic), sinon fallback started_at.
-      // Tout est calculé/affiché en zone Africa/Abidjan.
+      // Slots (manuels ou établissement)
+      let slots: { start: string; end: string }[] = [];
+      if (usePeriods && instForSlots) {
+        slots = await buildInstitutionSlots(srv, instForSlots);
+      } else {
+        slots = buildUniformSlots(startHour, endHour, slotMin);
+      }
+
+      // Placement en cellules + meta origine
       const TZ = "Africa/Abidjan";
       const fmtYMD = new Intl.DateTimeFormat("en-CA", { timeZone: TZ, year: "numeric", month: "2-digit", day: "2-digit" });
       const fmtHM  = new Intl.DateTimeFormat("fr-FR", { timeZone: TZ, hour: "2-digit", minute: "2-digit", hour12: false });
@@ -218,6 +264,28 @@ export async function GET(req: NextRequest) {
       const classIdSet = new Set(classes.map(c => c.id));
       const datesSet = new Set(dates);
       const cells: Record<string, string[]> = {};
+      const cellsMeta: Record<string, { hhmm: string; origin?: "teacher" | "class_device" | "other" }[]> = {};
+
+      // aide: trouver le slot pour une HH:MM selon la stratégie
+      const slotStarts = slots.map(s => s.start);
+      function slotStartForHM(hhmm: string): string | null {
+        if (!hhmm) return null;
+        // 1) match exact sur horaire de début
+        if (slotStarts.includes(hhmm)) return hhmm;
+        // 2) si usePeriods → placer dans le slot dont (start <= hhmm < end)
+        if (usePeriods) {
+          const t = hmToMin(hhmm);
+          for (const sl of slots) {
+            const a = hmToMin(sl.start), b = hmToMin(sl.end);
+            if (t >= a && t < b) return sl.start;
+          }
+          return null;
+        }
+        // 3) slots uniformes (fallback arrondi)
+        const [h, m] = hhmm.split(":").map((x) => parseInt(x, 10));
+        if (!isFinite(h) || !isFinite(m)) return null;
+        return bucketToSlotStartAligned(h, m, slotMin, startHour, endHour);
+      }
 
       for (const s of sessions) {
         if (!s.class_id || !classIdSet.has(s.class_id)) continue;
@@ -229,19 +297,36 @@ export async function GET(req: NextRequest) {
         const dateKey = fmtYMD.format(sched);                     // "YYYY-MM-DD"
         if (!datesSet.has(dateKey)) continue;
 
-        // Slot basé sur l'heure/min du "sched" (Abidjan)
-        const { h: sh, m: sm } = getHM(sched);
-        const slotKey = bucketToSlotStartAligned(sh, sm, slotMin, startHour, endHour);
+        // Déterminer le slotStart selon la stratégie
+        const schedHM = (() => {
+          const { h, m } = getHM(sched);
+          return `${pad2(h)}:${pad2(m)}`;
+        })();
+        const slotKey = slotStartForHM(schedHM);
         if (!slotKey) continue;
 
-        // Heure affichée dans la cellule = click (Abidjan)
-        const { h, m } = getHM(click);
-        const hhmm = `${pad2(h)}:${pad2(m)}`;
+        // Heure affichée (HH:MM) = click
+        const clickHM = (() => {
+          const { h, m } = getHM(click);
+          return `${pad2(h)}:${pad2(m)}`;
+        })();
 
         const key = `${dateKey}|${slotKey}|${s.class_id}`;
         if (!cells[key]) cells[key] = [];
-        if (!cells[key].includes(hhmm)) cells[key].push(hhmm);
+        if (!cellsMeta[key]) cellsMeta[key] = [];
+
+        if (!cells[key].includes(clickHM)) cells[key].push(clickHM);
+
+        // Origine
+        let origin: "teacher" | "class_device" | "other" = "other";
+        if (s.created_by && s.teacher_id && s.created_by === s.teacher_id) origin = "teacher";
+        else if (s.created_by) origin = "class_device"; // nos routes class/sessions/start mettent created_by = compte-classe
+
+        if (!cellsMeta[key].some(m => m.hhmm === clickHM)) {
+          cellsMeta[key].push({ hhmm: clickHM, origin });
+        }
       }
+
       for (const k of Object.keys(cells)) cells[k].sort((a, b) => a.localeCompare(b));
 
       const total_minutes = sessions.reduce((acc, s) => acc + (s.expected_minutes || 0), 0);
@@ -255,8 +340,9 @@ export async function GET(req: NextRequest) {
         },
         dates,
         classes,
-        slots,
-        cells,
+        slots,     // { start:"HH:MM", end:"HH:MM" }[]
+        cells,     // { [date|slotStart|classId]: ["08:13","08:55"] }
+        cellsMeta, // { [date|slotStart|classId]: [{hhmm, origin}] }
       });
     }
 

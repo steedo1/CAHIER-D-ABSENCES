@@ -5,9 +5,7 @@ import React, { useEffect, useState } from "react";
 
 /* ───────── routes dédiées parents + fallbacks ───────── */
 const LOGOUT_PARENTS = "/parents/logout";
-const LOGIN_PARENTS  = "/parents/login";
-const LOGOUT_GENERIC = "/logout";
-const LOGIN_GENERIC  = "/login";
+const LOGIN_PARENTS = "/parents/login";
 
 /* ───────── helpers ───────── */
 function urlBase64ToUint8Array(base64: string) {
@@ -105,6 +103,7 @@ type Conduct = {
 function Button(
   p: React.ButtonHTMLAttributes<HTMLButtonElement> & {
     tone?: "emerald" | "slate" | "red" | "white" | "outline";
+    iconLeft?: React.ReactNode;
   }
 ) {
   const tone = p.tone ?? "emerald";
@@ -119,7 +118,7 @@ function Button(
     outline:
       "bg-transparent text-emerald-700 ring-1 ring-emerald-300 hover:bg-emerald-50 focus:ring-emerald-400",
   };
-  const { tone: _t, className, ...rest } = p;
+  const { tone: _t, className, iconLeft, children, ...rest } = p;
   return (
     <button
       {...rest}
@@ -130,7 +129,10 @@ function Button(
         map[tone],
         className ?? "",
       ].join(" ")}
-    />
+    >
+      {iconLeft}
+      {children}
+    </button>
   );
 }
 function Input(p: React.InputHTMLAttributes<HTMLInputElement>) {
@@ -189,6 +191,19 @@ function Skeleton({ className = "" }: { className?: string }) {
   return <div className={`animate-pulse rounded-xl bg-slate-200/70 ${className}`} />;
 }
 
+/* Petites icônes inline (pas de dépendances) */
+const IconBell = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" className="shrink-0" fill="none" stroke="currentColor" strokeWidth="2">
+    <path d="M18 8a6 6 0 10-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9" />
+    <path d="M13.73 21a2 2 0 01-3.46 0" />
+  </svg>
+);
+const IconPower = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" className="shrink-0" fill="none" stroke="currentColor" strokeWidth="2">
+    <path d="M12 2v10" /><path d="M5.5 7a7 7 0 1013 0" />
+  </svg>
+);
+
 /* ───────── PUSH: ensure registration + subscribe + server upsert ───────── */
 async function ensurePushSubscription() {
   if (typeof window === "undefined") return { ok: false, reason: "ssr" };
@@ -239,7 +254,9 @@ async function ensurePushSubscription() {
     }),
   });
   let body: any = null;
-  try { body = await res.json(); } catch {}
+  try {
+    body = await res.json();
+  } catch {}
   if (!res.ok) {
     const err = `${res.status} ${body?.error || ""}${body?.stage ? ` [${body.stage}]` : ""}`;
     return { ok: false, reason: "server_upsert_failed:" + err };
@@ -425,6 +442,7 @@ export default function ParentPage() {
     setMsg("Déconnexion en cours…");
 
     try {
+      // 1) Tentative de désinscription push (silencieuse)
       if ("serviceWorker" in navigator) {
         const reg = await navigator.serviceWorker.getRegistration();
         const sub = await reg?.pushManager.getSubscription();
@@ -448,32 +466,24 @@ export default function ParentPage() {
             });
           } catch {}
         }
-        try { await sub?.unsubscribe(); } catch {}
+        try {
+          await sub?.unsubscribe();
+        } catch {}
       }
-    } catch {}
 
-    try { await fetch("/api/auth/sync", { method: "DELETE", credentials: "include" }); } catch {}
-
-    try {
-      const target = `${LOGOUT_PARENTS}?from=parents`;
-      window.location.assign(target);
+      // 2) Fin de session côté API (si présente)
+      try {
+        await fetch("/api/auth/sync", { method: "DELETE", credentials: "include" });
+      } catch {}
+    } finally {
+      // 3) Toujours passer par /parents/logout (qui redirige vers /parents/login)
+      window.location.assign(LOGOUT_PARENTS);
+      // filet de sécurité si jamais la navigation échoue
       setTimeout(() => {
         if (document.visibilityState === "visible") {
           window.location.replace(LOGIN_PARENTS);
-          setTimeout(() => {
-            if (document.visibilityState === "visible") {
-              window.location.replace(LOGOUT_GENERIC);
-              setTimeout(() => {
-                if (document.visibilityState === "visible") {
-                  window.location.replace(LOGIN_GENERIC);
-                }
-              }, 800);
-            }
-          }, 800);
         }
-      }, 1200);
-    } catch {
-      window.location.href = LOGOUT_GENERIC;
+      }, 1500);
     }
   }
 
@@ -500,7 +510,11 @@ export default function ParentPage() {
         <div className="absolute inset-0 opacity-20 [background-image:radial-gradient(60%_50%_at_100%_0%,white,transparent_70%)]" />
         <div className="relative z-10 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div className="min-w-0">
-            <h1 className="text-xl md:text-2xl font-semibold tracking-tight">Espace parent</h1>
+            <h1 className="text-xl md:text-2xl font-semibold tracking-tight">
+              <span className="bg-clip-text text-transparent bg-gradient-to-r from-emerald-300 to-cyan-300">
+                Espace parent
+              </span>
+            </h1>
             <p className="mt-1 text-white/80 text-sm">
               Suivez en temps réel les <b>absences</b>, <b>retards</b> et <b>sanctions</b> de vos
               enfants.
@@ -508,7 +522,7 @@ export default function ParentPage() {
           </div>
           <div className="flex items-center gap-2 shrink-0">
             {!granted ? (
-              <Button tone="white" onClick={enablePush} title="Activer les notifications push">
+              <Button tone="white" onClick={enablePush} title="Activer les notifications push" iconLeft={<IconBell />}>
                 Activer les push
               </Button>
             ) : (
@@ -516,7 +530,7 @@ export default function ParentPage() {
                 Push activés ✅
               </span>
             )}
-            <Button tone="white" onClick={safeLogout} disabled={loggingOut} title="Se déconnecter">
+            <Button tone="white" onClick={safeLogout} disabled={loggingOut} title="Se déconnecter" iconLeft={<IconPower />}>
               {loggingOut ? "Déconnexion…" : "Déconnexion"}
             </Button>
           </div>
@@ -574,7 +588,7 @@ export default function ParentPage() {
               Aucun enfant lié à votre compte pour l’instant.
             </div>
             {!granted && (
-              <Button tone="outline" onClick={enablePush}>
+              <Button tone="outline" onClick={enablePush} iconLeft={<IconBell />}>
                 Activer les push
               </Button>
             )}
@@ -586,13 +600,20 @@ export default function ParentPage() {
               {kids.map((k) => {
                 const c = conduct[k.id];
                 return (
-                  <div key={k.id} className="rounded-xl border border-slate-200 p-4 hover:shadow-sm transition">
+                  <div
+                    key={k.id}
+                    className="rounded-xl border border-slate-200 p-4 hover:shadow-sm transition ring-emerald-100 hover:ring-2"
+                  >
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
                         <div className="font-medium text-slate-900">{k.full_name}</div>
                         <div className="text-xs text-slate-600">{k.class_label || "—"}</div>
                       </div>
-                      {c ? <Badge tone="emerald">{c.total.toFixed(2).replace(".", ",")} / 20</Badge> : <Badge>—</Badge>}
+                      {c ? (
+                        <Badge tone="emerald">{c.total.toFixed(2).replace(".", ",")} / 20</Badge>
+                      ) : (
+                        <Badge>—</Badge>
+                      )}
                     </div>
                     {c ? (
                       <div className="mt-3 space-y-2">
@@ -601,7 +622,8 @@ export default function ParentPage() {
                         <Meter value={c.breakdown.moralite} max={4} label="Moralité (/4)" />
                         <Meter value={c.breakdown.discipline} max={7} label="Discipline (/7)" />
                         <div className="pt-1 text-xs text-slate-600">
-                          <span className="font-medium">Appréciation : </span>{c.appreciation}
+                          <span className="font-medium">Appréciation : </span>
+                          {c.appreciation}
                         </div>
                       </div>
                     ) : (
@@ -636,15 +658,27 @@ export default function ParentPage() {
                         <td className="px-3 py-2">{k.class_label || "—"}</td>
                         {c ? (
                           <>
-                            <td className="px-3 py-2">{c.breakdown.assiduite.toFixed(2).replace(".", ",")}</td>
-                            <td className="px-3 py-2">{c.breakdown.tenue.toFixed(2).replace(".", ",")}</td>
-                            <td className="px-3 py-2">{c.breakdown.moralite.toFixed(2).replace(".", ",")}</td>
-                            <td className="px-3 py-2">{c.breakdown.discipline.toFixed(2).replace(".", ",")}</td>
-                            <td className="px-3 py-2 font-semibold">{c.total.toFixed(2).replace(".", ",")}</td>
+                            <td className="px-3 py-2">
+                              {c.breakdown.assiduite.toFixed(2).replace(".", ",")}
+                            </td>
+                            <td className="px-3 py-2">
+                              {c.breakdown.tenue.toFixed(2).replace(".", ",")}
+                            </td>
+                            <td className="px-3 py-2">
+                              {c.breakdown.moralite.toFixed(2).replace(".", ",")}
+                            </td>
+                            <td className="px-3 py-2">
+                              {c.breakdown.discipline.toFixed(2).replace(".", ",")}
+                            </td>
+                            <td className="px-3 py-2 font-semibold">
+                              {c.total.toFixed(2).replace(".", ",")}
+                            </td>
                             <td className="px-3 py-2">{c.appreciation}</td>
                           </>
                         ) : (
-                          <td className="px-3 py-2 text-slate-600" colSpan={6}>—</td>
+                          <td className="px-3 py-2 text-slate-600" colSpan={6}>
+                            —
+                          </td>
                         )}
                       </tr>
                     );
@@ -660,13 +694,13 @@ export default function ParentPage() {
       <section className="rounded-2xl border bg-white/90 backdrop-blur p-5 shadow-sm">
         <div className="mb-3 flex items-center justify-between">
           <div className="text-sm font-semibold uppercase tracking-wide text-slate-700">
-            Mes enfants — Absences/retards récents
+            Mes enfants — Absences/retards récents et sanctions
           </div>
           <div className="flex items-center gap-2">
             {granted ? (
               <span className="text-xs text-emerald-700">Notifications déjà activées ✅</span>
             ) : (
-              <Button tone="outline" onClick={enablePush} title="Activer les notifications push">
+              <Button tone="outline" onClick={enablePush} title="Activer les notifications push" iconLeft={<IconBell />}>
                 Activer les push
               </Button>
             )}
@@ -691,10 +725,14 @@ export default function ParentPage() {
               const visibleGroups = showAll ? groups : groups.slice(0, 3);
 
               return (
-                <div key={k.id} className="rounded-xl border border-slate-200 p-4 hover:shadow-sm transition">
+                <div
+                  key={k.id}
+                  className="rounded-xl border border-slate-200 p-4 hover:shadow-sm transition ring-emerald-100 hover:ring-2"
+                >
                   <div className="flex items-center justify-between">
                     <div className="font-medium text-slate-900">
-                      {k.full_name} <span className="text-xs text-slate-600">({k.class_label || "—"})</span>
+                      {k.full_name}{" "}
+                      <span className="text-xs text-slate-600">({k.class_label || "—"})</span>
                     </div>
                     {groups.length > 3 && (
                       <button
@@ -738,7 +776,11 @@ export default function ParentPage() {
                                 <li key={ev.id} className="py-2 flex items-center justify-between text-sm">
                                   <div className="min-w-0">
                                     <div className="text-slate-800 truncate">
-                                      {ev.type === "absent" ? <Badge tone="rose">Absence</Badge> : <Badge tone="amber">Retard</Badge>}
+                                      {ev.type === "absent" ? (
+                                        <Badge tone="rose">Absence</Badge>
+                                      ) : (
+                                        <Badge tone="amber">Retard</Badge>
+                                      )}
                                       <span className="ml-2">{ev.subject_name || "—"}</span>
                                     </div>
                                     <div className="mt-0.5 text-xs text-slate-600">
@@ -746,7 +788,9 @@ export default function ParentPage() {
                                       {ev.type === "late" && ev.minutes_late ? `• ${ev.minutes_late} min` : ""}
                                     </div>
                                   </div>
-                                  <div className="text-xs text-slate-500 shrink-0 pl-2">{ev.class_label || ""}</div>
+                                  <div className="text-xs text-slate-500 shrink-0 pl-2">
+                                    {ev.class_label || ""}
+                                  </div>
                                 </li>
                               ))}
                             </ul>
@@ -754,7 +798,9 @@ export default function ParentPage() {
                         </li>
                       );
                     })}
-                    {visibleGroups.length === 0 && <li className="py-2 text-sm text-slate-600">Aucun évènement récent.</li>}
+                    {visibleGroups.length === 0 && (
+                      <li className="py-2 text-sm text-slate-600">Aucun évènement récent.</li>
+                    )}
                   </ul>
 
                   {/* Sanctions */}
@@ -774,21 +820,29 @@ export default function ParentPage() {
                       <div className="mt-2 text-sm text-slate-600">Aucune sanction récente.</div>
                     ) : (
                       <ul className="mt-2 divide-y">
-                        {(showAllPenForKid[k.id] ? (kidPenalties[k.id] || []) : (kidPenalties[k.id] || []).slice(0, 5)).map((p) => (
+                        {(showAllPenForKid[k.id]
+                          ? kidPenalties[k.id] || []
+                          : (kidPenalties[k.id] || []).slice(0, 5)
+                        ).map((p) => (
                           <li key={p.id} className="py-2 flex items-center justify-between text-sm">
                             <div className="min-w-0">
                               <div className="text-slate-800">
-                                <span className="mr-2"><Badge tone="amber">{rubricLabel(p.rubric)}</Badge></span>
+                                <span className="mr-2">
+                                  <Badge tone="amber">{rubricLabel(p.rubric)}</Badge>
+                                </span>
                                 −{Number(p.points || 0).toFixed(2)} pt
                                 {(() => {
                                   const subj = p.author_subject_name || p.subject_name;
-                                  if (p.author_role_label === "Enseignant") return subj ? ` — par le prof de ${subj}` : " — par un enseignant";
-                                  if (p.author_role_label === "Administration") return " — par l’administration";
+                                  if (p.author_role_label === "Enseignant")
+                                    return subj ? ` — par le prof de ${subj}` : " — par un enseignant";
+                                  if (p.author_role_label === "Administration")
+                                    return " — par l’administration";
                                   return p.author_name ? ` — par ${p.author_name}` : "";
                                 })()}
                               </div>
                               <div className="text-xs text-slate-600 truncate">
-                                {fmt(p.when)} {p.class_label ? `• ${p.class_label}` : ""} {p.reason ? `• Motif: ${p.reason}` : ""}
+                                {fmt(p.when)} {p.class_label ? `• ${p.class_label}` : ""}{" "}
+                                {p.reason ? `• Motif: ${p.reason}` : ""}
                               </div>
                             </div>
                           </li>
@@ -803,7 +857,11 @@ export default function ParentPage() {
         )}
       </section>
 
-      {msg && <div className="text-sm text-slate-700" aria-live="polite">{msg}</div>}
+      {msg && (
+        <div className="text-sm text-slate-700" aria-live="polite">
+          {msg}
+        </div>
+      )}
     </main>
   );
 }

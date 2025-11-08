@@ -26,14 +26,14 @@ type NavItem = {
 
 const NAV: NavItem[] = [
   { href: "/admin/dashboard", label: "Tableau de bord", Icon: LayoutDashboard },
-  { href: "/admin/absences", label: "Absences (Dashboard)", Icon: Ban },
-  { href: "/admin/classes", label: "Classes", Icon: School },
-  { href: "/admin/users", label: "Enseignants", Icon: Users },
-  { href: "/admin/affectations", label: "Affectations classes", Icon: Puzzle },
-  { href: "/admin/parents", label: "Parents", Icon: UserRoundCheck },
-  { href: "/admin/import", label: "Import", Icon: Inbox, badge: "OCT" },
-  { href: "/admin/statistiques", label: "Statistiques", Icon: BarChart3 },
-  { href: "/admin/conduite", label: "Conduite", Icon: ShieldCheck }, // ✅ nouveau
+  { href: "/admin/absences", label: "Matrice des Absences", Icon: Ban },
+  { href: "/admin/classes", label: "Créer vos Classes", Icon: School },
+  { href: "/admin/users", label: "Créer un Enseignant", Icon: Users },
+  { href: "/admin/affectations", label: "Attribution des classes", Icon: Puzzle },
+  { href: "/admin/parents", label: "Liste des classes", Icon: UserRoundCheck },
+  { href: "/admin/import", label: "Import classes-enseignants", Icon: Inbox, badge: "OCT" },
+  { href: "/admin/statistiques", label: "Contrôle Enseignants", Icon: BarChart3 },
+  { href: "/admin/conduite", label: "Moyenne de Conduite", Icon: ShieldCheck }, // ✅ nouveau
   { href: "/admin/parametres", label: "Paramètres", Icon: Settings },
 ];
 

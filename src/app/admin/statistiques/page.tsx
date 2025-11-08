@@ -75,15 +75,18 @@ function formatDateFR(iso: string) {
   const yyyy = d.getFullYear();
   return `${dd}/${mm}/${yyyy}`;
 }
+/** UNIQUE format de durée : 2H50 (minutes toujours 2 chiffres) */
 function minutesToHourLabel(min: number) {
   const m = Math.max(0, Math.round(min || 0));
   const h = Math.floor(m / 60);
   const r = m % 60;
-  return `${h}h${String(r).padStart(2, "0")}`;
+  return `${h}H${String(r).padStart(2, "0")}`;
 }
+/* (gardé si besoin plus tard, mais non utilisé pour l’affichage)
 function minutesToDecimalHours(min: number) {
   return Math.round(((min || 0) / 60) * 100) / 100;
 }
+*/
 function downloadText(filename: string, content: string, mime = "text/csv;charset=utf-8") {
   const blob = new Blob([content], { type: mime });
   const url = URL.createObjectURL(blob);
@@ -100,21 +103,6 @@ const teacherLabel = (t: Teacher) =>
     t.phone?.trim() ||
     "(enseignant)");
 
-function rangeDates(from: string, to: string): string[] {
-  const [fy, fm, fd] = from.split("-").map(Number);
-  const [ty, tm, td] = to.split("-").map(Number);
-  const cur = new Date(fy, fm - 1, fd, 12, 0, 0, 0);
-  const end = new Date(ty, tm - 1, td, 12, 0, 0, 0);
-  const out: string[] = [];
-  while (cur.getTime() <= end.getTime()) {
-    const y = cur.getFullYear();
-    const m = String(cur.getMonth() + 1).padStart(2, "0");
-    const d = String(cur.getDate()).padStart(2, "0");
-    out.push(`${y}-${m}-${d}`);
-    cur.setDate(cur.getDate() + 1);
-  }
-  return out;
-}
 function dateHumanFR(ymd: string) {
   const [y, m, d] = ymd.split("-").map(Number);
   const dt = new Date(y, m - 1, d);
@@ -145,6 +133,15 @@ function originEmoji(o?: string) {
   if (o === "class_device") return "🖥️";
   if (o === "teacher") return "📱";
   return "";
+}
+
+/** Durée effective d’un créneau en minutes = longueur_slot − max(0, clic − début) */
+function effectiveSlotMinutes(times: string[], slot: TimesheetSlot) {
+  const slotLen = Math.max(0, hhmmToMinutes(slot.end) - hhmmToMinutes(slot.start));
+  if (!times || times.length === 0) return 0;
+  const earliest = [...times].sort()[0];
+  const lateness = Math.max(0, hhmmToMinutes(earliest) - hhmmToMinutes(slot.start));
+  return Math.max(0, slotLen - lateness);
 }
 
 /* ─────────────────────────────────────────
@@ -302,7 +299,7 @@ export default function AdminStatistiquesPage() {
   /* Exports CSV (tableau) */
   function exportSummaryCSV() {
     const items = summary.data || [];
-    const header = ["Enseignant", subjectId === "ALL" ? "Discipline(s)" : "Discipline (filtrée)", "Total minutes", "Total heures (décimal)"];
+    const header = ["Enseignant", subjectId === "ALL" ? "Discipline(s)" : "Discipline (filtrée)", "Total minutes", "Total heures"];
     const lines = [header.join(";")];
     for (const it of items) {
       const disciplineCell =
@@ -313,7 +310,7 @@ export default function AdminStatistiquesPage() {
         it.teacher_name,
         disciplineCell,
         String(it.total_minutes),
-        String(minutesToDecimalHours(it.total_minutes)),
+        minutesToHourLabel(it.total_minutes),
       ];
       lines.push(cols.join(";"));
     }
@@ -322,7 +319,7 @@ export default function AdminStatistiquesPage() {
   function exportDetailCSV() {
     const d = detail.data;
     if (!d) return;
-    const header = ["Date", "Heure début", "Plage horaire", "Discipline", "Classe", "Minutes", "Heures (décimal)"];
+    const header = ["Date", "Heure début", "Plage horaire", "Discipline", "Classe", "Minutes", "Heures"];
     const lines = [header.join(";")];
     for (const r of d.rows) {
       const start = formatHHmm(r.dateISO);
@@ -334,7 +331,7 @@ export default function AdminStatistiquesPage() {
         r.subject_name || "Discipline non renseignée",
         r.class_label || "",
         String(r.expected_minutes ?? 0),
-        String(minutesToDecimalHours(r.expected_minutes ?? 0)),
+        minutesToHourLabel(r.expected_minutes ?? 0),
       ];
       lines.push(cols.join(";"));
     }
@@ -347,6 +344,7 @@ export default function AdminStatistiquesPage() {
   const [slot, setSlot] = useState<number>(60);
   const [startHour, setStartHour] = useState<number>(7);
   const [endHour, setEndHour] = useState<number>(18);
+  const [usePeriods, setUsePeriods] = useState<boolean>(false); // ✅ toggle créneaux établissement
   const [tsData, setTsData] = useState<FetchState<TimesheetPayload>>({
     loading: false, error: null, data: null,
   });
@@ -394,6 +392,7 @@ export default function AdminStatistiquesPage() {
       start_hour: String(startHour),
       end_hour: String(endHour),
     });
+    if (usePeriods) qs.set("use_periods", "1"); // ✅ active les créneaux établissement
     try {
       const res = await fetch(`/api/admin/statistics?${qs.toString()}`, { cache: "no-store" });
       const j = await res.json();
@@ -413,11 +412,11 @@ export default function AdminStatistiquesPage() {
       setSelectedClassId("");
     }
   }
-  useEffect(() => { loadTimesheet(); /* eslint-disable-next-line */ }, [view, tsTeacherId, from, to, slot, startHour, endHour]);
+  useEffect(() => { loadTimesheet(); /* eslint-disable-next-line */ }, [view, tsTeacherId, from, to, slot, startHour, endHour, usePeriods]);
 
   const td = tsData.data;
 
-  // ✅ Dates actives pour la classe sélectionnée (et filtre jours scolaires)
+  // ✅ Calculs d’appui (dates actives / compteurs)
   const activeDatesForClass = useMemo(() => {
     if (!td || !selectedClassId) return [] as string[];
     const out: string[] = [];
@@ -433,7 +432,6 @@ export default function AdminStatistiquesPage() {
     return out;
   }, [td, selectedClassId, onlyWeekdays]);
 
-  // ✅ Compteur par date (total de clics pour la classe)
   const clicksPerDate = useMemo(() => {
     const map = new Map<string, number>();
     if (!td || !selectedClassId) return map;
@@ -516,22 +514,41 @@ export default function AdminStatistiquesPage() {
                 {tsTeachers.map(t => <option key={t.id} value={t.id}>{t.label}</option>)}
               </Select>
             </div>
+
+            <div className="space-y-1">
+              <label className="text-sm font-medium">Mode de créneaux</label>
+              <div className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2">
+                <label className="inline-flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    className="h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                    checked={usePeriods}
+                    onChange={(e) => setUsePeriods(e.target.checked)}
+                  />
+                  Créneaux d’établissement
+                </label>
+                <span className="text-xs text-slate-500">
+                  {usePeriods ? "Utilise les créneaux définis dans Paramètres" : "Utilise les créneaux manuels ci-dessous"}
+                </span>
+              </div>
+            </div>
+
             <div className="grid grid-cols-3 gap-2">
               <div className="space-y-1">
                 <label className="text-sm font-medium">Créneau (min)</label>
-                <Select value={String(slot)} onChange={e => setSlot(parseInt(e.target.value, 10))}>
+                <Select value={String(slot)} onChange={e => setSlot(parseInt(e.target.value, 10))} disabled={usePeriods}>
                   {[30, 45, 60, 90, 120].map((m) => <option key={m} value={m}>{m}</option>)}
                 </Select>
               </div>
               <div className="space-y-1">
                 <label className="text-sm font-medium">Début (h)</label>
-                <Select value={String(startHour)} onChange={e => setStartHour(parseInt(e.target.value, 10))}>
+                <Select value={String(startHour)} onChange={e => setStartHour(parseInt(e.target.value, 10))} disabled={usePeriods}>
                   {Array.from({ length: 24 }, (_, h) => h).map((h) => <option key={h} value={h}>{h}</option>)}
                 </Select>
               </div>
               <div className="space-y-1">
                 <label className="text-sm font-medium">Fin (h)</label>
-                <Select value={String(endHour)} onChange={e => setEndHour(parseInt(e.target.value, 10))}>
+                <Select value={String(endHour)} onChange={e => setEndHour(parseInt(e.target.value, 10))} disabled={usePeriods}>
                   {Array.from({ length: 24 }, (_, h) => h).map((h) => <option key={h} value={h}>{h}</option>)}
                 </Select>
               </div>
@@ -548,7 +565,7 @@ export default function AdminStatistiquesPage() {
               <h2 className="text-lg font-semibold">Synthèse par enseignant</h2>
               <div className="flex items-center gap-2">
                 <div className="text-sm">
-                  Total période: <strong>{minutesToHourLabel(totalMinutesSummary)}</strong> ({minutesToDecimalHours(totalMinutesSummary)} h)
+                  Total période: <strong>{minutesToHourLabel(totalMinutesSummary)}</strong>
                 </div>
                 <Button onClick={exportSummaryCSV} disabled={summary.loading || !summary.data}>Export CSV</Button>
               </div>
@@ -580,7 +597,7 @@ export default function AdminStatistiquesPage() {
                           <td className="px-3 py-2">{row.teacher_name}</td>
                           <td className="px-3 py-2">{disciplineCell}</td>
                           <td className="px-3 py-2 text-right">{row.total_minutes}</td>
-                          <td className="px-3 py-2 text-right">{minutesToDecimalHours(row.total_minutes)}</td>
+                          <td className="px-3 py-2 text-right">{minutesToHourLabel(row.total_minutes)}</td>
                         </tr>
                       );
                     })}
@@ -601,7 +618,7 @@ export default function AdminStatistiquesPage() {
               <div className="flex items-center gap-2">
                 {detail.data && (
                   <div className="text-sm">
-                    {detail.data.count} séance(s) • Total : <strong>{minutesToHourLabel(detail.data.total_minutes)}</strong> ({minutesToDecimalHours(detail.data.total_minutes)} h)
+                    {detail.data.count} séance(s) • Total : <strong>{minutesToHourLabel(detail.data.total_minutes)}</strong>
                   </div>
                 )}
                 <Button onClick={exportDetailCSV} disabled={detail.loading || !detail.data}>Export CSV</Button>
@@ -636,7 +653,7 @@ export default function AdminStatistiquesPage() {
                           <td className="px-3 py-2">{r.subject_name || "Discipline non renseignée"}</td>
                           <td className="px-3 py-2">{r.class_label || "—"}</td>
                           <td className="px-3 py-2 text-right">{r.expected_minutes ?? 0}</td>
-                          <td className="px-3 py-2 text-right">{minutesToDecimalHours(r.expected_minutes ?? 0)}</td>
+                          <td className="px-3 py-2 text-right">{minutesToHourLabel(r.expected_minutes ?? 0)}</td>
                         </tr>
                       );
                     })}
@@ -678,11 +695,22 @@ export default function AdminStatistiquesPage() {
                     </div>
                   </div>
                   <div className="text-sm">
-                    Total période : <strong>{minutesToHourLabel(td.teacher.total_minutes)}</strong> ({minutesToDecimalHours(td.teacher.total_minutes)} h)
+                    Total période : <strong>{minutesToHourLabel(td.teacher.total_minutes)}</strong>
                   </div>
                 </div>
 
-                {/* ✅ Sélecteur de classe sous forme de boutons */}
+                {/* Légende compactée */}
+                <div className="mt-3 flex flex-wrap items-center gap-3 text-xs text-slate-600">
+                  <span className="inline-flex items-center gap-1">
+                    <span>📱</span> <span>prof</span>
+                  </span>
+                  <span className="inline-flex items-center gap-1">
+                    <span>🖥️</span> <span>compte-classe</span>
+                  </span>
+                  <span className="text-slate-400">La cellule montre la <em>durée effective</em> du créneau (1h − retard).</span>
+                </div>
+
+                {/* Sélecteur de classe */}
                 <div className="mt-4 flex flex-wrap items-center gap-2">
                   {td.classes.map((c) => {
                     const active = c.id === selectedClassId;
@@ -719,7 +747,7 @@ export default function AdminStatistiquesPage() {
                 </div>
               </div>
 
-              {/* ✅ Tableau : LIGNES = créneaux ; COLONNES = dates actives pour la classe sélectionnée */}
+              {/* Tableau : LIGNES = créneaux ; COLONNES = dates actives */}
               <div className="rounded-2xl border bg-white p-5 shadow-sm">
                 {!selectedClassId ? (
                   <div className="p-4 border rounded-xl text-slate-600">Choisissez une classe ci-dessus.</div>
@@ -757,51 +785,27 @@ export default function AdminStatistiquesPage() {
                             </td>
                             {activeDatesForClass.map((d) => {
                               const key = `${d}|${sl.start}|${selectedClassId}`;
-                              // heures simples
                               const times = td.cells[key] || [];
-                              // meta si dispo (pour origine)
-                              const metas = td.cellsMeta?.[key];
-
-                              // compactage: on montre 2 items + “+N”
-                              const MAX = 2;
-                              const head = times.slice(0, MAX);
-                              const rest = times.slice(MAX);
-                              const tooltip = times.length ? times.join(", ") : "";
-
+                              const metas = td.cellsMeta?.[key] || [];
+                              const eff = effectiveSlotMinutes(times, sl);          // ✅ durée effective en minutes
+                              const earliest = times.length ? [...times].sort()[0] : null;
+                              const delta = earliest ? diffToSlotStart(earliest, sl.start) : 0;
+                              const badge = clickBadgeClass(delta);
+                              const origin = earliest ? metas.find(m => m.hhmm === earliest)?.origin : undefined;
+                              const hint = earliest
+                                ? `${d} • début ${sl.start}, premier clic ${earliest} (${delta >= 0 ? "+" : ""}${delta} min)${origin ? ` • ${origin}` : ""}`
+                                : `${d} • aucun clic`;
                               return (
                                 <td key={key} className="px-3 py-2 align-top">
-                                  {times.length === 0 ? (
-                                    <span className="text-slate-300">—</span>
-                                  ) : (
-                                    <div className="flex flex-wrap gap-1">
-                                      {head.map((t, i) => {
-                                        const delta = diffToSlotStart(t, sl.start);
-                                        const badge = clickBadgeClass(delta);
-                                        const origin = metas?.find(m => m.hhmm === t)?.origin;
-                                        const hint = `${d} • ${sl.start} → ${t} (${delta >= 0 ? "+" : ""}${delta} min)${origin ? ` • ${origin}` : ""}`;
-                                        return (
-                                          <span
-                                            key={`${t}-${i}`}
-                                            title={hint}
-                                            className={[
-                                              "inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-xs",
-                                              badge,
-                                            ].join(" ")}
-                                          >
-                                            {originEmoji(origin)} {t}
-                                          </span>
-                                        );
-                                      })}
-                                      {rest.length > 0 && (
-                                        <span
-                                          title={tooltip}
-                                          className="inline-flex items-center rounded-md border border-slate-200 bg-slate-50 px-2 py-0.5 text-xs text-slate-700"
-                                        >
-                                          +{rest.length}
-                                        </span>
-                                      )}
-                                    </div>
-                                  )}
+                                  <span
+                                    title={hint}
+                                    className={[
+                                      "inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-xs",
+                                      times.length ? badge : "border-slate-200 bg-slate-50 text-slate-500",
+                                    ].join(" ")}
+                                  >
+                                    {originEmoji(origin)} {minutesToHourLabel(eff)}
+                                  </span>
                                 </td>
                               );
                             })}
@@ -812,9 +816,7 @@ export default function AdminStatistiquesPage() {
                   </div>
                 )}
                 <p className="mt-3 text-xs text-slate-500">
-                  Les dates affichées sont uniquement celles de la période {from} → {to} qui comportent au moins une séance pour la classe sélectionnée.
-                  Chaque cellule liste l’<em>heure du clic</em> (une ou plusieurs) tombant dans le créneau.
-                  Pastilles vertes : dans la fenêtre [–5 min, +10 min] du début de créneau ; orange : en dehors.
+                  Chaque cellule affiche la <strong>durée effective</strong> du créneau&nbsp;: longueur du créneau − (heure du premier clic − heure de début). Sans clic, valeur <strong>0H00</strong>.
                 </p>
               </div>
             </>

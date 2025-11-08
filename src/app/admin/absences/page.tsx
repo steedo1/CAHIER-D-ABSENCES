@@ -2,19 +2,9 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import {
-  Calendar,
-  Download,
-  RefreshCw,
-  Filter,
-  Users,
-  Clock,
-  School,
-  Layers,
-  ChevronRight,
-} from "lucide-react";
+import { Calendar, Filter, RefreshCw, Download } from "lucide-react";
 
-/* ───────────────── UI helpers ───────────────── */
+/* ───────── UI helpers ───────── */
 function Input(p: React.InputHTMLAttributes<HTMLInputElement>) {
   return (
     <input
@@ -49,7 +39,7 @@ function Button(p: React.ButtonHTMLAttributes<HTMLButtonElement>) {
       {...p}
       className={[
         "inline-flex items-center gap-2 rounded-xl bg-emerald-600 text-white px-4 py-2 text-sm font-medium shadow",
-        p.disabled ? "opacity-60" : "hover:bg-emerald-700 transition",
+        p.disabled ? "opacity-60 cursor-not-allowed" : "hover:bg-emerald-700 transition",
         p.className ?? "",
       ].join(" ")}
     />
@@ -83,9 +73,7 @@ function Card({
       <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
         <div>
           <div className="text-base font-semibold text-slate-800">{title}</div>
-          {subtitle ? (
-            <div className="text-xs text-slate-500 mt-0.5">{subtitle}</div>
-          ) : null}
+          {subtitle ? <div className="text-xs text-slate-500 mt-0.5">{subtitle}</div> : null}
         </div>
         {actions}
       </div>
@@ -93,105 +81,75 @@ function Card({
     </div>
   );
 }
-function Badge({ children }: { children: React.ReactNode }) {
-  return (
-    <span className="inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs text-slate-700">
-      {children}
-    </span>
-  );
-}
-function Stat({
-  icon,
-  label,
-  value,
-  hint,
-  loading,
-}: {
-  icon: React.ReactNode;
-  label: string;
-  value: string;
-  hint?: string;
-  loading?: boolean;
-}) {
-  return (
-    <div className="rounded-2xl border bg-white p-4">
-      <div className="flex items-center gap-3">
-        <div className="rounded-xl bg-emerald-50 p-2 text-emerald-700">{icon}</div>
-        <div className="min-w-0">
-          <div className="text-xs uppercase tracking-wide text-slate-500">{label}</div>
-          {loading ? (
-            <div className="mt-1 h-6 w-24 animate-pulse rounded bg-slate-100" />
-          ) : (
-            <div className="mt-1 text-xl font-semibold text-slate-900 tabular-nums">{value}</div>
-          )}
-          {hint ? <div className="text-[11px] text-slate-500 mt-1">{hint}</div> : null}
-        </div>
-      </div>
-    </div>
-  );
-}
 
-/* ───────────────── Types ───────────────── */
+/* ───────── Types ───────── */
 type ClassItem = { id: string; name: string; level: string };
-type LevelAgg = { level: string; absents: number; minutes: number };
-type ClassAgg = { class_id: string; class_label: string; absents: number; minutes: number };
-type SubjectAgg = { name: string; absents: number };
 
-/** Étudiants — compat: accepte l'ancien schéma (minutes) et le nouveau (minutes_abs / minutes_tardy). */
-type StudentAbs = {
-  student_id: string;
-  full_name: string;
-  minutes?: number | null;         // legacy (total)
-  minutes_abs?: number | null;     // nouveau: minutes d'absence
-  minutes_tardy?: number | null;   // nouveau: minutes de retard
-  tardy_minutes?: number | null;   // alias éventuel
+type MatrixSubject = { id: string; name: string };
+type MatrixStudent = { id: string; full_name: string; rank?: number };
+type MatrixPayload = {
+  subjects: MatrixSubject[];
+  students: MatrixStudent[];
+  values: Array<{ student_id: string; subject_id: string; minutes: number }>;
+  subjectDistinct: Record<string, number>;
 };
 
-/* ───────────────── Helpers ───────────────── */
+/* ───────── Helpers ───────── */
 const nf = new Intl.NumberFormat("fr-FR");
-const fmtHM = (minutes: number) =>
-  `${Math.floor(minutes / 60)}h ${Math.abs(minutes % 60)}min`;
-function fmtUnitsFR(units: number) {
-  const r = Math.round(units * 100) / 100;
-  const s = r.toFixed(2).replace(".", ",");
-  return s.replace(/,00$/, "").replace(/,(\d)0$/, ",$1");
-}
 const toYMD = (d: Date) =>
-  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
+    d.getDate()
+  ).padStart(2, "0")}`;
+const hoursLabel = (minutes: number) => {
+  const h = (minutes || 0) / 60;
+  const s = h.toFixed(1).replace(".", ",");
+  return s.replace(/,0$/, "") + " h";
+};
 
-function SparkBar({ value, max }: { value: number; max: number }) {
-  const pct = max > 0 ? Math.round((value / max) * 100) : 0;
-  return (
-    <div className="h-2 w-32 rounded bg-slate-100 overflow-hidden" aria-hidden>
-      <div
-        className="h-2 bg-emerald-500"
-        style={{ width: `${Math.min(100, pct)}%` }}
-        title={`${pct}%`}
-      />
-    </div>
-  );
+/* CSV – échappage + export UTF-16LE (Excel-friendly) */
+function csvEscape(x: any) {
+  const s = String(x ?? "");
+  return `"${s.replace(/"/g, '""')}"`;
+}
+function downloadCsvUtf16LE(filename: string, content: string) {
+  const bom = new Uint8Array([0xff, 0xfe]); // BOM UTF-16LE
+  const buf = new Uint8Array(bom.length + content.length * 2);
+  buf.set(bom, 0);
+  for (let i = 0; i < content.length; i++) {
+    const code = content.charCodeAt(i);
+    buf[bom.length + i * 2] = code & 0xff;
+    buf[bom.length + i * 2 + 1] = code >> 8;
+  }
+  const blob = new Blob([buf], { type: "text/csv;charset=utf-16le" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
 }
 
-/* ───────────────── Component ───────────────── */
-export default function AbsencesDashboard() {
+/* ───────── Page ───────── */
+const HOT_RATIO = 0.95; // ≥95% du max → surligné
+
+export default function AbsencesMatrixOnly() {
   // Filtres
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
+  const [rubrique, setRubrique] = useState<"absent" | "tardy">("absent");
 
   // Sélections
   const [allClasses, setAllClasses] = useState<ClassItem[]>([]);
   const [selectedLevel, setSelectedLevel] = useState("");
   const [selectedClassId, setSelectedClassId] = useState("");
 
-  // Données
-  const [levelsAgg, setLevelsAgg] = useState<LevelAgg[]>([]);
-  const [classesAgg, setClassesAgg] = useState<ClassAgg[]>([]);
-  const [students, setStudents] = useState<StudentAbs[]>([]);
-  const [subjects, setSubjects] = useState<SubjectAgg[]>([]);
+  // Données matrice
+  const [matrix, setMatrix] = useState<MatrixPayload | null>(null);
 
-  // UI state
+  // UI
   const [loading, setLoading] = useState(false);
 
+  /* Charger classes */
   useEffect(() => {
     fetch("/api/admin/classes?limit=500", { cache: "no-store" })
       .then((r) => r.json())
@@ -212,17 +170,17 @@ export default function AbsencesDashboard() {
       .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
   }, [allClasses, selectedLevel]);
 
-  const kpi = useMemo(() => {
-    const totalMinutes =
-      selectedLevel
-        ? classesAgg.reduce((acc, x) => acc + (Number(x.minutes) || 0), 0)
-        : levelsAgg.reduce((acc, x) => acc + (Number(x.minutes) || 0), 0);
-    const totalHours = (totalMinutes / 60) || 0;
-    const classesCount = selectedLevel ? classesAgg.length : 0;
-    const levelsCount = selectedLevel ? 1 : levelsAgg.length;
-    const studentsCount = selectedClassId ? students.length : 0;
-    return { totalHours, classesCount, levelsCount, studentsCount };
-  }, [levelsAgg, classesAgg, students, selectedLevel, selectedClassId]);
+  /* Index minutes par élève × matière */
+  const matrixIndex = useMemo(() => {
+    if (!matrix) return null;
+    const dict: Record<string, Record<string, number>> = {};
+    for (const v of matrix.values) {
+      if (!dict[v.student_id]) dict[v.student_id] = {};
+      dict[v.student_id][v.subject_id] =
+        (dict[v.student_id][v.subject_id] || 0) + Number(v.minutes || 0);
+    }
+    return dict;
+  }, [matrix]);
 
   function setRange(kind: "week" | "month" | "ytd") {
     const now = new Date();
@@ -247,50 +205,69 @@ export default function AbsencesDashboard() {
     }
   }
 
-  async function refreshAll() {
+  /* Rafraîchir matrice + fusionner avec les matières officielles de la classe + tri/numérotation */
+  async function refreshMatrix() {
+    if (!selectedClassId) {
+      setMatrix(null);
+      return;
+    }
     setLoading(true);
-    const qs = new URLSearchParams();
-    if (from) qs.set("from", from);
-    if (to) qs.set("to", to);
-
     try {
-      const lv = await fetch("/api/admin/absences/levels?" + qs.toString(), { cache: "no-store" }).then((r) => r.json());
-      setLevelsAgg(lv.items || []);
+      const qs = new URLSearchParams();
+      qs.set("class_id", selectedClassId);
+      qs.set("type", rubrique);
+      if (from) qs.set("from", from);
+      if (to) qs.set("to", to);
 
-      if (selectedLevel) {
-        const qLevel = new URLSearchParams(qs);
-        qLevel.set("level", selectedLevel);
-        const cl = await fetch("/api/admin/absences/classes?" + qLevel.toString(), { cache: "no-store" }).then((r) =>
-          r.json()
-        );
-        setClassesAgg(cl.items || []);
+      const [mat, subs] = await Promise.all([
+        fetch("/api/admin/absences/matrix?" + qs.toString(), { cache: "no-store" })
+          .then((r) => r.json())
+          .catch(() => null),
+        fetch(`/api/class/subjects?class_id=${selectedClassId}`, { cache: "no-store" })
+          .then((r) => r.json())
+          .catch(() => ({ items: [] })),
+      ]);
 
-        const qSub = new URLSearchParams(qLevel);
-        if (selectedClassId) qSub.set("class_id", selectedClassId);
-        const sb = await fetch("/api/admin/absences/subjects?" + qSub.toString(), { cache: "no-store" }).then((r) =>
-          r.json()
-        );
-        setSubjects(sb.items || []);
-      } else {
-        setClassesAgg([]);
-        setSubjects([]);
-      }
+      const payload: MatrixPayload =
+        mat && mat.subjects && mat.students
+          ? mat
+          : { subjects: [], students: [], values: [], subjectDistinct: {} };
 
-      if (selectedClassId) {
-        const q3 = new URLSearchParams(qs);
-        q3.set("class_id", selectedClassId);
-        const st = await fetch("/api/admin/absences/by-class?" + q3.toString(), { cache: "no-store" }).then((r) =>
-          r.json()
-        );
-        setStudents(st.items || []);
-      } else {
-        setStudents([]);
-      }
+      // matières officielles de la classe
+      const classSubjects: MatrixSubject[] = (subs.items || []).map((s: any) => ({
+        id: s.id,
+        name: (s.label || s.name || "").trim() || s.id,
+      }));
+
+      // fusion (garantit l’affichage des colonnes)
+      const map = new Map<string, MatrixSubject>();
+      for (const s of payload.subjects) map.set(s.id, s);
+      for (const s of classSubjects) if (!map.has(s.id)) map.set(s.id, s);
+      const mergedSubjects = Array.from(map.values()).sort((a, b) =>
+        a.name.localeCompare(b.name, undefined, { sensitivity: "base" })
+      );
+
+      // complete subjectDistinct (tooltips)
+      const subjectDistinct: Record<string, number> = { ...(payload.subjectDistinct || {}) };
+      for (const s of mergedSubjects) if (!(s.id in subjectDistinct)) subjectDistinct[s.id] = 0;
+
+      // 🔠 tri alphabétique garanti côté client + numérotation
+      const sortedStudents = [...(payload.students || [])].sort((a, b) =>
+        (a.full_name || "").localeCompare(b.full_name || "", undefined, { sensitivity: "base" })
+      );
+      const numberedStudents: MatrixStudent[] = sortedStudents.map((s, i) => ({
+        ...s,
+        rank: (s as any).rank ?? i + 1,
+      }));
+
+      setMatrix({
+        subjects: mergedSubjects,
+        students: numberedStudents,
+        values: payload.values || [],
+        subjectDistinct,
+      });
     } catch {
-      setLevelsAgg([]);
-      setClassesAgg([]);
-      setSubjects([]);
-      setStudents([]);
+      setMatrix(null);
     } finally {
       setLoading(false);
     }
@@ -299,62 +276,109 @@ export default function AbsencesDashboard() {
   function resetAll() {
     setFrom("");
     setTo("");
+    setRubrique("absent");
     setSelectedLevel("");
     setSelectedClassId("");
-    setLevelsAgg([]);
-    setClassesAgg([]);
-    setStudents([]);
-    setSubjects([]);
+    setMatrix(null);
   }
 
   useEffect(() => {
     setSelectedClassId("");
   }, [selectedLevel]);
 
-  const buildLevelCsvUrl = () => {
-    if (!selectedLevel) return "#";
-    const qs = new URLSearchParams();
-    if (from) qs.set("from", from);
-    if (to) qs.set("to", to);
-    qs.set("format", "csv");
-    return `/api/admin/absences/export/level/${encodeURIComponent(selectedLevel)}?` + qs.toString();
-  };
-  const buildClassCsvUrl = () => {
-    if (!selectedClassId) return "#";
-    const qs = new URLSearchParams();
-    if (from) qs.set("from", from);
-    if (to) qs.set("to", to);
-    qs.set("format", "csv");
-    return `/api/admin/absences/export/class/${selectedClassId}?` + qs.toString();
-  };
+  /* Totaux & éléments « chauds » (mise en évidence) */
+  const subjectTotals = useMemo(() => {
+    const m = new Map<string, number>();
+    if (!matrix) return m;
+    for (const v of matrix.values) {
+      m.set(v.subject_id, (m.get(v.subject_id) || 0) + (v.minutes || 0));
+    }
+    return m;
+  }, [matrix]);
 
-  const maxLevelMinutes = useMemo(
-    () => Math.max(0, ...levelsAgg.map((x) => Number(x.minutes || 0))),
-    [levelsAgg]
-  );
-  const maxClassMinutes = useMemo(
-    () => Math.max(0, ...classesAgg.map((x) => Number(x.minutes || 0))),
-    [classesAgg]
-  );
-  const maxSubjectAbs = useMemo(() => Math.max(0, ...subjects.map((x) => Number(x.absents || 0))), [subjects]);
+  const studentTotals = useMemo(() => {
+    const m = new Map<string, number>();
+    if (!matrix) return m;
+    for (const v of matrix.values) {
+      m.set(v.student_id, (m.get(v.student_id) || 0) + (v.minutes || 0));
+    }
+    return m;
+  }, [matrix]);
 
-  const hasLevel = !!selectedLevel;
-  const hasClass = !!selectedClassId;
+  function computeHotSet(m: Map<string, number>) {
+    const vals = Array.from(m.values());
+    if (!vals.length) return new Set<string>();
+    const max = Math.max(...vals);
+    if (max <= 0) return new Set<string>();
+    const thr = Math.ceil(max * HOT_RATIO);
+    const out = new Set<string>();
+    for (const [id, total] of m) if (total >= thr) out.add(id);
+    return out;
+  }
+
+  const hotSubjects = useMemo(() => computeHotSet(subjectTotals), [subjectTotals]);
+  const hotStudents = useMemo(() => computeHotSet(studentTotals), [studentTotals]);
+
+  /* Export CSV (UTF-16LE propre pour Excel) */
+  const matrixIndexRef = matrixIndex;
+  function exportMatrixCsv() {
+    if (!matrix || !matrixIndexRef) return;
+    const sep = ";";
+    const EOL = "\r\n";
+    const lines: string[] = [];
+
+    lines.push("sep=;");
+
+    const head = ["N°", "Élève", ...matrix.subjects.map((s) => s.name), "Total"];
+    lines.push(head.map(csvEscape).join(sep));
+
+    for (const stu of matrix.students) {
+      const row: string[] = [csvEscape(String(stu.rank ?? "")), csvEscape(stu.full_name)];
+      let tot = 0;
+      for (const sub of matrix.subjects) {
+        const min = matrixIndexRef[stu.id]?.[sub.id] || 0;
+        tot += min;
+        const cell =
+          rubrique === "absent"
+            ? min
+              ? String((min / 60).toFixed(1)).replace(".", ",")
+              : ""
+            : min
+            ? String(min)
+            : "";
+        row.push(csvEscape(cell));
+      }
+      const totalCell =
+        rubrique === "absent"
+          ? tot
+            ? String((tot / 60).toFixed(1)).replace(".", ",")
+            : ""
+          : tot
+          ? String(tot)
+          : "";
+      row.push(csvEscape(totalCell));
+      lines.push(row.join(sep));
+    }
+
+    const csv = lines.join(EOL);
+    downloadCsvUtf16LE(`matrice_${rubrique}_${from || "debut"}_${to || "fin"}.csv`, csv);
+  }
+
+  const hasClass = Boolean(selectedClassId);
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex flex-col gap-2">
-        <h1 className="text-2xl font-semibold text-slate-900">Absences — Tableau de bord</h1>
-        <p className="text-slate-600">
-          Analyse par période, niveau, classe et discipline. Exporte les vues en CSV pour partage.
+      <div className="flex flex-col gap-1">
+        <h1 className="text-2xl font-semibold text-slate-900">Matrice des absences</h1>
+        <p className="text-slate-600 text-sm">
+          Filtre la période, le niveau, la classe et la rubrique (absence/retard). Le tableau affiche les élèves en lignes et les disciplines en colonnes.
         </p>
       </div>
 
       {/* Filtres */}
       <Card
         title="Filtres"
-        subtitle="Choisis une période, puis un niveau (et une classe) pour détailler."
+        subtitle="Choisis une période, un niveau, puis une classe. Clique sur Actualiser."
         actions={
           <div className="flex items-center gap-2">
             <GhostButton onClick={() => setRange("week")}><Calendar className="h-4 w-4" /> Semaine</GhostButton>
@@ -363,7 +387,7 @@ export default function AbsencesDashboard() {
           </div>
         }
       >
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-6">
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-7">
           <div className="md:col-span-2">
             <div className="mb-1 text-xs text-slate-500">Du</div>
             <Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
@@ -388,175 +412,140 @@ export default function AbsencesDashboard() {
               onChange={(e) => setSelectedClassId(e.target.value)}
               disabled={!selectedLevel}
             >
-              <option value="">— Toutes —</option>
+              <option value="">— Choisir —</option>
               {classesOfLevel.map((c) => (
                 <option key={c.id} value={c.id}>{c.name}</option>
               ))}
             </Select>
           </div>
+          <div className="md:col-span-1">
+            <div className="mb-1 text-xs text-slate-500">Rubrique</div>
+            <Select value={rubrique} onChange={(e) => setRubrique(e.target.value as any)}>
+              <option value="absent">Absences (heures)</option>
+              <option value="tardy">Retards (minutes)</option>
+            </Select>
+          </div>
         </div>
 
         <div className="mt-4 flex flex-wrap items-center gap-2">
-          <Button onClick={refreshAll} disabled={loading}>
-            {loading ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Filter className="h-4 w-4" />} Actualiser
+          <Button onClick={refreshMatrix} disabled={Boolean(loading || !selectedClassId)}>
+            {loading ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Filter className="h-4 w-4" />}
+            Actualiser
           </Button>
           <GhostButton onClick={resetAll}>Réinitialiser</GhostButton>
-          {from || to ? <Badge><Calendar className="h-3.5 w-3.5 mr-1" /> {from || "…"} <ChevronRight className="mx-1 h-3 w-3" /> {to || "…"} </Badge> : null}
-          {hasLevel ? <Badge><School className="h-3.5 w-3.5 mr-1" /> {selectedLevel}</Badge> : null}
-          {hasClass ? <Badge><Layers className="h-3.5 w-3.5 mr-1" /> Classe sélectionnée</Badge> : null}
+          <GhostButton onClick={exportMatrixCsv} disabled={Boolean(!matrix || !matrixIndex)}>
+            <Download className="h-4 w-4" /> Export CSV
+          </GhostButton>
         </div>
       </Card>
 
-      {/* KPI */}
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <Stat icon={<School className="h-5 w-5" />} label="Niveaux concernés" value={nf.format(kpi.levelsCount)} loading={loading && !hasLevel && levelsAgg.length === 0} />
-        <Stat icon={<Layers className="h-5 w-5" />} label="Classes concernées" value={hasLevel ? nf.format(kpi.classesCount) : "—"} hint={!hasLevel ? "Sélectionne un niveau" : undefined} loading={loading && hasLevel && classesAgg.length === 0} />
-        <Stat icon={<Users className="h-5 w-5" />} label="Élèves listés" value={hasClass ? nf.format(kpi.studentsCount) : "—"} hint={!hasClass ? "Sélectionne une classe" : undefined} loading={loading && hasClass && students.length === 0} />
-        <Stat icon={<Clock className="h-5 w-5" />} label="Heures cumulées" value={fmtUnitsFR(kpi.totalHours)} loading={loading} />
-      </div>
-
-      {/* ───────── Carte NIVEAUX / CLASSES ───────── */}
+      {/* Matrice */}
       <Card
-        title={hasLevel ? `Classes — niveau ${selectedLevel}` : "Résumé par niveau (période)"}
-        actions={
-          hasLevel ? (
-            <a
-              className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-1.5 text-xs hover:bg-slate-50"
-              href={buildLevelCsvUrl()}
-              target="_blank"
-              rel="noreferrer"
-            >
-              <Download className="h-4 w-4" /> Export niveau (CSV)
-            </a>
-          ) : null
+        title="Matrice — Élèves × Disciplines"
+        subtitle={
+          hasClass
+            ? (rubrique === "absent" ? "Valeurs en heures" : "Valeurs en minutes")
+            : "Sélectionne une classe puis Actualiser"
         }
       >
-        {!hasLevel ? (
-          levelsAgg.length === 0 ? (
-            <div className="text-sm text-slate-600">Aucune donnée pour la période.</div>
-          ) : (
-            <ul className="divide-y">
-              {levelsAgg.map((l) => (
-                <li
-                  key={l.level}
-                  className="flex items-center justify-between gap-3 py-2 text-slate-800 hover:text-emerald-700 cursor-pointer"
-                  onClick={() => setSelectedLevel(l.level)}
-                >
-                  <div className="flex items-center gap-3">
-                    <div className="w-28 font-medium">{l.level}</div>
-                    <SparkBar value={Number(l.minutes || 0)} max={maxLevelMinutes} />
-                  </div>
-                  <div className="text-sm tabular-nums">
-                    {l.absents} élève(s) • {fmtHM(Number(l.minutes || 0))}
-                  </div>
-                </li>
-              ))}
-            </ul>
-          )
-        ) : classesAgg.length === 0 ? (
-          <div className="text-sm text-slate-600">Aucune absence pour {selectedLevel} sur la période.</div>
-        ) : (
-          <ul className="divide-y">
-            {classesAgg.map((c) => (
-              <li
-                key={c.class_id}
-                className={[
-                  "flex items-center justify-between gap-3 py-2 cursor-pointer",
-                  selectedClassId === c.class_id
-                    ? "font-semibold text-emerald-700"
-                    : "text-slate-800 hover:text-emerald-700",
-                ].join(" ")}
-                onClick={() => setSelectedClassId(c.class_id)}
-              >
-                <div className="flex items-center gap-3">
-                  <div className="w-28">{c.class_label}</div>
-                  <SparkBar value={Number(c.minutes || 0)} max={maxClassMinutes} />
-                </div>
-                <div className="text-sm tabular-nums">
-                  {c.absents} élève(s) • {fmtHM(Number(c.minutes || 0))}
-                </div>
-              </li>
+        {!hasClass ? (
+          <div className="text-sm text-slate-600">—</div>
+        ) : loading && !matrix ? (
+          <div className="space-y-2">
+            {Array.from({ length: 6 }).map((_, i) => (
+              <div key={i} className="h-10 w-full animate-pulse rounded bg-slate-100" />
             ))}
-          </ul>
-        )}
-      </Card>
-
-      {/* DISCIPLINES & ÉLÈVES */}
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        {/* Disciplines */}
-        <Card
-          title={hasClass ? "Disciplines — classe sélectionnée" : hasLevel ? "Disciplines — niveau sélectionné" : "Disciplines"}
-          subtitle="Nombre d’élèves concernés par discipline"
-        >
-          {subjects.length === 0 ? (
-            <div className="text-sm text-slate-600">—</div>
-          ) : (
-            <ul className="divide-y">
-              {subjects.map((s) => (
-                <li key={s.name} className="flex items-center justify-between py-2">
-                  <span className="text-slate-800">{s.name}</span>
-                  <span className="text-sm tabular-nums">{nf.format(s.absents)}</span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </Card>
-
-        {/* Élèves — 2 colonnes distinctes */}
-        <Card
-          title="Élèves"
-          subtitle={hasClass ? "Absences vs Retards pour la classe sélectionnée" : "Sélectionne une classe pour voir les élèves"}
-          actions={
-            hasClass ? (
-              <a
-                className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-1.5 text-xs hover:bg-slate-50"
-                href={buildClassCsvUrl()}
-                target="_blank"
-                rel="noreferrer"
-              >
-                <Download className="h-4 w-4" /> Export classe (CSV)
-              </a>
-            ) : null
-          }
-        >
-          {!hasClass ? (
-            <div className="text-sm text-slate-600">—</div>
-          ) : loading && students.length === 0 ? (
-            <div className="space-y-2">
-              {Array.from({ length: 6 }).map((_, i) => (
-                <div key={i} className="h-10 w-full animate-pulse rounded bg-slate-100" />
-              ))}
-            </div>
-          ) : students.length === 0 ? (
-            <div className="text-sm text-slate-600">Aucune absence pour cette classe sur la période.</div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="min-w-full text-sm">
-                <thead className="sticky top-0 z-10 bg-slate-50">
-                  <tr>
-                    <th className="px-3 py-2 text-left font-semibold text-slate-700">Élève</th>
-                    <th className="px-3 py-2 text-left font-semibold text-slate-700">Heures d’absence</th>
-                    <th className="px-3 py-2 text-left font-semibold text-slate-700">Retards (min)</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y">
-                  {students.map((s) => {
-                    const minutesAbs = Number(s.minutes_abs ?? s.minutes ?? 0);
-                    const minutesTardy = Number(s.minutes_tardy ?? s.tardy_minutes ?? 0);
+          </div>
+        ) : !matrix || !matrixIndex ? (
+          <div className="text-sm text-slate-600">Aucune donnée pour la période/classe sélectionnée.</div>
+        ) : (
+          <div className="overflow-auto">
+            <table className="min-w-full text-sm border border-slate-200 rounded-xl">
+              <thead className="sticky top-0 z-10 bg-slate-100">
+                <tr>
+                  <th className="px-2 py-2 text-left align-bottom w-12">N°</th>
+                  <th className="px-3 py-2 text-left align-bottom sticky left-0 bg-slate-100 z-20">
+                    Élève
+                  </th>
+                  {matrix.subjects.map((subj) => {
+                    const isHot = hotSubjects.has(subj.id);
                     return (
-                      <tr key={s.student_id} className="hover:bg-slate-50">
-                        <td className="px-3 py-2">{s.full_name}</td>
-                        <td className="px-3 py-2">{fmtHM(minutesAbs)}</td>
-                        <td className="px-3 py-2 tabular-nums">{nf.format(minutesTardy)}</td>
-                      </tr>
+                      <th
+                        key={subj.id}
+                        className={[
+                          "px-2 py-2 text-center align-bottom",
+                          isHot ? "bg-rose-50 text-rose-800 ring-1 ring-rose-200" : "",
+                        ].join(" ")}
+                        title={isHot ? "Discipline la plus concernée sur la période" : undefined}
+                      >
+                        <div className="mx-auto h-24 w-8 [writing-mode:vertical-rl] rotate-180 whitespace-nowrap">
+                          {subj.name}
+                          {isHot ? " 🔥" : ""}
+                        </div>
+                      </th>
                     );
                   })}
-                </tbody>
-              </table>
+                  {/* ── Nouvelle colonne Total (fin) ── */}
+                  <th className="px-2 py-2 text-center align-bottom">
+                    Total
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {matrix.students.map((stu, rIdx) => {
+                  const isHotRow = hotStudents.has(stu.id);
+                  const totalMinutes = studentTotals.get(stu.id) || 0;
+                  return (
+                    <tr
+                      key={stu.id}
+                      className={[
+                        "border-t hover:bg-slate-100",
+                        isHotRow ? "bg-amber-50" : rIdx % 2 ? "bg-slate-50" : "bg-white",
+                      ].join(" ")}
+                      title={isHotRow ? "Élève parmi les plus concernés sur la période" : undefined}
+                    >
+                      <td className="px-2 py-2 text-left tabular-nums">{stu.rank ?? rIdx + 1}</td>
+                      <td className={["px-3 py-2 sticky left-0 z-10", isHotRow ? "bg-amber-50 font-medium" : "bg-inherit"].join(" ")}>
+                        {stu.full_name}
+                      </td>
+                      {matrix.subjects.map((subj, cIdx) => {
+                        const minutes = matrixIndex[stu.id]?.[subj.id] || 0;
+                        const tipCount = matrix.subjectDistinct[subj.id] ?? 0;
+                        const zebraCol = cIdx % 2 ? "bg-slate-50/60" : "";
+                        const isHotCol = hotSubjects.has(subj.id);
+                        return (
+                          <td
+                            key={subj.id}
+                            className={[
+                              "px-2 py-2 text-center tabular-nums",
+                              zebraCol,
+                              isHotCol ? "bg-rose-50/70" : "",
+                            ].join(" ")}
+                            title={`${tipCount} élève(s) distinct(s) ${rubrique === "absent" ? "absent(s)" : "en retard"} en « ${subj.name} » sur la période`}
+                          >
+                            {rubrique === "absent" ? hoursLabel(minutes) : nf.format(minutes)}
+                          </td>
+                        );
+                      })}
+                      {/* ── Cellule Total par élève ── */}
+                      <td
+                        className="px-2 py-2 text-center tabular-nums font-semibold text-slate-900"
+                        title="Somme sur toutes les disciplines de la période"
+                      >
+                        {rubrique === "absent" ? hoursLabel(totalMinutes) : nf.format(totalMinutes)}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+            <div className="mt-2 text-[11px] text-slate-500">
+              Survole une case pour voir le nombre d’élèves distincts concernés par la discipline.
+              Les colonnes en rose et les lignes en jaune mettent en évidence les plus gros totaux de la période.
             </div>
-          )}
-        </Card>
-      </div>
+          </div>
+        )}
+      </Card>
     </div>
   );
 }

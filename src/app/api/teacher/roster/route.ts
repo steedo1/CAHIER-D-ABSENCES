@@ -17,7 +17,7 @@ export async function GET(req: Request) {
   const class_id = url.searchParams.get("class_id") || "";
   if (!class_id) return NextResponse.json({ error: "missing_class_id" }, { status: 400 });
 
-  // �tablissement de l'enseignant
+  // établissement de l'enseignant
   const { data: me } = await supa
     .from("profiles")
     .select("institution_id")
@@ -27,7 +27,7 @@ export async function GET(req: Request) {
   if (!inst) return NextResponse.json({ items: [] });
 
   // autorisation :
-  // 1) s�ance ouverte sur cette classe
+  // 1) séance ouverte sur cette classe
   const { data: os } = await supa
     .from("teacher_sessions")
     .select("id,class_id")

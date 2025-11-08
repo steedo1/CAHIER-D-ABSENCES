@@ -190,7 +190,7 @@ export default function HomePage() {
         <div className="mx-auto grid max-w-7xl grid-cols-1 items-center gap-8 px-4 py-10 md:grid-cols-2 md:py-16">
           <div className="relative z-10">
             <h1 className="text-4xl font-extrabold leading-tight text-slate-900 md:text-6xl">
-              Le cahier d’absences <span className="text-indigo-600">moderne</span>
+              Le cahier d’absences <span className="text-indigo-600">numérique</span>
             </h1>
             <p className="mt-5 max-w-xl text-base leading-7 text-slate-700">
               Appel rapide, alertes parents instantanées, suivi des heures, exports.
