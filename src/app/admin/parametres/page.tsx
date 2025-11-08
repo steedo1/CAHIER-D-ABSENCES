@@ -1,7 +1,7 @@
 // src/app/admin/parametres/page.tsx
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 /* =========================
    Types
@@ -132,6 +132,19 @@ function ToastHost({ toasts, onClose }: { toasts: Toast[]; onClose: (id: string)
 }
 
 /* =========================
+   Petits helpers horaires
+========================= */
+function timeStrToMin(t: string): number {
+  const [h, m] = (t || "00:00").split(":").map(n => parseInt(n, 10) || 0);
+  return h * 60 + m;
+}
+function minToTimeStr(min: number): string {
+  const h = Math.floor(min / 60);
+  const m = min % 60;
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+}
+
+/* =========================
    Page
 ========================= */
 export default function AdminSettingsPage() {
@@ -154,6 +167,10 @@ export default function AdminSettingsPage() {
   const [users, setUsers] = useState<Profile[]>([]);
   const [loadingUsers, setLoadingUsers] = useState(false);
   const [errUsers, setErrUsers] = useState<string | null>(null);
+
+  // Mode compact / détails dépliables
+  const [compactUsers, setCompactUsers] = useState<boolean>(true);
+  const [expandedUserIds, setExpandedUserIds] = useState<Set<string>>(new Set());
 
   // Modal pour définir un mot de passe personnalisé
   const [modalOpen, setModalOpen] = useState(false);
@@ -225,6 +242,15 @@ export default function AdminSettingsPage() {
     loadUsers();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  function toggleUserExpanded(id: string) {
+    setExpandedUserIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
 
   /* ====== Réinit temporaire ====== */
   async function resetTemp(user: Profile) {
@@ -319,6 +345,66 @@ export default function AdminSettingsPage() {
   const [loadingCfg, setLoadingCfg] = useState(false);
   const [savingPeriods, setSavingPeriods] = useState(false);
   const [msgSched, setMsgSched] = useState<string | null>(null);
+
+  // Générateur de créneaux (UI)
+  const [genStart, setGenStart] = useState<string>("08:00");
+  const [genEnd, setGenEnd] = useState<string>("17:00");
+  const [genDuration, setGenDuration] = useState<number>(55);
+  const [genGap, setGenGap] = useState<number>(5); // pause entre séances
+  const [genLabelBase, setGenLabelBase] = useState<string>("Séance");
+  const [genPreview, setGenPreview] = useState<Period[]>([]);
+  const [genReplace, setGenReplace] = useState<boolean>(true); // remplacer ou ajouter
+
+  function buildPreview(day: number) {
+    const s = timeStrToMin(genStart);
+    const e = timeStrToMin(genEnd);
+    if (e <= s) {
+      pushToast("error", "Heure de fin ≤ heure de début.");
+      setGenPreview([]);
+      return;
+    }
+    if (genDuration <= 0) {
+      pushToast("error", "Durée de séance invalide.");
+      setGenPreview([]);
+      return;
+    }
+    const step = Math.max(1, genDuration) + Math.max(0, genGap);
+    let cur = s;
+    let i = 1;
+    const out: Period[] = [];
+    while (cur + genDuration <= e) {
+      const st = cur;
+      const en = cur + genDuration;
+      out.push({
+        weekday: day,
+        label: `${genLabelBase} ${i}`,
+        start_time: minToTimeStr(st),
+        end_time: minToTimeStr(en),
+      });
+      cur += step;
+      i++;
+      if (i > 100) break; // garde-fou
+    }
+    setGenPreview(out);
+    pushToast("info", `Prévisualisation: ${out.length} créneau(x).`);
+  }
+
+  function applyGeneratedToDays(days: number[]) {
+    if (genPreview.length === 0) {
+      pushToast("error", "Aucune prévisualisation à appliquer. Cliquez d’abord sur « Prévisualiser ».");
+      return;
+    }
+    setByDay(m => {
+      const next = { ...m };
+      for (const d of days) {
+        const rows = genPreview.map(p => ({ ...p, weekday: d }));
+        if (genReplace) next[d] = rows;
+        else next[d] = [...(next[d] || []), ...rows];
+      }
+      return next;
+    });
+    pushToast("success", `Créneaux ${genReplace ? "remplacés" : "ajoutés"} pour ${days.length} jour(s).`);
+  }
 
   async function loadInstitutionConfig() {
     setLoadingCfg(true);
@@ -513,26 +599,36 @@ export default function AdminSettingsPage() {
             2) Réinitialiser le mot de passe d'un user
         =========================================== */}
         <section className="rounded-2xl border bg-white p-5">
-          <div className="mb-3 flex items-center justify-between">
+          <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <div className="text-sm font-semibold uppercase tracking-wide text-slate-700">
               Réinitialiser le mot de passe d’un utilisateur
             </div>
-            <div className="flex items-center gap-2">
-              <input
-                placeholder="Recherche : nom, email, téléphone…"
-                className="w-64 rounded-lg border px-3 py-1.5 text-sm"
-                value={q}
-                onChange={e => setQ(e.target.value)}
-                onKeyDown={e => e.key === "Enter" && loadUsers()}
-              />
-              <button
-                onClick={loadUsers}
-                className="rounded-lg border px-3 py-1.5 text-sm hover:bg-slate-50"
-                disabled={loadingUsers}
-                title="Rechercher"
-              >
-                {loadingUsers ? "Recherche…" : "Rechercher"}
-              </button>
+            <div className="flex flex-wrap items-center gap-2">
+              <label className="inline-flex select-none items-center gap-2 rounded-lg border px-2 py-1 text-xs">
+                <input
+                  type="checkbox"
+                  checked={compactUsers}
+                  onChange={(e) => setCompactUsers(e.target.checked)}
+                />
+                Mode compact (replier les lignes)
+              </label>
+              <div className="flex items-center gap-2">
+                <input
+                  placeholder="Recherche : nom, email, téléphone…"
+                  className="w-64 rounded-lg border px-3 py-1.5 text-sm"
+                  value={q}
+                  onChange={e => setQ(e.target.value)}
+                  onKeyDown={e => e.key === "Enter" && loadUsers()}
+                />
+                <button
+                  onClick={loadUsers}
+                  className="rounded-lg border px-3 py-1.5 text-sm hover:bg-slate-50"
+                  disabled={loadingUsers}
+                  title="Rechercher"
+                >
+                  {loadingUsers ? "Recherche…" : "Rechercher"}
+                </button>
+              </div>
             </div>
           </div>
 
@@ -552,45 +648,27 @@ export default function AdminSettingsPage() {
                 <thead>
                   <tr className="border-b bg-slate-50 text-slate-600">
                     <th className="px-3 py-2 text-left">Utilisateur</th>
-                    <th className="px-3 py-2 text-left">Contact</th>
+                    {!compactUsers && <th className="px-3 py-2 text-left">Contact</th>}
                     <th className="px-3 py-2 text-left">Rôle</th>
                     <th className="px-3 py-2 text-right">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {users.map(u => (
-                    <tr key={u.id} className="border-b">
-                      <td className="px-3 py-2">
-                        <div className="font-medium text-slate-800">{u.display_name || "—"}</div>
-                        <div className="text-[11px] text-slate-500">{u.id}</div>
-                      </td>
-                      <td className="px-3 py-2">
-                        <div className="text-slate-700">{u.email || "—"}</div>
-                        <div className="text-[12px] text-slate-500">{u.phone || ""}</div>
-                      </td>
-                      <td className="px-3 py-2">
-                        <Badge color={roleColor(u.role || undefined)}>{u.role || "—"}</Badge>
-                      </td>
-                      <td className="px-3 py-2">
-                        <div className="flex items-center justify-end gap-2">
-                          <button
-                            onClick={() => resetTemp(u)}
-                            className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-1.5 text-xs font-medium text-amber-800 hover:bg-amber-100"
-                            title="Réinitialiser avec mot de passe temporaire"
-                          >
-                            Réinit. temporaire
-                          </button>
-                          <button
-                            onClick={() => openCustom(u)}
-                            className="rounded-lg border border-sky-300 bg-sky-50 px-3 py-1.5 text-xs font-medium text-sky-800 hover:bg-sky-100"
-                            title="Définir un mot de passe"
-                          >
-                            Définir…
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
+                  {users.map(u => {
+                    const isOpen = expandedUserIds.has(u.id);
+                    return (
+                      <FragmentRow
+                        key={u.id}
+                        user={u}
+                        compact={compactUsers}
+                        expanded={isOpen}
+                        onToggle={() => toggleUserExpanded(u.id)}
+                        onResetTemp={() => resetTemp(u)}
+                        onOpenCustom={() => openCustom(u)}
+                        roleColor={roleColor}
+                      />
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -676,6 +754,115 @@ export default function AdminSettingsPage() {
               {savingCfg ? "Enregistrement…" : "Enregistrer les paramètres"}
             </button>
             {msgSched && <span className="text-sm text-slate-700">{msgSched}</span>}
+          </div>
+
+          {/* Générateur de créneaux */}
+          <div className="mb-4 rounded-xl border bg-slate-50 p-3">
+            <div className="mb-2 text-sm font-medium text-slate-800">Générateur de créneaux (auto)</div>
+            <div className="grid grid-cols-1 gap-2 md:grid-cols-5">
+              <div>
+                <div className="mb-1 text-xs text-slate-500">Début journée</div>
+                <input
+                  type="time"
+                  value={genStart}
+                  onChange={(e) => setGenStart(e.target.value)}
+                  className="w-full rounded-lg border bg-white px-3 py-1.5 text-sm"
+                />
+              </div>
+              <div>
+                <div className="mb-1 text-xs text-slate-500">Fin journée</div>
+                <input
+                  type="time"
+                  value={genEnd}
+                  onChange={(e) => setGenEnd(e.target.value)}
+                  className="w-full rounded-lg border bg-white px-3 py-1.5 text-sm"
+                />
+              </div>
+              <div>
+                <div className="mb-1 text-xs text-slate-500">Durée séance (min)</div>
+                <input
+                  type="number"
+                  min={1}
+                  value={genDuration}
+                  onChange={(e) => setGenDuration(Math.max(1, parseInt(e.target.value || "0", 10)))}
+                  className="w-full rounded-lg border bg-white px-3 py-1.5 text-sm"
+                />
+              </div>
+              <div>
+                <div className="mb-1 text-xs text-slate-500">Pause entre séances (min)</div>
+                <input
+                  type="number"
+                  min={0}
+                  value={genGap}
+                  onChange={(e) => setGenGap(Math.max(0, parseInt(e.target.value || "0", 10)))}
+                  className="w-full rounded-lg border bg-white px-3 py-1.5 text-sm"
+                />
+              </div>
+              <div>
+                <div className="mb-1 text-xs text-slate-500">Libellé de base</div>
+                <input
+                  value={genLabelBase}
+                  onChange={(e) => setGenLabelBase(e.target.value)}
+                  className="w-full rounded-lg border bg-white px-3 py-1.5 text-sm"
+                  placeholder="Séance"
+                />
+              </div>
+            </div>
+
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <label className="inline-flex items-center gap-2 text-xs">
+                <input
+                  type="checkbox"
+                  checked={genReplace}
+                  onChange={(e) => setGenReplace(e.target.checked)}
+                />
+                Remplacer les créneaux existants (sinon, ajouter à la suite)
+              </label>
+
+              <button
+                onClick={() => buildPreview(curDay)}
+                className="rounded-lg border bg-white px-3 py-1.5 text-sm hover:bg-slate-100"
+              >
+                Prévisualiser (jour courant)
+              </button>
+              <button
+                onClick={() => applyGeneratedToDays([curDay])}
+                className="rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700"
+              >
+                Appliquer au jour courant
+              </button>
+              <button
+                onClick={() => applyGeneratedToDays([1,2,3,4,5])}
+                className="rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700"
+              >
+                Appliquer Lun→Ven
+              </button>
+            </div>
+
+            {genPreview.length > 0 && (
+              <div className="mt-3 overflow-x-auto rounded-lg border bg-white">
+                <table className="min-w-full text-sm">
+                  <thead className="bg-slate-50">
+                    <tr className="text-left text-slate-600">
+                      <th className="px-3 py-2 w-12">#</th>
+                      <th className="px-3 py-2 w-36">Début</th>
+                      <th className="px-3 py-2 w-36">Fin</th>
+                      <th className="px-3 py-2">Libellé (prévisualisation)</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y">
+                    {genPreview.map((p, i) => (
+                      <tr key={i}>
+                        <td className="px-3 py-2">{i + 1}</td>
+                        <td className="px-3 py-2">{p.start_time}</td>
+                        <td className="px-3 py-2">{p.end_time}</td>
+                        <td className="px-3 py-2">{p.label}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
 
           {/* Onglets jours */}
@@ -859,6 +1046,106 @@ export default function AdminSettingsPage() {
           </div>
         </Modal>
       </main>
+    </>
+  );
+}
+
+/* =========================
+   Ligne utilisateur (compact + détail)
+========================= */
+function FragmentRow(props: {
+  user: Profile;
+  compact: boolean;
+  expanded: boolean;
+  onToggle: () => void;
+  onResetTemp: () => void;
+  onOpenCustom: () => void;
+  roleColor: (r?: Role | null) => "violet" | "sky" | "rose" | "slate";
+}) {
+  const u = props.user;
+  return (
+    <>
+      <tr className="border-b align-top">
+        <td className="px-3 py-2">
+          <div className="font-medium text-slate-800">{u.display_name || "—"}</div>
+          <div className="text-[11px] text-slate-500">{u.id}</div>
+        </td>
+
+        {!props.compact && (
+          <td className="px-3 py-2">
+            <div className="text-slate-700">{u.email || "—"}</div>
+            <div className="text-[12px] text-slate-500">{u.phone || ""}</div>
+          </td>
+        )}
+
+        <td className="px-3 py-2">
+          <Badge color={props.roleColor(u.role || undefined)}>{u.role || "—"}</Badge>
+        </td>
+
+        <td className="px-3 py-2">
+          <div className="flex items-center justify-end gap-2">
+            {props.compact && (
+              <button
+                onClick={props.onToggle}
+                className="rounded-lg border px-3 py-1.5 text-xs hover:bg-slate-50"
+                title={props.expanded ? "Masquer les détails" : "Voir les détails"}
+              >
+                {props.expanded ? "Masquer" : "Voir"}
+              </button>
+            )}
+            {!props.compact && (
+              <>
+                <button
+                  onClick={props.onResetTemp}
+                  className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-1.5 text-xs font-medium text-amber-800 hover:bg-amber-100"
+                  title="Réinitialiser avec mot de passe temporaire"
+                >
+                  Réinit. temporaire
+                </button>
+                <button
+                  onClick={props.onOpenCustom}
+                  className="rounded-lg border border-sky-300 bg-sky-50 px-3 py-1.5 text-xs font-medium text-sky-800 hover:bg-sky-100"
+                  title="Définir un mot de passe"
+                >
+                  Définir…
+                </button>
+              </>
+            )}
+          </div>
+        </td>
+      </tr>
+
+      {/* Ligne de détails seulement en mode compact */}
+      {props.compact && props.expanded && (
+        <tr className="border-b bg-slate-50/50">
+          <td className="px-3 py-2" colSpan={3}>
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+              <div>
+                <div className="text-[11px] text-slate-500">Email</div>
+                <div className="text-sm text-slate-800">{u.email || "—"}</div>
+              </div>
+              <div>
+                <div className="text-[11px] text-slate-500">Téléphone</div>
+                <div className="text-sm text-slate-800">{u.phone || "—"}</div>
+              </div>
+              <div className="flex items-end justify-end gap-2">
+                <button
+                  onClick={props.onResetTemp}
+                  className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-1.5 text-xs font-medium text-amber-800 hover:bg-amber-100"
+                >
+                  Réinit. temporaire
+                </button>
+                <button
+                  onClick={props.onOpenCustom}
+                  className="rounded-lg border border-sky-300 bg-sky-50 px-3 py-1.5 text-xs font-medium text-sky-800 hover:bg-sky-100"
+                >
+                  Définir…
+                </button>
+              </div>
+            </div>
+          </td>
+        </tr>
+      )}
     </>
   );
 }

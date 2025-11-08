@@ -1,3 +1,4 @@
+//src/app/admin/statistiques/page.tsx
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";

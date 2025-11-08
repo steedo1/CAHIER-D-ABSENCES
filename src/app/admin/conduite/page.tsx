@@ -1,4 +1,3 @@
-// src/app/admin/conduite/page.tsx
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
@@ -32,39 +31,26 @@ function Card({ title, children }: { title: string; children: React.ReactNode })
 
 /* ─────────────────────────────────────────
    Helpers noms/prénoms
-   - Affiche "Nom Prénom"
-   - Fournit une clé de tri sur le NOM
 ────────────────────────────────────────── */
 function splitNomPrenoms(full: string) {
   const s = (full ?? "").trim().replace(/\s+/g, " ");
   if (!s) return { nom: "", prenoms: "" };
-
-  // Cas "Prenom, Nom"
   if (s.includes(",")) {
     const [prenoms, nom] = s.split(",").map((x) => x.trim());
     return { nom: nom ?? "", prenoms: prenoms ?? "" };
   }
-
   const parts = s.split(" ");
   if (parts.length === 1) return { nom: s, prenoms: "" };
-
   const last = parts[parts.length - 1];
   const rest = parts.slice(0, -1).join(" ");
-
-  // Si 2 mots → inverser ; si dernier tout en majuscules → NOM
   const isUpper = /^[A-ZÀÂÄÇÉÈÊËÎÏÔÖÙÛÜŸ\-']+$/.test(last);
   if (parts.length === 2 || isUpper) return { nom: last, prenoms: rest };
-
-  // Par défaut, dernier = NOM
   return { nom: last, prenoms: rest };
 }
-
 function nomPrenom(full: string) {
   const { nom, prenoms } = splitNomPrenoms(full);
-  // const NOM = nom.toUpperCase(); // ← décommente si tu veux le NOM en majuscules
   return `${nom} ${prenoms}`.trim();
 }
-
 function nomKey(full: string) {
   const { nom } = splitNomPrenoms(full);
   return (nom || "").trim();
@@ -139,7 +125,7 @@ export default function ConduitePage() {
     }
   }
 
-  /* ✨ Tri alphabétique (A → Z) sur le NOM avec collateur FR */
+  /* Tri alphabétique (A → Z) sur le NOM */
   const sortedItems = useMemo(() => {
     const coll = new Intl.Collator("fr", { sensitivity: "base", ignorePunctuation: true });
     const list = [...items];
@@ -148,11 +134,45 @@ export default function ConduitePage() {
       const bk = nomKey(b.full_name);
       const byNom = coll.compare(ak, bk);
       if (byNom !== 0) return byNom;
-      // Départage éventuel par prénoms ou nom complet formatté
       return coll.compare(nomPrenom(a.full_name), nomPrenom(b.full_name));
     });
     return list;
   }, [items]);
+
+  // Export CSV (utilise l'API avec format=csv, crée un blob pour éviter de quitter la page)
+  async function exportCSV() {
+    if (!classId || sortedItems.length === 0) return;
+    const qs = new URLSearchParams({ class_id: classId, format: "csv" });
+    if (from) qs.set("from", from);
+    if (to) qs.set("to", to);
+
+    const res = await fetch(`/api/admin/conduite/averages?${qs.toString()}`, {
+      cache: "no-store",
+      headers: { Accept: "text/csv" },
+    });
+    const blob = await res.blob();
+    // tentative de récupérer le filename du header
+    let filename = "conduite.csv";
+    const dispo = res.headers.get("Content-Disposition") || "";
+    const m = /filename\*=UTF-8''([^;]+)|filename="([^"]+)"/i.exec(dispo);
+    if (m) {
+      filename = decodeURIComponent(m[1] || m[2] || filename);
+    } else {
+      const safeLabel = (classLabel || "classe").replace(/[^\p{L}\p{N}_-]+/gu, "_");
+      const range =
+        from && to ? `${from}_au_${to}` : from ? `depuis_${from}` : to ? `jusqua_${to}` : "toutes_dates";
+      filename = `conduite_${safeLabel}_${range}.csv`;
+    }
+
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
 
   return (
     <div className="space-y-6">
@@ -196,9 +216,12 @@ export default function ConduitePage() {
             </Select>
           </div>
         </div>
-        <div className="mt-4">
+        <div className="mt-4 flex gap-2">
           <Button onClick={validate} disabled={!classId || loading}>
             {loading ? "…" : "Valider"}
+          </Button>
+          <Button onClick={exportCSV} disabled={!classId || loading || sortedItems.length === 0}>
+            Exporter CSV
           </Button>
         </div>
       </Card>

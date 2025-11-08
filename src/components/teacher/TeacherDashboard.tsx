@@ -136,6 +136,16 @@ function jsWeekday1to6(date: Date): number {
   return d; // 1..6 (samedi = 6)
 }
 
+/* Helpers fuseau établissement */
+const hmInTZ = (d: Date, tz: string): string =>
+  new Intl.DateTimeFormat("en-GB", { timeZone: tz, hour: "2-digit", minute: "2-digit", hour12: false }).format(d);
+
+const weekdayInTZ1to7 = (d: Date, tz: string): number => {
+  const w = new Intl.DateTimeFormat("en-US", { timeZone: tz, weekday: "short" }).format(d).toLowerCase();
+  const map: Record<string, number> = { sun: 7, mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6 };
+  return map[w] ?? 7;
+};
+
 /* ─────────────────────────────────────────
    Component (teacher only)
 ────────────────────────────────────────── */
@@ -269,23 +279,34 @@ export default function TeacherDashboard() {
 
   // Calcul du créneau « du moment » + verrouillage heure/durée
   function computeDefaultsForNow() {
-    const today = new Date();
-    const wd = jsWeekday1to6(today); // 1..6, 7 si dimanche
+    const tz = inst?.tz || "Africa/Abidjan";
+    const now = new Date();
+    const nowHM = hmInTZ(now, tz);
+    const wd = weekdayInTZ1to7(now, tz); // 1..6, 7 = dimanche (hors créneau)
     const slots = periodsByDay[wd] || [];
 
+    // Si pas de créneau aujourd’hui → fallback = maintenant (dans le fuseau établissement)
     if (wd === 7 || slots.length === 0) {
-      setStartTime(defTime);
+      setStartTime(nowHM);
       setDuration(inst.default_session_minutes || 60);
-      setSlotLabel("Aucun créneau configuré (fallback automatique)");
+      setSlotLabel("Hors créneau — utilisation de l’heure actuelle");
       setLocked(true);
       return;
     }
 
-    const nowMin = toMinutes(hhmm(today));
+    const nowMin = toMinutes(nowHM);
     // 1) si on est dans un créneau → celui-ci
-    let pick = slots.find((s) => nowMin >= toMinutes(s.start_time) && nowMin < toMinutes(s.end_time));
-    // 2) sinon, le prochain non commencé ; à défaut, le dernier du jour
-    if (!pick) pick = slots.find((s) => nowMin <= toMinutes(s.start_time)) || slots[slots.length - 1];
+    let pick = slots.find(s => nowMin >= toMinutes(s.start_time) && nowMin < toMinutes(s.end_time));
+    // 2) sinon, le prochain non commencé
+    if (!pick) pick = slots.find(s => nowMin <= toMinutes(s.start_time));
+    // 3) si après le dernier créneau → fallback = maintenant (au lieu du dernier créneau)
+    if (!pick) {
+      setStartTime(nowHM);
+      setDuration(inst.default_session_minutes || 60);
+      setSlotLabel("Hors créneau — utilisation de l’heure actuelle");
+      setLocked(true);
+      return;
+    }
 
     setStartTime(pick.start_time);
     setDuration(Math.max(1, minutesDiff(pick.start_time, pick.end_time) || inst.default_session_minutes || 60));
@@ -297,7 +318,7 @@ export default function TeacherDashboard() {
   useEffect(() => {
     computeDefaultsForNow();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [JSON.stringify(periodsByDay), inst.default_session_minutes, selKey]);
+  }, [JSON.stringify(periodsByDay), inst.default_session_minutes, inst.tz, selKey]);
 
   /* Charger roster si séance ouverte */
   useEffect(() => {

@@ -1,4 +1,3 @@
-// src/app/api/admin/conduite/averages/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
@@ -74,15 +73,14 @@ export async function GET(req: NextRequest) {
     };
   });
 
-  // Minutes d'absences + retards (centralisé via /api/admin/absences/by-class)
-  // On accepte minutes_total (nouveau), sinon on retombe sur minutes (ancien).
+  // Minutes d'absences + retards via route centralisée
   const minutesMap = new Map<string, number>();
   try {
     const url = new URL("/api/admin/absences/by-class", req.url);
     url.searchParams.set("class_id", class_id);
     if (from) url.searchParams.set("from", from);
     if (to)   url.searchParams.set("to", to);
-    url.searchParams.set("unjustified", "1"); // si ignoré par la route, aucun impact
+    url.searchParams.set("unjustified", "1");
 
     const cookie = req.headers.get("cookie");
     const r = await fetch(url.toString(), {
@@ -106,7 +104,7 @@ export async function GET(req: NextRequest) {
     /* silencieux */
   }
 
-  // Évènements (bornage journée complète pour coller au parent)
+  // Évènements
   type Ev = {
     student_id: string;
     rubric: "assiduite" | "tenue" | "moralite" | "discipline";
@@ -142,7 +140,7 @@ export async function GET(req: NextRequest) {
   }
   for (const [, arr] of byStudent) arr.sort((a, b) => a.occurred_at.localeCompare(b.occurred_at));
 
-  // Pénalités libres (hors assiduité), même bornage journée
+  // Pénalités libres
   type Pen = { student_id: string; rubric: "tenue" | "moralite" | "discipline"; points: number; occurred_at: string; };
   let penalties: Pen[] = [];
   try {
@@ -228,5 +226,74 @@ export async function GET(req: NextRequest) {
     })
     .sort((a, b) => a.full_name.localeCompare(b.full_name, undefined, { numeric: true }));
 
-  return NextResponse.json({ class_label: (cls as any).label ?? "", items });
+  // ───────────────── CSV branch (opt-in) ─────────────────
+  const wantsCSV =
+    (searchParams.get("format") || "").toLowerCase() === "csv" ||
+    (req.headers.get("accept") || "").toLowerCase().includes("text/csv");
+
+  const class_label = (cls as any).label ?? "";
+
+  if (wantsCSV) {
+    // séparateur ; , décimales avec ,
+    const sep = ";";
+    const CRLF = "\r\n";
+    const fmt = (n: number) => n.toFixed(2).replace(".", ",");
+    const q = (s: string) => {
+      const str = String(s ?? "");
+      // échapper les guillemets
+      return `"${str.replace(/"/g, '""')}"`;
+    };
+
+    const headers = [
+      "Classe",
+      "Élève",
+      "Assiduité (/6)",
+      "Tenue (/3)",
+      "Moralité (/4)",
+      "Discipline (/7)",
+      "Moyenne (/20)",
+      "Appréciation",
+    ];
+
+    const rows = [headers.join(sep)];
+    for (const it of items) {
+      rows.push([
+        q(class_label),
+        q(it.full_name),
+        fmt(it.breakdown.assiduite),
+        fmt(it.breakdown.tenue),
+        fmt(it.breakdown.moralite),
+        fmt(it.breakdown.discipline),
+        fmt(it.total),
+        q(it.appreciation),
+      ].join(sep));
+    }
+
+    const bom = "\uFEFF"; // Excel-friendly
+    const body = bom + rows.join(CRLF) + CRLF;
+
+    const labelSafe = (class_label || "classe")
+      .replace(/[^\p{L}\p{N}_-]+/gu, "_")
+      .replace(/_+/g, "_")
+      .replace(/^_|_$/g, "") || "classe";
+
+    const rangePart =
+      from && to ? `${from}_au_${to}` :
+      from ? `depuis_${from}` :
+      to ? `jusqua_${to}` : "toutes_dates";
+
+    const filename = `conduite_${labelSafe}_${rangePart}.csv`;
+
+    return new NextResponse(body, {
+      status: 200,
+      headers: {
+        "Content-Type": "text/csv; charset=utf-8",
+        "Content-Disposition": `attachment; filename="${filename}"`,
+        "Cache-Control": "no-store",
+      },
+    });
+  }
+
+  // JSON (comportement existant, intact)
+  return NextResponse.json({ class_label: class_label ?? "", items });
 }

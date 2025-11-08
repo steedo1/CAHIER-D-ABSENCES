@@ -96,12 +96,16 @@ function toMinutes(hm: string) {
 function minutesDiff(a: string, b: string) {
   return Math.max(0, toMinutes(b) - toMinutes(a));
 }
-function jsWeekday1to6(date: Date): number {
-  // JS: 0=dim,1=lun,…,6=sam  → on utilise 1..6 (lun..sam)
-  const d = date.getDay();
-  if (d === 0) return 6;
-  return d;
-}
+
+/* Helpers fuseau établissement (identiques à l’interface enseignant) */
+const hmInTZ = (d: Date, tz: string): string =>
+  new Intl.DateTimeFormat("en-GB", { timeZone: tz, hour: "2-digit", minute: "2-digit", hour12: false }).format(d);
+
+const weekdayInTZ1to7 = (d: Date, tz: string): number => {
+  const w = new Intl.DateTimeFormat("en-US", { timeZone: tz, weekday: "short" }).format(d).toLowerCase();
+  const map: Record<string, number> = { sun: 7, mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6 };
+  return map[w] ?? 7;
+};
 
 /* Sanctions */
 const ALLOWED_RUBRICS = ["discipline", "tenue", "moralite"] as const;
@@ -342,23 +346,36 @@ export default function ClassDevicePage() {
     loadInstitutionBasics();
   }, []);
 
-  // Calcul du créneau par défaut « du moment »
+  // Calcul du créneau par défaut « du moment » (timezone-aware, comme l’interface enseignant)
   function computeDefaultsForNow() {
-    const today = new Date();
-    const wd = jsWeekday1to6(today);
+    const tz = inst?.tz || "Africa/Abidjan";
+    const now = new Date();
+    const nowHM = hmInTZ(now, tz);
+    const wd = weekdayInTZ1to7(now, tz); // 1..6 (lun..sam), 7 = dimanche (hors créneau)
     const slots = periodsByDay[wd] || [];
 
-    if (slots.length === 0) {
-      setStartTime(defTime);
+    // Pas de créneau ce jour / dimanche → fallback heure actuelle
+    if (wd === 7 || slots.length === 0) {
+      setStartTime(nowHM);
       setDuration(inst.default_session_minutes || 60);
-      setSlotLabel("Aucun créneau configuré (fallback automatique)");
+      setSlotLabel("Hors créneau — utilisation de l’heure actuelle");
       setLocked(true);
       return;
     }
 
-    const nowMin = toMinutes(hhmm(today));
+    const nowMin = toMinutes(nowHM);
+    // 1) créneau en cours
     let pick = slots.find((s) => nowMin >= toMinutes(s.start_time) && nowMin < toMinutes(s.end_time));
-    if (!pick) pick = slots.find((s) => nowMin <= toMinutes(s.start_time)) || slots[slots.length - 1];
+    // 2) sinon, prochain à venir
+    if (!pick) pick = slots.find((s) => nowMin <= toMinutes(s.start_time));
+    // 3) si après le dernier créneau → fallback heure actuelle
+    if (!pick) {
+      setStartTime(nowHM);
+      setDuration(inst.default_session_minutes || 60);
+      setSlotLabel("Hors créneau — utilisation de l’heure actuelle");
+      setLocked(true);
+      return;
+    }
 
     setStartTime(pick.start_time);
     setDuration(Math.max(1, minutesDiff(pick.start_time, pick.end_time) || inst.default_session_minutes || 60));
@@ -369,7 +386,7 @@ export default function ClassDevicePage() {
   useEffect(() => {
     computeDefaultsForNow();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [JSON.stringify(periodsByDay), inst.default_session_minutes, classId]);
+  }, [JSON.stringify(periodsByDay), inst.default_session_minutes, inst.tz, classId]);
 
   /* 2) charger les matières quand la classe change */
   useEffect(() => {

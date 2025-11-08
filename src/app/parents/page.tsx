@@ -68,6 +68,28 @@ function yyyyMMdd(d: Date) {
   const dd = String(d.getDate()).padStart(2, "0");
   return `${y}-${m}-${dd}`;
 }
+function getInitials(name: string) {
+  const parts = (name || "").trim().split(/\s+/);
+  const pick = (s: string) => (s ? s[0].toUpperCase() : "");
+  if (parts.length === 1) return pick(parts[0]);
+  return pick(parts[0]) + pick(parts[parts.length - 1]);
+}
+
+/* ───────── thèmes (couleurs différentes par enfant) ───────── */
+const THEMES = [
+  // Chaque thème liste explicitement ses classes Tailwind (pas de classes dynamiques imprévisibles)
+  { name: "emerald", ring: "hover:ring-emerald-300", border: "border-emerald-200", bar: "from-emerald-500 to-teal-500", chipBg: "bg-emerald-100", chipText: "text-emerald-800" },
+  { name: "indigo",  ring: "hover:ring-indigo-300",  border: "border-indigo-200",  bar: "from-indigo-500 to-blue-500",   chipBg: "bg-indigo-100",  chipText: "text-indigo-800" },
+  { name: "violet",  ring: "hover:ring-violet-300",  border: "border-violet-200",  bar: "from-violet-500 to-fuchsia-500",chipBg: "bg-violet-100",  chipText: "text-violet-800" },
+  { name: "sky",     ring: "hover:ring-sky-300",     border: "border-sky-200",     bar: "from-sky-500 to-cyan-500",      chipBg: "bg-sky-100",     chipText: "text-sky-800" },
+  { name: "amber",   ring: "hover:ring-amber-300",   border: "border-amber-200",   bar: "from-amber-500 to-orange-500",  chipBg: "bg-amber-100",   chipText: "text-amber-900" },
+  { name: "rose",    ring: "hover:ring-rose-300",    border: "border-rose-200",    bar: "from-rose-500 to-pink-500",     chipBg: "bg-rose-100",    chipText: "text-rose-800" },
+  { name: "teal",    ring: "hover:ring-teal-300",    border: "border-teal-200",    bar: "from-teal-500 to-emerald-500",  chipBg: "bg-teal-100",    chipText: "text-teal-800" },
+  { name: "cyan",    ring: "hover:ring-cyan-300",    border: "border-cyan-200",    bar: "from-cyan-500 to-sky-500",      chipBg: "bg-cyan-100",    chipText: "text-cyan-800" },
+] as const;
+function themeFor(i: number) {
+  return THEMES[i % THEMES.length];
+}
 
 /* ───────── types ───────── */
 type Kid = { id: string; full_name: string; class_label: string | null };
@@ -203,6 +225,75 @@ const IconPower = () => (
     <path d="M12 2v10" /><path d="M5.5 7a7 7 0 1013 0" />
   </svg>
 );
+
+/* ───────── Carte 3D (tilt) réutilisable ───────── */
+function TiltCard({
+  children,
+  className = "",
+}: {
+  children: React.ReactNode;
+  className?: string;
+}) {
+  const [style, setStyle] = useState<React.CSSProperties>({});
+  const [shineStyle, setShineStyle] = useState<React.CSSProperties>({});
+  const [hasFinePointer, setHasFinePointer] = useState(false);
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      setHasFinePointer(window.matchMedia?.("(pointer: fine)")?.matches ?? false);
+    }
+  }, []);
+
+  function onMove(e: React.MouseEvent<HTMLDivElement>) {
+    if (!hasFinePointer) return;
+    const el = e.currentTarget;
+    const rect = el.getBoundingClientRect();
+    const px = (e.clientX - rect.left) / rect.width;  // 0..1
+    const py = (e.clientY - rect.top) / rect.height; // 0..1
+
+    const rotMax = 8; // degrés
+    const rx = (py - 0.5) * -2 * rotMax;
+    const ry = (px - 0.5) * 2 * rotMax;
+
+    setStyle({
+      transform: `rotateX(${rx.toFixed(2)}deg) rotateY(${ry.toFixed(2)}deg) translateZ(0) scale(1.01)`,
+      transition: "transform 60ms linear",
+      transformStyle: "preserve-3d",
+    });
+
+    const x = Math.round(px * rect.width);
+    const y = Math.round(py * rect.height);
+    setShineStyle({
+      background: `radial-gradient(300px circle at ${x}px ${y}px, rgba(255,255,255,0.18), transparent 45%)`,
+    });
+  }
+  function onLeave() {
+    setStyle({
+      transform: "rotateX(0deg) rotateY(0deg) translateZ(0)",
+      transition: "transform 180ms ease",
+      transformStyle: "preserve-3d",
+    });
+    setShineStyle({});
+  }
+
+  return (
+    <div
+      style={{ perspective: "1000px" }}
+      className={`[transform-style:preserve-3d] ${className}`}
+      onMouseMove={onMove}
+      onMouseLeave={onLeave}
+    >
+      <div
+        className="relative rounded-xl bg-white transition-shadow will-change-transform"
+        style={style}
+      >
+        {/* halo lumineux */}
+        <div className="pointer-events-none absolute inset-0 rounded-xl" style={shineStyle} />
+        {children}
+      </div>
+    </div>
+  );
+}
 
 /* ───────── PUSH: ensure registration + subscribe + server upsert ───────── */
 async function ensurePushSubscription() {
@@ -478,7 +569,6 @@ export default function ParentPage() {
     } finally {
       // 3) Toujours passer par /parents/logout (qui redirige vers /parents/login)
       window.location.assign(LOGOUT_PARENTS);
-      // filet de sécurité si jamais la navigation échoue
       setTimeout(() => {
         if (document.visibilityState === "visible") {
           window.location.replace(LOGIN_PARENTS);
@@ -549,7 +639,7 @@ export default function ParentPage() {
         </div>
       )}
 
-      {/* Conduite — moyenne par enfant */}
+      {/* Conduite — moyenne par enfant (inchangé fonctionnellement) */}
       <section className="rounded-2xl border bg-white/90 backdrop-blur p-5 shadow-sm">
         <div className="mb-3 flex items-center justify-between gap-3">
           <div className="text-sm font-semibold uppercase tracking-wide text-slate-700">
@@ -584,9 +674,7 @@ export default function ParentPage() {
           </div>
         ) : kids.length === 0 ? (
           <div className="flex items-center justify-between rounded-xl border bg-slate-50 p-4">
-            <div className="text-sm text-slate-700">
-              Aucun enfant lié à votre compte pour l’instant.
-            </div>
+            <div className="text-sm text-slate-700">Aucun enfant lié à votre compte pour l’instant.</div>
             {!granted && (
               <Button tone="outline" onClick={enablePush} iconLeft={<IconBell />}>
                 Activer les push
@@ -600,10 +688,7 @@ export default function ParentPage() {
               {kids.map((k) => {
                 const c = conduct[k.id];
                 return (
-                  <div
-                    key={k.id}
-                    className="rounded-xl border border-slate-200 p-4 hover:shadow-sm transition ring-emerald-100 hover:ring-2"
-                  >
+                  <div key={k.id} className="rounded-xl border border-slate-200 p-4 hover:shadow-sm transition ring-emerald-100 hover:ring-2">
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
                         <div className="font-medium text-slate-900">{k.full_name}</div>
@@ -617,10 +702,10 @@ export default function ParentPage() {
                     </div>
                     {c ? (
                       <div className="mt-3 space-y-2">
-                        <Meter value={c.breakdown.assiduite} max={6} label="Assiduité (/6)" />
-                        <Meter value={c.breakdown.tenue} max={3} label="Tenue (/3)" />
-                        <Meter value={c.breakdown.moralite} max={4} label="Moralité (/4)" />
-                        <Meter value={c.breakdown.discipline} max={7} label="Discipline (/7)" />
+                        <Meter value={c.breakdown.assiduite} max={6} label={`Assiduité — ${Math.round(c.breakdown.assiduite)}/6`} />
+                        <Meter value={c.breakdown.tenue} max={3} label={`Tenue — ${Math.round(c.breakdown.tenue)}/3`} />
+                        <Meter value={c.breakdown.moralite} max={4} label={`Moralité — ${Math.round(c.breakdown.moralite)}/4`} />
+                        <Meter value={c.breakdown.discipline} max={7} label={`Discipline — ${Math.round(c.breakdown.discipline)}/7`} />
                         <div className="pt-1 text-xs text-slate-600">
                           <span className="font-medium">Appréciation : </span>
                           {c.appreciation}
@@ -658,27 +743,15 @@ export default function ParentPage() {
                         <td className="px-3 py-2">{k.class_label || "—"}</td>
                         {c ? (
                           <>
-                            <td className="px-3 py-2">
-                              {c.breakdown.assiduite.toFixed(2).replace(".", ",")}
-                            </td>
-                            <td className="px-3 py-2">
-                              {c.breakdown.tenue.toFixed(2).replace(".", ",")}
-                            </td>
-                            <td className="px-3 py-2">
-                              {c.breakdown.moralite.toFixed(2).replace(".", ",")}
-                            </td>
-                            <td className="px-3 py-2">
-                              {c.breakdown.discipline.toFixed(2).replace(".", ",")}
-                            </td>
-                            <td className="px-3 py-2 font-semibold">
-                              {c.total.toFixed(2).replace(".", ",")}
-                            </td>
+                            <td className="px-3 py-2">{c.breakdown.assiduite.toFixed(2).replace(".", ",")}</td>
+                            <td className="px-3 py-2">{c.breakdown.tenue.toFixed(2).replace(".", ",")}</td>
+                            <td className="px-3 py-2">{c.breakdown.moralite.toFixed(2).replace(".", ",")}</td>
+                            <td className="px-3 py-2">{c.breakdown.discipline.toFixed(2).replace(".", ",")}</td>
+                            <td className="px-3 py-2 font-semibold">{c.total.toFixed(2).replace(".", ",")}</td>
                             <td className="px-3 py-2">{c.appreciation}</td>
                           </>
                         ) : (
-                          <td className="px-3 py-2 text-slate-600" colSpan={6}>
-                            —
-                          </td>
+                          <td className="px-3 py-2 text-slate-600" colSpan={6}>—</td>
                         )}
                       </tr>
                     );
@@ -690,7 +763,7 @@ export default function ParentPage() {
         )}
       </section>
 
-      {/* Mes enfants — Absences/retards + Sanctions */}
+      {/* Mes enfants — Absences/retards + Sanctions (FUN + 3D + thèmes) */}
       <section className="rounded-2xl border bg-white/90 backdrop-blur p-5 shadow-sm">
         <div className="mb-3 flex items-center justify-between">
           <div className="text-sm font-semibold uppercase tracking-wide text-slate-700">
@@ -718,139 +791,150 @@ export default function ParentPage() {
             Aucun enfant lié à votre compte pour l’instant.
           </div>
         ) : (
-          <div className="space-y-4 md:grid md:grid-cols-2 md:gap-4 md:space-y-0 xl:grid-cols-3">
-            {kids.map((k) => {
+          <div className="space-y-4 md:grid md:grid-cols-2 md:gap-5 md:space-y-0 xl:grid-cols-3">
+            {kids.map((k, i) => {
               const groups = groupByDay(feed[k.id] || []);
               const showAll = !!showAllDaysForKid[k.id];
               const visibleGroups = showAll ? groups : groups.slice(0, 3);
+              const t = themeFor(i);
 
               return (
-                <div
-                  key={k.id}
-                  className="rounded-xl border border-slate-200 p-4 hover:shadow-sm transition ring-emerald-100 hover:ring-2"
-                >
-                  <div className="flex items-center justify-between">
-                    <div className="font-medium text-slate-900">
-                      {k.full_name}{" "}
-                      <span className="text-xs text-slate-600">({k.class_label || "—"})</span>
-                    </div>
-                    {groups.length > 3 && (
-                      <button
-                        onClick={() => setShowAllDaysForKid((m) => ({ ...m, [k.id]: !m[k.id] }))}
-                        className="text-xs text-emerald-700 underline-offset-2 hover:underline"
-                      >
-                        {showAll ? "Réduire" : "Voir plus"}
-                      </button>
-                    )}
-                  </div>
-
-                  <ul className="mt-2 space-y-2">
-                    {visibleGroups.map((g) => {
-                      const key = `${k.id}|${g.day}`;
-                      const isOpen = !!expanded[key];
-                      const hasSingle = g.items.length === 1;
-
-                      const parts: string[] = [];
-                      if (g.absentCount) parts.push(`${g.absentCount} absence${g.absentCount > 1 ? "s" : ""}`);
-                      if (g.lateCount) parts.push(`${g.lateCount} retard${g.lateCount > 1 ? "s" : ""}`);
-                      const summary = parts.length ? parts.join(" • ") : "Aucun évènement";
-
-                      return (
-                        <li key={g.day} className="rounded-lg border p-3 hover:bg-slate-50/60 transition">
-                          <div className="flex items-center justify-between gap-3">
-                            <div className="text-sm font-medium text-slate-800">
-                              {g.label} : <span className="font-normal text-slate-700">{summary}</span>
-                            </div>
-                            {g.items.length > 0 && (
-                              <button
-                                onClick={() => setExpanded((m) => ({ ...m, [key]: !m[key] }))}
-                                className="text-xs text-emerald-700 underline-offset-2 hover:underline shrink-0"
-                              >
-                                {isOpen || hasSingle ? "Masquer" : "Voir détails"}
-                              </button>
-                            )}
+                <TiltCard key={k.id} className={`rounded-xl ${t.ring}`}>
+                  <div className={`relative rounded-xl border ${t.border} p-4 transition shadow-sm`}>
+                    {/* liseré dégradé haut */}
+                    <div className={`absolute inset-x-0 top-0 h-1 rounded-t-xl bg-gradient-to-r ${t.bar}`} style={{ transform: "translateZ(20px)" }} />
+                    <div className="flex items-center justify-between" style={{ transform: "translateZ(16px)" }}>
+                      <div className="flex items-center gap-3 min-w-0">
+                        {/* avatar initiales coloré */}
+                        <div className={`grid h-9 w-9 place-items-center rounded-xl text-xs font-semibold ${t.chipBg} ${t.chipText} shadow-sm`}>
+                          {getInitials(k.full_name)}
+                        </div>
+                        <div className="min-w-0">
+                          <div className="font-medium text-slate-900 truncate">
+                            {k.full_name} <span className="text-xs text-slate-600">({k.class_label || "—"})</span>
                           </div>
-                          {(isOpen || hasSingle) && g.items.length > 0 && (
-                            <ul className="mt-2 divide-y">
-                              {g.items.map((ev) => (
-                                <li key={ev.id} className="py-2 flex items-center justify-between text-sm">
-                                  <div className="min-w-0">
-                                    <div className="text-slate-800 truncate">
-                                      {ev.type === "absent" ? (
-                                        <Badge tone="rose">Absence</Badge>
-                                      ) : (
-                                        <Badge tone="amber">Retard</Badge>
-                                      )}
-                                      <span className="ml-2">{ev.subject_name || "—"}</span>
-                                    </div>
-                                    <div className="mt-0.5 text-xs text-slate-600">
-                                      {slotLabel(ev.when, ev.expected_minutes)}{" "}
-                                      {ev.type === "late" && ev.minutes_late ? `• ${ev.minutes_late} min` : ""}
-                                    </div>
-                                  </div>
-                                  <div className="text-xs text-slate-500 shrink-0 pl-2">
-                                    {ev.class_label || ""}
-                                  </div>
-                                </li>
-                              ))}
-                            </ul>
-                          )}
-                        </li>
-                      );
-                    })}
-                    {visibleGroups.length === 0 && (
-                      <li className="py-2 text-sm text-slate-600">Aucun évènement récent.</li>
-                    )}
-                  </ul>
+                        </div>
+                      </div>
 
-                  {/* Sanctions */}
-                  <div className="mt-3 rounded-lg border p-3 bg-amber-50/40">
-                    <div className="flex items-center justify-between">
-                      <div className="text-sm font-medium text-slate-800">Sanctions récentes</div>
-                      {(kidPenalties[k.id]?.length || 0) > 5 && (
+                      {groups.length > 3 && (
                         <button
-                          onClick={() => setShowAllPenForKid((m) => ({ ...m, [k.id]: !m[k.id] }))}
-                          className="text-xs text-slate-700 underline-offset-2 hover:underline"
+                          onClick={() => setShowAllDaysForKid((m) => ({ ...m, [k.id]: !m[k.id] }))}
+                          className="text-xs text-slate-700 underline-offset-2 hover:underline shrink-0"
+                          style={{ transform: "translateZ(16px)" }}
                         >
-                          {showAllPenForKid[k.id] ? "Réduire" : "Voir plus"}
+                          {showAll ? "Réduire" : "Voir plus"}
                         </button>
                       )}
                     </div>
-                    {(kidPenalties[k.id]?.length || 0) === 0 ? (
-                      <div className="mt-2 text-sm text-slate-600">Aucune sanction récente.</div>
-                    ) : (
-                      <ul className="mt-2 divide-y">
-                        {(showAllPenForKid[k.id]
-                          ? kidPenalties[k.id] || []
-                          : (kidPenalties[k.id] || []).slice(0, 5)
-                        ).map((p) => (
-                          <li key={p.id} className="py-2 flex items-center justify-between text-sm">
-                            <div className="min-w-0">
-                              <div className="text-slate-800">
-                                <span className="mr-2">
-                                  <Badge tone="amber">{rubricLabel(p.rubric)}</Badge>
-                                </span>
-                                −{Number(p.points || 0).toFixed(2)} pt
-                                {(() => {
-                                  const subj = p.author_subject_name || p.subject_name;
-                                  if (p.author_role_label === "Enseignant")
-                                    return subj ? ` — par le prof de ${subj}` : " — par un enseignant";
-                                  if (p.author_role_label === "Administration")
-                                    return " — par l’administration";
-                                  return p.author_name ? ` — par ${p.author_name}` : "";
-                                })()}
+
+                    <ul className="mt-3 space-y-2">
+                      {visibleGroups.map((g) => {
+                        const key = `${k.id}|${g.day}`;
+                        const isOpen = !!expanded[key];
+                        const hasSingle = g.items.length === 1;
+
+                        const parts: string[] = [];
+                        if (g.absentCount) parts.push(`${g.absentCount} absence${g.absentCount > 1 ? "s" : ""}`);
+                        if (g.lateCount) parts.push(`${g.lateCount} retard${g.lateCount > 1 ? "s" : ""}`);
+                        const summary = parts.length ? parts.join(" • ") : "Aucun évènement";
+
+                        return (
+                          <li key={g.day} className="rounded-lg border p-3 hover:bg-slate-50/70 transition" style={{ transform: "translateZ(10px)" }}>
+                            <div className="flex items-center justify-between gap-3">
+                              <div className="text-sm font-medium text-slate-800">
+                                {g.label} : <span className="font-normal text-slate-700">{summary}</span>
                               </div>
-                              <div className="text-xs text-slate-600 truncate">
-                                {fmt(p.when)} {p.class_label ? `• ${p.class_label}` : ""}{" "}
-                                {p.reason ? `• Motif: ${p.reason}` : ""}
-                              </div>
+                              {g.items.length > 0 && (
+                                <button
+                                  onClick={() => setExpanded((m) => ({ ...m, [key]: !m[key] }))}
+                                  className="text-xs text-emerald-700 underline-offset-2 hover:underline shrink-0"
+                                >
+                                  {isOpen || hasSingle ? "Masquer" : "Voir détails"}
+                                </button>
+                              )}
                             </div>
+                            {(isOpen || hasSingle) && g.items.length > 0 && (
+                              <ul className="mt-2 divide-y">
+                                {g.items.map((ev) => (
+                                  <li key={ev.id} className="py-2 flex items-center justify-between text-sm">
+                                    <div className="min-w-0">
+                                      <div className="text-slate-800 truncate">
+                                        {ev.type === "absent" ? (
+                                          <Badge tone="rose">Absence</Badge>
+                                        ) : (
+                                          <Badge tone="amber">Retard</Badge>
+                                        )}
+                                        <span className="ml-2">{ev.subject_name || "—"}</span>
+                                      </div>
+                                      <div className="mt-0.5 text-xs text-slate-600">
+                                        {slotLabel(ev.when, ev.expected_minutes)}{" "}
+                                        {ev.type === "late" && ev.minutes_late ? `• ${ev.minutes_late} min` : ""}
+                                      </div>
+                                    </div>
+                                    <div className="text-xs text-slate-500 shrink-0 pl-2">
+                                      {ev.class_label || ""}
+                                    </div>
+                                  </li>
+                                ))}
+                              </ul>
+                            )}
                           </li>
-                        ))}
-                      </ul>
-                    )}
+                        );
+                      })}
+                      {visibleGroups.length === 0 && (
+                        <li className="py-2 text-sm text-slate-600">Aucun évènement récent.</li>
+                      )}
+                    </ul>
+
+                    {/* Sanctions */}
+                    <div className="mt-3 rounded-lg border p-3 bg-amber-50/40" style={{ transform: "translateZ(8px)" }}>
+                      <div className="flex items-center justify-between">
+                        <div className="text-sm font-medium text-slate-800">Sanctions récentes</div>
+                        {(kidPenalties[k.id]?.length || 0) > 5 && (
+                          <button
+                            onClick={() => setShowAllPenForKid((m) => ({ ...m, [k.id]: !m[k.id] }))}
+                            className="text-xs text-slate-700 underline-offset-2 hover:underline"
+                          >
+                            {showAllPenForKid[k.id] ? "Réduire" : "Voir plus"}
+                          </button>
+                        )}
+                      </div>
+                      {(kidPenalties[k.id]?.length || 0) === 0 ? (
+                        <div className="mt-2 text-sm text-slate-600">Aucune sanction récente.</div>
+                      ) : (
+                        <ul className="mt-2 divide-y">
+                          {(showAllPenForKid[k.id]
+                            ? kidPenalties[k.id] || []
+                            : (kidPenalties[k.id] || []).slice(0, 5)
+                          ).map((p) => (
+                            <li key={p.id} className="py-2 flex items-center justify-between text-sm">
+                              <div className="min-w-0">
+                                <div className="text-slate-800">
+                                  <span className="mr-2">
+                                    <Badge tone="amber">{rubricLabel(p.rubric)}</Badge>
+                                  </span>
+                                  −{Number(p.points || 0).toFixed(2)} pt
+                                  {(() => {
+                                    const subj = p.author_subject_name || p.subject_name;
+                                    if (p.author_role_label === "Enseignant")
+                                      return subj ? ` — par le prof de ${subj}` : " — par un enseignant";
+                                    if (p.author_role_label === "Administration")
+                                      return " — par l’administration";
+                                    return p.author_name ? ` — par ${p.author_name}` : "";
+                                  })()}
+                                </div>
+                                <div className="text-xs text-slate-600 truncate">
+                                  {fmt(p.when)} {p.class_label ? `• ${p.class_label}` : ""}{" "}
+                                  {p.reason ? `• Motif: ${p.reason}` : ""}
+                                </div>
+                              </div>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
                   </div>
-                </div>
+                </TiltCard>
               );
             })}
           </div>

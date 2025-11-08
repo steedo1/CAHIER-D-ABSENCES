@@ -219,7 +219,7 @@ async function run(req: NextRequest) {
       })),
   });
 
-  // 2bis) Subscriptions — élèves (matricule)
+  // 2bis) Subscriptions — élèves (par student_id)
   const studentIds = Array.from(
     new Set(
       rows
@@ -230,7 +230,11 @@ async function run(req: NextRequest) {
   console.info("[push/dispatch] subs_fetch_students", { id, studentCount: studentIds.length });
 
   let subsStudentByKid = new Map<string, SubRow[]>();
+
   if (studentIds.length) {
+    let usedFallback = false;
+
+    // (A) Essai table/vue dédiée push_subscriptions_student
     try {
       const { data: subsKid, error: subsKidErr } = await srv
         .from("push_subscriptions_student")
@@ -239,7 +243,8 @@ async function run(req: NextRequest) {
 
       if (subsKidErr) {
         console.warn("[push/dispatch] subs_student_select_error", { id, error: subsKidErr.message });
-      } else {
+        usedFallback = true;
+      } else if ((subsKid || []).length) {
         for (const s of (subsKid || []) as any[]) {
           let subJson = s.subscription_json;
           if (subJson && typeof subJson === "string") {
@@ -259,9 +264,51 @@ async function run(req: NextRequest) {
           });
           subsStudentByKid.set(k, arr);
         }
+      } else {
+        // pas d’erreur mais vide → on pourra tenter le fallback
+        usedFallback = true;
       }
     } catch (e: any) {
+      // table inexistante par ex. → on bascule en fallback
       console.warn("[push/dispatch] subs_student_unavailable", { id, error: String(e?.message || e) });
+      usedFallback = true;
+    }
+
+    // (B) Fallback robuste : utiliser push_subscriptions.student_id quand présent
+    if (usedFallback) {
+      try {
+        const { data: subsKid2, error: subsKidErr2 } = await srv
+          .from("push_subscriptions")
+          .select("student_id,platform,device_id,subscription_json,fcm_token")
+          .in("student_id", studentIds);
+
+        if (subsKidErr2) {
+          console.warn("[push/dispatch] subs_student_fallback_error", { id, error: subsKidErr2.message });
+        } else {
+          for (const s of (subsKid2 || []) as any[]) {
+            if (!s.student_id) continue;
+            let subJson = s.subscription_json;
+            if (subJson && typeof subJson === "string") {
+              try {
+                subJson = JSON.parse(subJson);
+              } catch {}
+            }
+            const k = String(s.student_id);
+            const arr = subsStudentByKid.get(k) || [];
+            arr.push({
+              student_id: k,
+              platform: s.platform,
+              device_id: s.device_id,
+              subscription_json: subJson,
+              fcm_token: s.fcm_token,
+              __source: "student",
+            });
+            subsStudentByKid.set(k, arr);
+          }
+        }
+      } catch (e: any) {
+        console.warn("[push/dispatch] subs_student_fallback_unavailable", { id, error: String(e?.message || e) });
+      }
     }
   }
 
