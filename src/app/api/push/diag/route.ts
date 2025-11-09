@@ -1,56 +1,50 @@
-// src/app/api/push/diag/route.ts
 import { NextResponse } from "next/server";
+import { cookies } from "next/headers";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+function sid(x: unknown, n = 16) {
+  const s = String(x ?? "");
+  return s.length <= n ? s : `${s.slice(0, 6)}…${s.slice(-6)}`;
+}
+
+async function parentIdFromDevice(srv: ReturnType<typeof getSupabaseServiceClient>, deviceId: string) {
+  try {
+    const { data } = await (srv as any).rpc("ensure_parent_profile", { p_device: deviceId }).single();
+    return data?.ensure_parent_profile || data?.parent_profile_id || data?.parent_id || data || null;
+  } catch {}
+  try {
+    const { data } = await srv.from("parent_devices").select("parent_profile_id").eq("device_id", deviceId).maybeSingle();
+    return data?.parent_profile_id || null;
+  } catch {}
+  return null;
+}
+
 export async function GET() {
   const srv = getSupabaseServiceClient();
+  const jar = await cookies();
+  const device = jar.get("parent_device")?.value || null;
+  const parentId = device ? await parentIdFromDevice(srv, device) : null;
 
-  // 1) Tester l'existence de colonnes en tentant une petite sélection
-  const tests: Record<string, boolean | string> = {};
-  async function hasColumn(col: string) {
-    const r = await srv.from("push_subscriptions").select(col).limit(1);
-    if (r.error) { tests[col] = r.error.message; return false; }
-    tests[col] = true; return true;
+  let subs: any[] = [];
+  if (parentId) {
+    const { data } = await srv
+      .from("push_subscriptions")
+      .select("user_id, platform, device_id, created_at")
+      .eq("user_id", parentId)
+      .order("created_at", { ascending: false });
+    subs = data || [];
   }
 
-  await hasColumn("subscription_json");
-  await hasColumn("platform");
-  await hasColumn("device_id");
-  await hasColumn("last_seen_at");
-
-  // 2) Compter doublons (si la table est grande, c'est limité mais utile)
-  let duplicates: Array<{ user_id: string; platform: string | null; device_id: string | null; n: number }> = [];
-  try {
-    const { data, error } = await srv
-      .from("push_subscriptions")
-      .select("user_id, platform, device_id")
-      .limit(10000); // échantillon raisonnable
-    if (!error && data) {
-      const map = new Map<string, number>();
-      for (const r of data as any[]) {
-        const k = [r.user_id, r.platform ?? "NULL", r.device_id ?? "NULL"].join("|");
-        map.set(k, (map.get(k) || 0) + 1);
-      }
-      duplicates = Array.from(map.entries())
-        .filter(([, n]) => n > 1)
-        .map(([k, n]) => {
-          const [u, p, d] = k.split("|");
-          return { user_id: u, platform: p === "NULL" ? null : p, device_id: d === "NULL" ? null : d, n };
-        });
-    }
-  } catch { /* ignore */ }
-
   return NextResponse.json({
-    env: {
-      has_service_role: !!process.env.SUPABASE_SERVICE_ROLE_KEY,
-      has_vapid_pub: !!process.env.VAPID_PUBLIC_KEY,
-    },
-    columns_ok: tests,
-    duplicates_sample: duplicates.slice(0, 50),
-    hint_unique:
-      "Assure une contrainte UNIQUE (user_id,platform,device_id). Si elle manque, crée-la et NOTIFY pgrst, 'reload schema';",
+    ok: true,
+    cookie_parent_device: device,
+    cookie_parent_device_preview: sid(device),
+    resolved_parent_id: parentId,
+    resolved_parent_id_preview: sid(parentId),
+    subs_count_for_parent: subs.length,
+    subs_preview: subs.slice(0, 3),
   });
 }
