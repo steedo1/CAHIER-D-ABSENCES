@@ -3,10 +3,28 @@
 
 import { useState } from "react";
 
-/**
- * ⚠️ Placez votre image de fond dans /public/parent.png
- * (sur Linux/Vercel, la casse du nom de fichier compte).
- */
+/** Icône Famille (inline, pas de dépendance) */
+function FamilyIcon(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg
+      viewBox="0 0 48 48"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      aria-hidden="true"
+      {...props}
+    >
+      {/* parents */}
+      <circle cx="16" cy="14" r="4" />
+      <circle cx="32" cy="12.5" r="4" />
+      <path d="M10 28c0-4 3.5-7 8-7s8 3 8 7v7H10v-7Z" />
+      <path d="M26 26c0-3.5 3-6.5 7-6.5s7 3 7 6.5v9H26v-9Z" />
+      {/* enfant */}
+      <circle cx="24" cy="20.5" r="3" />
+      <path d="M18.5 34.5c0-3 2.5-5.5 5.5-5.5s5.5 2.5 5.5 5.5V38H18.5v-3.5Z" />
+    </svg>
+  );
+}
 
 export default function ParentsLoginPage() {
   const [matricule, setMatricule] = useState("");
@@ -29,7 +47,10 @@ export default function ParentsLoginPage() {
       });
 
       let j: any = {};
-      try { j = await res.json(); } catch {}
+      try {
+        j = await res.json();
+      } catch {}
+
       console.info(`[parents.login:${_rid}] response`, { status: res.status, body: j });
 
       if (!res.ok) {
@@ -48,32 +69,34 @@ export default function ParentsLoginPage() {
   }
 
   return (
-    <main className="relative min-h-[100svh]">
-      {/* --- Fond image : focalisé à gauche/haut sur mobile pour garder les visages --- */}
-      <div
-        aria-hidden
-        className="absolute inset-0 -z-20 bg-no-repeat bg-cover
-                   bg-[position:18%_10%] md:bg-center"
-        style={{ backgroundImage: "url(/parent.png)" }}
-      />
-      <div
-        aria-hidden
-        className="absolute inset-0 -z-10 bg-gradient-to-b from-black/45 via-black/20 to-white/70
-                   md:bg-gradient-to-r md:from-black/55 md:via-black/15 md:to-white/70"
-      />
+    <main
+      className={[
+        "relative min-h-[100svh]",
+        // Dégradé principal, pro & fun
+        "bg-gradient-to-b from-emerald-50 via-white to-sky-50",
+      ].join(" ")}
+    >
+      {/* Décors doux (bulles dégradées) */}
+      <div className="pointer-events-none absolute inset-0 -z-10 overflow-hidden">
+        <div className="absolute -left-20 -top-24 h-64 w-64 rounded-full bg-emerald-200/40 blur-3xl" />
+        <div className="absolute -right-24 top-1/4 h-56 w-56 rounded-full bg-sky-200/40 blur-3xl" />
+        <div className="absolute left-1/4 bottom-0 h-60 w-60 rounded-full bg-indigo-200/30 blur-3xl" />
+      </div>
 
-      {/* --- Contenu centré (avec padding top plus grand sur mobile pour dégager les visages) --- */}
-      <div className="relative z-0 mx-auto flex min-h-[100svh] max-w-7xl items-center justify-center px-4 pt-28 pb-10 md:pt-10">
+      {/* Contenu */}
+      <div className="relative z-0 mx-auto flex min-h-[100svh] max-w-7xl items-center justify-center px-4 py-10 md:py-12">
         <div className="grid w-full grid-cols-1 gap-8 md:grid-cols-12">
-          {/* Pitch (caché sur petits écrans pour garder la sobriété) */}
+          {/* Pitch (desktop) */}
           <section className="hidden md:col-span-6 md:flex md:flex-col md:justify-center">
-            <div className="max-w-md text-white drop-shadow">
-              <h1 className="text-3xl font-bold leading-tight md:text-4xl">
+            <div className="max-w-md text-slate-800">
+              <h1 className="text-3xl font-extrabold leading-tight md:text-4xl">
                 Espace Parents
               </h1>
-              <p className="mt-3 text-white/90">
+              <p className="mt-3 text-slate-600">
                 Suivez en temps réel la présence, les retards et la conduite de votre enfant.
               </p>
+              {/* Grande icône déco */}
+              <FamilyIcon className="mt-6 h-20 w-20 text-emerald-600" />
             </div>
           </section>
 
@@ -82,41 +105,27 @@ export default function ParentsLoginPage() {
             <form
               onSubmit={onSubmit}
               className={[
-                "w-full max-w-md rounded-2xl border border-white/40 bg-white/80",
+                "w-full max-w-md rounded-2xl border border-slate-200/80 bg-white/80",
                 "backdrop-blur-xl shadow-2xl",
                 "p-6 md:p-8 space-y-5",
               ].join(" ")}
             >
-              {/* En-tête compact */}
+              {/* En-tête carte */}
               <div className="flex items-center gap-3">
                 <div className="grid h-10 w-10 place-items-center rounded-xl bg-emerald-600 text-white shadow">
-                  <svg
-                    viewBox="0 0 24 24"
-                    className="h-5 w-5"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth={2}
-                    aria-hidden="true"
-                  >
-                    <path d="M12 3l7 3v6c0 5-3.5 8-7 9-3.5-1-7-4-7-9V6l7-3z" />
-                  </svg>
+                  <FamilyIcon className="h-5 w-5" />
                 </div>
                 <div>
-                  <div className="text-sm font-medium text-slate-700">
+                  <div className="text-sm font-semibold text-slate-800">
                     Mon Cahier d’Absences
                   </div>
-                  <div className="text-xs text-slate-500">
-                    Connexion par matricule élève
-                  </div>
+                  <div className="text-xs text-slate-500">Connexion par matricule élève</div>
                 </div>
               </div>
 
               {/* Champ matricule */}
               <div>
-                <label
-                  htmlFor="matricule"
-                  className="block text-sm font-medium text-slate-700"
-                >
+                <label htmlFor="matricule" className="block text-sm font-medium text-slate-700">
                   Matricule élève
                 </label>
                 <input
@@ -159,6 +168,7 @@ export default function ParentsLoginPage() {
                       fill="none"
                       stroke="currentColor"
                       strokeWidth={2}
+                      aria-hidden="true"
                     >
                       <path d="M12 3a9 9 0 1 0 9 9" />
                     </svg>
@@ -187,7 +197,7 @@ export default function ParentsLoginPage() {
                 le tableau de bord parent.
               </div>
 
-              {/* Mentions discrètes */}
+              {/* Mentions */}
               <p className="text-center text-xs text-slate-500">
                 En continuant, vous acceptez nos conditions d’utilisation.
               </p>

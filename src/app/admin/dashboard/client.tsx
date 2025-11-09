@@ -1,7 +1,7 @@
-// src/app/admin/dashboard/AdminDashboardClient.tsx (ou le bon chemin)
+// src/app/admin/dashboard/AdminDashboardClient.tsx
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
   School,
@@ -15,6 +15,7 @@ import {
   TrendingUp,
   AlertTriangle,
   Clock4,
+  BarChart3,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -59,7 +60,7 @@ function CountUp({ value, duration = 700, className = "" }: { value: number; dur
     return () => cancelAnimationFrame(raf);
   }, [value, duration]);
   return (
-    <span className={className} aria-live="polite" aria-atomic>
+    <span className={className} aria-live="polite" aria-atomic="true">
       {display.toLocaleString()}
     </span>
   );
@@ -377,10 +378,13 @@ export default function AdminDashboardClient() {
                 Affecter des classes
               </QuickLink>
               <QuickLink href="/admin/parents" icon={Users}>
-                Gérer les parents
+                Listes des classes
               </QuickLink>
               <QuickLink href="/admin/import" icon={GraduationCap}>
                 Importer élèves
+              </QuickLink>
+              <QuickLink href="/admin/statistiques" icon={BarChart3}>
+                Contrôle des enseignants
               </QuickLink>
             </div>
           </CardContent>
@@ -419,5 +423,3 @@ export default function AdminDashboardClient() {
     </div>
   );
 }
-
-
