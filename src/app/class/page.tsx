@@ -92,7 +92,7 @@ type Period = { weekday: number; label: string; start_time: string; end_time: st
 const hhmm = (d: Date) => d.toTimeString().slice(0, 5);
 function toMinutes(hm: string) {
   const [h, m] = (hm || "00:00").split(":").map((x) => +x);
-  return (isFinite(h) ? h : 0) * 60 + (isFinite(m) ? m : 0);
+  return h * 60 + m;
 }
 function minutesDiff(a: string, b: string) {
   return Math.max(0, toMinutes(b) - toMinutes(a));
@@ -101,7 +101,6 @@ function minutesDiff(a: string, b: string) {
 /* Helpers fuseau établissement (identiques à l’interface enseignant) */
 const hmInTZ = (d: Date, tz: string): string =>
   new Intl.DateTimeFormat("en-GB", { timeZone: tz, hour: "2-digit", minute: "2-digit", hour12: false }).format(d);
-const toHM = (d: Date, tz?: string) => (tz ? hmInTZ(d, tz) : hhmm(d));
 
 const weekdayInTZ1to7 = (d: Date, tz: string): number => {
   const w = new Intl.DateTimeFormat("en-US", { timeZone: tz, weekday: "short" }).format(d).toLowerCase();
@@ -240,7 +239,7 @@ export default function ClassDevicePage() {
     }
   }
 
-  /* 1) classes liées à l'appareil + éventuelle séance ouverte */
+  /* 1) charger mes classes (liées au téléphone) + éventuelle séance ouverte */
   useEffect(() => {
     (async () => {
       try {
@@ -266,7 +265,7 @@ export default function ClassDevicePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /* 1bis) paramètres + périodes (endpoints multiples tolérés) */
+  /* 1bis) charger paramètres + périodes (endpoints multiples tolérés) */
   async function loadInstitutionBasics() {
     async function getJson(url: string) {
       try {
@@ -348,15 +347,15 @@ export default function ClassDevicePage() {
     loadInstitutionBasics();
   }, []);
 
-  // Calcul par défaut « du moment » (TZ-aware)
+  // Calcul du créneau par défaut « du moment » (timezone-aware, comme l’interface enseignant)
   function computeDefaultsForNow() {
     const tz = inst?.tz || "Africa/Abidjan";
     const now = new Date();
     const nowHM = hmInTZ(now, tz);
-    const wd = weekdayInTZ1to7(now, tz); // 1..6 (lun..sam), 7 = dimanche
+    const wd = weekdayInTZ1to7(now, tz); // 1..6 (lun..sam), 7 = dimanche (hors créneau)
     const slots = periodsByDay[wd] || [];
 
-    // Pas de créneau / dimanche → fallback heure actuelle
+    // Pas de créneau ce jour / dimanche → fallback heure actuelle
     if (wd === 7 || slots.length === 0) {
       setStartTime(nowHM);
       setDuration(inst.default_session_minutes || 60);
@@ -366,8 +365,11 @@ export default function ClassDevicePage() {
     }
 
     const nowMin = toMinutes(nowHM);
+    // 1) créneau en cours
     let pick = slots.find((s) => nowMin >= toMinutes(s.start_time) && nowMin < toMinutes(s.end_time));
+    // 2) sinon, prochain à venir
     if (!pick) pick = slots.find((s) => nowMin <= toMinutes(s.start_time));
+    // 3) si après le dernier créneau → fallback heure actuelle
     if (!pick) {
       setStartTime(nowHM);
       setDuration(inst.default_session_minutes || 60);
@@ -382,26 +384,12 @@ export default function ClassDevicePage() {
     setLocked(true);
   }
 
-  // ⚠️ ne recalculer par défaut que s'il n'y a PAS de séance ouverte
   useEffect(() => {
-    if (!open) computeDefaultsForNow();
+    computeDefaultsForNow();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [JSON.stringify(periodsByDay), inst.default_session_minutes, inst.tz, classId, open?.id]);
+  }, [JSON.stringify(periodsByDay), inst.default_session_minutes, inst.tz, classId]);
 
-  // ⚠️ Synchroniser l’UI quand une séance est ouverte (source de vérité = open)
-  useEffect(() => {
-    if (!open) return;
-    const dur = Math.max(1, Number(open.expected_minutes || inst.default_session_minutes || 60));
-    const start = new Date(open.started_at);
-    const end = new Date(start.getTime() + dur * 60000);
-
-    setStartTime(toHM(start, inst.tz));
-    setDuration(dur);
-    setSlotLabel(`Séance en cours • ${toHM(start, inst.tz)} → ${toHM(end, inst.tz)}`);
-    setLocked(true);
-  }, [open?.id, open?.started_at, open?.expected_minutes, inst.default_session_minutes, inst.tz]);
-
-  /* 2) matières quand la classe change */
+  /* 2) charger les matières quand la classe change */
   useEffect(() => {
     if (!classId) {
       setSubjects([]);
@@ -416,7 +404,7 @@ export default function ClassDevicePage() {
     })();
   }, [classId]);
 
-  /* 3) roster si séance ouverte */
+  /* 3) charger roster si séance ouverte */
   useEffect(() => {
     if (!open) {
       setRoster([]);
@@ -448,7 +436,7 @@ export default function ClassDevicePage() {
       return { ...prev, [id]: next };
     });
   }
-  // (colonne Motif retirée dans l'appel)
+  // ⚠️ setReason supprimé car la colonne Motif est retirée dans l'appel
 
   /* actions */
   async function startSession() {
@@ -659,7 +647,7 @@ export default function ClassDevicePage() {
         )}
       </div>
 
-      {/* ───────── Bloc Sanctions ───────── */}
+      {/* ───────── Bloc Sanctions (téléphone de classe) ───────── */}
       {penaltyOpen && (
         <div className="rounded-2xl border bg-white p-5 shadow-sm">
           <div className="flex items-center justify-between mb-3">
@@ -774,10 +762,7 @@ export default function ClassDevicePage() {
         <div className="rounded-2xl border bg-white p-5 shadow-sm">
           <div className="mb-3 text-sm font-semibold text-slate-700">
             Appel — {open.class_label} {open.subject_name ? `• ${open.subject_name}` : ""} •{" "}
-            {toHM(new Date(open.started_at), inst.tz)}
-            {open.expected_minutes
-              ? ` → ${toHM(new Date(new Date(open.started_at).getTime() + open.expected_minutes * 60000), inst.tz)}`
-              : ""}
+            {new Date(open.started_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
           </div>
 
           <div className="overflow-x-auto rounded-xl border">
@@ -788,7 +773,7 @@ export default function ClassDevicePage() {
                   <th className="px-3 py-2 w-40">Matricule</th>
                   <th className="px-3 py-2">Nom et prénoms</th>
                   <th className="px-3 py-2">Absent</th>
-                  <th className="px-3 py-2">Retard (minutes auto)</th>
+                  <th className="px-3 py-2">Retard</th>
                   {/* Colonne Motif supprimée dans l'appel */}
                 </tr>
               </thead>

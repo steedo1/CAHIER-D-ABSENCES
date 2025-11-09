@@ -139,9 +139,6 @@ function jsWeekday1to6(date: Date): number {
 const hmInTZ = (d: Date, tz: string): string =>
   new Intl.DateTimeFormat("en-GB", { timeZone: tz, hour: "2-digit", minute: "2-digit", hour12: false }).format(d);
 
-// pratique : format HH:MM avec éventuellement le TZ de l’établissement
-const toHM = (d: Date, tz?: string) => (tz ? hmInTZ(d, tz) : hhmm(d));
-
 const weekdayInTZ1to7 = (d: Date, tz: string): number => {
   const w = new Intl.DateTimeFormat("en-US", { timeZone: tz, weekday: "short" }).format(d).toLowerCase();
   const map: Record<string, number> = { sun: 7, mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6 };
@@ -301,7 +298,7 @@ export default function TeacherDashboard() {
     let pick = slots.find(s => nowMin >= toMinutes(s.start_time) && nowMin < toMinutes(s.end_time));
     // 2) sinon, le prochain non commencé
     if (!pick) pick = slots.find(s => nowMin <= toMinutes(s.start_time));
-    // 3) si après le dernier créneau → fallback = maintenant
+    // 3) si après le dernier créneau → fallback = maintenant (au lieu du dernier créneau)
     if (!pick) {
       setStartTime(nowHM);
       setDuration(inst.default_session_minutes || 60);
@@ -316,24 +313,11 @@ export default function TeacherDashboard() {
     setLocked(true);
   }
 
-  // Recalculer par défaut UNIQUEMENT s'il n'y a PAS de séance ouverte
+  // recalculer quand on a les périodes / paramètres / ou changement de classe
   useEffect(() => {
-    if (!open) computeDefaultsForNow();
+    computeDefaultsForNow();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [JSON.stringify(periodsByDay), inst.default_session_minutes, inst.tz, selKey, open?.id]);
-
-  // ⚠️ Synchroniser l’UI quand une séance est ouverte : source de vérité = open.started_at / expected_minutes
-  useEffect(() => {
-    if (!open) return;
-    const dur = Math.max(1, Number(open.expected_minutes || inst.default_session_minutes || 60));
-    const start = new Date(open.started_at);
-    const end = new Date(start.getTime() + dur * 60000);
-
-    setStartTime(toHM(start, inst.tz)); // ex: "11:09" en TZ établissement
-    setDuration(dur);
-    setSlotLabel(`Séance en cours • ${toHM(start, inst.tz)} → ${toHM(end, inst.tz)}`);
-    setLocked(true);
-  }, [open?.id, open?.started_at, open?.expected_minutes, inst.default_session_minutes, inst.tz]);
+  }, [JSON.stringify(periodsByDay), inst.default_session_minutes, inst.tz, selKey]);
 
   /* Charger roster si séance ouverte */
   useEffect(() => {
@@ -476,7 +460,7 @@ export default function TeacherDashboard() {
         const j = await fetch(`/api/teacher/roster?class_id=${sel.class_id}`, { cache: "no-store" }).then((r) => r.json());
         setRoster((j.items || []) as RosterItem[]);
       } finally {
-        setLoadingRoster(false);
+               setLoadingRoster(false);
       }
     }
   }
@@ -579,7 +563,7 @@ export default function TeacherDashboard() {
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Espace enseignant</h1>
           <p className="text-slate-600 text-sm">
-            Sélectionnez une classe, puis marquez uniquement <b>absents</b> et <b>retards</b>. Les minutes de retard sont <b>calculées automatiquement</b>.
+            Sélectionnez une classe avant de faire l'appel,. Les minutes de retard sont <b>calculées automatiquement</b>.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -706,7 +690,7 @@ export default function TeacherDashboard() {
                 <Chip tone={penRubric === "tenue" ? "emerald" : "slate"}>Tenue</Chip>
                 <Chip tone={penRubric === "moralite" ? "emerald" : "slate"}>Moralité</Chip>
               </div>
-              <div className="mt-2 text-[11px] text-slate-500">
+              <div className="mt-2 text：[11px] text-slate-500">
                 <b>Note :</b> l’assiduité est <u>calculée automatiquement</u> via les absences injustifiées.
               </div>
             </div>
@@ -797,9 +781,12 @@ export default function TeacherDashboard() {
           <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
             <div className="text-sm font-semibold text-slate-700">
               Appel — {open.class_label} {open.subject_name ? `• ${open.subject_name}` : ""} •{" "}
-              {toHM(new Date(open.started_at), inst.tz)}
+              {new Date(open.started_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
               {open.expected_minutes
-                ? ` → ${toHM(new Date(new Date(open.started_at).getTime() + open.expected_minutes * 60000), inst.tz)}`
+                ? ` → ${new Date(new Date(open.started_at).getTime() + open.expected_minutes * 60000).toLocaleTimeString([], {
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  })}`
                 : ""}
             </div>
             <Chip>{changedCount} modif{changedCount > 1 ? "s" : ""} en cours</Chip>
@@ -813,7 +800,8 @@ export default function TeacherDashboard() {
                   <th className="px-3 py-2 w-40">Matricule</th>
                   <th className="px-3 py-2">Nom et prénoms</th>
                   <th className="px-3 py-2">Absent</th>
-                  <th className="px-3 py-2">Retard (minutes auto)</th>
+                  <th className="px-3 py-2">Retard</th>
+                  {/* Colonne Motif supprimée */}
                 </tr>
               </thead>
               <tbody className="divide-y">
@@ -856,6 +844,7 @@ export default function TeacherDashboard() {
                             aria-label={`Retard: ${st.full_name}`}
                           />
                         </td>
+                        {/* Colonne Motif supprimée */}
                       </tr>
                     );
                   })

@@ -30,7 +30,6 @@ export default function ParentsLoginPage() {
 
       let j: any = {};
       try { j = await res.json(); } catch {}
-
       console.info(`[parents.login:${_rid}] response`, { status: res.status, body: j });
 
       if (!res.ok) {
@@ -49,21 +48,22 @@ export default function ParentsLoginPage() {
   }
 
   return (
-    <main className="relative min-h-screen">
-      {/* --- Fond image ancré à gauche sur mobile pour éviter le rognage de la fille --- */}
+    <main className="relative min-h-[100svh]">
+      {/* --- Fond image : focalisé à gauche/haut sur mobile pour garder les visages --- */}
       <div
         aria-hidden
         className="absolute inset-0 -z-20 bg-no-repeat bg-cover
-                   bg-[position:15%_center] md:bg-center"
+                   bg-[position:18%_10%] md:bg-center"
         style={{ backgroundImage: "url(/parent.png)" }}
       />
       <div
         aria-hidden
-        className="absolute inset-0 -z-10 bg-gradient-to-b from-black/50 via-black/25 to-white/70 md:bg-gradient-to-r md:from-black/60 md:via-black/20 md:to-white/70"
+        className="absolute inset-0 -z-10 bg-gradient-to-b from-black/45 via-black/20 to-white/70
+                   md:bg-gradient-to-r md:from-black/55 md:via-black/15 md:to-white/70"
       />
 
-      {/* --- Contenu centré --- */}
-      <div className="relative z-0 mx-auto flex min-h-screen max-w-7xl items-center justify-center px-4 py-10">
+      {/* --- Contenu centré (avec padding top plus grand sur mobile pour dégager les visages) --- */}
+      <div className="relative z-0 mx-auto flex min-h-[100svh] max-w-7xl items-center justify-center px-4 pt-28 pb-10 md:pt-10">
         <div className="grid w-full grid-cols-1 gap-8 md:grid-cols-12">
           {/* Pitch (caché sur petits écrans pour garder la sobriété) */}
           <section className="hidden md:col-span-6 md:flex md:flex-col md:justify-center">
