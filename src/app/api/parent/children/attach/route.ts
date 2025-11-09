@@ -18,30 +18,17 @@ function normMatricule(s: string) {
   return String(s || "").normalize("NFKC").toUpperCase().replace(/\s+/g, "");
 }
 
-/** Garantit un parent_profile_id stable pour un device. 
- * 1) essaie RPC ensure_parent_profile(p_device text) -> uuid
- * 2) fallback table parent_devices (select → sinon insert)
- */
+/** Garantit un parent_profile_id stable pour un device. */
 async function ensureParentProfileForDevice(
   srv: ReturnType<typeof getSupabaseServiceClient>,
   deviceId: string
 ): Promise<string | null> {
-  // 1) RPC (si présent côté DB)
   try {
-    const { data } = await (srv as any)
-      .rpc("ensure_parent_profile", { p_device: deviceId })
-      .single();
-    const got =
-      data?.ensure_parent_profile ||
-      data?.parent_profile_id ||
-      data?.parent_id ||
-      data;
+    const { data } = await (srv as any).rpc("ensure_parent_profile", { p_device: deviceId }).single();
+    const got = data?.ensure_parent_profile || data?.parent_profile_id || data?.parent_id || data;
     if (got) return String(got);
-  } catch {
-    // ignore — on tente le fallback table
-  }
+  } catch { /* ignore */ }
 
-  // 2a) Lire parent_devices si la table existe
   try {
     const { data: row } = await srv
       .from("parent_devices")
@@ -49,11 +36,8 @@ async function ensureParentProfileForDevice(
       .eq("device_id", deviceId)
       .maybeSingle();
     if (row?.parent_profile_id) return String(row.parent_profile_id);
-  } catch {
-    // table absente ou autre → on essaiera l'insert juste après
-  }
+  } catch { /* ignore */ }
 
-  // 2b) Créer une ligne si absente
   try {
     const parentId = randomUUID();
     const { data: ins } = await srv
@@ -63,8 +47,6 @@ async function ensureParentProfileForDevice(
       .maybeSingle();
     return String(ins?.parent_profile_id || parentId);
   } catch {
-    // parent_devices non disponible → pas bloquant pour l’attache,
-    // mais pas de notifications sans guardian.
     return null;
   }
 }
@@ -83,7 +65,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "MATRICULE_REQUIRED" }, { status: 400 });
     }
 
-    // Récupère élève + institution (NOT NULL)
+    // Élève + établissement
     const { data: rows, error: sErr } = await srv
       .from("students")
       .select("id, matricule, institution_id")
@@ -91,21 +73,14 @@ export async function POST(req: NextRequest) {
       .order("created_at", { ascending: false })
       .limit(1);
 
-    if (sErr) {
-      console.error(`[parent.attach:${id}] select students error`, sErr);
-      return NextResponse.json({ error: sErr.message }, { status: 400 });
-    }
+    if (sErr) return NextResponse.json({ error: sErr.message }, { status: 400 });
     const student = (rows ?? [])[0];
-    if (!student) {
-      console.warn(`[parent.attach:${id}] MATRICULE_NOT_FOUND`);
-      return NextResponse.json({ error: "MATRICULE_NOT_FOUND" }, { status: 404 });
-    }
+    if (!student) return NextResponse.json({ error: "MATRICULE_NOT_FOUND" }, { status: 404 });
     if (!student.institution_id) {
-      console.error(`[parent.attach:${id}] student has NULL institution_id`, { student_id: student.id });
       return NextResponse.json({ error: "STUDENT_MISSING_INSTITUTION" }, { status: 400 });
     }
 
-    // Cookie device
+    // Cookie device (✅ await cookies())
     const jar = await cookies();
     let deviceId = jar.get("parent_device")?.value || "";
     let mustSet = false;
@@ -115,7 +90,7 @@ export async function POST(req: NextRequest) {
     }
     console.info(`[parent.attach:${id}] device`, { deviceId, mustSet });
 
-    // Attache (idempotent) à parent_device_children
+    // Lien device ↔ enfant
     const payload = {
       device_id: deviceId,
       student_id: student.id,
@@ -124,13 +99,9 @@ export async function POST(req: NextRequest) {
     const { error: upErr } = await srv
       .from("parent_device_children")
       .upsert(payload, { onConflict: "device_id,student_id" });
+    if (upErr) return NextResponse.json({ error: upErr.message }, { status: 400 });
 
-    if (upErr) {
-      console.error(`[parent.attach:${id}] upsert error`, upErr);
-      return NextResponse.json({ error: upErr.message }, { status: 400 });
-    }
-
-    // S’assurer d’un parent_profile_id et créer le lien guardian (idempotent)
+    // Lien guardian (idempotent)
     try {
       const parentId = await ensureParentProfileForDevice(srv, deviceId);
       if (parentId) {
@@ -147,7 +118,7 @@ export async function POST(req: NextRequest) {
             { onConflict: "student_id,parent_id", ignoreDuplicates: false }
           );
       } else {
-        console.warn(`[parent.attach:${id}] parent_profile_id_missing (no parent_devices / no rpc)`);
+        console.warn(`[parent.attach:${id}] parent_profile_id_missing`);
       }
     } catch (e: any) {
       console.warn(`[parent.attach:${id}] guardian_link_warn`, { err: String(e?.message || e) });
@@ -164,14 +135,12 @@ export async function POST(req: NextRequest) {
       res.cookies.set("parent_device", deviceId, {
         httpOnly: true,
         sameSite: "lax",
-        secure: process.env.NODE_ENV === "production", // ✅ pas de Secure en local
+        secure: process.env.NODE_ENV === "production",
         path: "/",
         maxAge: 60 * 60 * 24 * 365,
       });
-      console.info(`[parent.attach:${id}] cookie set`, { deviceId });
     }
 
-    console.info(`[parent.attach:${id}] success`);
     return res;
   } catch (e: any) {
     console.error(`[parent.attach:${id}] fatal`, e);
