@@ -143,7 +143,6 @@ export async function POST(req: NextRequest) {
               parent_id: parentId,
               notifications_enabled: true,
               updated_at: now,
-              // created_at sera rempli par défaut si présent côté DB
             } as any,
             { onConflict: "student_id,parent_id", ignoreDuplicates: false }
           );
@@ -165,7 +164,7 @@ export async function POST(req: NextRequest) {
       res.cookies.set("parent_device", deviceId, {
         httpOnly: true,
         sameSite: "lax",
-        secure: true,
+        secure: process.env.NODE_ENV === "production", // ✅ pas de Secure en local
         path: "/",
         maxAge: 60 * 60 * 24 * 365,
       });
