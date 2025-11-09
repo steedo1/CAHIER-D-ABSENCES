@@ -33,15 +33,13 @@ type Identity =
   | { mode: "device";   deviceId: string; studentIds: string[] };
 
 /* ─────────────── Helpers ─────────────── */
-
 function detectPlatform(body: Body): "web" | "android" | "ios" | "unknown" {
   const raw = String(body.platform || "").toLowerCase().trim();
   if (raw === "web" || raw === "android" || raw === "ios") return raw as any;
-  if (body.subscription?.endpoint) return "web";
+  if ((body as any)?.subscription?.endpoint) return "web";
   if (body.fcm_token) return "android";
   return "unknown";
 }
-
 function validWebSub(sub: any) {
   return !!(sub?.endpoint && sub?.keys?.p256dh && sub?.keys?.auth);
 }
@@ -53,7 +51,7 @@ async function upsertParentRow(
   deviceId: string,
   sub: any,
   fcm: string | null,
-  studentId: string | null, // si mode "parent", on renseigne aussi l'élève lié
+  studentId: string | null,
 ) {
   const now = new Date().toISOString();
   const row: any = {
@@ -63,9 +61,8 @@ async function upsertParentRow(
     last_seen_at: now,
     subscription_json: platform === "web" ? sub : null,
     fcm_token: platform !== "web" ? fcm : null,
-    student_id: studentId, // nullable ; info supplémentaire utile pour filtres/diagnostics
+    student_id: studentId, // info complémentaire, nullable
   };
-
   const onConflict = "user_id,platform,device_id";
   log("upsert_parent_try", { user_id: shortId(userId), platform, device_id: shortId(deviceId) });
 
@@ -79,16 +76,10 @@ async function upsertParentRow(
     .update(row)
     .match({ user_id: userId, platform, device_id: deviceId })
     .select("user_id");
-
   if (!upd.error && upd.data?.length) return { ok: true, mode: "update" as const };
 
-  if (upd.error) log("update_parent_fail", { code: upd.error.code, message: upd.error.message });
-
   const ins = await srv.from("push_subscriptions").insert(row).select("user_id");
-  if (ins.error) {
-    log("insert_parent_fail", { code: ins.error.code, message: ins.error.message, details: ins.error.details, hint: ins.error.hint });
-    return { ok: false, error: ins.error.message, stage: "insert_parent" as const };
-  }
+  if (ins.error) return { ok: false, error: ins.error.message, stage: "insert_parent" as const };
   return { ok: true, mode: "insert" as const };
 }
 
@@ -120,9 +111,7 @@ async function upsertStudentRows(
   const up = await srv.from("push_subscriptions_student").upsert(rows, { onConflict, ignoreDuplicates: false });
   if (!up.error) return { ok: true, mode: "upsert" as const, count: rows.length };
 
-  log("upsert_students_fail", { code: up.error.code, message: up.error.message, details: up.error.details, hint: up.error.hint });
-
-  // Fallback UPDATE puis INSERT unitaire (en cas de contrainte absente)
+  // Fallback UPDATE→INSERT (rare)
   let done = 0;
   for (const r of rows) {
     const upd = await srv
@@ -130,16 +119,10 @@ async function upsertStudentRows(
       .update(r)
       .match({ student_id: r.student_id, platform: r.platform, device_id: r.device_id })
       .select("student_id");
-
-    if (!upd.error && upd.data?.length) {
-      done++;
-      continue;
-    }
-
+    if (!upd.error && upd.data?.length) { done++; continue; }
     const ins = await srv.from("push_subscriptions_student").insert(r).select("student_id");
     if (!ins.error) done++;
   }
-
   return { ok: true, mode: "mixed" as const, count: done };
 }
 
@@ -150,13 +133,8 @@ export async function POST(req: NextRequest) {
   const startedAt = new Date().toISOString();
 
   try {
-    /* 1) Déterminer l’identité parmi 3 modes :
-       - "supabase": user authentifié (prof/admin/parent classique)
-       - "parent":   cookie `psess` (JWT parent)
-       - "device":   cookie `parent_device` (nouveau flow “matricule only”)
-    */
+    // 1) Identification (supabase → parent cookie → device cookie)
     let ident: Identity | null = null;
-
     const { data: { user: supaUser } } = await supa.auth.getUser().catch(() => ({ data: { user: null } as any }));
     if (supaUser?.id) {
       ident = { mode: "supabase", userId: supaUser.id, studentId: null };
@@ -165,24 +143,19 @@ export async function POST(req: NextRequest) {
       if (claims) {
         ident = { mode: "parent", userId: claims.uid, studentId: claims.sid };
       } else {
-        // Nouveau : essayer le cookie device → tous les enfants de ce device
         const jar = await cookies();
-        const deviceId = jar.get("parent_device")?.value || "";
-        if (deviceId) {
+        const cookieDevice = jar.get("parent_device")?.value || "";
+        if (cookieDevice) {
           const { data: links, error: linkErr } = await srv
             .from("parent_device_children")
             .select("student_id")
-            .eq("device_id", deviceId);
-
-          const studentIds = (links || []).map((r) => String(r.student_id)).filter(Boolean);
-          if (linkErr) log("device_links_fail", { error: linkErr.message, deviceId: shortId(deviceId) });
-          if (studentIds.length) {
-            ident = { mode: "device", deviceId, studentIds };
-          }
+            .eq("device_id", cookieDevice);
+          if (linkErr) log("device_links_fail", { error: linkErr.message, deviceId: shortId(cookieDevice) });
+          const studentIds = (links || []).map(r => String(r.student_id)).filter(Boolean);
+          if (studentIds.length) ident = { mode: "device", deviceId: cookieDevice, studentIds };
         }
       }
     }
-
     if (!ident) {
       log("auth_fail", { startedAt });
       return NextResponse.json({ error: "unauthorized", stage: "auth" }, { status: 401 });
@@ -196,65 +169,50 @@ export async function POST(req: NextRequest) {
       startedAt
     });
 
-    /* 2) Body */
-    let body: Body | null = null;
-    try {
-      body = await req.json();
-    } catch (e: any) {
-      log("parse_fail", { error: String(e?.message || e) });
-      return NextResponse.json({ error: "invalid_json", stage: "parse" }, { status: 400 });
-    }
-    if (!body) {
-      log("parse_empty", {});
-      return NextResponse.json({ error: "empty_body", stage: "parse" }, { status: 400 });
-    }
+    // 2) Body
+    let body: Body;
+    try { body = await req.json(); }
+    catch { return NextResponse.json({ error: "invalid_json", stage: "parse" }, { status: 400 }); }
 
-    /* 3) Plateforme + préflights */
+    // 3) Plateforme + préflights
     const platform = detectPlatform(body);
-    log("platform_detect", { platform, hasSub: !!body.subscription, hasFcm: !!body.fcm_token });
-
-    if (platform === "unknown") {
-      return NextResponse.json({ error: "unknown_platform", stage: "preflight" }, { status: 400 });
-    }
+    if (platform === "unknown") return NextResponse.json({ error: "unknown_platform", stage: "preflight" }, { status: 400 });
 
     let deviceId = String(body.device_id || "").trim();
     let sub: any = null;
     let fcm: string | null = null;
 
     if (platform === "web") {
-      sub = body.subscription;
-      if (!validWebSub(sub)) {
-        return NextResponse.json({ error: "missing_or_invalid_subscription", stage: "preflight" }, { status: 400 });
-      }
+      sub = (body as any).subscription;
+      if (!validWebSub(sub)) return NextResponse.json({ error: "missing_or_invalid_subscription", stage: "preflight" }, { status: 400 });
       deviceId = deviceId || String(sub.endpoint);
       log("web_preflight", { endpoint: shortId(sub.endpoint), hasP256: !!sub?.keys?.p256dh, hasAuth: !!sub?.keys?.auth });
     } else {
       fcm = String(body.fcm_token || "").trim();
-      if (!fcm) {
-        return NextResponse.json({ error: "missing_fcm_token", stage: "preflight" }, { status: 400 });
-      }
+      if (!fcm) return NextResponse.json({ error: "missing_fcm_token", stage: "preflight" }, { status: 400 });
       deviceId = deviceId || fcm;
       log("fcm_preflight", { token: shortId(fcm) });
     }
 
-    /* 4) Ecritures selon le mode */
+    // **CRUCIAL** : en mode "device", on force le deviceId à celui du cookie "parent_device"
+    if (ident.mode === "device") {
+      deviceId = ident.deviceId;
+      log("force_cookie_device", { deviceId: shortId(deviceId) });
+    }
+
+    // 4) Écritures
     if (ident.mode === "supabase") {
-      // (A) Session Supabase : on écrit dans push_subscriptions (parent)
       const a = await upsertParentRow(srv, ident.userId, platform, deviceId, sub, fcm, null);
       if (!a.ok) return NextResponse.json({ error: a.error, stage: a.stage }, { status: 400 });
       return NextResponse.json({ ok: true, who: "supabase", platform, device_id: deviceId });
     }
 
     if (ident.mode === "parent") {
-      // (B) Cookie psess : double écriture
-      //    - parent : push_subscriptions (compat historique)
-      //    - élève  : push_subscriptions_student (pour le ciblage par kid)
+      // legacy parent + ciblage élève
       const a = await upsertParentRow(srv, ident.userId, platform, deviceId, sub, fcm, ident.studentId);
       if (!a.ok) return NextResponse.json({ error: a.error, stage: a.stage }, { status: 400 });
-
       const b = await upsertStudentRows(srv, [ident.studentId], platform, deviceId, sub, fcm);
       if (!b.ok) return NextResponse.json({ error: "student_upsert_failed", stage: "insert_student" }, { status: 400 });
-
       return NextResponse.json({
         ok: true,
         who: "parent",
@@ -265,22 +223,20 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // (C) Mode device-only : pas d'userId → on n’écrit *que* dans push_subscriptions_student pour *tous* les enfants
     if (ident.mode === "device") {
+      // device-only : écritures uniquement orientées élève (tous les enfants du device)
       const res = await upsertStudentRows(srv, ident.studentIds, platform, deviceId, sub, fcm);
       if (!res.ok) return NextResponse.json({ error: "student_upsert_failed", stage: "insert_students" }, { status: 400 });
-
       return NextResponse.json({
         ok: true,
         who: "device",
         platform,
         device_id: deviceId,
         students: ident.studentIds,
-        writes: res.mode,
+        writes: res.mode
       });
     }
 
-    // impossible d’arriver ici
     return NextResponse.json({ error: "unhandled_identity" }, { status: 500 });
   } catch (e: any) {
     log("unhandled_error", { error: String(e?.message || e) });
