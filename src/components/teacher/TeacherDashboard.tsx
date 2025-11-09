@@ -2,7 +2,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
-import { Users, Clock, Save, Play, StepForward, Square, LogOut } from "lucide-react";
+import { Users, Clock, Save, Play, Square, LogOut } from "lucide-react";
 
 /* ─────────────────────────────────────────
    Types
@@ -130,15 +130,17 @@ const toMinutes = (hm: string) => {
 };
 const minutesDiff = (a: string, b: string) => Math.max(0, toMinutes(b) - toMinutes(a));
 function jsWeekday1to6(date: Date): number {
-  // JS: 0=dim,1=lun,…,6=sam → on renvoie 1..6, et 7 pour dimanche (non utilisé)
-  const d = date.getDay(); // 0..6
-  if (d === 0) return 7; // dimanche → 7 (aucun créneau)
-  return d; // 1..6 (samedi = 6)
+  const d = date.getDay(); // 0..6 (0 = dim)
+  if (d === 0) return 7; // dimanche → 7
+  return d; // 1..6
 }
 
 /* Helpers fuseau établissement */
 const hmInTZ = (d: Date, tz: string): string =>
   new Intl.DateTimeFormat("en-GB", { timeZone: tz, hour: "2-digit", minute: "2-digit", hour12: false }).format(d);
+
+// pratique : format HH:MM avec éventuellement le TZ de l’établissement
+const toHM = (d: Date, tz?: string) => (tz ? hmInTZ(d, tz) : hhmm(d));
 
 const weekdayInTZ1to7 = (d: Date, tz: string): number => {
   const w = new Intl.DateTimeFormat("en-US", { timeZone: tz, weekday: "short" }).format(d).toLowerCase();
@@ -299,7 +301,7 @@ export default function TeacherDashboard() {
     let pick = slots.find(s => nowMin >= toMinutes(s.start_time) && nowMin < toMinutes(s.end_time));
     // 2) sinon, le prochain non commencé
     if (!pick) pick = slots.find(s => nowMin <= toMinutes(s.start_time));
-    // 3) si après le dernier créneau → fallback = maintenant (au lieu du dernier créneau)
+    // 3) si après le dernier créneau → fallback = maintenant
     if (!pick) {
       setStartTime(nowHM);
       setDuration(inst.default_session_minutes || 60);
@@ -314,11 +316,24 @@ export default function TeacherDashboard() {
     setLocked(true);
   }
 
-  // recalculer quand on a les périodes / paramètres / ou changement de classe
+  // Recalculer par défaut UNIQUEMENT s'il n'y a PAS de séance ouverte
   useEffect(() => {
-    computeDefaultsForNow();
+    if (!open) computeDefaultsForNow();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [JSON.stringify(periodsByDay), inst.default_session_minutes, inst.tz, selKey]);
+  }, [JSON.stringify(periodsByDay), inst.default_session_minutes, inst.tz, selKey, open?.id]);
+
+  // ⚠️ Synchroniser l’UI quand une séance est ouverte : source de vérité = open.started_at / expected_minutes
+  useEffect(() => {
+    if (!open) return;
+    const dur = Math.max(1, Number(open.expected_minutes || inst.default_session_minutes || 60));
+    const start = new Date(open.started_at);
+    const end = new Date(start.getTime() + dur * 60000);
+
+    setStartTime(toHM(start, inst.tz)); // ex: "11:09" en TZ établissement
+    setDuration(dur);
+    setSlotLabel(`Séance en cours • ${toHM(start, inst.tz)} → ${toHM(end, inst.tz)}`);
+    setLocked(true);
+  }, [open?.id, open?.started_at, open?.expected_minutes, inst.default_session_minutes, inst.tz]);
 
   /* Charger roster si séance ouverte */
   useEffect(() => {
@@ -350,12 +365,6 @@ export default function TeacherDashboard() {
       const cur = prev[id] || {};
       const next: Row = { ...cur, late: v, absent: v ? false : cur.absent };
       return { ...prev, [id]: next };
-    });
-  }
-  function setReason(id: string, s: string) {
-    setRows((prev) => {
-      const cur = prev[id] || {};
-      return { ...prev, [id]: { ...cur, reason: s } };
     });
   }
 
@@ -433,39 +442,6 @@ export default function TeacherDashboard() {
       computeDefaultsForNow();
     } catch (e: any) {
       setMsg(e?.message || "Échec fin de séance");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function nextHour() {
-    if (!open) return;
-    setBusy(true);
-    setMsg(null);
-    try {
-      const base = open.started_at ? new Date(open.started_at) : new Date();
-      const exp = open.expected_minutes ?? duration;
-      const nextStart = new Date(base.getTime() + (exp || 60) * 60000);
-
-      await fetch("/api/teacher/sessions/end", { method: "PATCH" });
-
-      const payload = {
-        class_id: open.class_id,
-        subject_id: open.subject_id,
-        started_at: nextStart.toISOString(),
-        expected_minutes: exp,
-      };
-      const r2 = await fetch("/api/teacher/sessions/start", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      const j2 = await r2.json();
-      if (!r2.ok) throw new Error(j2?.error || "Échec prochaine heure");
-      setOpen(j2.item as OpenSession);
-      setMsg("Nouvelle heure démarrée ✅");
-    } catch (e: any) {
-      setMsg(e?.message || "Échec enchaînement");
     } finally {
       setBusy(false);
     }
@@ -561,7 +537,7 @@ export default function TeacherDashboard() {
     }
   }
 
-  /* Barre d’actions collante (mobile) */
+  /* Barre d’actions collante (mobile) — sans “Prochaine heure” */
   const showSticky = true;
   const mobileBar = showSticky ? (
     <>
@@ -578,14 +554,10 @@ export default function TeacherDashboard() {
             </GhostButton>
           </div>
         ) : (
-          <div className="grid grid-cols-4 gap-2">
+          <div className="grid grid-cols-3 gap-2">
             <Button onClick={saveMarks} disabled={busy} aria-label="Enregistrer">
               <Save className="h-4 w-4" />
               {busy ? "…" : `Save${changedCount ? ` (${changedCount})` : ""}`}
-            </Button>
-            <Button onClick={nextHour} disabled={busy} aria-label="Prochaine heure">
-              <StepForward className="h-4 w-4" />
-              Suiv.
             </Button>
             <GhostButton tone="red" onClick={() => (penaltyOpen ? setPenaltyOpen(false) : openPenalty())} disabled={busy || (!selKey && !penaltyOpen)} aria-label="Sanctions">
               Sanctions
@@ -607,7 +579,7 @@ export default function TeacherDashboard() {
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Espace enseignant</h1>
           <p className="text-slate-600 text-sm">
-            Sélectionnez une classe, choisissez l’horaire, puis marquez uniquement <b>absents</b> et <b>retards</b>. Les minutes de retard sont <b>calculées automatiquement</b>.
+            Sélectionnez une classe, puis marquez uniquement <b>absents</b> et <b>retards</b>. Les minutes de retard sont <b>calculées automatiquement</b>.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -684,10 +656,6 @@ export default function TeacherDashboard() {
             <Button onClick={saveMarks} disabled={busy} aria-label="Enregistrer">
               <Save className="h-4 w-4" />
               {busy ? "Enregistrement…" : `Enregistrer${changedCount ? ` (${changedCount})` : ""}`}
-            </Button>
-            <Button onClick={nextHour} disabled={busy} aria-label="Prochaine heure">
-              <StepForward className="h-4 w-4" />
-              Prochaine heure
             </Button>
             <GhostButton tone="red" onClick={() => (penaltyOpen ? setPenaltyOpen(false) : openPenalty())} disabled={busy || (!selKey && !penaltyOpen)} aria-label="Sanctions">
               Sanctions
@@ -829,12 +797,9 @@ export default function TeacherDashboard() {
           <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
             <div className="text-sm font-semibold text-slate-700">
               Appel — {open.class_label} {open.subject_name ? `• ${open.subject_name}` : ""} •{" "}
-              {new Date(open.started_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+              {toHM(new Date(open.started_at), inst.tz)}
               {open.expected_minutes
-                ? ` → ${new Date(new Date(open.started_at).getTime() + open.expected_minutes * 60000).toLocaleTimeString([], {
-                    hour: "2-digit",
-                    minute: "2-digit",
-                  })}`
+                ? ` → ${toHM(new Date(new Date(open.started_at).getTime() + open.expected_minutes * 60000), inst.tz)}`
                 : ""}
             </div>
             <Chip>{changedCount} modif{changedCount > 1 ? "s" : ""} en cours</Chip>
@@ -849,19 +814,18 @@ export default function TeacherDashboard() {
                   <th className="px-3 py-2">Nom et prénoms</th>
                   <th className="px-3 py-2">Absent</th>
                   <th className="px-3 py-2">Retard (minutes auto)</th>
-                  <th className="px-3 py-2">Motif (facultatif)</th>
                 </tr>
               </thead>
               <tbody className="divide-y">
                 {loadingRoster ? (
                   <tr>
-                    <td className="px-3 py-4 text-slate-500" colSpan={6}>
+                    <td className="px-3 py-4 text-slate-500" colSpan={5}>
                       Chargement de la liste…
                     </td>
                   </tr>
                 ) : roster.length === 0 ? (
                   <tr>
-                    <td className="px-3 py-4 text-slate-500" colSpan={6}>
+                    <td className="px-3 py-4 text-slate-500" colSpan={5}>
                       Aucun élève dans cette classe.
                     </td>
                   </tr>
@@ -890,14 +854,6 @@ export default function TeacherDashboard() {
                             onChange={(e) => toggleLate(st.id, e.target.checked)}
                             disabled={!!r.absent}
                             aria-label={`Retard: ${st.full_name}`}
-                          />
-                        </td>
-                        <td className="px-3 py-2">
-                          <Input
-                            placeholder="(optionnel)"
-                            value={r.reason || ""}
-                            onChange={(e) => setReason(st.id, e.target.value)}
-                            aria-label={`Motif: ${st.full_name}`}
                           />
                         </td>
                       </tr>

@@ -2,7 +2,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Users, BookOpen, Clock, Play, Save, StepForward, Square, LogOut } from "lucide-react";
+import { Users, BookOpen, Clock, Play, Save, Square, LogOut } from "lucide-react";
 
 /* ───────── UI helpers ───────── */
 function Input(p: React.InputHTMLAttributes<HTMLInputElement>) {
@@ -27,6 +27,7 @@ function Select(p: React.SelectHTMLAttributes<HTMLSelectElement>) {
       className={[
         "w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm",
         "shadow-sm outline-none transition",
+        "placeholder:text-slate-400",
         "focus:border-emerald-400 focus:ring-4 focus:ring-emerald-500/20",
         "disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400",
         p.className ?? "",
@@ -91,7 +92,7 @@ type Period = { weekday: number; label: string; start_time: string; end_time: st
 const hhmm = (d: Date) => d.toTimeString().slice(0, 5);
 function toMinutes(hm: string) {
   const [h, m] = (hm || "00:00").split(":").map((x) => +x);
-  return h * 60 + m;
+  return (isFinite(h) ? h : 0) * 60 + (isFinite(m) ? m : 0);
 }
 function minutesDiff(a: string, b: string) {
   return Math.max(0, toMinutes(b) - toMinutes(a));
@@ -100,6 +101,7 @@ function minutesDiff(a: string, b: string) {
 /* Helpers fuseau établissement (identiques à l’interface enseignant) */
 const hmInTZ = (d: Date, tz: string): string =>
   new Intl.DateTimeFormat("en-GB", { timeZone: tz, hour: "2-digit", minute: "2-digit", hour12: false }).format(d);
+const toHM = (d: Date, tz?: string) => (tz ? hmInTZ(d, tz) : hhmm(d));
 
 const weekdayInTZ1to7 = (d: Date, tz: string): number => {
   const w = new Intl.DateTimeFormat("en-US", { timeZone: tz, weekday: "short" }).format(d).toLowerCase();
@@ -238,7 +240,7 @@ export default function ClassDevicePage() {
     }
   }
 
-  /* 1) charger mes classes (liées au téléphone) + éventuelle séance ouverte */
+  /* 1) classes liées à l'appareil + éventuelle séance ouverte */
   useEffect(() => {
     (async () => {
       try {
@@ -264,7 +266,7 @@ export default function ClassDevicePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /* 1bis) charger paramètres + périodes (endpoints multiples tolérés) */
+  /* 1bis) paramètres + périodes (endpoints multiples tolérés) */
   async function loadInstitutionBasics() {
     async function getJson(url: string) {
       try {
@@ -346,15 +348,15 @@ export default function ClassDevicePage() {
     loadInstitutionBasics();
   }, []);
 
-  // Calcul du créneau par défaut « du moment » (timezone-aware, comme l’interface enseignant)
+  // Calcul par défaut « du moment » (TZ-aware)
   function computeDefaultsForNow() {
     const tz = inst?.tz || "Africa/Abidjan";
     const now = new Date();
     const nowHM = hmInTZ(now, tz);
-    const wd = weekdayInTZ1to7(now, tz); // 1..6 (lun..sam), 7 = dimanche (hors créneau)
+    const wd = weekdayInTZ1to7(now, tz); // 1..6 (lun..sam), 7 = dimanche
     const slots = periodsByDay[wd] || [];
 
-    // Pas de créneau ce jour / dimanche → fallback heure actuelle
+    // Pas de créneau / dimanche → fallback heure actuelle
     if (wd === 7 || slots.length === 0) {
       setStartTime(nowHM);
       setDuration(inst.default_session_minutes || 60);
@@ -364,11 +366,8 @@ export default function ClassDevicePage() {
     }
 
     const nowMin = toMinutes(nowHM);
-    // 1) créneau en cours
     let pick = slots.find((s) => nowMin >= toMinutes(s.start_time) && nowMin < toMinutes(s.end_time));
-    // 2) sinon, prochain à venir
     if (!pick) pick = slots.find((s) => nowMin <= toMinutes(s.start_time));
-    // 3) si après le dernier créneau → fallback heure actuelle
     if (!pick) {
       setStartTime(nowHM);
       setDuration(inst.default_session_minutes || 60);
@@ -383,12 +382,26 @@ export default function ClassDevicePage() {
     setLocked(true);
   }
 
+  // ⚠️ ne recalculer par défaut que s'il n'y a PAS de séance ouverte
   useEffect(() => {
-    computeDefaultsForNow();
+    if (!open) computeDefaultsForNow();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [JSON.stringify(periodsByDay), inst.default_session_minutes, inst.tz, classId]);
+  }, [JSON.stringify(periodsByDay), inst.default_session_minutes, inst.tz, classId, open?.id]);
 
-  /* 2) charger les matières quand la classe change */
+  // ⚠️ Synchroniser l’UI quand une séance est ouverte (source de vérité = open)
+  useEffect(() => {
+    if (!open) return;
+    const dur = Math.max(1, Number(open.expected_minutes || inst.default_session_minutes || 60));
+    const start = new Date(open.started_at);
+    const end = new Date(start.getTime() + dur * 60000);
+
+    setStartTime(toHM(start, inst.tz));
+    setDuration(dur);
+    setSlotLabel(`Séance en cours • ${toHM(start, inst.tz)} → ${toHM(end, inst.tz)}`);
+    setLocked(true);
+  }, [open?.id, open?.started_at, open?.expected_minutes, inst.default_session_minutes, inst.tz]);
+
+  /* 2) matières quand la classe change */
   useEffect(() => {
     if (!classId) {
       setSubjects([]);
@@ -403,7 +416,7 @@ export default function ClassDevicePage() {
     })();
   }, [classId]);
 
-  /* 3) charger roster si séance ouverte */
+  /* 3) roster si séance ouverte */
   useEffect(() => {
     if (!open) {
       setRoster([]);
@@ -435,9 +448,7 @@ export default function ClassDevicePage() {
       return { ...prev, [id]: next };
     });
   }
-  function setReason(id: string, s: string) {
-    setRows((prev) => ({ ...prev, [id]: { ...(prev[id] || {}), reason: s } }));
-  }
+  // (colonne Motif retirée dans l'appel)
 
   /* actions */
   async function startSession() {
@@ -512,38 +523,6 @@ export default function ClassDevicePage() {
       computeDefaultsForNow();
     } catch (e: any) {
       setMsg(e?.message || "Échec fin de séance");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function nextHour() {
-    if (!open) return;
-    setBusy(true);
-    setMsg(null);
-    try {
-      const base = open.started_at ? new Date(open.started_at) : new Date();
-      const exp = open.expected_minutes ?? duration;
-      const nextStart = new Date(base.getTime() + (exp || 60) * 60000);
-
-      await fetch("/api/class/sessions/end", { method: "PATCH" });
-
-      const r2 = await fetch("/api/class/sessions/start", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          class_id: open.class_id,
-          subject_id: open.subject_id,
-          started_at: nextStart.toISOString(),
-          expected_minutes: exp,
-        }),
-      });
-      const j2 = await r2.json();
-      if (!r2.ok) throw new Error(j2?.error || "Échec prochaine heure");
-      setOpen(j2.item as OpenSession);
-      setMsg("Nouvelle heure démarrée.");
-    } catch (e: any) {
-      setMsg(e?.message || "Échec enchaînement");
     } finally {
       setBusy(false);
     }
@@ -660,10 +639,6 @@ export default function ClassDevicePage() {
               <Save className="h-4 w-4" />
               {busy ? "Enregistrement…" : `Enregistrer${changedCount ? ` (${changedCount})` : ""}`}
             </Button>
-            <Button onClick={nextHour} disabled={busy}>
-              <StepForward className="h-4 w-4" />
-              Prochaine heure
-            </Button>
             <GhostButton
               tone="red"
               onClick={() => (penaltyOpen ? setPenaltyOpen(false) : openPenalty())}
@@ -684,7 +659,7 @@ export default function ClassDevicePage() {
         )}
       </div>
 
-      {/* ───────── Bloc Sanctions (téléphone de classe) ───────── */}
+      {/* ───────── Bloc Sanctions ───────── */}
       {penaltyOpen && (
         <div className="rounded-2xl border bg-white p-5 shadow-sm">
           <div className="flex items-center justify-between mb-3">
@@ -799,7 +774,10 @@ export default function ClassDevicePage() {
         <div className="rounded-2xl border bg-white p-5 shadow-sm">
           <div className="mb-3 text-sm font-semibold text-slate-700">
             Appel — {open.class_label} {open.subject_name ? `• ${open.subject_name}` : ""} •{" "}
-            {new Date(open.started_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+            {toHM(new Date(open.started_at), inst.tz)}
+            {open.expected_minutes
+              ? ` → ${toHM(new Date(new Date(open.started_at).getTime() + open.expected_minutes * 60000), inst.tz)}`
+              : ""}
           </div>
 
           <div className="overflow-x-auto rounded-xl border">
@@ -811,19 +789,19 @@ export default function ClassDevicePage() {
                   <th className="px-3 py-2">Nom et prénoms</th>
                   <th className="px-3 py-2">Absent</th>
                   <th className="px-3 py-2">Retard (minutes auto)</th>
-                  <th className="px-3 py-2">Motif</th>
+                  {/* Colonne Motif supprimée dans l'appel */}
                 </tr>
               </thead>
               <tbody className="divide-y">
                 {loadingRoster ? (
                   <tr>
-                    <td className="px-3 py-4 text-slate-500" colSpan={6}>
+                    <td className="px-3 py-4 text-slate-500" colSpan={5}>
                       Chargement…
                     </td>
                   </tr>
                 ) : roster.length === 0 ? (
                   <tr>
-                    <td className="px-3 py-4 text-slate-500" colSpan={6}>
+                    <td className="px-3 py-4 text-slate-500" colSpan={5}>
                       Aucun élève.
                     </td>
                   </tr>
@@ -852,13 +830,7 @@ export default function ClassDevicePage() {
                             disabled={!!r.absent}
                           />
                         </td>
-                        <td className="px-3 py-2">
-                          <Input
-                            placeholder="(optionnel)"
-                            value={r.reason || ""}
-                            onChange={(e) => setReason(st.id, e.target.value)}
-                          />
-                        </td>
+                        {/* Colonne Motif retirée */}
                       </tr>
                     );
                   })

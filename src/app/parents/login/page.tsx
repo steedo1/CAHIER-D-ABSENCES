@@ -50,10 +50,11 @@ export default function ParentsLoginPage() {
 
   return (
     <main className="relative min-h-screen">
-      {/* --- Fond image + overlays --- */}
+      {/* --- Fond image ancré à gauche sur mobile pour éviter le rognage de la fille --- */}
       <div
         aria-hidden
-        className="absolute inset-0 -z-20 bg-cover bg-center"
+        className="absolute inset-0 -z-20 bg-no-repeat bg-cover
+                   bg-[position:15%_center] md:bg-center"
         style={{ backgroundImage: "url(/parent.png)" }}
       />
       <div
@@ -133,7 +134,7 @@ export default function ParentsLoginPage() {
                   autoCapitalize="characters"
                   autoCorrect="off"
                   spellCheck={false}
-                  inputMode="text"   // ⬅️ correction: 'latin' -> 'text'
+                  inputMode="text"
                   required
                   autoFocus
                 />
