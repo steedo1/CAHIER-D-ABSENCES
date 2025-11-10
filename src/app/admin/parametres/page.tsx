@@ -163,25 +163,14 @@ export default function AdminSettingsPage() {
   const [msgMine, setMsgMine] = useState<string | null>(null);
 
   /* ----- Réinitialiser mot de passe d’un user ----- */
-  const [q, setQ] = useState("");
-
-  // ✅ nouveaux filtres
-  const ROLE_OPTIONS: { value: string; label: string }[] = [
-    { value: "ALL", label: "Tous les rôles" },
-    { value: "super_admin", label: "Super admin" },
-    { value: "admin", label: "Admin" },
-    { value: "educator", label: "Éducateur" },
-    { value: "teacher", label: "Enseignant" },
-    { value: "parent", label: "Parent" },
-  ];
-  const [roleFilter, setRoleFilter] = useState<string>("ALL");
-  const [limit, setLimit] = useState<number>(50);
-
   const [users, setUsers] = useState<Profile[]>([]);
   const [loadingUsers, setLoadingUsers] = useState(false);
   const [errUsers, setErrUsers] = useState<string | null>(null);
 
-  // Mode compact / détails dépliables
+  // Liste repliable
+  const [userListOpen, setUserListOpen] = useState(false);
+
+  // Mode compact / détails dépliables (reste utile une fois déroulé)
   const [compactUsers, setCompactUsers] = useState<boolean>(true);
   const [expandedUserIds, setExpandedUserIds] = useState<Set<string>>(new Set());
 
@@ -233,29 +222,15 @@ export default function AdminSettingsPage() {
     }
   }
 
-  /* ====== Chargement des utilisateurs (avec filtres) ====== */
+  /* ====== Chargement des utilisateurs (sur déroulé) ====== */
   async function loadUsers() {
     setErrUsers(null);
     setLoadingUsers(true);
     try {
-      const params = new URLSearchParams();
-      if (q.trim()) params.set("q", q.trim());
-      if (roleFilter !== "ALL") params.set("role", roleFilter);
-      if (limit) params.set("limit", String(limit));
-
-      const r = await fetch(`/api/admin/users?${params.toString()}`, { cache: "no-store" });
+      const r = await fetch(`/api/admin/users`, { cache: "no-store" });
       const j = await r.json();
-
-      let items: Profile[] = Array.isArray(j.items) ? j.items : [];
-      // ✅ sécurité : si l’API ignore ?role=…, on filtre côté client
-      if (roleFilter !== "ALL") {
-        items = items.filter((u) => (u.role || "").toLowerCase() === roleFilter.toLowerCase());
-      }
-      // ✅ limite côté client au cas où l’API ignore ?limit=…
-      if (limit > 0) items = items.slice(0, limit);
-
-      setUsers(items);
-      pushToast("info", `Utilisateurs chargés (${items.length})`);
+      setUsers(Array.isArray(j.items) ? j.items : []);
+      pushToast("info", `Utilisateurs chargés (${Array.isArray(j.items) ? j.items.length : 0})`);
     } catch (e: any) {
       const m = e?.message || "Impossible de charger les utilisateurs.";
       setErrUsers(m);
@@ -265,17 +240,13 @@ export default function AdminSettingsPage() {
     }
   }
 
+  // Charger la liste uniquement quand on déroule pour la première fois
   useEffect(() => {
-    // chargement initial
-    loadUsers();
+    if (userListOpen && users.length === 0 && !loadingUsers) {
+      loadUsers();
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // recharge automatique quand on change de rôle / limite
-  useEffect(() => {
-    loadUsers();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [roleFilter, limit]);
+  }, [userListOpen]);
 
   function toggleUserExpanded(id: string) {
     setExpandedUserIds(prev => {
@@ -384,10 +355,10 @@ export default function AdminSettingsPage() {
   const [genStart, setGenStart] = useState<string>("08:00");
   const [genEnd, setGenEnd] = useState<string>("17:00");
   const [genDuration, setGenDuration] = useState<number>(55);
-  const [genGap, setGenGap] = useState<number>(5);
+  const [genGap, setGenGap] = useState<number>(5); // pause entre séances
   const [genLabelBase, setGenLabelBase] = useState<string>("Séance");
   const [genPreview, setGenPreview] = useState<Period[]>([]);
-  const [genReplace, setGenReplace] = useState<boolean>(true);
+  const [genReplace, setGenReplace] = useState<boolean>(true); // remplacer ou ajouter
 
   function buildPreview(day: number) {
     const s = timeStrToMin(genStart);
@@ -417,7 +388,7 @@ export default function AdminSettingsPage() {
       });
       cur += step;
       i++;
-      if (i > 100) break;
+      if (i > 100) break; // garde-fou
     }
     setGenPreview(out);
     pushToast("info", `Prévisualisation: ${out.length} créneau(x).`);
@@ -633,104 +604,83 @@ export default function AdminSettingsPage() {
             2) Réinitialiser le mot de passe d'un user
         =========================================== */}
         <section className="rounded-2xl border bg-white p-5">
-          <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div className="mb-2 flex items-center justify-between">
             <div className="text-sm font-semibold uppercase tracking-wide text-slate-700">
               Réinitialiser le mot de passe d’un utilisateur
             </div>
+            <button
+              onClick={() => setUserListOpen(v => !v)}
+              className="rounded-lg border px-3 py-1.5 text-sm hover:bg-slate-50"
+            >
+              {userListOpen ? "Masquer la liste" : "Afficher la liste"}
+            </button>
+          </div>
 
-            {/* ✅ Barre de filtres */}
-            <div className="flex flex-wrap items-center gap-2">
-              <label className="inline-flex select-none items-center gap-2 rounded-lg border px-2 py-1 text-xs">
-                <input
-                  type="checkbox"
-                  checked={compactUsers}
-                  onChange={(e) => setCompactUsers(e.target.checked)}
-                />
-                Mode compact (replier les lignes)
-              </label>
+          {/* Contenu déroulant */}
+          {userListOpen && (
+            <>
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                <label className="inline-flex select-none items-center gap-2 rounded-lg border px-2 py-1 text-xs">
+                  <input
+                    type="checkbox"
+                    checked={compactUsers}
+                    onChange={(e) => setCompactUsers(e.target.checked)}
+                  />
+                  Mode compact (replier les lignes)
+                </label>
 
-              <select
-                className="rounded-lg border px-3 py-1.5 text-sm"
-                value={roleFilter}
-                onChange={(e) => setRoleFilter(e.target.value)}
-                title="Filtrer par rôle"
-              >
-                {ROLE_OPTIONS.map((o) => (
-                  <option key={o.value} value={o.value}>{o.label}</option>
-                ))}
-              </select>
-
-              <select
-                className="rounded-lg border px-3 py-1.5 text-sm"
-                value={String(limit)}
-                onChange={(e) => setLimit(parseInt(e.target.value || "50", 10))}
-                title="Limiter le nombre de résultats"
-              >
-                {[25, 50, 100, 200].map((n) => (
-                  <option key={n} value={n}>{n} résultats</option>
-                ))}
-              </select>
-
-              <div className="flex items-center gap-2">
-                <input
-                  placeholder="Recherche : nom, email, téléphone…"
-                  className="w-64 rounded-lg border px-3 py-1.5 text-sm"
-                  value={q}
-                  onChange={e => setQ(e.target.value)}
-                  onKeyDown={e => e.key === "Enter" && loadUsers()}
-                />
                 <button
                   onClick={loadUsers}
                   className="rounded-lg border px-3 py-1.5 text-sm hover:bg-slate-50"
                   disabled={loadingUsers}
-                  title="Rechercher"
+                  title="Rafraîchir la liste"
                 >
-                  {loadingUsers ? "Recherche…" : "Rechercher"}
+                  {loadingUsers ? "Chargement…" : "Rafraîchir"}
                 </button>
               </div>
-            </div>
-          </div>
 
-          {errUsers && (
-            <div className="mb-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
-              {errUsers}
-            </div>
-          )}
+              {errUsers && (
+                <div className="mb-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+                  {errUsers}
+                </div>
+              )}
 
-          {loadingUsers ? (
-            <div className="text-sm text-slate-500">Chargement des utilisateurs…</div>
-          ) : users.length === 0 ? (
-            <div className="text-sm text-slate-500">Aucun utilisateur trouvé.</div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="min-w-full text-sm">
-                <thead>
-                  <tr className="border-b bg-slate-50 text-slate-600">
-                    <th className="px-3 py-2 text-left">Utilisateur</th>
-                    {!compactUsers && <th className="px-3 py-2 text-left">Contact</th>}
-                    <th className="px-3 py-2 text-left">Rôle</th>
-                    <th className="px-3 py-2 text-right">Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {users.map(u => {
-                    const isOpen = expandedUserIds.has(u.id);
-                    return (
-                      <FragmentRow
-                        key={u.id}
-                        user={u}
-                        compact={compactUsers}
-                        expanded={isOpen}
-                        onToggle={() => toggleUserExpanded(u.id)}
-                        onResetTemp={() => resetTemp(u)}
-                        onOpenCustom={() => openCustom(u)}
-                        roleColor={roleColor}
-                      />
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+              {loadingUsers ? (
+                <div className="text-sm text-slate-500">Chargement des utilisateurs…</div>
+              ) : users.length === 0 ? (
+                <div className="text-sm text-slate-500">Aucun utilisateur trouvé.</div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="min-w-full text-sm">
+                    <thead>
+                      <tr className="border-b bg-slate-50 text-slate-600">
+                        <th className="px-3 py-2 text-left">Utilisateur</th>
+                        {!compactUsers && <th className="px-3 py-2 text-left">Contact</th>}
+                        <th className="px-3 py-2 text-left">Rôle</th>
+                        <th className="px-3 py-2 text-right">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {users.map(u => {
+                        const isOpen = expandedUserIds.has(u.id);
+                        return (
+                          <FragmentRow
+                            key={u.id}
+                            user={u}
+                            compact={compactUsers}
+                            expanded={isOpen}
+                            onToggle={() => toggleUserExpanded(u.id)}
+                            onResetTemp={() => resetTemp(u)}
+                            onOpenCustom={() => openCustom(u)}
+                            roleColor={roleColor}
+                          />
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </>
           )}
         </section>
 
@@ -926,11 +876,20 @@ export default function AdminSettingsPage() {
 
           {/* Onglets jours */}
           <div className="mb-2 flex flex-wrap gap-2">
-            {[{d:1,n:"Lun"},{d:2,n:"Mar"},{d:3,n:"Mer"},{d:4,n:"Jeu"},{d:5,n:"Ven"},{d:6,n:"Sam"}].map(w => (
+            {[
+              { d: 1, n: "Lun" },
+              { d: 2, n: "Mar" },
+              { d: 3, n: "Mer" },
+              { d: 4, n: "Jeu" },
+              { d: 5, n: "Ven" },
+              { d: 6, n: "Sam" },
+            ].map(w => (
               <button
                 key={w.d}
                 onClick={() => setCurDay(w.d)}
-                className={`rounded-lg border px-3 py-1.5 text-sm ${curDay === w.d ? "bg-slate-900 text-white" : "hover:bg-slate-50"}`}
+                className={`rounded-lg border px-3 py-1.5 text-sm ${
+                  curDay === w.d ? "bg-slate-900 text-white" : "hover:bg-slate-50"
+                }`}
               >
                 {w.n}
               </button>
