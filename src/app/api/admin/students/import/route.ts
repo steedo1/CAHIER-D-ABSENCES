@@ -1,6 +1,10 @@
+// src/app/api/admin/students/import/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 /* ───────── CSV utils ───────── */
 function stripAccents(s: string) {
@@ -12,39 +16,66 @@ function normHeader(s: string) {
 
 /** Détection du séparateur + guillemets */
 function parseCSV(raw: string) {
-  const firstNonEmpty = (raw.split(/\r?\n/).find(l => l.trim().length > 0) ?? "");
+  const firstNonEmpty = (raw.split(/\r?\n/).find((l) => l.trim().length > 0) ?? "");
   const sep =
     firstNonEmpty.includes("\t")
       ? "\t"
-      : (firstNonEmpty.split(";").length > firstNonEmpty.split(",").length ? ";" : ",");
+      : firstNonEmpty.split(";").length > firstNonEmpty.split(",").length
+      ? ";"
+      : ",";
 
   const rows: string[][] = [];
-  let i = 0, f = "", inQ = false, line: string[] = [];
+  let i = 0,
+    f = "",
+    inQ = false,
+    line: string[] = [];
   const s = raw.replace(/\r\n/g, "\n");
-  const pushField = () => { line.push(f); f = ""; };
-  const pushLine  = () => { rows.push(line); line = []; };
+  const pushField = () => {
+    line.push(f);
+    f = "";
+  };
+  const pushLine = () => {
+    rows.push(line);
+    line = [];
+  };
 
   while (i < s.length) {
     const c = s[i];
     if (c === '"') {
-      if (inQ && s[i + 1] === '"') { f += '"'; i += 2; continue; }
-      inQ = !inQ; i++; continue;
+      if (inQ && s[i + 1] === '"') {
+        f += '"';
+        i += 2;
+        continue;
+      }
+      inQ = !inQ;
+      i++;
+      continue;
     }
-    if (!inQ && c === sep) { pushField(); i++; continue; }
-    if (!inQ && c === "\n") { pushField(); pushLine(); i++; continue; }
-    f += c; i++;
+    if (!inQ && c === sep) {
+      pushField();
+      i++;
+      continue;
+    }
+    if (!inQ && c === "\n") {
+      pushField();
+      pushLine();
+      i++;
+      continue;
+    }
+    f += c;
+    i++;
   }
   pushField();
   if (line.length > 1 || (line[0] ?? "").trim() !== "") pushLine();
 
-  return rows.filter(r => r.some(c => String(c).trim() !== ""));
+  return rows.filter((r) => r.some((c) => String(c).trim() !== ""));
 }
 
 /** "NOM Prenoms" → { last_name, first_name } */
 function splitFullName(v: string) {
   const s = (v || "").replace(/\s+/g, " ").trim();
   if (!s) return { last_name: "", first_name: "" };
-  const comma = s.split(",").map(x => x.trim());
+  const comma = s.split(",").map((x) => x.trim());
   if (comma.length >= 2) return { last_name: comma[0], first_name: comma.slice(1).join(" ") };
   const parts = s.split(" ");
   return { last_name: parts[0] || "", first_name: parts.slice(1).join(" ") || "" };
@@ -56,46 +87,53 @@ function parseCsvStudentsFlexible(raw: string) {
   if (!rows.length) return [];
 
   const Hraw = rows[0];
-  const H = Hraw.map(normHeader).map(h => h.replace(/[._-]/g, " ").replace(/\s+/g, " ").trim());
+  const H = Hraw.map(normHeader).map((h) => h.replace(/[._-]/g, " ").replace(/\s+/g, " ").trim());
   const hCompact = (h: string) => h.replace(/[ .]/g, "");
 
   const idx = {
-    numero:   H.findIndex(h => /^(n°|nº|no|numero|num|#)$/i.test(hCompact(h))),
-    matric:   H.findIndex(h => /^(matricule|matr|code|id|identifiant|matric)$/i.test(hCompact(h))),
-    nom:      H.findIndex(h => /^(nom|last|surname)$/i.test(hCompact(h))),
-    prenom:   H.findIndex(h => /^(prenom|prenoms|first|given)$/i.test(hCompact(h))),
-    fullname: H.findIndex(h => /^(nomcomplet|nom et prenoms?|fullname|name|nomprenom?s?)$/i.test(hCompact(h))),
+    numero: H.findIndex((h) => /^(n°|nº|no|numero|num|#)$/i.test(hCompact(h))),
+    matric: H.findIndex((h) => /^(matricule|matr|code|id|identifiant|matric)$/i.test(hCompact(h))),
+    nom: H.findIndex((h) => /^(nom|last|surname)$/i.test(hCompact(h))),
+    prenom: H.findIndex((h) => /^(prenom|prenoms|first|given)$/i.test(hCompact(h))),
+    fullname: H.findIndex((h) =>
+      /^(nomcomplet|nom et prenoms?|fullname|name|nomprenom?s?)$/i.test(hCompact(h)),
+    ),
   };
 
   const body = rows.slice(1).map((cols, i) => {
     const cell = (k: number) => (k >= 0 ? String(cols[k] ?? "").trim() : "");
 
-    let last_name = "", first_name = "";
+    let last_name = "",
+      first_name = "";
     if (idx.nom >= 0 && idx.prenom >= 0) {
       last_name = cell(idx.nom);
       first_name = cell(idx.prenom);
     } else if (idx.fullname >= 0) {
       const s = splitFullName(cell(idx.fullname));
-      last_name = s.last_name; first_name = s.first_name;
+      last_name = s.last_name;
+      first_name = s.first_name;
     }
 
     return {
       _row: i,
-      numero:    cell(idx.numero),
+      numero: cell(idx.numero),
       matricule: cell(idx.matric) || null,
-      last_name, first_name,
+      last_name,
+      first_name,
     };
   });
 
-  return body.filter(r => (r.last_name || r.first_name || r.matricule));
+  return body.filter((r) => r.last_name || r.first_name || r.matricule);
 }
 
 /* ───────── Route ───────── */
 export async function POST(req: NextRequest) {
   const supa = await getSupabaseServerClient();
-  const srv  = getSupabaseServiceClient();
+  const srv = getSupabaseServiceClient();
 
-  const { data: { user } } = await supa.auth.getUser();
+  const {
+    data: { user },
+  } = await supa.auth.getUser();
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
 
   const { data: me } = await supa
@@ -107,14 +145,14 @@ export async function POST(req: NextRequest) {
   const inst = (me?.institution_id ?? null) as string | null;
 
   const body = await req.json().catch(() => ({}));
-  const action   = String(body?.action || "");
-  const csv      = String(body?.csv || "");
+  const action = String(body?.action || "");
+  const csv = String(body?.csv || "");
   const class_id = String(body?.class_id || "");
 
   const parsed = parseCsvStudentsFlexible(csv);
 
   if (action === "preview") {
-    const preview = parsed.slice(0, 500).map(r => ({
+    const preview = parsed.slice(0, 500).map((r) => ({
       numero: r.numero || null,
       matricule: r.matricule || null,
       last_name: r.last_name || "",
@@ -129,7 +167,7 @@ export async function POST(req: NextRequest) {
   }
 
   /* ── commit ── */
-  if (!inst)     return NextResponse.json({ error: "no_institution" }, { status: 400 });
+  if (!inst) return NextResponse.json({ error: "no_institution" }, { status: 400 });
   if (!class_id) return NextResponse.json({ error: "class_id_required" }, { status: 400 });
 
   // Classe dans mon établissement ?
@@ -144,10 +182,15 @@ export async function POST(req: NextRequest) {
   }
 
   // 1) Matricules (distincts, non vides)
-  const wantedMatr = Array.from(new Set(parsed.map(r => (r.matricule ?? "").trim()).filter(Boolean)));
+  const wantedMatr = Array.from(
+    new Set(parsed.map((r) => (r.matricule ?? "").trim()).filter(Boolean)),
+  );
 
   // 2) Élèves existants par matricule
-  let existingByMat: Record<string, { id: string; first_name: string | null; last_name: string | null }> = {};
+  let existingByMat: Record<
+    string,
+    { id: string; first_name: string | null; last_name: string | null }
+  > = {};
   if (wantedMatr.length) {
     const { data: existing, error: exErr } = await srv
       .from("students")
@@ -156,23 +199,23 @@ export async function POST(req: NextRequest) {
       .in("matricule", wantedMatr);
     if (exErr) return NextResponse.json({ error: exErr.message }, { status: 400 });
 
-    for (const s of (existing ?? [])) {
+    for (const s of existing ?? []) {
       existingByMat[(s as any).matricule] = {
         id: (s as any).id,
         first_name: (s as any).first_name,
-        last_name:  (s as any).last_name
+        last_name: (s as any).last_name,
       };
     }
   }
 
   // 3) Créer les élèves manquants
   const toInsert = parsed
-    .filter(r => (r.matricule ?? "").trim() && !existingByMat[(r.matricule as string)])
-    .map(r => ({
+    .filter((r) => (r.matricule ?? "").trim() && !existingByMat[r.matricule as string])
+    .map((r) => ({
       institution_id: inst,
       first_name: r.first_name || null,
-      last_name:  r.last_name  || null,
-      matricule:  r.matricule!.trim(),
+      last_name: r.last_name || null,
+      matricule: r.matricule!.trim(),
     }));
 
   let createdCount = 0;
@@ -184,22 +227,26 @@ export async function POST(req: NextRequest) {
     if (e1) return NextResponse.json({ error: e1.message }, { status: 400 });
 
     createdCount = (createdRows ?? []).length;
-    for (const s of (createdRows ?? [])) {
-      existingByMat[(s as any).matricule] = { id: (s as any).id, first_name: null, last_name: null };
+    for (const s of createdRows ?? []) {
+      existingByMat[(s as any).matricule] = {
+        id: (s as any).id,
+        first_name: null,
+        last_name: null,
+      };
     }
   }
 
   // 4) Mettre à jour nom/prénom des existants si différents
   const toUpdate = parsed
-    .filter(r => (r.matricule ?? "").trim() && existingByMat[r.matricule as string])
-    .map(r => {
+    .filter((r) => (r.matricule ?? "").trim() && existingByMat[r.matricule as string])
+    .map((r) => {
       const cur = existingByMat[r.matricule as string];
       const patch: any = {};
       if (r.first_name && r.first_name !== (cur.first_name ?? "")) patch.first_name = r.first_name;
-      if (r.last_name  && r.last_name  !== (cur.last_name  ?? "")) patch.last_name  = r.last_name;
+      if (r.last_name && r.last_name !== (cur.last_name ?? "")) patch.last_name = r.last_name;
       return { id: cur.id, patch };
     })
-    .filter(x => Object.keys(x.patch).length > 0);
+    .filter((x) => Object.keys(x.patch).length > 0);
 
   let updatedNames = 0;
   for (const u of toUpdate) {
@@ -208,11 +255,15 @@ export async function POST(req: NextRequest) {
     updatedNames++;
   }
 
-  // 5) IDs de tous les élèves importés
-  const allStudentIds: string[] = parsed
-    .map(r => r.matricule)
-    .filter((m): m is string => !!m && !!existingByMat[m])
-    .map(m => existingByMat[m].id);
+  // 5) IDs de tous les élèves importés (dédupliqués)
+  const allStudentIds: string[] = Array.from(
+    new Set(
+      parsed
+        .map((r) => r.matricule)
+        .filter((m): m is string => !!m && !!existingByMat[m])
+        .map((m) => existingByMat[m].id),
+    ),
+  );
 
   if (!allStudentIds.length) {
     return NextResponse.json({
@@ -220,7 +271,7 @@ export async function POST(req: NextRequest) {
       updated_names: updatedNames,
       closed_old_enrollments: 0,
       reactivated_in_target: 0,
-      inserted_in_target: 0
+      inserted_in_target: 0,
     });
   }
 
@@ -247,7 +298,11 @@ export async function POST(req: NextRequest) {
   {
     const { data, error } = await srv
       .from("class_enrollments")
-      .update({ end_date: null })
+      .update({
+        end_date: null,
+        // 👉 Si tu souhaites dater le "retour" à aujourd’hui, décommente :
+        // start_date: today,
+      })
       .in("student_id", allStudentIds)
       .eq("class_id", class_id)
       .eq("institution_id", inst)
@@ -260,7 +315,7 @@ export async function POST(req: NextRequest) {
   //    NB: on met start_date = today à la création; si la ligne existait, on ne la remplace pas.
   let insertedTarget = 0;
   {
-    const enrollRows = allStudentIds.map(sid => ({
+    const enrollRows = allStudentIds.map((sid) => ({
       class_id,
       student_id: sid,
       institution_id: inst,
@@ -270,6 +325,8 @@ export async function POST(req: NextRequest) {
 
     const { data, error } = await srv
       .from("class_enrollments")
+      // IMPORTANT : on s’appuie sur la contrainte UNIQUE (class_id, student_id).
+      // ignoreDuplicates évite d’écraser la réactivation de l’étape 7.
       .upsert(enrollRows, { onConflict: "class_id,student_id", ignoreDuplicates: true })
       .select("id");
     if (error) return NextResponse.json({ error: error.message }, { status: 400 });
@@ -278,8 +335,14 @@ export async function POST(req: NextRequest) {
 
   // (Optionnel) logs utiles côté serveur
   try {
-    console.log("[students/import] commit",
-      { class_id, createdCount, updatedNames, closedOld, reactivated, insertedTarget });
+    console.log("[students/import] commit", {
+      class_id,
+      createdCount,
+      updatedNames,
+      closedOld,
+      reactivated,
+      insertedTarget,
+    });
   } catch {}
 
   return NextResponse.json({
@@ -287,6 +350,6 @@ export async function POST(req: NextRequest) {
     updated_names: updatedNames,
     closed_old_enrollments: closedOld,
     reactivated_in_target: reactivated,
-    inserted_in_target: insertedTarget
+    inserted_in_target: insertedTarget,
   });
 }

@@ -8,7 +8,9 @@ export const dynamic = "force-dynamic";
 export async function GET(_req: NextRequest) {
   const supa = await getSupabaseServerClient();
 
-  const { data: { user } } = await supa.auth.getUser();
+  const {
+    data: { user },
+  } = await supa.auth.getUser();
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
 
   const { data: me, error: meErr } = await supa
@@ -18,7 +20,7 @@ export async function GET(_req: NextRequest) {
     .maybeSingle();
   if (meErr) return NextResponse.json({ error: meErr.message }, { status: 400 });
 
-  const inst = me?.institution_id as string | null;
+  const inst = (me?.institution_id ?? null) as string | null;
   if (!inst) return NextResponse.json({ items: [] });
 
   const { data, error } = await supa
@@ -31,20 +33,35 @@ export async function GET(_req: NextRequest) {
     `)
     .eq("institution_id", inst)
     .is("end_date", null);
+
   if (error) return NextResponse.json({ error: error.message }, { status: 400 });
 
-  const items = (data ?? []).map((row: any) => {
-    const s = row.students ?? {};
-    const c = row.classes ?? {};
+  // ⚖️ Dédoublonnage défensif (au cas où)
+  const seen = new Set<string>(); // student_id
+  const items: Array<{
+    id: string;
+    full_name: string;
+    matricule: string | null;
+    class_id: string;
+    class_label: string | null;
+  }> = [];
+
+  for (const row of data ?? []) {
+    const s = (row as any).students ?? {};
+    const c = (row as any).classes ?? {};
+    const sid = s.id as string | undefined;
+    if (!sid || seen.has(sid)) continue;
+    seen.add(sid);
+
     const full = `${s.first_name ?? ""} ${s.last_name ?? ""}`.trim() || "—";
-    return {
-      id: s.id as string,
+    items.push({
+      id: sid,
       full_name: full,
-      matricule: (s.matricule ?? null) as string | null,   // ✅ renvoyé maintenant
-      class_id: row.class_id as string,
+      matricule: (s.matricule ?? null) as string | null,
+      class_id: (row as any).class_id as string,
       class_label: (c.label ?? null) as string | null,
-    };
-  });
+    });
+  }
 
   return NextResponse.json({ items });
 }
