@@ -229,7 +229,7 @@ export default function AdminStatistiquesPage() {
   }, [summary.data]);
   const disciplineHeader = subjectId === "ALL" ? "Discipline(s)" : "Discipline (filtrée)";
 
-  /* Charger disciplines */
+  /* Charger disciplines (globale, réutilisée aussi par le timesheet) */
   useEffect(() => {
     (async () => {
       try {
@@ -242,7 +242,7 @@ export default function AdminStatistiquesPage() {
     })();
   }, []);
 
-  /* Charger enseignants (selon filtre discipline) */
+  /* Charger enseignants (selon filtre discipline) — vue Tableau */
   useEffect(() => {
     (async () => {
       setLoadingTeachers(true);
@@ -340,6 +340,7 @@ export default function AdminStatistiquesPage() {
   }
 
   /* ====== Timesheet (emploi du temps d’appel) ====== */
+  const [tsSubjectId, setTsSubjectId] = useState<string>(""); // ✅ filtre discipline (vide = toutes)
   const [tsTeacherId, setTsTeacherId] = useState<string>("");
   const [tsTeachers, setTsTeachers] = useState<{ id: string; label: string }[]>([]);
   const [slot, setSlot] = useState<number>(60);
@@ -362,24 +363,30 @@ export default function AdminStatistiquesPage() {
   // ✅ Jours scolaires uniquement
   const [onlyWeekdays, setOnlyWeekdays] = useState<boolean>(false);
 
-  /* Charger liste enseignants pour le timesheet */
+  /* Charger liste enseignants pour le timesheet — avec filtre discipline optionnel */
   useEffect(() => {
     if (view !== "timesheet") return;
     (async () => {
       try {
-        const res = await fetch(`/api/admin/teachers/by-subject`, { cache: "no-store" });
+        const url = tsSubjectId
+          ? `/api/admin/teachers/by-subject?subject_id=${encodeURIComponent(tsSubjectId)}`
+          : `/api/admin/teachers/by-subject`;
+        const res = await fetch(url, { cache: "no-store" });
         const j = await res.json();
         const items: Teacher[] = (j?.items || []) as Teacher[];
         const opts = items.map((t) => ({ id: String(t.id), label: teacherLabel(t) }));
         setTsTeachers(opts);
-        if (!tsTeacherId && opts[0]) setTsTeacherId(opts[0].id);
+        // Conserver la sélection si possible, sinon prendre le premier
+        if (!opts.find(o => o.id === tsTeacherId)) {
+          setTsTeacherId(opts[0]?.id || "");
+        }
       } catch {
         setTsTeachers([]);
         setTsTeacherId("");
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [view]);
+  }, [view, tsSubjectId]);
 
   async function loadTimesheet() {
     if (view !== "timesheet") return;
@@ -508,6 +515,18 @@ export default function AdminStatistiquesPage() {
           </>
         ) : (
           <>
+            {/* ✅ Filtre Discipline (optionnel) pour le timesheet */}
+            <div className="space-y-1">
+              <label className="text-sm font-medium">Discipline</label>
+              <Select value={tsSubjectId} onChange={e => setTsSubjectId(e.target.value)}>
+                <option value="">Toutes les disciplines</option>
+                {subjects
+                  .filter(s => s.id !== "ALL")
+                  .map(s => <option key={s.id} value={s.id}>{s.name}</option>)
+                }
+              </Select>
+            </div>
+
             <div className="space-y-1">
               <label className="text-sm font-medium">Enseignant</label>
               <Select value={tsTeacherId} onChange={e => setTsTeacherId(e.target.value)}>

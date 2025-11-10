@@ -164,6 +164,19 @@ export default function AdminSettingsPage() {
 
   /* ----- Réinitialiser mot de passe d’un user ----- */
   const [q, setQ] = useState("");
+
+  // ✅ nouveaux filtres
+  const ROLE_OPTIONS: { value: string; label: string }[] = [
+    { value: "ALL", label: "Tous les rôles" },
+    { value: "super_admin", label: "Super admin" },
+    { value: "admin", label: "Admin" },
+    { value: "educator", label: "Éducateur" },
+    { value: "teacher", label: "Enseignant" },
+    { value: "parent", label: "Parent" },
+  ];
+  const [roleFilter, setRoleFilter] = useState<string>("ALL");
+  const [limit, setLimit] = useState<number>(50);
+
   const [users, setUsers] = useState<Profile[]>([]);
   const [loadingUsers, setLoadingUsers] = useState(false);
   const [errUsers, setErrUsers] = useState<string | null>(null);
@@ -220,15 +233,29 @@ export default function AdminSettingsPage() {
     }
   }
 
-  /* ====== Chargement des utilisateurs ====== */
+  /* ====== Chargement des utilisateurs (avec filtres) ====== */
   async function loadUsers() {
     setErrUsers(null);
     setLoadingUsers(true);
     try {
-      const r = await fetch(`/api/admin/users?q=${encodeURIComponent(q)}`, { cache: "no-store" });
+      const params = new URLSearchParams();
+      if (q.trim()) params.set("q", q.trim());
+      if (roleFilter !== "ALL") params.set("role", roleFilter);
+      if (limit) params.set("limit", String(limit));
+
+      const r = await fetch(`/api/admin/users?${params.toString()}`, { cache: "no-store" });
       const j = await r.json();
-      setUsers(Array.isArray(j.items) ? j.items : []);
-      pushToast("info", `Utilisateurs chargés (${Array.isArray(j.items) ? j.items.length : 0})`);
+
+      let items: Profile[] = Array.isArray(j.items) ? j.items : [];
+      // ✅ sécurité : si l’API ignore ?role=…, on filtre côté client
+      if (roleFilter !== "ALL") {
+        items = items.filter((u) => (u.role || "").toLowerCase() === roleFilter.toLowerCase());
+      }
+      // ✅ limite côté client au cas où l’API ignore ?limit=…
+      if (limit > 0) items = items.slice(0, limit);
+
+      setUsers(items);
+      pushToast("info", `Utilisateurs chargés (${items.length})`);
     } catch (e: any) {
       const m = e?.message || "Impossible de charger les utilisateurs.";
       setErrUsers(m);
@@ -237,11 +264,18 @@ export default function AdminSettingsPage() {
       setLoadingUsers(false);
     }
   }
+
   useEffect(() => {
     // chargement initial
     loadUsers();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // recharge automatique quand on change de rôle / limite
+  useEffect(() => {
+    loadUsers();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [roleFilter, limit]);
 
   function toggleUserExpanded(id: string) {
     setExpandedUserIds(prev => {
@@ -350,10 +384,10 @@ export default function AdminSettingsPage() {
   const [genStart, setGenStart] = useState<string>("08:00");
   const [genEnd, setGenEnd] = useState<string>("17:00");
   const [genDuration, setGenDuration] = useState<number>(55);
-  const [genGap, setGenGap] = useState<number>(5); // pause entre séances
+  const [genGap, setGenGap] = useState<number>(5);
   const [genLabelBase, setGenLabelBase] = useState<string>("Séance");
   const [genPreview, setGenPreview] = useState<Period[]>([]);
-  const [genReplace, setGenReplace] = useState<boolean>(true); // remplacer ou ajouter
+  const [genReplace, setGenReplace] = useState<boolean>(true);
 
   function buildPreview(day: number) {
     const s = timeStrToMin(genStart);
@@ -383,7 +417,7 @@ export default function AdminSettingsPage() {
       });
       cur += step;
       i++;
-      if (i > 100) break; // garde-fou
+      if (i > 100) break;
     }
     setGenPreview(out);
     pushToast("info", `Prévisualisation: ${out.length} créneau(x).`);
@@ -603,6 +637,8 @@ export default function AdminSettingsPage() {
             <div className="text-sm font-semibold uppercase tracking-wide text-slate-700">
               Réinitialiser le mot de passe d’un utilisateur
             </div>
+
+            {/* ✅ Barre de filtres */}
             <div className="flex flex-wrap items-center gap-2">
               <label className="inline-flex select-none items-center gap-2 rounded-lg border px-2 py-1 text-xs">
                 <input
@@ -612,6 +648,29 @@ export default function AdminSettingsPage() {
                 />
                 Mode compact (replier les lignes)
               </label>
+
+              <select
+                className="rounded-lg border px-3 py-1.5 text-sm"
+                value={roleFilter}
+                onChange={(e) => setRoleFilter(e.target.value)}
+                title="Filtrer par rôle"
+              >
+                {ROLE_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </select>
+
+              <select
+                className="rounded-lg border px-3 py-1.5 text-sm"
+                value={String(limit)}
+                onChange={(e) => setLimit(parseInt(e.target.value || "50", 10))}
+                title="Limiter le nombre de résultats"
+              >
+                {[25, 50, 100, 200].map((n) => (
+                  <option key={n} value={n}>{n} résultats</option>
+                ))}
+              </select>
+
               <div className="flex items-center gap-2">
                 <input
                   placeholder="Recherche : nom, email, téléphone…"
@@ -867,20 +926,11 @@ export default function AdminSettingsPage() {
 
           {/* Onglets jours */}
           <div className="mb-2 flex flex-wrap gap-2">
-            {[
-              { d: 1, n: "Lun" },
-              { d: 2, n: "Mar" },
-              { d: 3, n: "Mer" },
-              { d: 4, n: "Jeu" },
-              { d: 5, n: "Ven" },
-              { d: 6, n: "Sam" },
-            ].map(w => (
+            {[{d:1,n:"Lun"},{d:2,n:"Mar"},{d:3,n:"Mer"},{d:4,n:"Jeu"},{d:5,n:"Ven"},{d:6,n:"Sam"}].map(w => (
               <button
                 key={w.d}
                 onClick={() => setCurDay(w.d)}
-                className={`rounded-lg border px-3 py-1.5 text-sm ${
-                  curDay === w.d ? "bg-slate-900 text-white" : "hover:bg-slate-50"
-                }`}
+                className={`rounded-lg border px-3 py-1.5 text-sm ${curDay === w.d ? "bg-slate-900 text-white" : "hover:bg-slate-50"}`}
               >
                 {w.n}
               </button>
