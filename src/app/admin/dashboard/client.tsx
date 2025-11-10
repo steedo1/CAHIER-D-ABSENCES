@@ -1,4 +1,4 @@
-// src/app/admin/dashboard/AdminDashboardClient.tsx
+// src/app/admin/dashboard/client.tsx
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
@@ -27,8 +27,15 @@ import { Separator } from "@/components/ui/separator";
 ───────────────────────────── */
 type MetricsOk = {
   ok: true;
-  counts: { classes: number; teachers: number; parents: number; students: number };
+  counts: {
+    classes: number;
+    teachers: number;
+    parents: number;
+    students: number;          // élèves ACTIFS si l'API a été mise à jour
+    students_total?: number;   // total profils (facultatif pour compat descendante)
+  };
   kpis: { absences: number; retards: number };
+  meta?: { days?: number };    // facultatif (7/30/90)
 };
 
 type MetricsErr = { ok: false; error: string };
@@ -72,12 +79,14 @@ function StatCard({
   Icon,
   accent = "emerald",
   loading,
+  sub,
 }: {
   label: string;
   value: number;
   Icon: any;
   accent?: "emerald" | "teal" | "sky" | "violet" | "amber";
   loading?: boolean;
+  sub?: string;
 }) {
   const ring = useMemo(() => {
     switch (accent) {
@@ -103,6 +112,7 @@ function StatCard({
             <div className="text-3xl font-semibold tracking-tight">
               {loading ? <Skeleton className="h-8 w-16" /> : <CountUp value={value} />}
             </div>
+            {sub && <div className="text-xs text-slate-500">{sub}</div>}
           </div>
           <div className="rounded-xl bg-gradient-to-br from-white to-slate-50 p-3 ring-1 ring-slate-200">
             <Icon className="h-6 w-6 text-slate-600" />
@@ -118,12 +128,14 @@ function KpiCard({
   value,
   hint,
   tone = "red",
+  periodLabel = "30 derniers jours",
   loading,
 }: {
   title: string;
   value: number;
   hint?: string;
   tone?: "red" | "amber" | "emerald";
+  periodLabel?: string;
   loading?: boolean;
 }) {
   const tones = {
@@ -158,7 +170,7 @@ function KpiCard({
         <CardTitle className="flex items-center gap-2 text-sm text-slate-600">
           <span className={`inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs ${t.chip}`}>
             {t.icon}
-            30 derniers jours
+            {periodLabel}
           </span>
           <span className="sr-only">{hint}</span>
         </CardTitle>
@@ -240,7 +252,7 @@ export default function AdminDashboardClient() {
   const [updatedAt, setUpdatedAt] = useState<Date | null>(null);
 
   const nfmt = useMemo(() => new Intl.NumberFormat(), []);
-  void nfmt; // (dispo si tu veux formatter autre chose)
+  void nfmt;
 
   async function load(d: DaysRange = days) {
     try {
@@ -281,10 +293,15 @@ export default function AdminDashboardClient() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const isOk = data && "ok" in data && data.ok;
-  const counts = isOk ? (data as MetricsOk).counts : { classes: 0, teachers: 0, parents: 0, students: 0 };
+  const isOk = !!data && "ok" in data && (data as any).ok;
+  const counts = isOk
+    ? (data as MetricsOk).counts
+    : { classes: 0, teachers: 0, parents: 0, students: 0, students_total: 0 };
+
   const absences = isOk ? (data as MetricsOk).kpis?.absences ?? 0 : 0;
   const retards = isOk ? (data as MetricsOk).kpis?.retards ?? 0 : 0;
+
+  const periodLabel = `${(isOk && (data as MetricsOk).meta?.days) || days} derniers jours`;
 
   return (
     <div className="space-y-6">
@@ -326,7 +343,7 @@ export default function AdminDashboardClient() {
           </div>
         </div>
 
-        {/* État d'erreur affiché sous le header si présent */}
+        {/* État d'erreur */}
         {!loading && data && "ok" in data && !data.ok && (
           <div className="relative z-10 mt-4 rounded-xl border border-red-300/60 bg-red-50/80 px-4 py-3 text-sm text-red-800">
             {(data as MetricsErr).error === "UNAUTHENTICATED"
@@ -343,7 +360,18 @@ export default function AdminDashboardClient() {
         <StatCard label="Classes" value={counts.classes} Icon={School} accent="emerald" loading={loading} />
         <StatCard label="Enseignants" value={counts.teachers} Icon={Users} accent="teal" loading={loading} />
         <StatCard label="Parents" value={counts.parents} Icon={UserRoundCheck} accent="sky" loading={loading} />
-        <StatCard label="Élèves" value={counts.students} Icon={GraduationCap} accent="violet" loading={loading} />
+        <StatCard
+          label="Élèves"
+          value={counts.students}
+          sub={
+            counts.students_total !== undefined && counts.students_total !== counts.students
+              ? `Total : ${counts.students_total}`
+              : undefined
+          }
+          Icon={GraduationCap}
+          accent="violet"
+          loading={loading}
+        />
       </section>
 
       {/* KPIs + Raccourcis */}
@@ -353,6 +381,7 @@ export default function AdminDashboardClient() {
           value={absences}
           hint="Total des absences enregistrées sur la période"
           tone="red"
+          periodLabel={periodLabel}
           loading={loading}
         />
         <KpiCard
@@ -360,6 +389,7 @@ export default function AdminDashboardClient() {
           value={retards}
           hint="Total des retards enregistrés sur la période"
           tone="amber"
+          periodLabel={periodLabel}
           loading={loading}
         />
         <Card className="rounded-2xl border-emerald-200 bg-emerald-50/50 shadow-sm">
@@ -391,7 +421,7 @@ export default function AdminDashboardClient() {
         </Card>
       </section>
 
-      {/* Petit bandeau info / onboarding */}
+      {/* Bandeau onboarding */}
       {!loading && isOk && counts.classes === 0 && (
         <Card className="rounded-2xl border-amber-200 bg-amber-50/60 shadow-sm">
           <CardContent className="flex flex-col items-start gap-4 p-5 sm:flex-row sm:items-center sm:justify-between">
