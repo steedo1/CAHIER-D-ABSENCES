@@ -1,4 +1,4 @@
-// src/app/admin/parents/page.tsx
+// src/app/admin/students-by-class/page.tsx (ex: AdminStudentsByClassPage)
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
@@ -66,12 +66,31 @@ function Skeleton({ className = "" }: { className?: string }) {
 type ClassRow = { id: string; name: string; level: string; label?: string | null };
 type StudentRow = {
   id: string;
-  full_name: string;
+  full_name: string;          // supposé "Prénom(s) Nom" depuis l'API
   class_id: string | null;
   class_label: string | null;
   matricule?: string | null;
-  level?: string | null; // parfois absent => on le déduit de classes[]
+  level?: string | null;      // parfois absent => on le déduit de classes[]
 };
+
+/* ───────── Helpers Noms ───────── */
+/** Transforme "Prénoms Nom" → "Nom Prénoms" pour affichage, tri, export. */
+function nomAvantPrenoms(full: string): string {
+  const t = (full || "").trim().replace(/\s+/g, " ");
+  if (!t) return "—";
+  const parts = t.split(" ");
+  if (parts.length === 1) return parts[0];
+  const last = parts[parts.length - 1];
+  const firsts = parts.slice(0, -1).join(" ");
+  return `${last} ${firsts}`;
+}
+/** Normalise une chaîne pour comparaisons/recherches insensibles aux accents/casse. */
+function norm(s: string) {
+  return (s || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+}
 
 /* ───────── Page Component ───────── */
 export default function AdminStudentsByClassPage() {
@@ -151,7 +170,7 @@ export default function AdminStudentsByClassPage() {
     [classes, level]
   );
 
-  // Filtrage + tri alphabétique
+  // Filtrage + tri alphabétique (par NOM d'abord)
   const studentsFiltered = useMemo(() => {
     let list = students;
     if (level) {
@@ -160,17 +179,25 @@ export default function AdminStudentsByClassPage() {
       );
     }
     if (classId) list = list.filter((s) => s.class_id === classId);
+
     if (q.trim()) {
-      const k = q.trim().toLowerCase();
-      list = list.filter(
-        (s) =>
-          s.full_name.toLowerCase().includes(k) ||
-          (s.matricule ?? "").toLowerCase().includes(k)
-      );
+      const k = norm(q.trim());
+      list = list.filter((s) => {
+        const full = s.full_name || "";
+        const display = nomAvantPrenoms(full);
+        return (
+          norm(full).includes(k) ||
+          norm(display).includes(k) ||
+          norm(s.matricule ?? "").includes(k)
+        );
+      });
     }
-    // Tri alphabétique naturel
+
+    // Tri par "Nom Prénoms"
     return [...list].sort((a, b) =>
-      a.full_name.localeCompare(b.full_name, undefined, { sensitivity: "base" })
+      nomAvantPrenoms(a.full_name).localeCompare(nomAvantPrenoms(b.full_name), undefined, {
+        sensitivity: "base",
+      })
     );
   }, [students, classId, level, q, classLevelById]);
 
@@ -187,7 +214,7 @@ export default function AdminStudentsByClassPage() {
     setPage(1);
   }, [level, classId, q, pageSize]);
 
-  // Open modal with split names
+  // Open modal with split names (on suppose full_name = "Prénoms Nom")
   function openEdit(s: StudentRow) {
     const parts = (s.full_name || "").trim().split(/\s+/);
     const first_name = parts[0] ?? "";
@@ -221,15 +248,15 @@ export default function AdminStudentsByClassPage() {
       }
       if (!res.ok) throw new Error(j?.error || "SAVE_FAILED");
 
-      // rafraîchir local
+      // ⚠️ On laisse full_name en "Prénoms Nom" côté état local,
+      // car l'affichage/tri utilise nomAvantPrenoms(full_name).
       setStudents((prev) =>
         prev.map((s) =>
           s.id === editing.id
             ? {
                 ...s,
                 full_name:
-                  [editing.first_name, editing.last_name].filter(Boolean).join(" ") ||
-                  s.full_name,
+                  [editing.first_name, editing.last_name].filter(Boolean).join(" ") || s.full_name,
                 matricule: editing.matricule || null,
               }
             : s
@@ -247,7 +274,7 @@ export default function AdminStudentsByClassPage() {
   /* ───────── Retirer un élève de la classe (clôture inscription) ───────── */
   async function removeFromClass(s: StudentRow) {
     if (!s.class_id) return;
-    if (!confirm(`Retirer ${s.full_name} de la classe ${s.class_label ?? ""} ?`)) return;
+    if (!confirm(`Retirer ${nomAvantPrenoms(s.full_name)} de la classe ${s.class_label ?? ""} ?`)) return;
     setRemovingId(s.id);
     setMsg(null);
     try {
@@ -282,7 +309,6 @@ export default function AdminStudentsByClassPage() {
   const asExcelText = (val: string) => `="${val.replace(/"/g, '""')}"`;
 
   function toCsvCell(v: string, sep: string) {
-    // ici v est déjà prêt (on ne re-quote pas si on a utilisé asExcelText)
     if (v.includes('"') || v.includes("\n") || v.includes(sep)) {
       return `"${v.replace(/"/g, '""')}"`;
     }
@@ -290,7 +316,7 @@ export default function AdminStudentsByClassPage() {
   }
 
   function exportCsv(currentPageOnly: boolean) {
-    const sep = ","; // on garde la virgule, on forcera Excel avec "sep="
+    const sep = ",";
     const EOL = "\r\n";
     const rows = currentPageOnly ? pageItems : studentsFiltered;
     const baseIndex = currentPageOnly ? startIdx : 0;
@@ -302,7 +328,7 @@ export default function AdminStudentsByClassPage() {
 
     rows.forEach((r, i) => {
       const numero = String(baseIndex + i + 1);
-      const nomComplet = r.full_name || "";
+      const nomComplet = nomAvantPrenoms(r.full_name || "");
       const matricule = r.matricule ? asExcelText(r.matricule) : "";
       const classe = r.class_label ? asExcelText(r.class_label) : "";
 
@@ -310,8 +336,8 @@ export default function AdminStudentsByClassPage() {
         [
           toCsvCell(numero, sep),
           toCsvCell(nomComplet, sep),
-          matricule, // déjà préparé pour Excel
-          classe, // idem
+          matricule,
+          classe,
         ].join(sep)
       );
     });
@@ -402,7 +428,7 @@ export default function AdminStudentsByClassPage() {
           </div>
           <div className="md:col-span-2">
             <div className="mb-1 text-xs text-slate-600">Recherche (nom ou matricule)</div>
-            <Input placeholder="Ex : KOFFI / 20166309J" value={q} onChange={(e) => setQ(e.target.value)} />
+            <Input placeholder="Ex : KOUASSI / 20166309J" value={q} onChange={(e) => setQ(e.target.value)} />
           </div>
         </div>
       </section>
@@ -458,7 +484,7 @@ export default function AdminStudentsByClassPage() {
                   return (
                     <tr key={s.id} className={`border-t ${zebra} hover:bg-slate-100`}>
                       <td className="px-3 py-2 tabular-nums">{numero}</td>
-                      <td className="px-3 py-2">{s.full_name || "—"}</td>
+                      <td className="px-3 py-2">{nomAvantPrenoms(s.full_name)}</td>
                       <td className="px-3 py-2">{s.matricule || "—"}</td>
                       <td className="px-3 py-2">{s.class_label || "—"}</td>
                       <td className="px-3 py-2 flex gap-2">
@@ -498,11 +524,11 @@ export default function AdminStudentsByClassPage() {
             <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2">
               <div>
                 <div className="mb-1 text-xs text-slate-600">Prénom(s)</div>
-                <Input value={editing.first_name} onChange={(e) => setEditing({ ...editing, first_name: e.target.value })} placeholder="Ex : KOFFI" />
+                <Input value={editing.first_name} onChange={(e) => setEditing({ ...editing, first_name: e.target.value })} placeholder="Ex : ANGE" />
               </div>
               <div>
                 <div className="mb-1 text-xs text-slate-600">Nom</div>
-                <Input value={editing.last_name} onChange={(e) => setEditing({ ...editing, last_name: e.target.value })} placeholder="Ex : Kouadio" />
+                <Input value={editing.last_name} onChange={(e) => setEditing({ ...editing, last_name: e.target.value })} placeholder="Ex : KOUASSI" />
               </div>
               <div className="md:col-span-2">
                 <div className="mb-1 text-xs text-slate-600">Matricule</div>
