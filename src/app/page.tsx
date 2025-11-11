@@ -166,6 +166,39 @@ function FeatureCard({
   );
 }
 
+/* ───────────────────────── Marquee Banner (défilant) ───────────────────────── */
+function MarqueeBanner({ text }: { text: string }) {
+  // Bande défilante accessible : pause au survol, réduit si prefers-reduced-motion.
+  return (
+    <div className="relative z-20 w-full overflow-hidden bg-gradient-to-r from-indigo-600 via-violet-600 to-fuchsia-600 text-white ring-1 ring-indigo-500/20">
+      <div
+        className="flex w-max items-center gap-8 py-2 pl-4 pr-8 [animation:marquee_28s_linear_infinite] hover:[animation-play-state:paused]"
+        role="status"
+        aria-live="polite"
+        aria-label={text}
+      >
+        {Array.from({ length: 8 }).map((_, i) => (
+          <span key={i} className="text-sm font-semibold tracking-wide">
+            {text} <span aria-hidden>•</span>
+          </span>
+        ))}
+      </div>
+      <style jsx>{`
+        @keyframes marquee {
+          0% { transform: translateX(0); }
+          100% { transform: translateX(-50%); }
+        }
+        @media (prefers-reduced-motion: reduce) {
+          div[role="status"] {
+            animation: none !important;
+            transform: none !important;
+          }
+        }
+      `}</style>
+    </div>
+  );
+}
+
 /* ───────────────────────── Page ───────────────────────── */
 export default function HomePage() {
   const { session } = useAuth();
@@ -239,6 +272,9 @@ export default function HomePage() {
     },
   ];
 
+  const MARQUEE_TEXT =
+    "Bienvenue sur EduPrésence : votre allié pour une gestion des absences fluide et moderne.";
+
   return (
     <main className="relative min-h-screen bg-white">
       {/* Gradient/Aurora background (non intrusif) */}
@@ -292,6 +328,9 @@ export default function HomePage() {
           </div>
         </div>
       </header>
+
+      {/* Bande défilante EduPrésence */}
+      <MarqueeBanner text={MARQUEE_TEXT} />
 
       {/* HERO */}
       <section id="hero" className="relative overflow-hidden">
