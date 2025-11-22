@@ -1,10 +1,19 @@
+// src/app/admin/conduite/page.tsx
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
 
 /* UI helpers */
 function Select(p: React.SelectHTMLAttributes<HTMLSelectElement>) {
-  return <select {...p} className={"w-full rounded-lg border bg-white px-3 py-2 text-sm " + (p.className ?? "")} />;
+  return (
+    <select
+      {...p}
+      className={
+        "w-full rounded-lg border bg-white px-3 py-2 text-sm " +
+        (p.className ?? "")
+      }
+    />
+  );
 }
 function Button(p: React.ButtonHTMLAttributes<HTMLButtonElement>) {
   return (
@@ -18,12 +27,19 @@ function Button(p: React.ButtonHTMLAttributes<HTMLButtonElement>) {
   );
 }
 function Input(p: React.InputHTMLAttributes<HTMLInputElement>) {
-  return <input {...p} className={"w-full rounded-lg border px-3 py-2 text-sm " + (p.className ?? "")} />;
+  return (
+    <input
+      {...p}
+      className={"w-full rounded-lg border px-3 py-2 text-sm " + (p.className ?? "")}
+    />
+  );
 }
 function Card({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div className="rounded-2xl border bg-white p-5">
-      <div className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-700">{title}</div>
+      <div className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-700">
+        {title}
+      </div>
       {children}
     </div>
   );
@@ -61,9 +77,21 @@ type ClassItem = { id: string; name: string; level: string };
 type ConductItem = {
   student_id: string;
   full_name: string;
-  breakdown: { assiduite: number; tenue: number; moralite: number; discipline: number };
+  breakdown: {
+    assiduite: number;
+    tenue: number;
+    moralite: number;
+    discipline: number;
+  };
   total: number;
   appreciation: string;
+};
+
+type ConductSettings = {
+  assiduite_max: number;
+  tenue_max: number;
+  moralite_max: number;
+  discipline_max: number;
 };
 
 export default function ConduitePage() {
@@ -79,6 +107,10 @@ export default function ConduitePage() {
   const [items, setItems] = useState<ConductItem[]>([]);
   const [classLabel, setClassLabel] = useState<string>("");
 
+  // réglages de conduite (max par rubrique)
+  const [conductSettings, setConductSettings] =
+    useState<ConductSettings | null>(null);
+
   // charger classes
   useEffect(() => {
     fetch("/api/admin/classes?limit=500", { cache: "no-store" })
@@ -87,18 +119,43 @@ export default function ConduitePage() {
       .catch(() => setAllClasses([]));
   }, []);
 
+  // charger les réglages de conduite
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch("/api/admin/conduct/settings", {
+          cache: "no-store",
+        });
+        if (!res.ok) return;
+        const j = await res.json();
+        setConductSettings({
+          assiduite_max: Number(j.assiduite_max ?? 0),
+          tenue_max: Number(j.tenue_max ?? 0),
+          moralite_max: Number(j.moralite_max ?? 0),
+          discipline_max: Number(j.discipline_max ?? 0),
+        });
+      } catch {
+        // on garde les valeurs par défaut si ça échoue
+      }
+    })();
+  }, []);
+
   const levels = useMemo(() => {
     const s = new Set<string>();
     for (const c of allClasses) if (c.level) s.add(c.level);
-    return Array.from(s).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+    return Array.from(s).sort((a, b) =>
+      a.localeCompare(b, undefined, { numeric: true }),
+    );
   }, [allClasses]);
 
   const classesOfLevel = useMemo(
     () =>
       allClasses
         .filter((c) => !level || c.level === level)
-        .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true })),
-    [allClasses, level]
+        .sort((a, b) =>
+          a.name.localeCompare(b.name, undefined, { numeric: true }),
+        ),
+    [allClasses, level],
   );
 
   useEffect(() => {
@@ -112,7 +169,10 @@ export default function ConduitePage() {
       const qs = new URLSearchParams({ class_id: classId });
       if (from) qs.set("from", from);
       if (to) qs.set("to", to);
-      const r = await fetch(`/api/admin/conduite/averages?${qs.toString()}`, { cache: "no-store" });
+      const r = await fetch(
+        `/api/admin/conduite/averages?${qs.toString()}`,
+        { cache: "no-store" },
+      );
       const j = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(j?.error || `HTTP ${r.status}`);
       setItems(j.items || []);
@@ -127,7 +187,10 @@ export default function ConduitePage() {
 
   /* Tri alphabétique (A → Z) sur le NOM */
   const sortedItems = useMemo(() => {
-    const coll = new Intl.Collator("fr", { sensitivity: "base", ignorePunctuation: true });
+    const coll = new Intl.Collator("fr", {
+      sensitivity: "base",
+      ignorePunctuation: true,
+    });
     const list = [...items];
     list.sort((a, b) => {
       const ak = nomKey(a.full_name);
@@ -139,7 +202,18 @@ export default function ConduitePage() {
     return list;
   }, [items]);
 
-  // Export CSV (utilise l'API avec format=csv, crée un blob pour éviter de quitter la page)
+  // Max par rubrique + total (pour les libellés)
+  const maxes = useMemo(() => {
+    const ass =
+      conductSettings?.assiduite_max ?? 6; // fallback sur les anciens défauts
+    const ten = conductSettings?.tenue_max ?? 3;
+    const mor = conductSettings?.moralite_max ?? 4;
+    const dis = conductSettings?.discipline_max ?? 7;
+    const total = ass + ten + mor + dis;
+    return { ass, ten, mor, dis, total };
+  }, [conductSettings]);
+
+  // Export CSV
   async function exportCSV() {
     if (!classId || sortedItems.length === 0) return;
     const qs = new URLSearchParams({ class_id: classId, format: "csv" });
@@ -151,16 +225,24 @@ export default function ConduitePage() {
       headers: { Accept: "text/csv" },
     });
     const blob = await res.blob();
-    // tentative de récupérer le filename du header
     let filename = "conduite.csv";
     const dispo = res.headers.get("Content-Disposition") || "";
     const m = /filename\*=UTF-8''([^;]+)|filename="([^"]+)"/i.exec(dispo);
     if (m) {
       filename = decodeURIComponent(m[1] || m[2] || filename);
     } else {
-      const safeLabel = (classLabel || "classe").replace(/[^\p{L}\p{N}_-]+/gu, "_");
+      const safeLabel = (classLabel || "classe").replace(
+        /[^\p{L}\p{N}_-]+/gu,
+        "_",
+      );
       const range =
-        from && to ? `${from}_au_${to}` : from ? `depuis_${from}` : to ? `jusqua_${to}` : "toutes_dates";
+        from && to
+          ? `${from}_au_${to}`
+          : from
+            ? `depuis_${from}`
+            : to
+              ? `jusqua_${to}`
+              : "toutes_dates";
       filename = `conduite_${safeLabel}_${range}.csv`;
     }
 
@@ -179,7 +261,8 @@ export default function ConduitePage() {
       <div>
         <h1 className="text-2xl font-semibold">Conduite — Moyennes par élève</h1>
         <p className="text-slate-600">
-          Sélectionne un <b>niveau</b>, une <b>classe</b>, puis <i>Valider</i>. Les retraits automatiques sont appliqués.
+          Sélectionne un <b>niveau</b>, une <b>classe</b>, puis <i>Valider</i>. Les
+          retraits automatiques sont appliqués.
         </p>
       </div>
 
@@ -187,15 +270,26 @@ export default function ConduitePage() {
         <div className="grid grid-cols-1 gap-3 md:grid-cols-6">
           <div>
             <div className="mb-1 text-xs text-slate-500">Du</div>
-            <Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
+            <Input
+              type="date"
+              value={from}
+              onChange={(e) => setFrom(e.target.value)}
+            />
           </div>
           <div>
             <div className="mb-1 text-xs text-slate-500">Au</div>
-            <Input type="date" value={to} onChange={(e) => setTo(e.target.value)} />
+            <Input
+              type="date"
+              value={to}
+              onChange={(e) => setTo(e.target.value)}
+            />
           </div>
           <div className="md:col-span-2">
             <div className="mb-1 text-xs text-slate-500">Niveau</div>
-            <Select value={level} onChange={(e) => setLevel(e.target.value)}>
+            <Select
+              value={level}
+              onChange={(e) => setLevel(e.target.value)}
+            >
               <option value="">— Sélectionner un niveau —</option>
               {levels.map((l) => (
                 <option key={l} value={l}>
@@ -206,7 +300,11 @@ export default function ConduitePage() {
           </div>
           <div className="md:col-span-2">
             <div className="mb-1 text-xs text-slate-500">Classe</div>
-            <Select value={classId} onChange={(e) => setClassId(e.target.value)} disabled={!level}>
+            <Select
+              value={classId}
+              onChange={(e) => setClassId(e.target.value)}
+              disabled={!level}
+            >
               <option value="">— Sélectionner une classe —</option>
               {classesOfLevel.map((c) => (
                 <option key={c.id} value={c.id}>
@@ -220,7 +318,10 @@ export default function ConduitePage() {
           <Button onClick={validate} disabled={!classId || loading}>
             {loading ? "…" : "Valider"}
           </Button>
-          <Button onClick={exportCSV} disabled={!classId || loading || sortedItems.length === 0}>
+          <Button
+            onClick={exportCSV}
+            disabled={!classId || loading || sortedItems.length === 0}
+          >
             Exporter CSV
           </Button>
         </div>
@@ -230,29 +331,51 @@ export default function ConduitePage() {
         {!classId ? (
           <div className="text-sm text-slate-600">—</div>
         ) : sortedItems.length === 0 ? (
-          <div className="text-sm text-slate-600">{loading ? "Chargement…" : "Aucune donnée."}</div>
+          <div className="text-sm text-slate-600">
+            {loading ? "Chargement…" : "Aucune donnée."}
+          </div>
         ) : (
           <div className="overflow-x-auto">
             <table className="min-w-full text-sm">
               <thead className="bg-slate-50">
                 <tr>
                   <th className="px-3 py-2 text-left">Élève (tri par NOM)</th>
-                  <th className="px-3 py-2 text-left">Assiduité (/6)</th>
-                  <th className="px-3 py-2 text-left">Tenue (/3)</th>
-                  <th className="px-3 py-2 text-left">Moralité (/4)</th>
-                  <th className="px-3 py-2 text-left">Discipline (/7)</th>
-                  <th className="px-3 py-2 text-left">Moyenne (/20)</th>
+                  <th className="px-3 py-2 text-left">
+                    Assiduité (/{maxes.ass})
+                  </th>
+                  <th className="px-3 py-2 text-left">
+                    Tenue (/{maxes.ten})
+                  </th>
+                  <th className="px-3 py-2 text-left">
+                    Moralité (/{maxes.mor})
+                  </th>
+                  <th className="px-3 py-2 text-left">
+                    Discipline (/{maxes.dis})
+                  </th>
+                  <th className="px-3 py-2 text-left">
+                    Moyenne (/{maxes.total})
+                  </th>
                 </tr>
               </thead>
               <tbody>
                 {sortedItems.map((it) => (
                   <tr key={it.student_id} className="border-t">
                     <td className="px-3 py-2">{nomPrenom(it.full_name)}</td>
-                    <td className="px-3 py-2">{it.breakdown.assiduite.toFixed(2).replace(".", ",")}</td>
-                    <td className="px-3 py-2">{it.breakdown.tenue.toFixed(2).replace(".", ",")}</td>
-                    <td className="px-3 py-2">{it.breakdown.moralite.toFixed(2).replace(".", ",")}</td>
-                    <td className="px-3 py-2">{it.breakdown.discipline.toFixed(2).replace(".", ",")}</td>
-                    <td className="px-3 py-2 font-semibold">{it.total.toFixed(2).replace(".", ",")}</td>
+                    <td className="px-3 py-2">
+                      {it.breakdown.assiduite.toFixed(2).replace(".", ",")}
+                    </td>
+                    <td className="px-3 py-2">
+                      {it.breakdown.tenue.toFixed(2).replace(".", ",")}
+                    </td>
+                    <td className="px-3 py-2">
+                      {it.breakdown.moralite.toFixed(2).replace(".", ",")}
+                    </td>
+                    <td className="px-3 py-2">
+                      {it.breakdown.discipline.toFixed(2).replace(".", ",")}
+                    </td>
+                    <td className="px-3 py-2 font-semibold">
+                      {it.total.toFixed(2).replace(".", ",")}
+                    </td>
                   </tr>
                 ))}
               </tbody>

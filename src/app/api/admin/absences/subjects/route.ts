@@ -1,3 +1,4 @@
+// src/app/api/admin/absences/subjects/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
@@ -24,7 +25,9 @@ export async function GET(req: NextRequest) {
   const supa = await getSupabaseServerClient();
   const srv  = getSupabaseServiceClient();
 
-  const { data: { user } } = await supa.auth.getUser();
+  const {
+    data: { user },
+  } = await supa.auth.getUser();
   if (!user) return NextResponse.json({ items: [] });
 
   const { searchParams } = new URL(req.url);
@@ -35,14 +38,17 @@ export async function GET(req: NextRequest) {
 
   // Établissement
   const { data: me } = await supa
-    .from("profiles").select("institution_id").eq("id", user.id).maybeSingle();
-  const institution_id = me?.institution_id as string | null;
+    .from("profiles")
+    .select("institution_id")
+    .eq("id", user.id)
+    .maybeSingle();
+  const institution_id = (me?.institution_id as string | null) ?? null;
   if (!institution_id) return NextResponse.json({ items: [] });
 
-  // Marques sur la période
+  // Marques sur la période (v_mark_minutes)
   let mq = srv
     .from("v_mark_minutes")
-    .select("class_id, subject_id, started_at")
+    .select("id, class_id, subject_id, started_at")
     .eq("institution_id", institution_id)
     .gte("started_at", startISO(from))
     .lte("started_at", endISO(to));
@@ -50,20 +56,64 @@ export async function GET(req: NextRequest) {
   if (class_id) mq = mq.eq("class_id", class_id);
 
   const { data: rawMarks, error } = await mq;
-  if (error) return NextResponse.json({ items: [], error: error.message }, { status: 400 });
-  let marks = (rawMarks || []) as Array<{ class_id: string | null; subject_id: string | null }>;
+  if (error) {
+    return NextResponse.json({ items: [], error: error.message }, { status: 400 });
+  }
+
+  let marks = (rawMarks || []) as Array<{
+    id: string;
+    class_id: string | null;
+    subject_id: string | null;
+  }>;
+
+  // Récupérer les raisons pour ces marques pour exclure les justifiées
+  const markIds = Array.from(
+    new Set(
+      marks
+        .map((m) => String((m as any).id || ""))
+        .filter(Boolean)
+    )
+  );
+
+  let reasonById = new Map<string, string | null>();
+  if (markIds.length) {
+    const { data: marksInfo, error: marksInfoErr } = await srv
+      .from("attendance_marks")
+      .select("id, reason")
+      .in("id", markIds);
+
+    if (marksInfoErr) {
+      return NextResponse.json({ items: [], error: marksInfoErr.message }, { status: 400 });
+    }
+
+    reasonById = new Map(
+      (marksInfo || []).map((m: any) => [String(m.id), (m.reason ?? null) as string | null])
+    );
+  }
 
   // Filtre par niveau si pas de class_id
   if (!class_id && level) {
-    const classIds = Array.from(new Set(marks.map(m => m.class_id).filter(Boolean))) as string[];
+    const classIds = Array.from(
+      new Set(marks.map((m) => m.class_id).filter(Boolean))
+    ) as string[];
+
     if (classIds.length) {
       const { data: classes } = await srv
-        .from("classes").select("id, level")
+        .from("classes")
+        .select("id, level")
         .in("id", classIds);
+
       const lvlMap = new Map<string, string>(
-        (classes || []).map(c => [c.id as string, sanitizeText((c as any).level)])
+        (classes || []).map((c: any) => [
+          c.id as string,
+          sanitizeText((c as any).level),
+        ])
       );
-      marks = marks.filter(m => sanitizeText(lvlMap.get(m.class_id as string)) === level);
+
+      marks = marks.filter((m) => {
+        const lvl = lvlMap.get(m.class_id as string);
+        return sanitizeText(lvl) === level;
+      });
     } else {
       marks = [];
     }
@@ -71,7 +121,12 @@ export async function GET(req: NextRequest) {
 
   // IDs de matière (peuvent être des institution_subjects.id OU des subjects.id)
   const subjIds = Array.from(
-    new Set(marks.map(m => m.subject_id).filter(Boolean).map(String))
+    new Set(
+      marks
+        .map((m) => m.subject_id)
+        .filter(Boolean)
+        .map(String)
+    )
   );
 
   const nameMap = new Map<string, string>();
@@ -81,6 +136,7 @@ export async function GET(req: NextRequest) {
       .from("institution_subjects")
       .select("id, subject_id, custom_name, subjects:subject_id(name)")
       .in("id", subjIds);
+
     for (const r of isById || []) {
       const id     = r.id as string;
       const subjId = (r as any).subject_id as string | null;
@@ -98,6 +154,7 @@ export async function GET(req: NextRequest) {
       .from("institution_subjects")
       .select("id, subject_id, custom_name, subjects:subject_id(name)")
       .in("subject_id", subjIds);
+
     for (const r of isBySubject || []) {
       const id     = r.id as string;
       const subjId = (r as any).subject_id as string | null;
@@ -108,22 +165,30 @@ export async function GET(req: NextRequest) {
     }
 
     // 3) fallback direct sur la table subjects (pour les IDs restants)
-    const missing = subjIds.filter(id => !nameMap.has(id));
+    const missing = subjIds.filter((id) => !nameMap.has(id));
     if (missing.length) {
       const { data: plain } = await srv
         .from("subjects")
         .select("id, name")
         .in("id", missing);
       for (const s of plain || []) {
-        nameMap.set(s.id as string, sanitizeText((s as any).name) || DEFAULT_NAME);
+        nameMap.set(
+          s.id as string,
+          sanitizeText((s as any).name) || DEFAULT_NAME
+        );
       }
     }
   }
 
-  // Agrégat par matière
+  // Agrégat par matière (EN EXCLUANT les marques justifiées)
   const agg = new Map<string, number>();
   for (const m of marks) {
     if (!m.subject_id) continue;
+
+    const markId = String((m as any).id || "");
+    const reason = String(reasonById.get(markId) ?? "").trim();
+    if (reason) continue; // ✅ événement justifié → on ignore
+
     const sid = String(m.subject_id);
     agg.set(sid, (agg.get(sid) || 0) + 1);
   }

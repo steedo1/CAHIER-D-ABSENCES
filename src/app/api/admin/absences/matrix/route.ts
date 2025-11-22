@@ -79,23 +79,33 @@ export async function GET(req: NextRequest) {
     : "absent") as "absent" | "tardy";
   const format = String(url.searchParams.get("format") || "").toLowerCase(); // "csv" | ""
 
-  if (!class_id) return NextResponse.json({ error: "class_id_required" }, { status: 400 });
+  if (!class_id) {
+    return NextResponse.json({ error: "class_id_required" }, { status: 400 });
+  }
 
   const supa = await getSupabaseServerClient();
   const srv = getSupabaseServiceClient();
 
   // ── Auth / tenant
-  const { data: { user } } = await supa.auth.getUser();
-  if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  const {
+    data: { user },
+  } = await supa.auth.getUser();
+  if (!user) {
+    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  }
 
   const { data: me, error: meErr } = await supa
     .from("profiles")
     .select("institution_id")
     .eq("id", user.id)
     .maybeSingle();
-  if (meErr) return NextResponse.json({ error: meErr.message }, { status: 400 });
+  if (meErr) {
+    return NextResponse.json({ error: meErr.message }, { status: 400 });
+  }
   const inst = me?.institution_id as string | null;
-  if (!inst) return NextResponse.json({ error: "no_institution" }, { status: 400 });
+  if (!inst) {
+    return NextResponse.json({ error: "no_institution" }, { status: 400 });
+  }
 
   // ── Lignes = élèves inscrits dans la classe
   const { data: enr, error: enrErr } = await srv
@@ -104,11 +114,18 @@ export async function GET(req: NextRequest) {
     .eq("institution_id", inst)
     .eq("class_id", class_id)
     .is("end_date", null);
-  if (enrErr) return NextResponse.json({ error: enrErr.message }, { status: 400 });
+  if (enrErr) {
+    return NextResponse.json({ error: enrErr.message }, { status: 400 });
+  }
 
   const studentsBase = (enr || [])
-    .map((r: any) => ({ id: r.student_id, full_name: normFullName(r.students || {}) }))
-    .sort((a, b) => a.full_name.localeCompare(b.full_name, undefined, { sensitivity: "base" }));
+    .map((r: any) => ({
+      id: r.student_id,
+      full_name: normFullName(r.students || {}),
+    }))
+    .sort((a, b) =>
+      a.full_name.localeCompare(b.full_name, undefined, { sensitivity: "base" })
+    );
 
   // ── 1/ Séances de la classe (filtrées par dates si fournies)
   let sessQ = srv
@@ -116,11 +133,17 @@ export async function GET(req: NextRequest) {
     .select("id, class_id, subject_id, teacher_id, started_at")
     .eq("class_id", class_id);
 
-  if (from) sessQ = (sessQ as any).gte("started_at", `${from}T00:00:00Z`);
-  if (to)   sessQ = (sessQ as any).lte("started_at", `${to}T23:59:59.999Z`);
+  if (from) {
+    sessQ = (sessQ as any).gte("started_at", `${from}T00:00:00Z`);
+  }
+  if (to) {
+    sessQ = (sessQ as any).lte("started_at", `${to}T23:59:59.999Z`);
+  }
 
   const { data: sessions, error: sErr } = await sessQ;
-  if (sErr) return NextResponse.json({ error: sErr.message }, { status: 400 });
+  if (sErr) {
+    return NextResponse.json({ error: sErr.message }, { status: 400 });
+  }
 
   const sessionById = new Map<string, any>();
   const sessionIds: string[] = [];
@@ -151,17 +174,24 @@ export async function GET(req: NextRequest) {
   }
 
   // ── 2/ Marques pour ces séances
+  // 🔴 IMPORTANT : on récupère maintenant aussi id + reason pour filtrer les justifiées
   const { data: marks, error: mErr } = await srv
     .from("attendance_marks")
-    .select("student_id, status, minutes_late, hours_absent, session_id")
+    .select("id, student_id, status, minutes_late, hours_absent, session_id, reason")
     .in("session_id", sessionIds);
-  if (mErr) return NextResponse.json({ error: mErr.message }, { status: 400 });
+  if (mErr) {
+    return NextResponse.json({ error: mErr.message }, { status: 400 });
+  }
 
   // ── Fallback subject_id via class_teachers quand la séance n’a pas de sujet
   const missingTeachers = Array.from(
     new Set(
       (marks || [])
-        .map((r: any) => sessionById.get(r.session_id)?.subject_id ? null : sessionById.get(r.session_id)?.teacher_id)
+        .map((r: any) =>
+          sessionById.get(r.session_id)?.subject_id
+            ? null
+            : sessionById.get(r.session_id)?.teacher_id
+        )
         .filter(Boolean)
     )
   ) as string[];
@@ -187,7 +217,7 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  // ── Agrégation minutes
+  // ── Agrégation minutes (UNIQUEMENT non justifiées)
   const byKey = new Map<string, number>(); // "student|subject" -> minutes
   const subjSet = new Set<string>();
   const subjDistinctSet = new Map<string, Set<string>>(); // subject -> set(student)
@@ -202,23 +232,32 @@ export async function GET(req: NextRequest) {
   }
 
   for (const r of marks || []) {
-    const sess = sessionById.get((r as any).session_id) || {};
+    const rec: any = r;
+
+    // ✅ Filtrage des marques justifiées
+    const reason = String(rec.reason ?? "").trim();
+    if (reason !== "") {
+      // Justifiée → on ne compte PAS cette absence / ce retard
+      continue;
+    }
+
+    const sess = sessionById.get(rec.session_id) || {};
     const teacherId = String(sess.teacher_id || "");
     let subj = String(sess.subject_id || "");
     if (!subj && teacherId && fallbackSubjectByTeacher.has(teacherId)) {
       subj = fallbackSubjectByTeacher.get(teacherId)!;
     }
-    const stu = String((r as any).student_id || "");
+    const stu = String(rec.student_id || "");
     if (!stu || !subj) continue;
 
     let minutes = 0;
     if (type === "absent") {
       // Arrondir CHAQUE absence à l'entier supérieur (heures), puis * 60
-      const h = Number((r as any).hours_absent ?? 0);
+      const h = Number(rec.hours_absent ?? 0);
       const roundedH = Math.ceil(Math.max(0, h));
       minutes = roundedH * 60;
     } else {
-      minutes = Math.max(0, Math.floor(Number((r as any).minutes_late ?? 0)));
+      minutes = Math.max(0, Math.floor(Number(rec.minutes_late ?? 0)));
     }
     if (minutes > 0) add(subj, stu, minutes);
   }
@@ -255,11 +294,13 @@ export async function GET(req: NextRequest) {
   const subjects = subjectIds
     .map((id) => ({
       id,
-      name: (nameMap.get(id) || id),
+      name: nameMap.get(id) || id,
       total_minutes: subjectTotals[id] || 0,
       is_hot: hotSubjects.has(id),
     }))
-    .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
+    .sort((a, b) =>
+      a.name.localeCompare(b.name, undefined, { sensitivity: "base" })
+    );
 
   // ── Values
   const values: Array<{ student_id: string; subject_id: string; minutes: number }> = [];
@@ -321,7 +362,7 @@ export async function GET(req: NextRequest) {
 
   // ── JSON (ajouts non-bloquants: rank, totals, is_hot)
   return NextResponse.json({
-    subjects,            // [{ id, name, total_minutes, is_hot }]
+    subjects,              // [{ id, name, total_minutes, is_hot }]
     students: studentsOut, // [{ id, full_name (Nom Prénom), rank, total_minutes, is_hot }]
     values,
     subjectDistinct,

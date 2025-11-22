@@ -3,6 +3,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { Users, BookOpen, Clock, Play, Save, Square, LogOut } from "lucide-react";
+import { getSupabaseBrowserClient } from "@/lib/supabase-browser";
 
 /* ───────── UI helpers ───────── */
 function Input(p: React.InputHTMLAttributes<HTMLInputElement>) {
@@ -88,11 +89,17 @@ type OpenSession = {
 type InstCfg = { tz: string; default_session_minutes: number; auto_lateness: boolean };
 type Period = { weekday: number; label: string; start_time: string; end_time: string };
 
+type ConductMax = {
+  discipline: number;
+  tenue: number;
+  moralite: number;
+};
+
 /* ───────── Utils (périodes) ───────── */
 const hhmm = (d: Date) => d.toTimeString().slice(0, 5);
 function toMinutes(hm: string) {
   const [h, m] = (hm || "00:00").split(":").map((x) => +x);
-  return h * 60 + m;
+  return (isFinite(h) ? h : 0) * 60 + (isFinite(m) ? m : 0);
 }
 function minutesDiff(a: string, b: string) {
   return Math.max(0, toMinutes(b) - toMinutes(a));
@@ -100,10 +107,20 @@ function minutesDiff(a: string, b: string) {
 
 /* Helpers fuseau établissement (identiques à l’interface enseignant) */
 const hmInTZ = (d: Date, tz: string): string =>
-  new Intl.DateTimeFormat("en-GB", { timeZone: tz, hour: "2-digit", minute: "2-digit", hour12: false }).format(d);
+  new Intl.DateTimeFormat("en-GB", {
+    timeZone: tz,
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(d);
 
 const weekdayInTZ1to7 = (d: Date, tz: string): number => {
-  const w = new Intl.DateTimeFormat("en-US", { timeZone: tz, weekday: "short" }).format(d).toLowerCase();
+  const w = new Intl.DateTimeFormat("en-US", {
+    timeZone: tz,
+    weekday: "short",
+  })
+    .format(d)
+    .toLowerCase();
   const map: Record<string, number> = { sun: 7, mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6 };
   return map[w] ?? 7;
 };
@@ -134,11 +151,22 @@ export default function ClassDevicePage() {
     auto_lateness: true,
   });
   const [periodsByDay, setPeriodsByDay] = useState<Record<number, Period[]>>({});
-  const [slotLabel, setSlotLabel] = useState<string>("Aucun créneau configuré (fallback automatique)");
+  const [slotLabel, setSlotLabel] = useState<string>(
+    "Aucun créneau configuré (fallback automatique)"
+  );
+
+  // maxima de conduite (discipline / tenue / moralité)
+  const [conductMax, setConductMax] = useState<ConductMax>({
+    discipline: 7,
+    tenue: 3,
+    moralite: 4,
+  });
 
   // horaire (verrouillé par l’établissement)
   const now = new Date();
-  const defTime = hhmm(new Date(now.getFullYear(), now.getMonth(), now.getDate(), now.getHours(), 0));
+  const defTime = hhmm(
+    new Date(now.getFullYear(), now.getMonth(), now.getDate(), now.getHours(), 0)
+  );
   const [startTime, setStartTime] = useState<string>(defTime);
   const [duration, setDuration] = useState<number>(60);
   const [locked, setLocked] = useState<boolean>(true);
@@ -160,16 +188,68 @@ export default function ClassDevicePage() {
   const [penaltyOpen, setPenaltyOpen] = useState(false);
   const [penRubric, setPenRubric] = useState<Rubric>("discipline");
   const [penBusy, setPenBusy] = useState(false);
-  const [penRows, setPenRows] = useState<Record<string, { points: number; reason?: string }>>({});
+  const [penRows, setPenRows] = useState<
+    Record<string, { points: number; reason?: string }>
+  >({});
   const [penMsg, setPenMsg] = useState<string | null>(null);
-  const hasPenChanges = useMemo(() => Object.values(penRows).some((v) => (v.points || 0) > 0), [penRows]);
+  const hasPenChanges = useMemo(
+    () => Object.values(penRows).some((v) => (v.points || 0) > 0),
+    [penRows]
+  );
+
+  // options de rubriques basées sur la config de conduite
+  const rubricOptions = useMemo(() => {
+    const defaults: ConductMax = { discipline: 7, tenue: 3, moralite: 4 };
+    const base: ConductMax = {
+      discipline: conductMax.discipline ?? defaults.discipline,
+      tenue: conductMax.tenue ?? defaults.tenue,
+      moralite: conductMax.moralite ?? defaults.moralite,
+    };
+    const order: Rubric[] = ["discipline", "tenue", "moralite"];
+    return order.map((r) => {
+      const maxVal = base[r];
+      const disabled = maxVal <= 0;
+      const labelBase =
+        r === "discipline" ? "Discipline" : r === "tenue" ? "Tenue" : "Moralité";
+      const label = disabled
+        ? `${labelBase} (désactivée)`
+        : `${labelBase} (max ${maxVal})`;
+      return { value: r, label, disabled, max: maxVal };
+    });
+  }, [conductMax]);
+
+  // si la rubrique choisie devient désactivée (max=0), on bascule sur une autre active
+  useEffect(() => {
+    setPenRubric((prev) => {
+      const defaults: ConductMax = { discipline: 7, tenue: 3, moralite: 4 };
+      const merged: ConductMax = {
+        discipline: conductMax.discipline ?? defaults.discipline,
+        tenue: conductMax.tenue ?? defaults.tenue,
+        moralite: conductMax.moralite ?? defaults.moralite,
+      };
+      if (merged[prev] > 0) return prev;
+      const order: Rubric[] = ["discipline", "tenue", "moralite"];
+      const candidate = order.find((r) => merged[r] > 0);
+      return candidate ?? prev;
+    });
+  }, [conductMax.discipline, conductMax.tenue, conductMax.moralite]);
+
+  const currentRubricMax = useMemo(() => {
+    const opt = rubricOptions.find((o) => o.value === penRubric);
+    return opt?.max ?? undefined;
+  }, [rubricOptions, penRubric]);
+
+  const rubricDisabled =
+    currentRubricMax !== undefined && currentRubricMax <= 0;
 
   async function ensureRosterForPenalty() {
     const cid = open?.class_id || classId;
     if (!cid || roster.length > 0) return;
     try {
       setLoadingRoster(true);
-      const j = await fetch(`/api/class/roster?class_id=${cid}`, { cache: "no-store" }).then((r) => r.json());
+      const j = await fetch(`/api/class/roster?class_id=${cid}`, {
+        cache: "no-store",
+      }).then((r) => r.json());
       setRoster((j.items || []) as RosterItem[]);
     } finally {
       setLoadingRoster(false);
@@ -181,7 +261,6 @@ export default function ClassDevicePage() {
       return;
     }
     setPenRows({});
-    setPenRubric("discipline");
     setPenaltyOpen(true);
     void ensureRosterForPenalty();
   }
@@ -265,7 +344,7 @@ export default function ClassDevicePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /* 1bis) charger paramètres + périodes (endpoints multiples tolérés) */
+  /* 1bis) charger paramètres + périodes + réglages de conduite */
   async function loadInstitutionBasics() {
     async function getJson(url: string) {
       try {
@@ -277,13 +356,24 @@ export default function ClassDevicePage() {
       }
     }
 
-    // Route combinée (préférée)
+    // 1) paramètres & périodes
+    let instConfig: InstCfg = {
+      tz: "Africa/Abidjan",
+      default_session_minutes: 60,
+      auto_lateness: true,
+    };
+    let grouped: Record<number, Period[]> = {};
+
     const all =
       (await getJson("/api/teacher/institution/basics")) ||
       (await getJson("/api/institution/basics"));
 
     if (all?.periods) {
-      const grouped: Record<number, Period[]> = {};
+      instConfig = {
+        tz: all?.tz || "Africa/Abidjan",
+        default_session_minutes: Number(all?.default_session_minutes || 60),
+        auto_lateness: !!all?.auto_lateness,
+      };
       (all.periods as any[]).forEach((row: any) => {
         const w = Number(row.weekday || 1);
         if (!grouped[w]) grouped[w] = [];
@@ -294,53 +384,65 @@ export default function ClassDevicePage() {
           end_time: String(row.end_time || "09:00").slice(0, 5),
         });
       });
-      Object.values(grouped).forEach((arr) =>
-        arr.sort((a, b) => toMinutes(a.start_time) - toMinutes(b.start_time))
-      );
+    } else {
+      const settings =
+        (await getJson("/api/teacher/institution/settings")) ||
+        (await getJson("/api/institution/settings")) || {
+          tz: "Africa/Abidjan",
+          default_session_minutes: 60,
+          auto_lateness: true,
+        };
 
-      setInst({
-        tz: all?.tz || "Africa/Abidjan",
-        default_session_minutes: Number(all?.default_session_minutes || 60),
-        auto_lateness: !!all?.auto_lateness,
-      });
-      setPeriodsByDay(grouped);
-      return;
-    }
+      const per =
+        (await getJson("/api/teacher/institution/periods")) ||
+        (await getJson("/api/institution/periods")) || { periods: [] };
 
-    // Fallback: routes séparées
-    const settings =
-      (await getJson("/api/teacher/institution/settings")) ||
-      (await getJson("/api/institution/settings")) || {
-        tz: "Africa/Abidjan",
-        default_session_minutes: 60,
-        auto_lateness: true,
+      instConfig = {
+        tz: settings?.tz || "Africa/Abidjan",
+        default_session_minutes: Number(settings?.default_session_minutes || 60),
+        auto_lateness: !!settings?.auto_lateness,
       };
 
-    const per =
-      (await getJson("/api/teacher/institution/periods")) ||
-      (await getJson("/api/institution/periods")) || { periods: [] };
-
-    const grouped: Record<number, Period[]> = {};
-    (Array.isArray(per?.periods) ? per.periods : []).forEach((row: any) => {
-      const w = Number(row.weekday || 1);
-      if (!grouped[w]) grouped[w] = [];
-      grouped[w].push({
-        weekday: w,
-        label: row.label || "Séance",
-        start_time: String(row.start_time || "08:00").slice(0, 5),
-        end_time: String(row.end_time || "09:00").slice(0, 5),
+      (Array.isArray(per?.periods) ? per.periods : []).forEach((row: any) => {
+        const w = Number(row.weekday || 1);
+        if (!grouped[w]) grouped[w] = [];
+        grouped[w].push({
+          weekday: w,
+          label: row.label || "Séance",
+          start_time: String(row.start_time || "08:00").slice(0, 5),
+          end_time: String(row.end_time || "09:00").slice(0, 5),
+        });
       });
-    });
+    }
+
     Object.values(grouped).forEach((arr) =>
       arr.sort((a, b) => toMinutes(a.start_time) - toMinutes(b.start_time))
     );
 
-    setInst({
-      tz: settings?.tz || "Africa/Abidjan",
-      default_session_minutes: Number(settings?.default_session_minutes || 60),
-      auto_lateness: !!settings?.auto_lateness,
-    });
+    setInst(instConfig);
     setPeriodsByDay(grouped);
+
+    // 2) config de conduite (maxima)
+    try {
+      const rawConf = (await getJson("/api/admin/conduct/settings")) as any;
+      const defaults: ConductMax = { discipline: 7, tenue: 3, moralite: 4 };
+
+      if (!rawConf) {
+        setConductMax(defaults);
+      } else {
+        const d = Number(rawConf.discipline_max ?? defaults.discipline);
+        const t = Number(rawConf.tenue_max ?? defaults.tenue);
+        const m = Number(rawConf.moralite_max ?? defaults.moralite);
+
+        setConductMax({
+          discipline: Number.isFinite(d) ? d : defaults.discipline,
+          tenue: Number.isFinite(t) ? t : defaults.tenue,
+          moralite: Number.isFinite(m) ? m : defaults.moralite,
+        });
+      }
+    } catch {
+      setConductMax({ discipline: 7, tenue: 3, moralite: 4 });
+    }
   }
 
   useEffect(() => {
@@ -366,7 +468,10 @@ export default function ClassDevicePage() {
 
     const nowMin = toMinutes(nowHM);
     // 1) créneau en cours
-    let pick = slots.find((s) => nowMin >= toMinutes(s.start_time) && nowMin < toMinutes(s.end_time));
+    let pick = slots.find(
+      (s) =>
+        nowMin >= toMinutes(s.start_time) && nowMin < toMinutes(s.end_time)
+    );
     // 2) sinon, prochain à venir
     if (!pick) pick = slots.find((s) => nowMin <= toMinutes(s.start_time));
     // 3) si après le dernier créneau → fallback heure actuelle
@@ -379,7 +484,14 @@ export default function ClassDevicePage() {
     }
 
     setStartTime(pick.start_time);
-    setDuration(Math.max(1, minutesDiff(pick.start_time, pick.end_time) || inst.default_session_minutes || 60));
+    setDuration(
+      Math.max(
+        1,
+        minutesDiff(pick.start_time, pick.end_time) ||
+          inst.default_session_minutes ||
+          60
+      )
+    );
     setSlotLabel(`${pick.label} • ${pick.start_time} → ${pick.end_time}`);
     setLocked(true);
   }
@@ -397,7 +509,9 @@ export default function ClassDevicePage() {
       return;
     }
     (async () => {
-      const j = await fetch(`/api/class/subjects?class_id=${classId}`, { cache: "no-store" }).then((r) => r.json());
+      const j = await fetch(`/api/class/subjects?class_id=${classId}`, {
+        cache: "no-store",
+      }).then((r) => r.json());
       const list = (j.items || []) as Subject[];
       setSubjects(list);
       setSubjectId(list[0]?.id || "");
@@ -413,7 +527,9 @@ export default function ClassDevicePage() {
     }
     (async () => {
       setLoadingRoster(true);
-      const j = await fetch(`/api/class/roster?class_id=${open.class_id}`, { cache: "no-store" }).then((r) => r.json());
+      const j = await fetch(`/api/class/roster?class_id=${open.class_id}`, {
+        cache: "no-store",
+      }).then((r) => r.json());
       setRoster((j.items || []) as RosterItem[]);
       setRows({});
       setLoadingRoster(false);
@@ -446,7 +562,15 @@ export default function ClassDevicePage() {
     try {
       const today = new Date();
       const [hh, mm] = (startTime || "08:00").split(":").map((x) => +x);
-      const started = new Date(today.getFullYear(), today.getMonth(), today.getDate(), hh, mm, 0, 0);
+      const started = new Date(
+        today.getFullYear(),
+        today.getMonth(),
+        today.getDate(),
+        hh,
+        mm,
+        0,
+        0
+      );
 
       const r = await fetch("/api/class/sessions/start", {
         method: "POST",
@@ -488,7 +612,9 @@ export default function ClassDevicePage() {
       });
       const j = await r.json();
       if (!r.ok) throw new Error(j?.error || "Échec enregistrement");
-      setMsg(`Enregistré : ${j.upserted} abs./ret. — ${j.deleted} suppressions (présent).`);
+      setMsg(
+        `Enregistré : ${j.upserted} abs./ret. — ${j.deleted} suppressions (présent).`
+      );
     } catch (e: any) {
       setMsg(e?.message || "Échec enregistrement");
     } finally {
@@ -518,6 +644,22 @@ export default function ClassDevicePage() {
 
   async function logout() {
     try {
+      // 1) Déconnexion Supabase côté navigateur
+      try {
+        const supabase = getSupabaseBrowserClient();
+        await supabase.auth.signOut();
+      } catch (e: any) {
+        console.warn("[class/logout] supabase signOut:", e?.message || e);
+      }
+
+      // 2) Nettoyage des cookies HttpOnly (sb-access/refresh, sb-*-auth-token)
+      try {
+        await fetch("/api/auth/sync", { method: "DELETE" });
+      } catch (e: any) {
+        console.warn("[class/logout] /api/auth/sync DELETE:", e?.message || e);
+      }
+
+      // 3) Endpoints legacy (si tu en as un côté API, on ne casse rien)
       const endpoints = ["/api/auth/signout", "/api/auth/logout", "/auth/signout"];
       for (const url of endpoints) {
         try {
@@ -527,6 +669,7 @@ export default function ClassDevicePage() {
         }
       }
     } finally {
+      // 4) Retour page de connexion
       window.location.href = "/login";
     }
   }
@@ -586,22 +729,34 @@ export default function ClassDevicePage() {
                 <Clock className="h-3.5 w-3.5" />
                 Début
               </div>
-              <Input type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} disabled={locked} />
+              <Input
+                type="time"
+                value={startTime}
+                onChange={(e) => setStartTime(e.target.value)}
+                disabled={locked}
+              />
               <div className="mt-1 text-[11px] text-slate-500">{slotLabel}</div>
             </div>
             <div>
-              <div className="mb-1 flex items-center gap-2 text-xs text-slate-500">
+              <div className="mb-1 flex items
+-center gap-2 text-xs text-slate-500">
                 <Clock className="h-3.5 w-3.5" />
                 Durée (min)
               </div>
-              <Select value={String(duration)} onChange={(e) => setDuration(parseInt(e.target.value, 10))} disabled={locked}>
+              <Select
+                value={String(duration)}
+                onChange={(e) => setDuration(parseInt(e.target.value, 10))}
+                disabled={locked}
+              >
                 {[duration].map((m) => (
                   <option key={m} value={m}>
                     {m}
                   </option>
                 ))}
               </Select>
-              <div className="mt-1 text-[11px] text-slate-500">Verrouillée par l’établissement.</div>
+              <div className="mt-1 text-[11px] text-slate-500">
+                Verrouillée par l’établissement.
+              </div>
             </div>
           </div>
         </div>
@@ -615,7 +770,9 @@ export default function ClassDevicePage() {
             </Button>
             <GhostButton
               tone="red"
-              onClick={() => (penaltyOpen ? setPenaltyOpen(false) : openPenalty())}
+              onClick={() =>
+                penaltyOpen ? setPenaltyOpen(false) : openPenalty()
+              }
               disabled={busy || (!classId && !penaltyOpen)}
             >
               Sanctions
@@ -629,7 +786,9 @@ export default function ClassDevicePage() {
             </Button>
             <GhostButton
               tone="red"
-              onClick={() => (penaltyOpen ? setPenaltyOpen(false) : openPenalty())}
+              onClick={() =>
+                penaltyOpen ? setPenaltyOpen(false) : openPenalty()
+              }
               disabled={busy || (!classId && !penaltyOpen)}
             >
               Sanctions
@@ -654,7 +813,9 @@ export default function ClassDevicePage() {
             <div>
               <div className="text-lg font-semibold">Autres sanctions</div>
               <div className="text-xs text-slate-500">
-                Rubriques: Discipline (max 7), Tenue (max 3), Moralité (max 4). L’assiduité est calculée via les absences.
+                Rubriques : Discipline, Tenue, Moralité. Les maxima viennent des{" "}
+                <b>règles de conduite de l’établissement</b>. L’assiduité est calculée via les
+                absences.
               </div>
             </div>
             <div className="flex items-center gap-2">
@@ -670,14 +831,27 @@ export default function ClassDevicePage() {
           <div className="grid gap-3 md:grid-cols-3 mb-3">
             <div className="md:col-span-1">
               <div className="mb-1 text-xs text-slate-500">Rubrique impactée</div>
-              <Select value={penRubric} onChange={(e) => setPenRubric(coerceRubric(e.target.value))} disabled={penBusy}>
-                <option value="discipline">Discipline (max 7)</option>
-                <option value="tenue">Tenue (max 3)</option>
-                <option value="moralite">Moralité (max 4)</option>
+              <Select
+                value={penRubric}
+                onChange={(e) => setPenRubric(coerceRubric(e.target.value))}
+                disabled={penBusy || rubricOptions.every((o) => o.disabled)}
+              >
+                {rubricOptions.map((opt) => (
+                  <option
+                    key={opt.value}
+                    value={opt.value}
+                    disabled={opt.disabled}
+                  >
+                    {opt.label}
+                  </option>
+                ))}
               </Select>
             </div>
             <div className="md:col-span-2 flex items-end justify-end">
-              <Button onClick={submitClassPenalties} disabled={penBusy || !hasPenChanges}>
+              <Button
+                onClick={submitClassPenalties}
+                disabled={penBusy || !hasPenChanges || rubricDisabled}
+              >
                 {penBusy ? "Enregistrement…" : "Enregistrer les sanctions"}
               </Button>
             </div>
@@ -725,11 +899,18 @@ export default function ClassDevicePage() {
                           <Input
                             type="number"
                             min={0}
+                            max={
+                              currentRubricMax && currentRubricMax > 0
+                                ? currentRubricMax
+                                : undefined
+                            }
                             value={pr.points || 0}
-                            onChange={(e) => setPenPoint(st.id, parseInt(e.target.value || "0", 10))}
+                            onChange={(e) =>
+                              setPenPoint(st.id, parseInt(e.target.value || "0", 10))
+                            }
                             className="w-24"
                             aria-label={`Points à retrancher: ${st.full_name}`}
-                            disabled={penBusy}
+                            disabled={penBusy || rubricDisabled}
                           />
                         </td>
                         <td className="px-3 py-2">
@@ -761,8 +942,12 @@ export default function ClassDevicePage() {
       {open && (
         <div className="rounded-2xl border bg-white p-5 shadow-sm">
           <div className="mb-3 text-sm font-semibold text-slate-700">
-            Appel — {open.class_label} {open.subject_name ? `• ${open.subject_name}` : ""} •{" "}
-            {new Date(open.started_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+            Appel — {open.class_label}{" "}
+            {open.subject_name ? `• ${open.subject_name}` : ""} •{" "}
+            {new Date(open.started_at).toLocaleTimeString([], {
+              hour: "2-digit",
+              minute: "2-digit",
+            })}
           </div>
 
           <div className="overflow-x-auto rounded-xl border">

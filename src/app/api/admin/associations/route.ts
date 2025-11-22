@@ -15,7 +15,7 @@ async function resolveOrCreateParent(
   const email = (opts.email ?? null) || null;
   const display_name = (opts.display_name ?? null) || null;
 
-  // 1) profiles par tÃ©lÃ©phone / email
+  // 1) profiles par téléphone / email
   if (phoneNorm) {
     const { data } = await srv.from("profiles").select("id").eq("phone", phoneNorm).maybeSingle();
     if (data?.id) return data.id as string;
@@ -108,15 +108,16 @@ export async function POST(req: NextRequest) {
     | "teacher_classes"
     | "teacher_class_remove"
     | "teacher_classes_clear"
-    | "teacher_classes_clear_all" // ðŸ‘ˆ NEW (reset global)
+    | "teacher_classes_clear_all" // NEW (reset global)
+    | "class_set_head_teacher"    // NEW (professeur principal)
     | "parent_student"
     | "parent_students"
     | "guardian_notifications"
     | "teacher_discipline";
 
-  /* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  /* ───────────────────────────────────────────────────
      AFFECTATIONS / INSERT (existant)
-  â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+  ─────────────────────────────────────────────────── */
   if (type === "teacher_classes") {
     const teacher_id: string | null = body?.teacher_id ?? null;
     const email: string | null = body?.email ?? null;
@@ -140,7 +141,7 @@ export async function POST(req: NextRequest) {
     }
     if (!tid) return NextResponse.json({ error: "teacher_not_found" }, { status: 404 });
 
-    // Optionnelle: matiÃ¨re (tolÃ¨re institution_subjects.id ou subjects.id)
+    // Optionnelle: matière (tolère institution_subjects.id ou subjects.id)
     let instSubjectId: string | null = null;
     if (subject_id_raw) {
       const { data: link } = await srv
@@ -184,9 +185,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true, inserted: count ?? class_ids.length });
   }
 
-  /* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-     Retirer UNE classe (existant Ã©tendu)
-  â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+  /* ───────────────────────────────────────────────────
+     Retirer UNE classe (existant étendu)
+  ─────────────────────────────────────────────────── */
   if (type === "teacher_class_remove") {
     const teacher_id: string = body?.teacher_id;
     const class_id: string   = body?.class_id;
@@ -218,9 +219,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true, removed: count ?? 1 });
   }
 
-  /* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-     Retirer TOUTES les classes dâ€™un enseignant
-  â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+  /* ───────────────────────────────────────────────────
+     Retirer TOUTES les classes d’un enseignant
+  ─────────────────────────────────────────────────── */
   if (type === "teacher_classes_clear") {
     const teacher_id: string = body?.teacher_id;
     const subject_id_raw: string | null = body?.subject_id ?? null;
@@ -248,13 +249,13 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true, removed: count ?? 0 });
   }
 
-  /* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-     ðŸ‘‡ NEW : Retirer pour TOUS les enseignants (reset global)
+  /* ───────────────────────────────────────────────────
+     NEW : Retirer pour TOUS les enseignants (reset global)
      Options:
        - subject_id (facultatif) : institution_subjects.id OU subjects.id
-       - class_ids (facultatif)  : restreindre Ã  une liste de classes
+       - class_ids (facultatif)  : restreindre à une liste de classes
        - level (facultatif)      : restreindre aux classes d'un niveau
-  â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+  ─────────────────────────────────────────────────── */
   if (type === "teacher_classes_clear_all") {
     const subject_id_raw: string | null = body?.subject_id ?? null;
     const class_ids: string[] | null = Array.isArray(body?.class_ids) ? body.class_ids : null;
@@ -287,7 +288,7 @@ export async function POST(req: NextRequest) {
       const ids = (cls || []).map((c: any) => c.id);
       if (ids.length) del = del.in("class_id", ids);
       else {
-        // Rien Ã  supprimer si aucune classe ne matche le niveau
+        // Rien à supprimer si aucune classe ne matche le niveau
         return NextResponse.json({ ok: true, removed: 0 });
       }
     }
@@ -297,9 +298,72 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true, removed: count ?? 0 });
   }
 
-  /* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-     Liens parents (inchangÃ©s)
-  â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+  /* ───────────────────────────────────────────────────
+     NEW : Professeur principal par classe
+     Front : type = "class_set_head_teacher"
+  ─────────────────────────────────────────────────── */
+  if (type === "class_set_head_teacher") {
+    const class_id: string | null = body?.class_id ?? null;
+    const teacher_id: string | null = body?.teacher_id ?? null;
+
+    if (!class_id) {
+      return NextResponse.json({ error: "missing_class_id" }, { status: 400 });
+    }
+
+    // Vérifier que la classe appartient bien à l’établissement
+    const { data: cls, error: clsErr } = await srv
+      .from("classes")
+      .select("id,institution_id")
+      .eq("id", class_id)
+      .maybeSingle();
+
+    if (clsErr) {
+      return NextResponse.json({ error: clsErr.message }, { status: 400 });
+    }
+    if (!cls || (cls as any).institution_id !== inst) {
+      return NextResponse.json({ error: "class_forbidden" }, { status: 403 });
+    }
+
+    // Si teacher_id null → on efface le prof principal
+    if (!teacher_id) {
+      const { error: uErr } = await srv
+        .from("classes")
+        .update({ head_teacher_id: null })
+        .eq("id", class_id)
+        .eq("institution_id", inst);
+      if (uErr) return NextResponse.json({ error: uErr.message }, { status: 400 });
+      return NextResponse.json({ ok: true, head_teacher_id: null });
+    }
+
+    // Vérifier que l’enseignant existe bien dans cet établissement
+    const { data: prof, error: profErr } = await srv
+      .from("profiles")
+      .select("id,institution_id")
+      .eq("id", teacher_id)
+      .maybeSingle();
+
+    if (profErr) {
+      return NextResponse.json({ error: profErr.message }, { status: 400 });
+    }
+    if (!prof || (prof as any).institution_id !== inst) {
+      return NextResponse.json({ error: "teacher_forbidden" }, { status: 403 });
+    }
+
+    // Mise à jour du prof principal
+    const { error: uErr } = await srv
+      .from("classes")
+      .update({ head_teacher_id: teacher_id })
+      .eq("id", class_id)
+      .eq("institution_id", inst);
+
+    if (uErr) return NextResponse.json({ error: uErr.message }, { status: 400 });
+
+    return NextResponse.json({ ok: true, head_teacher_id: teacher_id });
+  }
+
+  /* ───────────────────────────────────────────────────
+     Liens parents (inchangés)
+  ─────────────────────────────────────────────────── */
   if (type === "parent_students") {
     const student_ids: string[] = Array.isArray(body?.student_ids) ? body.student_ids : [];
     if (!student_ids.length) return NextResponse.json({ error: "no_students" }, { status: 400 });
@@ -336,7 +400,11 @@ export async function POST(req: NextRequest) {
     }
     if (upErr) {
       const { error: e2 } = await srv.from("student_guardians").upsert(
-        rows.map(({ parent_id, student_id, notifications_enabled }) => ({ parent_id, student_id, notifications_enabled })) as any,
+        rows.map(({ parent_id, student_id, notifications_enabled }) => ({
+          parent_id,
+          student_id,
+          notifications_enabled,
+        })) as any,
         { onConflict: "parent_id,student_id" }
       );
       if (e2) return NextResponse.json({ error: e2.message }, { status: 400 });
@@ -445,5 +513,3 @@ export async function POST(req: NextRequest) {
 
   return NextResponse.json({ error: "bad_type" }, { status: 400 });
 }
-
-

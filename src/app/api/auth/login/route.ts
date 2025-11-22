@@ -1,3 +1,4 @@
+//src/app/api/auth/login/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { normalizePhone, canonicalPrefix, sanitize } from "@/lib/phone";

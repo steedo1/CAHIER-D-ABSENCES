@@ -1,3 +1,4 @@
+// src/components/auth/LoginCard.tsx
 "use client";
 
 import { useEffect, useRef, useState } from "react";
@@ -6,18 +7,43 @@ import { useAuth } from "@/app/providers";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getSupabaseBrowserClient } from "@/lib/supabase-browser";
 import { normalizePhone, canonicalPrefix, sanitize } from "@/lib/phone";
-import { Mail, Phone as PhoneIcon, Lock, Eye, EyeOff, Loader2, ShieldAlert } from "lucide-react";
+import {
+  Mail,
+  Phone as PhoneIcon,
+  Lock,
+  Eye,
+  EyeOff,
+  Loader2,
+  ShieldAlert,
+} from "lucide-react";
 
-type Props = { redirectTo?: string; compactHeader?: boolean };
+type Props = {
+  redirectTo?: string;
+  compactHeader?: boolean;
+  /**
+   * "emailOnly"  → on masque le bouton téléphone (espace Direction)
+   * "phoneOnly"  → on masque le bouton email (espace Enseignant)
+   * undefined    → les deux modes sont disponibles
+   */
+  forcedMode?: "emailOnly" | "phoneOnly";
+};
 
 // --- Helpers hoistés (stables) ---
 function Field({
-  children, label, hint,
-}: { children: React.ReactNode; label: string; hint?: React.ReactNode }) {
+  children,
+  label,
+  hint,
+}: {
+  children: React.ReactNode;
+  label: string;
+  hint?: React.ReactNode;
+}) {
   return (
     <div>
       <div className="mb-1 flex items-center justify-between">
-        <label className="block text-xs font-medium text-slate-600">{label}</label>
+        <label className="block text-xs font-medium text-slate-600">
+          {label}
+        </label>
         {hint}
       </div>
       {children}
@@ -25,8 +51,12 @@ function Field({
   );
 }
 function InputWrap({
-  children, IconLeft,
-}: { children: React.ReactNode; IconLeft?: React.ComponentType<React.SVGProps<SVGSVGElement>> }) {
+  children,
+  IconLeft,
+}: {
+  children: React.ReactNode;
+  IconLeft?: React.ComponentType<React.SVGProps<SVGSVGElement>>;
+}) {
   return (
     <div className="relative">
       {IconLeft ? (
@@ -39,9 +69,16 @@ function InputWrap({
   );
 }
 
-export default function LoginCard({ redirectTo = "/redirect", compactHeader }: Props) {
+export default function LoginCard({
+  redirectTo = "/redirect",
+  compactHeader,
+  forcedMode,
+}: Props) {
   const { session, loading } = useAuth();
   const router = useRouter();
+
+  const emailOnly = forcedMode === "emailOnly";
+  const phoneOnly = forcedMode === "phoneOnly";
 
   // Client Supabase (navigateur uniquement)
   const supRef = useRef<SupabaseClient | null>(null);
@@ -49,7 +86,9 @@ export default function LoginCard({ redirectTo = "/redirect", compactHeader }: P
     supRef.current = getSupabaseBrowserClient();
   }, []);
 
-  const [mode, setMode] = useState<"email" | "phone">("email");
+  const [mode, setMode] = useState<"email" | "phone">(
+    phoneOnly ? "phone" : "email",
+  );
   const [email, setEmail] = useState("");
   const [pwdEmail, setPwdEmail] = useState("");
   const [phone, setPhone] = useState("");
@@ -85,6 +124,8 @@ export default function LoginCard({ redirectTo = "/redirect", compactHeader }: P
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (submitting) return; // garde anti double-clic très rapide
+
     setErr(null);
     setSubmitting(true);
 
@@ -92,7 +133,10 @@ export default function LoginCard({ redirectTo = "/redirect", compactHeader }: P
 
     try {
       if (mode === "email") {
-        const { error } = await supabase.auth.signInWithPassword({ email, password: pwdEmail });
+        const { error } = await supabase.auth.signInWithPassword({
+          email,
+          password: pwdEmail,
+        });
         if (error) throw new Error(error.message || "Identifiants invalides.");
       } else {
         // Candidats : normalisation standard + variante "conserver le 0"
@@ -101,12 +145,18 @@ export default function LoginCard({ redirectTo = "/redirect", compactHeader }: P
         const digitsOnly = sanitize(phone).replace(/^\+/, "");
         const n2 = digitsOnly ? pref + digitsOnly : "";
 
-        const tries = [n1, n2].filter((v, i, a) => !!v && a.indexOf(v) === i);
-        if (tries.length === 0) throw new Error("Numéro de téléphone invalide.");
+        const tries = [n1, n2].filter(
+          (v, i, a) => !!v && a.indexOf(v) === i,
+        );
+        if (tries.length === 0)
+          throw new Error("Numéro de téléphone invalide.");
 
         let lastErr: any = null;
         for (const candidate of tries) {
-          const { error } = await supabase.auth.signInWithPassword({ phone: candidate, password: pwdPhone });
+          const { error } = await supabase.auth.signInWithPassword({
+            phone: candidate,
+            password: pwdPhone,
+          });
           if (!error) {
             lastErr = null;
             break;
@@ -121,19 +171,27 @@ export default function LoginCard({ redirectTo = "/redirect", compactHeader }: P
       return;
     }
 
-    // Sync cookies SSR (tolérant)
+    // ⭐ Sync cookies SSR (ET on attend vraiment la fin de /api/auth/sync)
     try {
-      const { data } = await supabase.auth.getSession();
+      const { data, error } = await supabase.auth.getSession();
+      if (error) {
+        console.warn("[LoginCard] getSession error:", error.message || error);
+      }
       const at = data.session?.access_token;
       const rt = data.session?.refresh_token;
       if (typeof at === "string" && typeof rt === "string") {
-        fetch("/api/auth/sync", {
+        await fetch("/api/auth/sync", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ access_token: at, refresh_token: rt }),
-        }).catch(() => {});
+        });
       }
-    } catch {}
+    } catch (syncErr: any) {
+      console.warn(
+        "[LoginCard] /api/auth/sync failed:",
+        syncErr?.message || syncErr,
+      );
+    }
 
     setSubmitting(false);
     router.replace(redirectTo);
@@ -148,35 +206,73 @@ export default function LoginCard({ redirectTo = "/redirect", compactHeader }: P
       {!compactHeader && (
         <div className="border-b bg-blue-950 text-white">
           <div className="px-6 pb-4 pt-6">
-            <h2 className="text-xl font-semibold tracking-tight">Connexion à votre espace</h2>
-            <p className="mt-1 text-sm text-white/80">Utilisez les identifiants fournis par votre établissement.</p>
+            <h2 className="text-xl font-semibold tracking-tight">
+              Connexion à votre espace
+            </h2>
+            <p className="mt-1 text-sm text-white/80">
+              Absences, notes et prédiction sécurisées — identifiants fournis
+              par votre établissement.
+            </p>
           </div>
         </div>
       )}
 
-      {loading && <div className="px-6 pt-3 text-xs text-slate-500" aria-live="polite">Initialisation de la session…</div>}
+      {loading && (
+        <div className="px-6 pt-3 text-xs text-slate-500" aria-live="polite">
+          Initialisation de la session…
+        </div>
+      )}
 
+      {/* Sélecteur Email / Téléphone selon le contexte */}
       <div className="px-6 pt-4">
         <div className="inline-flex rounded-full border border-slate-200 bg-slate-50 p-1 text-sm shadow-sm">
-          <button
-            type="button"
-            onClick={() => setMode("email")}
-            disabled={disableButtons}
-            className={["inline-flex items-center gap-2 rounded-full px-3 py-2 transition",
-              mode === "email" ? "bg-white font-medium text-blue-700 shadow-sm" : "text-slate-600 hover:bg-white"].join(" ")}
-          >
-            <Mail className="h-4 w-4" /> Email
-          </button>
-          <button
-            type="button"
-            onClick={() => setMode("phone")}
-            disabled={disableButtons}
-            className={["inline-flex items-center gap-2 rounded-full px-3 py-2 transition",
-              mode === "phone" ? "bg-white font-medium text-blue-700 shadow-sm" : "text-slate-600 hover:bg-white"].join(" ")}
-          >
-            <PhoneIcon className="h-4 w-4" /> Téléphone
-          </button>
+          {/* Onglet Email (masqué si phoneOnly) */}
+          {!phoneOnly && (
+            <button
+              type="button"
+              onClick={() => setMode("email")}
+              disabled={disableButtons || emailOnly}
+              className={[
+                "inline-flex items-center gap-2 rounded-full px-3 py-2 transition",
+                mode === "email"
+                  ? "bg-white font-medium text-blue-700 shadow-sm"
+                  : "text-slate-600 hover:bg-white",
+              ].join(" ")}
+            >
+              <Mail className="h-4 w-4" /> Email
+            </button>
+          )}
+
+          {/* Onglet Téléphone (masqué si emailOnly) */}
+          {!emailOnly && (
+            <button
+              type="button"
+              onClick={() => setMode("phone")}
+              disabled={disableButtons || phoneOnly}
+              className={[
+                "inline-flex items-center gap-2 rounded-full px-3 py-2 transition",
+                mode === "phone"
+                  ? "bg-white font-medium text-blue-700 shadow-sm"
+                  : "text-slate-600 hover:bg-white",
+              ].join(" ")}
+            >
+              <PhoneIcon className="h-4 w-4" /> Téléphone
+            </button>
+          )}
         </div>
+
+        {emailOnly && (
+          <p className="mt-1 text-xs text-slate-500">
+            Connexion <b>Espace Direction</b> : identifiant par{" "}
+            <b>email uniquement</b>.
+          </p>
+        )}
+        {phoneOnly && (
+          <p className="mt-1 text-xs text-slate-500">
+            Connexion <b>Espace Enseignant</b> : identifiant par{" "}
+            <b>téléphone uniquement</b>.
+          </p>
+        )}
       </div>
 
       <form noValidate onSubmit={onSubmit} className="space-y-4 px-6 py-6">
@@ -216,7 +312,12 @@ export default function LoginCard({ redirectTo = "/redirect", compactHeader }: P
                       Verr. Maj activée
                     </span>
                   )}
-                  <button type="button" onClick={() => setForgotOpen(true)} className="text-xs text-slate-500 underline-offset-2 hover:underline" disabled={disableButtons}>
+                  <button
+                    type="button"
+                    onClick={() => setForgotOpen(true)}
+                    className="text-xs text-slate-500 underline-offset-2 hover:underline"
+                    disabled={disableButtons}
+                  >
                     Mot de passe oublié ?
                   </button>
                 </div>
@@ -232,7 +333,9 @@ export default function LoginCard({ redirectTo = "/redirect", compactHeader }: P
                     placeholder="••••••••"
                     value={pwdEmail}
                     onChange={(e) => setPwdEmail(e.target.value)}
-                    onKeyUp={(e) => setCapsEmail(e.getModifierState?.("CapsLock") ?? false)}
+                    onKeyUp={(e) =>
+                      setCapsEmail(e.getModifierState?.("CapsLock") ?? false)
+                    }
                     required
                     autoComplete="current-password"
                     autoCapitalize="none"
@@ -248,9 +351,17 @@ export default function LoginCard({ redirectTo = "/redirect", compactHeader }: P
                     onTouchStart={(e) => e.preventDefault()}
                     onClick={() => setShowPwdEmail((v) => !v)}
                     className="absolute inset-y-0 right-0 grid w-10 place-items-center text-slate-500 hover:text-slate-700"
-                    aria-label={showPwdEmail ? "Masquer le mot de passe" : "Afficher le mot de passe"}
+                    aria-label={
+                      showPwdEmail
+                        ? "Masquer le mot de passe"
+                        : "Afficher le mot de passe"
+                    }
                   >
-                    {showPwdEmail ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    {showPwdEmail ? (
+                      <EyeOff className="h-4 w-4" />
+                    ) : (
+                      <Eye className="h-4 w-4" />
+                    )}
                   </button>
                 </div>
               </InputWrap>
@@ -292,7 +403,12 @@ export default function LoginCard({ redirectTo = "/redirect", compactHeader }: P
                       Verr. Maj activée
                     </span>
                   )}
-                  <button type="button" onClick={() => setForgotOpen(true)} className="text-xs text-slate-500 underline-offset-2 hover:underline" disabled={disableButtons}>
+                  <button
+                    type="button"
+                    onClick={() => setForgotOpen(true)}
+                    className="text-xs text-slate-500 underline-offset-2 hover:underline"
+                    disabled={disableButtons}
+                  >
                     Mot de passe oublié ?
                   </button>
                 </div>
@@ -308,7 +424,9 @@ export default function LoginCard({ redirectTo = "/redirect", compactHeader }: P
                     placeholder="••••••••"
                     value={pwdPhone}
                     onChange={(e) => setPwdPhone(e.target.value)}
-                    onKeyUp={(e) => setCapsPhone(e.getModifierState?.("CapsLock") ?? false)}
+                    onKeyUp={(e) =>
+                      setCapsPhone(e.getModifierState?.("CapsLock") ?? false)
+                    }
                     required
                     autoComplete="current-password"
                     autoCapitalize="none"
@@ -324,9 +442,17 @@ export default function LoginCard({ redirectTo = "/redirect", compactHeader }: P
                     onTouchStart={(e) => e.preventDefault()}
                     onClick={() => setShowPwdPhone((v) => !v)}
                     className="absolute inset-y-0 right-0 grid w-10 place-items-center text-slate-500 hover:text-slate-700"
-                    aria-label={showPwdPhone ? "Masquer le mot de passe" : "Afficher le mot de passe"}
+                    aria-label={
+                      showPwdPhone
+                        ? "Masquer le mot de passe"
+                        : "Afficher le mot de passe"
+                    }
                   >
-                    {showPwdPhone ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    {showPwdPhone ? (
+                      <EyeOff className="h-4 w-4" />
+                    ) : (
+                      <Eye className="h-4 w-4" />
+                    )}
                   </button>
                 </div>
               </InputWrap>
@@ -335,7 +461,10 @@ export default function LoginCard({ redirectTo = "/redirect", compactHeader }: P
         )}
 
         {err && (
-          <div className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700" aria-live="polite">
+          <div
+            className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700"
+            aria-live="polite"
+          >
             <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" />
             <span>{err}</span>
           </div>
@@ -343,7 +472,10 @@ export default function LoginCard({ redirectTo = "/redirect", compactHeader }: P
 
         <button
           type="submit"
-          disabled={disableButtons || (mode === "email" ? !(email && pwdEmail) : !(phone && pwdPhone))}
+          disabled={
+            disableButtons ||
+            (mode === "email" ? !(email && pwdEmail) : !(phone && pwdPhone))
+          }
           className="group relative w-full overflow-hidden rounded-xl bg-blue-700 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-blue-800 disabled:opacity-50"
         >
           <span className="inline-flex items-center justify-center gap-2">
@@ -361,17 +493,26 @@ export default function LoginCard({ redirectTo = "/redirect", compactHeader }: P
         <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 px-4 backdrop-blur-sm">
           <div className="w-full max-w-md overflow-hidden rounded-2xl bg-white shadow-xl">
             <div className="bg-slate-50 px-5 py-3">
-              <div className="flex items-center gap-2 text-slate-800">
+              <div className="flex items-center gap-2 text-slate-8
+
+00">
                 <Lock className="h-4 w-4" />
-                <div className="text-sm font-semibold">Mot de passe oublié ?</div>
+                <div className="text-sm font-semibold">
+                  Mot de passe oublié ?
+                </div>
               </div>
             </div>
             <div className="px-5 py-4">
               <p className="text-sm text-slate-700">
-                Pour réinitialiser votre mot de passe, merci de <b>contacter l’administration de votre établissement</b>. Elle vous communiquera de nouveaux identifiants.
+                Pour réinitialiser votre mot de passe, merci de{" "}
+                <b>contacter l’administration de votre établissement</b>. Elle
+                vous communiquera de nouveaux identifiants.
               </p>
               <div className="mt-4 flex justify-end">
-                <button onClick={() => setForgotOpen(false)} className="rounded-lg border border-slate-200 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50">
+                <button
+                  onClick={() => setForgotOpen(false)}
+                  className="rounded-lg border border-slate-200 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50"
+                >
                   J’ai compris
                 </button>
               </div>

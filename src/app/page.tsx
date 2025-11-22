@@ -1,6 +1,8 @@
+// src/app/page.tsx (ou le fichier qui sert vraiment de page d’accueil)
 "use client";
 
 import Image from "next/image";
+import Link from "next/link";
 import { useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "./providers";
@@ -51,7 +53,7 @@ function Accordion({ items }: { items: FaqItem[] }) {
 
 function ContactCTA() {
   const wa =
-    "https://wa.me/2250720672094?text=Bonjour%20Mon%20Cahier%20d%E2%80%99Absences%2C%20je%20souhaite%20m%E2%80%99abonner.";
+    "https://wa.me/2250720672094?text=Bonjour%20Mon%20Cahier%2C%20je%20souhaite%20m%E2%80%99abonner.";
   return (
     <div className="mt-4 flex flex-wrap items-center gap-3">
       <a
@@ -78,7 +80,7 @@ function ContactCTA() {
   );
 }
 
-/* ───────────────────────── Fancy helpers (no deps) ───────────────────────── */
+/* ───────────────────────── Fancy helpers ───────────────────────── */
 function TiltCard({
   className = "",
   children,
@@ -87,7 +89,6 @@ function TiltCard({
   children: React.ReactNode;
 }) {
   const ref = useRef<HTMLDivElement | null>(null);
-
   function handleMove(e: React.MouseEvent) {
     const el = ref.current;
     if (!el) return;
@@ -96,15 +97,17 @@ function TiltCard({
     const y = e.clientY - rect.top;
     const rx = -(y - rect.height / 2) / (rect.height / 2);
     const ry = (x - rect.width / 2) / (rect.width / 2);
-    const max = 6; // deg
-    el.style.transform = `perspective(900px) rotateX(${rx * max}deg) rotateY(${ry * max}deg) translateZ(0)`;
+    const max = 6;
+    el.style.transform = `perspective(900px) rotateX(${rx * max}deg) rotateY(${
+      ry * max
+    }deg) translateZ(0)`;
   }
   function handleLeave() {
     const el = ref.current;
     if (!el) return;
-    el.style.transform = "perspective(900px) rotateX(0deg) rotateY(0deg) translateZ(0)";
+    el.style.transform =
+      "perspective(900px) rotateX(0deg) rotateY(0deg) translateZ(0)";
   }
-
   return (
     <div
       ref={ref}
@@ -128,14 +131,24 @@ function Pill({ children }: { children: React.ReactNode }) {
   );
 }
 
-function Stat({ icon: Icon, label, value }: { icon: any; label: string; value: string }) {
+function Stat({
+  icon: Icon,
+  label,
+  value,
+}: {
+  icon: any;
+  label: string;
+  value: string;
+}) {
   return (
     <div className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
       <div className="grid h-10 w-10 place-items-center rounded-xl bg-indigo-600/10 text-indigo-700">
         <Icon className="h-5 w-5" />
       </div>
       <div>
-        <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</div>
+        <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+          {label}
+        </div>
         <div className="text-lg font-bold text-slate-900">{value}</div>
       </div>
     </div>
@@ -166,9 +179,8 @@ function FeatureCard({
   );
 }
 
-/* ───────────────────────── Marquee Banner (défilant) ───────────────────────── */
+/* Marquee Banner */
 function MarqueeBanner({ text }: { text: string }) {
-  // Bande défilante accessible : pause au survol, réduit si prefers-reduced-motion.
   return (
     <div className="relative z-20 w-full overflow-hidden bg-gradient-to-r from-indigo-600 via-violet-600 to-fuchsia-600 text-white ring-1 ring-indigo-500/20">
       <div
@@ -185,8 +197,12 @@ function MarqueeBanner({ text }: { text: string }) {
       </div>
       <style jsx>{`
         @keyframes marquee {
-          0% { transform: translateX(0); }
-          100% { transform: translateX(-50%); }
+          0% {
+            transform: translateX(0);
+          }
+          100% {
+            transform: translateX(-50%);
+          }
         }
         @media (prefers-reduced-motion: reduce) {
           div[role="status"] {
@@ -205,7 +221,7 @@ export default function HomePage() {
   const router = useRouter();
   const redirectedRef = useRef(false);
 
-  // Si déjà connecté (admin/enseignant), on redirige vers l’app
+  // Si déjà connecté (admin/enseignant/parent), on bascule directement dans l’app
   useEffect(() => {
     if (session && !redirectedRef.current) {
       redirectedRef.current = true;
@@ -215,11 +231,12 @@ export default function HomePage() {
 
   const subscribeFaq: FaqItem[] = [
     {
-      q: "Comment s’abonner à Mon Cahier d’Absences ?",
+      q: "Comment s’abonner à Mon Cahier ?",
       a: (
         <>
-          L’abonnement se fait directement avec notre équipe. Les établissements restent
-          <b> autonomes</b> ensuite pour créer classes, enseignants et lier les parents.
+          L’abonnement se fait directement avec notre équipe. Les établissements
+          restent <b>autonomes</b> ensuite pour créer classes, enseignants,
+          matières et lier les parents.
           <ContactCTA />
         </>
       ),
@@ -229,24 +246,39 @@ export default function HomePage() {
       a: (
         <ul className="ml-5 list-disc space-y-1">
           <li>
-            Création autonome des <b>classes</b> et des <b>comptes enseignants</b>.
+            Création autonome des <b>classes</b> et des{" "}
+            <b>comptes enseignants</b>.
           </li>
           <li>
-            Contacts parents reliés aux élèves, <b>notifications temps réel</b> (absence/retard).
+            Contacts parents reliés aux élèves,{" "}
+            <b>notifications temps réel</b> (absence/retard).
           </li>
           <li>
-            <b>Suivi des heures effectuées</b> par enseignant sur une période donnée.
+            <b>Suivi des heures effectuées</b> par enseignant sur une période
+            donnée.
           </li>
           <li>
-            <b>Tableau de bord</b> clair ; exports CSV.
-          </li>
-          <li>Import facile (CSV) des <b>classes</b> et <b>enseignants</b>.</li>
-          <li>
-            Affectations <b>en masse</b> : créer et associer des <b>disciplines</b> aux
-            enseignants en un coup.
+            <b>Cahier de notes complet</b> : devoirs, interrogations, moyennes
+            et bulletins.
           </li>
           <li>
-            Rôles clairs : super admin, admin d’établissement, enseignant, parent — <b>une seule vue par rôle</b>.
+            <b>Tableaux de bord</b> clairs ; exports CSV (absences & notes).
+          </li>
+          <li>
+            Import facile (CSV) des <b>classes</b>, <b>enseignants</b> et
+            élèves.
+          </li>
+          <li>
+            Affectations <b>en masse</b> : créer et associer des{" "}
+            <b>disciplines</b> aux enseignants en un coup.
+          </li>
+          <li>
+            Rôles clairs : super admin, admin d’établissement, enseignant,
+            parent — <b>une seule vue par rôle</b>.
+          </li>
+          <li>
+            <b>Modèle de prédiction</b> du taux de réussite par classe, basé
+            sur absences, notes et matières clés.
           </li>
         </ul>
       ),
@@ -258,7 +290,8 @@ export default function HomePage() {
       q: "Comment suivre l’échéance et la situation de mon abonnement ?",
       a: (
         <>
-          Dans <b>Paramètres → Abonnement</b>, vous voyez l’échéance et l’historique des paiements.
+          Dans <b>Paramètres → Abonnement</b>, vous voyez l’échéance et
+          l’historique des paiements.
         </>
       ),
     },
@@ -266,19 +299,23 @@ export default function HomePage() {
       q: "Comment sont envoyées les notifications aux parents ?",
       a: (
         <>
-          Lors de la validation de l’appel, le parent est notifié <b>immédiatement</b>.
+          Lors de la validation de l’appel ou d’une nouvelle note publiée, le
+          parent est notifié <b>immédiatement</b>.
         </>
       ),
     },
   ];
 
   const MARQUEE_TEXT =
-    "Bienvenue sur EduPrésence : votre allié pour une gestion des absences fluide et moderne.";
+    "Mon Cahier : absences, notes et prédiction du taux de réussite dans un seul outil.";
 
   return (
     <main className="relative min-h-screen bg-white">
-      {/* Gradient/Aurora background (non intrusif) */}
-      <div aria-hidden className="pointer-events-none absolute inset-0 -z-10 overflow-hidden">
+      {/* Gradient/Aurora background */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-0 -z-10 overflow-hidden"
+      >
         <div className="absolute left-[5%] top-[-8%] h-80 w-80 rounded-full bg-fuchsia-300/40 blur-2xl md:h-[28rem] md:w-[28rem]" />
         <div className="absolute right-[2%] top-[10%] h-72 w-72 rounded-full bg-indigo-300/40 blur-2xl md:h-[26rem] md:w-[26rem]" />
         <div className="absolute bottom-[-10%] left-[15%] h-72 w-72 rounded-full bg-emerald-300/40 blur-2xl md:h-[26rem] md:w-[26rem]" />
@@ -300,19 +337,32 @@ export default function HomePage() {
               </svg>
             </div>
             <div className="text-white">
-              <div className="text-sm font-semibold tracking-wide">Mon Cahier d’Absences</div>
-              <div className="text-xs text-white/80">Portail Parents & Établissements</div>
+              <div className="text-sm font-semibold tracking-wide">
+                Mon Cahier
+              </div>
+              <div className="text-xs text-white/80">
+                Absences, notes &amp; prédiction des résultats
+              </div>
             </div>
           </a>
 
           <nav className="hidden items-center gap-6 text-sm font-semibold text-white/80 md:flex">
-            <a href="#features" className="hover:text-white">Fonctionnalités</a>
-            <a href="#steps" className="hover:text-white">Comment ça marche</a>
-            <a href="#faq" className="hover:text-white">FAQ</a>
-            <a href="#contact" className="hover:text-white">Contact</a>
+            <a href="#features" className="hover:text-white">
+              Fonctionnalités
+            </a>
+            <a href="#steps" className="hover:text-white">
+              Comment ça marche
+            </a>
+            <a href="#faq" className="hover:text-white">
+              FAQ
+            </a>
+            <a href="#contact" className="hover:text-white">
+              Contact
+            </a>
           </nav>
 
-          <div className="flex items-center gap-2">
+          {/* ⭐️ 3 boutons de connexion */}
+          <div className="flex flex-wrap items-center gap-2">
             <a
               href="/parents/login"
               className="rounded-full bg-emerald-600 px-3.5 py-1.5 text-sm font-semibold text-white shadow ring-1 ring-white/20 hover:bg-emerald-700"
@@ -320,16 +370,22 @@ export default function HomePage() {
               Espace parent
             </a>
             <a
-              href="/login"
-              className="rounded-full bg-indigo-600 px-3.5 py-1.5 text-sm font-semibold text-white shadow ring-1 ring-white/20 hover:bg-indigo-700"
+              href="/login?space=direction"
+              className="rounded-full bg-white/10 px-3.5 py-1.5 text-sm font-semibold text-white shadow ring-1 ring-white/30 hover:bg-white/15"
             >
-              Espace établissement
+              Espace direction
+            </a>
+            <a
+              href="/login?space=enseignant"
+              className="rounded-full bg-white px-3.5 py-1.5 text-sm font-semibold text-indigo-700 shadow ring-1 ring-white/20 hover:bg-slate-50"
+            >
+              Espace enseignant
             </a>
           </div>
         </div>
       </header>
 
-      {/* Bande défilante EduPrésence */}
+      {/* Bande défilante */}
       <MarqueeBanner text={MARQUEE_TEXT} />
 
       {/* HERO */}
@@ -338,42 +394,57 @@ export default function HomePage() {
           <div className="relative z-10">
             <Pill>
               <Rocket className="h-3.5 w-3.5" />
-              <span>L’appel le plus rapide pour vos classes</span>
+              <span>Absences, notes &amp; prédiction réunies</span>
             </Pill>
             <h1 className="mt-4 text-4xl font-extrabold leading-tight text-slate-900 md:text-6xl">
-              Le cahier d’absences <span className="text-indigo-600">numérique</span>
+              Le cahier d’absences &amp; de notes{" "}
+              <span className="text-indigo-600">intelligent</span>
             </h1>
             <p className="mt-5 max-w-xl text-base leading-7 text-slate-700">
-              Appel ultra-rapide, alertes parents instantanées, suivi des heures,
-              exports CSV, et tableaux de bord clairs pour toute l’équipe.
+              Appel ultra-rapide, cahier de notes complet, bulletins
+              automatiques, alertes parents instantanées et{" "}
+              <b>modèle de prédiction du taux de réussite</b> de chaque classe.
             </p>
 
-            <div className="mt-6 flex flex-wrap items-center gap-3">
+            {/* ⭐️ Trois gros boutons */}
+            <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-3">
               <a
                 href="/parents/login"
-                className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-emerald-700"
+                className="inline-flex items-center justify-center rounded-xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white shadow hover:bg-emerald-700"
               >
-                Espace parent
+                Espace Parent
               </a>
               <a
-                href="/login"
-                className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-indigo-700"
+                href="/login?space=direction"
+                className="inline-flex items-center justify-center rounded-xl bg-indigo-600 px-4 py-3 text-sm font-semibold text-white shadow hover:bg-indigo-700"
               >
-                Espace établissement
+                Espace Direction
               </a>
               <a
-                href="#contact"
-                className="rounded-xl bg-white px-4 py-2 text-sm font-semibold text-slate-800 ring-1 ring-slate-200 hover:bg-slate-50"
+                href="/login?space=enseignant"
+                className="inline-flex items-center justify-center rounded-xl bg-violet-600 px-4 py-3 text-sm font-semibold text-white shadow hover:bg-violet-700"
               >
-                Nous contacter
+                Espace Enseignant
               </a>
             </div>
 
             <div className="mt-8 grid max-w-2xl grid-cols-2 gap-3">
-              <Stat icon={Users} label="Parents touchés" value="> 10 000" />
-              <Stat icon={Clock} label="Temps d’appel moyen" value="< 60 s" />
-              <Stat icon={Bell} label="Notifications envoyées" value="> 250 000" />
-              <Stat icon={Shield} label="Rôles & accès" value="Sécurisés" />
+              <Stat icon={Users} label="Parents touchés" value="&gt; 10 000" />
+              <Stat
+                icon={Clock}
+                label="Temps d’appel moyen"
+                value="&lt; 60 s"
+              />
+              <Stat
+                icon={Bell}
+                label="Notifications envoyées"
+                value="&gt; 250 000"
+              />
+              <Stat
+                icon={Rocket}
+                label="Prédiction du taux de réussite"
+                value="Modèle intelligent"
+              />
             </div>
           </div>
 
@@ -382,7 +453,7 @@ export default function HomePage() {
             <TiltCard className="relative overflow-hidden rounded-l-[44px] border border-slate-200 shadow-xl">
               <Image
                 src="/accueil.png"
-                alt="Parents et enseignants suivent l’assiduité"
+                alt="Absences, notes et prédiction dans Mon Cahier"
                 width={900}
                 height={600}
                 className="h-auto w-full object-cover"
@@ -402,9 +473,28 @@ export default function HomePage() {
               <Building2 className="h-4 w-4" /> Établissement
             </div>
             <ol className="grid gap-3 text-sm text-slate-700">
-              <li className="flex items-start gap-3"><span className="mt-1 inline-grid h-6 w-6 flex-none place-items-center rounded-full bg-indigo-600 text-white">1</span> Créez vos classes et comptes enseignants (import CSV possible).</li>
-              <li className="flex items-start gap-3"><span className="mt-1 inline-grid h-6 w-6 flex-none place-items-center rounded-full bg-indigo-600 text-white">2</span> Affectez vos disciplines aux professeurs en un clic.</li>
-              <li className="flex items-start gap-3"><span className="mt-1 inline-grid h-6 w-6 flex-none place-items-center rounded-full bg-indigo-600 text-white">3</span> Lancez l’appel en cours : absences/retards sont notifiés aux parents.</li>
+              <li className="flex items-start gap-3">
+                <span className="mt-1 inline-grid h-6 w-6 flex-none place-items-center rounded-full bg-indigo-600 text-white">
+                  1
+                </span>
+                Créez vos classes, matières et comptes enseignants (import CSV
+                possible).
+              </li>
+              <li className="flex items-start gap-3">
+                <span className="mt-1 inline-grid h-6 w-6 flex-none place-items-center rounded-full bg-indigo-600 text-white">
+                  2
+                </span>
+                Affectez vos disciplines aux professeurs en un clic (absences et
+                cahier de notes).
+              </li>
+              <li className="flex items-start gap-3">
+                <span className="mt-1 inline-grid h-6 w-6 flex-none place-items-center rounded-full bg-indigo-600 text-white">
+                  3
+                </span>
+                En classe, lancez l’appel et saisissez les notes : absences,
+                retards et évaluations alimentent les tableaux de bord et le{" "}
+                <b>modèle de prédiction</b> du taux de réussite.
+              </li>
             </ol>
           </div>
           <div className="rounded-2xl border border-slate-200 bg-white p-6">
@@ -412,9 +502,26 @@ export default function HomePage() {
               <Users className="h-4 w-4" /> Parent
             </div>
             <ol className="grid gap-3 text-sm text-slate-700">
-              <li className="flex items-start gap-3"><span className="mt-1 inline-grid h-6 w-6 flex-none place-items-center rounded-full bg-emerald-600 text-white">1</span> Connectez-vous à l’Espace parent.</li>
-              <li className="flex items-start gap-3"><span className="mt-1 inline-grid h-6 w-6 flex-none place-items-center rounded-full bg-emerald-600 text-white">2</span> Associez votre enfant via son matricule (si requis par l’établissement).</li>
-              <li className="flex items-start gap-3"><span className="mt-1 inline-grid h-6 w-6 flex-none place-items-center rounded-full bg-emerald-600 text-white">3</span> Recevez les alertes d’absence/retard et suivez l’historique.</li>
+              <li className="flex items-start gap-3">
+                <span className="mt-1 inline-grid h-6 w-6 flex-none place-items-center rounded-full bg-emerald-600 text-white">
+                  1
+                </span>
+                Connectez-vous à l’Espace parent.
+              </li>
+              <li className="flex items-start gap-3">
+                <span className="mt-1 inline-grid h-6 w-6 flex-none place-items-center rounded-full bg-emerald-600 text-white">
+                  2
+                </span>
+                Associez votre enfant via son matricule (si requis par
+                l’établissement).
+              </li>
+              <li className="flex items-start gap-3">
+                <span className="mt-1 inline-grid h-6 w-6 flex-none place-items-center rounded-full bg-emerald-600 text-white">
+                  3
+                </span>
+                Recevez les alertes d’absence/retard et consultez{" "}
+                <b>notes, moyennes et bulletins</b> depuis votre téléphone.
+              </li>
             </ol>
           </div>
         </div>
@@ -424,18 +531,36 @@ export default function HomePage() {
       <section id="features" className="mx-auto max-w-7xl px-4 pb-10 md:pb-16">
         <SectionTitle>Fonctionnalités clés</SectionTitle>
         <div className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
-          <FeatureCard icon={Clock} title="Appel ultra-rapide"
-            desc="Démarrez un créneau en 1 clic et notez absences/retards en quelques secondes." />
-          <FeatureCard icon={Bell} title="Notifications instantanées"
-            desc="Les parents sont alertés en temps réel après validation de l’appel." />
-          <FeatureCard icon={FileSpreadsheet} title="Exports CSV propres"
-            desc="Récupérez vos données (absences, retards, heures) dans des CSV lisibles." />
-          <FeatureCard icon={Shield} title="Rôles & RLS"
-            desc="Accès sécurisés et vues dédiées : super admin, admin, enseignant, parent." />
-          <FeatureCard icon={Users} title="Parents connectés"
-            desc="Associez les responsables aux élèves et centralisez la communication." />
-          <FeatureCard icon={Rocket} title="Prêt pour l’échelle"
-            desc="Pensé pour des milliers d’élèves et des dizaines d’établissements." />
+          <FeatureCard
+            icon={Clock}
+            title="Appel ultra-rapide"
+            desc="Démarrez un créneau en 1 clic et notez absences/retards en quelques secondes, depuis le téléphone de la classe."
+          />
+          <FeatureCard
+            icon={Bell}
+            title="Notifications instantanées"
+            desc="Les parents sont alertés en temps réel après validation de l’appel ou publication d’une note."
+          />
+          <FeatureCard
+            icon={FileSpreadsheet}
+            title="Cahier de notes & bulletins"
+            desc="Saisissez devoirs, interrogations et examens ; Mon Cahier calcule automatiquement moyennes, bulletins et exports."
+          />
+          <FeatureCard
+            icon={Rocket}
+            title="Prédiction du taux de réussite"
+            desc="Un modèle interne analyse absences, notes et matières clés pour estimer le taux de réussite de chaque classe."
+          />
+          <FeatureCard
+            icon={Shield}
+            title="Rôles & sécurité"
+            desc="Accès sécurisés, RLS et vues dédiées : super admin, admin, enseignant, parent ; aucune confusion de rôle."
+          />
+          <FeatureCard
+            icon={Users}
+            title="Parents connectés"
+            desc="Associez les responsables aux élèves et centralisez la communication autour de l’assiduité et des résultats."
+          />
         </div>
       </section>
 
@@ -467,13 +592,14 @@ export default function HomePage() {
                   Parlons de votre établissement
                 </h3>
                 <p className="mt-1 max-w-2xl text-sm text-slate-700">
-                  On s’occupe de la mise en route. Vous gardez la main ensuite : classes, enseignants,
-                  matières, exports… le tout en autonomie.
+                  On s’occupe de la mise en route. Vous gardez la main ensuite :
+                  classes, enseignants, matières, cahier de notes, prédiction du
+                  taux de réussite… le tout en autonomie.
                 </p>
               </div>
               <div className="flex flex-wrap items-center gap-3">
                 <a
-                  href="https://wa.me/2250720672094?text=Bonjour%20Mon%20Cahier%20d%E2%80%99Absences%2C%20je%20souhaite%20m%E2%80%99abonner."
+                  href="https://wa.me/2250720672094?text=Bonjour%20Mon%20Cahier%2C%20je%20souhaite%20m%E2%80%99abonner."
                   target="_blank"
                   rel="noreferrer"
                   className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-emerald-700"
@@ -496,16 +622,34 @@ export default function HomePage() {
       <footer className="bg-indigo-950 py-12 text-indigo-50">
         <div className="mx-auto grid max-w-7xl grid-cols-1 gap-10 px-4 md:grid-cols-3">
           <div>
-            <div className="text-2xl font-extrabold">Mon Cahier d’Absences</div>
-            <div className="mt-1 text-indigo-300">Copyrights © {new Date().getFullYear()}</div>
+            <div className="text-2xl font-extrabold">Mon Cahier</div>
+            <div className="mt-1 text-indigo-300">
+              Copyrights © {new Date().getFullYear()}
+            </div>
           </div>
           <div>
             <h3 className="text-lg font-semibold">Pour commencer</h3>
             <ul className="mt-3 space-y-2 text-indigo-200">
-              <li><a href="#features" className="hover:text-white">Fonctionnalités</a></li>
-              <li><a href="#steps" className="hover:text-white">Comment ça marche</a></li>
-              <li><a href="#faq" className="hover:text-white">FAQ</a></li>
-              <li><a href="#contact" className="hover:text-white">Contact</a></li>
+              <li>
+                <a href="#features" className="hover:text-white">
+                  Fonctionnalités
+                </a>
+              </li>
+              <li>
+                <a href="#steps" className="hover:text-white">
+                  Comment ça marche
+                </a>
+              </li>
+              <li>
+                <a href="#faq" className="hover:text-white">
+                  FAQ
+                </a>
+              </li>
+              <li>
+                <a href="#contact" className="hover:text-white">
+                  Contact
+                </a>
+              </li>
             </ul>
           </div>
           <div>

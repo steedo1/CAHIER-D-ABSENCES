@@ -41,6 +41,11 @@ type MetricsOk = {
 type MetricsErr = { ok: false; error: string };
 type DaysRange = 7 | 30 | 90;
 
+type InstitutionInfo = {
+  name: string;
+  logo_url: string | null;
+};
+
 /* ─────────────────────────────
    Petites briques UI
 ───────────────────────────── */
@@ -251,6 +256,9 @@ export default function AdminDashboardClient() {
   const [days, setDays] = useState<DaysRange>(30);
   const [updatedAt, setUpdatedAt] = useState<Date | null>(null);
 
+  const [institution, setInstitution] = useState<InstitutionInfo | null>(null);
+  const [loadingInstitution, setLoadingInstitution] = useState(true);
+
   const nfmt = useMemo(() => new Intl.NumberFormat(), []);
   void nfmt;
 
@@ -272,21 +280,49 @@ export default function AdminDashboardClient() {
 
   useEffect(() => {
     let alive = true;
+    setLoading(true);
+    setLoadingInstitution(true);
+
     (async () => {
       try {
-        const r = await fetch(`/api/admin/dashboard/metrics?days=${days}`, { cache: "no-store" });
-        const j = await r.json().catch(() => ({}));
+        const [rMetrics, rInst] = await Promise.all([
+          fetch(`/api/admin/dashboard/metrics?days=${days}`, { cache: "no-store" }),
+          fetch(`/api/admin/institution/settings`, { cache: "no-store" }),
+        ]);
+
+        const metricsJson = await rMetrics.json().catch(() => ({}));
+        const instJson = await rInst.json().catch(() => ({}));
+
         if (!alive) return;
-        if (!r.ok) throw new Error(j?.error || `HTTP_${r.status}`);
-        setData(j);
+
+        if (!rMetrics.ok) {
+          throw new Error(metricsJson?.error || `HTTP_${rMetrics.status}`);
+        }
+
+        setData(metricsJson as MetricsOk | MetricsErr);
         setUpdatedAt(new Date());
+
+        if (rInst.ok) {
+          const name = String(instJson?.institution_name || "").trim();
+          const logo =
+            typeof instJson?.institution_logo_url === "string" ? instJson.institution_logo_url : "";
+          setInstitution({
+            name: name || "Votre établissement",
+            logo_url: logo || null,
+          });
+        } else {
+          setInstitution(null);
+        }
       } catch (e: any) {
         if (!alive) return;
         setData({ ok: false, error: e?.message ?? "NETWORK_ERROR" });
       } finally {
-        if (alive) setLoading(false);
+        if (!alive) return;
+        setLoading(false);
+        setLoadingInstitution(false);
       }
     })();
+
     return () => {
       alive = false;
     };
@@ -315,10 +351,33 @@ export default function AdminDashboardClient() {
           }}
         />
         <div className="relative z-10 flex flex-col items-start gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <h1 className="text-2xl font-semibold tracking-tight drop-shadow-sm">Espace établissement</h1>
-            <p className="mt-1 text-sm/6 text-white/90">Vue d&apos;ensemble de votre établissement scolaire</p>
+          <div className="flex items-center gap-3">
+            {institution?.logo_url && (
+              <div className="hidden h-12 w-12 items-center justify-center overflow-hidden rounded-2xl bg-white/10 ring-1 ring-white/40 sm:flex">
+                <img
+                  src={institution.logo_url}
+                  alt={`Logo de ${institution.name}`}
+                  className="h-10 w-10 object-contain"
+                />
+              </div>
+            )}
+            <div>
+              <div className="inline-flex items-center gap-2 rounded-full bg-black/20 px-3 py-1 text-[11px] font-semibold uppercase tracking-wide">
+                <span className="opacity-90">Mon Cahier</span>
+                <span className="h-1 w-1 rounded-full bg-white/70" />
+                <span className="opacity-80">Absences &amp; notes</span>
+              </div>
+              <h1 className="mt-2 text-2xl font-semibold tracking-tight drop-shadow-sm">
+                {loadingInstitution
+                  ? "Espace établissement"
+                  : institution?.name || "Espace établissement"}
+              </h1>
+              <p className="mt-1 text-sm/6 text-white/90">
+                Suivi des absences, des retards et des notes en temps réel.
+              </p>
+            </div>
           </div>
+
           <div className="flex items-center gap-2">
             <Segmented
               value={days}
@@ -444,7 +503,7 @@ export default function AdminDashboardClient() {
         <Separator className="my-2" />
       </div>
       <div className="flex items-center justify-between text-xs text-slate-400">
-        <div>© {new Date().getFullYear()} Mon Cahier d’Absences · Tableau de bord</div>
+        <div>© {new Date().getFullYear()} Mon Cahier · Absences &amp; Notes · Tableau de bord</div>
         <div className="inline-flex items-center gap-1 text-slate-400">
           <Clock4 className="h-3.5 w-3.5" />
           {updatedAt ? `Mis à jour à ${updatedAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : "—"}

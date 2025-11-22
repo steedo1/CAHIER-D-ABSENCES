@@ -14,6 +14,8 @@ function slug(s: string) {
     .replace(/^-+|-+$/g, "");
 }
 
+type BodyRole = "teacher" | "parent" | "admin" | "educator";
+
 export async function POST(req: NextRequest) {
   const supaSrv = getSupabaseServiceClient(); // service (no RLS)
   const supa = await getSupabaseServerClient(); // user-scoped (RLS)
@@ -37,7 +39,7 @@ export async function POST(req: NextRequest) {
 
   // Payload
   const body = await req.json().catch(() => ({} as any));
-  const role = body?.role as "teacher" | "parent";
+  const role = body?.role as BodyRole;
   const emailRaw = (body?.email ?? null) as string | null;
   const display_name = (body?.display_name ?? null) as string | null;
   const subjectName = (body?.subject ?? null) as string | null; // REQUIS si role=teacher
@@ -90,11 +92,19 @@ export async function POST(req: NextRequest) {
   // helper : auth.users lookup
   const findInAuth = async () => {
     if (phone) {
-      const { data } = await supaSrv.from("auth.users").select("id").eq("phone", phone).maybeSingle();
+      const { data } = await supaSrv
+        .from("auth.users")
+        .select("id")
+        .eq("phone", phone)
+        .maybeSingle();
       if (data?.id) return String(data.id);
     }
     if (email) {
-      const { data } = await supaSrv.from("auth.users").select("id").eq("email", email).maybeSingle();
+      const { data } = await supaSrv
+        .from("auth.users")
+        .select("id")
+        .eq("email", email)
+        .maybeSingle();
       if (data?.id) return String(data.id);
     }
     return null;
@@ -170,7 +180,10 @@ export async function POST(req: NextRequest) {
   // 3) Upsert du rôle (idempotent)
   const { error: rErr } = await supaSrv
     .from("user_roles")
-    .upsert({ profile_id: uid, institution_id: inst, role }, { onConflict: "profile_id,institution_id,role" });
+    .upsert(
+      { profile_id: uid, institution_id: inst, role },
+      { onConflict: "profile_id,institution_id,role" }
+    );
   if (rErr) {
     return NextResponse.json({ error: rErr.message }, { status: 400 });
   }
@@ -180,7 +193,11 @@ export async function POST(req: NextRequest) {
     const name = String(subjectName).trim();
     const code = slug(name).slice(0, 12).toUpperCase();
 
-    const { data: subj1 } = await supaSrv.from("subjects").select("id").ilike("name", name).maybeSingle();
+    const { data: subj1 } = await supaSrv
+      .from("subjects")
+      .select("id")
+      .ilike("name", name)
+      .maybeSingle();
     let subject_id = (subj1?.id as string) || undefined;
 
     if (!subject_id) {
@@ -189,10 +206,14 @@ export async function POST(req: NextRequest) {
         .insert({ code, name })
         .select("id")
         .maybeSingle();
-      subject_id = createdSubj?.id as string | undefined;
+      subject_id = (createdSubj?.id as string) || undefined;
       if (!subject_id) {
         // Dernière tentative : collision sur code
-        const { data: subjByCode } = await supaSrv.from("subjects").select("id").eq("code", code).maybeSingle();
+        const { data: subjByCode } = await supaSrv
+          .from("subjects")
+          .select("id")
+          .eq("code", code)
+          .maybeSingle();
         subject_id = (subjByCode?.id as string) || undefined;
       }
     }

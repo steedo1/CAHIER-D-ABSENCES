@@ -140,19 +140,46 @@ self.addEventListener("push", (event) => {
     ].filter(Boolean).join(" • ");
   }
 
-  // ───────── Absences / Retards
+  // ───────── Absences / Retards (y compris JUSTIFIÉS)
   else if (kind === "attendance" || ev === "absent" || ev === "late") {
-    if (ev === "late") {
-      const ml = Number(core.minutes_late || core.minutesLate || 0);
+    const action = String(core.action || "").toLowerCase();
+    const justified = !!core.justified;
+    const reason = (core.reason || core.motif || "").toString().trim();
+    const ml = Number(core.minutes_late || core.minutesLate || 0);
+
+    const baseParts = [subj, klass, slot || whenText];
+
+    // Cas absence/retard JUSTIFIÉ
+    if (justified || action === "justified" || action === "mark_justified") {
+      if (ev === "late") {
+        title = `Retard justifié — ${student}`;
+        const parts = [...baseParts];
+        if (ml) parts.push(`${ml} min`);
+        parts.push("Justifié");
+        if (reason) parts.push(`Motif : ${reason}`);
+        body = parts.filter(Boolean).join(" • ");
+      } else {
+        // défaut = absence justifiée
+        title = `Absence justifiée — ${student}`;
+        const parts = [...baseParts, "Justifiée"];
+        if (reason) parts.push(`Motif : ${reason}`);
+        body = parts.filter(Boolean).join(" • ");
+      }
+    }
+
+    // Cas normal (non justifié)
+    else if (ev === "late") {
       title = `Retard — ${student}`;
-      body  = [subj, klass, slot || whenText, ml ? `${ml} min` : ""].filter(Boolean).join(" • ");
+      const parts = [...baseParts];
+      if (ml) parts.push(`${ml} min`);
+      body = parts.filter(Boolean).join(" • ");
     } else if (ev === "absent") {
       title = `Absence — ${student}`;
-      body  = [subj, klass, slot || whenText].filter(Boolean).join(" • ");
+      body  = baseParts.filter(Boolean).join(" • ");
     } else {
       // autre évolution éventuelle du payload "attendance"
       title = title || `Présence — ${student}`;
-      body  = [subj, klass, slot || whenText].filter(Boolean).join(" • ");
+      body  = baseParts.filter(Boolean).join(" • ");
     }
   }
 

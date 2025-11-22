@@ -19,9 +19,9 @@ export default function AdminShell({ children }: { children: React.ReactNode }) 
           <header className="sticky top-0 z-40 bg-blue-950 text-white border-b border-blue-900/60 ring-1 ring-blue-800/40">
             <div className="mx-auto flex max-w-7xl items-center justify-between px-4 py-3">
               <div className="flex items-center gap-3">
-                <span className="text-sm font-medium tracking-tight">Mon Cahier des Absences</span>
+                <span className="text-sm font-medium tracking-tight">Mon Cahier</span>
                 <span className="rounded-full bg-white/10 px-2 py-0.5 text-xs font-semibold ring-1 ring-white/20">
-                  Admin  Etablissement
+                  Absences &amp; notes · Admin établissement
                 </span>
               </div>
               <div className="flex items-center gap-2">
@@ -32,7 +32,7 @@ export default function AdminShell({ children }: { children: React.ReactNode }) 
                 >
                   Conduite
                 </Link>
-                <ContactUsButton variant="chip" />  {/*  & le bouton */}
+                <ContactUsButton variant="chip" /> {/*  & le bouton */}
                 <div className="rounded-full bg-white/10 px-2 py-1 ring-1 ring-white/20 hover:bg-white/15">
                   <LogoutButton />
                 </div>

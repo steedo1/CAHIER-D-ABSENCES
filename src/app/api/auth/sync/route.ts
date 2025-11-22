@@ -1,3 +1,4 @@
+//src/app/api/auth/sync/route.ts
 import { NextRequest, NextResponse } from "next/server";
 
 const SECURE = process.env.NODE_ENV === "production";

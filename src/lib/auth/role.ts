@@ -1,30 +1,29 @@
 // src/lib/auth/role.ts
+
 export type AppRole =
   | "super_admin"
   | "admin"
   | "educator"
   | "teacher"
   | "parent"
-  | "class_device"; // ✅ nouveau
+  | "class_device";
 
 export const ROLE_PRIORITY: AppRole[] = [
   "super_admin",
   "admin",
   "educator",
   "teacher",
-  "class_device", // ✅ placé avant "parent"
+  "class_device",
   "parent",
 ];
 
 export function normalize(role: AppRole): AppRole {
-  // éducateur = admin pour l'UI/navigation
-  return role === "educator" ? "admin" : role;
+  // ⚠️ On ne mappe plus "educator" vers "admin"
+  // Chaque rôle reste distinct.
+  return role;
 }
 
-export function pickSingleRole(roles: AppRole[]): AppRole {
-  if (!roles?.length) throw new Error("Aucun rôle");
-  const found = ROLE_PRIORITY.find((r) => roles.includes(r));
-  return normalize(found || roles[0]);
-}
-
-export { routeForRole } from "./routing";
+// Compat : on continue d'exposer routeForRole.
+// Et on expose la variante Book-aware.
+export { routeForRole, routeForRoleWithBook } from "./routing";
+export type { Book } from "./routing";

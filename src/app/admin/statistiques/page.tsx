@@ -1,4 +1,4 @@
-//src/app/admin/statistiques/page.tsx
+// src/app/admin/statistiques/page.tsx
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
@@ -29,6 +29,15 @@ type SummaryRow = {
   teacher_name: string;
   total_minutes: number;
   subject_names?: string[];
+};
+
+type InspectorWeekRow = {
+  weekKey: string;
+  weekLabel: string;
+  subject_name: string | null;
+  class_label: string | null;
+  sessions: number;
+  total_minutes: number;
 };
 
 type FetchState<T> = { loading: boolean; error: string | null; data: T | null };
@@ -83,11 +92,7 @@ function minutesToHourLabel(min: number) {
   const r = m % 60;
   return `${h}H${String(r).padStart(2, "0")}`;
 }
-/* (gardé si besoin plus tard, mais non utilisé pour l’affichage)
-function minutesToDecimalHours(min: number) {
-  return Math.round(((min || 0) / 60) * 100) / 100;
-}
-*/
+
 function downloadText(filename: string, content: string, mime = "text/csv;charset=utf-8") {
   const blob = new Blob([content], { type: mime });
   const url = URL.createObjectURL(blob);
@@ -145,6 +150,32 @@ function effectiveSlotMinutes(times: string[], slot: TimesheetSlot) {
   return Math.max(0, slotLen - lateness);
 }
 
+/* Helpers pour la vue "Contrôle inspecteur" */
+function mondayOfWeek(d: Date) {
+  const day = d.getDay(); // 0=dimanche, 1=lundi, ...
+  const diff = day === 0 ? -6 : 1 - day; // pour tomber sur lundi
+  const monday = new Date(d);
+  monday.setDate(d.getDate() + diff);
+  monday.setHours(0, 0, 0, 0);
+  return monday;
+}
+function addDays(d: Date, days: number) {
+  const nd = new Date(d);
+  nd.setDate(d.getDate() + days);
+  return nd;
+}
+function formatDateFRFromDate(d: Date) {
+  const dd = String(d.getDate()).padStart(2, "0");
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const yyyy = d.getFullYear();
+  return `${dd}/${mm}/${yyyy}`;
+}
+function weekLabelFromMonday(monday: Date) {
+  const start = formatDateFRFromDate(monday);
+  const end = formatDateFRFromDate(addDays(monday, 6));
+  return `Semaine du ${start} au ${end}`;
+}
+
 /* ─────────────────────────────────────────
    UI atoms
 ────────────────────────────────────────── */
@@ -153,7 +184,7 @@ function Input(p: React.InputHTMLAttributes<HTMLInputElement>) {
     <input
       {...p}
       className={[
-        "w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm",
+        "w-full rounded-xl border border-slate-200 bg-white/90 px-3 py-2 text-sm",
         "shadow-sm outline-none transition",
         "focus:border-emerald-400 focus:ring-4 focus:ring-emerald-500/20",
         "disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400",
@@ -167,7 +198,7 @@ function Select(p: React.SelectHTMLAttributes<HTMLSelectElement>) {
     <select
       {...p}
       className={[
-        "w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm",
+        "w-full rounded-xl border border-slate-200 bg-white/90 px-3 py-2 text-sm",
         "shadow-sm outline-none transition",
         "focus:border-emerald-400 focus:ring-4 focus:ring-emerald-500/20",
         "disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400",
@@ -182,7 +213,7 @@ function Button(p: React.ButtonHTMLAttributes<HTMLButtonElement>) {
       {...p}
       className={[
         "inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-medium",
-        "bg-emerald-600 text-white shadow hover:bg-emerald-700",
+        "bg-emerald-600 text-white shadow-sm hover:bg-emerald-700",
         "focus:outline-none focus:ring-4 focus:ring-emerald-500/30",
         "disabled:opacity-60 disabled:cursor-not-allowed",
         p.className ?? "",
@@ -222,12 +253,54 @@ export default function AdminStatistiquesPage() {
     loading: false, error: null, data: null,
   });
 
+  const [detailMode, setDetailMode] = useState<"seances" | "inspecteur">("seances");
+
   const showDetail = teacherId !== "ALL";
   const totalMinutesSummary = useMemo(() => {
     if (!summary.data) return 0;
     return summary.data.reduce((acc, it) => acc + (it.total_minutes || 0), 0);
   }, [summary.data]);
   const disciplineHeader = subjectId === "ALL" ? "Discipline(s)" : "Discipline (filtrée)";
+
+  /* Agrégation hebdo pour la vue "Contrôle inspecteur" */
+  const inspectorRows = useMemo<InspectorWeekRow[]>(() => {
+    if (!detail.data) return [];
+    const map = new Map<string, InspectorWeekRow>();
+
+    for (const r of detail.data.rows) {
+      const d = new Date(r.dateISO);
+      const monday = mondayOfWeek(d);
+      const yyyy = monday.getFullYear();
+      const mm = String(monday.getMonth() + 1).padStart(2, "0");
+      const dd = String(monday.getDate()).padStart(2, "0");
+      const weekKey = `${yyyy}-${mm}-${dd}`;
+      const classLabel = r.class_label || "—";
+      const subjectName = r.subject_name || "Discipline non renseignée";
+      const key = `${weekKey}|${classLabel}|${subjectName}`;
+      const minutes = r.expected_minutes || 0;
+
+      const existing = map.get(key);
+      if (existing) {
+        existing.sessions += 1;
+        existing.total_minutes += minutes;
+      } else {
+        map.set(key, {
+          weekKey,
+          weekLabel: weekLabelFromMonday(monday),
+          class_label: classLabel,
+          subject_name: subjectName,
+          sessions: 1,
+          total_minutes: minutes,
+        });
+      }
+    }
+
+    return Array.from(map.values()).sort((a, b) =>
+      a.weekKey.localeCompare(b.weekKey) ||
+      (a.class_label || "").localeCompare(b.class_label || "") ||
+      (a.subject_name || "").localeCompare(b.subject_name || "")
+    );
+  }, [detail.data]);
 
   /* Charger disciplines (globale, réutilisée aussi par le timesheet) */
   useEffect(() => {
@@ -334,9 +407,25 @@ export default function AdminStatistiquesPage() {
         String(r.expected_minutes ?? 0),
         minutesToHourLabel(r.expected_minutes ?? 0),
       ];
-      lines.push(cols.join(";"));
+      lines.push(cols.join("\n"));
     }
     downloadText(`detail_${teacherId}_${from}_${to}.csv`, lines.join("\n"));
+  }
+  function exportInspectorCSV() {
+    if (!inspectorRows.length) return;
+    const header = ["Semaine", "Classe", "Discipline", "Nombre de séances (appels)", "Durée totale (heures)"];
+    const lines = [header.join(";")];
+    for (const r of inspectorRows) {
+      const cols = [
+        r.weekLabel,
+        r.class_label || "",
+        r.subject_name || "",
+        String(r.sessions),
+        minutesToHourLabel(r.total_minutes),
+      ];
+      lines.push(cols.join(";"));
+    }
+    downloadText(`controle_inspecteur_${teacherId}_${from}_${to}.csv`, lines.join("\n"));
   }
 
   /* ====== Timesheet (emploi du temps d’appel) ====== */
@@ -458,24 +547,33 @@ export default function AdminStatistiquesPage() {
      Rendu
   ────────────────────────────────────────── */
   return (
-    <main className="p-4 md:p-6 space-y-6">
-      <header className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">Statistiques</h1>
-        <div className="flex gap-2">
+    <main className="min-h-screen bg-slate-50/80 p-4 md:p-6 space-y-6">
+      <header className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        <div>
+          <h1 className="text-2xl font-semibold text-slate-900">Statistiques</h1>
+          <p className="text-sm text-slate-500 mt-1">
+            Suivi des appels, contrôle des enseignants et emploi du temps d’appel.
+          </p>
+        </div>
+        <div className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white/80 p-1 shadow-sm">
           <button
             onClick={() => setView("tableau")}
             className={[
-              "rounded-full px-3 py-1.5 text-sm transition",
-              view === "tableau" ? "bg-emerald-600 text-white shadow" : "border border-slate-200 text-slate-700 hover:bg-slate-50",
-           ].join(" ")}
+              "rounded-full px-3 py-1.5 text-xs md:text-sm transition",
+              view === "tableau"
+                ? "bg-emerald-600 text-white shadow"
+                : "text-slate-700 hover:bg-slate-100",
+            ].join(" ")}
           >
-            Tableau (synthèse/détail)
+            Tableau (synthèse / détail)
           </button>
           <button
             onClick={() => setView("timesheet")}
             className={[
-              "rounded-full px-3 py-1.5 text-sm transition",
-              view === "timesheet" ? "bg-emerald-600 text-white shadow" : "border border-slate-200 text-slate-700 hover:bg-slate-50",
+              "rounded-full px-3 py-1.5 text-xs md:text-sm transition",
+              view === "timesheet"
+                ? "bg-emerald-600 text-white shadow"
+                : "text-slate-700 hover:bg-slate-100",
             ].join(" ")}
           >
             Emploi du temps d’appel
@@ -484,121 +582,142 @@ export default function AdminStatistiquesPage() {
       </header>
 
       {/* Filtres de période (communs) */}
-      <section className="grid md:grid-cols-4 gap-3">
-        <div className="space-y-1">
-          <label className="text-sm font-medium">Date de début</label>
-          <Input type="date" value={from} onChange={e => setFrom(e.target.value)} />
+      <section className="rounded-2xl border border-slate-200 bg-white/90 shadow-sm p-4 md:p-5">
+        <div className="mb-3 flex items-center justify-between gap-2">
+          <h2 className="text-sm font-semibold text-slate-800">Filtres de période</h2>
+          <span className="text-xs text-slate-500">
+            Période active : <strong>{from}</strong> → <strong>{to}</strong>
+          </span>
         </div>
-        <div className="space-y-1">
-          <label className="text-sm font-medium">Date de fin</label>
-          <Input type="date" value={to} onChange={e => setTo(e.target.value)} />
+        <div className="grid md:grid-cols-4 gap-3">
+          <div className="space-y-1">
+            <label className="text-sm font-medium text-slate-700">Date de début</label>
+            <Input type="date" value={from} onChange={e => setFrom(e.target.value)} />
+          </div>
+          <div className="space-y-1">
+            <label className="text-sm font-medium text-slate-700">Date de fin</label>
+            <Input type="date" value={to} onChange={e => setTo(e.target.value)} />
+          </div>
+
+          {view === "tableau" ? (
+            <>
+              <div className="space-y-1">
+                <label className="text-sm font-medium text-slate-700">Discipline</label>
+                <Select value={subjectId} onChange={e => setSubjectId(e.target.value)}>
+                  {subjects.map(s => (
+                    <option key={s.id} value={s.id}>{s.name}</option>
+                  ))}
+                </Select>
+              </div>
+              <div className="space-y-1">
+                <label className="text-sm font-medium text-slate-700">Enseignant</label>
+                <Select
+                  value={teacherId}
+                  onChange={e => { setTeacherId(e.target.value); setDetailMode("seances"); }}
+                  disabled={loadingTeachers}
+                >
+                  {teachers.map(t => (
+                    <option key={t.id} value={t.id}>{teacherLabel(t)}</option>
+                  ))}
+                </Select>
+              </div>
+            </>
+          ) : (
+            <>
+              {/* ✅ Filtre Discipline (optionnel) pour le timesheet */}
+              <div className="space-y-1">
+                <label className="text-sm font-medium text-slate-700">Discipline</label>
+                <Select value={tsSubjectId} onChange={e => setTsSubjectId(e.target.value)}>
+                  <option value="">Toutes les disciplines</option>
+                  {subjects
+                    .filter(s => s.id !== "ALL")
+                    .map(s => <option key={s.id} value={s.id}>{s.name}</option>)
+                  }
+                </Select>
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-sm font-medium text-slate-700">Enseignant</label>
+                <Select value={tsTeacherId} onChange={e => setTsTeacherId(e.target.value)}>
+                  {!tsTeacherId && <option value="">— Sélectionner —</option>}
+                  {tsTeachers.map(t => <option key={t.id} value={t.id}>{t.label}</option>)}
+                </Select>
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-sm font-medium text-slate-700">Mode de créneaux</label>
+                <div className="flex items-center gap-3 rounded-xl border border-slate-200 bg-slate-50/80 px-3 py-2">
+                  <label className="inline-flex items-center gap-2 text-sm text-slate-700">
+                    <input
+                      type="checkbox"
+                      className="h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                      checked={usePeriods}
+                      onChange={(e) => setUsePeriods(e.target.checked)}
+                    />
+                    Créneaux d’établissement
+                  </label>
+                  <span className="text-xs text-slate-500">
+                    {usePeriods ? "Utilise les créneaux définis dans Paramètres" : "Utilise les créneaux manuels ci-dessous"}
+                  </span>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-3 gap-2">
+                <div className="space-y-1">
+                  <label className="text-sm font-medium text-slate-700">Créneau (min)</label>
+                  <Select value={String(slot)} onChange={e => setSlot(parseInt(e.target.value, 10))} disabled={usePeriods}>
+                    {[30, 45, 60, 90, 120].map((m) => <option key={m} value={m}>{m}</option>)}
+                  </Select>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-sm font-medium text-slate-700">Début (h)</label>
+                  <Select value={String(startHour)} onChange={e => setStartHour(parseInt(e.target.value, 10))} disabled={usePeriods}>
+                    {Array.from({ length: 24 }, (_, h) => h).map((h) => <option key={h} value={h}>{h}</option>)}
+                  </Select>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-sm font-medium text-slate-700">Fin (h)</label>
+                  <Select value={String(endHour)} onChange={e => setEndHour(parseInt(e.target.value, 10))} disabled={usePeriods}>
+                    {Array.from({ length: 24 }, (_, h) => h).map((h) => <option key={h} value={h}>{h}</option>)}
+                  </Select>
+                </div>
+              </div>
+            </>
+          )}
         </div>
-
-        {view === "tableau" ? (
-          <>
-            <div className="space-y-1">
-              <label className="text-sm font-medium">Discipline</label>
-              <Select value={subjectId} onChange={e => setSubjectId(e.target.value)}>
-                {subjects.map(s => (
-                  <option key={s.id} value={s.id}>{s.name}</option>
-                ))}
-              </Select>
-            </div>
-            <div className="space-y-1">
-              <label className="text-sm font-medium">Enseignant</label>
-              <Select value={teacherId} onChange={e => setTeacherId(e.target.value)} disabled={loadingTeachers}>
-                {teachers.map(t => (
-                  <option key={t.id} value={t.id}>{teacherLabel(t)}</option>
-                ))}
-              </Select>
-            </div>
-          </>
-        ) : (
-          <>
-            {/* ✅ Filtre Discipline (optionnel) pour le timesheet */}
-            <div className="space-y-1">
-              <label className="text-sm font-medium">Discipline</label>
-              <Select value={tsSubjectId} onChange={e => setTsSubjectId(e.target.value)}>
-                <option value="">Toutes les disciplines</option>
-                {subjects
-                  .filter(s => s.id !== "ALL")
-                  .map(s => <option key={s.id} value={s.id}>{s.name}</option>)
-                }
-              </Select>
-            </div>
-
-            <div className="space-y-1">
-              <label className="text-sm font-medium">Enseignant</label>
-              <Select value={tsTeacherId} onChange={e => setTsTeacherId(e.target.value)}>
-                {!tsTeacherId && <option value="">— Sélectionner —</option>}
-                {tsTeachers.map(t => <option key={t.id} value={t.id}>{t.label}</option>)}
-              </Select>
-            </div>
-
-            <div className="space-y-1">
-              <label className="text-sm font-medium">Mode de créneaux</label>
-              <div className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2">
-                <label className="inline-flex items-center gap-2 text-sm">
-                  <input
-                    type="checkbox"
-                    className="h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
-                    checked={usePeriods}
-                    onChange={(e) => setUsePeriods(e.target.checked)}
-                  />
-                  Créneaux d’établissement
-                </label>
-                <span className="text-xs text-slate-500">
-                  {usePeriods ? "Utilise les créneaux définis dans Paramètres" : "Utilise les créneaux manuels ci-dessous"}
-                </span>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-3 gap-2">
-              <div className="space-y-1">
-                <label className="text-sm font-medium">Créneau (min)</label>
-                <Select value={String(slot)} onChange={e => setSlot(parseInt(e.target.value, 10))} disabled={usePeriods}>
-                  {[30, 45, 60, 90, 120].map((m) => <option key={m} value={m}>{m}</option>)}
-                </Select>
-              </div>
-              <div className="space-y-1">
-                <label className="text-sm font-medium">Début (h)</label>
-                <Select value={String(startHour)} onChange={e => setStartHour(parseInt(e.target.value, 10))} disabled={usePeriods}>
-                  {Array.from({ length: 24 }, (_, h) => h).map((h) => <option key={h} value={h}>{h}</option>)}
-                </Select>
-              </div>
-              <div className="space-y-1">
-                <label className="text-sm font-medium">Fin (h)</label>
-                <Select value={String(endHour)} onChange={e => setEndHour(parseInt(e.target.value, 10))} disabled={usePeriods}>
-                  {Array.from({ length: 24 }, (_, h) => h).map((h) => <option key={h} value={h}>{h}</option>)}
-                </Select>
-              </div>
-            </div>
-          </>
-        )}
       </section>
 
       {view === "tableau" ? (
         /* ====== Tableau : synthèse/détail ====== */
         (teacherId === "ALL" ? (
           <section className="space-y-3">
-            <div className="flex items-center justify-between">
-              <h2 className="text-lg font-semibold">Synthèse par enseignant</h2>
-              <div className="flex items-center gap-2">
-                <div className="text-sm">
-                  Total période: <strong>{minutesToHourLabel(totalMinutesSummary)}</strong>
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <h2 className="text-lg font-semibold text-slate-900">Synthèse par enseignant</h2>
+                <p className="text-xs text-slate-500 mt-1">
+                  Vue globale des minutes d’appel effectuées par enseignant sur la période.
+                </p>
+              </div>
+              <div className="flex items-center gap-3">
+                <div className="text-xs md:text-sm rounded-full bg-emerald-50 text-emerald-800 px-3 py-1 border border-emerald-100">
+                  Total période : <strong>{minutesToHourLabel(totalMinutesSummary)}</strong>
                 </div>
-                <Button onClick={exportSummaryCSV} disabled={summary.loading || !summary.data}>Export CSV</Button>
+                <Button onClick={exportSummaryCSV} disabled={summary.loading || !summary.data}>
+                  Export CSV
+                </Button>
               </div>
             </div>
 
             {summary.loading ? (
-              <div className="p-4 border rounded-xl">Chargement…</div>
+              <div className="p-4 border border-slate-200 rounded-2xl bg-white text-slate-700">Chargement…</div>
             ) : summary.error ? (
-              <div className="p-4 border rounded-xl text-red-600">Erreur : {summary.error}</div>
+              <div className="p-4 border border-red-200 rounded-2xl bg-red-50 text-red-700">
+                Erreur : {summary.error}
+              </div>
             ) : (
-              <div className="overflow-auto border rounded-xl">
+              <div className="overflow-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
                 <table className="min-w-full text-sm">
-                  <thead className="bg-gray-50">
+                  <thead className="bg-slate-100/80 text-slate-700">
                     <tr>
                       <th className="text-left px-3 py-2">Enseignant</th>
                       <th className="text-left px-3 py-2">{disciplineHeader}</th>
@@ -606,24 +725,31 @@ export default function AdminStatistiquesPage() {
                       <th className="text-right px-3 py-2">Total heures</th>
                     </tr>
                   </thead>
-                  <tbody>
+                  <tbody className="divide-y divide-slate-100">
                     {(summary.data || []).map((row) => {
                       const disciplineCell =
                         subjectId === "ALL"
                           ? (row.subject_names && row.subject_names.length ? row.subject_names.join(", ") : "")
                           : (subjects.find(s => s.id === subjectId)?.name || "");
                       return (
-                        <tr key={row.teacher_id} className="border-t">
-                          <td className="px-3 py-2">{row.teacher_name}</td>
-                          <td className="px-3 py-2">{disciplineCell}</td>
-                          <td className="px-3 py-2 text-right">{row.total_minutes}</td>
-                          <td className="px-3 py-2 text-right">{minutesToHourLabel(row.total_minutes)}</td>
+                        <tr
+                          key={row.teacher_id}
+                          className="odd:bg-white even:bg-slate-50 hover:bg-emerald-50/70 transition-colors"
+                        >
+                          <td className="px-3 py-2 font-medium text-slate-800">{row.teacher_name}</td>
+                          <td className="px-3 py-2 text-slate-700">{disciplineCell}</td>
+                          <td className="px-3 py-2 text-right text-slate-700">{row.total_minutes}</td>
+                          <td className="px-3 py-2 text-right font-semibold text-slate-900">
+                            {minutesToHourLabel(row.total_minutes)}
+                          </td>
                         </tr>
                       );
                     })}
                     {(!summary.data || summary.data.length === 0) && (
-                      <tr>
-                        <td colSpan={4} className="px-3 py-4 text-center text-gray-500">Aucune donnée sur la période.</td>
+                      <tr className="odd:bg-white">
+                        <td colSpan={4} className="px-3 py-4 text-center text-gray-500">
+                          Aucune donnée sur la période.
+                        </td>
                       </tr>
                     )}
                   </tbody>
@@ -633,26 +759,65 @@ export default function AdminStatistiquesPage() {
           </section>
         ) : (
           <section className="space-y-3">
-            <div className="flex items-center justify-between">
-              <h2 className="text-lg font-semibold">Détails de l’enseignant</h2>
-              <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="space-y-2">
+                <h2 className="text-lg font-semibold text-slate-900">Détails de l’enseignant</h2>
+                <div className="inline-flex rounded-full border border-slate-200 bg-slate-50 p-0.5 text-xs">
+                  <button
+                    type="button"
+                    onClick={() => setDetailMode("seances")}
+                    className={[
+                      "px-3 py-1 rounded-full transition",
+                      detailMode === "seances"
+                        ? "bg-white text-emerald-700 shadow-sm"
+                        : "text-slate-600 hover:bg-white/60",
+                    ].join(" ")}
+                  >
+                    Séances détaillées
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setDetailMode("inspecteur")}
+                    className={[
+                      "px-3 py-1 rounded-full transition",
+                      detailMode === "inspecteur"
+                        ? "bg-white text-emerald-700 shadow-sm"
+                        : "text-slate-600 hover:bg-white/60",
+                    ].join(" ")}
+                  >
+                    Vue "Contrôle inspecteur"
+                  </button>
+                </div>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
                 {detail.data && (
-                  <div className="text-sm">
-                    {detail.data.count} séance(s) • Total : <strong>{minutesToHourLabel(detail.data.total_minutes)}</strong>
+                  <div className="text-xs md:text-sm rounded-full bg-slate-100 text-slate-800 px-3 py-1 border border-slate-200">
+                    {detail.data.count} séance(s) • Total :{" "}
+                    <strong>{minutesToHourLabel(detail.data.total_minutes)}</strong>
                   </div>
                 )}
-                <Button onClick={exportDetailCSV} disabled={detail.loading || !detail.data}>Export CSV</Button>
+                {detailMode === "seances" ? (
+                  <Button onClick={exportDetailCSV} disabled={detail.loading || !detail.data}>
+                    Export séances CSV
+                  </Button>
+                ) : (
+                  <Button onClick={exportInspectorCSV} disabled={detail.loading || !detail.data || inspectorRows.length === 0}>
+                    Export contrôle CSV
+                  </Button>
+                )}
               </div>
             </div>
 
             {detail.loading ? (
-              <div className="p-4 border rounded-xl">Chargement…</div>
+              <div className="p-4 border border-slate-200 rounded-2xl bg-white text-slate-700">Chargement…</div>
             ) : detail.error ? (
-              <div className="p-4 border rounded-xl text-red-600">Erreur : {detail.error}</div>
-            ) : (
-              <div className="overflow-auto border rounded-xl">
+              <div className="p-4 border border-red-200 rounded-2xl bg-red-50 text-red-700">
+                Erreur : {detail.error}
+              </div>
+            ) : detailMode === "seances" ? (
+              <div className="overflow-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
                 <table className="min-w-full text-sm">
-                  <thead className="bg-gray-50">
+                  <thead className="bg-slate-100/80 text-slate-700">
                     <tr>
                       <th className="text-left px-3 py-2">Date</th>
                       <th className="text-left px-3 py-2">Plage horaire</th>
@@ -662,28 +827,83 @@ export default function AdminStatistiquesPage() {
                       <th className="text-right px-3 py-2">Heures</th>
                     </tr>
                   </thead>
-                  <tbody>
+                  <tbody className="divide-y divide-slate-100">
                     {(detail.data?.rows || []).map((r) => {
                       const start = formatHHmm(r.dateISO);
                       const end = formatHHmm(addMinutesISO(r.dateISO, r.expected_minutes || 0));
                       return (
-                        <tr key={r.id} className="border-t">
-                          <td className="px-3 py-2">{formatDateFR(r.dateISO)}</td>
-                          <td className="px-3 py-2">{start} → {end}</td>
-                          <td className="px-3 py-2">{r.subject_name || "Discipline non renseignée"}</td>
-                          <td className="px-3 py-2">{r.class_label || "—"}</td>
-                          <td className="px-3 py-2 text-right">{r.expected_minutes ?? 0}</td>
-                          <td className="px-3 py-2 text-right">{minutesToHourLabel(r.expected_minutes ?? 0)}</td>
+                        <tr
+                          key={r.id}
+                          className="odd:bg-white even:bg-slate-50 hover:bg-emerald-50/70 transition-colors"
+                        >
+                          <td className="px-3 py-2 text-slate-800">{formatDateFR(r.dateISO)}</td>
+                          <td className="px-3 py-2 text-slate-700">{start} → {end}</td>
+                          <td className="px-3 py-2 text-slate-700">
+                            {r.subject_name || "Discipline non renseignée"}
+                          </td>
+                          <td className="px-3 py-2 text-slate-700">{r.class_label || "—"}</td>
+                          <td className="px-3 py-2 text-right text-slate-700">
+                            {r.expected_minutes ?? 0}
+                          </td>
+                          <td className="px-3 py-2 text-right font-semibold text-slate-900">
+                            {minutesToHourLabel(r.expected_minutes ?? 0)}
+                          </td>
                         </tr>
                       );
                     })}
                     {(!detail.data || detail.data.rows.length === 0) && (
-                      <tr>
-                        <td colSpan={6} className="px-3 py-4 text-center text-gray-500">Aucune donnée pour cet enseignant sur la période.</td>
+                      <tr className="odd:bg-white">
+                        <td colSpan={6} className="px-3 py-4 text-center text-gray-500">
+                          Aucune donnée pour cet enseignant sur la période.
+                        </td>
                       </tr>
                     )}
                   </tbody>
                 </table>
+              </div>
+            ) : (
+              <div className="overflow-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
+                <table className="min-w-full text-sm">
+                  <thead className="bg-slate-100/80 text-slate-700">
+                    <tr>
+                      <th className="text-left px-3 py-2">Semaine</th>
+                      <th className="text-left px-3 py-2">Classe</th>
+                      <th className="text-left px-3 py-2">Discipline</th>
+                      <th className="text-right px-3 py-2">Nombre de séances (appels)</th>
+                      <th className="text-right px-3 py-2">Durée totale</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {inspectorRows.map((r, idx) => (
+                      <tr
+                        key={`${r.weekKey}-${idx}`}
+                        className="odd:bg-white even:bg-slate-50 hover:bg-emerald-50/70 transition-colors"
+                      >
+                        <td className="px-3 py-2 text-slate-800">{r.weekLabel}</td>
+                        <td className="px-3 py-2 text-slate-700">{r.class_label || "—"}</td>
+                        <td className="px-3 py-2 text-slate-700">
+                          {r.subject_name || "Discipline non renseignée"}
+                        </td>
+                        <td className="px-3 py-2 text-right text-slate-700">{r.sessions}</td>
+                        <td className="px-3 py-2 text-right font-semibold text-slate-900">
+                          {minutesToHourLabel(r.total_minutes)}
+                        </td>
+                      </tr>
+                    ))}
+                    {inspectorRows.length === 0 && (
+                      <tr className="odd:bg-white">
+                        <td colSpan={5} className="px-3 py-4 text-center text-gray-500">
+                          Aucune donnée agrégée pour cet enseignant sur la période.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+                <p className="mt-3 text-xs text-slate-500 px-1 pb-1">
+                  Chaque ligne représente une <strong>semaine</strong> pour une <strong>classe</strong> et une
+                  <strong> discipline</strong>. L’inspecteur compare le <strong>nombre de séances</strong> avec ce qui est
+                  prévu dans l’emploi du temps (ex : 4 séances de maths en 6<sup>e</sup> par semaine).
+                </p>
               </div>
             )}
           </section>
@@ -693,19 +913,26 @@ export default function AdminStatistiquesPage() {
         <section className="space-y-4">
           {/* Bandeau enseignant + total */}
           {tsData.loading ? (
-            <div className="p-4 border rounded-xl">Chargement…</div>
+            <div className="p-4 border border-slate-200 rounded-2xl bg-white text-slate-700">Chargement…</div>
           ) : tsData.error ? (
-            <div className="p-4 border rounded-xl text-red-600">Erreur : {tsData.error}</div>
+            <div className="p-4 border border-red-200 rounded-2xl bg-red-50 text-red-700">
+              Erreur : {tsData.error}
+            </div>
           ) : td ? (
             <>
-              <div className="rounded-2xl border border-emerald-200 bg-gradient-to-b from-emerald-50/60 to-white p-5 ring-1 ring-emerald-100">
+              <div className="rounded-2xl border border-emerald-200 bg-gradient-to-br from-emerald-50 via-white to-slate-50 p-5 shadow-sm ring-1 ring-emerald-100">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div className="min-w-0">
-                    <div className="text-lg font-semibold truncate">{td.teacher.name}</div>
-                    <div className="mt-1 flex flex-wrap gap-2">
+                    <div className="text-lg font-semibold truncate text-slate-900">
+                      {td.teacher.name}
+                    </div>
+                    <div className="mt-2 flex flex-wrap gap-2">
                       {(td.teacher.subjects || []).length > 0 ? (
                         td.teacher.subjects.map((s) => (
-                          <span key={s} className="inline-flex items-center rounded-full bg-emerald-50 px-2 py-0.5 text-xs text-emerald-800 ring-1 ring-emerald-200">
+                          <span
+                            key={s}
+                            className="inline-flex items-center rounded-full bg-emerald-50 px-2 py-0.5 text-xs text-emerald-800 ring-1 ring-emerald-200"
+                          >
                             {s}
                           </span>
                         ))
@@ -714,20 +941,22 @@ export default function AdminStatistiquesPage() {
                       )}
                     </div>
                   </div>
-                  <div className="text-sm">
+                  <div className="text-sm rounded-xl bg-white/80 border border-emerald-100 px-3 py-1.5 text-emerald-900 shadow-sm">
                     Total période : <strong>{minutesToHourLabel(td.teacher.total_minutes)}</strong>
                   </div>
                 </div>
 
                 {/* Légende compactée */}
                 <div className="mt-3 flex flex-wrap items-center gap-3 text-xs text-slate-600">
-                  <span className="inline-flex items-center gap-1">
+                  <span className="inline-flex items-center gap-1 rounded-full bg-white/80 px-2 py-0.5 border border-slate-200">
                     <span>📱</span> <span>prof</span>
                   </span>
-                  <span className="inline-flex items-center gap-1">
+                  <span className="inline-flex items-center gap-1 rounded-full bg-white/80 px-2 py-0.5 border border-slate-200">
                     <span>🖥️</span> <span>compte-classe</span>
                   </span>
-                  <span className="text-slate-400">La cellule montre la <em>durée effective</em> du créneau (1h − retard).</span>
+                  <span className="text-slate-500">
+                    La cellule montre la <em>durée effective</em> du créneau (1h − retard).
+                  </span>
                 </div>
 
                 {/* Sélecteur de classe */}
@@ -740,10 +969,10 @@ export default function AdminStatistiquesPage() {
                         onClick={() => setSelectedClassId(c.id)}
                         aria-pressed={active}
                         className={[
-                          "px-3 py-1.5 rounded-full text-sm transition",
+                          "px-3 py-1.5 rounded-full text-sm transition border",
                           active
-                            ? "bg-emerald-600 text-white shadow"
-                            : "border border-emerald-200 text-emerald-800 hover:bg-emerald-50",
+                            ? "bg-emerald-600 text-white shadow border-emerald-700"
+                            : "border-emerald-200 text-emerald-800 bg-emerald-50 hover:bg-emerald-100",
                         ].join(" ")}
                         title={c.label}
                       >
@@ -768,20 +997,23 @@ export default function AdminStatistiquesPage() {
               </div>
 
               {/* Tableau : LIGNES = créneaux ; COLONNES = dates actives */}
-              <div className="rounded-2xl border bg-white p-5 shadow-sm">
+              <div className="rounded-2xl border border-slate-200 bg-white shadow-sm p-5">
                 {!selectedClassId ? (
-                  <div className="p-4 border rounded-xl text-slate-600">Choisissez une classe ci-dessus.</div>
+                  <div className="p-4 border border-slate-200 rounded-2xl bg-slate-50 text-slate-600">
+                    Choisissez une classe ci-dessus.
+                  </div>
                 ) : activeDatesForClass.length === 0 ? (
-                  <div className="p-4 border rounded-xl text-slate-600">
-                    Aucune date avec séance pour <strong>{td.classes.find(c => c.id === selectedClassId)?.label || "la classe"}</strong> sur la période.
+                  <div className="p-4 border border-slate-200 rounded-2xl bg-slate-50 text-slate-600">
+                    Aucune date avec séance pour{" "}
+                    <strong>{td.classes.find(c => c.id === selectedClassId)?.label || "la classe"}</strong> sur la période.
                   </div>
                 ) : (
-                  <div className="overflow-x-auto rounded-xl border">
+                  <div className="overflow-x-auto rounded-xl border border-slate-200">
                     <table className="min-w-full text-sm">
-                      <thead className="bg-slate-50 sticky top-0 z-10">
-                        <tr className="text-left text-slate-600">
+                      <thead className="bg-slate-100 sticky top-0 z-10 text-slate-700">
+                        <tr className="text-left">
                           {/* Colonne créneau STICKY */}
-                          <th className="px-3 py-2 w-44 whitespace-nowrap sticky left-0 z-20 bg-slate-50">
+                          <th className="px-3 py-2 w-44 whitespace-nowrap sticky left-0 z-20 bg-slate-100">
                             Créneau
                           </th>
                           {activeDatesForClass.map((d) => (
@@ -796,11 +1028,11 @@ export default function AdminStatistiquesPage() {
                           ))}
                         </tr>
                       </thead>
-                      <tbody className="divide-y">
+                      <tbody className="divide-y divide-slate-100">
                         {td.slots.map((sl) => (
-                          <tr key={sl.start}>
+                          <tr key={sl.start} className="odd:bg-white even:bg-slate-50">
                             {/* Cellule créneau STICKY */}
-                            <td className="px-3 py-2 font-medium text-slate-700 whitespace-nowrap sticky left-0 z-10 bg-white">
+                            <td className="px-3 py-2 font-medium text-slate-800 whitespace-nowrap sticky left-0 z-10 bg-white">
                               {sl.start} – {sl.end}
                             </td>
                             {activeDatesForClass.map((d) => {
@@ -820,8 +1052,10 @@ export default function AdminStatistiquesPage() {
                                   <span
                                     title={hint}
                                     className={[
-                                      "inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-xs",
-                                      times.length ? badge : "border-slate-200 bg-slate-50 text-slate-500",
+                                      "inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-xs transition",
+                                      times.length
+                                        ? `${badge} hover:shadow-sm`
+                                        : "border-slate-200 bg-slate-50 text-slate-500",
                                     ].join(" ")}
                                   >
                                     {originEmoji(origin)} {minutesToHourLabel(eff)}
@@ -836,12 +1070,15 @@ export default function AdminStatistiquesPage() {
                   </div>
                 )}
                 <p className="mt-3 text-xs text-slate-500">
-                  Chaque cellule affiche la <strong>durée effective</strong> du créneau&nbsp;: longueur du créneau − (heure du premier clic − heure de début). Sans clic, valeur <strong>0H00</strong>.
+                  Chaque cellule affiche la <strong>durée effective</strong> du créneau : longueur du créneau −
+                  (heure du premier clic − heure de début). Sans clic, valeur <strong>0H00</strong>.
                 </p>
               </div>
             </>
           ) : (
-            <div className="p-4 border rounded-xl text-slate-600">Sélectionnez un enseignant pour afficher le tableau.</div>
+            <div className="p-4 border border-slate-200 rounded-2xl bg-white text-slate-600">
+              Sélectionnez un enseignant pour afficher le tableau.
+            </div>
           )}
         </section>
       )}

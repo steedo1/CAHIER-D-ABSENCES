@@ -1,16 +1,53 @@
+// src/app/login/page.tsx
 "use client";
 
 import { useEffect } from "react";
+import { useSearchParams } from "next/navigation";
 import LoginCard from "@/components/auth/LoginCard";
 
 const DEBUG = true;
 
 export default function LoginPage() {
+  const sp = useSearchParams();
+  const bookParam = sp.get("book");
+  const spaceParam = sp.get("space"); // "direction" | "enseignant" | null
+
+  const book =
+    bookParam === "grades" || bookParam === "attendance"
+      ? (bookParam as "grades" | "attendance")
+      : undefined;
+
+  const space =
+    spaceParam === "direction" || spaceParam === "enseignant"
+      ? spaceParam
+      : undefined;
+
+  // 👉 On ne propage book que s'il existe vraiment
+  const redirectTo = book ? `/redirect?book=${book}` : "/redirect";
+
+  // 👉 Forçage du mode de connexion
+  const forcedMode =
+    space === "direction"
+      ? ("emailOnly" as const)
+      : space === "enseignant"
+      ? ("phoneOnly" as const)
+      : undefined;
+
+  const headerLabel =
+    space === "direction"
+      ? "Espace Direction — Absences & Notes"
+      : space === "enseignant"
+      ? "Espace Enseignant — Absences & Notes"
+      : book === "grades"
+      ? "Mon Cahier de Notes"
+      : "Mon Cahier d’Absences";
+
   useEffect(() => {
     if (!DEBUG) return;
-    console.log("[LOGIN/page] mount");
-    return () => console.log("[LOGIN/page] unmount");
-  }, []);
+    console.log("[LOGIN/page] mount", { book, redirectTo, space, forcedMode });
+    return () =>
+      console.log("[LOGIN/page] unmount", { book, redirectTo, space });
+  }, [book, redirectTo, space, forcedMode]);
 
   return (
     <main className="relative min-h-screen">
@@ -42,15 +79,16 @@ export default function LoginPage() {
               </svg>
             </div>
             <span className="text-sm font-semibold text-white drop-shadow">
-              Mon Cahier d’Absences
+              {headerLabel}
             </span>
           </div>
         </header>
 
         <section className="mx-auto max-w-md">
-          <LoginCard redirectTo="/redirect" />
+          {/* On propage le choix du cahier jusqu'à /redirect (si présent) */}
+          <LoginCard redirectTo={redirectTo} forcedMode={forcedMode} />
           <footer className="mt-6 text-center text-xs text-white/80 drop-shadow-sm">
-            © {new Date().getFullYear()} Mon Cahier d’Absences — Tous droits réservés
+            © {new Date().getFullYear()} Mon Cahier — Tous droits réservés
           </footer>
         </section>
       </div>

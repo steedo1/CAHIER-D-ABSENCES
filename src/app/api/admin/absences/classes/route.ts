@@ -1,4 +1,4 @@
-//src/app/api/admin/absences/classes/.route.ts
+// src/app/api/admin/absences/classes/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
@@ -16,7 +16,7 @@ function sanitizeText(s: unknown): string {
   const raw = String(s ?? "")
     .normalize("NFC")                       // normalise les accents
     .replace(/[\u0000-\u001F\u007F]/g, "") // enlève les caractères de contrôle
-    .replace(/\s+/g, " ")                   // espaces multiples → simple
+    .replace(/\s+/g, " ")                  // espaces multiples → simple
     .trim();
   return raw;
 }
@@ -25,7 +25,9 @@ export async function GET(req: NextRequest) {
   const supa = await getSupabaseServerClient();
   const srv = getSupabaseServiceClient();
 
-  const { data: { user } } = await supa.auth.getUser();
+  const {
+    data: { user },
+  } = await supa.auth.getUser();
   if (!user) return NextResponse.json({ items: [] });
 
   const { searchParams } = new URL(req.url);
@@ -40,13 +42,13 @@ export async function GET(req: NextRequest) {
     .eq("id", user.id)
     .maybeSingle();
 
-  const institution_id = me?.institution_id as string | null;
+  const institution_id = (me?.institution_id as string) ?? null;
   if (!institution_id) return NextResponse.json({ items: [] });
 
   // Marques (absences/retards) sur la période
   const { data: marks, error } = await srv
     .from("v_mark_minutes")
-    .select("class_id, minutes, started_at")
+    .select("id, class_id, minutes, started_at")
     .eq("institution_id", institution_id)
     .gte("started_at", startISO(from))
     .lte("started_at", endISO(to));
@@ -55,8 +57,35 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ items: [], error: error.message }, { status: 400 });
   }
 
+  // Récupérer les raisons pour ces marques afin d'exclure les justifiées
+  const markIds = Array.from(
+    new Set(
+      (marks || [])
+        .map((m: any) => String(m.id || ""))
+        .filter(Boolean)
+    )
+  );
+
+  let reasonById = new Map<string, string | null>();
+  if (markIds.length) {
+    const { data: marksInfo, error: marksInfoErr } = await srv
+      .from("attendance_marks")
+      .select("id, reason")
+      .in("id", markIds);
+
+    if (marksInfoErr) {
+      return NextResponse.json({ items: [], error: marksInfoErr.message }, { status: 400 });
+    }
+
+    reasonById = new Map(
+      (marksInfo || []).map((m: any) => [String(m.id), (m.reason ?? null) as string | null])
+    );
+  }
+
   // On veut classes.label (et pas name)
-  const classIds = Array.from(new Set((marks || []).map((m: any) => m.class_id).filter(Boolean))) as string[];
+  const classIds = Array.from(
+    new Set((marks || []).map((m: any) => m.class_id).filter(Boolean))
+  ) as string[];
 
   const { data: classes } = await srv
     .from("classes")
@@ -74,9 +103,13 @@ export async function GET(req: NextRequest) {
     ])
   );
 
-  // Agrégat par classe
+  // Agrégat par classe (EN EXCLUANT les marques justifiées)
   const agg = new Map<string, { absents: number; minutes: number }>();
   for (const m of marks || []) {
+    const mark_id = String((m as any).id || "");
+    const reason  = String(reasonById.get(mark_id) ?? "").trim();
+    if (reason) continue; // ✅ absence/retard justifié → on ignore
+
     const classId = (m as any).class_id as string | undefined;
     if (!classId) continue;
 
@@ -85,7 +118,7 @@ export async function GET(req: NextRequest) {
     if (levelFilter && cm.level !== levelFilter) continue;
 
     const a = agg.get(classId) || { absents: 0, minutes: 0 };
-    a.absents += 1;                            // 1 événement = 1 ligne (absence ou retard)
+    a.absents += 1; // 1 événement non justifié = 1 ligne
     a.minutes += Number((m as any).minutes) || 0;
     agg.set(classId, a);
   }

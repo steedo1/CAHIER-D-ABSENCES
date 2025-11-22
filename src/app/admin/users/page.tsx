@@ -33,7 +33,12 @@ function Help({ children }: { children: any }) {
 }
 
 type SubjectItem = { id: string; name: string };
-type TeacherRow = { id: string; display_name: string | null; email: string | null; phone: string | null };
+type TeacherRow = {
+  id: string;
+  display_name: string | null;
+  email: string | null;
+  phone: string | null;
+};
 
 // Réponse /api/admin/users (recherche)
 type AdminUserItem = {
@@ -44,15 +49,20 @@ type AdminUserItem = {
   role: string | null;
 };
 
+type CreateRole = "teacher" | "educator" | "admin";
+
 export default function UsersPage() {
   // État auth (session expirée)
   const [authErr, setAuthErr] = useState(false);
 
-  // ENSEIGNANT (création)
+  // CHOIX DU ROLE
+  const [createRole, setCreateRole] = useState<CreateRole>("teacher");
+
+  // ENSEIGNANT / EDUCATEUR / ADMIN (création)
   const [tEmail, setTEmail] = useState("");
   const [tPhone, setTPhone] = useState("");
   const [tName, setTName] = useState("");
-  const [tSubject, setTSubject] = useState(""); // discipline (optionnelle)
+  const [tSubject, setTSubject] = useState(""); // discipline (utilisée pour les enseignants)
 
   const [submitting, setSubmitting] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
@@ -75,7 +85,7 @@ export default function UsersPage() {
     })();
   }, []);
 
-  async function createTeacher() {
+  async function createUser() {
     setSubmitting(true);
     setMsg(null);
     try {
@@ -83,11 +93,11 @@ export default function UsersPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          role: "teacher",
+          role: createRole,
           email: tEmail.trim() || null, // email optionnel
-          phone: tPhone.trim(), // téléphone obligatoire
+          phone: tPhone.trim(), // téléphone obligatoire pour tous nos rôles ici
           display_name: tName.trim() || null,
-          subject: tSubject.trim() || null, // discipline optionnelle
+          subject: createRole === "teacher" ? tSubject.trim() || null : null, // discipline seulement pour teacher
         }),
       });
       const j = await r.json().catch(() => ({}));
@@ -100,7 +110,14 @@ export default function UsersPage() {
         setMsg(j?.error || "Échec");
         return;
       }
-      setMsg("Enseignant créé.");
+
+      let labelRole = "utilisateur";
+      if (createRole === "teacher") labelRole = "enseignant";
+      if (createRole === "educator") labelRole = "éducateur";
+      if (createRole === "admin") labelRole = "admin";
+
+      setMsg(`Compte ${labelRole} créé.`);
+
       setTEmail("");
       setTPhone("");
       setTName("");
@@ -196,7 +213,7 @@ export default function UsersPage() {
     }
   }
 
-  // ──────────────── Ajouter une discipline à un enseignant (NOUVEAU) ────────────────
+  // ──────────────── Ajouter une discipline à un enseignant ────────────────
   const [teachersForAdd, setTeachersForAdd] = useState<TeacherRow[]>([]);
   const [teacherIdForAdd, setTeacherIdForAdd] = useState<string>("");
   const [newSubjectName, setNewSubjectName] = useState("");
@@ -271,27 +288,48 @@ export default function UsersPage() {
     );
   }
 
+  const currentRoleLabel =
+    createRole === "teacher"
+      ? "enseignant"
+      : createRole === "educator"
+      ? "éducateur"
+      : "admin";
+
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-semibold">Enseignants</h1>
+        <h1 className="text-2xl font-semibold">Utilisateurs & rôles</h1>
         <p className="text-slate-600">
-          Créer des comptes enseignants (mot de passe temporaire) et donner une
-          discipline principale (optionnelle).
+          Créer des comptes <b>enseignants</b>, <b>éducateurs</b> ou{" "}
+          <b>admins d’établissement</b> (mot de passe temporaire). La discipline ne
+          concerne que les <b>enseignants</b>.
         </p>
       </div>
 
-      {/* Carte 1 : Création enseignant */}
+      {/* Carte 1 : Création utilisateur (teacher / educator / admin) */}
       <div className="rounded-2xl border bg-white p-5">
         <div className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-700">
-          Créer un enseignant
+          Créer un compte ({currentRoleLabel})
         </div>
         <Help>
           Téléphone <b>obligatoire</b> (pour la connexion). Email <b>facultatif</b>.
-          La discipline est <b>optionnelle</b> (utile surtout au PRIMAIRE).
+          La discipline est <b>réservée aux enseignants</b> (utile surtout au PRIMAIRE).
         </Help>
 
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+          <div>
+            <div className="mb-1 text-xs text-slate-500">Rôle du compte</div>
+            <select
+              className="w-full rounded-lg border bg-white px-3 py-2 text-sm"
+              value={createRole}
+              onChange={(e) => setCreateRole(e.target.value as CreateRole)}
+            >
+              <option value="teacher">Enseignant</option>
+              <option value="educator">Éducateur</option>
+              <option value="admin">Admin d’établissement</option>
+            </select>
+          </div>
+
           <div>
             <div className="mb-1 text-xs text-slate-500">Nom affiché</div>
             <Input
@@ -301,13 +339,14 @@ export default function UsersPage() {
               autoComplete="name"
             />
           </div>
+
           <div>
             <div className="mb-1 text-xs text-slate-500">Email (optionnel)</div>
             <Input
               type="email"
               value={tEmail}
               onChange={(e) => setTEmail(e.target.value)}
-              placeholder="enseignant@exemple.com"
+              placeholder="utilisateur@exemple.com"
               autoComplete="email"
             />
           </div>
@@ -321,28 +360,31 @@ export default function UsersPage() {
               autoComplete="tel"
             />
           </div>
-          <div>
-            <div className="mb-1 text-xs text-slate-500">Discipline (optionnel)</div>
-            <Input
-              list="subjects-list"
-              value={tSubject}
-              onChange={(e) => setTSubject(e.target.value)}
-              placeholder="Mathématiques, Français…"
-            />
-            <datalist id="subjects-list">
-              {subjects.map((s) => (
-                <option key={s.id} value={s.name} />
-              ))}
-            </datalist>
-            <div className="mt-1 text-[11px] text-slate-500">
-              Tu peux saisir une nouvelle discipline ou choisir une existante.
+
+          {createRole === "teacher" && (
+            <div>
+              <div className="mb-1 text-xs text-slate-500">Discipline</div>
+              <Input
+                list="subjects-list"
+                value={tSubject}
+                onChange={(e) => setTSubject(e.target.value)}
+                placeholder="Mathématiques, Français…"
+              />
+              <datalist id="subjects-list">
+                {subjects.map((s) => (
+                  <option key={s.id} value={s.name} />
+                ))}
+              </datalist>
+              <div className="mt-1 text-[11px] text-slate-500">
+                Tu peux saisir une nouvelle discipline ou choisir une existante.
+              </div>
             </div>
-          </div>
+          )}
         </div>
 
         <div className="mt-4">
-          <Button onClick={createTeacher} disabled={submitting || !tPhone.trim()}>
-            {submitting ? "Création…" : "Créer l’enseignant"}
+          <Button onClick={createUser} disabled={submitting || !tPhone.trim()}>
+            {submitting ? "Création…" : `Créer le compte ${currentRoleLabel}`}
           </Button>
         </div>
         {msg && (
@@ -352,14 +394,14 @@ export default function UsersPage() {
         )}
       </div>
 
-      {/* Carte 1bis : Ajouter une discipline à un enseignant (NOUVEAU) */}
+      {/* Carte 1bis : Ajouter une discipline à un enseignant */}
       <div className="rounded-2xl border bg-white p-5">
         <div className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-700">
           Ajouter une discipline à un enseignant
         </div>
         <Help>
-          Permet d’associer <b>plusieurs matières</b> au <b>même enseignant</b> dans cet établissement.
-          
+          Permet d’associer <b>plusieurs matières</b> au <b>même enseignant</b> dans cet
+          établissement.
         </Help>
 
         <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
@@ -373,7 +415,8 @@ export default function UsersPage() {
               <option value="">— Choisir —</option>
               {teachersForAdd.map((t) => (
                 <option key={t.id} value={t.id}>
-                  {t.display_name || "(Sans nom)"} {t.phone ? `— ${t.phone}` : t.email ? `— ${t.email}` : ""}
+                  {t.display_name || "(Sans nom)"}{" "}
+                  {t.phone ? `— ${t.phone}` : t.email ? `— ${t.email}` : ""}
                 </option>
               ))}
             </select>
@@ -403,7 +446,7 @@ export default function UsersPage() {
         {addMsg && <div className="mt-2 text-sm text-emerald-700">{addMsg}</div>}
       </div>
 
-      {/* Carte 2 : Retirer un enseignant */}
+      {/* Carte 2 : Retirer un enseignant de l’établissement */}
       <div className="rounded-2xl border bg-white p-5">
         <div className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-700">
           Retirer un enseignant de l’établissement
@@ -436,11 +479,17 @@ export default function UsersPage() {
             <div className="text-sm text-slate-500">Aucun résultat pour l’instant.</div>
           ) : (
             results.map((u) => (
-              <div key={u.id} className="flex items-center justify-between rounded-xl border p-3">
+              <div
+                key={u.id}
+                className="flex items-center justify-between rounded-xl border p-3"
+              >
                 <div className="min-w-0">
-                  <div className="truncate font-medium">{u.display_name || "(Sans nom)"}</div>
+                  <div className="truncate font-medium">
+                    {u.display_name || "(Sans nom)"}
+                  </div>
                   <div className="truncate text-xs text-slate-500">
-                    {u.email || "—"} {u.phone ? `• ${u.phone}` : ""} {u.role ? `• rôle: ${u.role}` : ""}
+                    {u.email || "—"} {u.phone ? `• ${u.phone}` : ""}{" "}
+                    {u.role ? `• rôle: ${u.role}` : ""}
                   </div>
                 </div>
                 <div className="flex items-center gap-2">

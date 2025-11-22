@@ -62,6 +62,11 @@ function rubricLabel(r: "discipline" | "tenue" | "moralite") {
   if (r === "moralite") return "Moralité";
   return "Discipline";
 }
+function gradeKindLabel(kind: "devoir" | "interro_ecrite" | "interro_orale") {
+  if (kind === "devoir") return "Devoir";
+  if (kind === "interro_ecrite") return "Interrogation écrite";
+  return "Interrogation orale";
+}
 function yyyyMMdd(d: Date) {
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, "0");
@@ -74,18 +79,93 @@ function getInitials(name: string) {
   if (parts.length === 1) return pick(parts[0]);
   return pick(parts[0]) + pick(parts[parts.length - 1]);
 }
+function startOfWeek(date: Date) {
+  const d = new Date(date);
+  const day = d.getDay(); // 0 (dimanche) -> 6 (samedi)
+  const diff = day === 0 ? -6 : 1 - day; // Lundi comme début
+  d.setDate(d.getDate() + diff);
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+function isInDateRange(iso: string, from?: string | null, to?: string | null) {
+  const d = new Date(iso);
+  if (from) {
+    const f = new Date(from + "T00:00:00");
+    if (d < f) return false;
+  }
+  if (to) {
+    const t = new Date(to + "T23:59:59");
+    if (d > t) return false;
+  }
+  return true;
+}
 
-/* ───────── thèmes (couleurs différentes par enfant) ───────── */
+/* ───────── thèmes (couleurs différentes par enfant / matière) ───────── */
 const THEMES = [
-  // Chaque thème liste explicitement ses classes Tailwind (pas de classes dynamiques imprévisibles)
-  { name: "emerald", ring: "hover:ring-emerald-300", border: "border-emerald-200", bar: "from-emerald-500 to-teal-500", chipBg: "bg-emerald-100", chipText: "text-emerald-800" },
-  { name: "indigo",  ring: "hover:ring-indigo-300",  border: "border-indigo-200",  bar: "from-indigo-500 to-blue-500",   chipBg: "bg-indigo-100",  chipText: "text-indigo-800" },
-  { name: "violet",  ring: "hover:ring-violet-300",  border: "border-violet-200",  bar: "from-violet-500 to-fuchsia-500",chipBg: "bg-violet-100",  chipText: "text-violet-800" },
-  { name: "sky",     ring: "hover:ring-sky-300",     border: "border-sky-200",     bar: "from-sky-500 to-cyan-500",      chipBg: "bg-sky-100",     chipText: "text-sky-800" },
-  { name: "amber",   ring: "hover:ring-amber-300",   border: "border-amber-200",   bar: "from-amber-500 to-orange-500",  chipBg: "bg-amber-100",   chipText: "text-amber-900" },
-  { name: "rose",    ring: "hover:ring-rose-300",    border: "border-rose-200",    bar: "from-rose-500 to-pink-500",     chipBg: "bg-rose-100",    chipText: "text-rose-800" },
-  { name: "teal",    ring: "hover:ring-teal-300",    border: "border-teal-200",    bar: "from-teal-500 to-emerald-500",  chipBg: "bg-teal-100",    chipText: "text-teal-800" },
-  { name: "cyan",    ring: "hover:ring-cyan-300",    border: "border-cyan-200",    bar: "from-cyan-500 to-sky-500",      chipBg: "bg-cyan-100",    chipText: "text-cyan-800" },
+  {
+    name: "emerald",
+    ring: "hover:ring-emerald-300",
+    border: "border-emerald-200",
+    bar: "from-emerald-500 to-teal-500",
+    chipBg: "bg-emerald-100",
+    chipText: "text-emerald-800",
+  },
+  {
+    name: "indigo",
+    ring: "hover:ring-indigo-300",
+    border: "border-indigo-200",
+    bar: "from-indigo-500 to-blue-500",
+    chipBg: "bg-indigo-100",
+    chipText: "text-indigo-800",
+  },
+  {
+    name: "violet",
+    ring: "hover:ring-violet-300",
+    border: "border-violet-200",
+    bar: "from-violet-500 to-fuchsia-500",
+    chipBg: "bg-violet-100",
+    chipText: "text-violet-800",
+  },
+  {
+    name: "sky",
+    ring: "hover:ring-sky-300",
+    border: "border-sky-200",
+    bar: "from-sky-500 to-cyan-500",
+    chipBg: "bg-sky-100",
+    chipText: "text-sky-800",
+  },
+  {
+    name: "amber",
+    ring: "hover:ring-amber-300",
+    border: "border-amber-200",
+    bar: "from-amber-500 to-orange-500",
+    chipBg: "bg-amber-100",
+    chipText: "text-amber-900",
+  },
+  {
+    name: "rose",
+    ring: "hover:ring-rose-300",
+    border: "border-rose-200",
+    bar: "from-rose-500 to-pink-500",
+    chipBg: "bg-rose-100",
+    chipText: "text-rose-800",
+  },
+  {
+    name: "teal",
+    ring: "hover:ring-teal-300",
+    border: "border-teal-200",
+    bar: "from-teal-500 to-emerald-500",
+    chipBg: "bg-teal-100",
+    chipText: "text-teal-800",
+  },
+  {
+    name: "cyan",
+    ring: "hover:ring-cyan-300",
+    border: "border-cyan-200",
+    bar: "from-cyan-500 to-sky-500",
+    chipBg: "bg-cyan-100",
+    chipText: "text-cyan-800",
+  },
 ] as const;
 function themeFor(i: number) {
   return THEMES[i % THEMES.length];
@@ -120,6 +200,19 @@ type Conduct = {
   total: number;
   appreciation: string;
 };
+type KidGradeRow = {
+  id: string;
+  eval_date: string;
+  eval_kind: "devoir" | "interro_ecrite" | "interro_orale";
+  scale: number;
+  coeff: number;
+  title?: string | null;
+  score: number | null;
+  subject_name?: string | null;
+  subject_id?: string | null;
+};
+
+type NavSection = "dashboard" | "conduct" | "absences" | "notes";
 
 /* ───────── UI ───────── */
 function Button(
@@ -215,14 +308,73 @@ function Skeleton({ className = "" }: { className?: string }) {
 
 /* Petites icônes inline (pas de dépendances) */
 const IconBell = () => (
-  <svg width="16" height="16" viewBox="0 0 24 24" className="shrink-0" fill="none" stroke="currentColor" strokeWidth="2">
+  <svg
+    width="16"
+    height="16"
+    viewBox="0 0 24 24"
+    className="shrink-0"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+  >
     <path d="M18 8a6 6 0 10-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9" />
     <path d="M13.73 21a2 2 0 01-3.46 0" />
   </svg>
 );
 const IconPower = () => (
-  <svg width="16" height="16" viewBox="0 0 24 24" className="shrink-0" fill="none" stroke="currentColor" strokeWidth="2">
-    <path d="M12 2v10" /><path d="M5.5 7a7 7 0 1013 0" />
+  <svg
+    width="16"
+    height="16"
+    viewBox="0 0 24 24"
+    className="shrink-0"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+  >
+    <path d="M12 2v10" />
+    <path d="M5.5 7a7 7 0 1013 0" />
+  </svg>
+);
+const IconHome = () => (
+  <svg
+    width="16"
+    height="16"
+    viewBox="0 0 24 24"
+    className="shrink-0"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+  >
+    <path d="M3 11l9-8 9 8" />
+    <path d="M5 12v8h14v-8" />
+  </svg>
+);
+const IconClipboard = () => (
+  <svg
+    width="16"
+    height="16"
+    viewBox="0 0 24 24"
+    className="shrink-0"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+  >
+    <rect x="8" y="3" width="8" height="4" rx="1" />
+    <rect x="5" y="7" width="14" height="14" rx="2" />
+  </svg>
+);
+const IconBook = () => (
+  <svg
+    width="16"
+    height="16"
+    viewBox="0 0 24 24"
+    className="shrink-0"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+  >
+    <path d="M4 4h10a2 2 0 012 2v14H6a2 2 0 01-2-2V4z" />
+    <path d="M14 4h2a2 2 0 012 2v14" />
   </svg>
 );
 
@@ -248,7 +400,7 @@ function TiltCard({
     if (!hasFinePointer) return;
     const el = e.currentTarget;
     const rect = el.getBoundingClientRect();
-    const px = (e.clientX - rect.left) / rect.width;  // 0..1
+    const px = (e.clientX - rect.left) / rect.width; // 0..1
     const py = (e.clientY - rect.top) / rect.height; // 0..1
 
     const rotMax = 8; // degrés
@@ -256,7 +408,9 @@ function TiltCard({
     const ry = (px - 0.5) * 2 * rotMax;
 
     setStyle({
-      transform: `rotateX(${rx.toFixed(2)}deg) rotateY(${ry.toFixed(2)}deg) translateZ(0) scale(1.01)`,
+      transform: `rotateX(${rx.toFixed(2)}deg) rotateY(${ry.toFixed(
+        2
+      )}deg) translateZ(0) scale(1.01)`,
       transition: "transform 60ms linear",
       transformStyle: "preserve-3d",
     });
@@ -369,7 +523,13 @@ function groupByDay(events: Ev[]): DayGroup[] {
     const ordered = [...arr].sort((a, b) => b.when.localeCompare(a.when));
     const absentCount = ordered.filter((e) => e.type === "absent").length;
     const lateCount = ordered.filter((e) => e.type === "late").length;
-    groups.push({ day: k, label: dayLabel(ordered[0].when), absentCount, lateCount, items: ordered });
+    groups.push({
+      day: k,
+      label: dayLabel(ordered[0].when),
+      absentCount,
+      lateCount,
+      items: ordered,
+    });
   }
   groups.sort((a, b) => b.day.localeCompare(a.day));
   return groups;
@@ -381,6 +541,7 @@ export default function ParentPage() {
   const [feed, setFeed] = useState<Record<string, Ev[]>>({});
   const [kidPenalties, setKidPenalties] = useState<Record<string, KidPenalty[]>>({});
   const [conduct, setConduct] = useState<Record<string, Conduct>>({});
+  const [kidGrades, setKidGrades] = useState<Record<string, KidGradeRow[]>>({});
   const [loadingKids, setLoadingKids] = useState(true);
   const [loadingConduct, setLoadingConduct] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
@@ -393,6 +554,18 @@ export default function ParentPage() {
   const [showAllDaysForKid, setShowAllDaysForKid] = useState<Record<string, boolean>>({});
   const [showAllPenForKid, setShowAllPenForKid] = useState<Record<string, boolean>>({});
 
+  // Filtre période pour les notes
+  const [gradeFilterMode, setGradeFilterMode] = useState<"week" | "month" | "all" | "custom">(
+    "week"
+  );
+  const [gradeFrom, setGradeFrom] = useState<string>("");
+  const [gradeTo, setGradeTo] = useState<string>("");
+
+  // Matière sélectionnée par enfant (onglet Cahier de notes)
+  const [activeSubjectPerKid, setActiveSubjectPerKid] = useState<Record<string, string | null>>(
+    {}
+  );
+
   // 🔔 Permission de notification déjà accordée ?
   const [granted, setGranted] = useState(false);
 
@@ -403,9 +576,24 @@ export default function ParentPage() {
   // ⛔ État de déconnexion
   const [loggingOut, setLoggingOut] = useState(false);
 
+  // Sélection enfant + section (sidebar / mobile nav)
+  const [activeChildId, setActiveChildId] = useState<string | "all">("all");
+  const [activeSection, setActiveSection] = useState<NavSection>("dashboard");
+
+  const hasKids = kids.length > 0;
+  const filteredKids = activeChildId === "all" ? kids : kids.filter((k) => k.id === activeChildId);
+
+  const isDashboard = activeSection === "dashboard";
+  const isConduct = activeSection === "conduct";
+  const isAbsences = activeSection === "absences";
+  const isNotes = activeSection === "notes";
+  const showConductSection = isDashboard || isConduct;
+  const showEventsSection = isDashboard || isAbsences; // plus isNotes ici
+  const showNotesSection = isNotes;
+
   // — init des dates par défaut + états push
   useEffect(() => {
-    // Dates par défaut : aujourd’hui et J-90
+    // Dates par défaut : aujourd’hui et J-90 pour la conduite
     const today = new Date();
     const start = new Date();
     start.setDate(start.getDate() - 90);
@@ -426,6 +614,24 @@ export default function ParentPage() {
     return () => document.removeEventListener("visibilitychange", refresh);
   }, []);
 
+  // Init période notes selon le mode (semaine / mois / all)
+  useEffect(() => {
+    const today = new Date();
+    if (gradeFilterMode === "week") {
+      const start = startOfWeek(today);
+      setGradeFrom(yyyyMMdd(start));
+      setGradeTo(yyyyMMdd(today));
+    } else if (gradeFilterMode === "month") {
+      const start = new Date(today.getFullYear(), today.getMonth(), 1);
+      setGradeFrom(yyyyMMdd(start));
+      setGradeTo(yyyyMMdd(today));
+    } else if (gradeFilterMode === "all") {
+      setGradeFrom("");
+      setGradeTo("");
+    }
+    // custom : on ne touche pas aux valeurs, c'est l'utilisateur qui choisit
+  }, [gradeFilterMode]);
+
   async function loadKids(from?: string, to?: string) {
     setLoadingKids(true);
     try {
@@ -436,10 +642,17 @@ export default function ParentPage() {
       }).then((r) => r.json());
       const ks = (j.items || []) as Kid[];
       setKids(ks);
+      setActiveChildId((prev) => {
+        if (prev !== "all" && ks.some((k) => k.id === prev)) return prev;
+        if (ks.length === 1) return ks[0].id;
+        if (ks.length === 0) return "all";
+        return "all";
+      });
 
-      // 2) événements + sanctions
+      // 2) événements + sanctions + notes publiées
       const feedEntries: Array<[string, Ev[]]> = [];
       const penEntries: Array<[string, KidPenalty[]]> = [];
+      const gradeEntries: Array<[string, KidGradeRow[]]> = [];
 
       for (const k of ks) {
         const f = await fetch(
@@ -455,16 +668,26 @@ export default function ParentPage() {
           .then((r) => r.json())
           .catch(() => ({ items: [] }));
         penEntries.push([k.id, (p.items || []) as KidPenalty[]]);
+
+        const g = await fetch(
+          `/api/parent/children/grades?student_id=${encodeURIComponent(k.id)}&limit=200`,
+          { cache: "no-store", credentials: "include" }
+        )
+          .then((r) => r.json())
+          .catch(() => ({ items: [] }));
+        gradeEntries.push([k.id, (g.items || []) as KidGradeRow[]]);
       }
 
       setFeed(Object.fromEntries(feedEntries));
       setKidPenalties(Object.fromEntries(penEntries));
+      setKidGrades(Object.fromEntries(gradeEntries));
 
       // 3) expand auto si une seule ligne dans une journée
       const initialExpanded: Record<string, boolean> = {};
       for (const [kidId, list] of feedEntries) {
         const groups = groupByDay(list);
-        for (const g of groups) if (g.items.length === 1) initialExpanded[`${kidId}|${g.day}`] = true;
+        for (const g of groups)
+          if (g.items.length === 1) initialExpanded[`${kidId}|${g.day}`] = true;
       }
       setExpanded(initialExpanded);
 
@@ -577,375 +800,1183 @@ export default function ParentPage() {
     }
   }
 
-  /* Render */
+  function selectSection(section: NavSection) {
+    setActiveSection(section);
+    if (typeof window !== "undefined") {
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+  }
+
+  function SidebarNavItem({
+    label,
+    icon,
+    section,
+  }: {
+    label: string;
+    icon: React.ReactNode;
+    section: NavSection;
+  }) {
+    const active = activeSection === section;
+    return (
+      <button
+        onClick={() => selectSection(section)}
+        className={[
+          "flex w-full items-center gap-2 rounded-xl px-3 py-2 text-sm transition",
+          active
+            ? "bg-emerald-50 text-emerald-800 ring-1 ring-emerald-200"
+            : "text-slate-700 hover:bg-slate-100",
+        ].join(" ")}
+      >
+        <span className="text-slate-500">{icon}</span>
+        <span className="truncate">{label}</span>
+      </button>
+    );
+  }
+
   return (
-    <main
-      className={[
-        "mx-auto max-w-6xl p-4 md:p-6 space-y-6 scroll-smooth",
-        "relative",
-      ].join(" ")}
-    >
-      {/* Background décoratif non intrusif */}
-      <div
-        aria-hidden
-        className="pointer-events-none absolute inset-0 -z-10"
-        style={{
-          background:
-            "radial-gradient(90% 60% at 100% 0%, rgba(56,189,248,0.10), transparent 60%), radial-gradient(70% 50% at 0% 0%, rgba(16,185,129,0.10), transparent 60%)",
-        }}
-      />
+    <div className="min-h-screen bg-slate-950/5">
+      <div className="flex min-h-screen">
+        {/* Sidebar desktop */}
+        <aside className="hidden md:flex w-64 flex-col border-r border-slate-200 bg-white/95 backdrop-blur">
+          {/* Brand */}
+          <div className="flex items-center gap-3 border-b border-slate-200 px-4 py-4">
+            <div className="grid h-9 w-9 place-items-center rounded-xl bg-slate-900 text-xs font-semibold text-white shadow-sm">
+              MC
+            </div>
+            <div className="min-w-0">
+              <div className="text-sm font-semibold text-slate-900 truncate">
+                Mon Cahier
+              </div>
+              <div className="text-xs text-slate-500">Espace parent</div>
+            </div>
+          </div>
 
-      {/* Header */}
-      <header className="relative overflow-hidden rounded-3xl border border-slate-800/20 bg-gradient-to-br from-slate-950 via-indigo-950 to-slate-900 px-5 py-5 md:px-7 md:py-6 text-white shadow-sm">
-        <div className="absolute inset-0 opacity-20 [background-image:radial-gradient(60%_50%_at_100%_0%,white,transparent_70%)]" />
-        <div className="relative z-10 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-          <div className="min-w-0">
-            <h1 className="text-xl md:text-2xl font-semibold tracking-tight">
-              <span className="bg-clip-text text-transparent bg-gradient-to-r from-emerald-300 to-cyan-300">
-                Espace parent
-              </span>
-            </h1>
-            <p className="mt-1 text-white/80 text-sm">
-              Suivez en temps réel les <b>absences</b>, <b>retards</b> et <b>sanctions</b> de vos
-              enfants.
-            </p>
-          </div>
-          <div className="flex items-center gap-2 shrink-0">
-            {!granted ? (
-              <Button tone="white" onClick={enablePush} title="Activer les notifications push" iconLeft={<IconBell />}>
-                Activer les push
-              </Button>
-            ) : (
-              <span className="hidden sm:inline rounded-full bg-white px-3 py-1.5 text-sm text-slate-900 ring-1 ring-white/40">
-                Push activés ✅
-              </span>
-            )}
-            <Button tone="white" onClick={safeLogout} disabled={loggingOut} title="Se déconnecter" iconLeft={<IconPower />}>
-              {loggingOut ? "Déconnexion…" : "Déconnexion"}
-            </Button>
-          </div>
-        </div>
-      </header>
-
-      {/* iOS hint */}
-      {isiOS && !isStandalone && !granted && (
-        <div className="rounded-2xl border p-3 bg-amber-50 text-amber-900">
-          <div className="text-sm">
-            <b>iPhone/iPad :</b> pour recevoir les notifications, ajoutez d’abord l’app à l’écran
-            d’accueil : ouvrez cette page dans <b>Safari</b> → <b>Partager</b> →{" "}
-            <b>Ajouter à l’écran d’accueil</b>. Puis rouvrez l’app et appuyez sur{" "}
-            <i>Activer les notifications</i>.
-          </div>
-        </div>
-      )}
-
-      {/* Conduite — moyenne par enfant (inchangé fonctionnellement) */}
-      <section className="rounded-2xl border bg-white/90 backdrop-blur p-5 shadow-sm">
-        <div className="mb-3 flex items-center justify-between gap-3">
-          <div className="text-sm font-semibold uppercase tracking-wide text-slate-700">
-            Conduite — Moyenne par enfant
-          </div>
-          <div className="hidden md:flex items-center gap-2">
-            <Input type="date" value={conductFrom} onChange={(e) => setConductFrom(e.target.value)} />
-            <span className="text-slate-600 text-xs">au</span>
-            <Input type="date" value={conductTo} onChange={(e) => setConductTo(e.target.value)} />
-            <Button onClick={applyConductFilter} disabled={loadingConduct}>
-              {loadingConduct ? "…" : "Valider"}
-            </Button>
-          </div>
-        </div>
-
-        {/* Filtres (mobile) */}
-        <div className="md:hidden mb-4 grid grid-cols-2 gap-2">
-          <Input type="date" value={conductFrom} onChange={(e) => setConductFrom(e.target.value)} />
-          <Input type="date" value={conductTo} onChange={(e) => setConductTo(e.target.value)} />
-          <div className="col-span-2">
-            <Button className="w-full" onClick={applyConductFilter} disabled={loadingConduct}>
-              {loadingConduct ? "…" : "Valider"}
-            </Button>
-          </div>
-        </div>
-
-        {loadingKids ? (
-          <div className="space-y-3">
-            <Skeleton className="h-16 w-full" />
-            <Skeleton className="h-16 w-full" />
-            <Skeleton className="h-16 w-full" />
-          </div>
-        ) : kids.length === 0 ? (
-          <div className="flex items-center justify-between rounded-xl border bg-slate-50 p-4">
-            <div className="text-sm text-slate-700">Aucun enfant lié à votre compte pour l’instant.</div>
-            {!granted && (
-              <Button tone="outline" onClick={enablePush} iconLeft={<IconBell />}>
-                Activer les push
-              </Button>
-            )}
-          </div>
-        ) : (
-          <>
-            {/* Mobile: cartes */}
-            <div className="md:hidden space-y-3">
+          {/* Enfants */}
+          <div className="border-b border-slate-100 px-4 py-3">
+            <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+              Enfants
+            </div>
+            <div className="space-y-1">
+              <button
+                onClick={() => setActiveChildId("all")}
+                className={[
+                  "flex w-full items-center justify-between rounded-lg px-2 py-1.5 text-xs transition",
+                  activeChildId === "all"
+                    ? "bg-slate-900 text-white"
+                    : "text-slate-700 hover:bg-slate-100",
+                ].join(" ")}
+              >
+                <span>Vue globale</span>
+                <span className="rounded-full bg-slate-900/5 px-1.5 py-0.5 text-[10px] text-slate-600">
+                  {kids.length || 0}
+                </span>
+              </button>
               {kids.map((k) => {
-                const c = conduct[k.id];
+                const active = activeChildId === k.id;
                 return (
-                  <div key={k.id} className="rounded-xl border border-slate-200 p-4 hover:shadow-sm transition ring-emerald-100 hover:ring-2">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <div className="font-medium text-slate-900">{k.full_name}</div>
-                        <div className="text-xs text-slate-600">{k.class_label || "—"}</div>
-                      </div>
-                      {c ? (
-                        <Badge tone="emerald">{c.total.toFixed(2).replace(".", ",")} / 20</Badge>
-                      ) : (
-                        <Badge>—</Badge>
-                      )}
+                  <button
+                    key={k.id}
+                    onClick={() => setActiveChildId(k.id)}
+                    className={[
+                      "flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-xs transition",
+                      active
+                        ? "bg-emerald-50 text-emerald-800 ring-1 ring-emerald-200"
+                        : "text-slate-700 hover:bg-slate-100",
+                    ].join(" ")}
+                  >
+                    <div className="grid h-6 w-6 place-items-center rounded-lg bg-slate-100 text-[10px] font-semibold text-slate-700">
+                      {getInitials(k.full_name)}
                     </div>
-                    {c ? (
-                      <div className="mt-3 space-y-2">
-                        <Meter value={c.breakdown.assiduite} max={6} label={`Assiduité — ${Math.round(c.breakdown.assiduite)}/6`} />
-                        <Meter value={c.breakdown.tenue} max={3} label={`Tenue — ${Math.round(c.breakdown.tenue)}/3`} />
-                        <Meter value={c.breakdown.moralite} max={4} label={`Moralité — ${Math.round(c.breakdown.moralite)}/4`} />
-                        <Meter value={c.breakdown.discipline} max={7} label={`Discipline — ${Math.round(c.breakdown.discipline)}/7`} />
-                        <div className="pt-1 text-xs text-slate-600">
-                          <span className="font-medium">Appréciation : </span>
-                          {c.appreciation}
-                        </div>
+                    <div className="min-w-0 text-left">
+                      <div className="truncate">{k.full_name}</div>
+                      <div className="text-[10px] text-slate-500 truncate">
+                        {k.class_label || "—"}
                       </div>
-                    ) : (
-                      <div className="mt-3 text-sm text-slate-600">—</div>
-                    )}
-                  </div>
+                    </div>
+                  </button>
                 );
               })}
             </div>
-
-            {/* Desktop: tableau */}
-            <div className="hidden md:block overflow-x-auto mt-2 rounded-xl border">
-              <table className="min-w-full text-sm">
-                <thead className="bg-slate-50">
-                  <tr>
-                    <th className="px-3 py-2 text-left">Enfant</th>
-                    <th className="px-3 py-2 text-left">Classe</th>
-                    <th className="px-3 py-2 text-left">Assiduité (/6)</th>
-                    <th className="px-3 py-2 text-left">Tenue (/3)</th>
-                    <th className="px-3 py-2 text-left">Moralité (/4)</th>
-                    <th className="px-3 py-2 text-left">Discipline (/7)</th>
-                    <th className="px-3 py-2 text-left">Moyenne (/20)</th>
-                    <th className="px-3 py-2 text-left">Appréciation</th>
-                  </tr>
-                </thead>
-                <tbody className="bg-white/60">
-                  {kids.map((k) => {
-                    const c = conduct[k.id];
-                    return (
-                      <tr key={k.id} className="border-t">
-                        <td className="px-3 py-2">{k.full_name}</td>
-                        <td className="px-3 py-2">{k.class_label || "—"}</td>
-                        {c ? (
-                          <>
-                            <td className="px-3 py-2">{c.breakdown.assiduite.toFixed(2).replace(".", ",")}</td>
-                            <td className="px-3 py-2">{c.breakdown.tenue.toFixed(2).replace(".", ",")}</td>
-                            <td className="px-3 py-2">{c.breakdown.moralite.toFixed(2).replace(".", ",")}</td>
-                            <td className="px-3 py-2">{c.breakdown.discipline.toFixed(2).replace(".", ",")}</td>
-                            <td className="px-3 py-2 font-semibold">{c.total.toFixed(2).replace(".", ",")}</td>
-                            <td className="px-3 py-2">{c.appreciation}</td>
-                          </>
-                        ) : (
-                          <td className="px-3 py-2 text-slate-600" colSpan={6}>—</td>
-                        )}
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </>
-        )}
-      </section>
-
-      {/* Mes enfants — Absences/retards + Sanctions (FUN + 3D + thèmes) */}
-      <section className="rounded-2xl border bg-white/90 backdrop-blur p-5 shadow-sm">
-        <div className="mb-3 flex items-center justify-between">
-          <div className="text-sm font-semibold uppercase tracking-wide text-slate-700">
-            Mes enfants — Absences/retards récents et sanctions
           </div>
-          <div className="flex items-center gap-2">
-            {granted ? (
-              <span className="text-xs text-emerald-700">Notifications déjà activées ✅</span>
-            ) : (
-              <Button tone="outline" onClick={enablePush} title="Activer les notifications push" iconLeft={<IconBell />}>
-                Activer les push
-              </Button>
-            )}
-          </div>
-        </div>
 
-        {loadingKids ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-            <Skeleton className="h-40 w-full" />
-            <Skeleton className="h-40 w-full" />
-            <Skeleton className="h-40 w-full" />
+          {/* Navigation */}
+          <div className="flex-1 px-3 py-3 space-y-1">
+            <SidebarNavItem label="Tableau de bord" icon={<IconHome />} section="dashboard" />
+            <SidebarNavItem
+              label="Conduite & points"
+              icon={<IconClipboard />}
+              section="conduct"
+            />
+            <SidebarNavItem
+              label="Cahier d’absences"
+              icon={<IconClipboard />}
+              section="absences"
+            />
+            <SidebarNavItem label="Cahier de notes" icon={<IconBook />} section="notes" />
           </div>
-        ) : kids.length === 0 ? (
-          <div className="rounded-xl border bg-slate-50 p-4 text-sm text-slate-700">
-            Aucun enfant lié à votre compte pour l’instant.
-          </div>
-        ) : (
-          <div className="space-y-4 md:grid md:grid-cols-2 md:gap-5 md:space-y-0 xl:grid-cols-3">
-            {kids.map((k, i) => {
-              const groups = groupByDay(feed[k.id] || []);
-              const showAll = !!showAllDaysForKid[k.id];
-              const visibleGroups = showAll ? groups : groups.slice(0, 3);
-              const t = themeFor(i);
 
-              return (
-                <TiltCard key={k.id} className={`rounded-xl ${t.ring}`}>
-                  <div className={`relative rounded-xl border ${t.border} p-4 transition shadow-sm`}>
-                    {/* liseré dégradé haut */}
-                    <div className={`absolute inset-x-0 top-0 h-1 rounded-t-xl bg-gradient-to-r ${t.bar}`} style={{ transform: "translateZ(20px)" }} />
-                    <div className="flex items-center justify-between" style={{ transform: "translateZ(16px)" }}>
-                      <div className="flex items-center gap-3 min-w-0">
-                        {/* avatar initiales coloré */}
-                        <div className={`grid h-9 w-9 place-items-center rounded-xl text-xs font-semibold ${t.chipBg} ${t.chipText} shadow-sm`}>
+          {/* Logout bas sidebar */}
+          <div className="border-t border-slate-200 px-4 py-3">
+            <Button
+              tone="white"
+              onClick={safeLogout}
+              disabled={loggingOut}
+              title="Se déconnecter"
+              iconLeft={<IconPower />}
+              className="w-full justify-start"
+            >
+              {loggingOut ? "Déconnexion…" : "Se déconnecter"}
+            </Button>
+          </div>
+        </aside>
+
+        {/* Contenu principal */}
+        <div className="flex-1">
+          <main
+            className={[
+              "mx-auto max-w-6xl p-4 md:p-6 space-y-6 scroll-smooth",
+              "relative",
+            ].join(" ")}
+          >
+            {/* Background décoratif non intrusif */}
+            <div
+              aria-hidden
+              className="pointer-events-none absolute inset-0 -z-10"
+              style={{
+                background:
+                  "radial-gradient(90% 60% at 100% 0%, rgba(56,189,248,0.10), transparent 60%), radial-gradient(70% 50% at 0% 0%, rgba(16,185,129,0.10), transparent 60%)",
+              }}
+            />
+
+            {/* Header */}
+            <header className="relative overflow-hidden rounded-3xl border border-slate-800/20 bg-gradient-to-br from-slate-950 via-indigo-950 to-slate-900 px-5 py-5 md:px-7 md:py-6 text-white shadow-sm">
+              <div className="absolute inset-0 opacity-20 [background-image:radial-gradient(60%_50%_at_100%_0%,white,transparent_70%)]" />
+              <div className="relative z-10 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+                <div className="min-w-0">
+                  <h1 className="text-xl md:text-2xl font-semibold tracking-tight">
+                    <span className="bg-clip-text text-transparent bg-gradient-to-r from-emerald-300 to-cyan-300">
+                      Espace parent
+                    </span>
+                  </h1>
+                  <p className="mt-1 text-white/80 text-sm">
+                    Suivez en temps réel les <b>absences</b>, <b>retards</b>, <b>sanctions</b> et{" "}
+                    <b>notes</b> de vos enfants.
+                  </p>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  {!granted ? (
+                    <Button
+                      tone="white"
+                      onClick={enablePush}
+                      title="Activer les notifications push"
+                      iconLeft={<IconBell />}
+                    >
+                      Activer les push
+                    </Button>
+                  ) : (
+                    <span className="hidden sm:inline rounded-full bg-white px-3 py-1.5 text-sm text-slate-900 ring-1 ring-white/40">
+                      Push activés ✅
+                    </span>
+                  )}
+                  {/* Bouton logout aussi ici (mobile + confort) */}
+                  <Button
+                    tone="white"
+                    onClick={safeLogout}
+                    disabled={loggingOut}
+                    title="Se déconnecter"
+                    iconLeft={<IconPower />}
+                  >
+                    {loggingOut ? "Déconnexion…" : "Déconnexion"}
+                  </Button>
+                </div>
+              </div>
+
+              {/* Mobile : sélection enfant + nav rapide */}
+              {hasKids && (
+                <div className="relative z-10 mt-4 space-y-2 md:hidden">
+                  {/* Enfants */}
+                  <div className="flex gap-2 overflow-x-auto pb-1">
+                    <button
+                      onClick={() => setActiveChildId("all")}
+                      className={[
+                        "whitespace-nowrap rounded-full px-3 py-1 text-xs",
+                        activeChildId === "all"
+                          ? "bg-white text-slate-900"
+                          : "bg-slate-900/40 text-slate-100 border border-white/10",
+                      ].join(" ")}
+                    >
+                      Vue globale
+                    </button>
+                    {kids.map((k) => (
+                      <button
+                        key={k.id}
+                        onClick={() => setActiveChildId(k.id)}
+                        className={[
+                          "flex items-center gap-1 whitespace-nowrap rounded-full px-3 py-1 text-xs",
+                          activeChildId === k.id
+                            ? "bg-emerald-300 text-slate-900"
+                            : "bg-slate-900/40 text-slate-100 border border-white/10",
+                        ].join(" ")}
+                      >
+                        <span className="rounded-full bg-white/10 px-1.5 py-0.5 text-[10px]">
                           {getInitials(k.full_name)}
-                        </div>
-                        <div className="min-w-0">
-                          <div className="font-medium text-slate-900 truncate">
-                            {k.full_name} <span className="text-xs text-slate-600">({k.class_label || "—"})</span>
-                          </div>
-                        </div>
-                      </div>
+                        </span>
+                        <span className="truncate max-w-[120px]">{k.full_name}</span>
+                      </button>
+                    ))}
+                  </div>
 
-                      {groups.length > 3 && (
-                        <button
-                          onClick={() => setShowAllDaysForKid((m) => ({ ...m, [k.id]: !m[k.id] }))}
-                          className="text-xs text-slate-700 underline-offset-2 hover:underline shrink-0"
-                          style={{ transform: "translateZ(16px)" }}
-                        >
-                          {showAll ? "Réduire" : "Voir plus"}
-                        </button>
-                      )}
+                  {/* Onglets mobile */}
+                  <div className="flex gap-2 overflow-x-auto pb-1">
+                    <button
+                      onClick={() => selectSection("dashboard")}
+                      className={[
+                        "whitespace-nowrap rounded-full px-3 py-1 text-[11px]",
+                        isDashboard
+                          ? "bg-emerald-300 text-slate-900"
+                          : "bg-slate-900/40 text-slate-100 border border-white/10",
+                      ].join(" ")}
+                    >
+                      Tableau de bord
+                    </button>
+                    <button
+                      onClick={() => selectSection("conduct")}
+                      className={[
+                        "whitespace-nowrap rounded-full px-3 py-1 text-[11px]",
+                        isConduct
+                          ? "bg-emerald-300 text-slate-900"
+                          : "bg-slate-900/40 text-slate-100 border border-white/10",
+                      ].join(" ")}
+                    >
+                      Conduite & points
+                    </button>
+                    <button
+                      onClick={() => selectSection("absences")}
+                      className={[
+                        "whitespace-nowrap rounded-full px-3 py-1 text-[11px]",
+                        isAbsences
+                          ? "bg-emerald-300 text-slate-900"
+                          : "bg-slate-900/40 text-slate-100 border border-white/10",
+                      ].join(" ")}
+                    >
+                      Cahier d’absences
+                    </button>
+                    <button
+                      onClick={() => selectSection("notes")}
+                      className={[
+                        "whitespace-nowrap rounded-full px-3 py-1 text-[11px]",
+                        isNotes
+                          ? "bg-emerald-300 text-slate-900"
+                          : "bg-slate-900/40 text-slate-100 border border-white/10",
+                      ].join(" ")}
+                    >
+                      Cahier de notes
+                    </button>
+                  </div>
+                </div>
+              )}
+            </header>
+
+            {/* iOS hint */}
+            {isiOS && !isStandalone && !granted && (
+              <div className="rounded-2xl border p-3 bg-amber-50 text-amber-900">
+                <div className="text-sm">
+                  <b>iPhone/iPad :</b> pour recevoir les notifications, ajoutez d’abord l’app à
+                  l’écran d’accueil : ouvrez cette page dans <b>Safari</b> → <b>Partager</b> →{" "}
+                  <b>Ajouter à l’écran d’accueil</b>. Puis rouvrez l’app et appuyez sur{" "}
+                  <i>Activer les notifications</i>.
+                </div>
+              </div>
+            )}
+
+            {/* Conduite — moyenne par enfant (visible en Dashboard + Conduite) */}
+            {showConductSection && (
+              <section className="rounded-2xl border bg-white/90 backdrop-blur p-5 shadow-sm">
+                <div className="mb-3 flex items-center justify-between gap-3">
+                  <div className="text-sm font-semibold uppercase tracking-wide text-slate-700">
+                    Conduite — Moyenne par enfant
+                  </div>
+                  <div className="hidden md:flex items-center gap-2">
+                    <Input
+                      type="date"
+                      value={conductFrom}
+                      onChange={(e) => setConductFrom(e.target.value)}
+                    />
+                    <span className="text-slate-600 text-xs">au</span>
+                    <Input
+                      type="date"
+                      value={conductTo}
+                      onChange={(e) => setConductTo(e.target.value)}
+                    />
+                    <Button onClick={applyConductFilter} disabled={loadingConduct}>
+                      {loadingConduct ? "…" : "Valider"}
+                    </Button>
+                  </div>
+                </div>
+
+                {/* Filtres (mobile) */}
+                <div className="md:hidden mb-4 grid grid-cols-2 gap-2">
+                  <Input
+                    type="date"
+                    value={conductFrom}
+                    onChange={(e) => setConductFrom(e.target.value)}
+                  />
+                  <Input
+                    type="date"
+                    value={conductTo}
+                    onChange={(e) => setConductTo(e.target.value)}
+                  />
+                  <div className="col-span-2">
+                    <Button
+                      className="w-full"
+                      onClick={applyConductFilter}
+                      disabled={loadingConduct}
+                    >
+                      {loadingConduct ? "…" : "Valider"}
+                    </Button>
+                  </div>
+                </div>
+
+                {loadingKids ? (
+                  <div className="space-y-3">
+                    <Skeleton className="h-16 w-full" />
+                    <Skeleton className="h-16 w-full" />
+                    <Skeleton className="h-16 w-full" />
+                  </div>
+                ) : kids.length === 0 ? (
+                  <div className="flex items-center justify-between rounded-xl border bg-slate-50 p-4">
+                    <div className="text-sm text-slate-700">
+                      Aucun enfant lié à votre compte pour l’instant.
+                    </div>
+                    {!granted && (
+                      <Button tone="outline" onClick={enablePush} iconLeft={<IconBell />}>
+                        Activer les push
+                      </Button>
+                    )}
+                  </div>
+                ) : (
+                  <>
+                    {/* Mobile: cartes */}
+                    <div className="md:hidden space-y-3">
+                      {filteredKids.map((k) => {
+                        const c = conduct[k.id];
+                        return (
+                          <div
+                            key={k.id}
+                            className="rounded-xl border border-slate-200 p-4 hover:shadow-sm transition ring-emerald-100 hover:ring-2"
+                          >
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="min-w-0">
+                                <div className="font-medium text-slate-900">{k.full_name}</div>
+                                <div className="text-xs text-slate-600">
+                                  {k.class_label || "—"}
+                                </div>
+                              </div>
+                              {c ? (
+                                <Badge tone="emerald">
+                                  {c.total.toFixed(2).replace(".", ",")} / 20
+                                </Badge>
+                              ) : (
+                                <Badge>—</Badge>
+                              )}
+                            </div>
+                            {c ? (
+                              <div className="mt-3 space-y-2">
+                                <Meter
+                                  value={c.breakdown.assiduite}
+                                  max={6}
+                                  label={`Assiduité — ${Math.round(
+                                    c.breakdown.assiduite
+                                  )}/6`}
+                                />
+                                <Meter
+                                  value={c.breakdown.tenue}
+                                  max={3}
+                                  label={`Tenue — ${Math.round(
+                                    c.breakdown.tenue
+                                  )}/3`}
+                                />
+                                <Meter
+                                  value={c.breakdown.moralite}
+                                  max={4}
+                                  label={`Moralité — ${Math.round(
+                                    c.breakdown.moralite
+                                  )}/4`}
+                                />
+                                <Meter
+                                  value={c.breakdown.discipline}
+                                  max={7}
+                                  label={`Discipline — ${Math.round(
+                                    c.breakdown.discipline
+                                  )}/7`}
+                                />
+                                <div className="pt-1 text-xs text-slate-600">
+                                  <span className="font-medium">Appréciation : </span>
+                                  {c.appreciation}
+                                </div>
+                              </div>
+                            ) : (
+                              <div className="mt-3 text-sm text-slate-600">—</div>
+                            )}
+                          </div>
+                        );
+                      })}
                     </div>
 
-                    <ul className="mt-3 space-y-2">
-                      {visibleGroups.map((g) => {
-                        const key = `${k.id}|${g.day}`;
-                        const isOpen = !!expanded[key];
-                        const hasSingle = g.items.length === 1;
+                    {/* Desktop: tableau */}
+                    <div className="hidden md:block overflow-x-auto mt-2 rounded-xl border">
+                      <table className="min-w-full text-sm">
+                        <thead className="bg-slate-50">
+                          <tr>
+                            <th className="px-3 py-2 text-left">Enfant</th>
+                            <th className="px-3 py-2 text-left">Classe</th>
+                            <th className="px-3 py-2 text-left">Assiduité (/6)</th>
+                            <th className="px-3 py-2 text-left">Tenue (/3)</th>
+                            <th className="px-3 py-2 text-left">Moralité (/4)</th>
+                            <th className="px-3 py-2 text-left">Discipline (/7)</th>
+                            <th className="px-3 py-2 text-left">Moyenne (/20)</th>
+                            <th className="px-3 py-2 text-left">Appréciation</th>
+                          </tr>
+                        </thead>
+                        <tbody className="bg-white/60">
+                          {filteredKids.map((k) => {
+                            const c = conduct[k.id];
+                            return (
+                              <tr key={k.id} className="border-t">
+                                <td className="px-3 py-2">{k.full_name}</td>
+                                <td className="px-3 py-2">{k.class_label || "—"}</td>
+                                {c ? (
+                                  <>
+                                    <td className="px-3 py-2">
+                                      {c.breakdown.assiduite
+                                        .toFixed(2)
+                                        .replace(".", ",")}
+                                    </td>
+                                    <td className="px-3 py-2">
+                                      {c.breakdown.tenue.toFixed(2).replace(".", ",")}
+                                    </td>
+                                    <td className="px-3 py-2">
+                                      {c.breakdown.moralite
+                                        .toFixed(2)
+                                        .replace(".", ",")}
+                                    </td>
+                                    <td className="px-3 py-2">
+                                      {c.breakdown.discipline
+                                        .toFixed(2)
+                                        .replace(".", ",")}
+                                    </td>
+                                    <td className="px-3 py-2 font-semibold">
+                                      {c.total.toFixed(2).replace(".", ",")}
+                                    </td>
+                                    <td className="px-3 py-2">{c.appreciation}</td>
+                                  </>
+                                ) : (
+                                  <td className="px-3 py-2 text-slate-600" colSpan={6}>
+                                    —
+                                  </td>
+                                )}
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </>
+                )}
+              </section>
+            )}
 
-                        const parts: string[] = [];
-                        if (g.absentCount) parts.push(`${g.absentCount} absence${g.absentCount > 1 ? "s" : ""}`);
-                        if (g.lateCount) parts.push(`${g.lateCount} retard${g.lateCount > 1 ? "s" : ""}`);
-                        const summary = parts.length ? parts.join(" • ") : "Aucun évènement";
+            {/* Absences / Sanctions / Notes (vue Dashboard + onglet Absences) */}
+            {showEventsSection && (
+              <section className="rounded-2xl border bg-white/90 backdrop-blur p-5 shadow-sm">
+                {(() => {
+                  const title = isAbsences
+                    ? "Cahier d’absences — Absences/retards récents et sanctions"
+                    : "Mes enfants — Absences/retards récents, sanctions et notes publiées";
+                  return (
+                    <div className="mb-3 flex items-center justify-between">
+                      <div className="text-sm font-semibold uppercase tracking-wide text-slate-700">
+                        {title}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {granted ? (
+                          <span className="text-xs text-emerald-700">
+                            Notifications déjà activées ✅
+                          </span>
+                        ) : (
+                          <Button
+                            tone="outline"
+                            onClick={enablePush}
+                            title="Activer les notifications push"
+                            iconLeft={<IconBell />}
+                          >
+                            Activer les push
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })()}
 
-                        return (
-                          <li key={g.day} className="rounded-lg border p-3 hover:bg-slate-50/70 transition" style={{ transform: "translateZ(10px)" }}>
-                            <div className="flex items-center justify-between gap-3">
-                              <div className="text-sm font-medium text-slate-800">
-                                {g.label} : <span className="font-normal text-slate-700">{summary}</span>
-                              </div>
-                              {g.items.length > 0 && (
-                                <button
-                                  onClick={() => setExpanded((m) => ({ ...m, [key]: !m[key] }))}
-                                  className="text-xs text-emerald-700 underline-offset-2 hover:underline shrink-0"
+                {loadingKids ? (
+                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                    <Skeleton className="h-40 w-full" />
+                    <Skeleton className="h-40 w-full" />
+                    <Skeleton className="h-40 w-full" />
+                  </div>
+                ) : kids.length === 0 ? (
+                  <div className="rounded-xl border bg-slate-50 p-4 text-sm text-slate-700">
+                    Aucun enfant lié à votre compte pour l’instant.
+                  </div>
+                ) : (
+                  <div className="space-y-4 md:grid md:grid-cols-2 md:gap-5 md:space-y-0 xl:grid-cols-3">
+                    {filteredKids.map((k, i) => {
+                      const groups = groupByDay(feed[k.id] || []);
+                      const showAll = !!showAllDaysForKid[k.id];
+                      const visibleGroups = showAll ? groups : groups.slice(0, 3);
+                      const t = themeFor(i);
+                      const gradesForKid = kidGrades[k.id] || [];
+
+                      const showEventsBlock = isDashboard || isAbsences;
+                      const showSanctionsBlock = isDashboard || isAbsences;
+                      const showNotesBlock = isDashboard; // ici seulement en Dashboard
+
+                      return (
+                        <TiltCard key={k.id} className={`rounded-xl ${t.ring}`}>
+                          <div
+                            className={`relative rounded-xl border ${t.border} p-4 transition shadow-sm`}
+                          >
+                            {/* liseré dégradé haut */}
+                            <div
+                              className={`absolute inset-x-0 top-0 h-1 rounded-t-xl bg-gradient-to-r ${t.bar}`}
+                              style={{ transform: "translateZ(20px)" }}
+                            />
+                            <div
+                              className="flex items-center justify-between"
+                              style={{ transform: "translateZ(16px)" }}
+                            >
+                              <div className="flex items-center gap-3 min-w-0">
+                                {/* avatar initiales coloré */}
+                                <div
+                                  className={`grid h-9 w-9 place-items-center rounded-xl text-xs font-semibold ${t.chipBg} ${t.chipText} shadow-sm`}
                                 >
-                                  {isOpen || hasSingle ? "Masquer" : "Voir détails"}
+                                  {getInitials(k.full_name)}
+                                </div>
+                                <div className="min-w-0">
+                                  <div className="font-medium text-slate-900 truncate">
+                                    {k.full_name}{" "}
+                                    <span className="text-xs text-slate-600">
+                                      ({k.class_label || "—"})
+                                    </span>
+                                  </div>
+                                </div>
+                              </div>
+
+                              {groups.length > 3 && showEventsBlock && (
+                                <button
+                                  onClick={() =>
+                                    setShowAllDaysForKid((m) => ({
+                                      ...m,
+                                      [k.id]: !m[k.id],
+                                    }))
+                                  }
+                                  className="text-xs text-slate-700 underline-offset-2 hover:underline shrink-0"
+                                  style={{ transform: "translateZ(16px)" }}
+                                >
+                                  {showAll ? "Réduire" : "Voir plus"}
                                 </button>
                               )}
                             </div>
-                            {(isOpen || hasSingle) && g.items.length > 0 && (
-                              <ul className="mt-2 divide-y">
-                                {g.items.map((ev) => (
-                                  <li key={ev.id} className="py-2 flex items-center justify-between text-sm">
-                                    <div className="min-w-0">
-                                      <div className="text-slate-800 truncate">
-                                        {ev.type === "absent" ? (
-                                          <Badge tone="rose">Absence</Badge>
-                                        ) : (
-                                          <Badge tone="amber">Retard</Badge>
+
+                            {/* Absences / retards par jour */}
+                            {showEventsBlock && (
+                              <ul className="mt-3 space-y-2">
+                                {visibleGroups.map((g) => {
+                                  const key = `${k.id}|${g.day}`;
+                                  const isOpen = !!expanded[key];
+                                  const hasSingle = g.items.length === 1;
+
+                                  const parts: string[] = [];
+                                  if (g.absentCount)
+                                    parts.push(
+                                      `${g.absentCount} absence${
+                                        g.absentCount > 1 ? "s" : ""
+                                      }`
+                                    );
+                                  if (g.lateCount)
+                                    parts.push(
+                                      `${g.lateCount} retard${
+                                        g.lateCount > 1 ? "s" : ""
+                                      }`
+                                    );
+                                  const summary = parts.length
+                                    ? parts.join(" • ")
+                                    : "Aucun évènement";
+
+                                  return (
+                                    <li
+                                      key={g.day}
+                                      className="rounded-lg border p-3 hover:bg-slate-50/70 transition"
+                                      style={{ transform: "translateZ(10px)" }}
+                                    >
+                                      <div className="flex items-center justify-between gap-3">
+                                        <div className="text-sm font-medium text-slate-800">
+                                          {g.label} :{" "}
+                                          <span className="font-normal text-slate-700">
+                                            {summary}
+                                          </span>
+                                        </div>
+                                        {g.items.length > 0 && (
+                                          <button
+                                            onClick={() =>
+                                              setExpanded((m) => ({
+                                                ...m,
+                                                [key]: !m[key],
+                                              }))
+                                            }
+                                            className="text-xs text-emerald-700 underline-offset-2 hover:underline shrink-0"
+                                          >
+                                            {isOpen || hasSingle
+                                              ? "Masquer"
+                                              : "Voir détails"}
+                                          </button>
                                         )}
-                                        <span className="ml-2">{ev.subject_name || "—"}</span>
                                       </div>
-                                      <div className="mt-0.5 text-xs text-slate-600">
-                                        {slotLabel(ev.when, ev.expected_minutes)}{" "}
-                                        {ev.type === "late" && ev.minutes_late ? `• ${ev.minutes_late} min` : ""}
-                                      </div>
-                                    </div>
-                                    <div className="text-xs text-slate-500 shrink-0 pl-2">
-                                      {ev.class_label || ""}
-                                    </div>
+                                      {(isOpen || hasSingle) && g.items.length > 0 && (
+                                        <ul className="mt-2 divide-y">
+                                          {g.items.map((ev) => (
+                                            <li
+                                              key={ev.id}
+                                              className="py-2 flex items-center justify-between text-sm"
+                                            >
+                                              <div className="min-w-0">
+                                                <div className="text-slate-800 truncate">
+                                                  {ev.type === "absent" ? (
+                                                    <Badge tone="rose">Absence</Badge>
+                                                  ) : (
+                                                    <Badge tone="amber">
+                                                      Retard
+                                                    </Badge>
+                                                  )}
+                                                  <span className="ml-2">
+                                                    {ev.subject_name || "—"}
+                                                  </span>
+                                                </div>
+                                                <div className="mt-0.5 text-xs text-slate-600">
+                                                  {slotLabel(
+                                                    ev.when,
+                                                    ev.expected_minutes
+                                                  )}{" "}
+                                                  {ev.type === "late" &&
+                                                  ev.minutes_late
+                                                    ? `• ${ev.minutes_late} min`
+                                                    : ""}
+                                                </div>
+                                              </div>
+                                              <div className="text-xs text-slate-500 shrink-0 pl-2">
+                                                {ev.class_label || ""}
+                                              </div>
+                                            </li>
+                                          ))}
+                                        </ul>
+                                      )}
+                                    </li>
+                                  );
+                                })}
+                                {visibleGroups.length === 0 && (
+                                  <li className="py-2 text-sm text-slate-600">
+                                    Aucun évènement récent.
                                   </li>
-                                ))}
+                                )}
                               </ul>
                             )}
-                          </li>
-                        );
-                      })}
-                      {visibleGroups.length === 0 && (
-                        <li className="py-2 text-sm text-slate-600">Aucun évènement récent.</li>
-                      )}
-                    </ul>
 
-                    {/* Sanctions */}
-                    <div className="mt-3 rounded-lg border p-3 bg-amber-50/40" style={{ transform: "translateZ(8px)" }}>
-                      <div className="flex items-center justify-between">
-                        <div className="text-sm font-medium text-slate-800">Sanctions récentes</div>
-                        {(kidPenalties[k.id]?.length || 0) > 5 && (
-                          <button
-                            onClick={() => setShowAllPenForKid((m) => ({ ...m, [k.id]: !m[k.id] }))}
-                            className="text-xs text-slate-700 underline-offset-2 hover:underline"
-                          >
-                            {showAllPenForKid[k.id] ? "Réduire" : "Voir plus"}
-                          </button>
-                        )}
-                      </div>
-                      {(kidPenalties[k.id]?.length || 0) === 0 ? (
-                        <div className="mt-2 text-sm text-slate-600">Aucune sanction récente.</div>
-                      ) : (
-                        <ul className="mt-2 divide-y">
-                          {(showAllPenForKid[k.id]
-                            ? kidPenalties[k.id] || []
-                            : (kidPenalties[k.id] || []).slice(0, 5)
-                          ).map((p) => (
-                            <li key={p.id} className="py-2 flex items-center justify-between text-sm">
-                              <div className="min-w-0">
-                                <div className="text-slate-800">
-                                  <span className="mr-2">
-                                    <Badge tone="amber">{rubricLabel(p.rubric)}</Badge>
-                                  </span>
-                                  −{Number(p.points || 0).toFixed(2)} pt
-                                  {(() => {
-                                    const subj = p.author_subject_name || p.subject_name;
-                                    if (p.author_role_label === "Enseignant")
-                                      return subj ? ` — par le prof de ${subj}` : " — par un enseignant";
-                                    if (p.author_role_label === "Administration")
-                                      return " — par l’administration";
-                                    return p.author_name ? ` — par ${p.author_name}` : "";
-                                  })()}
+                            {/* Sanctions */}
+                            {showSanctionsBlock && (
+                              <div
+                                className="mt-3 rounded-lg border p-3 bg-amber-50/40"
+                                style={{ transform: "translateZ(8px)" }}
+                              >
+                                <div className="flex items-center justify-between">
+                                  <div className="text-sm font-medium text-slate-800">
+                                    Sanctions récentes
+                                  </div>
+                                  {(kidPenalties[k.id]?.length || 0) > 5 && (
+                                    <button
+                                      onClick={() =>
+                                        setShowAllPenForKid((m) => ({
+                                          ...m,
+                                          [k.id]: !m[k.id],
+                                        }))
+                                      }
+                                      className="text-xs text-slate-700 underline-offset-2 hover:underline"
+                                    >
+                                      {showAllPenForKid[k.id] ? "Réduire" : "Voir plus"}
+                                    </button>
+                                  )}
                                 </div>
-                                <div className="text-xs text-slate-600 truncate">
-                                  {fmt(p.when)} {p.class_label ? `• ${p.class_label}` : ""}{" "}
-                                  {p.reason ? `• Motif: ${p.reason}` : ""}
-                                </div>
+                                {(kidPenalties[k.id]?.length || 0) === 0 ? (
+                                  <div className="mt-2 text-sm text-slate-600">
+                                    Aucune sanction récente.
+                                  </div>
+                                ) : (
+                                  <ul className="mt-2 divide-y">
+                                    {(showAllPenForKid[k.id]
+                                      ? kidPenalties[k.id] || []
+                                      : (kidPenalties[k.id] || []).slice(0, 5)
+                                    ).map((p) => (
+                                      <li
+                                        key={p.id}
+                                        className="py-2 flex items-center justify-between text-sm"
+                                      >
+                                        <div className="min-w-0">
+                                          <div className="text-slate-800">
+                                            <span className="mr-2">
+                                              <Badge tone="amber">
+                                                {rubricLabel(p.rubric)}
+                                              </Badge>
+                                            </span>
+                                            −{Number(p.points || 0).toFixed(2)} pt
+                                            {(() => {
+                                              const subj =
+                                                p.author_subject_name ||
+                                                p.subject_name;
+                                              if (p.author_role_label === "Enseignant")
+                                                return subj
+                                                  ? ` — par le prof de ${subj}`
+                                                  : " — par un enseignant";
+                                              if (
+                                                p.author_role_label ===
+                                                "Administration"
+                                              )
+                                                return " — par l’administration";
+                                              return p.author_name
+                                                ? ` — par ${p.author_name}`
+                                                : "";
+                                            })()}
+                                          </div>
+                                          <div className="text-xs text-slate-600 truncate">
+                                            {fmt(p.when)}{" "}
+                                            {p.class_label
+                                              ? `• ${p.class_label}`
+                                              : ""}{" "}
+                                            {p.reason ? `• Motif: ${p.reason}` : ""}
+                                          </div>
+                                        </div>
+                                      </li>
+                                    ))}
+                                  </ul>
+                                )}
                               </div>
-                            </li>
-                          ))}
-                        </ul>
-                      )}
+                            )}
+
+                            {/* Notes publiées (petit résumé Dashboard uniquement) */}
+                            {showNotesBlock && (
+                              <div
+                                className="mt-3 rounded-lg border p-3 bg-slate-50/60"
+                                style={{ transform: "translateZ(6px)" }}
+                              >
+                                <div className="flex items-center justify-between">
+                                  <div className="text-sm font-medium text-slate-800">
+                                    Notes publiées (dernieres)
+                                  </div>
+                                </div>
+                                {gradesForKid.length === 0 ? (
+                                  <div className="mt-2 text-sm text-slate-600">
+                                    Aucune note publiée pour le moment.
+                                  </div>
+                                ) : (
+                                  <ul className="mt-2 space-y-1">
+                                    {gradesForKid.slice(0, 5).map((gr) => (
+                                      <li
+                                        key={gr.id}
+                                        className="text-sm flex items-center justify-between gap-2"
+                                      >
+                                        <div className="min-w-0">
+                                          <div className="text-slate-800 truncate">
+                                            {gradeKindLabel(gr.eval_kind)}{" "}
+                                            <span className="text-xs text-slate-500">
+                                              (
+                                              {new Date(
+                                                gr.eval_date
+                                              ).toLocaleDateString("fr-FR")}
+                                              )
+                                            </span>
+                                            {gr.subject_name && (
+                                              <span className="ml-1 text-xs text-slate-500">
+                                                • {gr.subject_name}
+                                              </span>
+                                            )}
+                                          </div>
+                                          <div className="text-xs text-slate-600">
+                                            {gr.score == null
+                                              ? "Non noté"
+                                              : `${Number(gr.score)
+                                                  .toFixed(2)
+                                                  .replace(".", ",")} / ${
+                                                  gr.scale
+                                                }`}{" "}
+                                            {gr.coeff ? (
+                                              <span className="text-[11px] text-slate-500">
+                                                • coeff {gr.coeff}
+                                              </span>
+                                            ) : null}
+                                          </div>
+                                        </div>
+                                      </li>
+                                    ))}
+                                  </ul>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        </TiltCard>
+                      );
+                    })}
+                  </div>
+                )}
+              </section>
+            )}
+
+            {/* Cahier de notes — vue dédiée par matière */}
+            {showNotesSection && (
+              <section className="rounded-2xl border bg-white/90 backdrop-blur p-5 shadow-sm">
+                <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                  <div>
+                    <div className="text-sm font-semibold uppercase tracking-wide text-slate-700">
+                      Cahier de notes — Par matière
+                    </div>
+                    <div className="text-xs text-slate-600">
+                      Sélectionnez une période, puis une matière pour voir les notes publiées.
                     </div>
                   </div>
-                </TiltCard>
-              );
-            })}
-          </div>
-        )}
-      </section>
 
-      {msg && (
-        <div className="text-sm text-slate-700" aria-live="polite">
-          {msg}
+                  <div className="flex flex-wrap gap-2 text-xs">
+                    <button
+                      onClick={() => setGradeFilterMode("week")}
+                      className={[
+                        "rounded-full px-3 py-1",
+                        gradeFilterMode === "week"
+                          ? "bg-emerald-600 text-white"
+                          : "bg-slate-100 text-slate-700 hover:bg-slate-200",
+                      ].join(" ")}
+                    >
+                      Cette semaine
+                    </button>
+                    <button
+                      onClick={() => setGradeFilterMode("month")}
+                      className={[
+                        "rounded-full px-3 py-1",
+                        gradeFilterMode === "month"
+                          ? "bg-emerald-600 text-white"
+                          : "bg-slate-100 text-slate-700 hover:bg-slate-200",
+                      ].join(" ")}
+                    >
+                      Ce mois-ci
+                    </button>
+                    <button
+                      onClick={() => setGradeFilterMode("all")}
+                      className={[
+                        "rounded-full px-3 py-1",
+                        gradeFilterMode === "all"
+                          ? "bg-emerald-600 text-white"
+                          : "bg-slate-100 text-slate-700 hover:bg-slate-200",
+                      ].join(" ")}
+                    >
+                      Toute l’année
+                    </button>
+                    <button
+                      onClick={() => setGradeFilterMode("custom")}
+                      className={[
+                        "rounded-full px-3 py-1",
+                        gradeFilterMode === "custom"
+                          ? "bg-emerald-600 text-white"
+                          : "bg-slate-100 text-slate-700 hover:bg-slate-200",
+                      ].join(" ")}
+                    >
+                      Perso.
+                    </button>
+                  </div>
+                </div>
+
+                {gradeFilterMode === "custom" && (
+                  <div className="mb-4 grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center">
+                    <Input
+                      type="date"
+                      value={gradeFrom}
+                      onChange={(e) => setGradeFrom(e.target.value)}
+                    />
+                    <span className="hidden sm:inline text-xs text-slate-500 text-center">
+                      au
+                    </span>
+                    <Input
+                      type="date"
+                      value={gradeTo}
+                      onChange={(e) => setGradeTo(e.target.value)}
+                    />
+                  </div>
+                )}
+
+                {(gradeFrom || gradeTo) && gradeFilterMode !== "all" && (
+                  <div className="mb-4 text-xs text-slate-600">
+                    Période sélectionnée{" "}
+                    {gradeFrom ? `du ${gradeFrom.split("-").reverse().join("/")}` : ""}{" "}
+                    {gradeTo ? `au ${gradeTo.split("-").reverse().join("/")}` : ""}
+                  </div>
+                )}
+
+                {loadingKids ? (
+                  <div className="space-y-3">
+                    <Skeleton className="h-24 w-full" />
+                    <Skeleton className="h-24 w-full" />
+                  </div>
+                ) : kids.length === 0 ? (
+                  <div className="rounded-xl border bg-slate-50 p-4 text-sm text-slate-700">
+                    Aucun enfant lié à votre compte pour l’instant.
+                  </div>
+                ) : (
+                  <div className="space-y-5">
+                    {filteredKids.map((k, kidIndex) => {
+                      const allGrades = kidGrades[k.id] || [];
+                      const filteredGrades = allGrades.filter((gr) =>
+                        isInDateRange(gr.eval_date, gradeFrom || undefined, gradeTo || undefined)
+                      );
+
+                      // Regroupement par matière (uniquement celles avec au moins une note sur la période)
+                      const subjectMap = new Map<
+                        string,
+                        { key: string; name: string; count: number }
+                      >();
+                      for (const gr of filteredGrades) {
+                        const key = gr.subject_id || gr.subject_name || "autre";
+                        const name = gr.subject_name || "Matière inconnue";
+                        if (!subjectMap.has(key)) {
+                          subjectMap.set(key, { key, name, count: 0 });
+                        }
+                        subjectMap.get(key)!.count += 1;
+                      }
+                      const subjects = Array.from(subjectMap.values()).sort((a, b) =>
+                        a.name.localeCompare(b.name, "fr")
+                      );
+
+                      const selectedKey = activeSubjectPerKid[k.id] || null;
+                      const selectedGrades =
+                        selectedKey == null
+                          ? []
+                          : filteredGrades
+                              .filter((gr) => {
+                                const key = gr.subject_id || gr.subject_name || "autre";
+                                return key === selectedKey;
+                              })
+                              .sort(
+                                (a, b) =>
+                                  new Date(b.eval_date).getTime() -
+                                  new Date(a.eval_date).getTime()
+                              );
+
+                      // Moyenne /20 sur la période pour la matière sélectionnée
+                      let avg20: number | null = null;
+                      if (selectedGrades.length > 0) {
+                        const numeric = selectedGrades.filter(
+                          (g) => g.score != null && g.scale > 0
+                        );
+                        if (numeric.length > 0) {
+                          const sum = numeric.reduce(
+                            (acc, g) => acc + ((g.score as number) / g.scale) * 20,
+                            0
+                          );
+                          avg20 = sum / numeric.length;
+                        }
+                      }
+
+                      const containerTheme = themeFor(kidIndex);
+
+                      return (
+                        <div
+                          key={k.id}
+                          className="rounded-2xl border border-slate-200 bg-white/95 p-4 shadow-sm"
+                        >
+                          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                            <div className="flex items-center gap-3 min-w-0">
+                              <div
+                                className={`grid h-9 w-9 place-items-center rounded-xl text-xs font-semibold ${containerTheme.chipBg} ${containerTheme.chipText}`}
+                              >
+                                {getInitials(k.full_name)}
+                              </div>
+                              <div className="min-w-0">
+                                <div className="font-medium text-slate-900 truncate">
+                                  {k.full_name}
+                                </div>
+                                <div className="text-xs text-slate-600">
+                                  {k.class_label || "—"}
+                                </div>
+                              </div>
+                            </div>
+                            <div className="text-xs text-slate-500">
+                              {subjects.length === 0
+                                ? "Aucune note publiée sur cette période."
+                                : `${subjects.length} matière${
+                                    subjects.length > 1 ? "s" : ""
+                                  } avec au moins une note publiée.`}
+                            </div>
+                          </div>
+
+                          {/* Cartes matières */}
+                          {subjects.length > 0 && (
+                            <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                              {subjects.map((s, idx) => {
+                                const th = themeFor(idx);
+                                const active = selectedKey === s.key;
+                                return (
+                                  <button
+                                    key={s.key}
+                                    onClick={() =>
+                                      setActiveSubjectPerKid((prev) => ({
+                                        ...prev,
+                                        [k.id]:
+                                          prev[k.id] === s.key ? null : s.key,
+                                      }))
+                                    }
+                                    className={[
+                                      "flex flex-col items-start rounded-xl border p-3 text-left transition shadow-sm",
+                                      active
+                                        ? "border-slate-900 bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-white"
+                                        : `bg-white hover:shadow-md ${th.border}`,
+                                    ].join(" ")}
+                                  >
+                                    <div className="flex items-center gap-2">
+                                      <div
+                                        className={`h-8 w-1.5 rounded-full bg-gradient-to-b ${th.bar}`}
+                                      />
+                                      <div className="min-w-0">
+                                        <div
+                                          className={[
+                                            "text-sm font-semibold",
+                                            active ? "text-white" : "text-slate-900",
+                                          ].join(" ")}
+                                        >
+                                          {s.name}
+                                        </div>
+                                        <div
+                                          className={[
+                                            "text-[11px]",
+                                            active
+                                              ? "text-slate-200"
+                                              : "text-slate-500",
+                                          ].join(" ")}
+                                        >
+                                          {s.count} note{s.count > 1 ? "s" : ""} sur la
+                                          période
+                                        </div>
+                                      </div>
+                                    </div>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          )}
+
+                          {/* Détail notes pour la matière sélectionnée */}
+                          {selectedKey && (
+                            <div className="mt-4 rounded-xl border bg-slate-50/80 p-3">
+                              <div className="mb-2 flex items-center justify-between">
+                                <div className="text-sm font-semibold text-slate-800">
+                                  Notes détaillées en{" "}
+                                  {
+                                    subjects.find((s) => s.key === selectedKey)
+                                      ?.name
+                                  }
+                                </div>
+                                {avg20 != null && (
+                                  <div className="text-xs text-slate-700">
+                                    Moyenne sur la période :{" "}
+                                    <span className="font-semibold">
+                                      {avg20.toFixed(2).replace(".", ",")} / 20
+                                    </span>
+                                  </div>
+                                )}
+                              </div>
+
+                              {selectedGrades.length === 0 ? (
+                                <div className="text-sm text-slate-600">
+                                  Aucune note pour cette période dans cette matière.
+                                </div>
+                              ) : (
+                                <div className="overflow-x-auto">
+                                  <table className="min-w-full text-xs">
+                                    <thead>
+                                      <tr className="border-b bg-slate-100/80">
+                                        <th className="px-2 py-1 text-left">Date</th>
+                                        <th className="px-2 py-1 text-left">Évaluation</th>
+                                        <th className="px-2 py-1 text-left">Type</th>
+                                        <th className="px-2 py-1 text-left">Note</th>
+                                        <th className="px-2 py-1 text-left">Coeff</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody>
+                                      {selectedGrades.map((gr) => (
+                                        <tr key={gr.id} className="border-b last:border-0">
+                                          <td className="px-2 py-1">
+                                            {new Date(
+                                              gr.eval_date
+                                            ).toLocaleDateString("fr-FR")}
+                                          </td>
+                                          <td className="px-2 py-1">
+                                            {gr.title || "—"}
+                                          </td>
+                                          <td className="px-2 py-1">
+                                            {gradeKindLabel(gr.eval_kind)}
+                                          </td>
+                                          <td className="px-2 py-1">
+                                            {gr.score == null
+                                              ? "Non noté"
+                                              : `${Number(
+                                                  gr.score
+                                                ).toFixed(2).replace(".", ",")} / ${
+                                                  gr.scale
+                                                }`}
+                                          </td>
+                                          <td className="px-2 py-1">
+                                            {gr.coeff || 1}
+                                          </td>
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              )}
+                            </div>
+                          )}
+
+                          {/* Si pas de matière et pas de notes sur la période */}
+                          {subjects.length === 0 && (
+                            <div className="mt-3 text-xs text-slate-600">
+                              Aucune matière n’a de note publiée sur cette période pour cet
+                              enfant.
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {!loadingKids && kids.length > 0 && filteredKids.length === 0 && (
+                  <div className="mt-3 text-xs text-slate-600">
+                    Aucun enfant sélectionné pour l’instant.
+                  </div>
+                )}
+              </section>
+            )}
+
+            {msg && (
+              <div className="text-sm text-slate-700" aria-live="polite">
+                {msg}
+              </div>
+            )}
+          </main>
         </div>
-      )}
-    </main>
+      </div>
+    </div>
   );
 }
