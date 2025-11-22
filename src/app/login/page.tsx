@@ -1,13 +1,15 @@
 // src/app/login/page.tsx
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import LoginCard from "@/components/auth/LoginCard";
 
 const DEBUG = true;
 
-export default function LoginPage() {
+/* ───────── Composant interne qui utilise useSearchParams ───────── */
+
+function LoginPageInner() {
   const sp = useSearchParams();
   const bookParam = sp.get("book");
   const spaceParam = sp.get("space"); // "direction" | "enseignant" | null
@@ -93,5 +95,23 @@ export default function LoginPage() {
         </section>
       </div>
     </main>
+  );
+}
+
+/* ───────── Page exportée, enveloppée dans un Suspense ───────── */
+
+export default function LoginPage() {
+  return (
+    <Suspense
+      fallback={
+        <main className="min-h-screen flex items-center justify-center">
+          <div className="rounded-xl bg-white/90 px-4 py-3 text-sm text-slate-700 shadow">
+            Chargement de la page de connexion…
+          </div>
+        </main>
+      }
+    >
+      <LoginPageInner />
+    </Suspense>
   );
 }
