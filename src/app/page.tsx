@@ -1,4 +1,4 @@
-// src/app/page.tsx (ou le fichier qui sert vraiment de page d’accueil)
+// src/app/page.tsx
 "use client";
 
 import Image from "next/image";
@@ -361,8 +361,9 @@ export default function HomePage() {
             </a>
           </nav>
 
-          {/* ⭐️ 3 boutons de connexion */}
-          <div className="flex flex-wrap items-center gap-2">
+          {/* ⭐️ Connexions */}
+          {/* Desktop : 3 boutons comme avant */}
+          <div className="hidden flex-wrap items-center gap-2 md:flex">
             <a
               href="/parents/login"
               className="rounded-full bg-emerald-600 px-3.5 py-1.5 text-sm font-semibold text-white shadow ring-1 ring-white/20 hover:bg-emerald-700"
@@ -382,6 +383,14 @@ export default function HomePage() {
               Espace enseignant
             </a>
           </div>
+
+          {/* Mobile : un seul bouton propre qui amène vers le bloc "Choisissez votre espace" */}
+          <a
+            href="#spaces"
+            className="inline-flex items-center rounded-full bg-white/10 px-3 py-1.5 text-xs font-semibold text-white ring-1 ring-white/30 hover:bg-white/15 md:hidden"
+          >
+            Se connecter
+          </a>
         </div>
       </header>
 
@@ -406,25 +415,82 @@ export default function HomePage() {
               <b>modèle de prédiction du taux de réussite</b> de chaque classe.
             </p>
 
-            {/* ⭐️ Trois gros boutons */}
-            <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-3">
+            {/* 🔥 Nouveau bloc de choix d’espace, propre sur mobile */}
+            <div
+              id="spaces"
+              className="mt-6 w-full max-w-md space-y-3 rounded-2xl bg-white/90 p-3 shadow-sm backdrop-blur"
+            >
+              <p className="px-1 text-xs font-medium uppercase tracking-wide text-slate-500">
+                Choisissez votre espace
+              </p>
+
+              {/* Parent */}
               <a
                 href="/parents/login"
-                className="inline-flex items-center justify-center rounded-xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white shadow hover:bg-emerald-700"
+                className="flex items-center justify-between rounded-2xl bg-white px-4 py-3 text-sm shadow-sm ring-1 ring-slate-200 transition hover:bg-slate-50"
               >
-                Espace Parent
+                <div className="flex items-center gap-3">
+                  <div className="grid h-9 w-9 place-items-center rounded-xl bg-emerald-50 text-emerald-700">
+                    <Users className="h-4 w-4" />
+                  </div>
+                  <div>
+                    <div className="text-sm font-semibold text-slate-900">
+                      Espace parent
+                    </div>
+                    <div className="text-xs text-slate-500">
+                      Absences, retards et notes de vos enfants.
+                    </div>
+                  </div>
+                </div>
+                <span className="ml-3 rounded-full bg-emerald-100 px-3 py-1 text-[11px] font-semibold text-emerald-700">
+                  Se connecter
+                </span>
               </a>
+
+              {/* Direction */}
               <a
                 href="/login?space=direction"
-                className="inline-flex items-center justify-center rounded-xl bg-indigo-600 px-4 py-3 text-sm font-semibold text-white shadow hover:bg-indigo-700"
+                className="flex items-center justify-between rounded-2xl bg-white/95 px-4 py-3 text-sm shadow-sm ring-1 ring-slate-200 transition hover:bg-slate-50"
               >
-                Espace Direction
+                <div className="flex items-center gap-3">
+                  <div className="grid h-9 w-9 place-items-center rounded-xl bg-indigo-50 text-indigo-700">
+                    <Building2 className="h-4 w-4" />
+                  </div>
+                  <div>
+                    <div className="text-sm font-semibold text-slate-900">
+                      Espace direction
+                    </div>
+                    <div className="text-xs text-slate-500">
+                      Suivi des classes, enseignants et statistiques.
+                    </div>
+                  </div>
+                </div>
+                <span className="ml-3 rounded-full bg-indigo-100 px-3 py-1 text-[11px] font-semibold text-indigo-700">
+                  Se connecter
+                </span>
               </a>
+
+              {/* Enseignant */}
               <a
                 href="/login?space=enseignant"
-                className="inline-flex items-center justify-center rounded-xl bg-violet-600 px-4 py-3 text-sm font-semibold text-white shadow hover:bg-violet-700"
+                className="flex items-center justify-between rounded-2xl bg-white/95 px-4 py-3 text-sm shadow-sm ring-1 ring-slate-200 transition hover:bg-slate-50"
               >
-                Espace Enseignant
+                <div className="flex items-center gap-3">
+                  <div className="grid h-9 w-9 place-items-center rounded-xl bg-violet-50 text-violet-700">
+                    <FileSpreadsheet className="h-4 w-4" />
+                  </div>
+                  <div>
+                    <div className="text-sm font-semibold text-slate-900">
+                      Espace enseignant
+                    </div>
+                    <div className="text-xs text-slate-500">
+                      Appel, notes et bulletins en quelques clics.
+                    </div>
+                  </div>
+                </div>
+                <span className="ml-3 rounded-full bg-violet-100 px-3 py-1 text-[11px] font-semibold text-violet-700">
+                  Se connecter
+                </span>
               </a>
             </div>
 
@@ -561,6 +627,61 @@ export default function HomePage() {
             title="Parents connectés"
             desc="Associez les responsables aux élèves et centralisez la communication autour de l’assiduité et des résultats."
           />
+        </div>
+      </section>
+
+      {/* Témoignages / Ils nous font confiance */}
+      <section
+        id="testimonials"
+        className="mx-auto max-w-7xl px-4 pb-10 md:pb-16"
+      >
+        <SectionTitle>Ils nous font confiance</SectionTitle>
+        <p className="mt-2 max-w-2xl text-sm text-slate-600">
+          Chefs d’établissement, enseignants et parents utilisent déjà Mon
+          Cahier au quotidien.
+        </p>
+
+        <div className="mt-6 grid gap-4 md:grid-cols-3">
+          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <p className="text-sm text-slate-700">
+              « Les retards et absences sont enfin suivis sérieusement, sans
+              piles de papiers. »
+            </p>
+            <p className="mt-3 text-xs font-semibold text-slate-500">
+              Proviseur, Lycée public Abidjan
+            </p>
+          </div>
+          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <p className="text-sm text-slate-700">
+              « Les parents nous disent qu’ils se sentent vraiment informés du
+              travail de leurs enfants. »
+            </p>
+            <p className="mt-3 text-xs font-semibold text-slate-500">
+              Censeur, Collège privé à Yopougon
+            </p>
+          </div>
+          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <p className="text-sm text-slate-700">
+              « Ce qui est interessant, C4EST QU'on sait si un enseignant est en classe ou pas »
+            </p>
+            <p className="mt-3 text-xs font-semibold text-slate-500">
+              Responsable pédagogique, Établissement partenaire
+            </p>
+          </div>
+        </div>
+
+        {/* Bloc vidéo – remplace VIDEO_ID par ton ID YouTube réel */}
+        <div className="mt-8">
+          <div className="relative overflow-hidden rounded-2xl bg-black shadow-md">
+            <iframe
+              className="aspect-video w-full"
+              src="https://www.youtube.com/embed/https://www.youtube.com/@mon-cahier"
+              title="Témoignage Mon Cahier"
+              loading="lazy"
+              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+              allowFullScreen
+            />
+          </div>
         </div>
       </section>
 
