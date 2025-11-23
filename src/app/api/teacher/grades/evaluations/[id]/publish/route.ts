@@ -19,7 +19,7 @@ function bad(error: string, status = 400, extra?: Record<string, unknown>) {
  */
 export async function PATCH(
   req: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> } // ✅ adapté au type Next 15
 ) {
   try {
     const supabase = await getSupabaseServerClient();
@@ -28,17 +28,21 @@ export async function PATCH(
     const { data: auth } = await supabase.auth.getUser();
     if (!auth?.user) return bad("UNAUTHENTICATED", 401);
 
-    const id = String(params?.id || "").trim();
-    if (!id) return bad("MISSING_ID");
+    const { id } = await params; // ✅ on "résout" la Promise params
+    const cleanId = String(id || "").trim();
+    if (!cleanId) return bad("MISSING_ID");
 
-    const body = (await req.json().catch(() => ({}))) as { is_published?: boolean };
-    const is_published = body.is_published === undefined ? true : Boolean(body.is_published);
+    const body = (await req.json().catch(() => ({}))) as {
+      is_published?: boolean;
+    };
+    const is_published =
+      body.is_published === undefined ? true : Boolean(body.is_published);
 
     // Vérifier accès/présence de l'évaluation (RLS)
     const { data: row, error: qErr } = await supabase
       .from("grade_evaluations")
       .select("id, is_published")
-      .eq("id", id)
+      .eq("id", cleanId)
       .single();
 
     if (qErr) {
@@ -54,7 +58,7 @@ export async function PATCH(
     const { data: upd, error: uErr } = await supabase
       .from("grade_evaluations")
       .update({ is_published }) // published_at géré par trigger côté DB (false->true)
-      .eq("id", id)
+      .eq("id", cleanId)
       .select("*")
       .single();
 
