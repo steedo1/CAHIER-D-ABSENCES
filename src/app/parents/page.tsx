@@ -461,12 +461,12 @@ function TiltCard({
   return (
     <div
       style={{ perspective: "1000px" }}
-      className={`[transform-style:preserve-3d] ${className}`}
+      className="[transform-style:preserve-3d] "
       onMouseMove={onMove}
       onMouseLeave={onLeave}
     >
       <div
-        className="relative rounded-xl bg-white transition-shadow will-change-transform"
+        className={`relative rounded-xl bg-white transition-shadow will-change-transform ${className}`}
         style={style}
       >
         {/* halo lumineux */}
@@ -604,7 +604,7 @@ export default function ParentPage() {
   // ⛔ État de déconnexion
   const [loggingOut, setLoggingOut] = useState(false);
 
-  // Menu mobile
+  // Menu mobile (drawer)
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
   // Sélection enfant + section (sidebar / mobile nav)
@@ -619,7 +619,7 @@ export default function ParentPage() {
   const isAbsences = activeSection === "absences";
   const isNotes = activeSection === "notes";
   const showConductSection = isDashboard || isConduct;
-  const showEventsSection = isDashboard || isAbsences; // plus isNotes ici
+  const showEventsSection = isDashboard || isAbsences;
   const showNotesSection = isNotes;
 
   // — init des dates par défaut + états push
@@ -717,8 +717,7 @@ export default function ParentPage() {
       const initialExpanded: Record<string, boolean> = {};
       for (const [kidId, list] of feedEntries) {
         const groups = groupByDay(list);
-        for (const g of groups)
-          if (g.items.length === 1) initialExpanded[`${kidId}|${g.day}`] = true;
+        for (const g of groups) if (g.items.length === 1) initialExpanded[`${kidId}|${g.day}`] = true;
       }
       setExpanded(initialExpanded);
 
@@ -867,15 +866,10 @@ export default function ParentPage() {
 
   return (
     <div className="min-h-screen bg-slate-950/5">
-      {/* Drawer mobile (style EcoleMedia) */}
+      {/* Drawer mobile (style app, ouverture à gauche) */}
       {mobileNavOpen && (
         <div className="fixed inset-0 z-40 flex md:hidden">
-          <button
-            type="button"
-            aria-label="Fermer le menu"
-            className="flex-1 bg-slate-950/50"
-            onClick={() => setMobileNavOpen(false)}
-          />
+          {/* Panneau gauche */}
           <div className="relative h-full w-72 max-w-[80%] bg-white shadow-2xl flex flex-col">
             <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
               <div className="flex items-center gap-2">
@@ -982,6 +976,14 @@ export default function ParentPage() {
               </Button>
             </div>
           </div>
+
+          {/* Overlay à droite */}
+          <button
+            type="button"
+            aria-label="Fermer le menu"
+            className="flex-1 bg-slate-950/40"
+            onClick={() => setMobileNavOpen(false)}
+          />
         </div>
       )}
 
@@ -1082,8 +1084,7 @@ export default function ParentPage() {
         <div className="flex-1">
           <main
             className={[
-              "mx-auto max-w-6xl p-4 md:px-6 md:py-6 space-y-6 scroll-smooth",
-              "relative",
+              "relative mx-auto max-w-6xl p-4 pb-24 md:px-6 md:py-6 md:pb-8 space-y-6 scroll-smooth",
             ].join(" ")}
           >
             {/* Background décoratif non intrusif */}
@@ -1191,10 +1192,9 @@ export default function ParentPage() {
                   </Button>
                 </div>
 
-                {/* Mobile : sélection enfant + nav rapide */}
+                {/* Mobile : sélection enfant (nav sections via bottom-nav) */}
                 {hasKids && (
                   <div className="relative z-10 mt-4 space-y-2 md:hidden">
-                    {/* Enfants */}
                     <div className="flex gap-2 overflow-x-auto pb-1">
                       <button
                         onClick={() => setActiveChildId("all")}
@@ -1224,54 +1224,6 @@ export default function ParentPage() {
                           <span className="truncate max-w-[120px]">{k.full_name}</span>
                         </button>
                       ))}
-                    </div>
-
-                    {/* Onglets mobile */}
-                    <div className="flex gap-2 overflow-x-auto pb-1">
-                      <button
-                        onClick={() => selectSection("dashboard")}
-                        className={[
-                          "whitespace-nowrap rounded-full px-3 py-1 text-[11px]",
-                          isDashboard
-                            ? "bg-emerald-300 text-slate-900"
-                            : "bg-slate-900/40 text-slate-100 border border-white/10",
-                        ].join(" ")}
-                      >
-                        Tableau de bord
-                      </button>
-                      <button
-                        onClick={() => selectSection("conduct")}
-                        className={[
-                          "whitespace-nowrap rounded-full px-3 py-1 text-[11px]",
-                          isConduct
-                            ? "bg-emerald-300 text-slate-900"
-                            : "bg-slate-900/40 text-slate-100 border border-white/10",
-                        ].join(" ")}
-                      >
-                        Conduite & points
-                      </button>
-                      <button
-                        onClick={() => selectSection("absences")}
-                        className={[
-                          "whitespace-nowrap rounded-full px-3 py-1 text-[11px]",
-                          isAbsences
-                            ? "bg-emerald-300 text-slate-900"
-                            : "bg-slate-900/40 text-slate-100 border border-white/10",
-                        ].join(" ")}
-                      >
-                        Cahier d’absences
-                      </button>
-                      <button
-                        onClick={() => selectSection("notes")}
-                        className={[
-                          "whitespace-nowrap rounded-full px-3 py-1 text-[11px]",
-                          isNotes
-                            ? "bg-emerald-300 text-slate-900"
-                            : "bg-slate-900/40 text-slate-100 border border-white/10",
-                        ].join(" ")}
-                      >
-                        Cahier de notes
-                      </button>
                     </div>
                   </div>
                 )}
@@ -1540,12 +1492,12 @@ export default function ParentPage() {
 
                       const showEventsBlock = isDashboard || isAbsences;
                       const showSanctionsBlock = isDashboard || isAbsences;
-                      const showNotesBlock = isDashboard; // ici seulement en Dashboard
+                      const showNotesBlock = isDashboard; // résumé notes sur Dashboard
 
                       return (
-                        <TiltCard key={k.id} className={`rounded-xl ${t.ring}`}>
+                        <TiltCard key={k.id} className={t.ring}>
                           <div
-                            className={`relative rounded-xl border ${t.border} p-4 transition shadow-sm`}
+                            className={`relative rounded-xl border ${t.border} p-4 transition shadow-sm bg-white`}
                           >
                             {/* liseré dégradé haut */}
                             <div
@@ -1779,7 +1731,7 @@ export default function ParentPage() {
                               >
                                 <div className="flex items-center justify-between">
                                   <div className="text-sm font-medium text-slate-800">
-                                    Notes publiées (dernieres)
+                                    Notes publiées (dernières)
                                   </div>
                                 </div>
                                 {gradesForKid.length === 0 ? (
@@ -2091,7 +2043,7 @@ export default function ParentPage() {
                                 {avg20 != null && (
                                   <div className="text-xs text-slate-700">
                                     Moyenne sur la période :{" "}
-                                      <span className="font-semibold">
+                                    <span className="font-semibold">
                                       {avg20.toFixed(2).replace(".", ",")} / 20
                                     </span>
                                   </div>
@@ -2178,6 +2130,64 @@ export default function ParentPage() {
           </main>
         </div>
       </div>
+
+      {/* Bottom navigation mobile type app native */}
+      <nav className="fixed inset-x-0 bottom-0 z-30 border-t border-slate-200 bg-white/95 backdrop-blur md:hidden">
+        <div className="mx-auto flex max-w-6xl items-stretch justify-between">
+          <button
+            type="button"
+            onClick={() => selectSection("dashboard")}
+            className={[
+              "flex-1 flex flex-col items-center justify-center gap-0.5 py-2 text-[11px] font-medium border-t-2",
+              isDashboard ? "text-emerald-700 border-emerald-500" : "text-slate-500 border-transparent",
+            ].join(" ")}
+          >
+            <span className="mb-0.5">
+              <IconHome />
+            </span>
+            <span>Tableau</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => selectSection("conduct")}
+            className={[
+              "flex-1 flex flex-col items-center justify-center gap-0.5 py-2 text-[11px] font-medium border-t-2",
+              isConduct ? "text-emerald-700 border-emerald-500" : "text-slate-500 border-transparent",
+            ].join(" ")}
+          >
+            <span className="mb-0.5">
+              <IconClipboard />
+            </span>
+            <span>Conduite</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => selectSection("absences")}
+            className={[
+              "flex-1 flex flex-col items-center justify-center gap-0.5 py-2 text-[11px] font-medium border-t-2",
+              isAbsences ? "text-emerald-700 border-emerald-500" : "text-slate-500 border-transparent",
+            ].join(" ")}
+          >
+            <span className="mb-0.5">
+              <IconClipboard />
+            </span>
+            <span>Absences</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => selectSection("notes")}
+            className={[
+              "flex-1 flex flex-col items-center justify-center gap-0.5 py-2 text-[11px] font-medium border-t-2",
+              isNotes ? "text-emerald-700 border-emerald-500" : "text-slate-500 border-transparent",
+            ].join(" ")}
+          >
+            <span className="mb-0.5">
+              <IconBook />
+            </span>
+            <span>Notes</span>
+          </button>
+        </div>
+      </nav>
     </div>
   );
 }

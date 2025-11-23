@@ -141,12 +141,12 @@ function Stat({
   value: string;
 }) {
   return (
-    <div className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+    <div className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white/95 p-4 shadow-sm backdrop-blur">
       <div className="grid h-10 w-10 place-items-center rounded-xl bg-indigo-600/10 text-indigo-700">
         <Icon className="h-5 w-5" />
       </div>
       <div>
-        <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+        <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
           {label}
         </div>
         <div className="text-lg font-bold text-slate-900">{value}</div>
@@ -165,7 +165,7 @@ function FeatureCard({
   desc: string;
 }) {
   return (
-    <TiltCard className="rounded-2xl border border-slate-200 bg-white/90 p-5 shadow-sm hover:shadow-md">
+    <TiltCard className="rounded-2xl border border-slate-200 bg-white/95 p-5 shadow-sm backdrop-blur hover:shadow-md">
       <div className="flex items-start gap-3">
         <div className="grid h-10 w-10 flex-none place-items-center rounded-xl bg-indigo-600 text-white shadow-sm">
           <Icon className="h-5 w-5" />
@@ -310,22 +310,22 @@ export default function HomePage() {
     "Mon Cahier : absences, notes et prédiction du taux de réussite dans un seul outil.";
 
   return (
-    <main className="relative min-h-screen bg-white">
+    <main className="relative min-h-screen bg-slate-25">
       {/* Gradient/Aurora background */}
       <div
         aria-hidden
         className="pointer-events-none absolute inset-0 -z-10 overflow-hidden"
       >
-        <div className="absolute left-[5%] top-[-8%] h-80 w-80 rounded-full bg-fuchsia-300/40 blur-2xl md:h-[28rem] md:w-[28rem]" />
-        <div className="absolute right-[2%] top-[10%] h-72 w-72 rounded-full bg-indigo-300/40 blur-2xl md:h-[26rem] md:w-[26rem]" />
-        <div className="absolute bottom-[-10%] left-[15%] h-72 w-72 rounded-full bg-emerald-300/40 blur-2xl md:h-[26rem] md:w-[26rem]" />
+        <div className="absolute left-[5%] top-[-10%] h-64 w-64 rounded-full bg-fuchsia-300/40 blur-3xl md:h-[24rem] md:w-[24rem]" />
+        <div className="absolute right-[-10%] top-[5%] h-72 w-72 rounded-full bg-indigo-300/40 blur-3xl md:h-[26rem] md:w-[26rem]" />
+        <div className="absolute bottom-[-18%] left-[10%] h-72 w-72 rounded-full bg-emerald-300/35 blur-3xl md:h-[26rem] md:w-[26rem]" />
       </div>
 
       {/* Header */}
-      <header className="sticky top-0 z-30 w-full bg-gradient-to-r from-indigo-600 via-violet-600 to-fuchsia-600 text-white shadow-sm">
+      <header className="sticky top-0 z-30 w-full border-b border-white/10 bg-gradient-to-r from-indigo-700 via-violet-700 to-fuchsia-600/95 text-white shadow-sm backdrop-blur">
         <div className="mx-auto flex max-w-7xl items-center justify-between px-4 py-3">
           <a href="#hero" className="flex items-center gap-3">
-            <div className="grid h-9 w-9 place-items-center rounded-lg bg-white/15 text-white shadow-sm">
+            <div className="grid h-10 w-10 place-items-center rounded-xl bg-white/15 text-white shadow-sm">
               <svg
                 viewBox="0 0 24 24"
                 className="h-5 w-5"
@@ -346,12 +346,15 @@ export default function HomePage() {
             </div>
           </a>
 
-          <nav className="hidden items-center gap-6 text-sm font-semibold text-white/80 md:flex">
+          <nav className="hidden items-center gap-6 text-sm font-semibold text-white/85 md:flex">
             <a href="#features" className="hover:text-white">
               Fonctionnalités
             </a>
             <a href="#steps" className="hover:text-white">
               Comment ça marche
+            </a>
+            <a href="#testimonials" className="hover:text-white">
+              Témoignages
             </a>
             <a href="#faq" className="hover:text-white">
               FAQ
@@ -361,35 +364,37 @@ export default function HomePage() {
             </a>
           </nav>
 
-          {/* Connexions visibles */}
-          {/* Desktop : 3 boutons toujours visibles */}
-          <div className="hidden flex-wrap items-center gap-2 md:flex">
+          {/* Connexions visibles - GROS BOUTONS HEADER (desktop) */}
+          <div className="hidden items-center gap-3 md:flex">
             <a
               href="/parents/login"
-              className="rounded-full bg-emerald-600 px-3.5 py-1.5 text-sm font-semibold text-white shadow ring-1 ring-white/20 hover:bg-emerald-700"
+              className="inline-flex items-center gap-2 rounded-full bg-emerald-400 px-5 py-2.5 text-sm font-semibold text-emerald-950 shadow-lg ring-2 ring-white/50 hover:bg-emerald-300"
             >
-              Espace parent
+              <Users className="h-4 w-4" />
+              <span>Espace parent</span>
             </a>
             <a
               href="/login?space=direction"
-              className="rounded-full bg-white/10 px-3.5 py-1.5 text-sm font-semibold text-white shadow ring-1 ring-white/30 hover:bg-white/15"
+              className="inline-flex items-center gap-2 rounded-full bg-white/10 px-4 py-2 text-sm font-semibold text-white shadow ring-1 ring-white/40 hover:bg-white/20"
             >
-              Espace direction
+              <Building2 className="h-4 w-4" />
+              <span>Espace direction</span>
             </a>
             <a
               href="/login?space=enseignant"
-              className="rounded-full bg-white px-3.5 py-1.5 text-sm font-semibold text-indigo-700 shadow ring-1 ring-white/20 hover:bg-slate-50"
+              className="inline-flex items-center gap-2 rounded-full bg-white px-4 py-2 text-sm font-semibold text-indigo-700 shadow ring-1 ring-white/30 hover:bg-slate-50"
             >
-              Espace enseignant
+              <FileSpreadsheet className="h-4 w-4" />
+              <span>Espace enseignant</span>
             </a>
           </div>
 
           {/* Mobile : bouton unique qui scrolle vers le bloc de choix d’espace */}
           <a
             href="#spaces"
-            className="inline-flex items-center rounded-full bg-white/10 px-3 py-1.5 text-xs font-semibold text-white ring-1 ring-white/30 hover:bg-white/15 md:hidden"
+            className="inline-flex items-center gap-2 rounded-full bg-white px-4 py-2 text-sm font-semibold text-indigo-700 shadow-md ring-1 ring-indigo-200 hover:bg-slate-50 md:hidden"
           >
-            Se connecter
+            <span>Se connecter</span>
           </a>
         </div>
       </header>
@@ -399,50 +404,51 @@ export default function HomePage() {
 
       {/* HERO */}
       <section id="hero" className="relative overflow-hidden">
-        <div className="mx-auto grid max-w-7xl grid-cols-1 items-center gap-10 px-4 py-12 md:grid-cols-2 md:py-20">
+        <div className="mx-auto grid max-w-7xl grid-cols-1 items-center gap-10 px-4 py-10 md:grid-cols-2 md:py-18">
+          {/* Colonne texte + gros boutons espaces */}
           <div className="relative z-10">
             <Pill>
               <Rocket className="h-3.5 w-3.5" />
               <span>Absences, notes &amp; prédiction réunies</span>
             </Pill>
-            <h1 className="mt-4 text-4xl font-extrabold leading-tight text-slate-900 md:text-6xl">
+            <h1 className="mt-4 text-[2.25rem] font-extrabold leading-tight text-slate-900 sm:text-[2.6rem] md:text-[3.2rem]">
               Le cahier d’absences &amp; de notes{" "}
-              <span className="text-indigo-600">intelligent</span>
+              <span className="bg-gradient-to-r from-indigo-600 via-violet-600 to-fuchsia-600 bg-clip-text text-transparent">
+                intelligent
+              </span>
             </h1>
-            <p className="mt-5 max-w-xl text-base leading-7 text-slate-700">
+            <p className="mt-4 max-w-xl text-sm leading-7 text-slate-700 sm:text-base">
               Appel ultra-rapide, cahier de notes complet, bulletins
               automatiques, alertes parents instantanées et{" "}
               <b>modèle de prédiction du taux de réussite</b> de chaque classe.
             </p>
 
-            {/* Bloc de choix d’espace (très visible et cliquable) */}
+            {/* Bloc de choix d’espace (TRÈS VISIBLE & GROS BOUTONS) */}
             <div
               id="spaces"
-              className="mt-6 w-full max-w-md space-y-3 rounded-2xl bg-white/90 p-3 shadow-sm backdrop-blur"
+              className="mt-6 w-full max-w-xl space-y-4 rounded-3xl bg-white/95 p-4 shadow-2xl ring-1 ring-slate-200 backdrop-blur"
             >
-              <p className="px-1 text-xs font-medium uppercase tracking-wide text-slate-500">
-                Choisissez votre espace
+              <p className="px-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+                Choisissez votre espace de connexion
               </p>
 
               {/* Parent */}
               <a
                 href="/parents/login"
-                className="flex items-center justify-between rounded-2xl bg-white px-4 py-3 text-sm shadow-sm ring-1 ring-slate-200 transition hover:bg-slate-50"
+                className="group flex items-center justify-between gap-4 rounded-2xl bg-gradient-to-r from-emerald-500 to-emerald-400 px-5 py-4 text-white shadow-xl ring-1 ring-emerald-300 hover:from-emerald-400 hover:to-emerald-300 md:py-5"
               >
-                <div className="flex items-center gap-3">
-                  <div className="grid h-9 w-9 place-items-center rounded-xl bg-emerald-50 text-emerald-700">
-                    <Users className="h-4 w-4" />
+                <div className="flex items-center gap-4">
+                  <div className="grid h-12 w-12 flex-none place-items-center rounded-2xl bg-white/20">
+                    <Users className="h-6 w-6" />
                   </div>
                   <div>
-                    <div className="text-sm font-semibold text-slate-900">
-                      Espace parent
-                    </div>
-                    <div className="text-xs text-slate-500">
-                      Absences, retards et notes de vos enfants.
+                    <div className="text-lg font-bold">Espace parent</div>
+                    <div className="text-xs text-emerald-50 sm:text-[13px]">
+                      Absences, retards et notes de vos enfants en temps réel.
                     </div>
                   </div>
                 </div>
-                <span className="ml-3 rounded-full bg-emerald-100 px-3 py-1 text-[11px] font-semibold text-emerald-700">
+                <span className="ml-3 hidden rounded-full bg-white/20 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-emerald-950 shadow-sm group-hover:bg-white/30 sm:inline-block">
                   Se connecter
                 </span>
               </a>
@@ -450,22 +456,21 @@ export default function HomePage() {
               {/* Direction */}
               <a
                 href="/login?space=direction"
-                className="flex items-center justify-between rounded-2xl bg-white/95 px-4 py-3 text-sm shadow-sm ring-1 ring-slate-200 transition hover:bg-slate-50"
+                className="group flex items-center justify-between gap-4 rounded-2xl bg-gradient-to-r from-indigo-600 to-indigo-500 px-5 py-4 text-white shadow-lg ring-1 ring-indigo-300 hover:from-indigo-500 hover:to-indigo-400 md:py-5"
               >
-                <div className="flex items-center gap-3">
-                  <div className="grid h-9 w-9 place-items-center rounded-xl bg-indigo-50 text-indigo-700">
-                    <Building2 className="h-4 w-4" />
+                <div className="flex items-center gap-4">
+                  <div className="grid h-12 w-12 flex-none place-items-center rounded-2xl bg-white/20">
+                    <Building2 className="h-6 w-6" />
                   </div>
                   <div>
-                    <div className="text-sm font-semibold text-slate-900">
-                      Espace direction
-                    </div>
-                    <div className="text-xs text-slate-500">
-                      Suivi des classes, enseignants et statistiques.
+                    <div className="text-lg font-bold">Espace direction</div>
+                    <div className="text-xs text-indigo-50 sm:text-[13px]">
+                      Pilotage des classes, enseignants, statistiques et
+                      prédiction.
                     </div>
                   </div>
                 </div>
-                <span className="ml-3 rounded-full bg-indigo-100 px-3 py-1 text-[11px] font-semibold text-indigo-700">
+                <span className="ml-3 hidden rounded-full bg-white/20 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-indigo-950 shadow-sm group-hover:bg-white/30 sm:inline-block">
                   Se connecter
                 </span>
               </a>
@@ -473,34 +478,33 @@ export default function HomePage() {
               {/* Enseignant */}
               <a
                 href="/login?space=enseignant"
-                className="flex items-center justify-between rounded-2xl bg-white/95 px-4 py-3 text-sm shadow-sm ring-1 ring-slate-200 transition hover:bg-slate-50"
+                className="group flex items-center justify-between gap-4 rounded-2xl bg-gradient-to-r from-violet-600 to-fuchsia-500 px-5 py-4 text-white shadow-lg ring-1 ring-violet-300 hover:from-violet-500 hover:to-fuchsia-400 md:py-5"
               >
-                <div className="flex items-center gap-3">
-                  <div className="grid h-9 w-9 place-items-center rounded-xl bg-violet-50 text-violet-700">
-                    <FileSpreadsheet className="h-4 w-4" />
+                <div className="flex items-center gap-4">
+                  <div className="grid h-12 w-12 flex-none place-items-center rounded-2xl bg-white/20">
+                    <FileSpreadsheet className="h-6 w-6" />
                   </div>
                   <div>
-                    <div className="text-sm font-semibold text-slate-900">
-                      Espace enseignant
-                    </div>
-                    <div className="text-xs text-slate-500">
-                      Appel, notes et bulletins en quelques clics.
+                    <div className="text-lg font-bold">Espace enseignant</div>
+                    <div className="text-xs text-violet-50 sm:text-[13px]">
+                      Appel, notes, moyennes et bulletins en quelques clics.
                     </div>
                   </div>
                 </div>
-                <span className="ml-3 rounded-full bg-violet-100 px-3 py-1 text-[11px] font-semibold text-violet-700">
+                <span className="ml-3 hidden rounded-full bg-white/20 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-violet-950 shadow-sm group-hover:bg-white/30 sm:inline-block">
                   Se connecter
                 </span>
               </a>
             </div>
 
-            <div className="mt-8 grid max-w-2xl grid-cols-2 gap-3">
-              <Stat icon={Users} label="Parents touchés" value="> 10 000" />
-              <Stat icon={Clock} label="Temps d’appel moyen" value="< 60 s" />
+            {/* Stats */}
+            <div className="mt-7 grid max-w-2xl grid-cols-2 gap-3 sm:gap-4">
+              <Stat icon={Users} label="Parents touchés" value="&gt; 10 000" />
+              <Stat icon={Clock} label="Temps d’appel moyen" value="&lt; 60 s" />
               <Stat
                 icon={Bell}
                 label="Notifications envoyées"
-                value="> 250 000"
+                value="&gt; 250 000"
               />
               <Stat
                 icon={Rocket}
@@ -510,12 +514,13 @@ export default function HomePage() {
             </div>
           </div>
 
+          {/* Colonne illustration */}
           <div className="relative">
-            <div className="pointer-events-none absolute right-0 top-0 h-full w-14 bg-yellow-300/70 md:w-20" />
-            <TiltCard className="relative overflow-hidden rounded-l-[44px] border border-slate-200 shadow-xl">
+            <div className="pointer-events-none hidden h-full w-20 bg-gradient-to-b from-yellow-300/80 via-yellow-200/40 to-transparent md:absolute md:right-0 md:top-0 md:block" />
+            <TiltCard className="relative overflow-hidden rounded-[32px] border border-slate-200 bg-white/60 shadow-xl backdrop-blur">
               <Image
                 src="/accueil.png"
-                alt="Absences, notes et prédiction dans Mon Cahier"
+                alt="Interface Mon Cahier : absences, notes et prédiction"
                 width={900}
                 height={600}
                 className="h-auto w-full object-cover"
@@ -527,10 +532,10 @@ export default function HomePage() {
       </section>
 
       {/* Steps / How it works */}
-      <section id="steps" className="mx-auto max-w-7xl px-4 pb-8 md:pb-12">
+      <section id="steps" className="mx-auto max-w-7xl px-4 pb-10 md:pb-12">
         <SectionTitle>Comment ça marche</SectionTitle>
         <div className="mt-6 grid grid-cols-1 gap-6 md:grid-cols-2">
-          <div className="rounded-2xl border border-slate-200 bg-white p-6">
+          <div className="rounded-2xl border border-slate-200 bg-white/95 p-6 shadow-sm backdrop-blur">
             <div className="mb-4 flex items-center gap-2 text-sm font-semibold text-indigo-700">
               <Building2 className="h-4 w-4" /> Établissement
             </div>
@@ -559,7 +564,7 @@ export default function HomePage() {
               </li>
             </ol>
           </div>
-          <div className="rounded-2xl border border-slate-200 bg-white p-6">
+          <div className="rounded-2xl border border-slate-200 bg-white/95 p-6 shadow-sm backdrop-blur">
             <div className="mb-4 flex items-center gap-2 text-sm font-semibold text-emerald-700">
               <Users className="h-4 w-4" /> Parent
             </div>
@@ -661,7 +666,7 @@ export default function HomePage() {
               travail de leurs enfants. »
             </p>
             <p className="mt-4 text-xs font-semibold text-indigo-800">
-              Censeur, Collège privé à Yopougon
+              Directeur des études, Collège privé à Yopougon
             </p>
           </article>
 
@@ -697,7 +702,7 @@ export default function HomePage() {
                   sizes="(max-width: 768px) 100vw, 768px"
                   className="object-cover transition duration-300 group-hover:scale-[1.03]"
                 />
-                <div className="absolute inset-0 bg-gradient-to-t from-black/75 via-black/40 to-black/10" />
+                <div className="absolute inset-0 bg-gradient-to-t from-indigo-950/85 via-indigo-900/40 to-transparent" />
               </div>
 
               <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center px-6 text-center text-white">
@@ -736,8 +741,8 @@ export default function HomePage() {
 
       {/* Big Contact CTA */}
       <section id="contact" className="mx-auto max-w-7xl px-4 pb-20">
-        <div className="relative overflow-hidden rounded-3xl border border-indigo-200 bg-linear-to-r from-indigo-600 via-violet-600 to-fuchsia-600 p-0.5 shadow-xl">
-          <div className="rounded-[calc(1.5rem-2px)] bg-white p-6 md:p-10">
+        <div className="relative overflow-hidden rounded-3xl border border-indigo-200 bg-gradient-to-r from-indigo-600 via-violet-600 to-fuchsia-600 p-0.5 shadow-xl">
+          <div className="rounded-[calc(1.5rem-2px)] bg-white/98 p-6 backdrop-blur md:p-10">
             <div className="flex flex-col items-start justify-between gap-6 md:flex-row md:items-center">
               <div>
                 <h3 className="text-2xl font-extrabold text-slate-900 md:text-3xl">
@@ -806,14 +811,14 @@ export default function HomePage() {
           </div>
           <div>
             <h3 className="text-lg font-semibold">Nous contacter</h3>
-            <div className="mt-3 space-y-2 text-indigo-200">
+            <div className="mt-3 space-y-2 text-indigo-200 text-sm">
               <div>WhatsApp : 07 20 67 20 94</div>
               <div>Appel : +225 07 13 02 37 62</div>
               <div>Email : moncahier.ci@gmail.com</div>
             </div>
           </div>
         </div>
-        <div className="mx-auto mt-8 max-w-7xl px-4 text-sm text-indigo-300">
+        <div className="mx-auto mt-8 max-w-7xl px-4 text-xs text-indigo-300">
           Mentions légales · Données personnelles et cookies
         </div>
       </footer>

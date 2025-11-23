@@ -1,4 +1,3 @@
-// src/app/api/push/dispatch/route.ts
 import { NextResponse } from "next/server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import webpush from "web-push";
@@ -31,12 +30,9 @@ function okAuth(req: Request) {
   const secret = (process.env.CRON_SECRET || process.env.CRON_PUSH_SECRET || "").trim();
   const xCron = (req.headers.get("x-cron-secret") || "").trim();
   const auth = (req.headers.get("authorization") || "").trim();
-  const bearer = auth.toLowerCase().startsWith("bearer ")
-    ? auth.slice(7).trim()
-    : "";
+  const bearer = auth.toLowerCase().startsWith("bearer ") ? auth.slice(7).trim() : "";
   const fromVercelCron = req.headers.has("x-vercel-cron");
-  const allowed =
-    fromVercelCron || (!!secret && (xCron === secret || bearer === secret));
+  const allowed = fromVercelCron || (!!secret && (xCron === secret || bearer === secret));
   console.info("[push/dispatch] auth", {
     fromVercelCron,
     xCronPresent: !!xCron,
@@ -67,7 +63,7 @@ async function sendFCM(
   title: string,
   body: string,
   url: string,
-  data: any
+  data: any,
 ) {
   if (!FCM_KEY) throw new Error("missing FCM_SERVER_KEY");
   const payload = {
@@ -78,10 +74,7 @@ async function sendFCM(
   };
   const res = await fetch("https://fcm.googleapis.com/fcm/send", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `key=${FCM_KEY}`,
-    },
+    headers: { "Content-Type": "application/json", Authorization: `key=${FCM_KEY}` },
     body: JSON.stringify(payload),
   });
   const text = await res.text().catch(() => "");
@@ -91,6 +84,7 @@ async function sendFCM(
 /* ──────────────── Types ──────────────── */
 type QueueRow = {
   id: string;
+  institution_id: string | null; // 👈 ajouté pour cibler les admins par établissement
   parent_id: string | null;
   student_id: string | null;
   channels: any;
@@ -146,10 +140,7 @@ async function run(req: Request) {
 
   if (!okAuth(req)) {
     console.warn("[push/dispatch] forbidden", { id });
-    return NextResponse.json(
-      { ok: false, error: "forbidden", id },
-      { status: 403 }
-    );
+    return NextResponse.json({ ok: false, error: "forbidden", id }, { status: 403 });
   }
 
   try {
@@ -161,7 +152,7 @@ async function run(req: Request) {
     });
     return NextResponse.json(
       { ok: false, error: String(e?.message || e), id },
-      { status: 500 }
+      { status: 500 },
     );
   }
 
@@ -172,20 +163,17 @@ async function run(req: Request) {
   const { data: raw, error: pickErr } = await srv
     .from("notifications_queue")
     .select(
-      "id,parent_id,student_id,channels,payload,title,body,status,attempts,created_at,meta"
+      "id,institution_id,parent_id,student_id,channels,payload,title,body,status,attempts,created_at,meta",
     )
     .eq("status", WAIT_STATUS)
     .order("created_at", { ascending: true })
     .limit(400);
 
   if (pickErr) {
-    console.error("[push/dispatch] select_error", {
-      id,
-      error: pickErr.message,
-    });
+    console.error("[push/dispatch] select_error", { id, error: pickErr.message });
     return NextResponse.json(
       { ok: false, error: pickErr.message, stage: "select", id },
-      { status: 200 }
+      { status: 200 },
     );
   }
 
@@ -225,12 +213,14 @@ async function run(req: Request) {
   const deviceIds = Array.from(
     new Set(
       noParent
-        .map((r) => (safeParse<any>(r.meta) || {}).device_id as string | undefined)
-        .filter(Boolean)
-    )
+        .map(
+          (r) => (safeParse<any>(r.meta) || {}).device_id as string | undefined,
+        )
+        .filter(Boolean),
+    ),
   );
   const studentIds = Array.from(
-    new Set(noParent.map((r) => r.student_id).filter(Boolean))
+    new Set(noParent.map((r) => r.student_id).filter(Boolean)),
   ) as string[];
 
   const deviceToParent = new Map<string, string>(); // device_id -> parent_profile_id
@@ -245,11 +235,12 @@ async function run(req: Request) {
         error: mapErr.message,
       });
     for (const row of mapDev || []) {
-      if (row.device_id && row.parent_profile_id)
+      if (row.device_id && row.parent_profile_id) {
         deviceToParent.set(
           String(row.device_id),
-          String(row.parent_profile_id)
+          String(row.parent_profile_id),
         );
+      }
     }
   }
 
@@ -275,7 +266,7 @@ async function run(req: Request) {
     }
   }
 
-  // Pour chaque queue row, liste de user_ids cibles
+  // Pour chaque queue row, liste de user_ids cibles (parents / responsables)
   const targetUserIdsByRow = new Map<string, string[]>();
   for (const r of rows) {
     let ids: string[] = [];
@@ -285,7 +276,9 @@ async function run(req: Request) {
       const dev = (safeParse<any>(r.meta) || {}).device_id as
         | string
         | undefined;
-      if (dev && deviceToParent.has(dev)) ids.push(deviceToParent.get(dev)!);
+      if (dev && deviceToParent.has(dev)) {
+        ids.push(deviceToParent.get(dev)!);
+      }
     }
 
     if (!ids.length && r.student_id && studToParents.has(r.student_id)) {
@@ -296,8 +289,58 @@ async function run(req: Request) {
     targetUserIdsByRow.set(r.id, ids);
   }
 
+  // 2.b) Ajouter les ADMIN / SUPER_ADMIN pour certains messages (ex: admin_attendance_monitor)
+  const adminTargetRows = rows.filter((r) => {
+    const p = safeParse<any>(r.payload) || {};
+    const kind = p?.kind || p?.type || "";
+    return kind === "admin_attendance_monitor";
+  });
+
+  const instIdsForAdminRows = Array.from(
+    new Set(
+      adminTargetRows
+        .map((r) => r.institution_id)
+        .filter(Boolean) as string[],
+    ),
+  );
+
+  const adminByInstitution = new Map<string, string[]>();
+  if (instIdsForAdminRows.length) {
+    const { data: roleRows, error: roleErr2 } = await srv
+      .from("user_roles")
+      .select("profile_id,institution_id,role")
+      .in("institution_id", instIdsForAdminRows)
+      .in("role", ["admin", "super_admin"]);
+    if (roleErr2) {
+      console.warn("[push/dispatch] admin_roles_err", {
+        id,
+        error: roleErr2.message,
+      });
+    } else {
+      for (const r of roleRows || []) {
+        const inst = String((r as any).institution_id);
+        const pid = String((r as any).profile_id || "");
+        if (!inst || !pid) continue;
+        const arr = adminByInstitution.get(inst) || [];
+        arr.push(pid);
+        adminByInstitution.set(inst, Array.from(new Set(arr)));
+      }
+    }
+  }
+
+  for (const r of adminTargetRows) {
+    const inst = r.institution_id ? String(r.institution_id) : "";
+    if (!inst) continue;
+    const adminIds = adminByInstitution.get(inst) || [];
+    if (!adminIds.length) continue;
+    const cur = targetUserIdsByRow.get(r.id) || [];
+    const merged = Array.from(new Set([...cur, ...adminIds]));
+    targetUserIdsByRow.set(r.id, merged);
+  }
+
+  // Tous les user_ids à charger côté push_subscriptions
   const allUserIds = Array.from(
-    new Set(Array.from(targetUserIdsByRow.values()).flatMap((a) => a))
+    new Set(Array.from(targetUserIdsByRow.values()).flatMap((a) => a)),
   );
 
   // 3) Subscriptions (web + mobile) pour ces user_ids
@@ -344,15 +387,19 @@ async function run(req: Request) {
       n?.title ||
       (typ === "conduct_penalty" || typ === "penalty"
         ? "Sanction"
-        : typ === "attendance" || typ === "absent" || typ === "late"
+        : typ === "attendance" ||
+          typ === "absent" ||
+          typ === "late"
         ? "Absence / Retard"
+        : typ === "admin_attendance_monitor"
+        ? "Surveillance des appels"
         : "Notification");
     const body = core?.body || n?.body || "";
     const url = "/parents";
 
     const targetUsers = targetUserIdsByRow.get(n.id) || [];
     const list: SubRow[] = targetUsers.flatMap(
-      (uid) => subsByUser.get(uid) || []
+      (uid) => subsByUser.get(uid) || [],
     );
 
     console.info("[push/dispatch] item_begin", {
@@ -390,7 +437,7 @@ async function run(req: Request) {
         try {
           const res: any = await webpush.sendNotification(
             s.subscription_json,
-            payloadStr
+            payloadStr,
           );
           console.info("[push/dispatch] web_send_ok", {
             id,

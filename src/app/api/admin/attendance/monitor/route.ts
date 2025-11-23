@@ -433,5 +433,10 @@ export async function GET(req: NextRequest) {
     return ca.localeCompare(cb);
   });
 
+  // 👉 Ici : PLUS AUCUN ENQUEUE DE PUSH.
+  // Les notifications admins sont gérées exclusivement par :
+  //   - /api/admin/attendance/alerts  (cron)
+  //   - /api/push/dispatch            (distribution vers les admins)
+
   return NextResponse.json({ rows });
 }

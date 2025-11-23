@@ -89,29 +89,15 @@ export default function AdminShell({ children }: { children: React.ReactNode }) 
                   <Menu className="h-4 w-4" />
                 </button>
 
-                <span className="text-sm font-medium tracking-tight">Mon Cahier</span>
-                <span className="rounded-full bg-white/10 px-2 py-0.5 text-xs font-semibold ring-1 ring-white/20">
+                <span className="text-sm font-semibold tracking-tight">Mon Cahier</span>
+                {/* Tagline masquée sur très petit écran pour un rendu plus "app" */}
+                <span className="hidden rounded-full bg-white/10 px-2 py-0.5 text-xs font-semibold ring-1 ring-white/20 sm:inline-flex">
                   Absences &amp; notes · Admin établissement
                 </span>
               </div>
 
               <div className="flex items-center gap-2">
-                {/* 🔥 Raccourci Assiduité */}
-                <Link
-                  href="/admin/assiduite"
-                  className="rounded-full bg-white/10 px-3 py-1 text-xs font-semibold ring-1 ring-white/20 hover:bg-white/15"
-                >
-                  Assiduité
-                </Link>
-
-                {/* Conduite */}
-                <Link
-                  href="/admin/conduite"
-                  className="rounded-full bg-white/10 px-3 py-1 text-xs font-semibold ring-1 ring-white/20 hover:bg-white/15"
-                >
-                  Conduite
-                </Link>
-
+                {/* ✅ Assiduité / Conduite retirés du header */}
                 <ContactUsButton variant="chip" />
 
                 <div className="rounded-full bg-white/10 px-2 py-1 ring-1 ring-white/20 hover:bg-white/15">
@@ -128,7 +114,7 @@ export default function AdminShell({ children }: { children: React.ReactNode }) 
           {/* ─────────────────────────────
               MENU MOBILE EN BAS (style app / Ecolemedia)
           ───────────────────────────── */}
-          <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-slate-200 bg-white/95 backdrop-blur md:hidden">
+          <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-slate-200 bg-white/95 backdrop-blur shadow-[0_-4px_12px_rgba(15,23,42,0.12)] md:hidden">
             <div className="mx-auto flex max-w-7xl items-stretch justify-between">
               {[
                 {
@@ -158,7 +144,7 @@ export default function AdminShell({ children }: { children: React.ReactNode }) 
                     key={href}
                     href={href}
                     className={[
-                      "flex flex-1 flex-col items-center justify-center gap-0.5 py-2 text-[11px]",
+                      "flex flex-1 flex-col items-center justify-center gap-0.5 py-2.5 text-[11px]",
                       "transition-colors",
                       active
                         ? "text-emerald-700 font-semibold"
@@ -167,7 +153,7 @@ export default function AdminShell({ children }: { children: React.ReactNode }) 
                   >
                     <div
                       className={[
-                        "flex h-8 w-8 items-center justify-center rounded-full text-xs border",
+                        "flex h-9 w-9 items-center justify-center rounded-full text-xs border",
                         active
                           ? "bg-emerald-50 border-emerald-200"
                           : "bg-slate-50 border-slate-200",

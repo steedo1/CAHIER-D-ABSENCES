@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { queueGradeNotificationsForEvaluation } from "@/lib/push/grades";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -321,10 +322,10 @@ export async function PATCH(req: NextRequest) {
 
   const svc = getSupabaseServiceClient();
 
-  // On récupère l’évaluation pour vérifier la classe
+  // On récupère l’évaluation pour vérifier la classe + état précédent
   const { data: ev, error: evErr } = await svc
     .from("grade_evaluations")
-    .select("id, class_id")
+    .select("id, class_id, is_published")
     .eq("id", evaluation_id)
     .maybeSingle();
 
@@ -335,6 +336,8 @@ export async function PATCH(req: NextRequest) {
       { status: 404 }
     );
   }
+
+  const wasPublished = !!ev.is_published;
 
   // Vérifier que l'utilisateur a le droit sur CETTE classe
   const mode = await getAccessModeForClass(svc, user.id, ev.class_id);
@@ -363,6 +366,16 @@ export async function PATCH(req: NextRequest) {
       { ok: false, error: error.message },
       { status: 500 }
     );
+  }
+
+  // 👉 Si on vient de passer de non publié → publié, on enfile les push
+  if (!wasPublished && is_published) {
+    queueGradeNotificationsForEvaluation(evaluation_id).catch((e) => {
+      console.error(
+        "[teacher/grades/evaluations] queue_grade_notifications_error",
+        e
+      );
+    });
   }
 
   return NextResponse.json({ ok: true, item: data });

@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
+import { queueGradeNotificationsForEvaluation } from "@/lib/push/grades";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -411,10 +412,10 @@ export async function PATCH(req: NextRequest) {
       );
     }
 
-    // On récupère la classe pour vérifier l'accès
+    // On récupère la classe + état précédent
     const { data: evalRow, error: evErr } = await srv
       .from("grade_evaluations")
-      .select("id,class_id")
+      .select("id,class_id,is_published")
       .eq("id", evaluation_id)
       .maybeSingle();
 
@@ -449,6 +450,8 @@ export async function PATCH(req: NextRequest) {
       patch.published_at = is_published ? new Date().toISOString() : null;
     }
 
+    const wasPublished = !!evalRow.is_published;
+
     const { data, error } = await srv
       .from("grade_evaluations")
       .update(patch)
@@ -464,6 +467,16 @@ export async function PATCH(req: NextRequest) {
         { ok: false, error: error.message },
         { status: 400 },
       );
+    }
+
+    // 👉 On ne déclenche les push que si on vient de passer NON publié → publié
+    if (typeof is_published === "boolean" && !wasPublished && is_published) {
+      queueGradeNotificationsForEvaluation(evaluation_id).catch((e) => {
+        console.error(
+          "[grades/evaluations] queue_grade_notifications_error",
+          e,
+        );
+      });
     }
 
     return NextResponse.json({ ok: true, item: data as EvalRow });
