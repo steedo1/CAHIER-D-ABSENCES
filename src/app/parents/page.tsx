@@ -1101,9 +1101,19 @@ export default function ParentPage() {
             <header className="relative overflow-hidden rounded-3xl border border-slate-800/20 bg-gradient-to-br from-slate-950 via-indigo-950 to-slate-900 px-5 py-5 md:px-7 md:py-6 text-white shadow-sm">
               <div className="absolute inset-0 opacity-20 [background-image:radial-gradient(60%_50%_at_100%_0%,white,transparent_70%)]" />
               <div className="relative z-10 flex flex-col gap-3">
-                {/* Ligne supérieure : brand + actions */}
+                {/* Ligne supérieure : menu à gauche + brand + actions */}
                 <div className="flex items-center justify-between gap-3">
                   <div className="flex items-center gap-3 min-w-0">
+                    {/* Bouton menu mobile à gauche */}
+                    <button
+                      type="button"
+                      aria-label="Ouvrir le menu"
+                      onClick={() => setMobileNavOpen(true)}
+                      className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-white/20 bg-white/10 text-white md:hidden"
+                    >
+                      <IconMenu />
+                    </button>
+
                     <div className="grid h-9 w-9 place-items-center rounded-xl bg-slate-950/80 text-xs font-semibold">
                       MC
                     </div>
@@ -1118,16 +1128,6 @@ export default function ParentPage() {
                   </div>
 
                   <div className="flex items-center gap-2">
-                    {/* Bouton menu mobile */}
-                    <button
-                      type="button"
-                      aria-label="Ouvrir le menu"
-                      onClick={() => setMobileNavOpen(true)}
-                      className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-white/20 bg-white/10 text-white md:hidden"
-                    >
-                      <IconMenu />
-                    </button>
-
                     {/* Actions (push + logout) en md+ */}
                     <div className="hidden sm:flex items-center gap-2">
                       {!granted ? (
@@ -1159,8 +1159,7 @@ export default function ParentPage() {
 
                 {/* Description */}
                 <p className="mt-1 text-sm text-white/80 max-w-2xl">
-                  Suivez en temps réel les <b>absences</b>, <b>retards</b>, <b>sanctions</b> et{" "}
-                  <b>notes</b> de vos enfants.
+                  Suivez en temps réel vos enfants.
                 </p>
 
                 {/* Actions (push + logout) en mobile */}
@@ -1552,15 +1551,11 @@ export default function ParentPage() {
                                   const parts: string[] = [];
                                   if (g.absentCount)
                                     parts.push(
-                                      `${g.absentCount} absence${
-                                        g.absentCount > 1 ? "s" : ""
-                                      }`
+                                      `${g.absentCount} absence${g.absentCount > 1 ? "s" : ""}`
                                     );
                                   if (g.lateCount)
                                     parts.push(
-                                      `${g.lateCount} retard${
-                                        g.lateCount > 1 ? "s" : ""
-                                      }`
+                                      `${g.lateCount} retard${g.lateCount > 1 ? "s" : ""}`
                                     );
                                   const summary = parts.length
                                     ? parts.join(" • ")

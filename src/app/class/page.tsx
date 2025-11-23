@@ -1,4 +1,3 @@
-// src/app/class/page.tsx
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
@@ -86,7 +85,13 @@ type OpenSession = {
   expected_minutes?: number | null;
 };
 
-type InstCfg = { tz: string; default_session_minutes: number; auto_lateness: boolean };
+type InstCfg = {
+  tz: string;
+  default_session_minutes: number;
+  auto_lateness: boolean;
+  institution_name?: string | null;
+  academic_year_label?: string | null;
+};
 type Period = { weekday: number; label: string; start_time: string; end_time: string };
 
 type ConductMax = {
@@ -105,7 +110,7 @@ function minutesDiff(a: string, b: string) {
   return Math.max(0, toMinutes(b) - toMinutes(a));
 }
 
-/* Helpers fuseau établissement (identiques à l’interface enseignant) */
+/* Helpers fuseau établissement */
 const hmInTZ = (d: Date, tz: string): string =>
   new Intl.DateTimeFormat("en-GB", {
     timeZone: tz,
@@ -149,6 +154,8 @@ export default function ClassDevicePage() {
     tz: "Africa/Abidjan",
     default_session_minutes: 60,
     auto_lateness: true,
+    institution_name: "Mon établissement",
+    academic_year_label: null,
   });
   const [periodsByDay, setPeriodsByDay] = useState<Record<number, Period[]>>({});
   const [slotLabel, setSlotLabel] = useState<string>(
@@ -361,6 +368,8 @@ export default function ClassDevicePage() {
       tz: "Africa/Abidjan",
       default_session_minutes: 60,
       auto_lateness: true,
+      institution_name: inst.institution_name || "Mon établissement",
+      academic_year_label: inst.academic_year_label || null,
     };
     let grouped: Record<number, Period[]> = {};
 
@@ -369,11 +378,33 @@ export default function ClassDevicePage() {
       (await getJson("/api/institution/basics"));
 
     if (all?.periods) {
+      const nameFromAll =
+        all?.institution_name ||
+        all?.institution_label ||
+        all?.short_name ||
+        all?.name ||
+        all?.settings_json?.institution_name ||
+        all?.settings_json?.header_title ||
+        all?.settings_json?.school_name ||
+        null;
+
+      const yearFromAll =
+        all?.academic_year_label ||
+        all?.current_academic_year_label ||
+        all?.academic_year ||
+        all?.year_label ||
+        all?.settings_json?.academic_year_label ||
+        all?.settings_json?.current_academic_year_label ||
+        null;
+
       instConfig = {
         tz: all?.tz || "Africa/Abidjan",
         default_session_minutes: Number(all?.default_session_minutes || 60),
         auto_lateness: !!all?.auto_lateness,
+        institution_name: nameFromAll || instConfig.institution_name,
+        academic_year_label: yearFromAll || instConfig.academic_year_label || null,
       };
+
       (all.periods as any[]).forEach((row: any) => {
         const w = Number(row.weekday || 1);
         if (!grouped[w]) grouped[w] = [];
@@ -397,10 +428,29 @@ export default function ClassDevicePage() {
         (await getJson("/api/teacher/institution/periods")) ||
         (await getJson("/api/institution/periods")) || { periods: [] };
 
+      const nameFromSettings =
+        settings?.institution_name ||
+        settings?.institution_label ||
+        settings?.short_name ||
+        settings?.name ||
+        settings?.header_title ||
+        settings?.school_name ||
+        null;
+
+      const yearFromSettings =
+        settings?.academic_year_label ||
+        settings?.current_academic_year_label ||
+        settings?.academic_year ||
+        settings?.year_label ||
+        settings?.header_academic_year ||
+        null;
+
       instConfig = {
         tz: settings?.tz || "Africa/Abidjan",
         default_session_minutes: Number(settings?.default_session_minutes || 60),
-        auto_lateness: !!settings?.auto_lateness,
+        auto_lateness: !!settings?.auto_lteness,
+        institution_name: nameFromSettings || instConfig.institution_name,
+        academic_year_label: yearFromSettings || instConfig.academic_year_label || null,
       };
 
       (Array.isArray(per?.periods) ? per.periods : []).forEach((row: any) => {
@@ -447,9 +497,10 @@ export default function ClassDevicePage() {
 
   useEffect(() => {
     loadInstitutionBasics();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Calcul du créneau par défaut « du moment » (timezone-aware, comme l’interface enseignant)
+  // Calcul du créneau par défaut « du moment » (timezone-aware)
   function computeDefaultsForNow() {
     const tz = inst?.tz || "Africa/Abidjan";
     const now = new Date();
@@ -552,7 +603,6 @@ export default function ClassDevicePage() {
       return { ...prev, [id]: next };
     });
   }
-  // ⚠️ setReason supprimé car la colonne Motif est retirée dans l'appel
 
   /* actions */
   async function startSession() {
@@ -604,7 +654,6 @@ export default function ClassDevicePage() {
         return { student_id, status: "present" as const };
       });
 
-      // on garde l’endpoint existant pour ne rien casser
       const r = await fetch("/api/teacher/attendance/bulk", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -659,7 +708,7 @@ export default function ClassDevicePage() {
         console.warn("[class/logout] /api/auth/sync DELETE:", e?.message || e);
       }
 
-      // 3) Endpoints legacy (si tu en as un côté API, on ne casse rien)
+      // 3) Endpoints legacy éventuels
       const endpoints = ["/api/auth/signout", "/api/auth/logout", "/auth/signout"];
       for (const url of endpoints) {
         try {
@@ -669,25 +718,41 @@ export default function ClassDevicePage() {
         }
       }
     } finally {
-      // 4) Retour page de connexion
+      // 4) Retour écran de connexion global
       window.location.href = "/login";
     }
   }
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-6 space-y-6">
-      <header className="flex items-start justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Classe — Démarrer l’appel</h1>
-          <p className="text-slate-600 text-sm">
-            Choisissez votre discipline et démarrez l’appel. Les minutes de retard sont{" "}
-            <b>calculées automatiquement</b>. À la fin du cours, cliquez sur <b>Terminer</b>.
-          </p>
+      {/* Header compact avec établissement + année scolaire */}
+      <header className="overflow-hidden rounded-2xl border border-slate-800 bg-gradient-to-r from-slate-950 via-indigo-900 to-slate-950 px-4 py-4 sm:px-6 sm:py-5 shadow-sm">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="space-y-1">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.25em] text-indigo-200/80">
+              {inst.institution_name || "Mon établissement"}
+            </p>
+            {inst.academic_year_label && (
+              <p className="text-[11px] font-medium text-indigo-100/80">
+                Année scolaire {inst.academic_year_label}
+              </p>
+            )}
+            <h1 className="text-xl sm:text-2xl font-semibold tracking-tight text-white">
+              Téléphone de classe — Appel
+            </h1>
+            <p className="mt-1 max-w-xl text-xs sm:text-sm text-indigo-100/85">
+              Mode simplifié pour appeler la classe et enregistrer retards et sanctions.
+            </p>
+          </div>
+          <GhostButton
+            tone="red"
+            onClick={logout}
+            className="shrink-0 bg-red-600 text-white border-red-500 hover:bg-red-700 hover:text-white"
+          >
+            <LogOut className="h-4 w-4" />
+            Se déconnecter
+          </GhostButton>
         </div>
-        <GhostButton onClick={logout} className="shrink-0">
-          <LogOut className="h-4 w-4" />
-          Se déconnecter
-        </GhostButton>
       </header>
 
       {/* Sélection */}
@@ -738,8 +803,7 @@ export default function ClassDevicePage() {
               <div className="mt-1 text-[11px] text-slate-500">{slotLabel}</div>
             </div>
             <div>
-              <div className="mb-1 flex items
--center gap-2 text-xs text-slate-500">
+              <div className="mb-1 flex items-center gap-2 text-xs text-slate-500">
                 <Clock className="h-3.5 w-3.5" />
                 Durée (min)
               </div>
@@ -959,7 +1023,6 @@ export default function ClassDevicePage() {
                   <th className="px-3 py-2">Nom et prénoms</th>
                   <th className="px-3 py-2">Absent</th>
                   <th className="px-3 py-2">Retard</th>
-                  {/* Colonne Motif supprimée dans l'appel */}
                 </tr>
               </thead>
               <tbody className="divide-y">
@@ -1000,7 +1063,6 @@ export default function ClassDevicePage() {
                             disabled={!!r.absent}
                           />
                         </td>
-                        {/* Colonne Motif retirée */}
                       </tr>
                     );
                   })

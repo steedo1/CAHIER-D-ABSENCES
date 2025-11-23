@@ -28,6 +28,27 @@ function logError(...args: any[]) {
 }
 
 /* =========================
+   Responsive helper
+========================= */
+const MOBILE_BREAKPOINT = 768; // < md
+
+function useIsMobile() {
+  const [isMobile, setIsMobile] = useState(false);
+
+  useEffect(() => {
+    const update = () => {
+      if (typeof window === "undefined") return;
+      setIsMobile(window.innerWidth < MOBILE_BREAKPOINT);
+    };
+    update();
+    window.addEventListener("resize", update);
+    return () => window.removeEventListener("resize", update);
+  }, []);
+
+  return isMobile;
+}
+
+/* =========================
    Types
 ========================= */
 type TeachClass = {
@@ -48,7 +69,7 @@ type Evaluation = {
   subject_id: string | null;
   subject_component_id?: string | null; // ✅ sous-rubrique éventuelle
   eval_date: string; // yyyy-mm-dd
-  eval_kind: EvalKind;
+  eval_kind: EvalKind; // ✅ pour lever les erreurs TS
   scale: 5 | 10 | 20 | 40 | 60;
   coeff: number;
   is_published: boolean;
@@ -121,6 +142,7 @@ function Select(p: React.SelectHTMLAttributes<HTMLSelectElement>) {
       className={[
         "w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm",
         "shadow-sm outline-none transition",
+        "placeholder:text-slate-400",
         "focus:border-emerald-400 focus:ring-4 focus:ring-emerald-500/20",
         "disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400",
         p.className ?? "",
@@ -178,6 +200,42 @@ function GhostButton(
    Page Compte-classe
 ========================= */
 export default function ClassDeviceNotesPage() {
+  const isMobile = useIsMobile();
+
+  // ✅ Tentative douce de récupérer le nom de l’établissement + année scolaire (sans rien casser)
+  const [institutionName, setInstitutionName] = useState<string | null>(null);
+  const [academicYearLabel, setAcademicYearLabel] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const body: any = document.body;
+
+      // Nom établissement
+      const fromDataName =
+        body?.dataset?.institutionName || body?.dataset?.institution || null;
+      const fromGlobalName = (window as any).__MC_INSTITUTION_NAME__
+        ? String((window as any).__MC_INSTITUTION_NAME__)
+        : null;
+      const finalName = fromDataName || fromGlobalName;
+      if (finalName) setInstitutionName(finalName);
+
+      // Année scolaire (si le layout la fournit)
+      const fromDataYear =
+        body?.dataset?.academicYear ||
+        body?.dataset?.schoolYear ||
+        body?.dataset?.anneeScolaire ||
+        null;
+      const fromGlobalYear = (window as any).__MC_ACADEMIC_YEAR__
+        ? String((window as any).__MC_ACADEMIC_YEAR__)
+        : null;
+      const finalYear = fromDataYear || fromGlobalYear;
+      if (finalYear) setAcademicYearLabel(finalYear);
+    } catch {
+      // on ne casse rien si ça échoue
+    }
+  }, []);
+
   /* -------- Sélection classe/discipline -------- */
   const [teachClasses, setTeachClasses] = useState<TeachClass[]>([]);
   const classOptions = useMemo(
@@ -237,12 +295,17 @@ export default function ClassDeviceNotesPage() {
   const [newCoeff, setNewCoeff] = useState<number>(1);
   const [creating, setCreating] = useState(false);
 
+  /* -------- Colonne active sur mobile -------- */
+  const [activeEvalId, setActiveEvalId] = useState<string | null>(null);
+
   /* ==========================================
      Chargement des classes (compte-classe)
   ========================================== */
   useEffect(() => {
     (async () => {
-      logInfo("useEffect[classes] -> début chargement des classes pour compte-classe");
+      logInfo(
+        "useEffect[classes] -> début chargement des classes pour compte-classe"
+      );
       try {
         const r = await fetch("/api/grades/classes", { cache: "no-store" });
         logInfo("useEffect[classes] -> /api/grades/classes status", r.status);
@@ -285,7 +348,9 @@ export default function ClassDeviceNotesPage() {
     setComponents([]);
     setSelectedComponentId("");
     if (!selected || !selected.subject_id) {
-      logInfo("useEffect[components] -> pas de selected ou pas de subject_id, on annule.");
+      logInfo(
+        "useEffect[components] -> pas de selected ou pas de subject_id, on annule."
+      );
       return;
     }
     if (!isCollegeLevel(selected.level)) {
@@ -344,6 +409,7 @@ export default function ClassDeviceNotesPage() {
       setEvaluations([]);
       setGrades({});
       setChanged({});
+      setActiveEvalId(null);
       return;
     }
     (async () => {
@@ -564,6 +630,8 @@ export default function ClassDeviceNotesPage() {
         return next;
       });
       setGrades((prev) => ({ ...prev, [created.id]: {} }));
+      // ✅ Sur mobile, on passe automatiquement sur la nouvelle colonne
+      setActiveEvalId(created.id);
       setMsg("NOTE ajoutée ✅ (colonne suivante)");
     } catch (e: any) {
       logError("addEvaluation -> exception", e);
@@ -664,6 +732,8 @@ export default function ClassDeviceNotesPage() {
         delete next[ev.id];
         return next;
       });
+
+      // Si on supprimait la colonne active sur mobile, on la réajuste via le mémo plus bas
       setMsg("Colonne de note supprimée ✅");
     } catch (e: any) {
       logError("deleteEvaluation -> exception", e);
@@ -848,11 +918,12 @@ export default function ClassDeviceNotesPage() {
     };
     const map: Record<string, string> = {};
     for (const ev of evaluations) {
-      counters[ev.eval_kind] += 1;
-      const idx = counters[ev.eval_kind];
+      const kind = ev.eval_kind as EvalKind;
+      counters[kind] = (counters[kind] ?? 0) + 1;
+      const idx = counters[kind];
       let prefix: string;
-      if (ev.eval_kind === "devoir") prefix = "DEVOIR";
-      else if (ev.eval_kind === "interro_ecrite") prefix = "IE";
+      if (kind === "devoir") prefix = "DEVOIR";
+      else if (kind === "interro_ecrite") prefix = "IE";
       else prefix = "IO";
       map[ev.id] = `${prefix}${idx}`;
     }
@@ -1013,34 +1084,70 @@ export default function ClassDeviceNotesPage() {
   }
 
   /* ==========================================
+     Calcul de la colonne active sur mobile
+  ========================================== */
+  const currentActiveEvalId = useMemo(() => {
+    if (!evaluations.length) return null;
+    if (activeEvalId && evaluations.some((ev) => ev.id === activeEvalId)) {
+      return activeEvalId;
+    }
+    // si activeEvalId est null ou ne correspond plus (suppression), on se met sur la dernière
+    return evaluations[evaluations.length - 1]?.id ?? null;
+  }, [evaluations, activeEvalId]);
+
+  const displayedEvaluations = useMemo(() => {
+    if (!isMobile) return evaluations; // PC → toutes les colonnes, comportement actuel
+    if (!evaluations.length) return evaluations;
+    if (!currentActiveEvalId) return evaluations;
+    return evaluations.filter((ev) => ev.id === currentActiveEvalId);
+  }, [isMobile, evaluations, currentActiveEvalId]);
+
+  /* ==========================================
      Rendu
   ========================================== */
   return (
     <main className="mx-auto max-w-7xl px-4 py-6 space-y-6">
-      {/* Header */}
-      <header className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">
-            Notes — Compte classe
-          </h1>
-          <p className="text-slate-600 text-sm">
-            Ce compte est associé au téléphone de la classe pour saisir les
-            notes.
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <GhostButton onClick={() => window.location.reload()}>
-            <RefreshCw className="h-4 w-4" /> Actualiser
-          </GhostButton>
-          {mode === "saisie" ? (
-            <GhostButton onClick={openAverages}>
-              <Eye className="h-4 w-4" /> Voir les moyennes
+      {/* Header indigo / bleu nuit avec établissement + année scolaire */}
+      <header className="rounded-2xl border border-indigo-800/60 bg-gradient-to-r from-slate-950 via-indigo-900 to-slate-900 px-4 py-4 md:px-6 md:py-5 text-white shadow-sm">
+        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <div className="space-y-1">
+            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-indigo-200/80">
+              {institutionName || "Nom de l’établissement"}
+              {academicYearLabel
+                ? ` • Année scolaire ${academicYearLabel}`
+                : ""}
+            </p>
+            <h1 className="text-2xl md:text-3xl font-semibold tracking-tight">
+              Notes — Compte classe
+            </h1>
+            <p className="text-xs md:text-sm text-indigo-100/85">
+              Ce compte est associé au téléphone de la classe pour saisir les
+              notes rapidement, même sur mobile.
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <GhostButton
+              onClick={() => window.location.reload()}
+              className="border-indigo-400/70 bg-indigo-900/40 text-indigo-100 hover:bg-indigo-800/80 hover:text-white"
+            >
+              <RefreshCw className="h-4 w-4" /> Actualiser
             </GhostButton>
-          ) : (
-            <GhostButton onClick={() => setMode("saisie")}>
-              <EyeOff className="h-4 w-4" /> Retour à la saisie
-            </GhostButton>
-          )}
+            {mode === "saisie" ? (
+              <GhostButton
+                onClick={openAverages}
+                className="border-indigo-400/70 bg-indigo-900/40 text-indigo-100 hover:bg-indigo-800/80 hover:text-white"
+              >
+                <Eye className="h-4 w-4" /> Voir les moyennes
+              </GhostButton>
+            ) : (
+              <GhostButton
+                onClick={() => setMode("saisie")}
+                className="border-indigo-400/70 bg-indigo-900/40 text-indigo-100 hover:bg-indigo-800/80 hover:text-white"
+              >
+                <EyeOff className="h-4 w-4" /> Retour à la saisie
+              </GhostButton>
+            )}
+          </div>
         </div>
       </header>
 
@@ -1055,7 +1162,10 @@ export default function ClassDeviceNotesPage() {
             <Select
               value={selKey}
               onChange={(e) => {
-                logInfo("UI -> changement de classe/discipline", e.target.value);
+                logInfo(
+                  "UI -> changement de classe/discipline",
+                  e.target.value
+                );
                 setSelKey(e.target.value);
               }}
               aria-label="Classe — Discipline"
@@ -1084,7 +1194,10 @@ export default function ClassDeviceNotesPage() {
                   type="date"
                   value={newDate}
                   onChange={(e) => {
-                    logInfo("UI -> changement date nouvelle note", e.target.value);
+                    logInfo(
+                      "UI -> changement date nouvelle note",
+                      e.target.value
+                    );
                     setNewDate(e.target.value);
                   }}
                   aria-label="Date"
@@ -1126,7 +1239,8 @@ export default function ClassDeviceNotesPage() {
                     aria-label="Sous-rubrique"
                   >
                     <option value="">
-                      — Sous-rubrique (Français, etc.) —</option>
+                      — Sous-rubrique (Français, etc.) —
+                    </option>
                     {components.map((c) => (
                       <option key={c.id} value={c.id}>
                         {c.short_label || c.label} (coeff {c.coeff_in_subject})
@@ -1181,10 +1295,7 @@ export default function ClassDeviceNotesPage() {
               </div>
             </div>
             <div className="mt-2">
-              <Button
-                onClick={addEvaluation}
-                disabled={!selected || creating}
-              >
+              <Button onClick={addEvaluation} disabled={!selected || creating}>
                 <Plus className="h-4 w-4" />
                 {creating ? "Ajout…" : "Ajouter une note"}
               </Button>
@@ -1217,6 +1328,16 @@ export default function ClassDeviceNotesPage() {
                 ? "colonne de note"
                 : "colonnes de notes"}{" "}
               • {roster.length} élèves
+              {isMobile && currentActiveEvalId && evaluations.length > 0 && (
+                <span className="ml-1 text-xs text-slate-500">
+                  — colonne affichée :{" "}
+                  {
+                    labelByEvalId[
+                      currentActiveEvalId as keyof typeof labelByEvalId
+                    ]
+                  }
+                </span>
+              )}
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <GhostButton
@@ -1246,6 +1367,32 @@ export default function ClassDeviceNotesPage() {
             </div>
           </div>
 
+          {/* Bandeau de boutons compacts pour changer de colonne sur mobile */}
+          {isMobile && evaluations.length > 0 && (
+            <div className="mb-3 flex flex-wrap gap-2">
+              {evaluations.map((ev) => {
+                const label = labelByEvalId[ev.id] ?? "NOTE";
+                const isActive = currentActiveEvalId === ev.id;
+                return (
+                  <button
+                    key={ev.id}
+                    type="button"
+                    onClick={() => setActiveEvalId(ev.id)}
+                    className={[
+                      "inline-flex items-center rounded-full border px-3 py-1 text-xs font-medium transition",
+                      "focus:outline-none focus:ring-2 focus:ring-emerald-500/40",
+                      isActive
+                        ? "border-emerald-500 bg-emerald-50 text-emerald-700"
+                        : "border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100",
+                    ].join(" ")}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
           <div className="overflow-x-auto rounded-xl border">
             <table className="min-w-full text-sm">
               <thead className="bg-slate-50 sticky top-0 z-10">
@@ -1260,13 +1407,12 @@ export default function ClassDeviceNotesPage() {
                     Nom et prénoms
                   </th>
 
-                  {evaluations.map((ev) => {
+                  {displayedEvaluations.map((ev) => {
                     const label = labelByEvalId[ev.id] ?? "NOTE";
                     const comp = ev.subject_component_id
                       ? componentById[ev.subject_component_id]
                       : undefined;
-                    const rubLabel =
-                      comp?.short_label || comp?.label || "";
+                    const rubLabel = comp?.short_label || comp?.label || "";
                     return (
                       <th
                         key={ev.id}
@@ -1347,7 +1493,7 @@ export default function ClassDeviceNotesPage() {
                         {st.full_name}
                       </td>
 
-                      {evaluations.map((ev) => {
+                      {displayedEvaluations.map((ev) => {
                         const scale = ev.scale;
                         const current =
                           changed[ev.id]?.[st.id] ??
