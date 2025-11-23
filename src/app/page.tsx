@@ -16,6 +16,7 @@ import {
   MessageSquare,
   PhoneCall,
   ArrowUp,
+  Quote,
   PlayCircle,
 } from "lucide-react";
 
@@ -352,9 +353,6 @@ export default function HomePage() {
             <a href="#steps" className="hover:text-white">
               Comment ça marche
             </a>
-            <a href="#testimonials" className="hover:text-white">
-              Témoignages
-            </a>
             <a href="#faq" className="hover:text-white">
               FAQ
             </a>
@@ -363,8 +361,8 @@ export default function HomePage() {
             </a>
           </nav>
 
-          {/* Connexions */}
-          {/* Desktop : 3 boutons */}
+          {/* Connexions visibles */}
+          {/* Desktop : 3 boutons toujours visibles */}
           <div className="hidden flex-wrap items-center gap-2 md:flex">
             <a
               href="/parents/login"
@@ -386,7 +384,7 @@ export default function HomePage() {
             </a>
           </div>
 
-          {/* Mobile : un seul bouton qui amène vers le bloc "Choisissez votre espace" */}
+          {/* Mobile : bouton unique qui scrolle vers le bloc de choix d’espace */}
           <a
             href="#spaces"
             className="inline-flex items-center rounded-full bg-white/10 px-3 py-1.5 text-xs font-semibold text-white ring-1 ring-white/30 hover:bg-white/15 md:hidden"
@@ -417,7 +415,7 @@ export default function HomePage() {
               <b>modèle de prédiction du taux de réussite</b> de chaque classe.
             </p>
 
-            {/* Bloc choix d’espace */}
+            {/* Bloc de choix d’espace (très visible et cliquable) */}
             <div
               id="spaces"
               className="mt-6 w-full max-w-md space-y-3 rounded-2xl bg-white/90 p-3 shadow-sm backdrop-blur"
@@ -497,16 +495,12 @@ export default function HomePage() {
             </div>
 
             <div className="mt-8 grid max-w-2xl grid-cols-2 gap-3">
-              <Stat icon={Users} label="Parents touchés" value="&gt; 10 000" />
-              <Stat
-                icon={Clock}
-                label="Temps d’appel moyen"
-                value="&lt; 60 s"
-              />
+              <Stat icon={Users} label="Parents touchés" value="> 10 000" />
+              <Stat icon={Clock} label="Temps d’appel moyen" value="< 60 s" />
               <Stat
                 icon={Bell}
                 label="Notifications envoyées"
-                value="&gt; 250 000"
+                value="> 250 000"
               />
               <Stat
                 icon={Rocket}
@@ -643,64 +637,79 @@ export default function HomePage() {
           Cahier au quotidien.
         </p>
 
+        {/* Cartes témoignages */}
         <div className="mt-6 grid gap-4 md:grid-cols-3">
-          <div className="rounded-2xl border border-indigo-100 bg-indigo-50/70 p-5 shadow-sm">
-            <p className="text-sm text-slate-800">
+          <article className="flex h-full flex-col rounded-2xl bg-gradient-to-b from-emerald-50 to-white p-5 shadow-sm ring-1 ring-emerald-100">
+            <div className="mb-3 inline-flex h-8 w-8 items-center justify-center rounded-full bg-emerald-100 text-emerald-700">
+              <Quote className="h-4 w-4" />
+            </div>
+            <p className="text-sm text-slate-700">
               « Les retards et absences sont enfin suivis sérieusement, sans
               piles de papiers. »
             </p>
-            <p className="mt-3 text-xs font-semibold text-indigo-700">
+            <p className="mt-4 text-xs font-semibold text-emerald-800">
               Proviseur, Lycée public Abidjan
             </p>
-          </div>
-          <div className="rounded-2xl border border-violet-100 bg-violet-50/70 p-5 shadow-sm">
-            <p className="text-sm text-slate-800">
+          </article>
+
+          <article className="flex h-full flex-col rounded-2xl bg-gradient-to-b from-indigo-50 to-white p-5 shadow-sm ring-1 ring-indigo-100">
+            <div className="mb-3 inline-flex h-8 w-8 items-center justify-center rounded-full bg-indigo-100 text-indigo-700">
+              <Quote className="h-4 w-4" />
+            </div>
+            <p className="text-sm text-slate-700">
               « Les parents nous disent qu’ils se sentent vraiment informés du
               travail de leurs enfants. »
             </p>
-            <p className="mt-3 text-xs font-semibold text-violet-700">
+            <p className="mt-4 text-xs font-semibold text-indigo-800">
               Censeur, Collège privé à Yopougon
             </p>
-          </div>
-          <div className="rounded-2xl border border-emerald-100 bg-emerald-50/70 p-5 shadow-sm">
-            <p className="text-sm text-slate-800">
-              « Ce qui est intéressant, c’est qu’on sait si un enseignant est en
-              classe ou pas. »
+          </article>
+
+          <article className="flex h-full flex-col rounded-2xl bg-gradient-to-b from-violet-50 to-white p-5 shadow-sm ring-1 ring-violet-100">
+            <div className="mb-3 inline-flex h-8 w-8 items-center justify-center rounded-full bg-violet-100 text-violet-700">
+              <Quote className="h-4 w-4" />
+            </div>
+            <p className="text-sm text-slate-700">
+              « Ce qui est intéressant, c’est qu’on sait si un enseignant est
+              en classe ou pas. »
             </p>
-            <p className="mt-3 text-xs font-semibold text-emerald-700">
+            <p className="mt-4 text-xs font-semibold text-violet-800">
               Responsable pédagogique, Établissement partenaire
             </p>
-          </div>
+          </article>
         </div>
 
-        {/* "Vidéo" : image cliquable plutôt qu’un embed lourd */}
+        {/* "Vidéo" : image cliquable plutôt qu’un embed */}
         <div className="mt-8 flex justify-center">
           <a
             href="https://youtube.com/shorts/ZF923Z7NXGc?si=RlUDmRm8FN_NbPjG"
             target="_blank"
             rel="noreferrer"
-            className="group relative block w-full max-w-3xl overflow-hidden rounded-3xl bg-slate-900 shadow-lg ring-1 ring-slate-900/10"
+            className="group block w-full max-w-3xl"
           >
-            {/* Image du témoignage – place le fichier dans /public/temoignage-directeur.jpg */}
-            <div className="relative aspect-video w-full">
-              <Image
-                src="/temoignage-directeur.jpg"
-                alt="Témoignage d’un chef d’établissement utilisant Mon Cahier"
-                fill
-                className="object-cover transition duration-300 group-hover:scale-[1.02] group-hover:brightness-[0.9]"
-              />
-              <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/40 to-black/10" />
-            </div>
+            <div className="relative overflow-hidden rounded-3xl bg-slate-900 shadow-lg ring-1 ring-slate-900/20">
+              {/* ⚠️ place bien le fichier dans /public/temoignage-directeur.jpg */}
+              <div className="relative aspect-video w-full">
+                <Image
+                  src="/temoignage-directeur.jpg"
+                  alt="Témoignage d’un chef d’établissement utilisant Mon Cahier"
+                  fill
+                  sizes="(max-width: 768px) 100vw, 768px"
+                  className="object-cover transition duration-300 group-hover:scale-[1.03]"
+                />
+                <div className="absolute inset-0 bg-gradient-to-t from-black/75 via-black/40 to-black/10" />
+              </div>
 
-            <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center px-6 text-center text-white">
-              <div className="mb-3 inline-flex h-14 w-14 items-center justify-center rounded-full bg-white/15 ring-2 ring-white/40 group-hover:bg-white/25">
-                <PlayCircle className="h-8 w-8" />
-              </div>
-              <div className="text-sm font-semibold sm:text-base">
-                Témoignage vidéo d’un chef d’établissement
-              </div>
-              <div className="mt-1 text-xs text-slate-200/90 sm:text-sm">
-                Cliquez pour regarder le témoignage complet sur YouTube.
+              <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center px-6 text-center text-white">
+                <div className="mb-3 inline-flex h-14 w-14 items-center justify-center rounded-full bg-white/15 ring-2 ring-white/40 group-hover:bg-white/25">
+                  <PlayCircle className="h-8 w-8" />
+                </div>
+                <div className="text-sm font-semibold sm:text-base">
+                  Témoignage vidéo d’un chef d’établissement
+                </div>
+                <div className="mt-1 text-xs text-slate-200/90 sm:text-sm">
+                  Cliquez pour regarder le témoignage complet sur YouTube.
+                </div>
               </div>
             </div>
           </a>
@@ -781,11 +790,6 @@ export default function HomePage() {
               <li>
                 <a href="#steps" className="hover:text-white">
                   Comment ça marche
-                </a>
-              </li>
-              <li>
-                <a href="#testimonials" className="hover:text-white">
-                  Témoignages
                 </a>
               </li>
               <li>

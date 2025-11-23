@@ -23,7 +23,6 @@ export function normalize(role: AppRole): AppRole {
   return role;
 }
 
-// Compat : on continue d'exposer routeForRole.
-// Et on expose la variante Book-aware.
+// Compat : on continue d'exposer routeForRole et la variante "Book-aware".
 export { routeForRole, routeForRoleWithBook } from "./routing";
 export type { Book } from "./routing";

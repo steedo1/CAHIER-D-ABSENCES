@@ -1,3 +1,4 @@
+// src/lib/auth/routing.ts
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 export type AppRole =
@@ -21,9 +22,14 @@ export const ROLE_PRIORITY: AppRole[] = [
 
 function normalize(role: AppRole): AppRole {
   // ⚠️ On ne mappe plus educator → admin
+  // Chaque rôle reste distinct.
   return role;
 }
 
+/**
+ * Route par défaut (sans notion de cahier).
+ * Utilisé quand on ne précise pas `book` ou pour le "book" assiduité.
+ */
 export function routeForRole(role: AppRole): string {
   switch (role) {
     case "super_admin":
@@ -33,9 +39,9 @@ export function routeForRole(role: AppRole): string {
     case "educator":
       return "/admin/dashboard"; // même dashboard, mais menu filtré côté front
     case "teacher":
-      return "/attendance";
+      return "/attendance"; // espace assiduité enseignant
     case "class_device":
-      return "/class";
+      return "/class"; // compte-classe pour assiduité
     case "parent":
       return "/parents";
     default:
@@ -43,31 +49,42 @@ export function routeForRole(role: AppRole): string {
   }
 }
 
-/** Variante sensible au cahier choisi. */
+/**
+ * Variante sensible au cahier choisi (assiduité / notes).
+ */
 export function routeForRoleWithBook(role: AppRole, book?: Book): string {
   const r = normalize(role);
+
+  // ✅ Cahier de NOTES
   if (book === "grades") {
     switch (r) {
       case "teacher":
-        return "/grades";
+        return "/grades"; // Cahier de notes — espace enseignant
       case "admin":
-        return "/admin/notes";
+        return "/admin/notes"; // Cahier de notes — admin établissement
       case "super_admin":
-        return "/super/notes";
+        return "/super/notes"; // Cahier de notes — super admin
       case "parent":
-        return "/parents?tab=notes";
+        return "/parents?tab=notes"; // Onglet "notes" côté parent
       case "class_device":
-        return "/class";
-      // 👉 educator : ne va PAS vers /admin/notes, on retombe sur la route par défaut
+        // ✅ Compte-classe pour le cahier de notes
+        return "/grades/class-device";
+      // 👉 educator : ne va PAS vers /admin/notes,
+      // on retombe sur la route par défaut (dashboard admin filtré).
       default:
         return routeForRole(r);
     }
   }
-  // défaut : absences
+
+  // ✅ Par défaut : assiduité
   return routeForRole(r);
 }
 
-/** Renvoie toujours une route. Si role=teacher et pas de book → /choose-book. */
+/**
+ * Renvoie toujours une route.
+ * - Si role = teacher OU class_device et pas de `book` → /choose-book.
+ * - Sinon → route calculée avec ou sans `book`.
+ */
 export async function routeForUser(
   userId: string,
   supabase: SupabaseClient,
@@ -82,19 +99,23 @@ export async function routeForUser(
     if (!error) {
       const roles = (rows ?? []).map((r) => r.role as AppRole);
       const primary = ROLE_PRIORITY.find((r) => roles.includes(r)) || roles[0];
+
       if (primary) {
         const pr = normalize(primary);
-        // ⭐️ Nouveau: les enseignants choisissent leur cahier après login
-        if (pr === "teacher" && !book) {
+
+        // ⭐️ Enseignant ET compte-classe : si pas encore choisi son cahier,
+        // on l'envoie sur l’écran de choix.
+        if ((pr === "teacher" || pr === "class_device") && !book) {
           return "/choose-book";
         }
+
         return routeForRoleWithBook(pr, book);
       }
     } else {
       console.error("[routeForUser] user_roles error:", error.message || error);
     }
 
-    // fallback "parent" si lien existant
+    // Fallback "parent" si le user est un parent lié à un élève
     const { data: g } = await supabase
       .from("student_guardians")
       .select("student_id")
@@ -105,6 +126,7 @@ export async function routeForUser(
       return book === "grades" ? "/parents?tab=notes" : "/parents";
     }
 
+    // Fallback ultime
     return "/profile";
   } catch (e: any) {
     console.error("[routeForUser] exception:", e?.message || e);
