@@ -3,18 +3,24 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { Menu, X } from "lucide-react";
+import { usePathname } from "next/navigation";
+import { Menu, X, LayoutDashboard, Ban, NotebookPen, Settings } from "lucide-react";
 import { LogoutButton } from "@/components/LogoutButton";
 import SidebarNav from "./sidebar-nav";
 import ContactUsButton from "@/components/ContactUsButton";
 
 export default function AdminShell({ children }: { children: React.ReactNode }) {
   const [mobileOpen, setMobileOpen] = useState(false);
+  const pathname = usePathname();
+
+  function isActive(href: string) {
+    return pathname === href || (pathname ?? "").startsWith(href + "/");
+  }
 
   return (
     <div className="min-h-screen bg-slate-50">
       {/* ─────────────────────────────
-          Drawer mobile (sidebar)
+          Drawer mobile (sidebar complète)
       ───────────────────────────── */}
       <div
         className={[
@@ -43,12 +49,12 @@ export default function AdminShell({ children }: { children: React.ReactNode }) 
           </div>
 
           <div className="h-[calc(100%-3rem)] overflow-y-auto">
-            {/* ✅ On réutilise exactement le même menu */}
+            {/* ✅ Même menu que desktop */}
             <SidebarNav />
           </div>
         </div>
 
-        {/* Cliquer sur le fond ferme le drawer */}
+        {/* Clic sur le fond → ferme le drawer */}
         <button
           type="button"
           className="h-full w-full cursor-default"
@@ -90,7 +96,7 @@ export default function AdminShell({ children }: { children: React.ReactNode }) 
               </div>
 
               <div className="flex items-center gap-2">
-                {/* 🔥 Raccourci Assiduité toujours visible */}
+                {/* 🔥 Raccourci Assiduité */}
                 <Link
                   href="/admin/assiduite"
                   className="rounded-full bg-white/10 px-3 py-1 text-xs font-semibold ring-1 ring-white/20 hover:bg-white/15"
@@ -115,7 +121,66 @@ export default function AdminShell({ children }: { children: React.ReactNode }) 
             </div>
           </header>
 
-          <main className="mx-auto max-w-7xl px-4 py-6">{children}</main>
+          {/* Contenu principal
+             👉 padding-bottom plus grand pour ne pas être caché par la barre du bas */}
+          <main className="mx-auto max-w-7xl px-4 py-6 pb-20 md:pb-8">{children}</main>
+
+          {/* ─────────────────────────────
+              MENU MOBILE EN BAS (style app / Ecolemedia)
+          ───────────────────────────── */}
+          <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-slate-200 bg-white/95 backdrop-blur md:hidden">
+            <div className="mx-auto flex max-w-7xl items-stretch justify-between">
+              {[
+                {
+                  href: "/admin/dashboard",
+                  label: "Accueil",
+                  Icon: LayoutDashboard,
+                },
+                {
+                  href: "/admin/absences",
+                  label: "Absences",
+                  Icon: Ban,
+                },
+                {
+                  href: "/admin/notes",
+                  label: "Notes",
+                  Icon: NotebookPen,
+                },
+                {
+                  href: "/admin/parametres",
+                  label: "Paramètres",
+                  Icon: Settings,
+                },
+              ].map(({ href, label, Icon }) => {
+                const active = isActive(href);
+                return (
+                  <Link
+                    key={href}
+                    href={href}
+                    className={[
+                      "flex flex-1 flex-col items-center justify-center gap-0.5 py-2 text-[11px]",
+                      "transition-colors",
+                      active
+                        ? "text-emerald-700 font-semibold"
+                        : "text-slate-500 hover:text-slate-800",
+                    ].join(" ")}
+                  >
+                    <div
+                      className={[
+                        "flex h-8 w-8 items-center justify-center rounded-full text-xs border",
+                        active
+                          ? "bg-emerald-50 border-emerald-200"
+                          : "bg-slate-50 border-slate-200",
+                      ].join(" ")}
+                    >
+                      <Icon className="h-4 w-4" />
+                    </div>
+                    <span className="truncate">{label}</span>
+                  </Link>
+                );
+              })}
+            </div>
+          </nav>
         </div>
       </div>
     </div>

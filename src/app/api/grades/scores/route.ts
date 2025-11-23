@@ -64,7 +64,9 @@ export async function GET(req: NextRequest) {
   try {
     const url = new URL(req.url);
     const evalId = url.searchParams.get("evaluation_id") || "";
-    if (!evalId) return NextResponse.json({ items: [] as ScoreRow[] });
+    if (!evalId) {
+      return NextResponse.json({ items: [] as ScoreRow[] });
+    }
 
     const { profile, srv } = await getContext();
     if (!profile || !srv) {
@@ -73,11 +75,13 @@ export async function GET(req: NextRequest) {
 
     const ev = await ensureEvalAccess(srv, evalId, profile.institution_id);
     if (!ev) {
+      // Pas d'accès ou évaluation inexistante → on renvoie un tableau vide
       return NextResponse.json({ items: [] as ScoreRow[] }, { status: 200 });
     }
 
+    // 🔴 ICI ÉTAIT L'ERREUR : on lisait dans "grade_scores"
     const { data, error } = await srv
-      .from("grade_scores")
+      .from("student_grades")
       .select("student_id,score")
       .eq("evaluation_id", evalId);
 

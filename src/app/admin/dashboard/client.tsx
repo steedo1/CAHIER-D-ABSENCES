@@ -31,11 +31,11 @@ type MetricsOk = {
     classes: number;
     teachers: number;
     parents: number;
-    students: number;          // élèves ACTIFS si l'API a été mise à jour
-    students_total?: number;   // total profils (facultatif pour compat descendante)
+    students: number; // élèves ACTIFS
+    students_total?: number;
   };
   kpis: { absences: number; retards: number };
-  meta?: { days?: number };    // facultatif (7/30/90)
+  meta?: { days?: number };
 };
 
 type MetricsErr = { ok: false; error: string };
@@ -53,24 +53,36 @@ function Skeleton({ className = "" }: { className?: string }) {
   return <div className={`animate-pulse rounded-lg bg-slate-200/70 ${className}`} />;
 }
 
-function CountUp({ value, duration = 700, className = "" }: { value: number; duration?: number; className?: string }) {
+function CountUp({
+  value,
+  duration = 700,
+  className = "",
+}: {
+  value: number;
+  duration?: number;
+  className?: string;
+}) {
   const [display, setDisplay] = useState(0);
   const prev = useRef(0);
+
   useEffect(() => {
     const start = performance.now();
     const from = prev.current;
     const diff = value - from;
     let raf = 0;
+
     function tick(t: number) {
       const p = Math.min(1, (t - start) / duration);
-      const eased = 1 - Math.pow(1 - p, 3); // easeOutCubic
+      const eased = 1 - Math.pow(1 - p, 3);
       setDisplay(Math.round(from + diff * eased));
       if (p < 1) raf = requestAnimationFrame(tick);
     }
+
     raf = requestAnimationFrame(tick);
     prev.current = value;
     return () => cancelAnimationFrame(raf);
   }, [value, duration]);
+
   return (
     <span className={className} aria-live="polite" aria-atomic="true">
       {display.toLocaleString()}
@@ -170,14 +182,18 @@ function KpiCard({
   const t = tones[tone];
 
   return (
-    <Card className={`rounded-2xl shadow-sm ring-1 ${t.ring} ${t.border} border bg-gradient-to-b ${t.bg}`}>
+    <Card
+      className={`rounded-2xl shadow-sm ring-1 ${t.ring} ${t.border} border bg-gradient-to-b ${t.bg}`}
+    >
       <CardHeader className="pb-3">
-        <CardTitle className="flex items-center gap-2 text-sm text-slate-600">
-          <span className={`inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs ${t.chip}`}>
+        <CardTitle className="flex items-center justify-between gap-2 text-sm text-slate-600">
+          <span
+            className={`inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs ${t.chip}`}
+          >
             {t.icon}
             {periodLabel}
           </span>
-          <span className="sr-only">{hint}</span>
+          <span className="ml-auto text-[11px] font-medium text-slate-500">{title}</span>
         </CardTitle>
       </CardHeader>
       <CardContent className="pt-0">
@@ -190,7 +206,15 @@ function KpiCard({
   );
 }
 
-function QuickLink({ href, icon: Icon, children }: { href: string; icon: any; children: React.ReactNode }) {
+function QuickLink({
+  href,
+  icon: Icon,
+  children,
+}: {
+  href: string;
+  icon: any;
+  children: React.ReactNode;
+}) {
   return (
     <Link href={href} className="group">
       <div className="flex items-center justify-between rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 shadow-sm transition hover:border-emerald-300 hover:bg-emerald-100">
@@ -198,7 +222,9 @@ function QuickLink({ href, icon: Icon, children }: { href: string; icon: any; ch
           <div className="rounded-lg bg-white p-2 text-emerald-700 ring-1 ring-emerald-100">
             <Icon className="h-5 w-5" />
           </div>
-          <span className="text-sm font-medium text-emerald-900 group-hover:text-emerald-950">{children}</span>
+          <span className="text-sm font-medium text-emerald-900 group-hover:text-emerald-950">
+            {children}
+          </span>
         </div>
         <ChevronRight className="h-5 w-5 text-emerald-500 transition group-hover:translate-x-0.5" />
       </div>
@@ -223,25 +249,6 @@ function Segmented({ value, onChange }: { value: DaysRange; onChange: (v: DaysRa
           {d}j
         </button>
       ))}
-    </div>
-  );
-}
-
-/* ─────────────────────────────
-   Barre supérieure bleue (option)
-───────────────────────────── */
-export function ColoredTopbar({ children, className = "" }: { children: React.ReactNode; className?: string }) {
-  return (
-    <div
-      className={[
-        "mb-4 flex items-center justify-between rounded-2xl",
-        "border border-blue-900/60 ring-1 ring-blue-800/40",
-        "bg-blue-950 text-white shadow-sm",
-        "px-4 py-3",
-        className,
-      ].join(" ")}
-    >
-      {children}
     </div>
   );
 }
@@ -305,7 +312,9 @@ export default function AdminDashboardClient() {
         if (rInst.ok) {
           const name = String(instJson?.institution_name || "").trim();
           const logo =
-            typeof instJson?.institution_logo_url === "string" ? instJson.institution_logo_url : "";
+            typeof instJson?.institution_logo_url === "string"
+              ? instJson.institution_logo_url
+              : "";
           setInstitution({
             name: name || "Votre établissement",
             logo_url: logo || null,
@@ -342,7 +351,7 @@ export default function AdminDashboardClient() {
   return (
     <div className="space-y-6">
       {/* En-tête gradient (section héro) */}
-      <div className="relative overflow-hidden rounded-3xl bg-gradient-to-r from-emerald-600 via-lime-500 to-amber-500 p-6 text-white">
+      <div className="relative overflow-hidden rounded-3xl bg-gradient-to-r from-emerald-600 via-lime-500 to-amber-500 p-5 text-white sm:p-6">
         <div
           className="pointer-events-none absolute inset-0 opacity-20"
           style={{
@@ -367,18 +376,19 @@ export default function AdminDashboardClient() {
                 <span className="h-1 w-1 rounded-full bg-white/70" />
                 <span className="opacity-80">Absences &amp; notes</span>
               </div>
-              <h1 className="mt-2 text-2xl font-semibold tracking-tight drop-shadow-sm">
+              <h1 className="mt-2 text-xl font-semibold tracking-tight drop-shadow-sm sm:text-2xl">
                 {loadingInstitution
                   ? "Espace établissement"
                   : institution?.name || "Espace établissement"}
               </h1>
-              <p className="mt-1 text-sm/6 text-white/90">
-                Suivi des absences, des retards et des notes en temps réel.
+              <p className="mt-1 text-sm leading-5 text-white/90">
+                Suivi des <strong>absences</strong>, des <strong>retards</strong>, de la{" "}
+                <strong>conduite</strong> et des <strong>notes</strong> de votre établissement.
               </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex flex-col items-stretch gap-2 sm:items-end">
             <Segmented
               value={days}
               onChange={(d) => {
@@ -386,25 +396,27 @@ export default function AdminDashboardClient() {
                 load(d);
               }}
             />
-            <Badge variant="secondary" className="bg-white/20 text-white hover:bg-white/30">
-              <CalendarClock className="mr-1 h-3.5 w-3.5" />
-              Aujourd&apos;hui
-            </Badge>
-            <Button
-              variant="secondary"
-              className="bg-white text-emerald-700 hover:bg-white/90"
-              onClick={() => load(days)}
-              disabled={refreshing}
-            >
-              <RefreshCw className={`mr-2 h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
-              Actualiser
-            </Button>
+            <div className="flex items-center justify-end gap-2">
+              <Badge variant="secondary" className="bg-white/20 text-white hover:bg-white/30">
+                <CalendarClock className="mr-1 h-3.5 w-3.5" />
+                {periodLabel}
+              </Badge>
+              <Button
+                variant="secondary"
+                className="bg-white text-emerald-700 hover:bg-white/90"
+                onClick={() => load(days)}
+                disabled={refreshing}
+              >
+                <RefreshCw className={`mr-2 h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
+                Actualiser
+              </Button>
+            </div>
           </div>
         </div>
 
         {/* État d'erreur */}
         {!loading && data && "ok" in data && !data.ok && (
-          <div className="relative z-10 mt-4 rounded-xl border border-red-300/60 bg-red-50/80 px-4 py-3 text-sm text-red-800">
+          <div className="relative z-10 mt-4 rounded-xl border border-red-300/60 bg-red-50/90 px-4 py-3 text-sm text-red-800">
             {(data as MetricsErr).error === "UNAUTHENTICATED"
               ? "Session expirée. Réactualisez la page ou reconnectez-vous."
               : (data as MetricsErr).error === "FORBIDDEN"
@@ -414,11 +426,29 @@ export default function AdminDashboardClient() {
         )}
       </div>
 
-      {/* Cartes de compteurs */}
+      {/* Cartes compteurs (vue globale simple, 1 colonne mobile) */}
       <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <StatCard label="Classes" value={counts.classes} Icon={School} accent="emerald" loading={loading} />
-        <StatCard label="Enseignants" value={counts.teachers} Icon={Users} accent="teal" loading={loading} />
-        <StatCard label="Parents" value={counts.parents} Icon={UserRoundCheck} accent="sky" loading={loading} />
+        <StatCard
+          label="Classes"
+          value={counts.classes}
+          Icon={School}
+          accent="emerald"
+          loading={loading}
+        />
+        <StatCard
+          label="Enseignants"
+          value={counts.teachers}
+          Icon={Users}
+          accent="teal"
+          loading={loading}
+        />
+        <StatCard
+          label="Parents"
+          value={counts.parents}
+          Icon={UserRoundCheck}
+          accent="sky"
+          loading={loading}
+        />
         <StatCard
           label="Élèves"
           value={counts.students}
@@ -433,12 +463,12 @@ export default function AdminDashboardClient() {
         />
       </section>
 
-      {/* KPIs + Raccourcis */}
+      {/* KPIs + Raccourcis (raccourcis cachés sur mobile) */}
       <section className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <KpiCard
           title="Absences / période"
           value={absences}
-          hint="Total des absences enregistrées sur la période"
+          hint="Total des absences enregistrées sur la période sélectionnée."
           tone="red"
           periodLabel={periodLabel}
           loading={loading}
@@ -446,14 +476,17 @@ export default function AdminDashboardClient() {
         <KpiCard
           title="Retards / période"
           value={retards}
-          hint="Total des retards enregistrés sur la période"
+          hint="Total des retards enregistrés sur la période sélectionnée."
           tone="amber"
           periodLabel={periodLabel}
           loading={loading}
         />
-        <Card className="rounded-2xl border-emerald-200 bg-emerald-50/50 shadow-sm">
+        {/* 👉 Raccourcis visibles uniquement à partir de md (pas sur mobile) */}
+        <Card className="hidden rounded-2xl border-emerald-200 bg-emerald-50/50 shadow-sm md:block">
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-semibold text-emerald-900">Raccourcis</CardTitle>
+            <CardTitle className="text-sm font-semibold text-emerald-900">
+              Raccourcis établissement
+            </CardTitle>
           </CardHeader>
           <CardContent className="pt-0">
             <div className="space-y-2">
@@ -467,7 +500,7 @@ export default function AdminDashboardClient() {
                 Affecter des classes
               </QuickLink>
               <QuickLink href="/admin/parents" icon={Users}>
-                Listes des classes
+                Liste des classes
               </QuickLink>
               <QuickLink href="/admin/import" icon={GraduationCap}>
                 Importer élèves
@@ -480,14 +513,15 @@ export default function AdminDashboardClient() {
         </Card>
       </section>
 
-      {/* Bandeau onboarding */}
+      {/* Bandeau onboarding si aucune classe */}
       {!loading && isOk && counts.classes === 0 && (
         <Card className="rounded-2xl border-amber-200 bg-amber-50/60 shadow-sm">
           <CardContent className="flex flex-col items-start gap-4 p-5 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <div className="font-medium text-amber-900">Commencez par créer vos classes</div>
               <div className="text-sm text-amber-800/90">
-                Aucune classe trouvée pour le moment. Ajoutez vos classes pour activer la prise de présence.
+                Aucune classe trouvée pour le moment. Ajoutez vos classes pour activer la prise de
+                présence.
               </div>
             </div>
             <Button asChild className="bg-amber-600 text-white hover:bg-amber-600/90">
@@ -503,10 +537,17 @@ export default function AdminDashboardClient() {
         <Separator className="my-2" />
       </div>
       <div className="flex items-center justify-between text-xs text-slate-400">
-        <div>© {new Date().getFullYear()} Mon Cahier · Absences &amp; Notes · Tableau de bord</div>
+        <div>
+          © {new Date().getFullYear()} Mon Cahier · Absences &amp; Notes · Tableau de bord
+        </div>
         <div className="inline-flex items-center gap-1 text-slate-400">
           <Clock4 className="h-3.5 w-3.5" />
-          {updatedAt ? `Mis à jour à ${updatedAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : "—"}
+          {updatedAt
+            ? `Mis à jour à ${updatedAt.toLocaleTimeString([], {
+                hour: "2-digit",
+                minute: "2-digit",
+              })}`
+            : "—"}
         </div>
       </div>
     </div>

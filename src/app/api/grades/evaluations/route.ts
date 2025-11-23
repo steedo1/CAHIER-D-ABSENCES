@@ -1,3 +1,4 @@
+// src/app/api/grades/evaluations/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
@@ -10,7 +11,7 @@ type EvalKind = "devoir" | "interro_ecrite" | "interro_orale";
 type EvalRow = {
   id: string;
   class_id: string;
-  subject_id: string | null;
+  subject_id: string | null; // ⇐ toujours un subjects.id en DB
   subject_component_id: string | null;
   teacher_id: string | null;
   eval_date: string;
@@ -20,6 +21,8 @@ type EvalRow = {
   is_published: boolean;
   published_at?: string | null;
 };
+
+/* ───────── Contexte user / établissement ───────── */
 
 async function getContext() {
   const supa = await getSupabaseServerClient();
@@ -53,7 +56,7 @@ async function getContext() {
 async function ensureClassAccess(
   srv: ReturnType<typeof getSupabaseServiceClient>,
   classId: string,
-  institutionId: string
+  institutionId: string,
 ): Promise<boolean> {
   if (!classId || !institutionId) return false;
   const { data: cls, error } = await srv
@@ -79,75 +82,77 @@ async function ensureClassAccess(
 }
 
 /**
- * Essaie de normaliser le subject_id pour respecter la FK :
- *  - d'abord on regarde si c'est déjà un institution_subjects.id pour cet établissement
- *  - sinon, on regarde si c'est un subject_id global rattaché à un institution_subjects
+ * Résout le subject_id envoyé par le front en un **subjects.id** utilisable
+ * dans grade_evaluations.subject_id.
+ *
+ * Cas gérés :
+ *  - le front envoie directement un subjects.id  → on garde tel quel
+ *  - le front envoie un institution_subjects.id → on récupère institution_subjects.subject_id
  *  - sinon, on renvoie la valeur brute (et on log un warning)
  */
-async function resolveSubjectId(
+async function resolveSubjectIdToGlobal(
   srv: ReturnType<typeof getSupabaseServiceClient>,
   institutionId: string,
-  rawSubjectId?: string | null
+  rawSubjectId?: string | null,
 ): Promise<string | null> {
   if (!rawSubjectId) return null;
   const sid = rawSubjectId;
 
-  // 1) Directement comme institution_subjects.id
-  const { data: direct, error: err1 } = await srv
-    .from("institution_subjects")
-    .select("id")
-    .eq("id", sid)
-    .eq("institution_id", institutionId)
-    .maybeSingle();
+  // 0) Est-ce déjà un subjects.id ?
+  try {
+    const { data: subj } = await srv
+      .from("subjects")
+      .select("id")
+      .eq("id", sid)
+      .maybeSingle();
 
-  if (err1) {
+    if (subj?.id) {
+      console.log(
+        "[grades/evaluations] resolveSubjectIdToGlobal: direct subjects.id",
+        { institutionId, rawSubjectId: sid },
+      );
+      return subj.id;
+    }
+  } catch (err) {
     console.error(
-      "[grades/evaluations] resolveSubjectId direct error",
-      err1,
-      { institutionId, sid }
+      "[grades/evaluations] resolveSubjectIdToGlobal subjects error",
+      err,
+      { institutionId, sid },
     );
   }
-  if (direct) {
-    console.log(
-      "[grades/evaluations] resolveSubjectId: direct institution_subjects.id",
-      {
-        institutionId,
-        rawSubjectId: sid,
-        resolved: direct.id,
-      }
-    );
-    return direct.id;
-  }
 
-  // 2) Comme subject_id global lié à un institution_subjects
-  const { data: viaSub, error: err2 } = await srv
-    .from("institution_subjects")
-    .select("id")
-    .eq("subject_id", sid)
-    .eq("institution_id", institutionId)
-    .maybeSingle();
+  // 1) Sinon, on considère que c’est un institution_subjects.id
+  try {
+    const { data: instSub } = await srv
+      .from("institution_subjects")
+      .select("id,subject_id")
+      .eq("id", sid)
+      .eq("institution_id", institutionId)
+      .maybeSingle();
 
-  if (err2) {
+    if (instSub?.subject_id) {
+      console.log(
+        "[grades/evaluations] resolveSubjectIdToGlobal: via institution_subjects",
+        {
+          institutionId,
+          rawSubjectId: sid,
+          resolved: instSub.subject_id,
+        },
+      );
+      return instSub.subject_id;
+    }
+  } catch (err) {
     console.error(
-      "[grades/evaluations] resolveSubjectId via subject_id error",
-      err2,
-      { institutionId, sid }
+      "[grades/evaluations] resolveSubjectIdToGlobal instSub error",
+      err,
+      { institutionId, sid },
     );
   }
-  if (viaSub) {
-    console.log("[grades/evaluations] resolveSubjectId: via subject_id", {
-      institutionId,
-      rawSubjectId: sid,
-      resolved: viaSub.id,
-    });
-    return viaSub.id;
-  }
 
-  // 3) Aucun match trouvé → on renvoie la valeur brute (provoquera
-  // probablement l'erreur de FK, mais avec un log clair).
+  // 2) Aucun match clair → on renvoie la valeur brute (risque de FK si vraiment invalide)
   console.warn(
-    "[grades/evaluations] resolveSubjectId: no institution_subjects match",
-    { institutionId, rawSubjectId: sid }
+    "[grades/evaluations] resolveSubjectIdToGlobal: no match",
+    { institutionId, rawSubjectId: sid },
   );
   return sid;
 }
@@ -160,7 +165,14 @@ export async function GET(req: NextRequest) {
     const url = new URL(req.url);
     const classId = url.searchParams.get("class_id") || "";
     const subjectRaw = url.searchParams.get("subject_id");
-    const subjectId = subjectRaw && subjectRaw !== "" ? subjectRaw : null;
+    const subjectParam = subjectRaw && subjectRaw !== "" ? subjectRaw : null;
+
+    // 🔹 sous-matière éventuelle
+    const subjectComponentRaw = url.searchParams.get("subject_component_id");
+    const subjectComponentId =
+      subjectComponentRaw && subjectComponentRaw !== ""
+        ? subjectComponentRaw
+        : null;
 
     if (!classId) {
       console.warn("[grades/evaluations] GET sans class_id");
@@ -171,14 +183,16 @@ export async function GET(req: NextRequest) {
     if (!user || !profile || !srv) {
       console.warn("[grades/evaluations] GET unauthorized", {
         classId,
-        subjectId,
+        subjectParam,
+        subjectComponentId,
       });
       return NextResponse.json({ items: [] as EvalRow[] }, { status: 401 });
     }
 
     console.log("[grades/evaluations] GET", {
       classId,
-      subjectId,
+      subjectParam,
+      subjectComponentId,
       profileId: profile.id,
       institutionId: profile.institution_id,
     });
@@ -192,17 +206,30 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ items: [] as EvalRow[] }, { status: 200 });
     }
 
+    // 🔁 On normalise toujours vers un subjects.id pour filtrer la table
+    let effectiveSubjectId: string | null = null;
+    if (subjectParam !== null) {
+      effectiveSubjectId = await resolveSubjectIdToGlobal(
+        srv,
+        profile.institution_id,
+        subjectParam,
+      );
+    }
+
     let q = srv
       .from("grade_evaluations")
       .select(
-        "id,class_id,subject_id,subject_component_id,teacher_id,eval_date,eval_kind,scale,coeff,is_published,published_at"
+        "id,class_id,subject_id,subject_component_id,teacher_id,eval_date,eval_kind,scale,coeff,is_published,published_at",
       )
       .eq("class_id", classId);
 
-    if (subjectId === null) {
+    // 🔹 Priorité à la sous-matière si présente
+    if (subjectComponentId) {
+      q = q.eq("subject_component_id", subjectComponentId);
+    } else if (effectiveSubjectId === null) {
       q = q.is("subject_id", null);
     } else {
-      q = q.eq("subject_id", subjectId);
+      q = q.eq("subject_id", effectiveSubjectId);
     }
 
     const { data, error } = await q.order("eval_date", { ascending: true });
@@ -210,7 +237,9 @@ export async function GET(req: NextRequest) {
     if (error) {
       console.error("[grades/evaluations] GET error", error, {
         classId,
-        subjectId,
+        subjectParam,
+        effectiveSubjectId,
+        subjectComponentId,
       });
       return NextResponse.json({ items: [] as EvalRow[] }, { status: 200 });
     }
@@ -231,7 +260,7 @@ export async function POST(req: NextRequest) {
     if (!body) {
       return NextResponse.json(
         { ok: false, error: "invalid_body" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -258,7 +287,7 @@ export async function POST(req: NextRequest) {
     if (!class_id || !eval_date || !eval_kind || !scale) {
       return NextResponse.json(
         { ok: false, error: "missing_fields" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -270,14 +299,14 @@ export async function POST(req: NextRequest) {
       });
       return NextResponse.json(
         { ok: false, error: "unauthorized" },
-        { status: 401 }
+        { status: 401 },
       );
     }
 
     const allowed = await ensureClassAccess(
       srv,
       class_id,
-      profile.institution_id
+      profile.institution_id,
     );
     if (!allowed) {
       console.warn("[grades/evaluations] POST forbidden", {
@@ -287,15 +316,15 @@ export async function POST(req: NextRequest) {
       });
       return NextResponse.json(
         { ok: false, error: "forbidden" },
-        { status: 403 }
+        { status: 403 },
       );
     }
 
     const subjRaw = subject_id && subject_id !== "" ? subject_id : null;
-    const resolvedSubjectId = await resolveSubjectId(
+    const resolvedSubjectId = await resolveSubjectIdToGlobal(
       srv,
       profile.institution_id,
-      subjRaw
+      subjRaw,
     );
 
     console.log("[grades/evaluations] POST resolved subject", {
@@ -321,7 +350,7 @@ export async function POST(req: NextRequest) {
         published_at: null,
       })
       .select(
-        "id,class_id,subject_id,subject_component_id,teacher_id,eval_date,eval_kind,scale,coeff,is_published,published_at"
+        "id,class_id,subject_id,subject_component_id,teacher_id,eval_date,eval_kind,scale,coeff,is_published,published_at",
       )
       .single();
 
@@ -332,7 +361,7 @@ export async function POST(req: NextRequest) {
       });
       return NextResponse.json(
         { ok: false, error: error.message },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -341,7 +370,7 @@ export async function POST(req: NextRequest) {
     console.error("[grades/evaluations] unexpected POST", e);
     return NextResponse.json(
       { ok: false, error: e?.message || "eval_create_failed" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
@@ -356,7 +385,7 @@ export async function PATCH(req: NextRequest) {
     if (!body) {
       return NextResponse.json(
         { ok: false, error: "invalid_body" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -370,7 +399,7 @@ export async function PATCH(req: NextRequest) {
     if (!evaluation_id) {
       return NextResponse.json(
         { ok: false, error: "missing_id" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -378,7 +407,7 @@ export async function PATCH(req: NextRequest) {
     if (!profile || !srv) {
       return NextResponse.json(
         { ok: false, error: "unauthorized" },
-        { status: 401 }
+        { status: 401 },
       );
     }
 
@@ -393,14 +422,14 @@ export async function PATCH(req: NextRequest) {
       console.error("[grades/evaluations] PATCH fetch eval error", evErr);
       return NextResponse.json(
         { ok: false, error: "evaluation_not_found" },
-        { status: 404 }
+        { status: 404 },
       );
     }
 
     const allowed = await ensureClassAccess(
       srv,
       evalRow.class_id,
-      profile.institution_id
+      profile.institution_id,
     );
     if (!allowed) {
       console.warn("[grades/evaluations] PATCH forbidden", {
@@ -410,7 +439,7 @@ export async function PATCH(req: NextRequest) {
       });
       return NextResponse.json(
         { ok: false, error: "forbidden" },
-        { status: 403 }
+        { status: 403 },
       );
     }
 
@@ -425,7 +454,7 @@ export async function PATCH(req: NextRequest) {
       .update(patch)
       .eq("id", evaluation_id)
       .select(
-        "id,class_id,subject_id,subject_component_id,teacher_id,eval_date,eval_kind,scale,coeff,is_published,published_at"
+        "id,class_id,subject_id,subject_component_id,teacher_id,eval_date,eval_kind,scale,coeff,is_published,published_at",
       )
       .maybeSingle();
 
@@ -433,7 +462,7 @@ export async function PATCH(req: NextRequest) {
       console.error("[grades/evaluations] PATCH error", error);
       return NextResponse.json(
         { ok: false, error: error.message },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -442,7 +471,7 @@ export async function PATCH(req: NextRequest) {
     console.error("[grades/evaluations] unexpected PATCH", e);
     return NextResponse.json(
       { ok: false, error: e?.message || "eval_update_failed" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
@@ -457,7 +486,7 @@ export async function DELETE(req: NextRequest) {
     if (!body) {
       return NextResponse.json(
         { ok: false, error: "invalid_body" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -467,7 +496,7 @@ export async function DELETE(req: NextRequest) {
     if (!evaluation_id) {
       return NextResponse.json(
         { ok: false, error: "missing_id" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -475,7 +504,7 @@ export async function DELETE(req: NextRequest) {
     if (!profile || !srv) {
       return NextResponse.json(
         { ok: false, error: "unauthorized" },
-        { status: 401 }
+        { status: 401 },
       );
     }
 
@@ -489,14 +518,14 @@ export async function DELETE(req: NextRequest) {
       console.error("[grades/evaluations] DELETE fetch eval error", evErr);
       return NextResponse.json(
         { ok: false, error: "evaluation_not_found" },
-        { status: 404 }
+        { status: 404 },
       );
     }
 
     const allowed = await ensureClassAccess(
       srv,
       evalRow.class_id,
-      profile.institution_id
+      profile.institution_id,
     );
     if (!allowed) {
       console.warn("[grades/evaluations] DELETE forbidden", {
@@ -506,11 +535,11 @@ export async function DELETE(req: NextRequest) {
       });
       return NextResponse.json(
         { ok: false, error: "forbidden" },
-        { status: 403 }
+        { status: 403 },
       );
     }
 
-    // 1️⃣ Supprimer d'abord les notes associées (nouvelle table student_grades)
+    // 1️⃣ Supprimer d'abord les notes associées
     const { error: delScoresErr } = await srv
       .from("student_grades")
       .delete()
@@ -519,11 +548,11 @@ export async function DELETE(req: NextRequest) {
     if (delScoresErr) {
       console.error(
         "[grades/evaluations] delete student_grades error",
-        delScoresErr
+        delScoresErr,
       );
       return NextResponse.json(
         { ok: false, error: delScoresErr.message },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -537,7 +566,7 @@ export async function DELETE(req: NextRequest) {
       console.error("[grades/evaluations] DELETE error", error);
       return NextResponse.json(
         { ok: false, error: error.message },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -546,7 +575,7 @@ export async function DELETE(req: NextRequest) {
     console.error("[grades/evaluations] unexpected DELETE", e);
     return NextResponse.json(
       { ok: false, error: e?.message || "eval_delete_failed" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

@@ -1,4 +1,3 @@
-// src/app/parents/page.tsx
 "use client";
 
 import React, { useEffect, useState } from "react";
@@ -377,6 +376,35 @@ const IconBook = () => (
     <path d="M14 4h2a2 2 0 012 2v14" />
   </svg>
 );
+const IconMenu = () => (
+  <svg
+    width="16"
+    height="16"
+    viewBox="0 0 24 24"
+    className="shrink-0"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+  >
+    <path d="M4 6h16" />
+    <path d="M4 12h16" />
+    <path d="M4 18h16" />
+  </svg>
+);
+const IconX = () => (
+  <svg
+    width="16"
+    height="16"
+    viewBox="0 0 24 24"
+    className="shrink-0"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+  >
+    <path d="M6 6l12 12" />
+    <path d="M18 6l-12 12" />
+  </svg>
+);
 
 /* ───────── Carte 3D (tilt) réutilisable ───────── */
 function TiltCard({
@@ -575,6 +603,9 @@ export default function ParentPage() {
 
   // ⛔ État de déconnexion
   const [loggingOut, setLoggingOut] = useState(false);
+
+  // Menu mobile
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
   // Sélection enfant + section (sidebar / mobile nav)
   const [activeChildId, setActiveChildId] = useState<string | "all">("all");
@@ -802,6 +833,7 @@ export default function ParentPage() {
 
   function selectSection(section: NavSection) {
     setActiveSection(section);
+    setMobileNavOpen(false);
     if (typeof window !== "undefined") {
       window.scrollTo({ top: 0, behavior: "smooth" });
     }
@@ -835,6 +867,124 @@ export default function ParentPage() {
 
   return (
     <div className="min-h-screen bg-slate-950/5">
+      {/* Drawer mobile (style EcoleMedia) */}
+      {mobileNavOpen && (
+        <div className="fixed inset-0 z-40 flex md:hidden">
+          <button
+            type="button"
+            aria-label="Fermer le menu"
+            className="flex-1 bg-slate-950/50"
+            onClick={() => setMobileNavOpen(false)}
+          />
+          <div className="relative h-full w-72 max-w-[80%] bg-white shadow-2xl flex flex-col">
+            <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
+              <div className="flex items-center gap-2">
+                <div className="grid h-8 w-8 place-items-center rounded-lg bg-slate-900 text-xs font-semibold text-white">
+                  MC
+                </div>
+                <div className="min-w-0">
+                  <div className="text-xs font-semibold text-slate-900">Mon Cahier</div>
+                  <div className="text-[11px] text-slate-500">Espace parent</div>
+                </div>
+              </div>
+              <button
+                type="button"
+                aria-label="Fermer le menu"
+                onClick={() => setMobileNavOpen(false)}
+                className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-slate-100 text-slate-700"
+              >
+                <IconX />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto">
+              {/* Enfants (mobile drawer) */}
+              <div className="border-b border-slate-100 px-4 py-3">
+                <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                  Enfants
+                </div>
+                <div className="space-y-1">
+                  <button
+                    onClick={() => {
+                      setActiveChildId("all");
+                      setMobileNavOpen(false);
+                    }}
+                    className={[
+                      "flex w-full items-center justify-between rounded-lg px-2 py-1.5 text-xs transition",
+                      activeChildId === "all"
+                        ? "bg-slate-900 text-white"
+                        : "text-slate-700 hover:bg-slate-100",
+                    ].join(" ")}
+                  >
+                    <span>Vue globale</span>
+                    <span className="rounded-full bg-slate-900/5 px-1.5 py-0.5 text-[10px] text-slate-600">
+                      {kids.length || 0}
+                    </span>
+                  </button>
+                  {kids.map((k) => {
+                    const active = activeChildId === k.id;
+                    return (
+                      <button
+                        key={k.id}
+                        onClick={() => {
+                          setActiveChildId(k.id);
+                          setMobileNavOpen(false);
+                        }}
+                        className={[
+                          "flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-xs transition",
+                          active
+                            ? "bg-emerald-50 text-emerald-800 ring-1 ring-emerald-200"
+                            : "text-slate-700 hover:bg-slate-100",
+                        ].join(" ")}
+                      >
+                        <div className="grid h-6 w-6 place-items-center rounded-lg bg-slate-100 text-[10px] font-semibold text-slate-700">
+                          {getInitials(k.full_name)}
+                        </div>
+                        <div className="min-w-0 text-left">
+                          <div className="truncate">{k.full_name}</div>
+                          <div className="text-[10px] text-slate-500 truncate">
+                            {k.class_label || "—"}
+                          </div>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Navigation (mobile drawer) */}
+              <div className="px-3 py-3 space-y-1">
+                <SidebarNavItem label="Tableau de bord" icon={<IconHome />} section="dashboard" />
+                <SidebarNavItem
+                  label="Conduite & points"
+                  icon={<IconClipboard />}
+                  section="conduct"
+                />
+                <SidebarNavItem
+                  label="Cahier d’absences"
+                  icon={<IconClipboard />}
+                  section="absences"
+                />
+                <SidebarNavItem label="Cahier de notes" icon={<IconBook />} section="notes" />
+              </div>
+            </div>
+
+            <div className="border-t border-slate-200 px-4 py-3">
+              <Button
+                tone="slate"
+                onClick={safeLogout}
+                disabled={loggingOut}
+                title="Se déconnecter"
+                iconLeft={<IconPower />}
+                className="w-full justify-start"
+              >
+                {loggingOut ? "Déconnexion…" : "Se déconnecter"}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="flex min-h-screen">
         {/* Sidebar desktop */}
         <aside className="hidden md:flex w-64 flex-col border-r border-slate-200 bg-white/95 backdrop-blur">
@@ -844,9 +994,7 @@ export default function ParentPage() {
               MC
             </div>
             <div className="min-w-0">
-              <div className="text-sm font-semibold text-slate-900 truncate">
-                Mon Cahier
-              </div>
+              <div className="text-sm font-semibold text-slate-900 truncate">Mon Cahier</div>
               <div className="text-xs text-slate-500">Espace parent</div>
             </div>
           </div>
@@ -934,7 +1082,7 @@ export default function ParentPage() {
         <div className="flex-1">
           <main
             className={[
-              "mx-auto max-w-6xl p-4 md:p-6 space-y-6 scroll-smooth",
+              "mx-auto max-w-6xl p-4 md:px-6 md:py-6 space-y-6 scroll-smooth",
               "relative",
             ].join(" ")}
           >
@@ -951,130 +1099,183 @@ export default function ParentPage() {
             {/* Header */}
             <header className="relative overflow-hidden rounded-3xl border border-slate-800/20 bg-gradient-to-br from-slate-950 via-indigo-950 to-slate-900 px-5 py-5 md:px-7 md:py-6 text-white shadow-sm">
               <div className="absolute inset-0 opacity-20 [background-image:radial-gradient(60%_50%_at_100%_0%,white,transparent_70%)]" />
-              <div className="relative z-10 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-                <div className="min-w-0">
-                  <h1 className="text-xl md:text-2xl font-semibold tracking-tight">
-                    <span className="bg-clip-text text-transparent bg-gradient-to-r from-emerald-300 to-cyan-300">
-                      Espace parent
-                    </span>
-                  </h1>
-                  <p className="mt-1 text-white/80 text-sm">
-                    Suivez en temps réel les <b>absences</b>, <b>retards</b>, <b>sanctions</b> et{" "}
-                    <b>notes</b> de vos enfants.
-                  </p>
+              <div className="relative z-10 flex flex-col gap-3">
+                {/* Ligne supérieure : brand + actions */}
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="grid h-9 w-9 place-items-center rounded-xl bg-slate-950/80 text-xs font-semibold">
+                      MC
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-[11px] font-semibold uppercase tracking-wide text-emerald-300">
+                        Espace parent
+                      </p>
+                      <h1 className="text-lg md:text-xl font-semibold tracking-tight">
+                        Mon Cahier
+                      </h1>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    {/* Bouton menu mobile */}
+                    <button
+                      type="button"
+                      aria-label="Ouvrir le menu"
+                      onClick={() => setMobileNavOpen(true)}
+                      className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-white/20 bg-white/10 text-white md:hidden"
+                    >
+                      <IconMenu />
+                    </button>
+
+                    {/* Actions (push + logout) en md+ */}
+                    <div className="hidden sm:flex items-center gap-2">
+                      {!granted ? (
+                        <Button
+                          tone="white"
+                          onClick={enablePush}
+                          title="Activer les notifications push"
+                          iconLeft={<IconBell />}
+                        >
+                          Activer les push
+                        </Button>
+                      ) : (
+                        <span className="hidden md:inline rounded-full bg-white px-3 py-1.5 text-sm text-slate-900 ring-1 ring-white/40">
+                          Push activés ✅
+                        </span>
+                      )}
+                      <Button
+                        tone="white"
+                        onClick={safeLogout}
+                        disabled={loggingOut}
+                        title="Se déconnecter"
+                        iconLeft={<IconPower />}
+                      >
+                        {loggingOut ? "Déconnexion…" : "Déconnexion"}
+                      </Button>
+                    </div>
+                  </div>
                 </div>
-                <div className="flex items-center gap-2 shrink-0">
+
+                {/* Description */}
+                <p className="mt-1 text-sm text-white/80 max-w-2xl">
+                  Suivez en temps réel les <b>absences</b>, <b>retards</b>, <b>sanctions</b> et{" "}
+                  <b>notes</b> de vos enfants.
+                </p>
+
+                {/* Actions (push + logout) en mobile */}
+                <div className="mt-3 flex gap-2 sm:hidden">
                   {!granted ? (
                     <Button
                       tone="white"
                       onClick={enablePush}
                       title="Activer les notifications push"
                       iconLeft={<IconBell />}
+                      className="flex-1"
                     >
                       Activer les push
                     </Button>
                   ) : (
-                    <span className="hidden sm:inline rounded-full bg-white px-3 py-1.5 text-sm text-slate-900 ring-1 ring-white/40">
+                    <div className="flex-1 rounded-full bg-white/10 px-3 py-2 text-xs text-white/90 flex items-center justify-center">
                       Push activés ✅
-                    </span>
+                    </div>
                   )}
-                  {/* Bouton logout aussi ici (mobile + confort) */}
                   <Button
                     tone="white"
                     onClick={safeLogout}
                     disabled={loggingOut}
                     title="Se déconnecter"
                     iconLeft={<IconPower />}
+                    className="flex-1"
                   >
                     {loggingOut ? "Déconnexion…" : "Déconnexion"}
                   </Button>
                 </div>
-              </div>
 
-              {/* Mobile : sélection enfant + nav rapide */}
-              {hasKids && (
-                <div className="relative z-10 mt-4 space-y-2 md:hidden">
-                  {/* Enfants */}
-                  <div className="flex gap-2 overflow-x-auto pb-1">
-                    <button
-                      onClick={() => setActiveChildId("all")}
-                      className={[
-                        "whitespace-nowrap rounded-full px-3 py-1 text-xs",
-                        activeChildId === "all"
-                          ? "bg-white text-slate-900"
-                          : "bg-slate-900/40 text-slate-100 border border-white/10",
-                      ].join(" ")}
-                    >
-                      Vue globale
-                    </button>
-                    {kids.map((k) => (
+                {/* Mobile : sélection enfant + nav rapide */}
+                {hasKids && (
+                  <div className="relative z-10 mt-4 space-y-2 md:hidden">
+                    {/* Enfants */}
+                    <div className="flex gap-2 overflow-x-auto pb-1">
                       <button
-                        key={k.id}
-                        onClick={() => setActiveChildId(k.id)}
+                        onClick={() => setActiveChildId("all")}
                         className={[
-                          "flex items-center gap-1 whitespace-nowrap rounded-full px-3 py-1 text-xs",
-                          activeChildId === k.id
+                          "whitespace-nowrap rounded-full px-3 py-1 text-xs",
+                          activeChildId === "all"
+                            ? "bg-white text-slate-900"
+                            : "bg-slate-900/40 text-slate-100 border border-white/10",
+                        ].join(" ")}
+                      >
+                        Vue globale
+                      </button>
+                      {kids.map((k) => (
+                        <button
+                          key={k.id}
+                          onClick={() => setActiveChildId(k.id)}
+                          className={[
+                            "flex items-center gap-1 whitespace-nowrap rounded-full px-3 py-1 text-xs",
+                            activeChildId === k.id
+                              ? "bg-emerald-300 text-slate-900"
+                              : "bg-slate-900/40 text-slate-100 border border-white/10",
+                          ].join(" ")}
+                        >
+                          <span className="rounded-full bg-white/10 px-1.5 py-0.5 text-[10px]">
+                            {getInitials(k.full_name)}
+                          </span>
+                          <span className="truncate max-w-[120px]">{k.full_name}</span>
+                        </button>
+                      ))}
+                    </div>
+
+                    {/* Onglets mobile */}
+                    <div className="flex gap-2 overflow-x-auto pb-1">
+                      <button
+                        onClick={() => selectSection("dashboard")}
+                        className={[
+                          "whitespace-nowrap rounded-full px-3 py-1 text-[11px]",
+                          isDashboard
                             ? "bg-emerald-300 text-slate-900"
                             : "bg-slate-900/40 text-slate-100 border border-white/10",
                         ].join(" ")}
                       >
-                        <span className="rounded-full bg-white/10 px-1.5 py-0.5 text-[10px]">
-                          {getInitials(k.full_name)}
-                        </span>
-                        <span className="truncate max-w-[120px]">{k.full_name}</span>
+                        Tableau de bord
                       </button>
-                    ))}
+                      <button
+                        onClick={() => selectSection("conduct")}
+                        className={[
+                          "whitespace-nowrap rounded-full px-3 py-1 text-[11px]",
+                          isConduct
+                            ? "bg-emerald-300 text-slate-900"
+                            : "bg-slate-900/40 text-slate-100 border border-white/10",
+                        ].join(" ")}
+                      >
+                        Conduite & points
+                      </button>
+                      <button
+                        onClick={() => selectSection("absences")}
+                        className={[
+                          "whitespace-nowrap rounded-full px-3 py-1 text-[11px]",
+                          isAbsences
+                            ? "bg-emerald-300 text-slate-900"
+                            : "bg-slate-900/40 text-slate-100 border border-white/10",
+                        ].join(" ")}
+                      >
+                        Cahier d’absences
+                      </button>
+                      <button
+                        onClick={() => selectSection("notes")}
+                        className={[
+                          "whitespace-nowrap rounded-full px-3 py-1 text-[11px]",
+                          isNotes
+                            ? "bg-emerald-300 text-slate-900"
+                            : "bg-slate-900/40 text-slate-100 border border-white/10",
+                        ].join(" ")}
+                      >
+                        Cahier de notes
+                      </button>
+                    </div>
                   </div>
-
-                  {/* Onglets mobile */}
-                  <div className="flex gap-2 overflow-x-auto pb-1">
-                    <button
-                      onClick={() => selectSection("dashboard")}
-                      className={[
-                        "whitespace-nowrap rounded-full px-3 py-1 text-[11px]",
-                        isDashboard
-                          ? "bg-emerald-300 text-slate-900"
-                          : "bg-slate-900/40 text-slate-100 border border-white/10",
-                      ].join(" ")}
-                    >
-                      Tableau de bord
-                    </button>
-                    <button
-                      onClick={() => selectSection("conduct")}
-                      className={[
-                        "whitespace-nowrap rounded-full px-3 py-1 text-[11px]",
-                        isConduct
-                          ? "bg-emerald-300 text-slate-900"
-                          : "bg-slate-900/40 text-slate-100 border border-white/10",
-                      ].join(" ")}
-                    >
-                      Conduite & points
-                    </button>
-                    <button
-                      onClick={() => selectSection("absences")}
-                      className={[
-                        "whitespace-nowrap rounded-full px-3 py-1 text-[11px]",
-                        isAbsences
-                          ? "bg-emerald-300 text-slate-900"
-                          : "bg-slate-900/40 text-slate-100 border border-white/10",
-                      ].join(" ")}
-                    >
-                      Cahier d’absences
-                    </button>
-                    <button
-                      onClick={() => selectSection("notes")}
-                      className={[
-                        "whitespace-nowrap rounded-full px-3 py-1 text-[11px]",
-                        isNotes
-                          ? "bg-emerald-300 text-slate-900"
-                          : "bg-slate-900/40 text-slate-100 border border-white/10",
-                      ].join(" ")}
-                    >
-                      Cahier de notes
-                    </button>
-                  </div>
-                </div>
-              )}
+                )}
+              </div>
             </header>
 
             {/* iOS hint */}
@@ -1890,7 +2091,7 @@ export default function ParentPage() {
                                 {avg20 != null && (
                                   <div className="text-xs text-slate-700">
                                     Moyenne sur la période :{" "}
-                                    <span className="font-semibold">
+                                      <span className="font-semibold">
                                       {avg20.toFixed(2).replace(".", ",")} / 20
                                     </span>
                                   </div>

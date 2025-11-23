@@ -86,8 +86,7 @@ const LATE_THRESHOLD_MIN =
     : 15;
 
 export async function GET(req: NextRequest) {
-  // ⭐️ bien faire l'await ici
-  const supa = await getSupabaseServerClient();
+  const supa = await getSupabaseServerClient(); // 🔧 IMPORTANT: await
   const srv = getSupabaseServiceClient();
 
   const url = new URL(req.url);
@@ -228,7 +227,7 @@ export async function GET(req: NextRequest) {
 
   const { data: sessions, error: sessErr } = await srv
     .from("teacher_sessions")
-    // ⚠️ on ne demande plus opened_from, mais origin (schéma réel)
+    // ⚠️ origin au lieu de opened_from
     .select(
       "id,institution_id,class_id,subject_id,teacher_id,started_at,actual_call_at,origin",
     )
@@ -314,15 +313,6 @@ export async function GET(req: NextRequest) {
     const ymd = isoToYMD(callIso);
     const hm = isoToHM(callIso);
     const callMin = hmToMin(hm);
-
-    const origin = (s.origin as string | null) || null;
-    const opened_from: "teacher" | "class_device" | null =
-      origin === "class_device"
-        ? "class_device"
-        : origin === "teacher"
-        ? "teacher"
-        : null;
-
     const key = [
       ymd,
       String(s.class_id || ""),
@@ -332,7 +322,12 @@ export async function GET(req: NextRequest) {
     const arr = sessionsIndex.get(key) || [];
     arr.push({
       callMin,
-      opened_from,
+      opened_from:
+        s.origin === "class_device"
+          ? "class_device"
+          : s.origin === "teacher"
+          ? "teacher"
+          : null,
     });
     sessionsIndex.set(key, arr);
   });
