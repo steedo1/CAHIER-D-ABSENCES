@@ -397,7 +397,9 @@ export default function ClassDeviceNotesPage() {
   useEffect(() => {
     logInfo(
       "useEffect[data] -> déclenché avec selected",
-      selected ? { class_id: selected.class_id, subject_id: selected.subject_id } : null
+      selected
+        ? { class_id: selected.class_id, subject_id: selected.subject_id }
+        : null
     );
 
     if (!selected) {
@@ -1104,7 +1106,7 @@ export default function ClassDeviceNotesPage() {
         <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div className="space-y-1">
             <p className="text-xs font-semibold uppercase tracking-[0.16em] text-indigo-200/80">
-              {institutionName || "COURS SECONDAIRE CATHOLIQUE ABOISSO"}
+              {institutionName || "Nom de l’établissement"}
               {academicYearLabel
                 ? ` • Année scolaire ${academicYearLabel}`
                 : ""}
@@ -1597,9 +1599,10 @@ export default function ClassDeviceNotesPage() {
       {/* Vue MOYENNES */}
       {mode === "moyennes" && (
         <section className="rounded-2xl border bg-white p-5 shadow-sm">
-          <div className="mb-3 flex items-center justify-between">
+          <div className="mb-3 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
             <div className="text-sm text-slate-700">
-              Moyennes de la classe (pondérées par coeff et sous-matières)
+              Moyennes de la classe (pondérées par coeff et sous-matières) •{" "}
+              {roster.length} élèves
             </div>
             <div className="flex items-center gap-2">
               <Button onClick={saveBonuses} disabled={loadingAvg}>
@@ -1608,95 +1611,181 @@ export default function ClassDeviceNotesPage() {
             </div>
           </div>
 
-          <div className="overflow-x-auto rounded-xl border">
-            <table className="min-w-full text-sm">
-              <thead className="bg-slate-50 sticky top-0 z-10">
-                <tr className="text-left text-slate-600">
-                  <th className="px-3 py-2 w-12 sticky left-0 z-20 bg-slate-50">
-                    N°
-                  </th>
-                  <th className="px-3 py-2 w-40 sticky left-[3rem] z-20 bg-slate-50">
-                    Matricule
-                  </th>
-                  <th className="px-3 py-2 w-64 sticky left-[13rem] z-20 bg-slate-50">
-                    Nom et prénoms
-                  </th>
-                  <th className="px-3 py-2 text-right">Moyenne (/20)</th>
-                  <th className="px-3 py-2 text-right">Bonus</th>
-                  <th className="px-3 py-2 text-right">Finale (/20)</th>
-                  <th className="px-3 py-2 text-right">Rang</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y">
-                {loadingAvg ? (
-                  <tr>
-                    <td className="px-3 py-4 text-slate-500" colSpan={999}>
-                      Chargement…
-                    </td>
+          {/* PC : tableau comme pour la saisie */}
+          {!isMobile && (
+            <div className="overflow-x-auto rounded-xl border">
+              <table className="min-w-full text-sm">
+                <thead className="bg-slate-50 sticky top-0 z-10">
+                  <tr className="text-left text-slate-600">
+                    <th className="px-3 py-2 w-12 sticky left-0 z-20 bg-slate-50">
+                      N°
+                    </th>
+                    <th className="px-3 py-2 w-40 sticky left-[3rem] z-20 bg-slate-50">
+                      Matricule
+                    </th>
+                    <th className="px-3 py-2 w-64 sticky left-[13rem] z-20 bg-slate-50">
+                      Nom et prénoms
+                    </th>
+                    <th className="px-3 py-2 text-right">Moyenne (/20)</th>
+                    <th className="px-3 py-2 text-right">Bonus</th>
+                    <th className="px-3 py-2 text-right">Finale (/20)</th>
+                    <th className="px-3 py-2 text-right">Rang</th>
                   </tr>
-                ) : roster.length === 0 ? (
-                  <tr>
-                    <td className="px-3 py-4 text-slate-500" colSpan={999}>
-                      Aucun élève dans cette classe.
-                    </td>
-                  </tr>
-                ) : (
-                  avgRows.map((row, idx) => (
-                    <tr
+                </thead>
+                <tbody className="divide-y">
+                  {loadingAvg ? (
+                    <tr>
+                      <td className="px-3 py-4 text-slate-500" colSpan={999}>
+                        Chargement…
+                      </td>
+                    </tr>
+                  ) : roster.length === 0 ? (
+                    <tr>
+                      <td className="px-3 py-4 text-slate-500" colSpan={999}>
+                        Aucun élève dans cette classe.
+                      </td>
+                    </tr>
+                  ) : (
+                    avgRows.map((row, idx) => (
+                      <tr
+                        key={row.student.id}
+                        className="hover:bg-slate-50/60"
+                      >
+                        <td className="px-3 py-2 w-12 sticky left-0 z-10 bg-white">
+                          {idx + 1}
+                        </td>
+                        <td className="px-3 py-2 w-40 sticky left-[3rem] z-10 bg-white">
+                          {row.student.matricule ?? ""}
+                        </td>
+                        <td className="px-3 py-2 w-64 sticky left-[13rem] z-10 bg-white">
+                          {row.student.full_name}
+                        </td>
+                        <td className="px-3 py-2 text-right tabular-nums">
+                          {row.avg20.toFixed(2)}
+                        </td>
+                        <td className="px-3 py-2 w-24">
+                          <Input
+                            type="number"
+                            step="0.25"
+                            min={0}
+                            max={10}
+                            value={bonusMap[row.student.id] ?? 0}
+                            onChange={(e) => {
+                              const v = Number(e.target.value || 0);
+                              logInfo("UI -> changement bonus", {
+                                student_id: row.student.id,
+                                value: v,
+                              });
+                              setBonusMap((m) => ({
+                                ...m,
+                                [row.student.id]: Math.max(
+                                  0,
+                                  Math.min(10, v)
+                                ),
+                              }));
+                            }}
+                            aria-label={`Bonus ${row.student.full_name}`}
+                          />
+                        </td>
+                        <td className="px-3 py-2 text-right tabular-nums">
+                          {Math.min(
+                            20,
+                            row.avg20 + (bonusMap[row.student.id] ?? 0)
+                          ).toFixed(2)}
+                        </td>
+                        <td className="px-3 py-2 text-right">
+                          {row.rank || ""}
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {/* MOBILE : même style que la saisie → cartes par élève */}
+          {isMobile && (
+            <div className="space-y-2 mt-2">
+              {loadingAvg ? (
+                <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-sm text-slate-600">
+                  Chargement…
+                </div>
+              ) : roster.length === 0 ? (
+                <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-sm text-slate-600">
+                  Aucun élève dans cette classe.
+                </div>
+              ) : (
+                avgRows.map((row, idx) => {
+                  const bonus = bonusMap[row.student.id] ?? 0;
+                  const final = Math.min(20, row.avg20 + bonus);
+                  return (
+                    <div
                       key={row.student.id}
-                      className="hover:bg-slate-50/60"
+                      className="rounded-xl border border-slate-200 bg-slate-50/80 px-3 py-2 shadow-sm"
                     >
-                      <td className="px-3 py-2 w-12 sticky left-0 z-10 bg-white">
-                        {idx + 1}
-                      </td>
-                      <td className="px-3 py-2 w-40 sticky left-[3rem] z-10 bg-white">
-                        {row.student.matricule ?? ""}
-                      </td>
-                      <td className="px-3 py-2 w-64 sticky left-[13rem] z-10 bg-white">
+                      <div className="flex items-center justify-between">
+                        <div className="text-[11px] font-semibold text-slate-500">
+                          #{idx + 1} • {row.student.matricule || "—"}
+                        </div>
+                        <div className="text-[11px] text-slate-500 text-right">
+                          Rang :{" "}
+                          <span className="font-semibold">
+                            {row.rank || "—"}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="mt-1 text-sm font-medium text-slate-900">
                         {row.student.full_name}
-                      </td>
-                      <td className="px-3 py-2 text-right tabular-nums">
-                        {row.avg20.toFixed(2)}
-                      </td>
-                      <td className="px-3 py-2 w-24">
+                      </div>
+                      <div className="mt-2 grid grid-cols-2 gap-2 text-xs text-slate-700">
+                        <div>
+                          <div className="text-[11px] uppercase tracking-wide text-slate-500">
+                            Moyenne /20
+                          </div>
+                          <div className="text-sm font-semibold">
+                            {row.avg20.toFixed(2)}
+                          </div>
+                        </div>
+                        <div>
+                          <div className="text-[11px] uppercase tracking-wide text-slate-500">
+                            Finale /20
+                          </div>
+                          <div className="text-sm font-semibold">
+                            {final.toFixed(2)}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="mt-2">
+                        <div className="text-[11px] mb-1 text-slate-500">
+                          Bonus (0 à 10)
+                        </div>
                         <Input
                           type="number"
                           step="0.25"
                           min={0}
                           max={10}
-                          value={bonusMap[row.student.id] ?? 0}
+                          value={bonus}
                           onChange={(e) => {
                             const v = Number(e.target.value || 0);
-                            logInfo("UI -> changement bonus", {
+                            logInfo("UI -> changement bonus (mobile)", {
                               student_id: row.student.id,
                               value: v,
                             });
                             setBonusMap((m) => ({
                               ...m,
-                              [row.student.id]: Math.max(
-                                0,
-                                Math.min(10, v)
-                              ),
+                              [row.student.id]: Math.max(0, Math.min(10, v)),
                             }));
                           }}
                           aria-label={`Bonus ${row.student.full_name}`}
                         />
-                      </td>
-                      <td className="px-3 py-2 text-right tabular-nums">
-                        {Math.min(
-                          20,
-                          row.avg20 + (bonusMap[row.student.id] ?? 0)
-                        ).toFixed(2)}
-                      </td>
-                      <td className="px-3 py-2 text-right">
-                        {row.rank || ""}
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          )}
         </section>
       )}
 
@@ -1795,9 +1884,7 @@ export default function ClassDeviceNotesPage() {
                                 disabled={!!publishBusy[ev.id]}
                               />
                               <span className="text-slate-700">
-                                {ev.is_published
-                                  ? "Publié"
-                                  : "Brouillon"}
+                                {ev.is_published ? "Publié" : "Brouillon"}
                               </span>
                             </label>
                           </td>
