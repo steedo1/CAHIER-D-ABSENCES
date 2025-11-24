@@ -1,3 +1,4 @@
+// src/app/api/push/subscribe/route.ts
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
@@ -11,7 +12,11 @@ const VERBOSE = (process.env.VERBOSE_PUSH || "1") !== "0";
 function shortId(x: unknown, n = 16) {
   const s = String(x ?? "");
   if (!s) return s;
-  return s.length <= n ? s : `${s.slice(0, Math.max(4, Math.floor(n / 2)))}…${s.slice(-Math.max(4, Math.floor(n / 2)))}`;
+  return s.length <= n
+    ? s
+    : `${s.slice(0, Math.max(4, Math.floor(n / 2)))}…${s.slice(
+        -Math.max(4, Math.floor(n / 2))
+      )}`;
 }
 function log(stage: string, meta: Record<string, unknown>) {
   if (VERBOSE) console.info(`[push/subscribe] ${stage}`, meta);
@@ -19,16 +24,20 @@ function log(stage: string, meta: Record<string, unknown>) {
 
 /* ───────── Types ───────── */
 type Body = {
-  platform?: string;   // "web" | "android" | "ios"
-  device_id?: string;  // endpoint (web) ou device id (mobile)
-  subscription?: any;  // webpush subscription JSON
-  fcm_token?: string;  // FCM token
+  platform?: string; // "web" | "android" | "ios"
+  device_id?: string; // endpoint (web) ou device id (mobile)
+  subscription?: any; // webpush subscription JSON
+  fcm_token?: string; // FCM token
 };
 
 /* ───────── helpers ───────── */
 function randPwd(n = 24) {
   return Array.from(crypto.getRandomValues(new Uint8Array(n)))
-    .map((b) => "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789".charAt(b % 62))
+    .map((b) =>
+      "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789".charAt(
+        b % 62
+      )
+    )
     .join("");
 }
 
@@ -46,7 +55,11 @@ async function ensureAuthBackedParentId(
   let parentId = dev.data?.parent_profile_id ?? null;
 
   if (parentId) {
-    const prof = await srv.from("profiles").select("id").eq("id", parentId).maybeSingle();
+    const prof = await srv
+      .from("profiles")
+      .select("id")
+      .eq("id", parentId)
+      .maybeSingle();
     if (prof.data?.id) return parentId;
   }
 
@@ -67,9 +80,14 @@ async function ensureAuthBackedParentId(
 
   // aligner parent_devices
   if (!dev.data) {
-    await srv.from("parent_devices").insert({ device_id: deviceId, parent_profile_id: parentId });
+    await srv
+      .from("parent_devices")
+      .insert({ device_id: deviceId, parent_profile_id: parentId });
   } else {
-    await srv.from("parent_devices").update({ parent_profile_id: parentId }).eq("device_id", deviceId);
+    await srv
+      .from("parent_devices")
+      .update({ parent_profile_id: parentId })
+      .eq("device_id", deviceId);
   }
 
   // créer profile
@@ -92,15 +110,84 @@ async function ensureAuthBackedParentId(
       .eq("institution_id", institutionId)
       .maybeSingle();
     if (!exists.data?.profile_id) {
-      const ur = await srv
-        .from("user_roles")
-        .insert({ profile_id: parentId, institution_id: institutionId, role: "parent" as any });
+      const ur = await srv.from("user_roles").insert({
+        profile_id: parentId,
+        institution_id: institutionId,
+        role: "parent" as any,
+      });
       if (ur.error) log("user_roles_insert_err", { err: ur.error.message });
       else log("user_roles_insert_ok", { parentId, institutionId });
     }
   }
 
   return parentId;
+}
+
+/**
+ * Synchronise la table student_guardians à partir de parent_device_children
+ * pour un device donné et le parent (profile_id) associé.
+ * - n’échoue pas la route en cas d’erreur : log uniquement.
+ */
+async function syncStudentGuardiansFromDevice(
+  srv: ReturnType<typeof getSupabaseServiceClient>,
+  deviceId: string,
+  parentId: string
+) {
+  const cleanDevice = String(deviceId || "").trim();
+  const cleanParent = String(parentId || "").trim();
+  if (!cleanDevice || !cleanParent) return;
+
+  const now = new Date().toISOString();
+
+  const { data, error } = await srv
+    .from("parent_device_children")
+    .select("student_id")
+    .eq("device_id", cleanDevice);
+
+  if (error) {
+    log("student_guardians_sync_err", {
+      err: error.message,
+      deviceId: shortId(cleanDevice),
+    });
+    return;
+  }
+
+  const rows =
+    (data || [])
+      .map((r: any) => String(r?.student_id || "").trim())
+      .filter(Boolean)
+      .map((sid) => ({
+        student_id: sid,
+        parent_id: cleanParent,
+        notifications_enabled: true,
+        updated_at: now,
+      })) || [];
+
+  if (!rows.length) {
+    log("student_guardians_sync_empty", { deviceId: shortId(cleanDevice) });
+    return;
+  }
+
+  const { error: upErr } = await srv
+    .from("student_guardians")
+    .upsert(rows as any, {
+      onConflict: "student_id,parent_id",
+      ignoreDuplicates: false,
+    });
+
+  if (upErr) {
+    log("student_guardians_sync_upsert_err", {
+      err: upErr.message,
+      deviceId: shortId(cleanDevice),
+      parentId: shortId(cleanParent),
+    });
+  } else {
+    log("student_guardians_sync_ok", {
+      deviceId: shortId(cleanDevice),
+      parentId: shortId(cleanParent),
+      count: rows.length,
+    });
+  }
 }
 
 /* ───────── Route ───────── */
@@ -133,14 +220,35 @@ export async function POST(req: Request) {
     if (parentDevice) {
       userId = await ensureAuthBackedParentId(srv, parentDevice, instId);
     }
-    const { data: { user } } = await supa.auth.getUser();
+    const {
+      data: { user },
+    } = await supa.auth.getUser();
     if (!userId) userId = user?.id || null;
+
+    // ✨ Synchroniser les liens élève ↔ parent à partir du device
+    if (parentDevice && userId) {
+      try {
+        await syncStudentGuardiansFromDevice(srv, parentDevice, userId);
+      } catch (e: any) {
+        log("student_guardians_sync_unhandled", {
+          err: String(e?.message || e),
+        });
+      }
+    }
 
     if (!userId) {
       log("auth_fail", { startedAt, haveCookie: !!parentDevice });
-      return NextResponse.json({ error: "unauthorized", stage: "auth" }, { status: 401 });
+      return NextResponse.json(
+        { error: "unauthorized", stage: "auth" },
+        { status: 401 }
+      );
     }
-    log("auth_ok", { startedAt, userId, haveCookie: !!parentDevice, haveSupabaseUser: !!user?.id });
+    log("auth_ok", {
+      startedAt,
+      userId,
+      haveCookie: !!parentDevice,
+      haveSupabaseUser: !!user?.id,
+    });
 
     // Body
     let body: Body | null = null;
@@ -148,9 +256,16 @@ export async function POST(req: Request) {
       body = await req.json();
     } catch (e: any) {
       log("parse_fail", { error: String(e?.message || e) });
-      return NextResponse.json({ error: "invalid_json", stage: "parse" }, { status: 400 });
+      return NextResponse.json(
+        { error: "invalid_json", stage: "parse" },
+        { status: 400 }
+      );
     }
-    if (!body) return NextResponse.json({ error: "empty_body", stage: "parse" }, { status: 400 });
+    if (!body)
+      return NextResponse.json(
+        { error: "empty_body", stage: "parse" },
+        { status: 400 }
+      );
 
     // Plateforme
     const platformRaw = String(body.platform || "").toLowerCase().trim();
@@ -159,10 +274,18 @@ export async function POST(req: Request) {
       if (body.subscription?.endpoint) platform = "web";
       else if (body.fcm_token) platform = "android";
     }
-    log("platform_detect", { platformRaw, platform, hasSub: !!body.subscription, hasFcm: !!body.fcm_token });
+    log("platform_detect", {
+      platformRaw,
+      platform,
+      hasSub: !!body.subscription,
+      hasFcm: !!body.fcm_token,
+    });
 
     if (!["web", "android", "ios"].includes(platform)) {
-      return NextResponse.json({ error: "unknown_platform", stage: "preflight" }, { status: 400 });
+      return NextResponse.json(
+        { error: "unknown_platform", stage: "preflight" },
+        { status: 400 }
+      );
     }
 
     // Row
@@ -172,14 +295,18 @@ export async function POST(req: Request) {
 
     if (platform === "web") {
       const sub = body.subscription;
-      const ok = !!sub?.endpoint && !!sub?.keys?.p256dh && !!sub?.keys?.auth;
+      const ok =
+        !!sub?.endpoint && !!sub?.keys?.p256dh && !!sub?.keys?.auth;
       log("web_preflight", {
         endpoint: shortId(sub?.endpoint),
         hasP256: !!sub?.keys?.p256dh,
         hasAuth: !!sub?.keys?.auth,
       });
       if (!ok) {
-        return NextResponse.json({ error: "missing_or_invalid_subscription", stage: "preflight" }, { status: 400 });
+        return NextResponse.json(
+          { error: "missing_or_invalid_subscription", stage: "preflight" },
+          { status: 400 }
+        );
       }
       deviceId = deviceId || String(sub.endpoint);
       row.device_id = deviceId;
@@ -188,7 +315,10 @@ export async function POST(req: Request) {
       const token = String(body.fcm_token || "").trim();
       log("fcm_preflight", { token: shortId(token) });
       if (!token) {
-        return NextResponse.json({ error: "missing_fcm_token", stage: "preflight" }, { status: 400 });
+        return NextResponse.json(
+          { error: "missing_fcm_token", stage: "preflight" },
+          { status: 400 }
+        );
       }
       row.fcm_token = token;
       row.device_id = deviceId || token;
@@ -196,9 +326,15 @@ export async function POST(req: Request) {
 
     // Upsert (FK maintenant satisfait)
     const onConflict = "user_id,platform,device_id";
-    log("upsert_try", { user_id: shortId(userId), platform, device_id: shortId(row.device_id) });
+    log("upsert_try", {
+      user_id: shortId(userId),
+      platform,
+      device_id: shortId(row.device_id),
+    });
 
-    const up = await srv.from("push_subscriptions").upsert(row, { onConflict, ignoreDuplicates: false });
+    const up = await srv
+      .from("push_subscriptions")
+      .upsert(row, { onConflict, ignoreDuplicates: false });
 
     if (up.error) {
       log("upsert_error", {
@@ -215,10 +351,17 @@ export async function POST(req: Request) {
         .select("user_id");
 
       if (upd.error || !upd.data?.length) {
-        if (upd.error) log("update_fail", { code: (upd.error as any).code, message: upd.error.message });
+        if (upd.error)
+          log("update_fail", {
+            code: (upd.error as any).code,
+            message: upd.error.message,
+          });
         else log("update_no_match", {});
 
-        const ins = await srv.from("push_subscriptions").insert({ ...row, user_id: userId }).select("user_id");
+        const ins = await srv
+          .from("push_subscriptions")
+          .insert({ ...row, user_id: userId })
+          .select("user_id");
         if (ins.error) {
           log("insert_fail", {
             code: (ins.error as any).code,
@@ -226,21 +369,51 @@ export async function POST(req: Request) {
             details: (ins.error as any).details,
             hint: (ins.error as any).hint,
           });
-          return NextResponse.json({ error: ins.error.message, stage: "insert" }, { status: 400 });
+          return NextResponse.json(
+            { error: ins.error.message, stage: "insert" },
+            { status: 400 }
+          );
         }
 
-        log("insert_ok", { platform, device_id: shortId(row.device_id) });
-        return NextResponse.json({ ok: true, mode: "insert", platform, device_id: row.device_id });
+        log("insert_ok", {
+          platform,
+          device_id: shortId(row.device_id),
+        });
+        return NextResponse.json({
+          ok: true,
+          mode: "insert",
+          platform,
+          device_id: row.device_id,
+        });
       }
 
-      log("update_ok", { platform, device_id: shortId(row.device_id) });
-      return NextResponse.json({ ok: true, mode: "update", platform, device_id: row.device_id });
+      log("update_ok", {
+        platform,
+        device_id: shortId(row.device_id),
+      });
+      return NextResponse.json({
+        ok: true,
+        mode: "update",
+        platform,
+        device_id: row.device_id,
+      });
     }
 
-    log("upsert_ok", { platform, device_id: shortId(row.device_id) });
-    return NextResponse.json({ ok: true, mode: "upsert", platform, device_id: row.device_id });
+    log("upsert_ok", {
+      platform,
+      device_id: shortId(row.device_id),
+    });
+    return NextResponse.json({
+      ok: true,
+      mode: "upsert",
+      platform,
+      device_id: row.device_id,
+    });
   } catch (e: any) {
     log("unhandled_error", { error: String(e?.message || e) });
-    return NextResponse.json({ error: String(e?.message || e), stage: "unhandled" }, { status: 500 });
+    return NextResponse.json(
+      { error: String(e?.message || e), stage: "unhandled" },
+      { status: 500 }
+    );
   }
 }

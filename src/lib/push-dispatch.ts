@@ -2,8 +2,9 @@
 // Petit helper idempotent pour déclencher /api/push/dispatch depuis n’importe
 // quelle route (classe, prof, admin…). Ne modifie pas la file ; il “tape” juste
 // l’endpoint avec le bon secret et gère quelques fallback (apex/www).
+
 export type Opts = {
-  req?: Request;     // Request Next.js (pour lire les headers host/proto en prod)
+  req?: Request;     // Request Next.js (pour lire les headers host/proto en prod, si besoin)
   reason?: string;   // Juste pour les logs côté /api/push/dispatch
   timeoutMs?: number;
   retries?: number;  // nb de tentatives supplémentaires (par défaut 2)
@@ -31,33 +32,47 @@ function swapApexWww(u: string) {
   }
 }
 
-/** Déduit la base URL à partir des envs et des headers de la requête (si fournie). */
+/**
+ * Déduit la base URL.
+ * PRIORITÉ :
+ *   1) NEXT_PUBLIC_BASE_URL (ton vrai domaine : ex https://app.moncahier.ci)
+ *   2) headers de la requête (host/proto)
+ *   3) VERCEL_URL
+ *   4) http://localhost:3000 en dev
+ */
 function resolveBaseFromReq(req?: Request) {
-  // 1) Env (prioritaire si défini proprement)
-  let base =
-    process.env.NEXT_PUBLIC_BASE_URL ||
-    process.env.VERCEL_URL || // souvent sans schéma
-    "";
+  // 1) Domaine explicite
+  let base = (process.env.NEXT_PUBLIC_BASE_URL || "").trim();
 
-  // 2) Headers (source la plus fiable en prod)
-  if (req) {
-    const host = req.headers.get("x-forwarded-host") || req.headers.get("host") || "";
+  // 2) Si pas défini, tenter depuis la requête
+  if (!base && req) {
+    const host =
+      req.headers.get("x-forwarded-host") ||
+      req.headers.get("host") ||
+      "";
     let proto = req.headers.get("x-forwarded-proto") || "";
     if (!proto) proto = /^localhost(:\d+)?$/i.test(host) ? "http" : "https";
     if (host) base = `${proto}://${host}`;
   }
 
+  // 3) Fallback sur VERCEL_URL si toujours rien
+  if (!base) {
+    base = (process.env.VERCEL_URL || "").trim();
+  }
+
   base = sanitizeBase(base);
 
-  // 3) Filet de sécurité en dev local
+  // 4) Filet dev
   if (!base) base = "http://localhost:3000";
 
-  // Corrige le cas https://localhost:3000 (force http)
+  // Corrige le cas https://localhost:3000 → http
   try {
     const u = new URL(base);
     if (/^localhost(:\d+)?$/i.test(u.host)) u.protocol = "http:";
     base = u.toString().replace(/\/+$/, "");
-  } catch {}
+  } catch {
+    // ignore
+  }
 
   return base;
 }
@@ -76,11 +91,14 @@ async function callOnce(
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
       "User-Agent": "mca-inline-dispatch",
-      // certains middlewares vérifient ce header côté Vercel
-      "x-vercel-cron": "1",
+      // ⚠️ on NE met plus x-vercel-cron ici : réservé aux vrais cron Vercel
     };
-    if (mode === "bearer") headers.Authorization = `Bearer ${secret}`;
-    else headers["x-cron-secret"] = secret;
+
+    if (mode === "bearer") {
+      headers.Authorization = `Bearer ${secret}`;
+    } else {
+      headers["x-cron-secret"] = secret;
+    }
 
     const res = await fetch(url, {
       method: "POST",
@@ -102,7 +120,11 @@ async function callOnce(
     });
     return false;
   } catch (e: any) {
-    console.warn("[inline-dispatch] fetch_err", { url, mode, err: String(e?.message || e) });
+    console.warn("[inline-dispatch] fetch_err", {
+      url,
+      mode,
+      err: String(e?.message || e),
+    });
     return false;
   } finally {
     clearTimeout(t);
@@ -112,7 +134,7 @@ async function callOnce(
 /**
  * Déclenche le worker /api/push/dispatch de manière “fire-and-forget”.
  * - throttle 200ms pour éviter les rafales
- * - essaie x-cron puis bearer, avec fallback apex/www
+ * - essaie x-cron-secret puis bearer, avec fallback apex/www
  */
 export async function triggerPushDispatch(opts: Opts = {}) {
   const secret = (process.env.CRON_SECRET || process.env.CRON_PUSH_SECRET || "").trim();
@@ -146,7 +168,13 @@ export async function triggerPushDispatch(opts: Opts = {}) {
   ];
 
   for (let i = 0; i < tries.length && i <= retries + 1; i++) {
-    const ok = await callOnce(tries[i].url, body, secret, timeoutMs, tries[i].mode);
+    const ok = await callOnce(
+      tries[i].url,
+      body,
+      secret,
+      timeoutMs,
+      tries[i].mode,
+    );
     if (ok) return true;
     // petit backoff linéaire
     await new Promise((r) => setTimeout(r, 150 + i * 200));
