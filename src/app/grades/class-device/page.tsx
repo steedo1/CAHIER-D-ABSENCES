@@ -1,7 +1,7 @@
 // src/app/grades/class-device/page.tsx
 "use client";
 
-import React, { useEffect, useMemo, useState, useRef } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   Users,
   Plus,
@@ -19,7 +19,6 @@ import {
 const LOG_PREFIX = "[ClassDeviceNotes]";
 
 function logInfo(...args: any[]) {
-  // On garde simple : logs toujours actifs côté client
   console.log(LOG_PREFIX, ...args);
 }
 
@@ -67,9 +66,9 @@ type Evaluation = {
   id: string;
   class_id: string;
   subject_id: string | null;
-  subject_component_id?: string | null; // ✅ sous-rubrique éventuelle
+  subject_component_id?: string | null;
   eval_date: string; // yyyy-mm-dd
-  eval_kind: EvalKind; // ✅ pour lever les erreurs TS
+  eval_kind: EvalKind;
   scale: 5 | 10 | 20 | 40 | 60;
   coeff: number;
   is_published: boolean;
@@ -108,7 +107,6 @@ function isCollegeLevel(level?: string | null): boolean {
   } catch {
     // pas grave
   }
-  // 6e, 5e, 4e, 3e (avec variantes "3e A", etc.)
   return (
     s.startsWith("6") ||
     s.startsWith("5") ||
@@ -163,7 +161,7 @@ function Button(
       "bg-emerald-600 text-white hover:bg-emerald-700 focus:ring-emerald-500/30",
     slate: "bg-slate-900 text-white hover:bg-slate-800 focus:ring-slate-600/30",
     amber:
-      "bg-amber-600 text-white hover:bg-amber-700 focus:ring-amber-500/30",
+      "bg-amber-500 text-slate-900 hover:bg-amber-600 focus:ring-amber-400/40",
     red: "bg-red-600 text-white hover:bg-red-700 focus:ring-red-500/30",
   };
   const cls = [base, tones[tone], p.className ?? ""].join(" ");
@@ -201,9 +199,8 @@ function GhostButton(
 ========================= */
 export default function ClassDeviceNotesPage() {
   const isMobile = useIsMobile();
-  const tableRef = useRef<HTMLDivElement | null>(null);
 
-  // ✅ Tentative douce de récupérer le nom de l’établissement + année scolaire (sans rien casser)
+  // Nom établissement + année scolaire (best effort sans rien casser)
   const [institutionName, setInstitutionName] = useState<string | null>(null);
   const [academicYearLabel, setAcademicYearLabel] = useState<string | null>(
     null
@@ -214,7 +211,6 @@ export default function ClassDeviceNotesPage() {
     try {
       const body: any = document.body;
 
-      // Nom établissement
       const fromDataName =
         body?.dataset?.institutionName || body?.dataset?.institution || null;
       const fromGlobalName = (window as any).__MC_INSTITUTION_NAME__
@@ -223,7 +219,6 @@ export default function ClassDeviceNotesPage() {
       const finalName = fromDataName || fromGlobalName;
       if (finalName) setInstitutionName(finalName);
 
-      // Année scolaire (si le layout la fournit)
       const fromDataYear =
         body?.dataset?.academicYear ||
         body?.dataset?.schoolYear ||
@@ -335,7 +330,6 @@ export default function ClassDeviceNotesPage() {
 
   /* ==========================================
      Chargement des sous-matières (collège)
-     via /api/teacher/grades/components
   ========================================== */
   useEffect(() => {
     logInfo(
@@ -403,9 +397,7 @@ export default function ClassDeviceNotesPage() {
   useEffect(() => {
     logInfo(
       "useEffect[data] -> déclenché avec selected",
-      selected
-        ? { class_id: selected.class_id, subject_id: selected.subject_id }
-        : null
+      selected ? { class_id: selected.class_id, subject_id: selected.subject_id } : null
     );
 
     if (!selected) {
@@ -422,7 +414,7 @@ export default function ClassDeviceNotesPage() {
         setLoading(true);
         setMsg(null);
 
-        // 1) Roster via /api/grades/roster
+        // 1) Roster
         const rosterUrl = `/api/grades/roster?class_id=${encodeURIComponent(
           selected.class_id
         )}`;
@@ -437,7 +429,7 @@ export default function ClassDeviceNotesPage() {
         logInfo("useEffect[data] -> roster reçu", ros);
         setRoster(ros);
 
-        // 2) Liste des évaluations via /api/grades/evaluations
+        // 2) Évaluations
         const evalsUrl = `/api/grades/evaluations?class_id=${encodeURIComponent(
           selected.class_id
         )}&subject_id=${encodeURIComponent(selected.subject_id ?? "")}`;
@@ -453,7 +445,7 @@ export default function ClassDeviceNotesPage() {
         logInfo("useEffect[data] -> évaluations reçues", evals);
         setEvaluations(evals);
 
-        // 3) Notes par évaluation via /api/grades/scores
+        // 3) Notes
         const g: GradesByEval = {};
         await Promise.all(
           evals.map(async (ev) => {
@@ -589,7 +581,6 @@ export default function ClassDeviceNotesPage() {
       return;
     }
 
-    // ✅ Si sous-matières configurées en collège, on impose la sélection
     if (hasComponents && !selectedComponentId) {
       logInfo(
         "addEvaluation -> sous-rubriques présentes mais aucune sélectionnée."
@@ -635,21 +626,10 @@ export default function ClassDeviceNotesPage() {
         return next;
       });
       setGrades((prev) => ({ ...prev, [created.id]: {} }));
-      // ✅ Sur mobile, on passe automatiquement sur la nouvelle colonne
-      setActiveEvalId(created.id);
-      setMsg("NOTE ajoutée ✅ (colonne suivante)");
 
-      // ✅ Et on fait défiler vers le tableau sur mobile
-      if (isMobile && typeof window !== "undefined") {
-        setTimeout(() => {
-          if (tableRef.current) {
-            tableRef.current.scrollIntoView({
-              behavior: "smooth",
-              block: "start",
-            });
-          }
-        }, 250);
-      }
+      // Sur mobile, on se place tout de suite sur cette nouvelle note
+      setActiveEvalId(created.id);
+      setMsg("NOTE ajoutée ✅ (colonne active sur mobile)");
     } catch (e: any) {
       logError("addEvaluation -> exception", e);
       setMsg(e?.message || "Échec d’ajout de la note.");
@@ -750,7 +730,6 @@ export default function ClassDeviceNotesPage() {
         return next;
       });
 
-      // Si on supprimait la colonne active sur mobile, on la réajuste via le mémo plus bas
       setMsg("Colonne de note supprimée ✅");
     } catch (e: any) {
       logError("deleteEvaluation -> exception", e);
@@ -765,13 +744,13 @@ export default function ClassDeviceNotesPage() {
   }
 
   /* ==========================================
-     Moyennes + bonus (aligné sur /grades/averages)
+     Moyennes + bonus
   ========================================== */
   type RowAvg = {
     student: RosterItem;
-    avg20: number; // moyenne brute avant bonus
+    avg20: number;
     bonus: number;
-    final: number; // après bonus (et éventuel arrondi côté API)
+    final: number;
     rank: number;
   };
   const [avgRows, setAvgRows] = useState<RowAvg[]>([]);
@@ -803,7 +782,6 @@ export default function ClassDeviceNotesPage() {
     setBonusMap(bm);
   }
 
-  /** ✅ Appel de la même API de moyennes générique que le reste (compte-classe) */
   async function openAverages() {
     if (!selected) {
       logInfo("openAverages -> aucun selected, on annule.");
@@ -815,7 +793,7 @@ export default function ClassDeviceNotesPage() {
     try {
       const params = new URLSearchParams({
         class_id: selected.class_id,
-        published_only: "1", // ✅ compte classe → on travaille sur les évaluations publiées
+        published_only: "1",
       });
       if (selected.subject_id) {
         params.set("subject_id", selected.subject_id);
@@ -882,7 +860,6 @@ export default function ClassDeviceNotesPage() {
       if (!r.ok || !j?.ok)
         throw new Error(j?.error || "Échec d’enregistrement des bonus.");
 
-      // On relit les moyennes consolidées après enregistrement
       const params = new URLSearchParams({
         class_id: selected.class_id,
         published_only: "1",
@@ -916,7 +893,7 @@ export default function ClassDeviceNotesPage() {
   }
 
   /* ==========================================
-     Export CSV (moyenne finale via /grades/averages)
+     Export CSV
   ========================================== */
   const totalChanges = useMemo(
     () =>
@@ -961,7 +938,6 @@ export default function ClassDeviceNotesPage() {
     }
 
     try {
-      // On tente de récupérer les moyennes consolidées (même source générique que compte prof/compte classe)
       let avgByStudent = new Map<string, AverageApiRow>();
       try {
         const params = new URLSearchParams({
@@ -1101,19 +1077,18 @@ export default function ClassDeviceNotesPage() {
   }
 
   /* ==========================================
-     Calcul de la colonne active sur mobile
+     Colonne active sur mobile
   ========================================== */
   const currentActiveEvalId = useMemo(() => {
     if (!evaluations.length) return null;
     if (activeEvalId && evaluations.some((ev) => ev.id === activeEvalId)) {
       return activeEvalId;
     }
-    // si activeEvalId est null ou ne correspond plus (suppression), on se met sur la dernière
     return evaluations[evaluations.length - 1]?.id ?? null;
   }, [evaluations, activeEvalId]);
 
   const displayedEvaluations = useMemo(() => {
-    if (!isMobile) return evaluations; // PC → toutes les colonnes, comportement actuel
+    if (!isMobile) return evaluations;
     if (!evaluations.length) return evaluations;
     if (!currentActiveEvalId) return evaluations;
     return evaluations.filter((ev) => ev.id === currentActiveEvalId);
@@ -1124,12 +1099,12 @@ export default function ClassDeviceNotesPage() {
   ========================================== */
   return (
     <main className="mx-auto max-w-7xl px-4 py-6 space-y-6">
-      {/* Header indigo / bleu nuit avec établissement + année scolaire */}
+      {/* Header bleu nuit avec établissement + année scolaire */}
       <header className="rounded-2xl border border-indigo-800/60 bg-gradient-to-r from-slate-950 via-indigo-900 to-slate-900 px-4 py-4 md:px-6 md:py-5 text-white shadow-sm">
         <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div className="space-y-1">
             <p className="text-xs font-semibold uppercase tracking-[0.16em] text-indigo-200/80">
-              {institutionName || "Nom de l’établissement"}
+              {institutionName || "COURS SECONDAIRE CATHOLIQUE ABOISSO"}
               {academicYearLabel
                 ? ` • Année scolaire ${academicYearLabel}`
                 : ""}
@@ -1138,31 +1113,34 @@ export default function ClassDeviceNotesPage() {
               Notes — Compte classe
             </h1>
             <p className="text-xs md:text-sm text-indigo-100/85">
-              Ce compte est associé au téléphone de la classe pour saisir les
-              notes rapidement, même sur mobile.
+              Saisissez les notes rapidement depuis le téléphone de la classe,
+              même sur mobile.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <GhostButton
+            <Button
+              tone="amber"
               onClick={() => window.location.reload()}
-              className="border-amber-400/80 bg-indigo-900/60 text-amber-300 hover:bg-indigo-800/90 hover:text-amber-100"
+              className="shadow-md"
             >
               <RefreshCw className="h-4 w-4" /> Actualiser
-            </GhostButton>
+            </Button>
             {mode === "saisie" ? (
-              <GhostButton
+              <Button
+                tone="amber"
                 onClick={openAverages}
-                className="border-amber-400/80 bg-indigo-900/60 text-amber-300 hover:bg-indigo-800/90 hover:text-amber-100"
+                className="shadow-md"
               >
                 <Eye className="h-4 w-4" /> Voir les moyennes
-              </GhostButton>
+              </Button>
             ) : (
-              <GhostButton
+              <Button
+                tone="amber"
                 onClick={() => setMode("saisie")}
-                className="border-amber-400/80 bg-indigo-900/60 text-amber-300 hover:bg-indigo-800/90 hover:text-amber-100"
+                className="shadow-md"
               >
                 <EyeOff className="h-4 w-4" /> Retour à la saisie
-              </GhostButton>
+              </Button>
             )}
           </div>
         </div>
@@ -1199,7 +1177,7 @@ export default function ClassDeviceNotesPage() {
             </div>
           </div>
 
-          {/* Création NOTE minimaliste */}
+          {/* Création NOTE */}
           <div className="md:col-span-2">
             <div
               className={`grid grid-cols-2 gap-2 ${
@@ -1233,12 +1211,8 @@ export default function ClassDeviceNotesPage() {
                   aria-label="Type d’évaluation"
                 >
                   <option value="devoir">Devoir</option>
-                  <option value="interro_ecrite">
-                    Interrogation écrite
-                  </option>
-                  <option value="interro_orale">
-                    Interrogation orale
-                  </option>
+                  <option value="interro_ecrite">Interrogation écrite</option>
+                  <option value="interro_orale">Interrogation orale</option>
                 </Select>
               </div>
 
@@ -1384,7 +1358,7 @@ export default function ClassDeviceNotesPage() {
             </div>
           </div>
 
-          {/* Bandeau de boutons compacts pour changer de colonne sur mobile */}
+          {/* Bandeau de boutons DEVOIR1, DEVOIR2, IE1… sur mobile */}
           {isMobile && evaluations.length > 0 && (
             <div className="mb-3 flex flex-wrap gap-2">
               {evaluations.map((ev) => {
@@ -1394,15 +1368,7 @@ export default function ClassDeviceNotesPage() {
                   <button
                     key={ev.id}
                     type="button"
-                    onClick={() => {
-                      setActiveEvalId(ev.id);
-                      if (tableRef.current) {
-                        tableRef.current.scrollIntoView({
-                          behavior: "smooth",
-                          block: "start",
-                        });
-                      }
-                    }}
+                    onClick={() => setActiveEvalId(ev.id)}
                     className={[
                       "inline-flex items-center rounded-full border px-3 py-1 text-xs font-medium transition",
                       "focus:outline-none focus:ring-2 focus:ring-emerald-500/40",
@@ -1418,128 +1384,213 @@ export default function ClassDeviceNotesPage() {
             </div>
           )}
 
-          <div
-            ref={tableRef}
-            className="overflow-x-auto rounded-xl border"
-          >
-            <table className="min-w-full text-sm">
-              <thead className="bg-slate-50 sticky top-0 z-10">
-                <tr className="text-left text-slate-600">
-                  <th className="px-3 py-2 w-12 sticky left-0 z-20 bg-slate-50">
-                    N°
-                  </th>
-                  <th className="px-3 py-2 w-40 sticky left-[3rem] z-20 bg-slate-50">
-                    Matricule
-                  </th>
-                  <th className="px-3 py-2 w-64 sticky left-[13rem] z-20 bg-slate-50">
-                    Nom et prénoms
-                  </th>
+          {/* ==== LAYOUT PC : tableau classique ==== */}
+          {!isMobile && (
+            <div className="overflow-x-auto rounded-xl border">
+              <table className="min-w-full text-sm">
+                <thead className="bg-slate-50 sticky top-0 z-10">
+                  <tr className="text-left text-slate-600">
+                    <th className="px-3 py-2 w-12 sticky left-0 z-20 bg-slate-50">
+                      N°
+                    </th>
+                    <th className="px-3 py-2 w-40 sticky left-[3rem] z-20 bg-slate-50">
+                      Matricule
+                    </th>
+                    <th className="px-3 py-2 w-64 sticky left-[13rem] z-20 bg-slate-50">
+                      Nom et prénoms
+                    </th>
 
-                  {displayedEvaluations.map((ev) => {
-                    const label = labelByEvalId[ev.id] ?? "NOTE";
-                    const comp = ev.subject_component_id
-                      ? componentById[ev.subject_component_id]
-                      : undefined;
-                    const rubLabel = comp?.short_label || comp?.label || "";
-                    return (
-                      <th key={ev.id} className="px-3 py-2 whitespace-nowrap">
-                        <div className="flex items-start justify-between gap-1">
-                          <div>
-                            <div className="font-semibold">{label}</div>
-                            <div className="text-[11px] text-slate-500">
-                              /{ev.scale} • coeff {ev.coeff}
-                              {rubLabel && (
-                                <>
-                                  <br />
-                                  <span className="text-[10px] text-emerald-700">
-                                    {rubLabel} (rubrique)
-                                  </span>
-                                </>
-                              )}
+                    {displayedEvaluations.map((ev) => {
+                      const label = labelByEvalId[ev.id] ?? "NOTE";
+                      const comp = ev.subject_component_id
+                        ? componentById[ev.subject_component_id]
+                        : undefined;
+                      const rubLabel = comp?.short_label || comp?.label || "";
+                      return (
+                        <th
+                          key={ev.id}
+                          className="px-3 py-2 whitespace-nowrap"
+                        >
+                          <div className="flex items-start justify-between gap-1">
+                            <div>
+                              <div className="font-semibold">{label}</div>
+                              <div className="text-[11px] text-slate-500">
+                                /{ev.scale} • coeff {ev.coeff}
+                                {rubLabel && (
+                                  <>
+                                    <br />
+                                    <span className="text-[10px] text-emerald-700">
+                                      {rubLabel} (rubrique)
+                                    </span>
+                                  </>
+                                )}
+                              </div>
                             </div>
+                            <button
+                              type="button"
+                              onClick={() => deleteEvaluation(ev)}
+                              disabled={!!publishBusy[ev.id]}
+                              className="ml-1 inline-flex h-7 w-7 items-center justify-center rounded-lg border border-red-100 text-red-500 hover:bg-red-50 hover:text-red-700 focus:outline-none focus:ring-2 focus:ring-red-500/40 disabled:opacity-60"
+                              title="Supprimer cette colonne de notes"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
                           </div>
-                          <button
-                            type="button"
-                            onClick={() => deleteEvaluation(ev)}
-                            disabled={!!publishBusy[ev.id]}
-                            className="ml-1 inline-flex h-7 w-7 items-center justify-center rounded-lg border border-red-100 text-red-500 hover:bg-red-50 hover:text-red-700 focus:outline-none focus:ring-2 focus:ring-red-500/40 disabled:opacity-60"
-                            title="Supprimer cette colonne de notes"
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </button>
-                        </div>
-                      </th>
-                    );
-                  })}
-                </tr>
-              </thead>
-              <tbody className="divide-y">
-                {loading ? (
-                  <tr>
-                    <td className="px-3 py-4 text-slate-500" colSpan={999}>
-                      Chargement…
-                    </td>
+                        </th>
+                      );
+                    })}
                   </tr>
-                ) : !selected ? (
-                  <tr>
-                    <td className="px-3 py-4 text-slate-500" colSpan={999}>
-                      Sélectionnez une classe/discipline pour saisir les
-                      notes.
-                    </td>
-                  </tr>
-                ) : roster.length === 0 ? (
-                  <tr>
-                    <td className="px-3 py-4 text-slate-500" colSpan={999}>
-                      Aucun élève dans cette classe.
-                    </td>
-                  </tr>
-                ) : (
-                  roster.map((st, idx) => (
-                    <tr key={st.id} className="hover:bg-slate-50/60">
-                      <td className="px-3 py-2 w-12 sticky left-0 z-10 bg-white">
-                        {idx + 1}
+                </thead>
+                <tbody className="divide-y">
+                  {loading ? (
+                    <tr>
+                      <td className="px-3 py-4 text-slate-500" colSpan={999}>
+                        Chargement…
                       </td>
-                      <td className="px-3 py-2 w-40 sticky left-[3rem] z-10 bg-white">
-                        {st.matricule ?? ""}
-                      </td>
-                      <td className="px-3 py-2 w-64 sticky left-[13rem] z-10 bg-white">
-                        {st.full_name}
-                      </td>
-
-                      {displayedEvaluations.map((ev) => {
-                        const scale = ev.scale;
-                        const current =
-                          changed[ev.id]?.[st.id] ??
-                          grades[ev.id]?.[st.id] ??
-                          null;
-                        return (
-                          <td key={ev.id} className="px-3 py-2 w-28">
-                            <Input
-                              type="number"
-                              inputMode="decimal"
-                              step="0.25"
-                              min={0}
-                              max={scale}
-                              value={current == null ? "" : String(current)}
-                              onChange={(e) => {
-                                const raw = e.target.value.trim();
-                                const v =
-                                  raw === ""
-                                    ? null
-                                    : Number(raw.replace(",", "."));
-                                setGrade(ev.id, st.id, v, scale);
-                              }}
-                              aria-label={`Note ${st.full_name}`}
-                            />
-                          </td>
-                        );
-                      })}
                     </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
+                  ) : !selected ? (
+                    <tr>
+                      <td className="px-3 py-4 text-slate-500" colSpan={999}>
+                        Sélectionnez une classe/discipline pour saisir les
+                        notes.
+                      </td>
+                    </tr>
+                  ) : roster.length === 0 ? (
+                    <tr>
+                      <td className="px-3 py-4 text-slate-500" colSpan={999}>
+                        Aucun élève dans cette classe.
+                      </td>
+                    </tr>
+                  ) : (
+                    roster.map((st, idx) => (
+                      <tr key={st.id} className="hover:bg-slate-50/60">
+                        <td className="px-3 py-2 w-12 sticky left-0 z-10 bg-white">
+                          {idx + 1}
+                        </td>
+                        <td className="px-3 py-2 w-40 sticky left-[3rem] z-10 bg-white">
+                          {st.matricule ?? ""}
+                        </td>
+                        <td className="px-3 py-2 w-64 sticky left-[13rem] z-10 bg-white">
+                          {st.full_name}
+                        </td>
+
+                        {displayedEvaluations.map((ev) => {
+                          const scale = ev.scale;
+                          const current =
+                            changed[ev.id]?.[st.id] ??
+                            grades[ev.id]?.[st.id] ??
+                            null;
+                          return (
+                            <td key={ev.id} className="px-3 py-2 w-28">
+                              <Input
+                                type="number"
+                                inputMode="decimal"
+                                step="0.25"
+                                min={0}
+                                max={scale}
+                                value={current == null ? "" : String(current)}
+                                onChange={(e) => {
+                                  const raw = e.target.value.trim();
+                                  const v =
+                                    raw === ""
+                                      ? null
+                                      : Number(raw.replace(",", "."));
+                                  setGrade(ev.id, st.id, v, scale);
+                                }}
+                                aria-label={`Note ${st.full_name}`}
+                              />
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {/* ==== LAYOUT MOBILE : cartes élèves + champ de saisie ==== */}
+          {isMobile && (
+            <div className="space-y-2">
+              {loading ? (
+                <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-sm text-slate-600">
+                  Chargement…
+                </div>
+              ) : !selected ? (
+                <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-sm text-slate-600">
+                  Sélectionnez une classe/discipline pour saisir les notes.
+                </div>
+              ) : roster.length === 0 ? (
+                <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-sm text-slate-600">
+                  Aucun élève dans cette classe.
+                </div>
+              ) : displayedEvaluations.length === 0 ? (
+                <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-sm text-slate-600">
+                  Aucune colonne de note pour le moment. Ajoutez une note puis
+                  choisissez-la dans les boutons (DEVOIR1, IE1…).
+                </div>
+              ) : (
+                roster.map((st, idx) => {
+                  const ev = displayedEvaluations[0];
+                  const label = labelByEvalId[ev.id] ?? "NOTE";
+                  const comp = ev.subject_component_id
+                    ? componentById[ev.subject_component_id]
+                    : undefined;
+                  const rubLabel = comp?.short_label || comp?.label || "";
+                  const scale = ev.scale;
+                  const current =
+                    changed[ev.id]?.[st.id] ?? grades[ev.id]?.[st.id] ?? null;
+
+                  return (
+                    <div
+                      key={st.id}
+                      className="rounded-xl border border-slate-200 bg-slate-50/80 px-3 py-2 shadow-sm"
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="text-[11px] font-semibold text-slate-500">
+                          #{idx + 1} • {st.matricule || "—"}
+                        </div>
+                        <div className="text-[11px] text-slate-500 text-right">
+                          {label} /{scale} • coeff {ev.coeff}
+                          {rubLabel && (
+                            <>
+                              <br />
+                              <span className="text-[10px] text-emerald-700">
+                                {rubLabel}
+                              </span>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                      <div className="mt-1 text-sm font-medium text-slate-900">
+                        {st.full_name}
+                      </div>
+                      <div className="mt-2">
+                        <Input
+                          type="number"
+                          inputMode="decimal"
+                          step="0.25"
+                          min={0}
+                          max={scale}
+                          value={current == null ? "" : String(current)}
+                          onChange={(e) => {
+                            const raw = e.target.value.trim();
+                            const v =
+                              raw === ""
+                                ? null
+                                : Number(raw.replace(",", "."));
+                            setGrade(ev.id, st.id, v, scale);
+                          }}
+                          aria-label={`Note ${st.full_name}`}
+                        />
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          )}
         </section>
       )}
 
@@ -1667,8 +1718,8 @@ export default function ClassDeviceNotesPage() {
               </GhostButton>
             </div>
             <p className="text-xs md:text-sm text-slate-600 mb-3">
-              Cochez les évaluations à publier pour les parents, ou
-              supprimez une colonne si besoin.
+              Cochez les évaluations à publier pour les parents, ou supprimez
+              une colonne si besoin.
             </p>
 
             {evaluations.length === 0 ? (
