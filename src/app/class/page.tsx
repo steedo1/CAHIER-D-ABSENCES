@@ -154,7 +154,7 @@ export default function ClassDevicePage() {
     tz: "Africa/Abidjan",
     default_session_minutes: 60,
     auto_lateness: true,
-    institution_name: "Mon établissement",
+    institution_name: "COURS SECONDAIRE CATHOLIQUE ABOISSO",
     academic_year_label: null,
   });
   const [periodsByDay, setPeriodsByDay] = useState<Record<number, Period[]>>({});
@@ -368,7 +368,7 @@ export default function ClassDevicePage() {
       tz: "Africa/Abidjan",
       default_session_minutes: 60,
       auto_lateness: true,
-      institution_name: inst.institution_name || "Mon établissement",
+      institution_name: inst.institution_name || "COURS SECONDAIRE CATHOLIQUE ABOISSO",
       academic_year_label: inst.academic_year_label || null,
     };
     let grouped: Record<number, Period[]> = {};
@@ -765,7 +765,7 @@ export default function ClassDevicePage() {
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="space-y-1">
             <p className="text-[11px] font-semibold uppercase tracking-[0.25em] text-indigo-200/80">
-              {inst.institution_name || "Mon établissement"}
+              {inst.institution_name || "COURS SECONDAIRE CATHOLIQUE ABOISSO"}
             </p>
             {inst.academic_year_label && (
               <p className="text-[11px] font-medium text-indigo-100/80">
