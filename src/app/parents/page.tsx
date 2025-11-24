@@ -1191,36 +1191,39 @@ export default function ParentPage() {
                   </Button>
                 </div>
 
-                {/* Mobile : sélection enfant (nav sections via bottom-nav) */}
+                {/* Mobile : sélection enfant (liste verticale type app) */}
                 {hasKids && (
                   <div className="relative z-10 mt-4 space-y-2 md:hidden">
-                    <div className="flex gap-2 overflow-x-auto pb-1">
+                    <div className="flex flex-col gap-2 max-h-40 overflow-y-auto">
                       <button
                         onClick={() => setActiveChildId("all")}
                         className={[
-                          "whitespace-nowrap rounded-full px-3 py-1 text-xs",
+                          "flex w-full items-center justify-between rounded-lg px-3 py-2 text-xs",
                           activeChildId === "all"
                             ? "bg-white text-slate-900"
                             : "bg-slate-900/40 text-slate-100 border border-white/10",
                         ].join(" ")}
                       >
-                        Vue globale
+                        <span>Vue globale</span>
+                        <span className="rounded-full bg-slate-900/10 px-2 py-0.5 text-[10px]">
+                          {kids.length || 0}
+                        </span>
                       </button>
                       {kids.map((k) => (
                         <button
                           key={k.id}
                           onClick={() => setActiveChildId(k.id)}
                           className={[
-                            "flex items-center gap-1 whitespace-nowrap rounded-full px-3 py-1 text-xs",
+                            "flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs",
                             activeChildId === k.id
                               ? "bg-emerald-300 text-slate-900"
                               : "bg-slate-900/40 text-slate-100 border border-white/10",
                           ].join(" ")}
                         >
-                          <span className="rounded-full bg-white/10 px-1.5 py-0.5 text-[10px]">
+                          <span className="grid h-7 w-7 place-items-center rounded-full bg-white/10 text-[10px] font-semibold">
                             {getInitials(k.full_name)}
                           </span>
-                          <span className="truncate max-w-[120px]">{k.full_name}</span>
+                          <span className="truncate">{k.full_name}</span>
                         </button>
                       ))}
                     </div>
@@ -1241,12 +1244,12 @@ export default function ParentPage() {
               </div>
             )}
 
-            {/* Conduite — moyenne par enfant (visible en Dashboard + Conduite) */}
+            {/* Conduite — points par enfant (sans note globale /20) */}
             {showConductSection && (
               <section className="rounded-2xl border bg-white/90 backdrop-blur p-5 shadow-sm">
                 <div className="mb-3 flex items-center justify-between gap-3">
                   <div className="text-sm font-semibold uppercase tracking-wide text-slate-700">
-                    Conduite — Moyenne par enfant
+                    Conduite — Points par rubrique
                   </div>
                   <div className="hidden md:flex items-center gap-2">
                     <Input
@@ -1260,7 +1263,11 @@ export default function ParentPage() {
                       value={conductTo}
                       onChange={(e) => setConductTo(e.target.value)}
                     />
-                    <Button onClick={applyConductFilter} disabled={loadingConduct}>
+                    <Button
+                      onClick={applyConductFilter}
+                      disabled={loadingConduct}
+                      className="px-3 py-1.5 text-xs"
+                    >
                       {loadingConduct ? "…" : "Valider"}
                     </Button>
                   </div>
@@ -1278,9 +1285,9 @@ export default function ParentPage() {
                     value={conductTo}
                     onChange={(e) => setConductTo(e.target.value)}
                   />
-                  <div className="col-span-2">
+                  <div className="col-span-2 flex justify-center">
                     <Button
-                      className="w-full"
+                      className="w-full max-w-[160px] px-4 py-1.5 text-xs mx-auto"
                       onClick={applyConductFilter}
                       disabled={loadingConduct}
                     >
@@ -1325,9 +1332,7 @@ export default function ParentPage() {
                                 </div>
                               </div>
                               {c ? (
-                                <Badge tone="emerald">
-                                  {c.total.toFixed(2).replace(".", ",")} / 20
-                                </Badge>
+                                <Badge tone="emerald">Points de conduite</Badge>
                               ) : (
                                 <Badge>—</Badge>
                               )}
@@ -1386,7 +1391,6 @@ export default function ParentPage() {
                             <th className="px-3 py-2 text-left">Tenue (/3)</th>
                             <th className="px-3 py-2 text-left">Moralité (/4)</th>
                             <th className="px-3 py-2 text-left">Discipline (/7)</th>
-                            <th className="px-3 py-2 text-left">Moyenne (/20)</th>
                             <th className="px-3 py-2 text-left">Appréciation</th>
                           </tr>
                         </thead>
@@ -1417,13 +1421,10 @@ export default function ParentPage() {
                                         .toFixed(2)
                                         .replace(".", ",")}
                                     </td>
-                                    <td className="px-3 py-2 font-semibold">
-                                      {c.total.toFixed(2).replace(".", ",")}
-                                    </td>
                                     <td className="px-3 py-2">{c.appreciation}</td>
                                   </>
                                 ) : (
-                                  <td className="px-3 py-2 text-slate-600" colSpan={6}>
+                                  <td className="px-3 py-2 text-slate-600" colSpan={5}>
                                     —
                                   </td>
                                 )}

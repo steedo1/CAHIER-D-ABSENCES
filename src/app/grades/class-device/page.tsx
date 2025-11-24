@@ -1,7 +1,7 @@
 // src/app/grades/class-device/page.tsx
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState, useRef } from "react";
 import {
   Users,
   Plus,
@@ -201,10 +201,13 @@ function GhostButton(
 ========================= */
 export default function ClassDeviceNotesPage() {
   const isMobile = useIsMobile();
+  const tableRef = useRef<HTMLDivElement | null>(null);
 
   // ✅ Tentative douce de récupérer le nom de l’établissement + année scolaire (sans rien casser)
   const [institutionName, setInstitutionName] = useState<string | null>(null);
-  const [academicYearLabel, setAcademicYearLabel] = useState<string | null>(null);
+  const [academicYearLabel, setAcademicYearLabel] = useState<string | null>(
+    null
+  );
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -400,7 +403,9 @@ export default function ClassDeviceNotesPage() {
   useEffect(() => {
     logInfo(
       "useEffect[data] -> déclenché avec selected",
-      selected ? { class_id: selected.class_id, subject_id: selected.subject_id } : null
+      selected
+        ? { class_id: selected.class_id, subject_id: selected.subject_id }
+        : null
     );
 
     if (!selected) {
@@ -633,6 +638,18 @@ export default function ClassDeviceNotesPage() {
       // ✅ Sur mobile, on passe automatiquement sur la nouvelle colonne
       setActiveEvalId(created.id);
       setMsg("NOTE ajoutée ✅ (colonne suivante)");
+
+      // ✅ Et on fait défiler vers le tableau sur mobile
+      if (isMobile && typeof window !== "undefined") {
+        setTimeout(() => {
+          if (tableRef.current) {
+            tableRef.current.scrollIntoView({
+              behavior: "smooth",
+              block: "start",
+            });
+          }
+        }, 250);
+      }
     } catch (e: any) {
       logError("addEvaluation -> exception", e);
       setMsg(e?.message || "Échec d’ajout de la note.");
@@ -1128,21 +1145,21 @@ export default function ClassDeviceNotesPage() {
           <div className="flex flex-wrap items-center gap-2">
             <GhostButton
               onClick={() => window.location.reload()}
-              className="border-indigo-400/70 bg-indigo-900/40 text-indigo-100 hover:bg-indigo-800/80 hover:text-white"
+              className="border-amber-400/80 bg-indigo-900/60 text-amber-300 hover:bg-indigo-800/90 hover:text-amber-100"
             >
               <RefreshCw className="h-4 w-4" /> Actualiser
             </GhostButton>
             {mode === "saisie" ? (
               <GhostButton
                 onClick={openAverages}
-                className="border-indigo-400/70 bg-indigo-900/40 text-indigo-100 hover:bg-indigo-800/80 hover:text-white"
+                className="border-amber-400/80 bg-indigo-900/60 text-amber-300 hover:bg-indigo-800/90 hover:text-amber-100"
               >
                 <Eye className="h-4 w-4" /> Voir les moyennes
               </GhostButton>
             ) : (
               <GhostButton
                 onClick={() => setMode("saisie")}
-                className="border-indigo-400/70 bg-indigo-900/40 text-indigo-100 hover:bg-indigo-800/80 hover:text-white"
+                className="border-amber-400/80 bg-indigo-900/60 text-amber-300 hover:bg-indigo-800/90 hover:text-amber-100"
               >
                 <EyeOff className="h-4 w-4" /> Retour à la saisie
               </GhostButton>
@@ -1377,7 +1394,15 @@ export default function ClassDeviceNotesPage() {
                   <button
                     key={ev.id}
                     type="button"
-                    onClick={() => setActiveEvalId(ev.id)}
+                    onClick={() => {
+                      setActiveEvalId(ev.id);
+                      if (tableRef.current) {
+                        tableRef.current.scrollIntoView({
+                          behavior: "smooth",
+                          block: "start",
+                        });
+                      }
+                    }}
                     className={[
                       "inline-flex items-center rounded-full border px-3 py-1 text-xs font-medium transition",
                       "focus:outline-none focus:ring-2 focus:ring-emerald-500/40",
@@ -1393,7 +1418,10 @@ export default function ClassDeviceNotesPage() {
             </div>
           )}
 
-          <div className="overflow-x-auto rounded-xl border">
+          <div
+            ref={tableRef}
+            className="overflow-x-auto rounded-xl border"
+          >
             <table className="min-w-full text-sm">
               <thead className="bg-slate-50 sticky top-0 z-10">
                 <tr className="text-left text-slate-600">
@@ -1414,10 +1442,7 @@ export default function ClassDeviceNotesPage() {
                       : undefined;
                     const rubLabel = comp?.short_label || comp?.label || "";
                     return (
-                      <th
-                        key={ev.id}
-                        className="px-3 py-2 whitespace-nowrap"
-                      >
+                      <th key={ev.id} className="px-3 py-2 whitespace-nowrap">
                         <div className="flex items-start justify-between gap-1">
                           <div>
                             <div className="font-semibold">{label}</div>
@@ -1451,38 +1476,26 @@ export default function ClassDeviceNotesPage() {
               <tbody className="divide-y">
                 {loading ? (
                   <tr>
-                    <td
-                      className="px-3 py-4 text-slate-500"
-                      colSpan={999}
-                    >
+                    <td className="px-3 py-4 text-slate-500" colSpan={999}>
                       Chargement…
                     </td>
                   </tr>
                 ) : !selected ? (
                   <tr>
-                    <td
-                      className="px-3 py-4 text-slate-500"
-                      colSpan={999}
-                    >
+                    <td className="px-3 py-4 text-slate-500" colSpan={999}>
                       Sélectionnez une classe/discipline pour saisir les
                       notes.
                     </td>
                   </tr>
                 ) : roster.length === 0 ? (
                   <tr>
-                    <td
-                      className="px-3 py-4 text-slate-500"
-                      colSpan={999}
-                    >
+                    <td className="px-3 py-4 text-slate-500" colSpan={999}>
                       Aucun élève dans cette classe.
                     </td>
                   </tr>
                 ) : (
                   roster.map((st, idx) => (
-                    <tr
-                      key={st.id}
-                      className="hover:bg-slate-50/60"
-                    >
+                    <tr key={st.id} className="hover:bg-slate-50/60">
                       <td className="px-3 py-2 w-12 sticky left-0 z-10 bg-white">
                         {idx + 1}
                       </td>
@@ -1500,31 +1513,21 @@ export default function ClassDeviceNotesPage() {
                           grades[ev.id]?.[st.id] ??
                           null;
                         return (
-                          <td
-                            key={ev.id}
-                            className="px-3 py-2 w-28"
-                          >
+                          <td key={ev.id} className="px-3 py-2 w-28">
                             <Input
                               type="number"
                               inputMode="decimal"
                               step="0.25"
                               min={0}
                               max={scale}
-                              value={
-                                current == null ? "" : String(current)
-                              }
+                              value={current == null ? "" : String(current)}
                               onChange={(e) => {
                                 const raw = e.target.value.trim();
                                 const v =
                                   raw === ""
                                     ? null
                                     : Number(raw.replace(",", "."));
-                                setGrade(
-                                  ev.id,
-                                  st.id,
-                                  v,
-                                  scale
-                                );
+                                setGrade(ev.id, st.id, v, scale);
                               }}
                               aria-label={`Note ${st.full_name}`}
                             />
@@ -1576,19 +1579,13 @@ export default function ClassDeviceNotesPage() {
               <tbody className="divide-y">
                 {loadingAvg ? (
                   <tr>
-                    <td
-                      className="px-3 py-4 text-slate-500"
-                      colSpan={999}
-                    >
+                    <td className="px-3 py-4 text-slate-500" colSpan={999}>
                       Chargement…
                     </td>
                   </tr>
                 ) : roster.length === 0 ? (
                   <tr>
-                    <td
-                      className="px-3 py-4 text-slate-500"
-                      colSpan={999}
-                    >
+                    <td className="px-3 py-4 text-slate-500" colSpan={999}>
                       Aucun élève dans cette classe.
                     </td>
                   </tr>

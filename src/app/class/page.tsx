@@ -500,6 +500,41 @@ export default function ClassDevicePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  /* ✅ Fallback doux : récupérer nom établissement + année via dataset / globals */
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const body: any = document.body;
+
+      const fromDataName =
+        body?.dataset?.institutionName || body?.dataset?.institution || null;
+      const fromGlobalName = (window as any).__MC_INSTITUTION_NAME__
+        ? String((window as any).__MC_INSTITUTION_NAME__)
+        : null;
+      const finalName = fromDataName || fromGlobalName;
+
+      const fromDataYear =
+        body?.dataset?.academicYear ||
+        body?.dataset?.schoolYear ||
+        body?.dataset?.anneeScolaire ||
+        null;
+      const fromGlobalYear = (window as any).__MC_ACADEMIC_YEAR__
+        ? String((window as any).__MC_ACADEMIC_YEAR__)
+        : null;
+      const finalYear = fromDataYear || fromGlobalYear;
+
+      if (!finalName && !finalYear) return;
+
+      setInst((prev) => ({
+        ...prev,
+        institution_name: finalName || prev.institution_name,
+        academic_year_label: finalYear || prev.academic_year_label || null,
+      }));
+    } catch {
+      // on ne casse rien si ça échoue
+    }
+  }, []);
+
   // Calcul du créneau par défaut « du moment » (timezone-aware)
   function computeDefaultsForNow() {
     const tz = inst?.tz || "Africa/Abidjan";
@@ -744,10 +779,11 @@ export default function ClassDevicePage() {
               Mode simplifié pour appeler la classe et enregistrer retards et sanctions.
             </p>
           </div>
+          {/* Bouton déconnexion or, très visible */}
           <GhostButton
-            tone="red"
+            tone="slate"
             onClick={logout}
-            className="shrink-0 bg-red-600 text-white border-red-500 hover:bg-red-700 hover:text-white"
+            className="shrink-0 rounded-full border-amber-400 bg-gradient-to-r from-amber-400 via-yellow-300 to-amber-500 px-4 py-2 text-sm font-semibold text-slate-900 shadow-md hover:shadow-lg hover:from-amber-500 hover:via-yellow-400 hover:to-amber-500 focus:ring-amber-400/40"
           >
             <LogOut className="h-4 w-4" />
             Se déconnecter
