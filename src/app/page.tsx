@@ -17,7 +17,6 @@ import {
   PhoneCall,
   ArrowUp,
   Quote,
-  PlayCircle,
 } from "lucide-react";
 
 /* ───────────────────────── Tiny UI helpers ───────────────────────── */
@@ -682,42 +681,6 @@ export default function HomePage() {
               Responsable pédagogique, Établissement partenaire
             </p>
           </article>
-        </div>
-
-        {/* "Vidéo" : image cliquable plutôt qu’un embed */}
-        <div className="mt-8 flex justify-center">
-          <a
-            href="https://youtube.com/shorts/ZF923Z7NXGc?si=RlUDmRm8FN_NbPjG"
-            target="_blank"
-            rel="noreferrer"
-            className="group block w-full max-w-3xl"
-          >
-            <div className="relative overflow-hidden rounded-3xl bg-slate-900 shadow-lg ring-1 ring-slate-900/20">
-              {/* ⚠️ place bien le fichier dans /public/temoignage-directeur.jpg */}
-              <div className="relative aspect-video w-full">
-                <Image
-                  src="/temoignage-directeur.jpg"
-                  alt="Témoignage d’un chef d’établissement utilisant Mon Cahier"
-                  fill
-                  sizes="(max-width: 768px) 100vw, 768px"
-                  className="object-cover transition duration-300 group-hover:scale-[1.03]"
-                />
-                <div className="absolute inset-0 bg-gradient-to-t from-indigo-950/85 via-indigo-900/40 to-transparent" />
-              </div>
-
-              <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center px-6 text-center text-white">
-                <div className="mb-3 inline-flex h-14 w-14 items-center justify-center rounded-full bg-white/15 ring-2 ring-white/40 group-hover:bg-white/25">
-                  <PlayCircle className="h-8 w-8" />
-                </div>
-                <div className="text-sm font-semibold sm:text-base">
-                  Témoignage vidéo d’un chef d’établissement
-                </div>
-                <div className="mt-1 text-xs text-slate-200/90 sm:text-sm">
-                  Cliquez pour regarder le témoignage complet sur YouTube.
-                </div>
-              </div>
-            </div>
-          </a>
         </div>
       </section>
 
