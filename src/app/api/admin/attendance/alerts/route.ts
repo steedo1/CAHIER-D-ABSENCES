@@ -6,6 +6,7 @@ import {
   type AdminAttendanceEvent,
   type MonitorStatus,
 } from "@/lib/push/admin-attendance";
+import { triggerPushDispatch } from "@/lib/push-dispatch";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -606,6 +607,19 @@ async function run(req: Request) {
       { ok: false, error: insertErr.message, stage: "insert", id },
       { status: 200 },
     );
+  }
+
+  // 🔔 Déclenchement quasi-instantané du push pour les admins
+  try {
+    await triggerPushDispatch({
+      reason: `admin_attendance_alerts:${id}`,
+      timeoutMs: 1500,
+    });
+  } catch (e: any) {
+    console.warn("[attendance/alerts] triggerPushDispatch_err", {
+      id,
+      error: String(e?.message || e),
+    });
   }
 
   const ms = Date.now() - t0;

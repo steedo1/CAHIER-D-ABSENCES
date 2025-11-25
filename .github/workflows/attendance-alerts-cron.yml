@@ -1,0 +1,98 @@
+name: Attendance Alerts Cron
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"   # toutes les 5 minutes pour les tests
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cron-attendance-alerts
+  cancel-in-progress: false
+
+jobs:
+  call-alerts:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    env:
+      PROD_ALERTS_URL: ${{ secrets.PROD_ALERTS_URL }}
+      CRON_SECRET:   ${{ secrets.CRON_SECRET }}
+    steps:
+      - name: Check secrets presence
+        run: |
+          test -n "$PROD_ALERTS_URL" || { echo "::error::Missing PROD_ALERTS_URL secret"; exit 1; }
+          test -n "$CRON_SECRET"   || { echo "::error::Missing CRON_SECRET secret"; exit 1; }
+
+      - name: Resolve host (DNS) for visibility
+        shell: bash
+        run: |
+          set -euo pipefail
+          URL="$(echo "$PROD_ALERTS_URL" | tr -d '[:space:]')"
+          HOST="${URL#*://}"; HOST="${HOST%%/*}"
+          echo "URL : $URL"
+          echo "Host: $HOST"
+          getent hosts "$HOST" || echo "No getent record for $HOST"
+
+      - name: Call alerts endpoint (follow redirects, keep POST)
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +x
+          URL="$(echo "$PROD_ALERTS_URL" | tr -d '[:space:]')"
+
+          call() {
+            local URL="$1"
+            local MODE="${2:-x-cron}"  # x-cron | bearer
+            echo "POST $URL (mode=$MODE)"
+
+            local -a AUTH
+            if [ "$MODE" = "bearer" ]; then
+              AUTH=(-H "Authorization: Bearer $CRON_SECRET")
+            else
+              AUTH=(-H "x-cron-secret: $CRON_SECRET")
+            fi
+
+            CODE=$(
+              curl -sS -L --post301 --post302 --post303 \
+                --retry 3 --retry-delay 2 --retry-connrefused \
+                --connect-timeout 10 --max-time 25 \
+                -o /tmp/resp.txt -w "%{http_code}" \
+                -X POST "$URL" \
+                "${AUTH[@]}" \
+                -H "x-vercel-cron: 1" \
+                -H "Content-Type: application/json" \
+                -H "User-Agent: gh-actions-attendance-alerts" \
+                --data '{"source":"github-actions-attendance"}' \
+              || true
+            )
+
+            echo "HTTP $CODE"
+            echo "----- Response body (2KB max) -----"
+            head -c 2048 /tmp/resp.txt || true; echo
+            echo "-----------------------------------"
+
+            [[ "$CODE" -ge 200 && "$CODE" -lt 300 ]]
+          }
+
+          if call "$URL" x-cron; then exit 0; fi
+
+          echo "Retry with Authorization: Bearer"
+          if call "$URL" bearer; then exit 0; fi
+
+          HOST="${URL#*://}"; HOST="${HOST%%/*}"
+          if [[ "$HOST" == www.* ]]; then
+            ALT_HOST="${HOST#www.}"
+          else
+            ALT_HOST="www.$HOST"
+          fi
+          SWAP="${URL/$HOST/$ALT_HOST}"
+          echo "Retry with swapped host: $SWAP"
+          if call "$SWAP" x-cron; then exit 0; fi
+
+          echo "Retry swapped host with Authorization: Bearer"
+          if call "$SWAP" bearer; then exit 0; fi
+
+          echo "::error::Failed after retries (see body above)"; exit 1
