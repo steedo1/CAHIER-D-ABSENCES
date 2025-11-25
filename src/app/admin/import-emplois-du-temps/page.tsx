@@ -1,13 +1,31 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Upload, Info, CheckCircle2, AlertTriangle, FileText } from "lucide-react";
 
 type UploadState =
   | { status: "idle" }
   | { status: "uploading" }
-  | { status: "success"; message: string }
-  | { status: "error"; message: string };
+  | { status: "success"; message: string; errors?: string[] }
+  | { status: "error"; message: string; errors?: string[] };
+
+type MetaClass = { id: string; label: string };
+type MetaSubject = { id: string; label: string };
+type MetaTeacher = { id: string; display_name: string; phone: string | null };
+type MetaPeriod = {
+  id: string;
+  weekday: number;
+  period_no: number;
+  start_time: string | null;
+  end_time: string | null;
+};
+
+type TimetablesMeta = {
+  classes: MetaClass[];
+  subjects: MetaSubject[];
+  teachers: MetaTeacher[];
+  periods: MetaPeriod[];
+};
 
 function Input(p: React.InputHTMLAttributes<HTMLInputElement>) {
   return (
@@ -49,11 +67,46 @@ function downloadText(filename: string, content: string, mime = "text/csv;charse
   URL.revokeObjectURL(url);
 }
 
+const WEEKDAY_LABELS: Record<number, string> = {
+  0: "Dimanche",
+  1: "Lundi",
+  2: "Mardi",
+  3: "Mercredi",
+  4: "Jeudi",
+  5: "Vendredi",
+  6: "Samedi",
+};
+
 export default function ImportEmploisDuTempsPage() {
   const [file, setFile] = useState<File | null>(null);
   const [sampleLines, setSampleLines] = useState<string[]>([]);
   const [uploadState, setUploadState] = useState<UploadState>({ status: "idle" });
   const [overwrite, setOverwrite] = useState<boolean>(false);
+
+  const [meta, setMeta] = useState<TimetablesMeta | null>(null);
+  const [metaLoading, setMetaLoading] = useState<boolean>(false);
+  const [metaError, setMetaError] = useState<string | null>(null);
+
+  useEffect(() => {
+    async function loadMeta() {
+      try {
+        setMetaLoading(true);
+        setMetaError(null);
+        const res = await fetch("/api/admin/timetables/meta", { method: "GET" });
+        if (!res.ok) {
+          setMetaError(`Impossible de charger les données d'aide (HTTP ${res.status}).`);
+          return;
+        }
+        const json = (await res.json()) as TimetablesMeta;
+        setMeta(json);
+      } catch (e: any) {
+        setMetaError(e?.message || "Erreur lors du chargement des données d'aide.");
+      } finally {
+        setMetaLoading(false);
+      }
+    }
+    loadMeta();
+  }, []);
 
   function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0];
@@ -78,20 +131,20 @@ export default function ImportEmploisDuTempsPage() {
   function handleDownloadTemplate() {
     const header = [
       "classe",
-      "enseignant_email_ou_tel",
+      "enseignant_email_ou_tel", // nom complet ou téléphone
       "discipline",
-      "jour",         // Lundi, Mardi, ... ou 1..6
-      "heure_debut",  // HH:MM
-      "heure_fin",    // HH:MM
-      "periode_no",   // optionnel : n° de créneau
+      "jour", // Lundi, Mardi, ... ou 1..6
+      "heure_debut", // HH:MM
+      "heure_fin", // HH:MM
+      "periode_no", // optionnel : n° de créneau
     ].join(";");
     const example = [
-      "3e A",
-      "prof.maths@ecole.ci",
-      "Mathématiques",
+      "1re D1",
+      "ATTEKEBLE ACHILLE", // nom complet de l'enseignant (téléphone possible à la place)
+      "PHYSIQUE-CHIMIE",
       "Lundi",
-      "07:10",
-      "08:05",
+      "07:15",
+      "08:10",
       "1",
     ].join(";");
     const content = [header, example].join("\n");
@@ -113,23 +166,28 @@ export default function ImportEmploisDuTempsPage() {
       });
 
       let message = `Import impossible (erreur serveur : HTTP ${res.status}).`;
+      let errors: string[] | undefined = undefined;
+
       try {
-        const json = await res.json().catch(() => null);
+        const json = await res.json().catch(() => null as any);
         if (json?.message) {
           message = json.message;
         } else if (json?.error) {
           message = json.error;
+        }
+        if (Array.isArray(json?.errors)) {
+          errors = json.errors as string[];
         }
       } catch {
         // ignore
       }
 
       if (!res.ok) {
-        setUploadState({ status: "error", message });
+        setUploadState({ status: "error", message, errors });
         return;
       }
 
-      setUploadState({ status: "success", message });
+      setUploadState({ status: "success", message, errors });
     } catch (e: any) {
       setUploadState({
         status: "error",
@@ -160,10 +218,10 @@ export default function ImportEmploisDuTempsPage() {
             </h2>
           </div>
           <ol className="space-y-2 text-sm text-slate-600 list-decimal list-inside">
-            <li>Une ligne = un cours (ex : 3e A, Mathématiques, Lundi, 07:10–08:05).</li>
+            <li>Une ligne = un cours (ex : 1re D1, PHYSIQUE-CHIMIE, Lundi, 07:15–08:10).</li>
             <li>
               Indiquez au moins : <strong>classe</strong>,{" "}
-              <strong>enseignant</strong> (email ou téléphone),{" "}
+              <strong>enseignant</strong> (nom complet ou téléphone),{" "}
               <strong>discipline</strong>, <strong>jour</strong>,{" "}
               <strong>heure_debut</strong>, <strong>heure_fin</strong>.{" "}
               Le numéro de créneau <code>periode_no</code> est facultatif.
@@ -190,6 +248,76 @@ export default function ImportEmploisDuTempsPage() {
               correspondance automatiquement entre{" "}
               <code>jour, heure_debut, heure_fin</code> et ces créneaux.
             </p>
+          </div>
+
+          {/* Aide dynamique pour l’admin */}
+          <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50/80 px-3 py-3 text-xs text-slate-700 space-y-2">
+            <div className="font-semibold text-slate-800 mb-1">
+              Aide : valeurs disponibles dans votre établissement
+            </div>
+
+            {metaLoading && (
+              <p className="text-slate-500">Chargement des données d&apos;aide…</p>
+            )}
+
+            {metaError && (
+              <p className="text-red-600">
+                {metaError}
+              </p>
+            )}
+
+            {meta && (
+              <div className="space-y-2">
+                <div>
+                  <div className="font-medium">Classes :</div>
+                  <p className="text-slate-600">
+                    {meta.classes.length === 0
+                      ? "Aucune classe trouvée."
+                      : meta.classes.map((c) => c.label).join(", ")}
+                  </p>
+                </div>
+
+                <div>
+                  <div className="font-medium">Disciplines activées :</div>
+                  <p className="text-slate-600">
+                    {meta.subjects.length === 0
+                      ? "Aucune discipline configurée."
+                      : meta.subjects.map((s) => s.label).join(", ")}
+                  </p>
+                </div>
+
+                <div>
+                  <div className="font-medium">Enseignants :</div>
+                  <p className="text-slate-600">
+                    {meta.teachers.length === 0
+                      ? "Aucun enseignant trouvé."
+                      : meta.teachers
+                          .map((t) =>
+                            t.phone
+                              ? `${t.display_name} (${t.phone})`
+                              : t.display_name
+                          )
+                          .join("; ")}
+                  </p>
+                </div>
+
+                <div>
+                  <div className="font-medium">Créneaux horaires :</div>
+                  <div className="max-h-32 overflow-auto space-y-1 text-slate-600">
+                    {meta.periods.length === 0 && (
+                      <p>Aucun créneau configuré.</p>
+                    )}
+                    {meta.periods.map((p) => (
+                      <div key={p.id}>
+                        {WEEKDAY_LABELS[p.weekday] ?? `Jour ${p.weekday}`} –{" "}
+                        {p.period_no} :{" "}
+                        {p.start_time?.slice(0, 5)}-{p.end_time?.slice(0, 5)}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </div>
 
@@ -259,15 +387,46 @@ export default function ImportEmploisDuTempsPage() {
           </div>
 
           {uploadState.status === "success" && (
-            <div className="mt-2 flex items-start gap-2 rounded-xl border border-emerald-200 bg-emerald-50/80 px-3 py-2 text-xs text-emerald-900">
-              <CheckCircle2 className="h-4 w-4 mt-0.5 shrink-0" />
-              <p>{uploadState.message}</p>
+            <div className="mt-2 flex flex-col gap-2">
+              <div className="flex items-start gap-2 rounded-xl border border-emerald-200 bg-emerald-50/80 px-3 py-2 text-xs text-emerald-900">
+                <CheckCircle2 className="h-4 w-4 mt-0.5 shrink-0" />
+                <p>{uploadState.message}</p>
+              </div>
+
+              {uploadState.errors && uploadState.errors.length > 0 && (
+                <details className="rounded-xl border border-emerald-200 bg-white/80 px-3 py-2 text-[11px] text-slate-700">
+                  <summary className="cursor-pointer font-semibold">
+                    Détails des lignes ignorées ({uploadState.errors.length})
+                  </summary>
+                  <ul className="mt-2 list-disc list-inside space-y-1">
+                    {uploadState.errors.map((err, idx) => (
+                      <li key={idx}>{err}</li>
+                    ))}
+                  </ul>
+                </details>
+              )}
             </div>
           )}
+
           {uploadState.status === "error" && (
-            <div className="mt-2 flex items-start gap-2 rounded-xl border border-red-200 bg-red-50/80 px-3 py-2 text-xs text-red-900">
-              <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
-              <p>{uploadState.message}</p>
+            <div className="mt-2 flex flex-col gap-2">
+              <div className="flex items-start gap-2 rounded-xl border border-red-200 bg-red-50/80 px-3 py-2 text-xs text-red-900">
+                <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
+                <p>{uploadState.message}</p>
+              </div>
+
+              {uploadState.errors && uploadState.errors.length > 0 && (
+                <details className="rounded-xl border border-red-200 bg-white/80 px-3 py-2 text-[11px] text-slate-700">
+                  <summary className="cursor-pointer font-semibold">
+                    Détails des erreurs ({uploadState.errors.length})
+                  </summary>
+                  <ul className="mt-2 list-disc list-inside space-y-1">
+                    {uploadState.errors.map((err, idx) => (
+                      <li key={idx}>{err}</li>
+                    ))}
+                  </ul>
+                </details>
+              )}
             </div>
           )}
         </div>

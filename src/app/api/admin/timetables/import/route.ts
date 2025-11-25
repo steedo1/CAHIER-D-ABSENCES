@@ -14,6 +14,18 @@ function normalize(str: string | null | undefined): string {
     .trim();
 }
 
+/**
+ * Normalisation spécifique des labels de classe :
+ * - normalise (minuscules, sans accents)
+ * - supprime tous les espaces
+ * ex: "1re D1" -> "1red1"
+ */
+function normalizeClasseLabel(str: string | null | undefined): string {
+  const base = normalize(str);
+  if (!base) return "";
+  return base.replace(/\s+/g, "");
+}
+
 function uniq<T>(arr: T[]): T[] {
   return Array.from(new Set((arr || []).filter(Boolean))) as T[];
 }
@@ -39,6 +51,22 @@ function buildPhoneVariants(raw: string) {
     localNo0 ? `0${localNo0}` : "",
   ]);
   return variants;
+}
+
+/**
+ * Mini table d'alias de disciplines (clé et valeur déjà normalisées).
+ * ex: "physiques-chimie" -> "physique-chimie"
+ */
+const DISCIPLINE_ALIASES: Record<string, string> = {
+  "physiques-chimie": "physique-chimie",
+  "physiques chimie": "physique-chimie",
+  "physique chimie": "physique-chimie",
+};
+
+function normalizeDisciplineInput(raw: string | null | undefined): string {
+  const base = normalize(raw);
+  if (!base) return "";
+  return DISCIPLINE_ALIASES[base] || base;
 }
 
 function parseWeekday(jour: string): number | null {
@@ -218,7 +246,7 @@ export async function POST(req: NextRequest) {
           .eq("institution_id", institution_id),
         srv
           .from("profiles")
-          .select("id,display_name,email,phone")
+          .select("id,display_name,phone")
           .eq("institution_id", institution_id),
         srv
           .from("institution_periods")
@@ -226,9 +254,13 @@ export async function POST(req: NextRequest) {
           .eq("institution_id", institution_id),
       ]);
 
+    // Map classes avec normalisation "sans espace"
     const classByLabel = new Map<string, string>();
     (classes || []).forEach((c: any) => {
-      classByLabel.set(normalize(c.label), c.id);
+      const key = normalizeClasseLabel(c.label);
+      if (key) {
+        classByLabel.set(key, c.id);
+      }
     });
 
     const subjectByName = new Map<string, string>();
@@ -254,11 +286,15 @@ export async function POST(req: NextRequest) {
       if (sname) subjectByName.set(sname, s.id);
     });
 
-    const teacherByEmail = new Map<string, string>();
+    // Professeurs : on matche d'abord sur display_name, puis éventuellement sur le téléphone
+    const teacherByName = new Map<string, string>();
     const teacherByPhone = new Map<string, string>();
     (profiles || []).forEach((p: any) => {
       const id = p.id as string;
-      if (p.email) teacherByEmail.set(normalize(p.email), id);
+      const normName = normalize(p.display_name);
+      if (normName) {
+        teacherByName.set(normName, id);
+      }
       if (p.phone) {
         const variants = buildPhoneVariants(String(p.phone));
         variants.forEach((v) => teacherByPhone.set(v, id));
@@ -300,8 +336,8 @@ export async function POST(req: NextRequest) {
       const endRaw = cols[idxEnd] ?? "";
 
       const lineNo = i + 1;
-      const normClasse = normalize(classe);
-      const normDisc = normalize(disc);
+      const normClasse = normalizeClasseLabel(classe);
+      const normDisc = normalizeDisciplineInput(disc);
       const weekday = parseWeekday(jour);
       const startNorm = normalizeTimeInput(startRaw);
       const endNorm = normalizeTimeInput(endRaw);
@@ -311,7 +347,7 @@ export async function POST(req: NextRequest) {
         continue;
       }
       if (!ensIdent.trim()) {
-        errors.push(`Ligne ${lineNo}: enseignant_email_ou_tel vide.`);
+        errors.push(`Ligne ${lineNo}: enseignant vide.`);
         continue;
       }
       if (!normDisc) {
@@ -345,10 +381,14 @@ export async function POST(req: NextRequest) {
         continue;
       }
 
+      // Recherche de l'enseignant :
+      // 1) par nom (display_name)
+      // 2) sinon par téléphone (si l'admin a mis un numéro dans le CSV)
       let teacher_id: string | undefined;
-      const normEmail = normalize(ensIdent);
-      if (teacherByEmail.has(normEmail)) {
-        teacher_id = teacherByEmail.get(normEmail)!;
+      const normTeacher = normalize(ensIdent);
+
+      if (teacherByName.has(normTeacher)) {
+        teacher_id = teacherByName.get(normTeacher)!;
       } else {
         const variants = buildPhoneVariants(ensIdent);
         for (const v of variants) {
@@ -358,9 +398,10 @@ export async function POST(req: NextRequest) {
           }
         }
       }
+
       if (!teacher_id) {
         errors.push(
-          `Ligne ${lineNo}: enseignant "${ensIdent}" introuvable (ni email ni téléphone ne correspondent).`
+          `Ligne ${lineNo}: enseignant "${ensIdent}" introuvable (ni nom ni téléphone ne correspondent dans l'établissement).`
         );
         continue;
       }

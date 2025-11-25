@@ -3,6 +3,7 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import { Users, Clock, Save, Play, Square, LogOut } from "lucide-react";
+import { getSupabaseBrowserClient } from "@/lib/supabase-browser";
 
 /* ─────────────────────────────────────────
    Types
@@ -29,6 +30,8 @@ type InstCfg = {
   tz: string;
   default_session_minutes: number;
   auto_lateness: boolean;
+  institution_name?: string | null;
+  academic_year_label?: string | null;
 };
 type Period = { weekday: number; label: string; start_time: string; end_time: string };
 
@@ -202,6 +205,8 @@ export default function TeacherDashboard() {
     tz: "Africa/Abidjan",
     default_session_minutes: 60,
     auto_lateness: true,
+    institution_name: "COURS SECONDAIRE CATHOLIQUE ABOISSO",
+    academic_year_label: null,
   });
   const [periodsByDay, setPeriodsByDay] = useState<Record<number, Period[]>>({});
   const [slotLabel, setSlotLabel] = useState<string>(
@@ -293,6 +298,21 @@ export default function TeacherDashboard() {
         tz: c?.tz || "Africa/Abidjan",
         default_session_minutes: Number(c?.default_session_minutes || 60),
         auto_lateness: !!c?.auto_lateness,
+        institution_name:
+          c?.institution_name ||
+          c?.institution_label ||
+          c?.short_name ||
+          c?.name ||
+          c?.header_title ||
+          c?.school_name ||
+          null,
+        academic_year_label:
+          c?.academic_year_label ||
+          c?.current_academic_year_label ||
+          c?.academic_year ||
+          c?.year_label ||
+          c?.header_academic_year ||
+          null,
         periods: Array.isArray(p?.periods) ? p.periods : [],
       };
     }
@@ -313,11 +333,25 @@ export default function TeacherDashboard() {
       arr.sort((a, b) => toMinutes(a.start_time) - toMinutes(b.start_time))
     );
 
-    setInst({
-      tz: basics.tz || "Africa/Abidjan",
-      default_session_minutes: Number(basics.default_session_minutes || 60),
-      auto_lateness: !!basics.auto_lateness,
-    });
+    setInst((prev) => ({
+      tz: basics!.tz || "Africa/Abidjan",
+      default_session_minutes: Number(basics!.default_session_minutes || 60),
+      auto_lateness: !!basics!.auto_lateness,
+      institution_name:
+        basics!.institution_name ??
+        prev.institution_name ??
+        (basics as any)?.institution_label ??
+        (basics as any)?.short_name ??
+        (basics as any)?.name ??
+        null,
+      academic_year_label:
+        basics!.academic_year_label ??
+        prev.academic_year_label ??
+        (basics as any)?.academic_year_label ??
+        (basics as any)?.current_academic_year_label ??
+        (basics as any)?.academic_year ??
+        null,
+    }));
     setPeriodsByDay(grouped);
 
     // 3) Config conduite (maxima par rubrique) — à partir de /api/admin/conduct/settings
@@ -345,6 +379,41 @@ export default function TeacherDashboard() {
 
   useEffect(() => {
     loadInstitutionBasics();
+  }, []);
+
+  /* ✅ Fallback doux : récupérer nom établissement + année via dataset / globals */
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const body: any = document.body;
+
+      const fromDataName =
+        body?.dataset?.institutionName || body?.dataset?.institution || null;
+      const fromGlobalName = (window as any).__MC_INSTITUTION_NAME__
+        ? String((window as any).__MC_INSTITUTION_NAME__)
+        : null;
+      const finalName = fromDataName || fromGlobalName;
+
+      const fromDataYear =
+        body?.dataset?.academicYear ||
+        body?.dataset?.schoolYear ||
+        body?.dataset?.anneeScolaire ||
+        null;
+      const fromGlobalYear = (window as any).__MC_ACADEMIC_YEAR__
+        ? String((window as any).__MC_ACADEMIC_YEAR__)
+        : null;
+      const finalYear = fromDataYear || fromGlobalYear;
+
+      if (!finalName && !finalYear) return;
+
+      setInst((prev) => ({
+        ...prev,
+        institution_name: finalName || prev.institution_name,
+        academic_year_label: finalYear || prev.academic_year_label || null,
+      }));
+    } catch {
+      // on ne casse rien si ça échoue
+    }
   }, []);
 
   // Calcul du créneau « du moment » + verrouillage heure/durée
@@ -677,6 +746,39 @@ export default function TeacherDashboard() {
     }
   }
 
+  /* Déconnexion type "téléphone de classe" */
+  async function logout() {
+    try {
+      // 1) Déconnexion Supabase côté navigateur
+      try {
+        const supabase = getSupabaseBrowserClient();
+        await supabase.auth.signOut();
+      } catch (e: any) {
+        console.warn("[teacher/logout] supabase signOut:", e?.message || e);
+      }
+
+      // 2) Nettoyage des cookies HttpOnly (sb-access/refresh, sb-*-auth-token)
+      try {
+        await fetch("/api/auth/sync", { method: "DELETE" });
+      } catch (e: any) {
+        console.warn("[teacher/logout] /api/auth/sync DELETE:", e?.message || e);
+      }
+
+      // 3) Endpoints legacy éventuels
+      const endpoints = ["/api/auth/signout", "/api/auth/logout", "/auth/signout"];
+      for (const url of endpoints) {
+        try {
+          await fetch(url, { method: "POST", cache: "no-store" });
+        } catch {
+          /* ignore */
+        }
+      }
+    } finally {
+      // 4) Retour écran de connexion global
+      window.location.href = "/login";
+    }
+  }
+
   /* Barre d’actions collante (mobile) — sans “Prochaine heure” */
   const showSticky = true;
   const mobileBar = showSticky ? (
@@ -736,24 +838,36 @@ export default function TeacherDashboard() {
   ) : null;
 
   return (
-    <div className="mx-auto max-w-7xl px-4 py-6 space-y-6">
-      {/* Header */}
-      <header className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">
-            Espace enseignant
-          </h1>
-          <p className="text-slate-600 text-sm">
-            Sélectionnez une classe avant de faire l'appel,. Les minutes de retard
-            sont <b>calculées automatiquement</b>.
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <a href="/logout">
-            <GhostButton tone="red">
-              <LogOut className="h-4 w-4" /> Déconnexion
-            </GhostButton>
-          </a>
+    <div className="mx-auto max-w-5xl px-4 py-6 space-y-6">
+      {/* Header premium, même style que téléphone de classe */}
+      <header className="overflow-hidden rounded-2xl border border-slate-800 bg-gradient-to-r from-slate-950 via-indigo-900 to-slate-950 px-4 py-4 sm:px-6 sm:py-5 shadow-sm">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="space-y-1">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.25em] text-indigo-200/80">
+              {inst.institution_name || "COURS SECONDAIRE CATHOLIQUE ABOISSO"}
+            </p>
+            {inst.academic_year_label && (
+              <p className="text-[11px] font-medium text-indigo-100/80">
+                Année scolaire {inst.academic_year_label}
+              </p>
+            )}
+            <h1 className="text-xl sm:text-2xl font-semibold tracking-tight text-white">
+              Espace enseignant — Appel
+            </h1>
+            <p className="mt-1 max-w-xl text-xs sm:text-sm text-indigo-100/85">
+              Sélectionnez une classe avant de faire l’appel. Les minutes de retard sont{" "}
+              <b>calculées automatiquement</b>.
+            </p>
+          </div>
+          {/* Bouton déconnexion or, très visible */}
+          <GhostButton
+            tone="slate"
+            onClick={logout}
+            className="shrink-0 rounded-full border-amber-400 bg-gradient-to-r from-amber-400 via-yellow-300 to-amber-500 px-4 py-2 text-sm font-semibold text-slate-900 shadow-md hover:shadow-lg hover:from-amber-500 hover:via-yellow-400 hover:to-amber-500 focus:ring-amber-400/40"
+          >
+            <LogOut className="h-4 w-4" />
+            Se déconnecter
+          </GhostButton>
         </div>
       </header>
 
@@ -939,7 +1053,7 @@ export default function TeacherDashboard() {
                   Moralité
                 </Chip>
               </div>
-              <div className="mt-2 text：[11px] text-slate-500">
+              <div className="mt-2 text-[11px] text-slate-500">
                 <b>Note :</b> l’assiduité est <u>calculée automatiquement</u> via
                 les absences injustifiées.
               </div>
