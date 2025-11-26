@@ -1,4 +1,4 @@
-// src/app/api/admin/attendance/alerts/route.ts 
+// src/app/api/admin/attendance/alerts/route.ts
 import { NextResponse } from "next/server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import {
@@ -546,7 +546,9 @@ async function run(req: Request) {
     return NextResponse.json({ ok: true, id, created: 0, ms: msNoEvents });
   }
 
-  // 5) Insertion dans notifications_queue (UNE ligne par créneau & type d’alerte)
+  // 5) Insertion dans notifications_queue
+  //    → UNE ligne par admin (profile_id) et par créneau, pour respecter la contrainte:
+  //      (profile_id IS NOT NULL AND parent_id IS NULL)
   const insertRows: any[] = [];
 
   for (const { ev, slotId, alertType } of events) {
@@ -562,26 +564,29 @@ async function run(req: Request) {
       (payload && (payload.severity as string)) ||
       (ev.status === "missing" ? "warning" : "info");
 
-    insertRows.push({
-      institution_id: ev.institution_id,
-      student_id: null,
-      session_id: null,
-      mark_id: null,
-      parent_id: null, // 👈 distribué aux admins dans /api/push/dispatch
-      channels: ["inapp", "push"],
-      payload: JSON.stringify(payload),
-      title,
-      body,
-      status: WAIT_STATUS,
-      attempts: 0,
-      last_error: null,
-      meta: JSON.stringify({
-        slot_id: slotId,
-        alert_type: alertType,
-        source: "admin_attendance_alerts",
-      }),
-      severity,
-    });
+    for (const adminProfileId of admins) {
+      insertRows.push({
+        institution_id: ev.institution_id,
+        student_id: null,
+        session_id: null,
+        mark_id: null,
+        parent_id: null,
+        profile_id: adminProfileId,
+        channels: ["inapp", "push"],
+        payload: JSON.stringify(payload),
+        title,
+        body,
+        status: WAIT_STATUS,
+        attempts: 0,
+        last_error: null,
+        meta: JSON.stringify({
+          slot_id: slotId,
+          alert_type: alertType,
+          source: "admin_attendance_alerts",
+        }),
+        severity,
+      });
+    }
   }
 
   if (!insertRows.length) {
