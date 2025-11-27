@@ -151,11 +151,126 @@ async function resolveSubjectIdToGlobal(
   }
 
   // 2) Aucun match clair → on renvoie la valeur brute (risque de FK si vraiment invalide)
-  console.warn(
-    "[grades/evaluations] resolveSubjectIdToGlobal: no match",
-    { institutionId, rawSubjectId: sid },
-  );
+  console.warn("[grades/evaluations] resolveSubjectIdToGlobal: no match", {
+    institutionId,
+    rawSubjectId: sid,
+  });
   return sid;
+}
+
+/**
+ * Détermine le teacher_id à enregistrer sur grade_evaluations.
+ *
+ * - Si l'utilisateur est un professeur "normal" → on met son profile.id
+ * - Si c'est un compte-classe → on essaie de retrouver le prof via class_teachers
+ *   pour (class_id, subject_id)
+ * - Sinon on garde le profile.id en fallback.
+ */
+async function resolveTeacherIdForEvaluation(
+  srv: ReturnType<typeof getSupabaseServiceClient>,
+  institutionId: string,
+  profileId: string,
+  classId: string,
+  rawSubjectId: string | null,
+  resolvedSubjectId: string | null,
+): Promise<string | null> {
+  try {
+    const { data: roleRows, error: rolesErr } = await srv
+      .from("user_roles")
+      .select("role")
+      .eq("profile_id", profileId)
+      .eq("institution_id", institutionId);
+
+    if (rolesErr) {
+      console.error(
+        "[grades/evaluations] resolveTeacherIdForEvaluation roles error",
+        rolesErr,
+      );
+      return profileId;
+    }
+
+    const roles = new Set<string>(
+      (roleRows ?? []).map((r: any) => String(r.role)),
+    );
+    const isTeacher = roles.has("teacher");
+    const isClassDevice = roles.has("class_device");
+
+    // Prof classique → on garde le prof lui-même
+    if (isTeacher && !isClassDevice) {
+      return profileId;
+    }
+
+    // Autre rôle sans class_device (admin qui crée une note par ex.)
+    if (!isClassDevice) {
+      return profileId;
+    }
+
+    // Compte-classe : on va chercher le prof de la classe
+    const { data: ctRows, error: ctErr } = await srv
+      .from("class_teachers")
+      .select("teacher_id,subject_id")
+      .eq("institution_id", institutionId)
+      .eq("class_id", classId)
+      .is("end_date", null);
+
+    if (ctErr) {
+      console.error(
+        "[grades/evaluations] resolveTeacherIdForEvaluation class_teachers error",
+        ctErr,
+      );
+      return profileId;
+    }
+
+    const rows = ctRows ?? [];
+    if (!rows.length) {
+      console.warn(
+        "[grades/evaluations] resolveTeacherIdForEvaluation: aucun enseignant trouvé pour la classe",
+        { classId, institutionId },
+      );
+      return profileId;
+    }
+
+    const matchByRaw = rawSubjectId
+      ? rows.filter((r: any) => r.subject_id === rawSubjectId)
+      : [];
+    const matchByResolved = resolvedSubjectId
+      ? rows.filter((r: any) => r.subject_id === resolvedSubjectId)
+      : [];
+    let candidates =
+      matchByRaw.length > 0
+        ? matchByRaw
+        : matchByResolved.length > 0
+        ? matchByResolved
+        : rows;
+
+    if (candidates.length === 1) {
+      const tid = (candidates[0] as any).teacher_id || profileId;
+      console.log(
+        "[grades/evaluations] resolveTeacherIdForEvaluation: teacher trouvé pour compte-classe",
+        { classId, rawSubjectId, resolvedSubjectId, teacher_id: tid },
+      );
+      return tid;
+    }
+
+    const chosen = (candidates[0] as any)?.teacher_id || profileId;
+    console.warn(
+      "[grades/evaluations] resolveTeacherIdForEvaluation: plusieurs enseignants possibles, on prend le premier",
+      {
+        classId,
+        rawSubjectId,
+        resolvedSubjectId,
+        teacher_id: chosen,
+      },
+    );
+    return chosen;
+  } catch (err) {
+    console.error(
+      "[grades/evaluations] resolveTeacherIdForEvaluation unexpected error",
+      err,
+      { institutionId, profileId, classId },
+    );
+    return profileId;
+  }
 }
 
 /* ==========================================
@@ -328,12 +443,21 @@ export async function POST(req: NextRequest) {
       subjRaw,
     );
 
-    console.log("[grades/evaluations] POST resolved subject", {
+    const teacherId = await resolveTeacherIdForEvaluation(
+      srv,
+      profile.institution_id,
+      profile.id,
+      class_id,
+      subjRaw,
+      resolvedSubjectId,
+    );
+
+    console.log("[grades/evaluations] POST resolved", {
       class_id,
       rawSubjectId: subjRaw,
       resolvedSubjectId,
       subject_component_id: subject_component_id ?? null,
-      teacher_id: user.id,
+      teacher_id: teacherId,
     });
 
     const { data, error } = await srv
@@ -342,7 +466,7 @@ export async function POST(req: NextRequest) {
         class_id,
         subject_id: resolvedSubjectId,
         subject_component_id: subject_component_id ?? null,
-        teacher_id: user.id,
+        teacher_id: teacherId,
         eval_date,
         eval_kind,
         scale,
@@ -359,6 +483,7 @@ export async function POST(req: NextRequest) {
       console.error("[grades/evaluations] POST error", error, {
         class_id,
         resolvedSubjectId,
+        teacherId,
       });
       return NextResponse.json(
         { ok: false, error: error.message },

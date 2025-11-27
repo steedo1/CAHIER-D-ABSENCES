@@ -286,6 +286,8 @@ export async function queueGradeNotificationsForEvaluation(
     payload: any;
     status: string;
     severity: "low" | "medium" | "high";
+    title: string;
+    body: string;
   };
 
   const rowsToInsert: QueueInsert[] = [];
@@ -356,6 +358,8 @@ export async function queueGradeNotificationsForEvaluation(
         payload: payloadBase,
         status: WAIT_STATUS,
         severity: "medium",
+        title,
+        body,
       });
     }
   }
@@ -368,17 +372,40 @@ export async function queueGradeNotificationsForEvaluation(
     return;
   }
 
+  // ⚖️ Sécurité : on ne garde que les lignes qui respectent le schéma "notif parent"
+  //   → parent_id non nul, student_id non nul, profile_id = NULL
+  const filteredRows = rowsToInsert.filter(
+    (row) => !!row.parent_id && !!row.student_id
+  );
+
+  if (!filteredRows.length) {
+    console.log(
+      "[push/grades] toutes les lignes de notif sont invalides (sans parent_id ou student_id) — rien à insérer",
+      { evaluationId }
+    );
+    return;
+  }
+
   // 5️⃣ Insertion en masse dans notifications_queue
   const { error: insertErr } = await srv
     .from("notifications_queue")
     .insert(
-      rowsToInsert.map((row) => ({
+      filteredRows.map((row) => ({
         institution_id: row.institution_id,
         student_id: row.student_id,
         parent_id: row.parent_id,
+        profile_id: null, // ✅ IMPORTANT pour respecter notifications_queue_target_ck
         channels: row.channels,
         payload: row.payload,
+        title: row.title,
+        body: row.body,
         status: row.status,
+        attempts: 0,
+        last_error: null,
+        meta: JSON.stringify({
+          source: "grades",
+          evaluation_id: evaluationId,
+        }),
         severity: row.severity,
       }))
     );
@@ -394,6 +421,6 @@ export async function queueGradeNotificationsForEvaluation(
 
   console.log("[push/grades] notifications de notes mises en file", {
     evaluationId,
-    count: rowsToInsert.length,
+    count: filteredRows.length,
   });
 }

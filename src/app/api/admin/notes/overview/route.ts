@@ -1,4 +1,4 @@
-//src/app/api/admin/notes/overview/route.ts
+// src/app/api/admin/notes/overview/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
@@ -10,7 +10,7 @@ type EvalKind = "devoir" | "interro_ecrite" | "interro_orale";
 type EvalRow = {
   id: string;
   class_id: string;
-  subject_id: string | null;
+  subject_id: string | null; // institution_subjects.id
   teacher_id: string | null;
   eval_date: string;
   eval_kind: EvalKind;
@@ -27,6 +27,26 @@ type FlatMarkRow = {
   mark_20: number | null;
 };
 
+type ClassMetaRow = {
+  id: string;
+  label?: string | null;
+  level?: string | null;
+  institution_id: string;
+};
+
+type InstSubjectRow = {
+  id: string;
+  custom_name?: string | null;
+  subjects?: {
+    name?: string | null;
+  } | null;
+};
+
+type TeacherRow = {
+  id: string;
+  display_name?: string | null;
+};
+
 export async function GET(req: NextRequest) {
   const url = new URL(req.url);
   const daysParam = url.searchParams.get("days") || "30";
@@ -37,7 +57,7 @@ export async function GET(req: NextRequest) {
 
   const supabase = await getSupabaseServerClient();
 
-  /* ───────── Auth + rôle admin/super_admin via user_roles ───────── */
+  /* ───────── Auth + rôle admin/super_admin ───────── */
   const {
     data: { user },
     error: authError,
@@ -72,6 +92,29 @@ export async function GET(req: NextRequest) {
     );
   }
 
+  /* ───────── Institution courante (profil) ───────── */
+  const { data: me, error: meErr } = await supabase
+    .from("profiles")
+    .select("institution_id")
+    .eq("id", user.id)
+    .maybeSingle();
+
+  if (meErr) {
+    console.error("[admin.notes.overview] profiles error", meErr);
+    return NextResponse.json(
+      { ok: false, error: "PROFILE_ERROR" },
+      { status: 500 }
+    );
+  }
+
+  const institutionId = me?.institution_id as string | null;
+  if (!institutionId) {
+    return NextResponse.json(
+      { ok: false, error: "NO_INSTITUTION" },
+      { status: 400 }
+    );
+  }
+
   /* ───────── Fenêtre de dates ───────── */
   const today = new Date();
   const fromDate = new Date(today);
@@ -85,7 +128,7 @@ export async function GET(req: NextRequest) {
   const fromYmd = toYMD(fromDate);
   const toYmd = toYMD(today);
 
-  /* ───────── 1) Évaluations sur la période ───────── */
+  /* ───────── 1) Évaluations sur la période (toutes) ───────── */
   const { data: evalsData, error: evalErr } = await supabase
     .from("grade_evaluations")
     .select(
@@ -102,10 +145,10 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  const evalRows = (evalsData || []) as EvalRow[];
+  const evalRowsRaw = (evalsData || []) as EvalRow[];
 
-  // Aucun contrôle sur la période → tout à zéro, mais pas d’erreur
-  if (!evalRows.length) {
+  if (!evalRowsRaw.length) {
+    // aucun contrôle sur la période, tous établissements confondus
     return NextResponse.json({
       ok: true,
       meta: { days },
@@ -152,17 +195,67 @@ export async function GET(req: NextRequest) {
     });
   }
 
+  /* ───────── 1b) Filtrer par établissement via classes ───────── */
+  const allClassIds = Array.from(new Set(evalRowsRaw.map((e) => e.class_id)));
+
+  const classesById: Record<string, { label: string; level: string | null }> =
+    {};
+  const allowedClassIds = new Set<string>();
+
+  if (allClassIds.length) {
+    const { data: classesData, error: classesErr } = await supabase
+      .from("classes")
+      .select("id, label, level, institution_id")
+      .in("id", allClassIds)
+      .eq("institution_id", institutionId);
+
+    if (classesErr) {
+      console.error("[admin.notes.overview] classes error", classesErr);
+      return NextResponse.json(
+        { ok: false, error: "CLASSES_ERROR" },
+        { status: 500 }
+      );
+    }
+
+    for (const c of (classesData || []) as ClassMetaRow[]) {
+      allowedClassIds.add(c.id);
+      classesById[c.id] = {
+        label: (c.label || "Classe").trim(),
+        level: (c.level || null) ?? null,
+      };
+    }
+  }
+
+  const evalRows = evalRowsRaw.filter((e) => allowedClassIds.has(e.class_id));
+
+  if (!evalRows.length) {
+    // il existe des évaluations sur la période, mais aucune dans CET établissement
+    return NextResponse.json({
+      ok: true,
+      meta: { days },
+      counts: {
+        evaluations_total: 0,
+        evaluations_published: 0,
+        evaluations_unpublished: 0,
+        scores_count: 0,
+        avg_score_20: null,
+      },
+      breakdown: {
+        by_level: [],
+        by_class: [],
+        worst_classes: [],
+      },
+      latest: [],
+    });
+  }
+
+  /* ───────── IDs utiles (après filtrage établissement) ───────── */
   const evalIds = Array.from(new Set(evalRows.map((e) => e.id)));
-  const classIds = Array.from(new Set(evalRows.map((e) => e.class_id)));
   const subjectIds = Array.from(
-    new Set(
-      evalRows.map((e) => e.subject_id).filter((x): x is string => !!x)
-    )
+    new Set(evalRows.map((e) => e.subject_id).filter((x): x is string => !!x))
   );
   const teacherIds = Array.from(
-    new Set(
-      evalRows.map((e) => e.teacher_id).filter((x): x is string => !!x)
-    )
+    new Set(evalRows.map((e) => e.teacher_id).filter((x): x is string => !!x))
   );
 
   /* ───────── 2) Notes via grade_flat_marks.mark_20 ───────── */
@@ -184,58 +277,31 @@ export async function GET(req: NextRequest) {
     flatMarks = (marksData || []) as FlatMarkRow[];
   }
 
-  /* ───────── 3) Métadonnées classes / matières / enseignants ───────── */
-  type ClassMetaRow = {
-    id: string;
-    label?: string | null;
-    level?: string | null;
-  };
-  type SubjectRow = { id: string; name?: string | null };
-  type TeacherRow = { id: string; display_name?: string | null };
-
-  const classesById: Record<string, { label: string; level: string | null }> =
-    {};
-  if (classIds.length) {
-    const { data: classesData, error: classesErr } = await supabase
-      .from("classes")
-      .select("id, label, level") // ✅ id, label, level uniquement
-      .in("id", classIds);
-
-    if (classesErr) {
-      console.error("[admin.notes.overview] classes error", classesErr);
-      return NextResponse.json(
-        { ok: false, error: "CLASSES_ERROR" },
-        { status: 500 }
-      );
-    }
-
-    for (const c of (classesData || []) as ClassMetaRow[]) {
-      classesById[c.id] = {
-        label: (c.label || "Classe").trim(),
-        level: (c.level || null) ?? null,
-      };
-    }
-  }
+  /* ───────── 3) Métadonnées matières & enseignants ───────── */
 
   const subjectsById: Record<string, { name: string }> = {};
   if (subjectIds.length) {
-    const { data: subjectsData, error: subjectsErr } = await supabase
-      .from("subjects")
-      .select("id, name") // ✅ plus de "label" ici
-      .in("id", subjectIds);
+    const { data: instSubjData, error: instSubjErr } = await supabase
+      .from("institution_subjects")
+      .select("id, custom_name, subjects(name)")
+      .in("id", subjectIds)
+      .eq("institution_id", institutionId);
 
-    if (subjectsErr) {
-      console.error("[admin.notes.overview] subjects error", subjectsErr);
+    if (instSubjErr) {
+      console.error(
+        "[admin.notes.overview] institution_subjects error",
+        instSubjErr
+      );
       return NextResponse.json(
         { ok: false, error: "SUBJECTS_ERROR" },
         { status: 500 }
       );
     }
 
-    for (const s of (subjectsData || []) as SubjectRow[]) {
-      subjectsById[s.id] = {
-        name: (s.name || "Matière").trim(),
-      };
+    for (const row of (instSubjData || []) as InstSubjectRow[]) {
+      const base = row.subjects?.name || "Matière";
+      const finalName = (row.custom_name || base || "Matière").trim();
+      subjectsById[row.id] = { name: finalName };
     }
   }
 
@@ -289,6 +355,7 @@ export async function GET(req: NextRequest) {
 
   for (const row of flatMarks) {
     if (!row.evaluation_id || row.mark_20 == null) continue;
+    if (row.class_id && !allowedClassIds.has(row.class_id)) continue;
 
     const mark = Number(row.mark_20);
     if (!Number.isFinite(mark)) continue;
@@ -356,10 +423,10 @@ export async function GET(req: NextRequest) {
 
   const worst_classes = by_class
     .filter((c) => c.avg_20 != null && c.evals > 0)
-    .sort((a, b) => a.avg_20! - b.avg_20!)
+    .sort((a, b) => (a.avg_20! - b.avg_20!))
     .slice(0, 5);
 
-  /* ───────── 5) Dernières évaluations ───────── */
+  /* ───────── 5) Dernières évaluations (top 10) ───────── */
 
   const latest = [...evalRows]
     .sort((a, b) => b.eval_date.localeCompare(a.eval_date))
