@@ -2,7 +2,7 @@ name: Attendance Alerts Cron
 
 on:
   schedule:
-    - cron: "*/5 * * * *"   # toutes les 5 minutes pour les tests
+    - cron: "*/2 * * * *"   # toutes les 5 minutes pour les tests
   workflow_dispatch: {}
 
 permissions:
