@@ -12,10 +12,12 @@ function bad(error: string, status = 400, extra?: any) {
 function clamp(n: number, a = 0, b = 20) {
   return Math.max(a, Math.min(b, n));
 }
+
 function roundTo(value: number, step: number) {
   if (!isFinite(step) || step <= 0) return value;
   return Math.round(value / step) * step;
 }
+
 function denseRanks(values: number[]) {
   // Valeurs déjà triées DESC; renvoie le rang dense (1,1,2,3…)
   const ranks: number[] = [];
@@ -34,13 +36,10 @@ function denseRanks(values: number[]) {
 function isLyceeLevel(level?: string | null): boolean {
   if (!level) return false;
   let lvl = level.toLowerCase();
-  // normalisation des accents : "première" -> "premiere"
   try {
-    // .normalize peut ne pas exister dans certains runtimes exotiques,
-    // on protège par un try.
     lvl = lvl.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
   } catch {
-    // on ignore, on garde lvl tel quel
+    // ignore
   }
   return lvl === "seconde" || lvl === "premiere" || lvl === "terminale";
 }
@@ -61,7 +60,11 @@ type GradeRow = {
   score: number | null;
 };
 
-type BonusRow = { student_id: string; bonus: number };
+type BonusRow = {
+  student_id: string;
+  bonus: number;
+  subject_id: string | null;
+};
 
 type Row = {
   student_id: string;
@@ -82,15 +85,25 @@ export async function GET(req: NextRequest) {
     if (!auth?.user) return bad("UNAUTHENTICATED", 401);
 
     const { searchParams } = new URL(req.url);
+
     const class_id = String(searchParams.get("class_id") || "").trim();
-    const subject_id = searchParams.get("subject_id")
-      ? String(searchParams.get("subject_id"))
-      : null;
+
+    // 🎯 Normalisation de subject_id : "", "null" → null
+    const rawSubject = searchParams.get("subject_id");
+    const subject_id =
+      rawSubject &&
+      rawSubject.trim() !== "" &&
+      rawSubject.trim().toLowerCase() !== "null"
+        ? rawSubject.trim()
+        : null;
+
     const academic_year =
       String(searchParams.get("academic_year") || "").trim() ||
       computeAcademicYear(new Date());
     const published_only = (searchParams.get("published_only") ?? "0") === "1";
-    const missing = (searchParams.get("missing") ?? "ignore") as "ignore" | "zero";
+    const missing = (searchParams.get("missing") ?? "ignore") as
+      | "ignore"
+      | "zero";
     const round_to_raw = String(searchParams.get("round_to") || "none");
     const rank_by = (searchParams.get("rank_by") ?? "average") as
       | "average"
@@ -119,14 +132,17 @@ export async function GET(req: NextRequest) {
     }
 
     const classLevel = (cls as any)?.level as string | null | undefined;
-    const institution_id = (cls as any)?.institution_id as string | null | undefined;
+    const institution_id = (cls as any)?.institution_id as
+      | string
+      | null
+      | undefined;
     const lycee = isLyceeLevel(classLevel ?? null);
 
     // 1) Évaluations concernées (RLS fait foi)
     let qEvals = supabase
       .from("grade_evaluations")
       .select(
-        "id, scale, coeff, class_id, subject_id, subject_component_id, is_published"
+        "id, scale, coeff, class_id, subject_id, subject_component_id, is_published",
       )
       .eq("class_id", class_id)
       .eq("academic_year", academic_year);
@@ -159,7 +175,7 @@ export async function GET(req: NextRequest) {
 
     // Détection : y a-t-il au moins une évaluation rattachée à une rubrique ?
     const hasAnyComponentEval = evaluations.some(
-      (e) => !!(e as any).subject_component_id
+      (e) => !!(e as any).subject_component_id,
     );
 
     // 1bis) Chargement des rubriques / sous-matières (coeff_in_subject) si nécessaire
@@ -200,7 +216,7 @@ export async function GET(req: NextRequest) {
       if (isFinite(coeff) && coeff > 0) {
         evalCoeffsByComponent.set(
           key,
-          (evalCoeffsByComponent.get(key) || 0) + coeff
+          (evalCoeffsByComponent.get(key) || 0) + coeff,
         );
         return acc + coeff;
       }
@@ -217,21 +233,41 @@ export async function GET(req: NextRequest) {
     const gradesRows = (grades ?? []) as unknown as GradeRow[];
 
     // 3) Bonus (grade_adjustments)
-    let qBonus = supabase
+    const { data: bonuses, error: bErr } = await supabase
       .from("grade_adjustments")
-      .select("student_id, bonus")
+      .select("student_id, bonus, subject_id")
       .eq("class_id", class_id)
       .eq("academic_year", academic_year);
 
-    if (subject_id !== null) qBonus = qBonus.eq("subject_id", subject_id);
-    else qBonus = qBonus.is("subject_id", null);
-
-    const { data: bonuses, error: bErr } = await qBonus;
     if (bErr) return bad(bErr.message || "BONUS_FETCH_FAILED", 400);
 
     const bonusMap = new Map<string, number>();
+
     for (const r of (bonuses ?? []) as unknown as BonusRow[]) {
-      bonusMap.set(r.student_id, Number(r.bonus || 0));
+      const sid = r.student_id;
+      const b = Number(r.bonus ?? 0);
+      const rowSubj = r.subject_id;
+
+      // Vue "moyenne générale" → on ne prend que les bonus généraux (subject_id NULL)
+      if (!subject_id) {
+        if (rowSubj === null) {
+          bonusMap.set(sid, b);
+        }
+        continue;
+      }
+
+      // Vue matière :
+      // 1) Bonus spécifiques à la matière → priorité absolue
+      if (rowSubj === subject_id) {
+        bonusMap.set(sid, b);
+        continue;
+      }
+
+      // 2) Sinon, bonus généraux (subject_id NULL) utilisés seulement
+      //    si aucun bonus spécifique n'est défini pour cet élève.
+      if (rowSubj === null && !bonusMap.has(sid)) {
+        bonusMap.set(sid, b);
+      }
     }
 
     // 4) Calcul des moyennes

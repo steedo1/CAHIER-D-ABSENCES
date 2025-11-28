@@ -10,7 +10,7 @@ type EvalKind = "devoir" | "interro_ecrite" | "interro_orale";
 type EvalRow = {
   id: string;
   class_id: string;
-  subject_id: string | null;
+  subject_id: string | null; // stocke désormais un subjects.id (mais on gère aussi l'ancien cas)
   teacher_id: string | null;
   eval_date: string;
   eval_kind: EvalKind;
@@ -28,6 +28,15 @@ type ClassRow = {
   id: string;
   label?: string | null;
   level?: string | null;
+};
+
+type InstSubjectRow = {
+  id: string;
+  subject_id: string;
+  custom_name?: string | null;
+  subjects?: {
+    name?: string | null;
+  } | null;
 };
 
 type SubjectRow = {
@@ -65,6 +74,14 @@ export async function GET(req: NextRequest) {
 
   if (roleErr || !roleRow || !["super_admin", "admin"].includes(roleRow.role)) {
     return NextResponse.json({ ok: false, error: "FORBIDDEN" }, { status: 403 });
+  }
+
+  const institutionId = roleRow.institution_id as string | null;
+  if (!institutionId) {
+    return NextResponse.json(
+      { ok: false, error: "NO_INSTITUTION" },
+      { status: 400 }
+    );
   }
 
   /* ───────── Paramètres ───────── */
@@ -123,7 +140,7 @@ export async function GET(req: NextRequest) {
     published,
     page,
     limit,
-    institution_id: roleRow.institution_id,
+    institution_id: institutionId,
   });
 
   /* ───────── Évaluations ───────── */
@@ -236,26 +253,87 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  /* ───────── Métadonnées matières ───────── */
+  /* ───────── Métadonnées matières (custom + fallback global) ───────── */
   const subjectsById: Record<string, { name: string }> = {};
   if (subjectIds.length) {
-    const { data: subjectsData, error: subjectsErr } = await supabase
-      .from("subjects")
-      .select("id, name")
-      .in("id", subjectIds);
+    // d'abord essayer via institution_subjects (nom custom)
+    const { data: instById, error: instByIdErr } = await supabase
+      .from("institution_subjects")
+      .select("id, subject_id, custom_name, subjects(name)")
+      .in("id", subjectIds)
+      .eq("institution_id", institutionId);
 
-    if (subjectsErr) {
-      console.error("[admin.notes.evaluations] subjects error", subjectsErr);
+    if (instByIdErr) {
+      console.error(
+        "[admin.notes.evaluations] institution_subjects by id error",
+        instByIdErr
+      );
       return NextResponse.json(
         { ok: false, error: "SUBJECTS_ERROR" },
         { status: 500 }
       );
     }
 
-    for (const s of (subjectsData || []) as SubjectRow[]) {
-      subjectsById[s.id] = {
-        name: (s.name || "Matière").trim(),
-      };
+    const { data: instBySubject, error: instBySubjectErr } = await supabase
+      .from("institution_subjects")
+      .select("id, subject_id, custom_name, subjects(name)")
+      .in("subject_id", subjectIds)
+      .eq("institution_id", institutionId);
+
+    if (instBySubjectErr) {
+      console.error(
+        "[admin.notes.evaluations] institution_subjects by subject_id error",
+        instBySubjectErr
+      );
+      return NextResponse.json(
+        { ok: false, error: "SUBJECTS_ERROR" },
+        { status: 500 }
+      );
+    }
+
+    const instRows = [
+      ...((instById || []) as InstSubjectRow[]),
+      ...((instBySubject || []) as InstSubjectRow[]),
+    ];
+
+    const resolvedIds = new Set<string>();
+
+    for (const row of instRows) {
+      const base = row.subjects?.name || "Matière";
+      const finalName = (row.custom_name || base || "Matière").trim();
+
+      if (row.id) {
+        subjectsById[row.id] = { name: finalName };
+        resolvedIds.add(row.id);
+      }
+      if (row.subject_id) {
+        subjectsById[row.subject_id] = { name: finalName };
+        resolvedIds.add(row.subject_id);
+      }
+    }
+
+    // fallback : subjects pour les IDs restants
+    const leftoverSubjectIds = subjectIds.filter((id) => !resolvedIds.has(id));
+
+    if (leftoverSubjectIds.length) {
+      const { data: subjectsData, error: subjectsErr } = await supabase
+        .from("subjects")
+        .select("id, name")
+        .in("id", leftoverSubjectIds);
+
+      if (subjectsErr) {
+        console.error("[admin.notes.evaluations] subjects error", subjectsErr);
+        return NextResponse.json(
+          { ok: false, error: "SUBJECTS_ERROR" },
+          { status: 500 }
+        );
+      }
+
+      for (const s of (subjectsData || []) as SubjectRow[]) {
+        subjectsById[s.id] = {
+          name: (s.name || "Matière").trim(),
+        };
+      }
     }
   }
 

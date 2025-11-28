@@ -10,7 +10,7 @@ type EvalKind = "devoir" | "interro_ecrite" | "interro_orale";
 type EvalRow = {
   id: string;
   class_id: string;
-  subject_id: string | null; // institution_subjects.id
+  subject_id: string | null; // peut être institution_subjects.id OU subjects.id
   teacher_id: string | null;
   eval_date: string;
   eval_kind: EvalKind;
@@ -36,10 +36,16 @@ type ClassMetaRow = {
 
 type InstSubjectRow = {
   id: string;
+  subject_id: string;
   custom_name?: string | null;
   subjects?: {
     name?: string | null;
   } | null;
+};
+
+type SubjectRow = {
+  id: string;
+  name?: string | null;
 };
 
 type TeacherRow = {
@@ -281,16 +287,17 @@ export async function GET(req: NextRequest) {
 
   const subjectsById: Record<string, { name: string }> = {};
   if (subjectIds.length) {
-    const { data: instSubjData, error: instSubjErr } = await supabase
+    // 3a) Essayer d'abord via institution_subjects (cas custom_name, ou ancien schéma)
+    const { data: instById, error: instByIdErr } = await supabase
       .from("institution_subjects")
-      .select("id, custom_name, subjects(name)")
+      .select("id, subject_id, custom_name, subjects(name)")
       .in("id", subjectIds)
       .eq("institution_id", institutionId);
 
-    if (instSubjErr) {
+    if (instByIdErr) {
       console.error(
-        "[admin.notes.overview] institution_subjects error",
-        instSubjErr
+        "[admin.notes.overview] institution_subjects by id error",
+        instByIdErr
       );
       return NextResponse.json(
         { ok: false, error: "SUBJECTS_ERROR" },
@@ -298,10 +305,67 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    for (const row of (instSubjData || []) as InstSubjectRow[]) {
+    const { data: instBySubject, error: instBySubjectErr } = await supabase
+      .from("institution_subjects")
+      .select("id, subject_id, custom_name, subjects(name)")
+      .in("subject_id", subjectIds)
+      .eq("institution_id", institutionId);
+
+    if (instBySubjectErr) {
+      console.error(
+        "[admin.notes.overview] institution_subjects by subject_id error",
+        instBySubjectErr
+      );
+      return NextResponse.json(
+        { ok: false, error: "SUBJECTS_ERROR" },
+        { status: 500 }
+      );
+    }
+
+    const instRows = [
+      ...((instById || []) as InstSubjectRow[]),
+      ...((instBySubject || []) as InstSubjectRow[]),
+    ];
+
+    const resolvedIds = new Set<string>();
+
+    for (const row of instRows) {
       const base = row.subjects?.name || "Matière";
       const finalName = (row.custom_name || base || "Matière").trim();
-      subjectsById[row.id] = { name: finalName };
+
+      // On mappe à la fois sur institution_subjects.id ET sur subjects.id
+      if (row.id) {
+        subjectsById[row.id] = { name: finalName };
+        resolvedIds.add(row.id);
+      }
+      if (row.subject_id) {
+        subjectsById[row.subject_id] = { name: finalName };
+        resolvedIds.add(row.subject_id);
+      }
+    }
+
+    // 3b) Pour les subject_ids restants, on va directement dans subjects
+    const leftoverSubjectIds = subjectIds.filter((id) => !resolvedIds.has(id));
+
+    if (leftoverSubjectIds.length) {
+      const { data: subjData, error: subjErr } = await supabase
+        .from("subjects")
+        .select("id, name")
+        .in("id", leftoverSubjectIds);
+
+      if (subjErr) {
+        console.error("[admin.notes.overview] subjects error", subjErr);
+        return NextResponse.json(
+          { ok: false, error: "SUBJECTS_ERROR" },
+          { status: 500 }
+        );
+      }
+
+      for (const s of (subjData || []) as SubjectRow[]) {
+        subjectsById[s.id] = {
+          name: (s.name || "Matière").trim(),
+        };
+      }
     }
   }
 
@@ -423,7 +487,7 @@ export async function GET(req: NextRequest) {
 
   const worst_classes = by_class
     .filter((c) => c.avg_20 != null && c.evals > 0)
-    .sort((a, b) => (a.avg_20! - b.avg_20!))
+    .sort((a, b) => a.avg_20! - b.avg_20!)
     .slice(0, 5);
 
   /* ───────── 5) Dernières évaluations (top 10) ───────── */
