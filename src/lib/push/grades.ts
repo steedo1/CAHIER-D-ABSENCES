@@ -126,7 +126,7 @@ export async function queueGradeNotificationsForEvaluation(
     return;
   }
 
-  // ⚠️ Les relations Supabase sont typées comme des tableaux côté TS
+  // Supabase typant souvent les relations comme des tableaux
   const rawClass: any = (ev as any).class;
   const rawSubject: any = (ev as any).subject;
 
@@ -173,7 +173,6 @@ export async function queueGradeNotificationsForEvaluation(
   });
 
   // 2️⃣ Récupérer toutes les lignes student_grades de cette évaluation
-  //    ⚠️ y compris celles où score est NULL
   const { data: grades, error: gradesErr } = await srv
     .from("student_grades")
     .select(
@@ -278,10 +277,12 @@ export async function queueGradeNotificationsForEvaluation(
   }
 
   // 4️⃣ Construire les lignes à insérer dans notifications_queue
+  //    👉 Ici on cible la branche du CHECK:
+  //       (profile_id IS NOT NULL AND parent_id IS NULL)
   type QueueInsert = {
     institution_id: string;
     student_id: string;
-    parent_id: string;
+    target_profile_id: string; // profil parent
     channels: string[];
     payload: any;
     status: string;
@@ -348,12 +349,12 @@ export async function queueGradeNotificationsForEvaluation(
     };
 
     for (const g of guardiansForStudent) {
-      const parentId = g.guardian_profile_id as string;
+      const profileId = g.guardian_profile_id as string;
 
       rowsToInsert.push({
         institution_id: institutionId,
         student_id: grade.student_id,
-        parent_id: parentId,
+        target_profile_id: profileId,
         channels: ["inapp", "push"],
         payload: payloadBase,
         status: WAIT_STATUS,
@@ -372,29 +373,30 @@ export async function queueGradeNotificationsForEvaluation(
     return;
   }
 
-  // ⚖️ Sécurité : on ne garde que les lignes qui respectent le schéma "notif parent"
-  //   → parent_id non nul, student_id non nul, profile_id = NULL
+  // ⚖️ Sécurité : on ne garde que les lignes qui ont bien un profil cible et un élève
   const filteredRows = rowsToInsert.filter(
-    (row) => !!row.parent_id && !!row.student_id
+    (row) => !!row.target_profile_id && !!row.student_id
   );
 
   if (!filteredRows.length) {
     console.log(
-      "[push/grades] toutes les lignes de notif sont invalides (sans parent_id ou student_id) — rien à insérer",
+      "[push/grades] toutes les lignes de notif sont invalides — rien à insérer",
       { evaluationId }
     );
     return;
   }
 
   // 5️⃣ Insertion en masse dans notifications_queue
+  //    IMPORTANT : on respecte strictement le CHECK:
+  //      (profile_id IS NOT NULL AND parent_id IS NULL)
   const { error: insertErr } = await srv
     .from("notifications_queue")
     .insert(
       filteredRows.map((row) => ({
         institution_id: row.institution_id,
         student_id: row.student_id,
-        parent_id: row.parent_id,
-        profile_id: null, // ✅ IMPORTANT pour respecter notifications_queue_target_ck
+        parent_id: null, // ✅ pour la 2e branche du CHECK
+        profile_id: row.target_profile_id, // ✅ non nul
         channels: row.channels,
         payload: row.payload,
         title: row.title,
