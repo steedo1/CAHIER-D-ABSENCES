@@ -273,6 +273,52 @@ async function resolveTeacherIdForEvaluation(
   }
 }
 
+/* ───────────────── Push dispatch immédiat ───────────────── */
+
+async function triggerImmediatePushDispatch(originHint?: string | null) {
+  try {
+    const base =
+      originHint ||
+      process.env.NEXT_PUBLIC_SITE_URL ||
+      process.env.SITE_URL ||
+      "";
+
+    if (!base) {
+      console.warn(
+        "[grades/evaluations] triggerImmediatePushDispatch: no base URL",
+      );
+      return;
+    }
+
+    const url = new URL("/api/push/dispatch", base).toString();
+
+    const headers: Record<string, string> = {
+      "content-type": "application/json",
+    };
+
+    if (process.env.PUSH_DISPATCH_SECRET) {
+      headers["x-push-dispatch-secret"] = process.env.PUSH_DISPATCH_SECRET;
+    }
+
+    console.log(
+      "[grades/evaluations] triggerImmediatePushDispatch →",
+      url,
+    );
+
+    await fetch(url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ reason: "grades_publish" }),
+      cache: "no-store",
+    });
+  } catch (err) {
+    console.error(
+      "[grades/evaluations] triggerImmediatePushDispatch error",
+      err,
+    );
+  }
+}
+
 /* ==========================================
    GET : liste des évaluations
 ========================================== */
@@ -596,12 +642,17 @@ export async function PATCH(req: NextRequest) {
 
     // 👉 On ne déclenche les push que si on vient de passer NON publié → publié
     if (typeof is_published === "boolean" && !wasPublished && is_published) {
-      queueGradeNotificationsForEvaluation(evaluation_id).catch((e) => {
-        console.error(
-          "[grades/evaluations] queue_grade_notifications_error",
-          e,
-        );
-      });
+      queueGradeNotificationsForEvaluation(evaluation_id)
+        .then(() => {
+          // déclenche le worker de push tout de suite
+          triggerImmediatePushDispatch(req.headers.get("origin"));
+        })
+        .catch((e) => {
+          console.error(
+            "[grades/evaluations] queue_grade_notifications_error",
+            e,
+          );
+        });
     }
 
     return NextResponse.json({ ok: true, item: data as EvalRow });

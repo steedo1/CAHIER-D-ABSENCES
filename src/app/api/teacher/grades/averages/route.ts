@@ -1,9 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
+import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { computeAcademicYear } from "@/lib/academicYear";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+const LOG_PREFIX = "[TeacherGradesAverages]";
 
 function bad(error: string, status = 400, extra?: any) {
   return NextResponse.json({ ok: false, error, ...(extra ?? {}) }, { status });
@@ -36,10 +39,11 @@ function denseRanks(values: number[]) {
 function isLyceeLevel(level?: string | null): boolean {
   if (!level) return false;
   let lvl = level.toLowerCase();
+  // normalisation des accents : "première" -> "premiere"
   try {
     lvl = lvl.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
   } catch {
-    // ignore
+    // on ignore, on garde lvl tel quel
   }
   return lvl === "seconde" || lvl === "premiere" || lvl === "terminale";
 }
@@ -80,23 +84,15 @@ type Row = {
 export async function GET(req: NextRequest) {
   try {
     const supabase = await getSupabaseServerClient();
+    const svc = getSupabaseServiceClient();
 
     const { data: auth } = await supabase.auth.getUser();
     if (!auth?.user) return bad("UNAUTHENTICATED", 401);
 
     const { searchParams } = new URL(req.url);
-
     const class_id = String(searchParams.get("class_id") || "").trim();
-
-    // 🎯 Normalisation de subject_id : "", "null" → null
     const rawSubject = searchParams.get("subject_id");
-    const subject_id =
-      rawSubject &&
-      rawSubject.trim() !== "" &&
-      rawSubject.trim().toLowerCase() !== "null"
-        ? rawSubject.trim()
-        : null;
-
+    const subject_id = rawSubject ? String(rawSubject) : null;
     const academic_year =
       String(searchParams.get("academic_year") || "").trim() ||
       computeAcademicYear(new Date());
@@ -120,6 +116,17 @@ export async function GET(req: NextRequest) {
       round_to = n;
     }
 
+    console.log(LOG_PREFIX, "incoming params", {
+      class_id,
+      rawSubject,
+      subject_id,
+      academic_year,
+      published_only,
+      missing,
+      round_to_raw,
+      rank_by,
+    });
+
     // 0) Infos de la classe : niveau + institution (pour savoir collège/lycée + rubriques)
     const { data: cls, error: clsErr } = await supabase
       .from("classes")
@@ -128,7 +135,7 @@ export async function GET(req: NextRequest) {
       .maybeSingle();
 
     if (clsErr) {
-      console.error("[grades/averages] classes error", clsErr);
+      console.error(LOG_PREFIX, "classes error", clsErr);
     }
 
     const classLevel = (cls as any)?.level as string | null | undefined;
@@ -137,6 +144,8 @@ export async function GET(req: NextRequest) {
       | null
       | undefined;
     const lycee = isLyceeLevel(classLevel ?? null);
+
+    console.log(LOG_PREFIX, "class info", cls);
 
     // 1) Évaluations concernées (RLS fait foi)
     let qEvals = supabase
@@ -155,6 +164,11 @@ export async function GET(req: NextRequest) {
 
     const evaluations = (evals ?? []) as unknown as EvaluationRow[];
     const evaluationIds = evaluations.map((e) => e.id);
+
+    console.log(LOG_PREFIX, "evals loaded", {
+      count: evaluations.length,
+      evaluationIds,
+    });
 
     if (evaluationIds.length === 0) {
       return NextResponse.json({
@@ -190,7 +204,7 @@ export async function GET(req: NextRequest) {
         .eq("is_active", true);
 
       if (cErr) {
-        console.error("[grades/averages] grade_subject_components error", cErr);
+        console.error(LOG_PREFIX, "grade_subject_components error", cErr);
       } else {
         for (const c of comps ?? []) {
           const id = (c as any).id as string;
@@ -208,6 +222,14 @@ export async function GET(req: NextRequest) {
       hasAnyComponentEval &&
       componentCoeffMap.size > 0;
 
+    console.log(LOG_PREFIX, "component model", {
+      lycee,
+      subject_id,
+      hasAnyComponentEval,
+      componentCoeffMapSize: componentCoeffMap.size,
+      useComponentModel,
+    });
+
     // Pré-calcul : total des coeffs par rubrique (pour missing="zero")
     const evalCoeffsByComponent = new Map<string, number>();
     const totalCoeff = evaluations.reduce((acc: number, e: EvaluationRow) => {
@@ -223,6 +245,11 @@ export async function GET(req: NextRequest) {
       return acc;
     }, 0);
 
+    console.log(LOG_PREFIX, "coeff info", {
+      totalCoeff,
+      evalCoeffsByComponent: Array.from(evalCoeffsByComponent.entries()),
+    });
+
     // 2) Notes associées
     const { data: grades, error: gErr } = await supabase
       .from("student_grades")
@@ -232,24 +259,38 @@ export async function GET(req: NextRequest) {
     if (gErr) return bad(gErr.message || "GRADES_FETCH_FAILED", 400);
     const gradesRows = (grades ?? []) as unknown as GradeRow[];
 
-    // 3) Bonus (grade_adjustments)
-    const { data: bonuses, error: bErr } = await supabase
+    console.log(LOG_PREFIX, "grades loaded", {
+      count: gradesRows.length,
+      sample: gradesRows.slice(0, 3),
+    });
+
+    // 3) Bonus (grade_adjustments) — LECTURE VIA SERVICE CLIENT
+    const { data: bonuses, error: bErr } = await svc
       .from("grade_adjustments")
-      .select("student_id, bonus, subject_id")
+      .select("student_id, bonus, subject_id, class_id, academic_year")
       .eq("class_id", class_id)
       .eq("academic_year", academic_year);
 
-    if (bErr) return bad(bErr.message || "BONUS_FETCH_FAILED", 400);
+    if (bErr) {
+      console.error(LOG_PREFIX, "bonus fetch error (svc)", bErr);
+      return bad(bErr.message || "BONUS_FETCH_FAILED", 400);
+    }
+
+    console.log(LOG_PREFIX, "raw bonuses (svc)", {
+      count: (bonuses ?? []).length,
+      sample: (bonuses ?? []).slice(0, 10),
+      subject_id_in_query: subject_id,
+    });
 
     const bonusMap = new Map<string, number>();
 
     for (const r of (bonuses ?? []) as unknown as BonusRow[]) {
       const sid = r.student_id;
-      const b = Number(r.bonus ?? 0);
+      const b = Number((r as any).bonus ?? 0);
       const rowSubj = r.subject_id;
 
-      // Vue "moyenne générale" → on ne prend que les bonus généraux (subject_id NULL)
       if (!subject_id) {
+        // Vue "moyenne générale" → on ne garde que les bonus sans matière
         if (rowSubj === null) {
           bonusMap.set(sid, b);
         }
@@ -257,18 +298,21 @@ export async function GET(req: NextRequest) {
       }
 
       // Vue matière :
-      // 1) Bonus spécifiques à la matière → priorité absolue
       if (rowSubj === subject_id) {
+        // Bonus spécifique à cette matière
         bonusMap.set(sid, b);
         continue;
       }
 
-      // 2) Sinon, bonus généraux (subject_id NULL) utilisés seulement
-      //    si aucun bonus spécifique n'est défini pour cet élève.
+      // Bonus général (subject_id null) utilisé SEULEMENT si pas de bonus matière
       if (rowSubj === null && !bonusMap.has(sid)) {
         bonusMap.set(sid, b);
       }
     }
+
+    console.log(LOG_PREFIX, "bonusMap built", {
+      entries: Array.from(bonusMap.entries()).slice(0, 20),
+    });
 
     // 4) Calcul des moyennes
     const evalById = new Map<string, EvaluationRow>();
@@ -335,6 +379,11 @@ export async function GET(req: NextRequest) {
       // pour fixer les dénominateurs par rubrique.
     }
 
+    console.log(LOG_PREFIX, "gradesByStudent (raw)", {
+      count: gradesByStudent.size,
+      sample: Array.from(gradesByStudent.entries()).slice(0, 3),
+    });
+
     // Construire le tableau final (ignore les élèves 0 note si missing=ignore)
     const rows: Row[] = [];
     const totalEvals = evaluations.length;
@@ -399,6 +448,11 @@ export async function GET(req: NextRequest) {
     const ranks = denseRanks(rows.map(sortKey));
     rows.forEach((r, i) => (r.rank = ranks[i]));
 
+    console.log(LOG_PREFIX, "final rows", {
+      count: rows.length,
+      sample: rows.slice(0, 3),
+    });
+
     return NextResponse.json({
       ok: true,
       params: {
@@ -414,7 +468,7 @@ export async function GET(req: NextRequest) {
       meta: { evaluations: totalEvals },
     });
   } catch (e: any) {
-    console.error("[grades/averages] unexpected error", e);
+    console.error(LOG_PREFIX, "unexpected error", e);
     return bad(e?.message || "INTERNAL_ERROR", 500);
   }
 }

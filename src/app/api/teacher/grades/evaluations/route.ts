@@ -147,6 +147,52 @@ async function resolveTeacherIdForInsert(
   return teacherId || userId;
 }
 
+/* ───────────────── Push dispatch immédiat ───────────────── */
+
+async function triggerImmediatePushDispatch(originHint?: string | null) {
+  try {
+    const base =
+      originHint ||
+      process.env.NEXT_PUBLIC_SITE_URL ||
+      process.env.SITE_URL ||
+      "";
+
+    if (!base) {
+      console.warn(
+        "[teacher/grades/evaluations] no base URL for push dispatch"
+      );
+      return;
+    }
+
+    const url = new URL("/api/push/dispatch", base).toString();
+
+    const headers: Record<string, string> = {
+      "content-type": "application/json",
+    };
+
+    if (process.env.PUSH_DISPATCH_SECRET) {
+      headers["x-push-dispatch-secret"] = process.env.PUSH_DISPATCH_SECRET;
+    }
+
+    console.log(
+      "[teacher/grades/evaluations] triggerImmediatePushDispatch →",
+      url
+    );
+
+    await fetch(url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ reason: "grades_publish" }),
+      cache: "no-store",
+    });
+  } catch (err) {
+    console.error(
+      "[teacher/grades/evaluations] triggerImmediatePushDispatch error",
+      err
+    );
+  }
+}
+
 /* ========== GET: liste des évaluations pour une classe/matière ========== */
 export async function GET(req: NextRequest) {
   const url = new URL(req.url);
@@ -368,14 +414,20 @@ export async function PATCH(req: NextRequest) {
     );
   }
 
-  // 👉 Si on vient de passer de non publié → publié, on enfile les push
+  // 👉 Si on vient de passer de non publié → publié :
+  // 1) on met en file les notifications
+  // 2) on déclenche immédiatement le dispatch
   if (!wasPublished && is_published) {
-    queueGradeNotificationsForEvaluation(evaluation_id).catch((e) => {
-      console.error(
-        "[teacher/grades/evaluations] queue_grade_notifications_error",
-        e
-      );
-    });
+    queueGradeNotificationsForEvaluation(evaluation_id)
+      .then(() => {
+        triggerImmediatePushDispatch(req.headers.get("origin"));
+      })
+      .catch((e) => {
+        console.error(
+          "[teacher/grades/evaluations] queue_grade_notifications_error",
+          e
+        );
+      });
   }
 
   return NextResponse.json({ ok: true, item: data });

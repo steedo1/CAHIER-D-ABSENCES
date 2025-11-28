@@ -7,6 +7,15 @@ import { computeAcademicYear } from "@/lib/academicYear";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+const LOG_PREFIX = "[grades/averages]";
+
+function logInfo(...args: any[]) {
+  console.log(LOG_PREFIX, ...args);
+}
+function logError(...args: any[]) {
+  console.error(LOG_PREFIX, ...args);
+}
+
 function bad(error: string, status = 400, extra?: any) {
   return NextResponse.json({ ok: false, error, ...(extra ?? {}) }, { status });
 }
@@ -50,7 +59,7 @@ function isLyceeLevel(level?: string | null): boolean {
 type EvaluationRow = {
   id: string;
   class_id: string;
-  subject_id: string | null;
+  subject_id: string | null;           // ✅ subjects.id (canonique)
   subject_component_id?: string | null;
   is_published: boolean;
   scale: number;
@@ -82,8 +91,11 @@ type Row = {
  * - sinon on essaie de le résoudre via institution_subjects.subject_id
  * - si rien ne matche → on renvoie null (pas de filtre subject_id)
  *
- * IMPORTANT : on garde l’ID BRUT pour grade_subject_components
- *             et grade_adjustments (qui utilisent institution_subjects.id).
+ * IMPORTANT :
+ *  - grade_evaluations.subject_id et grade_adjustments.subject_id
+ *    utilisent **subjects.id** (canonique)
+ *  - grade_subject_components.subject_id reste l’ID local
+ *    de institution_subjects (on garde donc le subject_id brut pour ça).
  */
 async function resolveSubjectIdToGlobal(
   supa: any,
@@ -103,18 +115,13 @@ async function resolveSubjectIdToGlobal(
       .maybeSingle();
 
     if (subj?.id) {
-      console.log(
-        "[grades/averages] resolveSubjectIdToGlobal: direct subjects.id",
-        { rawSubjectId: sid }
-      );
+      logInfo("resolveSubjectIdToGlobal: direct subjects.id", {
+        rawSubjectId: sid,
+      });
       return subj.id as string;
     }
   } catch (err) {
-    console.error(
-      "[grades/averages] resolveSubjectIdToGlobal subjects error",
-      err,
-      { sid }
-    );
+    logError("resolveSubjectIdToGlobal subjects error", err, { sid });
   }
 
   // 1) Sinon on tente via institution_subjects (ID d’établissement)
@@ -128,26 +135,22 @@ async function resolveSubjectIdToGlobal(
         .maybeSingle();
 
       if (instSub?.subject_id) {
-        console.log(
-          "[grades/averages] resolveSubjectIdToGlobal: via institution_subjects",
-          {
-            institutionId,
-            rawSubjectId: sid,
-            resolved: instSub.subject_id,
-          }
-        );
+        logInfo("resolveSubjectIdToGlobal: via institution_subjects", {
+          institutionId,
+          rawSubjectId: sid,
+          resolved: instSub.subject_id,
+        });
         return instSub.subject_id as string;
       }
     } catch (err) {
-      console.error(
-        "[grades/averages] resolveSubjectIdToGlobal instSub error",
-        err,
-        { institutionId, sid }
-      );
+      logError("resolveSubjectIdToGlobal instSub error", err, {
+        institutionId,
+        sid,
+      });
     }
   }
 
-  console.warn("[grades/averages] resolveSubjectIdToGlobal: no match", {
+  logError("resolveSubjectIdToGlobal: no match", {
     institutionId,
     rawSubjectId: sid,
   });
@@ -168,16 +171,16 @@ export async function GET(req: NextRequest) {
       .maybeSingle();
 
     if (pErr || !profile?.institution_id) {
-      console.error("[grades/averages] profile error", pErr);
+      logError("profile error", pErr);
       return bad("UNAUTHORIZED_PROFILE", 401);
     }
 
     const svc = getSupabaseServiceClient();
-
     const { searchParams } = new URL(req.url);
+
     const class_id = String(searchParams.get("class_id") || "").trim();
     const subjectIdRaw = searchParams.get("subject_id");
-    const subject_id = subjectIdRaw ? String(subjectIdRaw) : null;
+    const subject_id = subjectIdRaw ? String(subjectIdRaw) : null; // brut (institution_subjects.id ou subjects.id)
     const academic_year =
       String(searchParams.get("academic_year") || "").trim() ||
       computeAcademicYear(new Date());
@@ -201,6 +204,16 @@ export async function GET(req: NextRequest) {
       round_to = n;
     }
 
+    logInfo("incoming params", {
+      class_id,
+      rawSubject: subject_id,
+      academic_year,
+      published_only,
+      missing,
+      round_to_raw,
+      rank_by,
+    });
+
     // 0) Infos de la classe via SERVICE CLIENT (pas de RLS) + check établissement
     const { data: cls, error: clsErr } = await svc
       .from("classes")
@@ -209,12 +222,12 @@ export async function GET(req: NextRequest) {
       .maybeSingle();
 
     if (clsErr) {
-      console.error("[grades/averages] classes error", clsErr);
+      logError("classes error", clsErr);
       return bad("CLASS_FETCH_FAILED", 400);
     }
 
     if (!cls || cls.institution_id !== profile.institution_id) {
-      console.warn("[grades/averages] class access denied", {
+      logError("class access denied", {
         class_id,
         profile_institution_id: profile.institution_id,
         class_institution_id: cls?.institution_id ?? null,
@@ -229,7 +242,13 @@ export async function GET(req: NextRequest) {
       | undefined;
     const lycee = isLyceeLevel(classLevel ?? null);
 
-    // 🧠 subject_id GLOBAL pour grade_evaluations
+    logInfo("class info", {
+      id: cls.id,
+      level: classLevel,
+      institution_id,
+    });
+
+    // 🧠 subject_id GLOBAL pour grade_evaluations & grade_adjustments
     const effectiveSubjectId = await resolveSubjectIdToGlobal(
       svc,
       institution_id ?? null,
@@ -257,8 +276,13 @@ export async function GET(req: NextRequest) {
     const evaluations = (evals ?? []) as unknown as EvaluationRow[];
     const evaluationIds = evaluations.map((e) => e.id);
 
+    logInfo("evals loaded", {
+      count: evaluations.length,
+      evaluationIds,
+    });
+
     if (evaluationIds.length === 0) {
-      console.warn("[grades/averages] no evaluations for", {
+      logInfo("no evaluations for", {
         class_id,
         subjectIdRaw: subject_id,
         effectiveSubjectId,
@@ -289,7 +313,7 @@ export async function GET(req: NextRequest) {
     const componentCoeffMap = new Map<string, number>();
 
     if (!lycee && subject_id && institution_id && hasAnyComponentEval) {
-      // ⚠️ ICI on reste sur subject_id BRUT (institution_subjects.id)
+      // ⚠️ grade_subject_components.subject_id est l’ID local institution_subjects.id
       const { data: comps, error: cErr } = await svc
         .from("grade_subject_components")
         .select("id, coeff_in_subject")
@@ -298,7 +322,7 @@ export async function GET(req: NextRequest) {
         .eq("is_active", true);
 
       if (cErr) {
-        console.error("[grades/averages] grade_subject_components error", cErr);
+        logError("grade_subject_components error", cErr);
       } else {
         for (const c of comps ?? []) {
           const id = (c as any).id as string;
@@ -331,6 +355,19 @@ export async function GET(req: NextRequest) {
       return acc;
     }, 0);
 
+    logInfo("component model", {
+      lycee,
+      subject_id,
+      hasAnyComponentEval,
+      componentCoeffMapSize: componentCoeffMap.size,
+      useComponentModel,
+    });
+
+    logInfo("coeff info", {
+      totalCoeff,
+      evalCoeffsByComponent: Array.from(evalCoeffsByComponent.entries()),
+    });
+
     // 2) Notes associées
     const { data: grades, error: gErr } = await svc
       .from("student_grades")
@@ -340,23 +377,56 @@ export async function GET(req: NextRequest) {
     if (gErr) return bad(gErr.message || "GRADES_FETCH_FAILED", 400);
     const gradesRows = (grades ?? []) as unknown as GradeRow[];
 
-    // 3) Bonus (grade_adjustments) – ID BRUT (institution_subjects.id)
-    let qBonus = svc
-      .from("grade_adjustments")
-      .select("student_id, bonus")
-      .eq("class_id", class_id)
-      .eq("academic_year", academic_year);
+    logInfo("grades loaded", {
+      count: gradesRows.length,
+      sample: gradesRows.slice(0, 3),
+    });
 
-    if (subject_id !== null) qBonus = qBonus.eq("subject_id", subject_id);
-    else qBonus = qBonus.is("subject_id", null);
+    // 3) Bonus (grade_adjustments) – subject_id = subjects.id (canonique)
+    let bonusRows: BonusRow[] = [];
 
-    const { data: bonuses, error: bErr } = await qBonus;
-    if (bErr) return bad(bErr.message || "BONUS_FETCH_FAILED", 400);
+    if (subject_id && !effectiveSubjectId) {
+      // impossible de résoudre la matière → aucun bonus possible
+      bonusRows = [];
+      logError("no effectiveSubjectId while subject_id provided", {
+        subject_id,
+      });
+    } else {
+      let qBonus = svc
+        .from("grade_adjustments")
+        .select("student_id, bonus")
+        .eq("class_id", class_id)
+        .eq("academic_year", academic_year);
+
+      if (subject_id) {
+        // matière précise → filtre sur subjects.id canonique
+        qBonus = qBonus.eq("subject_id", effectiveSubjectId as string);
+      } else {
+        // moyenne générale → bonus avec subject_id NULL
+        qBonus = qBonus.is("subject_id", null);
+      }
+
+      const { data: bonuses, error: bErr } = await qBonus;
+      if (bErr) return bad(bErr.message || "BONUS_FETCH_FAILED", 400);
+
+      bonusRows = (bonuses ?? []) as unknown as BonusRow[];
+
+      logInfo("raw bonuses", {
+        count: bonusRows.length,
+        sample: bonusRows.slice(0, 3),
+        subject_id_in_query: subject_id,
+        effectiveSubjectId,
+      });
+    }
 
     const bonusMap = new Map<string, number>();
-    for (const r of (bonuses ?? []) as unknown as BonusRow[]) {
+    for (const r of bonusRows) {
       bonusMap.set(r.student_id, Number(r.bonus || 0));
     }
+
+    logInfo("bonusMap built", {
+      entries: Array.from(bonusMap.entries()).slice(0, 5),
+    });
 
     // 4) Calcul des moyennes
     const evalById = new Map<string, EvaluationRow>();
@@ -421,6 +491,11 @@ export async function GET(req: NextRequest) {
       }
     }
 
+    logInfo("gradesByStudent (raw)", {
+      count: gradesByStudent.size,
+      sample: Array.from(gradesByStudent.entries()).slice(0, 3),
+    });
+
     // Construire le tableau final
     const rows: Row[] = [];
     const totalEvals = evaluations.length;
@@ -481,6 +556,11 @@ export async function GET(req: NextRequest) {
     const ranks = denseRanks(rows.map(sortKey));
     rows.forEach((r, i) => (r.rank = ranks[i]));
 
+    logInfo("final rows", {
+      count: rows.length,
+      sample: rows.slice(0, 3),
+    });
+
     return NextResponse.json({
       ok: true,
       params: {
@@ -496,7 +576,7 @@ export async function GET(req: NextRequest) {
       meta: { evaluations: totalEvals },
     });
   } catch (e: any) {
-    console.error("[grades/averages] unexpected error", e);
+    logError("unexpected error", e);
     return bad(e?.message || "INTERNAL_ERROR", 500);
   }
 }
