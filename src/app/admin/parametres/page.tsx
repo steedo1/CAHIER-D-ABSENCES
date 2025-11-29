@@ -1,3 +1,4 @@
+// src/app/admin/parametres/page.tsx
 "use client";
 
 import React, {
@@ -333,8 +334,11 @@ export default function AdminSettingsPage() {
   const [academicYears, setAcademicYears] = useState<AcademicYearRow[]>([]);
   const [loadingAcademicYears, setLoadingAcademicYears] = useState(false);
   const [savingAcademicYears, setSavingAcademicYears] = useState(false);
-  const [msgAcademicYears, setMsgAcademicYears] = useState<string | null>(null);
-  const [selectedAcademicYear, setSelectedAcademicYear] = useState<string>("");
+  const [msgAcademicYears, setMsgAcademicYears] = useState<string | null>(
+    null
+  );
+  const [selectedAcademicYear, setSelectedAcademicYear] =
+    useState<string>("");
 
   /* =======================
      5) Périodes d'évaluation (bulletins)
@@ -342,7 +346,9 @@ export default function AdminSettingsPage() {
   const [evalPeriods, setEvalPeriods] = useState<EvalPeriodRow[]>([]);
   const [loadingEvalPeriods, setLoadingEvalPeriods] = useState(false);
   const [savingEvalPeriods, setSavingEvalPeriods] = useState(false);
-  const [msgEvalPeriods, setMsgEvalPeriods] = useState<string | null>(null);
+  const [msgEvalPeriods, setMsgEvalPeriods] = useState<string | null>(
+    null
+  );
 
   /* =======================
      6) Coefficients des disciplines (bulletins) + sous-matières
@@ -359,7 +365,8 @@ export default function AdminSettingsPage() {
   const [loadingComponents, setLoadingComponents] = useState(false);
   const [savingComponents, setSavingComponents] = useState(false);
   const [msgComponents, setMsgComponents] = useState<string | null>(null);
-  const [componentsModalOpen, setComponentsModalOpen] = useState(false);
+  const [componentsModalOpen, setComponentsModalOpen] =
+    useState(false);
   const [componentsTarget, setComponentsTarget] = useState<{
     level: string;
     subject_id: string;
@@ -408,7 +415,10 @@ export default function AdminSettingsPage() {
 
   const sumComponentsForTarget = useMemo(
     () =>
-      componentsForTarget.reduce((sum, c) => sum + (Number(c.coeff) || 0), 0),
+      componentsForTarget.reduce(
+        (sum, c) => sum + (Number(c.coeff) || 0),
+        0
+      ),
     [componentsForTarget]
   );
 
@@ -562,7 +572,10 @@ export default function AdminSettingsPage() {
       const r = await fetch("/api/admin/users/reset-password", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ user_id: targetUser.id, new_password: customPwd }),
+        body: JSON.stringify({
+          user_id: targetUser.id,
+          new_password: customPwd,
+        }),
       });
       const j = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(j?.error || "Échec de réinitialisation");
@@ -744,7 +757,9 @@ export default function AdminSettingsPage() {
         id: String(row.id ?? `year_${idx}`),
         code: String(row.code || "").trim(),
         label: String(row.label || "").trim() || "Année scolaire",
-        start_date: row.start_date ? String(row.start_date).slice(0, 10) : "",
+        start_date: row.start_date
+          ? String(row.start_date).slice(0, 10)
+          : "",
         end_date: row.end_date ? String(row.end_date).slice(0, 10) : "",
         is_current: row.is_current === true,
       }));
@@ -771,7 +786,8 @@ export default function AdminSettingsPage() {
 
       pushToast("info", `Années scolaires chargées (${mapped.length}).`);
     } catch (e: any) {
-      const m = e?.message || "Impossible de charger les années scolaires.";
+      const m =
+        e?.message || "Impossible de charger les années scolaires.";
       setMsgAcademicYears(m);
       setAcademicYears([]);
       pushToast("error", m);
@@ -853,7 +869,9 @@ export default function AdminSettingsPage() {
       });
       const j = await r.json().catch(() => ({}));
       if (!r.ok || !j?.ok) {
-        throw new Error(j?.error || "Échec enregistrement années scolaires");
+        throw new Error(
+          j?.error || "Échec enregistrement années scolaires"
+        );
       }
       const ok = "Années scolaires enregistrées ✅";
       setMsgAcademicYears(ok);
@@ -861,7 +879,8 @@ export default function AdminSettingsPage() {
       await loadAcademicYears();
     } catch (e: any) {
       const m =
-        e?.message || "Erreur lors de l'enregistrement des années scolaires.";
+        e?.message ||
+        "Erreur lors de l'enregistrement des années scolaires.";
       setMsgAcademicYears(m);
       pushToast("error", m);
     } finally {
@@ -897,7 +916,9 @@ export default function AdminSettingsPage() {
         label: String(row.label || "").trim() || "Période",
         short_label: String(row.short_label || row.label || "").trim(),
         kind: row.kind ? String(row.kind) : "",
-        start_date: row.start_date ? String(row.start_date).slice(0, 10) : "",
+        start_date: row.start_date
+          ? String(row.start_date).slice(0, 10)
+          : "",
         end_date: row.end_date ? String(row.end_date).slice(0, 10) : "",
         order_index: Number(row.order_index ?? idx + 1),
         is_active: row.is_active !== false,
@@ -1021,7 +1042,9 @@ export default function AdminSettingsPage() {
       });
       const j = await r.json().catch(() => ({}));
       if (!r.ok || !j?.ok) {
-        throw new Error(j?.error || "Échec enregistrement périodes");
+        throw new Error(
+          j?.error || "Échec enregistrement périodes"
+        );
       }
       const ok = `Périodes d'évaluation enregistrées ✅ (${academic_year}).`;
       setMsgEvalPeriods(ok);
@@ -1180,7 +1203,9 @@ export default function AdminSettingsPage() {
         (row: any, idx: number) => ({
           level: (row.level ?? "") ? String(row.level).trim() : "",
           subject_id: String(row.subject_id),
-          subject_name: String(row.subject_name || row.parent_name || "Matière"),
+          subject_name: String(
+            row.subject_name || row.parent_name || "Matière"
+          ),
           component_id: String(row.component_id ?? row.id ?? `comp_${idx}`),
           component_name: String(
             row.component_name || row.label || "Sous-matière"
@@ -1196,7 +1221,8 @@ export default function AdminSettingsPage() {
         }).`
       );
     } catch (e: any) {
-      const m = e?.message || "Impossible de charger les sous-matières.";
+      const m =
+        e?.message || "Impossible de charger les sous-matières.";
       setMsgComponents(m);
       setSubjectComponents([]);
       pushToast("error", m);
@@ -1248,16 +1274,51 @@ export default function AdminSettingsPage() {
     );
   }
 
-  async function saveSubjectComponents() {
+  // ✅ NOUVELLE VERSION — envoie subject_id + items[] vers la route API
+  async function saveSubjectComponents(
+    arg?: boolean | React.MouseEvent<HTMLButtonElement>
+  ) {
+    // arg = true quand on appelle saveSubjectComponents(true) depuis le modal
+    const targetOnly = typeof arg === "boolean" ? arg : false;
+
     setSavingComponents(true);
     setMsgComponents(null);
+
     try {
-      // Vérifier pour chaque (niveau, matière) que la somme des sous-coeffs = coeff parent
+      // 1) Déterminer le périmètre : tout / matière ciblée
+      let scope = subjectComponents;
+
+      if (targetOnly) {
+        if (!componentsTarget) {
+          const msg =
+            "Aucune matière sélectionnée pour les sous-matières.";
+          setMsgComponents(msg);
+          pushToast("error", msg);
+          setSavingComponents(false);
+          return;
+        }
+        scope = subjectComponents.filter(
+          (c) =>
+            c.level === componentsTarget.level &&
+            c.subject_id === componentsTarget.subject_id
+        );
+      }
+
+      if (scope.length === 0) {
+        const msg =
+          "Aucune sous-matière à enregistrer pour le périmètre sélectionné.";
+        setMsgComponents(msg);
+        pushToast("error", msg);
+        setSavingComponents(false);
+        return;
+      }
+
+      // 2) Vérifier pour chaque (niveau, matière) que la somme des sous-coeffs = coeff parent
       const sums = new Map<
         string,
         { sum: number; parent: number; subject_name: string; level: string }
       >();
-      for (const c of subjectComponents) {
+      for (const c of scope) {
         const key = `${c.level}__${c.subject_id}`;
         const parentRow = subjectCoeffs.find(
           (r) => r.level === c.level && r.subject_id === c.subject_id
@@ -1299,33 +1360,95 @@ export default function AdminSettingsPage() {
         return;
       }
 
-      const payload = subjectComponents
-        .filter((row) => row.component_name.trim().length > 0)
-        .map((row) => ({
-          level: row.level,
-          subject_id: row.subject_id,
-          component_id: row.component_id.startsWith("temp_")
-            ? null
-            : row.component_id,
-          name: row.component_name.trim(),
-          coeff:
-            !Number.isFinite(row.coeff as any) || row.coeff < 0
-              ? 0
-              : Number(row.coeff.toFixed(2)),
-        }));
+      // 3) On groupe par subject_id pour appeler la route API une fois par matière
+      const bySubject = new Map<
+        string,
+        {
+          subject_name: string;
+          items: {
+            label: string;
+            short_label: string;
+            coeff_in_subject: number;
+            order_index: number;
+            is_active: boolean;
+          }[];
+        }
+      >();
 
-      const r = await fetch("/api/admin/institution/subject-components", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ items: payload }),
-      });
-      const j = await r.json().catch(() => ({}));
-      if (!r.ok || !j?.ok) {
-        throw new Error(j?.error || "Échec enregistrement sous-matières");
+      for (const row of scope) {
+        const label = row.component_name.trim();
+        if (!label) continue;
+
+        const cleanCoeff =
+          !Number.isFinite(row.coeff as any) || row.coeff < 0
+            ? 0
+            : Number(row.coeff.toFixed(2));
+
+        if (!bySubject.has(row.subject_id)) {
+          bySubject.set(row.subject_id, {
+            subject_name: row.subject_name,
+            items: [],
+          });
+        }
+        const group = bySubject.get(row.subject_id)!;
+        const order_index = group.items.length + 1;
+
+        group.items.push({
+          label,
+          short_label: label,
+          coeff_in_subject: cleanCoeff,
+          order_index,
+          is_active: true,
+        });
       }
-      const ok = "Sous-matières enregistrées ✅";
+
+      if (bySubject.size === 0) {
+        const msg =
+          "Aucune sous-matière valide à enregistrer (toutes les lignes sont vides).";
+        setMsgComponents(msg);
+        pushToast("error", msg);
+        setSavingComponents(false);
+        return;
+      }
+
+      // 4) Appels API : PUT /subject-components par matière avec subject_id + items[]
+      let totalInserted = 0;
+
+      for (const [subjectId, group] of bySubject.entries()) {
+        const res = await fetch(
+          "/api/admin/institution/subject-components",
+          {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              subject_id: subjectId,
+              items: group.items,
+            }),
+          }
+        );
+        const j = await res.json().catch(() => ({}));
+        if (!res.ok || !j?.ok) {
+          throw new Error(
+            j?.error ||
+              `Échec enregistrement sous-matières pour la matière ${group.subject_name}.`
+          );
+        }
+        if (typeof j.inserted === "number") {
+          totalInserted += j.inserted;
+        }
+      }
+
+      const ok =
+        targetOnly && componentsTarget
+          ? `Sous-matières enregistrées ✅ pour ${componentsTarget.subject_name} (${componentsTarget.level}).`
+          : `Sous-matières enregistrées ✅ (${totalInserted} ligne${
+              totalInserted > 1 ? "s" : ""
+            }).`;
+
       setMsgComponents(ok);
       pushToast("success", ok);
+
+      // On recharge pour rester synchro avec la base
       await loadSubjectComponents();
     } catch (e: any) {
       const m =
@@ -1358,12 +1481,14 @@ export default function AdminSettingsPage() {
       if (!r.ok || !j?.ok) {
         throw new Error(j?.error || "Échec enregistrement coefficients");
       }
-      const ok = "Coefficients de disciplines par niveau enregistrés ✅";
+      const ok =
+        "Coefficients de disciplines par niveau enregistrés ✅";
       setMsgCoeffs(ok);
       pushToast("success", ok);
     } catch (e: any) {
       const m =
-        e?.message || "Erreur lors de l'enregistrement des coefficients.";
+        e?.message ||
+        "Erreur lors de l'enregistrement des coefficients.";
       setMsgCoeffs(m);
       pushToast("error", m);
     } finally {
@@ -1498,7 +1623,9 @@ export default function AdminSettingsPage() {
                   <input
                     type="checkbox"
                     checked={compactUsers}
-                    onChange={(e) => setCompactUsers(e.target.checked)}
+                    onChange={(e) =>
+                      setCompactUsers(e.target.checked)
+                    }
                   />
                   Mode compact (replier les lignes)
                 </label>
@@ -1532,12 +1659,18 @@ export default function AdminSettingsPage() {
                   <table className="min-w-full text-sm">
                     <thead>
                       <tr className="border-b bg-slate-50 text-slate-600">
-                        <th className="px-3 py-2 text-left">Utilisateur</th>
+                        <th className="px-3 py-2 text-left">
+                          Utilisateur
+                        </th>
                         {!compactUsers && (
-                          <th className="px-3 py-2 text-left">Contact</th>
+                          <th className="px-3 py-2 text-left">
+                            Contact
+                          </th>
                         )}
                         <th className="px-3 py-2 text-left">Rôle</th>
-                        <th className="px-3 py-2 text-right">Actions</th>
+                        <th className="px-3 py-2 text-right">
+                          Actions
+                        </th>
                       </tr>
                     </thead>
                     <tbody>
@@ -1549,7 +1682,9 @@ export default function AdminSettingsPage() {
                             user={u}
                             compact={compactUsers}
                             expanded={isOpen}
-                            onToggle={() => toggleUserExpanded(u.id)}
+                            onToggle={() =>
+                              toggleUserExpanded(u.id)
+                            }
                             onResetTemp={() => resetTemp(u)}
                             onOpenCustom={() => openCustom(u)}
                             roleColor={roleColor}
@@ -1593,7 +1728,9 @@ export default function AdminSettingsPage() {
           {/* Paramètres d’établissement (horaires) */}
           <div className="mb-4 grid grid-cols-1 gap-3 md:grid-cols-3">
             <div>
-              <div className="mb-1 text-xs text-slate-500">Fuseau horaire</div>
+              <div className="mb-1 text-xs text-slate-500">
+                Fuseau horaire
+              </div>
               <select
                 className="w-full rounded-lg border px-3 py-2 text-sm"
                 value={cfg.tz}
@@ -1602,9 +1739,15 @@ export default function AdminSettingsPage() {
                 }
                 disabled={loadingCfg || savingCfg}
               >
-                <option value="Africa/Abidjan">Africa/Abidjan (UTC+0)</option>
-                <option value="Africa/Lagos">Africa/Lagos (UTC+1)</option>
-                <option value="Africa/Dakar">Africa/Dakar (UTC+0)</option>
+                <option value="Africa/Abidjan">
+                  Africa/Abidjan (UTC+0)
+                </option>
+                <option value="Africa/Lagos">
+                  Africa/Lagos (UTC+1)
+                </option>
+                <option value="Africa/Dakar">
+                  Africa/Dakar (UTC+0)
+                </option>
                 <option value="UTC">UTC</option>
               </select>
             </div>
@@ -1664,7 +1807,10 @@ export default function AdminSettingsPage() {
                 className="w-full rounded-lg border px-3 py-2 text-sm"
                 value={cfg.institution_phone}
                 onChange={(e) =>
-                  setCfg((s) => ({ ...s, institution_phone: e.target.value }))
+                  setCfg((s) => ({
+                    ...s,
+                    institution_phone: e.target.value,
+                  }))
                 }
                 disabled={loadingCfg || savingCfg}
                 placeholder="+225 01 02 03 04"
@@ -1679,7 +1825,10 @@ export default function AdminSettingsPage() {
                 className="w-full rounded-lg border px-3 py-2 text-sm"
                 value={cfg.institution_email}
                 onChange={(e) =>
-                  setCfg((s) => ({ ...s, institution_email: e.target.value }))
+                  setCfg((s) => ({
+                    ...s,
+                    institution_email: e.target.value,
+                  }))
                 }
                 disabled={loadingCfg || savingCfg}
                 placeholder="contact@ecole.ci"
@@ -1862,7 +2011,9 @@ export default function AdminSettingsPage() {
                 />
               </div>
               <div>
-                <div className="mb-1 text-xs text-slate-500">Fin journée</div>
+                <div className="mb-1 text-xs text-slate-500">
+                  Fin journée
+                </div>
                 <input
                   type="time"
                   value={genEnd}
@@ -2006,19 +2157,27 @@ export default function AdminSettingsPage() {
                   <th className="w-36 px-3 py-2">Début</th>
                   <th className="w-36 px-3 py-2">Fin</th>
                   <th className="px-3 py-2">Libellé</th>
-                  <th className="w-24 px-3 py-2 text-right">Actions</th>
+                  <th className="w-24 px-3 py-2 text-right">
+                    Actions
+                  </th>
                 </tr>
               </thead>
               <tbody className="divide-y">
                 {loadingCfg ? (
                   <tr>
-                    <td className="px-3 py-3 text-slate-500" colSpan={5}>
+                    <td
+                      className="px-3 py-3 text-slate-500"
+                      colSpan={5}
+                    >
                       Chargement…
                     </td>
                   </tr>
                 ) : (byDay[curDay] || []).length === 0 ? (
                   <tr>
-                    <td className="px-3 py-3 text-slate-500" colSpan={5}>
+                    <td
+                      className="px-3 py-3 text-slate-500"
+                      colSpan={5}
+                    >
                       Aucun créneau pour ce jour.
                     </td>
                   </tr>
@@ -2090,7 +2249,9 @@ export default function AdminSettingsPage() {
               disabled={savingPeriods || loadingCfg}
               className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white shadow hover:bg-emerald-700 disabled:opacity-60"
             >
-              {savingPeriods ? "Enregistrement…" : "Enregistrer les créneaux"}
+              {savingPeriods
+                ? "Enregistrement…"
+                : "Enregistrer les créneaux"}
             </button>
           </div>
 
@@ -2121,7 +2282,9 @@ export default function AdminSettingsPage() {
               disabled={loadingAcademicYears}
               className="rounded-lg border px-3 py-1.5 text-sm hover:bg-slate-50 disabled:opacity-60"
             >
-              {loadingAcademicYears ? "Chargement…" : "Rafraîchir"}
+              {loadingAcademicYears
+                ? "Chargement…"
+                : "Rafraîchir"}
             </button>
           </div>
 
@@ -2169,24 +2332,34 @@ export default function AdminSettingsPage() {
                   <th className="w-10 px-3 py-2 text-left">#</th>
                   <th className="px-3 py-2 text-left">Code</th>
                   <th className="px-3 py-2 text-left">Libellé</th>
-                  <th className="w-32 px-3 py-2 text-left">Début</th>
+                  <th className="w-32 px-3 py-2 text-left">
+                    Début
+                  </th>
                   <th className="w-32 px-3 py-2 text-left">Fin</th>
                   <th className="w-40 px-3 py-2 text-center">
                     Année courante
                   </th>
-                  <th className="w-32 px-3 py-2 text-right">Actions</th>
+                  <th className="w-32 px-3 py-2 text-right">
+                    Actions
+                  </th>
                 </tr>
               </thead>
               <tbody className="divide-y">
                 {loadingAcademicYears ? (
                   <tr>
-                    <td className="px-3 py-3 text-slate-500" colSpan={7}>
+                    <td
+                      className="px-3 py-3 text-slate-500"
+                      colSpan={7}
+                    >
                       Chargement des années scolaires…
                     </td>
                   </tr>
                 ) : academicYears.length === 0 ? (
                   <tr>
-                    <td className="px-3 py-3 text-slate-500" colSpan={7}>
+                    <td
+                      className="px-3 py-3 text-slate-500"
+                      colSpan={7}
+                    >
                       Aucune année scolaire définie pour l&apos;instant. Ajoutez
                       au moins une ligne pour commencer.
                     </td>
@@ -2325,7 +2498,9 @@ export default function AdminSettingsPage() {
               disabled={loadingEvalPeriods}
               className="rounded-lg border px-3 py-1.5 text-sm hover:bg-slate-50 disabled:opacity-60"
             >
-              {loadingEvalPeriods ? "Chargement…" : "Rafraîchir"}
+              {loadingEvalPeriods
+                ? "Chargement…"
+                : "Rafraîchir"}
             </button>
           </div>
 
@@ -2341,25 +2516,45 @@ export default function AdminSettingsPage() {
                 <tr>
                   <th className="w-10 px-3 py-2 text-left">#</th>
                   <th className="px-3 py-2 text-left">Code</th>
-                  <th className="px-3 py-2 text-left">Libellé complet</th>
-                  <th className="px-3 py-2 text-left">Libellé bulletin</th>
-                  <th className="w-24 px-3 py-2 text-right">Coeff. période</th>
-                  <th className="w-32 px-3 py-2 text-left">Début</th>
-                  <th className="w-32 px-3 py-2 text-left">Fin</th>
-                  <th className="w-24 px-3 py-2 text-center">Actif</th>
-                  <th className="w-32 px-3 py-2 text-right">Actions</th>
+                  <th className="px-3 py-2 text-left">
+                    Libellé complet
+                  </th>
+                  <th className="px-3 py-2 text-left">
+                    Libellé bulletin
+                  </th>
+                  <th className="w-24 px-3 py-2 text-right">
+                    Coeff. période
+                  </th>
+                  <th className="w-32 px-3 py-2 text-left">
+                    Début
+                  </th>
+                  <th className="w-32 px-3 py-2 text-left">
+                    Fin
+                  </th>
+                  <th className="w-24 px-3 py-2 text-center">
+                    Actif
+                  </th>
+                  <th className="w-32 px-3 py-2 text-right">
+                    Actions
+                  </th>
                 </tr>
               </thead>
               <tbody className="divide-y">
                 {loadingEvalPeriods ? (
                   <tr>
-                    <td className="px-3 py-3 text-slate-500" colSpan={9}>
+                    <td
+                      className="px-3 py-3 text-slate-500"
+                      colSpan={9}
+                    >
                       Chargement des périodes…
                     </td>
                   </tr>
                 ) : evalPeriods.length === 0 ? (
                   <tr>
-                    <td className="px-3 py-3 text-slate-500" colSpan={9}>
+                    <td
+                      className="px-3 py-3 text-slate-500"
+                      colSpan={9}
+                    >
                       Aucune période définie pour l&apos;instant. Cliquez sur
                       « Ajouter une période » pour commencer.
                     </td>
@@ -2412,10 +2607,13 @@ export default function AdminSettingsPage() {
                           className="w-20 rounded-lg border px-2 py-1 text-right text-sm"
                           value={p.weight}
                           onChange={(e) => {
-                            const raw = e.target.value.replace(",", ".");
+                            const raw =
+                              e.target.value.replace(",", ".");
                             const num = parseFloat(raw);
                             updateEvalPeriod(p.id, {
-                              weight: isNaN(num) ? 1 : Math.max(0, num),
+                              weight: isNaN(num)
+                                ? 1
+                                : Math.max(0, num),
                             });
                           }}
                         />
@@ -2468,8 +2666,12 @@ export default function AdminSettingsPage() {
                           </button>
                           <button
                             type="button"
-                            onClick={() => moveEvalPeriod(p.id, "down")}
-                            disabled={index === evalPeriods.length - 1}
+                            onClick={() =>
+                              moveEvalPeriod(p.id, "down")
+                            }
+                            disabled={
+                              index === evalPeriods.length - 1
+                            }
                             className="rounded-lg border px-2 py-1 text-xs hover:bg-slate-50 disabled:opacity-40"
                             title="Descendre"
                           >
@@ -2571,7 +2773,9 @@ export default function AdminSettingsPage() {
 
           <div className="mb-3 grid grid-cols-1 gap-3 md:grid-cols-3">
             <div>
-              <div className="mb-1 text-xs text-slate-500">Niveau</div>
+              <div className="mb-1 text-xs text-slate-500">
+                Niveau
+              </div>
               <select
                 className="w-full rounded-lg border px-3 py-2 text-sm"
                 value={selectedCoeffLevel}
@@ -2607,20 +2811,29 @@ export default function AdminSettingsPage() {
               <tbody className="divide-y">
                 {loadingCoeffs ? (
                   <tr>
-                    <td className="px-3 py-3 text-slate-500" colSpan={3}>
+                    <td
+                      className="px-3 py-3 text-slate-500"
+                      colSpan={3}
+                    >
                       Chargement des disciplines…
                     </td>
                   </tr>
                 ) : !selectedCoeffLevel ? (
                   <tr>
-                    <td className="px-3 py-3 text-slate-500" colSpan={3}>
+                    <td
+                      className="px-3 py-3 text-slate-500"
+                      colSpan={3}
+                    >
                       Choisissez d&apos;abord un niveau pour voir et modifier
                       les coefficients.
                     </td>
                   </tr>
                 ) : coeffRowsForSelectedLevel.length === 0 ? (
                   <tr>
-                    <td className="px-3 py-3 text-slate-500" colSpan={3}>
+                    <td
+                      className="px-3 py-3 text-slate-500"
+                      colSpan={3}
+                    >
                       Aucune discipline n&apos;est encore paramétrée pour ce
                       niveau. Cliquez sur « Rafraîchir » si vous venez
                       d&apos;ajouter des matières.
@@ -2640,7 +2853,9 @@ export default function AdminSettingsPage() {
                     const ok = Math.abs(sum - sc.coeff) < 1e-6;
 
                     return (
-                      <tr key={`${sc.level}-${sc.subject_id}`}>
+                      <tr
+                        key={`${sc.level}-${sc.subject_id}`}
+                      >
                         <td className="px-3 py-2 text-slate-800">
                           {sc.subject_name}
                         </td>
@@ -2652,7 +2867,8 @@ export default function AdminSettingsPage() {
                             className="w-24 rounded-lg border px-2 py-1 text-right text-sm"
                             value={sc.coeff}
                             onChange={(e) => {
-                              const raw = e.target.value.replace(",", ".");
+                              const raw =
+                                e.target.value.replace(",", ".");
                               const num = parseFloat(raw);
                               setSubjectCoeffs((prev) =>
                                 prev.map((row) =>
@@ -2674,7 +2890,9 @@ export default function AdminSettingsPage() {
                           <div className="flex flex-col items-end gap-1">
                             <button
                               type="button"
-                              onClick={() => openComponentsEditor(sc)}
+                              onClick={() =>
+                                openComponentsEditor(sc)
+                              }
                               className="rounded-lg border px-2 py-1 text-xs hover:bg-slate-50"
                             >
                               {comps.length > 0
@@ -2827,11 +3045,14 @@ export default function AdminSettingsPage() {
             </div>
 
             {customMsg && (
-              <div className="text-sm text-slate-700">{customMsg}</div>
+              <div className="text-sm text-slate-700">
+                {customMsg}
+              </div>
             )}
 
             <div className="rounded-lg border border-yellow-200 bg-yellow-50 px-3 py-2 text-[12px] text-yellow-800">
-              Astuce : laissez ce modal et utilisez <b>« Réinit. temporaire »</b>{" "}
+              Astuce : laissez ce modal et utilisez{" "}
+              <b>« Réinit. temporaire »</b>{" "}
               si vous préférez générer un mot de passe provisoire (par défaut
               côté serveur).
             </div>
@@ -2850,7 +3071,7 @@ export default function AdminSettingsPage() {
           actions={
             <>
               <button
-                onClick={saveSubjectComponents}
+                onClick={() => saveSubjectComponents(true)}
                 disabled={savingComponents}
                 className="rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-60"
               >
@@ -2907,9 +3128,15 @@ export default function AdminSettingsPage() {
                 <table className="min-w-full text-sm">
                   <thead className="bg-slate-50 text-slate-600">
                     <tr>
-                      <th className="px-3 py-2 text-left">Sous-matière</th>
-                      <th className="w-28 px-3 py-2 text-right">Coeff.</th>
-                      <th className="w-24 px-3 py-2 text-right">Actions</th>
+                      <th className="px-3 py-2 text-left">
+                        Sous-matière
+                      </th>
+                      <th className="w-28 px-3 py-2 text-right">
+                        Coeff.
+                      </th>
+                      <th className="w-24 px-3 py-2 text-right">
+                        Actions
+                      </th>
                     </tr>
                   </thead>
                   <tbody className="divide-y">
@@ -2945,10 +3172,13 @@ export default function AdminSettingsPage() {
                               step="0.5"
                               value={c.coeff}
                               onChange={(e) => {
-                                const raw = e.target.value.replace(",", ".");
+                                const raw =
+                                  e.target.value.replace(",", ".");
                                 const num = parseFloat(raw);
                                 updateComponentRow(c.component_id, {
-                                  coeff: isNaN(num) ? 0 : Math.max(0, num),
+                                  coeff: isNaN(num)
+                                    ? 0
+                                    : Math.max(0, num),
                                 });
                               }}
                               className="w-24 rounded-lg border px-2 py-1 text-right text-sm"
@@ -3045,7 +3275,9 @@ function FragmentRow(props: {
                 onClick={props.onToggle}
                 className="rounded-lg border px-3 py-1.5 text-xs hover:bg-slate-50"
                 title={
-                  props.expanded ? "Masquer les détails" : "Voir les détails"
+                  props.expanded
+                    ? "Masquer les détails"
+                    : "Voir les détails"
                 }
               >
                 {props.expanded ? "Masquer" : "Voir"}
@@ -3079,7 +3311,9 @@ function FragmentRow(props: {
           <td className="px-3 py-2" colSpan={3}>
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
               <div>
-                <div className="text-[11px] text-slate-500">Email</div>
+                <div className="text-[11px] text-slate-500">
+                  Email
+                </div>
                 <div className="text-sm text-slate-800">
                   {u.email || "—"}
                 </div>

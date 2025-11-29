@@ -28,7 +28,8 @@ type SubjectComponentRow = {
   code: string;
   label: string;
   short_label: string | null;
-  coeff_in_subject: number;
+  coeff_in_subject: number; // utilisé par les écrans de saisie
+  coeff: number;            // alias pratique pour l'admin (même valeur)
   order_index: number;
   is_active: boolean;
 };
@@ -142,19 +143,23 @@ export async function GET(req: NextRequest) {
     return error(dbErr.message, 400);
   }
 
-  const items: SubjectComponentRow[] = (data || []).map((row: any) => ({
-    id: String(row.id),
-    subject_id: String(row.subject_id),
-    subject_name: row.subjects?.name
-      ? String(row.subjects.name)
-      : "Matière",
-    code: String(row.code || ""),
-    label: String(row.label || ""),
-    short_label: row.short_label ? String(row.short_label) : null,
-    coeff_in_subject: Number(row.coeff_in_subject ?? 1),
-    order_index: Number(row.order_index ?? 1),
-    is_active: row.is_active !== false,
-  }));
+  const items: SubjectComponentRow[] = (data || []).map((row: any) => {
+    const coeff = Number(row.coeff_in_subject ?? 1);
+    return {
+      id: String(row.id),
+      subject_id: String(row.subject_id),
+      subject_name: row.subjects?.name
+        ? String(row.subjects.name)
+        : "Matière",
+      code: String(row.code || ""),
+      label: String(row.label || ""),
+      short_label: row.short_label ? String(row.short_label) : null,
+      coeff_in_subject: coeff,
+      coeff, // alias pour l’admin (même valeur)
+      order_index: Number(row.order_index ?? 1),
+      is_active: row.is_active !== false,
+    };
+  });
 
   return NextResponse.json({ ok: true, items });
 }
