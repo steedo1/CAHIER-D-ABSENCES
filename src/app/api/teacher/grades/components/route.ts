@@ -1,3 +1,4 @@
+// src/app/api/teacher/grades/components/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
@@ -10,6 +11,7 @@ type SubjectComponentRow = {
   subject_id: string | null;
   label: string;
   short_label: string | null;
+  coeff_in_subject: number | null;
   order_index: number | null;
   is_active: boolean | null;
 };
@@ -27,7 +29,10 @@ async function getContext(): Promise<Context> {
 
   const { data: authData, error: authError } = await supa.auth.getUser();
   if (authError || !authData?.user) {
-    console.error("[TeacherGradesComponents] getContext -> auth error", authError);
+    console.error(
+      "[TeacherGradesComponents] getContext -> auth error",
+      authError
+    );
     throw new Error("Non authentifié.");
   }
   const userId = authData.user.id;
@@ -77,7 +82,6 @@ async function resolveSubjectIdToGlobal(
     rawSubjectId,
   });
 
-  // On essaie d’abord de l’interpréter comme un institution_subjects.id
   const { data, error } = await supa
     .from("institution_subjects")
     .select("id, subject_id")
@@ -100,7 +104,6 @@ async function resolveSubjectIdToGlobal(
     return resolved;
   }
 
-  // Sinon, on considère que rawSubjectId est déjà un subjects.id global
   console.log(
     "[TeacherGradesComponents] resolveSubjectIdToGlobal -> aucune correspondance, on garde rawSubjectId tel quel",
     { institutionId, rawSubjectId }
@@ -140,7 +143,6 @@ export async function GET(req: NextRequest) {
       institutionId,
     });
 
-    // On cherche les sous-matières pour ce sujet global dans CET établissement
     const subjectIds =
       globalSubjectId === rawSubjectId
         ? [globalSubjectId]
@@ -148,7 +150,9 @@ export async function GET(req: NextRequest) {
 
     const { data, error } = await supaService
       .from("grade_subject_components")
-      .select("id, subject_id, label, short_label, order_index, is_active")
+      .select(
+        "id, subject_id, label, short_label, coeff_in_subject, order_index, is_active"
+      )
       .in("subject_id", subjectIds)
       .eq("institution_id", institutionId)
       .order("order_index", { ascending: true });
@@ -164,7 +168,22 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    const rows: SubjectComponentRow[] = data || [];
+    const rows: SubjectComponentRow[] = (data || []).map((row: any) => ({
+      id: String(row.id),
+      subject_id: row.subject_id ? String(row.subject_id) : null,
+      label: String(row.label || ""),
+      short_label: row.short_label ? String(row.short_label) : null,
+      coeff_in_subject:
+        row.coeff_in_subject == null
+          ? 1
+          : Number.isFinite(Number(row.coeff_in_subject))
+          ? Number(row.coeff_in_subject)
+          : 1,
+      order_index:
+        row.order_index == null ? null : Number(row.order_index),
+      is_active:
+        typeof row.is_active === "boolean" ? row.is_active : true,
+    }));
 
     const components = rows
       .filter((row) => row.is_active ?? true)
@@ -173,6 +192,7 @@ export async function GET(req: NextRequest) {
         subject_id: row.subject_id,
         label: row.label,
         short_label: row.short_label,
+        coeff_in_subject: row.coeff_in_subject ?? 1,
         order_index: row.order_index,
       }));
 
@@ -181,8 +201,6 @@ export async function GET(req: NextRequest) {
       components
     );
 
-    // ⚠️ IMPORTANT : on renvoie à la fois "items" (pour l'UI actuelle)
-    // et "components" (plus explicite, pour un futur usage)
     return NextResponse.json({ items: components, components });
   } catch (err: any) {
     console.error("[TeacherGradesComponents] GET -> exception", err);

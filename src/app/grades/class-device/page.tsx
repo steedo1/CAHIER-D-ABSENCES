@@ -1,6 +1,3 @@
-
-
-
 // src/app/grades/class-device/page.tsx
 "use client";
 
@@ -209,32 +206,117 @@ export default function ClassDeviceNotesPage() {
     null
   );
 
+  /* 🔹 OPTION A : lecture DOM + fallback API /api/admin/institution/settings */
   useEffect(() => {
     if (typeof window === "undefined") return;
-    try {
-      const body: any = document.body;
 
-      const fromDataName =
-        body?.dataset?.institutionName || body?.dataset?.institution || null;
-      const fromGlobalName = (window as any).__MC_INSTITUTION_NAME__
-        ? String((window as any).__MC_INSTITUTION_NAME__)
-        : null;
-      const finalName = fromDataName || fromGlobalName;
-      if (finalName) setInstitutionName(finalName);
+    let cancelled = false;
 
-      const fromDataYear =
-        body?.dataset?.academicYear ||
-        body?.dataset?.schoolYear ||
-        body?.dataset?.anneeScolaire ||
-        null;
-      const fromGlobalYear = (window as any).__MC_ACADEMIC_YEAR__
-        ? String((window as any).__MC_ACADEMIC_YEAR__)
-        : null;
-      const finalYear = fromDataYear || fromGlobalYear;
-      if (finalYear) setAcademicYearLabel(finalYear);
-    } catch {
-      // on ne casse rien si ça échoue
-    }
+    (async () => {
+      try {
+        const body: any = document.body;
+
+        // 1) Essai via data-* + globals (comme avant)
+        const fromDataName =
+          body?.dataset?.institutionName || body?.dataset?.institution || null;
+        const fromGlobalName = (window as any).__MC_INSTITUTION_NAME__
+          ? String((window as any).__MC_INSTITUTION_NAME__)
+          : null;
+        const finalName = fromDataName || fromGlobalName;
+        if (finalName) {
+          logInfo(
+            "useEffect[institution] -> nom trouvé via DOM/global",
+            finalName
+          );
+          if (!cancelled) setInstitutionName(finalName);
+        }
+
+        const fromDataYear =
+          body?.dataset?.academicYear ||
+          body?.dataset?.schoolYear ||
+          body?.dataset?.anneeScolaire ||
+          null;
+        const fromGlobalYear = (window as any).__MC_ACADEMIC_YEAR__
+          ? String((window as any).__MC_ACADEMIC_YEAR__)
+          : null;
+        const finalYear = fromDataYear || fromGlobalYear;
+        if (finalYear) {
+          logInfo(
+            "useEffect[institution] -> année trouvée via DOM/global",
+            finalYear
+          );
+          if (!cancelled) setAcademicYearLabel(finalYear);
+        }
+
+        // 2) Fallback : si pas de nom (et/ou pas d'année), on appelle l’API admin
+        if (!finalName || !finalYear) {
+          logInfo(
+            "useEffect[institution] -> fallback API /api/admin/institution/settings"
+          );
+          try {
+            const r = await fetch("/api/admin/institution/settings", {
+              cache: "no-store",
+            });
+            logInfo(
+              "useEffect[institution] -> status fallback API",
+              r.status
+            );
+            const j = await r.json().catch((err) => {
+              logError(
+                "useEffect[institution] -> JSON parse error fallback API",
+                err
+              );
+              return {} as any;
+            });
+
+            if (!cancelled && r.ok) {
+              const name = String((j as any)?.institution_name || "").trim();
+              if (name) {
+                logInfo(
+                  "useEffect[institution] -> nom reçu via API",
+                  name
+                );
+                setInstitutionName(name);
+              }
+
+              const yearFromApi =
+                (j as any)?.current_academic_year_label ??
+                (j as any)?.academic_year_label ??
+                (j as any)?.academic_year ??
+                null;
+
+              if (yearFromApi && !finalYear) {
+                logInfo(
+                  "useEffect[institution] -> année reçue via API",
+                  yearFromApi
+                );
+                setAcademicYearLabel(String(yearFromApi));
+              }
+            } else if (!cancelled && !r.ok) {
+              logError(
+                "useEffect[institution] -> fallback API non OK",
+                r.status
+              );
+            }
+          } catch (err) {
+            if (!cancelled) {
+              logError(
+                "useEffect[institution] -> erreur réseau fallback API",
+                err
+              );
+            }
+          }
+        }
+      } catch (err) {
+        if (!cancelled) {
+          logError("useEffect[institution] -> exception générale", err);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   /* -------- Sélection classe/discipline -------- */
@@ -757,6 +839,8 @@ export default function ClassDeviceNotesPage() {
     bonus: number;
     final: number;
     rank: number;
+    /** Moyennes par sous-rubrique (clé = component.id, valeur = moyenne /20) */
+    componentAvgs?: Record<string, number>;
   };
   const [avgRows, setAvgRows] = useState<RowAvg[]>([]);
   const [bonusMap, setBonusMap] = useState<Record<string, number>>({});
@@ -765,6 +849,56 @@ export default function ClassDeviceNotesPage() {
   function applyAveragesFromApi(items: AverageApiRow[]) {
     logInfo("applyAveragesFromApi -> items bruts", items);
     const map = new Map(items.map((row) => [row.student_id, row]));
+
+    // 🔹 Calcul des moyennes par sous-rubrique (si collège + sous-matières)
+    type CompAgg = { num: number; denom: number };
+    let perStudentComp:
+      | Map<string, Record<string, CompAgg>>
+      | null = null;
+
+    if (hasComponents && evaluations.length > 0 && roster.length > 0) {
+      const rosterIds = new Set(roster.map((st) => st.id));
+      perStudentComp = new Map<string, Record<string, CompAgg>>();
+
+      for (const ev of evaluations) {
+        // On se cale sur la vue moyennes : uniquement les évaluations publiées
+        if (!ev.is_published) continue;
+        const compId = ev.subject_component_id;
+        if (!compId) continue; // on ne garde que les évaluations liées à une sous-rubrique
+
+        const scale = Number(ev.scale || 20);
+        const coeff = Number(ev.coeff || 1);
+        if (!isFinite(scale) || scale <= 0 || !isFinite(coeff) || coeff <= 0)
+          continue;
+
+        const perGrades = grades[ev.id] || {};
+        for (const [student_id, rawScore] of Object.entries(perGrades)) {
+          if (!rosterIds.has(student_id)) continue;
+          if (rawScore == null || Number.isNaN(rawScore as any)) continue;
+
+          const score = Number(rawScore);
+          if (!isFinite(score)) continue;
+          const clamped = Math.max(0, Math.min(scale, score));
+          const normalized = (clamped / scale) * 20;
+          const contrib = normalized * coeff;
+
+          let perComp = perStudentComp.get(student_id);
+          if (!perComp) {
+            perComp = {};
+            perStudentComp.set(student_id, perComp);
+          }
+          const agg = perComp[compId] || { num: 0, denom: 0 };
+          agg.num += contrib;
+          agg.denom += coeff;
+          perComp[compId] = agg;
+        }
+      }
+
+      logInfo("applyAveragesFromApi -> perStudentComp construit", {
+        sample: Array.from(perStudentComp.entries()).slice(0, 3),
+      });
+    }
+
     const rows: RowAvg[] = roster.map((st) => {
       const src = map.get(st.id);
       const avg20 = src ? src.average_raw ?? src.average ?? 0 : 0;
@@ -773,7 +907,25 @@ export default function ClassDeviceNotesPage() {
         ? src.average_rounded ?? src.average ?? avg20 + bonus
         : avg20 + bonus;
       const rank = src ? src.rank ?? 0 : 0;
-      return { student: st, avg20, bonus, final, rank };
+
+      let componentAvgs: Record<string, number> | undefined = undefined;
+      if (hasComponents && perStudentComp) {
+        const perComp = perStudentComp.get(st.id);
+        if (perComp) {
+          const tmp: Record<string, number> = {};
+          components.forEach((c) => {
+            const agg = perComp![c.id];
+            if (agg && agg.denom > 0) {
+              tmp[c.id] = agg.num / agg.denom;
+            }
+          });
+          if (Object.keys(tmp).length > 0) {
+            componentAvgs = tmp;
+          }
+        }
+      }
+
+      return { student: st, avg20, bonus, final, rank, componentAvgs };
     });
     logInfo("applyAveragesFromApi -> rows calculés", rows);
     setAvgRows(rows);
@@ -1576,9 +1728,7 @@ export default function ClassDeviceNotesPage() {
                     }}
                     aria-label="Sous-rubrique"
                   >
-                    <option value="">
-                      —-- Sous-rubrique --—
-                    </option>
+                    <option value="">—-- Sous-rubrique --—</option>
                     {components.map((c) => (
                       <option key={c.id} value={c.id}>
                         {c.short_label || c.label} (coeff {c.coeff_in_subject})
@@ -1973,6 +2123,23 @@ export default function ClassDeviceNotesPage() {
                     <th className="px-3 py-2 w-64 sticky left-[13rem] z-20 bg-slate-50">
                       Nom et prénoms
                     </th>
+
+                    {/* Colonnes de moyennes par sous-rubrique */}
+                    {hasComponents &&
+                      components.map((c) => (
+                        <th
+                          key={c.id}
+                          className="px-3 py-2 text-right whitespace-nowrap"
+                        >
+                          <div className="font-semibold text-xs">
+                            {c.short_label || c.label}
+                          </div>
+                          <div className="text-[11px] text-slate-500">
+                            Moy. /20
+                          </div>
+                        </th>
+                      ))}
+
                     <th className="px-3 py-2 text-right">Moyenne (/20)</th>
                     <th className="px-3 py-2 text-right">Bonus</th>
                     <th className="px-3 py-2 text-right">Finale (/20)</th>
@@ -2007,6 +2174,21 @@ export default function ClassDeviceNotesPage() {
                         <td className="px-3 py-2 w-64 sticky left-[13rem] z-10 bg-white">
                           {row.student.full_name}
                         </td>
+
+                        {/* Valeurs moyennes par sous-rubrique */}
+                        {hasComponents &&
+                          components.map((c) => {
+                            const val = row.componentAvgs?.[c.id];
+                            return (
+                              <td
+                                key={c.id}
+                                className="px-3 py-2 text-right tabular-nums text-xs"
+                              >
+                                {val != null ? val.toFixed(2) : "—"}
+                              </td>
+                            );
+                          })}
+
                         <td className="px-3 py-2 text-right tabular-nums">
                           {row.avg20.toFixed(2)}
                         </td>
@@ -2103,6 +2285,29 @@ export default function ClassDeviceNotesPage() {
                           </div>
                         </div>
                       </div>
+
+                      {/* Bloc moyennes par sous-rubrique sur mobile */}
+                      {hasComponents && (
+                        <div className="mt-2 border-t border-slate-200 pt-2">
+                          <div className="text-[11px] uppercase tracking-wide text-slate-500 mb-1">
+                            Moyennes par sous-rubrique
+                          </div>
+                          <div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-slate-700">
+                            {components.map((c) => {
+                              const val = row.componentAvgs?.[c.id];
+                              return (
+                                <div key={c.id}>
+                                  <span className="font-medium">
+                                    {c.short_label || c.label}:
+                                  </span>{" "}
+                                  {val != null ? val.toFixed(2) : "—"}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+
                       <div className="mt-2">
                         <div className="text-[11px] mb-1 text-slate-500">
                           Bonus (0 à 10)
