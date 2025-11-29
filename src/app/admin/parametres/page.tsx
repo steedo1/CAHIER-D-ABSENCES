@@ -998,65 +998,68 @@ export default function AdminSettingsPage() {
     setEvalPeriods((prev) => prev.filter((p) => p.id !== id));
   }
 
-  async function saveEvalPeriods() {
-    setSavingEvalPeriods(true);
-    setMsgEvalPeriods(null);
-    try {
-      const academic_year = (selectedAcademicYear || "").trim();
-      if (!academic_year) {
-        const msg =
-          "Choisissez d'abord une année scolaire dans la section « Années scolaires ».";
-        setMsgEvalPeriods(msg);
-        pushToast("error", msg);
-        setSavingEvalPeriods(false);
-        return;
-      }
-
-      const normalized = evalPeriods.map((p, idx) => {
-        const code = (p.code || `P${idx + 1}`).trim();
-        const label = (p.label || `Période ${idx + 1}`).trim();
-        const short_label = (p.short_label || label).trim();
-        const weight =
-          typeof p.weight === "number" && p.weight > 0
-            ? Number(p.weight)
-            : 1;
-        return {
-          id: p.id,
-          code,
-          label,
-          short_label,
-          kind: p.kind && p.kind.trim() ? p.kind.trim() : null,
-          start_date: p.start_date || null,
-          end_date: p.end_date || null,
-          order_index: idx + 1,
-          is_active: !!p.is_active,
-          weight,
-        };
-      });
-      const r = await fetch("/api/admin/institution/grading-periods", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ periods: normalized, academic_year }),
-      });
-      const j = await r.json().catch(() => ({}));
-      if (!r.ok || !j?.ok) {
-        throw new Error(
-          j?.error || "Échec enregistrement périodes"
-        );
-      }
-      const ok = `Périodes d'évaluation enregistrées ✅ (${academic_year}).`;
-      setMsgEvalPeriods(ok);
-      pushToast("success", ok);
-      await loadEvalPeriods(academic_year);
-    } catch (e: any) {
-      const m =
-        e?.message || "Erreur lors de l'enregistrement des périodes.";
-      setMsgEvalPeriods(m);
-      pushToast("error", m);
-    } finally {
+   async function saveEvalPeriods() {
+  setSavingEvalPeriods(true);
+  setMsgEvalPeriods(null);
+  try {
+    const academic_year = (selectedAcademicYear || "").trim();
+    if (!academic_year) {
+      const msg =
+        "Choisissez d'abord une année scolaire dans la section « Années scolaires ».";
+      setMsgEvalPeriods(msg);
+      pushToast("error", msg);
       setSavingEvalPeriods(false);
+      return;
     }
+
+    const normalized = evalPeriods.map((p, idx) => {
+      const code = (p.code || `P${idx + 1}`).trim();
+      const label = (p.label || `Période ${idx + 1}`).trim();
+      const short_label = (p.short_label || label).trim();
+
+      // ✅ on part de p.weight (UI) mais on envoie bien coeff à l’API
+      const coeff =
+        typeof p.weight === "number" && p.weight > 0
+          ? Number(p.weight)
+          : 1;
+
+      return {
+        id: p.id,
+        code,
+        label,
+        short_label,
+        kind: p.kind && p.kind.trim() ? p.kind.trim() : null,
+        start_date: p.start_date || null,
+        end_date: p.end_date || null,
+        order_index: idx + 1,
+        is_active: !!p.is_active,
+        coeff, // ✅ c'est ce champ que la route utilise
+      };
+    });
+
+    const r = await fetch("/api/admin/institution/grading-periods", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ periods: normalized, academic_year }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok || !j?.ok) {
+      throw new Error(j?.error || "Échec enregistrement périodes");
+    }
+    const ok = `Périodes d'évaluation enregistrées ✅ (${academic_year}).`;
+    setMsgEvalPeriods(ok);
+    pushToast("success", ok);
+    await loadEvalPeriods(academic_year);
+  } catch (e: any) {
+    const m =
+      e?.message || "Erreur lors de l'enregistrement des périodes.";
+    setMsgEvalPeriods(m);
+    pushToast("error", m);
+  } finally {
+    setSavingEvalPeriods(false);
   }
+}
+
 
   /* ====== Horaires : helpers CRUD ====== */
   function addRow(day: number) {
