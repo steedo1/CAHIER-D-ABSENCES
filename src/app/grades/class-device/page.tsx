@@ -1,3 +1,7 @@
+
+
+
+// src/app/grades/class-device/page.tsx
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
@@ -10,11 +14,23 @@ import {
   RefreshCw,
   FileSpreadsheet,
   Trash2,
-  FileText,
 } from "lucide-react";
 
 /* =========================
-   Helpers divers
+   Debug helpers (logs)
+========================= */
+const LOG_PREFIX = "[ClassDeviceNotes]";
+
+function logInfo(...args: any[]) {
+  console.log(LOG_PREFIX, ...args);
+}
+
+function logError(...args: any[]) {
+  console.error(LOG_PREFIX, ...args);
+}
+
+/* =========================
+   Responsive helper
 ========================= */
 const MOBILE_BREAKPOINT = 768; // < md
 
@@ -34,15 +50,6 @@ function useIsMobile() {
   return isMobile;
 }
 
-function escapeHtml(str: string) {
-  return str
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
-
 /* =========================
    Types
 ========================= */
@@ -50,7 +57,7 @@ type TeachClass = {
   class_id: string;
   class_label: string;
   level: string;
-  subject_id: string | null; // subjects.id canonique
+  subject_id: string | null;
   subject_name: string | null;
 };
 
@@ -62,16 +69,16 @@ type Evaluation = {
   id: string;
   class_id: string;
   subject_id: string | null;
-  subject_component_id?: string | null; // ✅ sous-rubrique éventuelle
+  subject_component_id?: string | null;
   eval_date: string; // yyyy-mm-dd
   eval_kind: EvalKind;
-  scale: 5 | 10 | 20 | 40 | 60; // on n’en crée que 5/10/20, mais on affiche tout ce qui existe
-  coeff: number; // 0.25, 0.5, 1, 2, 3...
+  scale: 5 | 10 | 20 | 40 | 60;
+  coeff: number;
   is_published: boolean;
   published_at?: string | null;
 };
 
-type GradesByEval = Record<string, Record<string, number | null>>; // grades[eval_id][student_id] = note
+type GradesByEval = Record<string, Record<string, number | null>>;
 
 type SubjectComponent = {
   id: string;
@@ -101,9 +108,8 @@ function isCollegeLevel(level?: string | null): boolean {
   try {
     s = s.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
   } catch {
-    // pas grave, on continue sans normalisation
+    // pas grave
   }
-  // On vise 6e, 5e, 4e, 3e (avec variantes du style "3e A")
   return (
     s.startsWith("6") ||
     s.startsWith("5") ||
@@ -137,6 +143,7 @@ function Select(p: React.SelectHTMLAttributes<HTMLSelectElement>) {
       className={[
         "w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm",
         "shadow-sm outline-none transition",
+        "placeholder:text-slate-400",
         "focus:border-emerald-400 focus:ring-4 focus:ring-emerald-500/20",
         "disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400",
         p.className ?? "",
@@ -191,9 +198,9 @@ function GhostButton(
 }
 
 /* =========================
-   Page
+   Page Compte-classe
 ========================= */
-export default function TeacherNotesPage() {
+export default function ClassDeviceNotesPage() {
   const isMobile = useIsMobile();
 
   // Nom établissement + année scolaire
@@ -293,54 +300,93 @@ export default function TeacherNotesPage() {
   const [activeEvalId, setActiveEvalId] = useState<string | null>(null);
 
   /* ==========================================
-     Chargements
+     Chargement des classes (compte-classe)
   ========================================== */
-  // Liste des classes/discipline du prof
   useEffect(() => {
     (async () => {
+      logInfo(
+        "useEffect[classes] -> début chargement des classes pour compte-classe"
+      );
       try {
-        const r = await fetch("/api/teacher/classes", { cache: "no-store" });
-        const j = await r.json().catch(() => ({ items: [] }));
+        const r = await fetch("/api/grades/classes", { cache: "no-store" });
+        logInfo("useEffect[classes] -> /api/grades/classes status", r.status);
+        const j = await r.json().catch((err) => {
+          logError("useEffect[classes] -> erreur parse JSON", err);
+          return { items: [] };
+        });
         const arr = (j.items || []) as TeachClass[];
+        logInfo("useEffect[classes] -> classes reçues", arr);
         setTeachClasses(arr);
         if (!selKey && arr.length) {
           const first = arr[0];
-          setSelKey(`${first.class_id}|${first.subject_id ?? ""}`);
+          const defaultKey = `${first.class_id}|${first.subject_id ?? ""}`;
+          logInfo("useEffect[classes] -> sélection par défaut", defaultKey);
+          setSelKey(defaultKey);
         }
-      } catch {
+      } catch (err: any) {
+        logError("useEffect[classes] -> échec de chargement", err);
         setTeachClasses([]);
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Rubriques / sous-matières pour les niveaux 6e-3e
+  /* ==========================================
+     Chargement des sous-matières (collège)
+  ========================================== */
   useEffect(() => {
+    logInfo(
+      "useEffect[components] -> déclenché avec",
+      "selected?.class_id=",
+      selected?.class_id,
+      "selected?.subject_id=",
+      selected?.subject_id,
+      "selected?.level=",
+      selected?.level
+    );
+
     setComponents([]);
     setSelectedComponentId("");
-    if (!selected || !selected.subject_id) return;
-    if (!isCollegeLevel(selected.level)) return;
+    if (!selected || !selected.subject_id) {
+      logInfo(
+        "useEffect[components] -> pas de selected ou pas de subject_id, on annule."
+      );
+      return;
+    }
+    if (!isCollegeLevel(selected.level)) {
+      logInfo(
+        "useEffect[components] -> niveau non collège, pas de sous-rubriques à charger."
+      );
+      return;
+    }
 
     (async () => {
       try {
         setComponentsLoading(true);
-        // ✅ construction sûre des query params (pas de null)
-        const params = new URLSearchParams();
-        params.set("class_id", selected.class_id);
-        if (selected.subject_id) {
-          params.set("subject_id", selected.subject_id);
-        }
-        const r = await fetch(
-          `/api/teacher/grades/components?${params.toString()}`,
-          { cache: "no-store" }
-        );
-        const j = await r.json().catch(() => ({ items: [] }));
+        const params = new URLSearchParams({
+          class_id: selected.class_id,
+          subject_id: selected.subject_id ?? "",
+        });
+        const url = `/api/teacher/grades/components?${params.toString()}`;
+        logInfo("useEffect[components] -> fetch", url);
+        const r = await fetch(url, { cache: "no-store" });
+        logInfo("useEffect[components] -> status", r.status);
+        const j = await r.json().catch((err) => {
+          logError("useEffect[components] -> JSON parse error", err);
+          return { items: [] };
+        });
         const arr = (j.items || []) as SubjectComponent[];
+        logInfo("useEffect[components] -> sous-rubriques reçues", arr);
         setComponents(arr);
         if (arr.length > 0) {
+          logInfo(
+            "useEffect[components] -> sélection auto première sous-rubrique",
+            arr[0].id
+          );
           setSelectedComponentId(arr[0].id);
         }
-      } catch {
+      } catch (err: any) {
+        logError("useEffect[components] -> échec de chargement", err);
         setComponents([]);
       } finally {
         setComponentsLoading(false);
@@ -348,9 +394,19 @@ export default function TeacherNotesPage() {
     })();
   }, [selected?.class_id, selected?.subject_id, selected?.level]);
 
-  // Roster + évaluations + notes pour la sélection courante
+  /* ==========================================
+     Chargement roster + évaluations + notes
+  ========================================== */
   useEffect(() => {
+    logInfo(
+      "useEffect[data] -> déclenché avec selected",
+      selected
+        ? { class_id: selected.class_id, subject_id: selected.subject_id }
+        : null
+    );
+
     if (!selected) {
+      logInfo("useEffect[data] -> aucun selected, reset des états.");
       setRoster([]);
       setEvaluations([]);
       setGrades({});
@@ -364,40 +420,57 @@ export default function TeacherNotesPage() {
         setMsg(null);
 
         // 1) Roster
-        const rRoster = await fetch(
-          `/api/teacher/roster?class_id=${selected.class_id}`,
-          {
-            cache: "no-store",
-          }
-        );
-        const jRoster = await rRoster.json().catch(() => ({ items: [] }));
+        const rosterUrl = `/api/grades/roster?class_id=${encodeURIComponent(
+          selected.class_id
+        )}`;
+        logInfo("useEffect[data] -> fetch roster", rosterUrl);
+        const rRoster = await fetch(rosterUrl, { cache: "no-store" });
+        logInfo("useEffect[data] -> roster status", rRoster.status);
+        const jRoster = await rRoster.json().catch((err) => {
+          logError("useEffect[data] -> roster JSON parse error", err);
+          return { items: [] };
+        });
         const ros = (jRoster.items || []) as RosterItem[];
+        logInfo("useEffect[data] -> roster reçu", ros);
         setRoster(ros);
 
-        // 2) Liste des évaluations
-        const rEvals = await fetch(
-          `/api/teacher/grades/evaluations?class_id=${
-            selected.class_id
-          }&subject_id=${selected.subject_id ?? ""}`,
-          { cache: "no-store" }
-        );
-        const jEvals = await rEvals.json().catch(() => ({ items: [] }));
+        // 2) Évaluations
+        const evalsUrl = `/api/grades/evaluations?class_id=${encodeURIComponent(
+          selected.class_id
+        )}&subject_id=${encodeURIComponent(selected.subject_id ?? "")}`;
+        logInfo("useEffect[data] -> fetch evaluations", evalsUrl);
+        const rEvals = await fetch(evalsUrl, { cache: "no-store" });
+        logInfo("useEffect[data] -> evaluations status", rEvals.status);
+        const jEvals = await rEvals.json().catch((err) => {
+          logError("useEffect[data] -> evals JSON parse error", err);
+          return { items: [] };
+        });
         const evals = (jEvals.items || []) as Evaluation[];
-        // tri par date croissante (stable)
         evals.sort((a, b) => a.eval_date.localeCompare(b.eval_date));
+        logInfo("useEffect[data] -> évaluations reçues", evals);
         setEvaluations(evals);
 
-        // 3) Notes par évaluation
+        // 3) Notes
         const g: GradesByEval = {};
         await Promise.all(
           evals.map(async (ev) => {
-            const r = await fetch(
-              `/api/teacher/grades/scores?evaluation_id=${ev.id}`,
-              {
-                cache: "no-store",
-              }
-            );
-            const j = await r.json().catch(() => ({ items: [] }));
+            const scoresUrl = `/api/grades/scores?evaluation_id=${encodeURIComponent(
+              ev.id
+            )}`;
+            logInfo("useEffect[data] -> fetch scores", {
+              eval_id: ev.id,
+              url: scoresUrl,
+            });
+            const r = await fetch(scoresUrl, { cache: "no-store" });
+            logInfo("useEffect[data] -> scores status", ev.id, r.status);
+            const j = await r.json().catch((err) => {
+              logError(
+                "useEffect[data] -> scores JSON parse error",
+                { eval_id: ev.id },
+                err
+              );
+              return { items: [] };
+            });
             const items = (j.items || []) as Array<{
               student_id: string;
               score: number | null;
@@ -406,15 +479,16 @@ export default function TeacherNotesPage() {
             for (const it of items) g[ev.id][it.student_id] = it.score;
           })
         );
+        logInfo("useEffect[data] -> notes par évaluation chargées", g);
         setGrades(g);
         setChanged({});
       } catch (e: any) {
+        logError("useEffect[data] -> exception générale", e);
         setMsg(e?.message || "Échec de chargement.");
         setRoster([]);
         setEvaluations([]);
         setGrades({});
         setChanged({});
-        setActiveEvalId(null);
       } finally {
         setLoading(false);
       }
@@ -434,6 +508,7 @@ export default function TeacherNotesPage() {
       value == null || Number.isNaN(value)
         ? null
         : Math.max(0, Math.min(scale, value));
+    logInfo("setGrade ->", { evId, studentId, value, clamped: v, scale });
     setChanged((prev) => ({
       ...prev,
       [evId]: { ...(prev[evId] || {}), [studentId]: v },
@@ -441,11 +516,14 @@ export default function TeacherNotesPage() {
   }
 
   async function saveAllChanges() {
-    if (!selected) return;
-    // Regrouper par évaluation
+    if (!selected) {
+      logInfo("saveAllChanges -> aucun selected, on annule.");
+      return;
+    }
     const perEval = Object.entries(changed).filter(
       ([, per]) => Object.keys(per).length > 0
     );
+    logInfo("saveAllChanges -> perEval à enregistrer", perEval);
     if (perEval.length === 0) {
       setMsg("Aucun changement à enregistrer.");
       return;
@@ -458,22 +536,31 @@ export default function TeacherNotesPage() {
           student_id,
           score: score == null ? null : Number(score),
         }));
-        const r = await fetch("/api/teacher/grades/scores/bulk", {
+        logInfo("saveAllChanges -> POST /api/grades/scores/bulk", {
+          evaluation_id,
+          items,
+        });
+        const r = await fetch("/api/grades/scores/bulk", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             evaluation_id,
             items,
             delete_if_null: true,
-            strict: false,
           }),
         });
-        const j = await r.json().catch(() => ({}));
+        const text = await r.text();
+        logInfo("saveAllChanges -> response status", r.status, "body", text);
+        let j: any = {};
+        try {
+          j = text ? JSON.parse(text) : {};
+        } catch (err) {
+          logError("saveAllChanges -> JSON parse error", err);
+        }
         if (!r.ok || !j?.ok)
           throw new Error(j?.error || "Échec d’enregistrement.");
       }
 
-      // Merge local
       setGrades((prev) => {
         const next = { ...prev };
         for (const [evId, per] of Object.entries(changed)) {
@@ -484,7 +571,9 @@ export default function TeacherNotesPage() {
       });
       setChanged({});
       setMsg("Notes enregistrées ✅");
+      logInfo("saveAllChanges -> succès, notes mises à jour en mémoire.");
     } catch (e: any) {
+      logError("saveAllChanges -> exception", e);
       setMsg(e?.message || "Échec d’enregistrement des notes.");
     } finally {
       setLoading(false);
@@ -492,10 +581,15 @@ export default function TeacherNotesPage() {
   }
 
   async function addEvaluation() {
-    if (!selected) return;
+    if (!selected) {
+      logInfo("addEvaluation -> aucun selected, on annule.");
+      return;
+    }
 
-    // Si sous-matières configurées en collège, on impose la sélection
     if (hasComponents && !selectedComponentId) {
+      logInfo(
+        "addEvaluation -> sous-rubriques présentes mais aucune sélectionnée."
+      );
       setMsg("Choisissez une sous-rubrique avant d’ajouter une note.");
       return;
     }
@@ -505,23 +599,32 @@ export default function TeacherNotesPage() {
     try {
       const payload = {
         class_id: selected.class_id,
-        subject_id: selected?.subject_id ?? null, // ← important si "" arrive
-        subject_component_id: hasComponents ? selectedComponentId : null, // ✅ sous-matière
+        subject_id: selected?.subject_id ?? null,
+        subject_component_id: hasComponents ? selectedComponentId : null,
         eval_date: newDate,
         eval_kind: newType,
         scale: newScale,
         coeff: newCoeff,
       };
-      const r = await fetch("/api/teacher/grades/evaluations", {
+      logInfo("addEvaluation -> POST /api/grades/evaluations", payload);
+      const r = await fetch("/api/grades/evaluations", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
-      const j = await r.json().catch(() => ({}));
+      const text = await r.text();
+      logInfo("addEvaluation -> response status", r.status, "body", text);
+      let j: any = {};
+      try {
+        j = text ? JSON.parse(text) : {};
+      } catch (err) {
+        logError("addEvaluation -> JSON parse error", err);
+      }
       if (!r.ok || !j?.ok)
         throw new Error(j?.error || "Échec de création de l’évaluation.");
 
       const created = j?.item as Evaluation;
+      logInfo("addEvaluation -> évaluation créée", created);
       setEvaluations((prev) => {
         const next = [...prev, created];
         next.sort((a, b) => a.eval_date.localeCompare(b.eval_date));
@@ -533,19 +636,23 @@ export default function TeacherNotesPage() {
       setActiveEvalId(created.id);
       setMsg("NOTE ajoutée ✅ (colonne active sur mobile)");
     } catch (e: any) {
+      logError("addEvaluation -> exception", e);
       setMsg(e?.message || "Échec d’ajout de la note.");
     } finally {
       setCreating(false);
     }
   }
 
-  /* -------- Publication (panneau séparé) -------- */
   async function togglePublish(ev: Evaluation) {
     setMsg(null);
     const next = !ev.is_published;
+    logInfo("togglePublish -> PATCH /api/grades/evaluations", {
+      eval_id: ev.id,
+      next,
+    });
     setPublishBusy((prev) => ({ ...prev, [ev.id]: true }));
     try {
-      const r = await fetch("/api/teacher/grades/evaluations", {
+      const r = await fetch("/api/grades/evaluations", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -553,7 +660,14 @@ export default function TeacherNotesPage() {
           is_published: next,
         }),
       });
-      const j = await r.json().catch(() => ({}));
+      const text = await r.text();
+      logInfo("togglePublish -> response status", r.status, "body", text);
+      let j: any = {};
+      try {
+        j = text ? JSON.parse(text) : {};
+      } catch (err) {
+        logError("togglePublish -> JSON parse error", err);
+      }
       if (!r.ok || !j?.ok)
         throw new Error(j?.error || "Échec de mise à jour.");
 
@@ -565,6 +679,7 @@ export default function TeacherNotesPage() {
         next ? "Évaluation publiée ✅." : "Évaluation repassée en brouillon."
       );
     } catch (e: any) {
+      logError("togglePublish -> exception", e);
       setMsg(e?.message || "Échec de mise à jour de la publication.");
     } finally {
       setPublishBusy((prev) => {
@@ -575,25 +690,36 @@ export default function TeacherNotesPage() {
     }
   }
 
-  /* -------- Suppression d’une évaluation (colonne) -------- */
   async function deleteEvaluation(ev: Evaluation) {
+    logInfo("deleteEvaluation -> demande de suppression", ev);
     if (
       !window.confirm(
         "Supprimer définitivement cette colonne de notes ?\nToutes les notes associées seront perdues."
       )
     ) {
+      logInfo("deleteEvaluation -> action annulée par l’utilisateur.");
       return;
     }
 
     setMsg(null);
     setPublishBusy((prev) => ({ ...prev, [ev.id]: true }));
     try {
-      const r = await fetch("/api/teacher/grades/evaluations", {
+      logInfo("deleteEvaluation -> DELETE /api/grades/evaluations", {
+        evaluation_id: ev.id,
+      });
+      const r = await fetch("/api/grades/evaluations", {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ evaluation_id: ev.id }),
       });
-      const j = await r.json().catch(() => ({}));
+      const text = await r.text();
+      logInfo("deleteEvaluation -> response status", r.status, "body", text);
+      let j: any = {};
+      try {
+        j = text ? JSON.parse(text) : {};
+      } catch (err) {
+        logError("deleteEvaluation -> JSON parse error", err);
+      }
       if (!r.ok || !j?.ok)
         throw new Error(j?.error || "Échec de suppression.");
 
@@ -608,8 +734,10 @@ export default function TeacherNotesPage() {
         delete next[ev.id];
         return next;
       });
+
       setMsg("Colonne de note supprimée ✅");
     } catch (e: any) {
+      logError("deleteEvaluation -> exception", e);
       setMsg(e?.message || "Échec de suppression de la colonne de note.");
     } finally {
       setPublishBusy((prev) => {
@@ -621,14 +749,13 @@ export default function TeacherNotesPage() {
   }
 
   /* ==========================================
-     Moyennes (vue dédiée)
-     🚨 Basées sur /api/teacher/grades/averages
+     Moyennes + bonus
   ========================================== */
   type RowAvg = {
     student: RosterItem;
-    avg20: number; // moyenne brute avant bonus
+    avg20: number;
     bonus: number;
-    final: number; // après bonus (et éventuel arrondi côté API)
+    final: number;
     rank: number;
   };
   const [avgRows, setAvgRows] = useState<RowAvg[]>([]);
@@ -636,6 +763,7 @@ export default function TeacherNotesPage() {
   const [loadingAvg, setLoadingAvg] = useState(false);
 
   function applyAveragesFromApi(items: AverageApiRow[]) {
+    logInfo("applyAveragesFromApi -> items bruts", items);
     const map = new Map(items.map((row) => [row.student_id, row]));
     const rows: RowAvg[] = roster.map((st) => {
       const src = map.get(st.id);
@@ -647,6 +775,7 @@ export default function TeacherNotesPage() {
       const rank = src ? src.rank ?? 0 : 0;
       return { student: st, avg20, bonus, final, rank };
     });
+    logInfo("applyAveragesFromApi -> rows calculés", rows);
     setAvgRows(rows);
     const bm: Record<string, number> = {};
     rows.forEach((r) => {
@@ -659,28 +788,45 @@ export default function TeacherNotesPage() {
   }
 
   async function openAverages() {
-    if (!selected) return;
+    if (!selected) {
+      logInfo("openAverages -> aucun selected, on annule.");
+      return;
+    }
     setMode("moyennes");
     setLoadingAvg(true);
     setMsg(null);
     try {
       const params = new URLSearchParams({
         class_id: selected.class_id,
+        published_only: "1",
+        missing: "ignore",
+        round_to_raw: "none",
+        rank_by: "average",
       });
       if (selected.subject_id) {
         params.set("subject_id", selected.subject_id);
       }
-      const r = await fetch(
-        `/api/teacher/grades/averages?${params.toString()}`,
-        { cache: "no-store" }
-      );
-      const j = await r.json().catch(() => ({}));
+      if (academicYearLabel) {
+        params.set("academic_year", academicYearLabel);
+      }
+      const url = `/api/grades/averages?${params.toString()}`;
+      logInfo("openAverages -> fetch", url);
+      const r = await fetch(url, { cache: "no-store" });
+      const text = await r.text();
+      logInfo("openAverages -> response status", r.status, "body", text);
+      let j: any = {};
+      try {
+        j = text ? JSON.parse(text) : {};
+      } catch (err) {
+        logError("openAverages -> JSON parse error", err);
+      }
       if (!r.ok || !j?.ok) {
         throw new Error(j?.error || "Échec du calcul des moyennes.");
       }
       const arr = (j.items || []) as AverageApiRow[];
       applyAveragesFromApi(arr);
     } catch (e: any) {
+      logError("openAverages -> exception", e);
       setAvgRows([]);
       setMsg(e?.message || "Échec du calcul des moyennes.");
     } finally {
@@ -689,7 +835,10 @@ export default function TeacherNotesPage() {
   }
 
   async function saveBonuses() {
-    if (!selected) return;
+    if (!selected) {
+      logInfo("saveBonuses -> aucun selected, on annule.");
+      return;
+    }
     setLoadingAvg(true);
     setMsg(null);
     try {
@@ -697,7 +846,12 @@ export default function TeacherNotesPage() {
         student_id,
         bonus: Number.isFinite(bonus) ? Number(bonus) : 0,
       }));
-      const r = await fetch("/api/teacher/grades/adjustments/bulk", {
+      logInfo("saveBonuses -> POST /api/grades/adjustments/bulk", {
+        class_id: selected.class_id,
+        subject_id: selected.subject_id,
+        items,
+      });
+      const r = await fetch("/api/grades/adjustments/bulk", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -706,22 +860,41 @@ export default function TeacherNotesPage() {
           items,
         }),
       });
-      const j = await r.json().catch(() => ({}));
+      const text = await r.text();
+      logInfo("saveBonuses -> response status", r.status, "body", text);
+      let j: any = {};
+      try {
+        j = text ? JSON.parse(text) : {};
+      } catch (err) {
+        logError("saveBonuses -> JSON parse error", err);
+      }
       if (!r.ok || !j?.ok)
         throw new Error(j?.error || "Échec d’enregistrement des bonus.");
 
-      // On relit les moyennes pour refléter les bonus stockés en base
       const params = new URLSearchParams({
         class_id: selected.class_id,
+        published_only: "1",
+        missing: "ignore",
+        round_to_raw: "none",
+        rank_by: "average",
       });
       if (selected.subject_id) {
         params.set("subject_id", selected.subject_id);
       }
-      const r2 = await fetch(
-        `/api/teacher/grades/averages?${params.toString()}`,
-        { cache: "no-store" }
-      );
-      const j2 = await r2.json().catch(() => ({}));
+      if (academicYearLabel) {
+        params.set("academic_year", academicYearLabel);
+      }
+      const url2 = `/api/grades/averages?${params.toString()}`;
+      logInfo("saveBonuses -> refetch", url2);
+      const r2 = await fetch(url2, { cache: "no-store" });
+      const text2 = await r2.text();
+      logInfo("saveBonuses -> refetch status", r2.status, "body", text2);
+      let j2: any = {};
+      try {
+        j2 = text2 ? JSON.parse(text2) : {};
+      } catch (err) {
+        logError("saveBonuses -> refetch JSON parse error", err);
+      }
       if (!r2.ok || !j2?.ok)
         throw new Error(j2?.error || "Échec du recalcul des moyennes.");
       const arr2 = (j2.items || []) as AverageApiRow[];
@@ -729,6 +902,7 @@ export default function TeacherNotesPage() {
 
       setMsg("Bonus enregistrés ✅");
     } catch (e: any) {
+      logError("saveBonuses -> exception", e);
       setMsg(e?.message || "Échec d’enregistrement des bonus.");
     } finally {
       setLoadingAvg(false);
@@ -736,295 +910,107 @@ export default function TeacherNotesPage() {
   }
 
   /* ==========================================
-     Export PDF (fiche statistique par évaluation)
+     Export CSV
   ========================================== */
-  function exportEvalToPdf(ev: Evaluation) {
-    if (!selected) {
-      setMsg("Sélectionnez une classe/discipline avant d’exporter.");
-      return;
+  const totalChanges = useMemo(
+    () =>
+      Object.values(changed).reduce(
+        (acc, per) => acc + Object.keys(per).length,
+        0
+      ),
+    [changed]
+  );
+
+  const labelByEvalId: Record<string, string> = useMemo(() => {
+    const counters: Record<EvalKind, number> = {
+      devoir: 0,
+      interro_ecrite: 0,
+      interro_orale: 0,
+    };
+    const map: Record<string, string> = {};
+    for (const ev of evaluations) {
+      const kind = ev.eval_kind as EvalKind;
+      counters[kind] = (counters[kind] ?? 0) + 1;
+      const idx = counters[kind];
+      let prefix: string;
+      if (kind === "devoir") prefix = "DEVOIR";
+      else if (kind === "interro_ecrite") prefix = "IE";
+      else prefix = "IO";
+      map[ev.id] = `${prefix}${idx}`;
     }
-    if (!roster.length) {
-      setMsg("Aucun élève dans cette classe pour générer la fiche.");
-      return;
-    }
+    logInfo("labelByEvalId -> map labels", map);
+    return map;
+  }, [evaluations]);
 
-    // On prend en compte les changements non enregistrés aussi
-    const evalGrades = { ...(grades[ev.id] || {}) };
-    const pending = changed[ev.id] || {};
-    for (const [sid, val] of Object.entries(pending)) {
-      evalGrades[sid] = val;
-    }
-
-    const rows = roster.map((st, idx) => {
-      const score =
-        evalGrades[st.id] == null ? null : Number(evalGrades[st.id]);
-      return { idx: idx + 1, student: st, score };
-    });
-
-    const withScores = rows.filter((r) => r.score != null);
-    if (!withScores.length) {
-      setMsg("Aucune note saisie pour cette évaluation.");
-      return;
-    }
-
-    const scores = withScores.map((r) => r.score as number);
-    const count = scores.length;
-    const sum = scores.reduce((acc, v) => acc + v, 0);
-    const minRaw = Math.min(...scores);
-    const maxRaw = Math.max(...scores);
-    const avgRaw = sum / count;
-    const scale = ev.scale || 20;
-
-    const to20 = (v: number) => (v / scale) * 20;
-    const avg20 = to20(avgRaw);
-    const min20 = to20(minRaw);
-    const max20 = to20(maxRaw);
-
-    const nbEleves = roster.length;
-    const nbSansNote = nbEleves - count;
-
-    const typeLabel =
-      ev.eval_kind === "devoir"
-        ? "Devoir"
-        : ev.eval_kind === "interro_ecrite"
-        ? "Interrogation écrite"
-        : "Interrogation orale";
-
-    const dateFr = formatDateFr(ev.eval_date);
-    const pdfTitle = `FICHE STATISTIQUE DE ${typeLabel.toUpperCase()} DU ${dateFr}`;
-
-    const inst = institutionName || "";
-    const year = academicYearLabel || "";
-    const classe = selected.class_label || "";
-    const subject = selected.subject_name || "Discipline";
-
-    const html = `<!DOCTYPE html>
-<html lang="fr">
-<head>
-  <meta charset="utf-8" />
-  <title>${escapeHtml(pdfTitle)}</title>
-  <style>
-    * { box-sizing: border-box; }
-    body {
-      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      margin: 24px;
-      color: #020617;
-      font-size: 12px;
-    }
-    h1 {
-      font-size: 18px;
-      text-align: center;
-      margin-bottom: 4px;
-      text-transform: uppercase;
-    }
-    h2 {
-      font-size: 14px;
-      margin-top: 16px;
-      margin-bottom: 4px;
-    }
-    .subtitle {
-      text-align: center;
-      font-size: 11px;
-      color: #475569;
-      margin-bottom: 16px;
-    }
-    .meta {
-      margin-bottom: 12px;
-      font-size: 11px;
-    }
-    .meta strong {
-      text-transform: uppercase;
-    }
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      margin-top: 8px;
-    }
-    th, td {
-      border: 1px solid #cbd5e1;
-      padding: 4px 6px;
-      text-align: left;
-    }
-    th {
-      background: #e2e8f0;
-      font-weight: 600;
-    }
-    .text-right { text-align: right; }
-    .small {
-      font-size: 10px;
-      color: #6b7280;
-    }
-  </style>
-</head>
-<body>
-  <h1>${escapeHtml(pdfTitle)}</h1>
-  <div class="subtitle">
-    ${escapeHtml(inst)}${
-      year ? " • Année scolaire " + escapeHtml(year) : ""
-    }<br/>
-    Classe : ${escapeHtml(classe)} • Discipline : ${escapeHtml(subject)}
-  </div>
-
-  <div class="meta">
-    <div><strong>Type :</strong> ${escapeHtml(typeLabel)}</div>
-    <div><strong>Date :</strong> ${escapeHtml(dateFr)}</div>
-    <div><strong>Échelle :</strong> /${scale} (équivalent /20 indiqué)</div>
-    <div><strong>Coefficient :</strong> ${ev.coeff}</div>
-  </div>
-
-  <h2>Résumé statistique</h2>
-  <table>
-    <tbody>
-      <tr>
-        <th>Nombre d'élèves</th>
-        <td>${nbEleves}</td>
-      </tr>
-      <tr>
-        <th>Nombre de notes saisies</th>
-        <td>${count}</td>
-      </tr>
-      <tr>
-        <th>Nombre d'élèves sans note</th>
-        <td>${nbSansNote}</td>
-      </tr>
-      <tr>
-        <th>Moyenne</th>
-        <td>${avgRaw.toFixed(2)} / ${scale} (soit ${avg20.toFixed(
-      2
-    )} / 20)</td>
-      </tr>
-      <tr>
-        <th>Note minimale</th>
-        <td>${minRaw.toFixed(2)} / ${scale} (soit ${min20.toFixed(
-      2
-    )} / 20)</td>
-      </tr>
-      <tr>
-        <th>Note maximale</th>
-        <td>${maxRaw.toFixed(2)} / ${scale} (soit ${max20.toFixed(
-      2
-    )} / 20)</td>
-      </tr>
-    </tbody>
-  </table>
-
-  <h2>Détails par élève</h2>
-  <table>
-    <thead>
-      <tr>
-        <th>N°</th>
-        <th>Matricule</th>
-        <th>Nom et prénoms</th>
-        <th class="text-right">Note /${scale}</th>
-        <th class="text-right">Équiv. /20</th>
-      </tr>
-    </thead>
-    <tbody>
-      ${rows
-        .map((r) => {
-          if (r.score == null) {
-            return `<tr>
-              <td>${r.idx}</td>
-              <td>${escapeHtml(r.student.matricule || "")}</td>
-              <td>${escapeHtml(r.student.full_name)}</td>
-              <td class="text-right small">—</td>
-              <td class="text-right small">—</td>
-            </tr>`;
-          }
-          const n = r.score;
-          const n20 = to20(n);
-          return `<tr>
-            <td>${r.idx}</td>
-            <td>${escapeHtml(r.student.matricule || "")}</td>
-            <td>${escapeHtml(r.student.full_name)}</td>
-            <td class="text-right">${n.toFixed(2)}</td>
-            <td class="text-right">${n20.toFixed(2)}</td>
-          </tr>`;
-        })
-        .join("")}
-    </tbody>
-  </table>
-
-  <p class="small" style="margin-top:16px;">
-    Fiche générée depuis Mon Cahier — Espace enseignant.
-  </p>
-</body>
-</html>`;
-
-    const win = window.open("", "_blank");
-    if (!win) {
-      setMsg(
-        "Impossible d’ouvrir la fenêtre d’impression (popup peut-être bloquée)."
-      );
-      return;
-    }
-    win.document.open();
-    win.document.write(html);
-    win.document.close();
-    win.focus();
-    // L'utilisateur pourra choisir "Enregistrer en PDF" dans la fenêtre d'impression.
-    setTimeout(() => {
-      try {
-        win.print();
-      } catch {
-        // silencieux
-      }
-    }, 300);
-  }
-
-  /* ==========================================
-     Export CSV / Excel
-     👉 Colonnes de notes détaillées,
-        moyenne finale alignée sur l’API /averages si possible.
-  ========================================== */
   async function exportToCsv() {
     if (!selected) {
       setMsg("Sélectionnez une classe/discipline avant d’exporter.");
+      logInfo("exportToCsv -> aucun selected");
       return;
     }
     if (!roster.length) {
       setMsg("Aucun élève à exporter pour cette classe.");
+      logInfo("exportToCsv -> roster vide");
       return;
     }
 
     try {
-      // On tente de récupérer les moyennes consolidées
       let avgByStudent = new Map<string, AverageApiRow>();
       try {
         const params = new URLSearchParams({
           class_id: selected.class_id,
+          published_only: "1",
+          missing: "ignore",
+          round_to_raw: "none",
+          rank_by: "average",
         });
         if (selected.subject_id) {
           params.set("subject_id", selected.subject_id);
         }
-        const r = await fetch(
-          `/api/teacher/grades/averages?${params.toString()}`,
-          { cache: "no-store" }
-        );
-        const j = await r.json().catch(() => ({}));
+        if (academicYearLabel) {
+          params.set("academic_year", academicYearLabel);
+        }
+        const url = `/api/grades/averages?${params.toString()}`;
+        logInfo("exportToCsv -> fetch moyennes", url);
+        const r = await fetch(url, { cache: "no-store" });
+        const text = await r.text();
+        logInfo("exportToCsv -> moyennes status", r.status, "body", text);
+        let j: any = {};
+        try {
+          j = text ? JSON.parse(text) : {};
+        } catch (err) {
+          logError("exportToCsv -> moyennes JSON parse error", err);
+        }
         if (r.ok && j?.ok && Array.isArray(j.items)) {
           const arr = j.items as AverageApiRow[];
           avgByStudent = new Map(
             arr.map((row) => [row.student_id, row] as const)
           );
+          logInfo("exportToCsv -> moyennes consolidées présentes", arr);
+        } else {
+          logInfo(
+            "exportToCsv -> pas de moyennes consolidées utilisables, on restera sur le calcul local."
+          );
+          avgByStudent = new Map();
         }
-      } catch {
+      } catch (err) {
+        logError("exportToCsv -> erreur lors du fetch moyennes", err);
         avgByStudent = new Map();
       }
 
-      // En-têtes
       const headers: string[] = ["Numero", "Matricule", "Nom complet"];
       evaluations.forEach((ev) => {
         const label = labelByEvalId[ev.id] ?? "NOTE";
         headers.push(`${label} (/${ev.scale})`);
       });
       headers.push("Moyenne finale (/20)");
+      logInfo("exportToCsv -> headers", headers);
 
-      const rowsCsv: string[][] = [];
+      const rows: string[][] = [];
 
       roster.forEach((st, idx) => {
         const row: (string | number)[] = [
-          idx + 1, // Numero
+          idx + 1,
           st.matricule ?? "",
           st.full_name,
         ];
@@ -1036,7 +1022,6 @@ export default function TeacherNotesPage() {
           const raw =
             changed[ev.id]?.[st.id] ?? grades[ev.id]?.[st.id] ?? null;
 
-          // Note brute telle que saisie (3/5, 8/10, 15/20…)
           row.push(raw == null ? "" : Number(raw));
 
           if (raw != null) {
@@ -1061,18 +1046,19 @@ export default function TeacherNotesPage() {
 
         row.push(finalFromApi.toFixed(2));
 
-        // Conversion en string + échappement CSV
         const rowStr = row.map((cell) => {
           const v = cell == null ? "" : String(cell);
           return `"${v.replace(/"/g, '""')}"`;
         });
-        rowsCsv.push(rowStr);
+        rows.push(rowStr);
       });
+
+      logInfo("exportToCsv -> nombre de lignes", rows.length);
 
       const headerStr = headers
         .map((h) => `"${h.replace(/"/g, '""')}"`)
         .join(";");
-      const csvLines = [headerStr, ...rowsCsv.map((r) => r.join(";"))];
+      const csvLines = [headerStr, ...rows.map((r) => r.join(";"))];
       const csvContent = csvLines.join("\r\n");
 
       const blob = new Blob([csvContent], {
@@ -1087,6 +1073,7 @@ export default function TeacherNotesPage() {
       const today = new Date().toISOString().slice(0, 10);
       const filename = `notes_${safeClass}_${safeSubj}_${today}.csv`;
 
+      logInfo("exportToCsv -> téléchargement du fichier", filename);
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
@@ -1098,41 +1085,343 @@ export default function TeacherNotesPage() {
 
       setMsg("Export CSV généré ✅ (ouvrable dans Excel).");
     } catch (e: any) {
+      logError("exportToCsv -> exception", e);
       setMsg(e?.message || "Échec de génération du CSV.");
     }
   }
 
-  /* ==========================================
-     Dérivés UI
-  ========================================== */
-  const totalChanges = useMemo(
-    () =>
-      Object.values(changed).reduce(
-        (acc, per) => acc + Object.keys(per).length,
-        0
-      ),
-    [changed]
-  );
-
-  // Libellés par type : DEVOIR1, DEVOIR2, IE1, IE2, IO1, IO2…
-  const labelByEvalId: Record<string, string> = useMemo(() => {
-    const counters: Record<EvalKind, number> = {
-      devoir: 0,
-      interro_ecrite: 0,
-      interro_orale: 0,
-    };
-    const map: Record<string, string> = {};
-    for (const ev of evaluations) {
-      counters[ev.eval_kind] += 1;
-      const idx = counters[ev.eval_kind];
-      let prefix: string;
-      if (ev.eval_kind === "devoir") prefix = "DEVOIR";
-      else if (ev.eval_kind === "interro_ecrite") prefix = "IE";
-      else prefix = "IO";
-      map[ev.id] = `${prefix}${idx}`;
+  function formatDateFr(value: string | null | undefined) {
+    if (!value) return "";
+    try {
+      return new Date(value).toLocaleDateString("fr-FR");
+    } catch {
+      return value;
     }
-    return map;
-  }, [evaluations]);
+  }
+
+  function getTypeLabel(kind: EvalKind): string {
+    if (kind === "devoir") return "Devoir";
+    if (kind === "interro_ecrite") return "Interrogation écrite";
+    return "Interrogation orale";
+  }
+
+  /**
+   * Génère une fiche statistique (HTML) et ouvre la boîte d’impression du navigateur.
+   * Titre du PDF (fenêtre) : "FICHE STATISTIQUE DE TYPE_EVALUATION DU DATE"
+   */
+  function openStatsPdfForEvaluation(ev: Evaluation) {
+    try {
+      if (typeof window === "undefined") return;
+
+      // Fusion notes enregistrées + modifications en cours
+      const base = grades[ev.id] || {};
+      const overrides = changed[ev.id] || {};
+      const combined: Record<string, number | null> = { ...base, ...overrides };
+
+      const scored: { student: RosterItem; score: number }[] = [];
+      const noScore: RosterItem[] = [];
+
+      roster.forEach((st) => {
+        const raw = combined[st.id];
+        if (raw == null || Number.isNaN(raw)) {
+          noScore.push(st);
+        } else {
+          scored.push({ student: st, score: Number(raw) });
+        }
+      });
+
+      const nTotal = roster.length;
+      const nWith = scored.length;
+      const nWithout = noScore.length;
+
+      let min: number | null = null;
+      let max: number | null = null;
+      let avg: number | null = null;
+      let median: number | null = null;
+      let stdDev: number | null = null;
+
+      if (nWith > 0) {
+        const vals = scored.map((s) => s.score).sort((a, b) => a - b);
+        min = vals[0];
+        max = vals[vals.length - 1];
+        const sum = vals.reduce((a, b) => a + b, 0);
+        avg = sum / nWith;
+        if (nWith % 2 === 1) {
+          median = vals[(nWith - 1) / 2];
+        } else {
+          const mid1 = vals[nWith / 2 - 1];
+          const mid2 = vals[nWith / 2];
+          median = (mid1 + mid2) / 2;
+        }
+        const mean = avg;
+        const variance =
+          vals.reduce(
+            (acc, v) => acc + Math.pow(v - (mean as number), 2),
+            0
+          ) / nWith;
+        stdDev = Math.sqrt(variance);
+      }
+
+      const scale = ev.scale;
+      const to20 = (v: number | null) =>
+        v == null || Number.isNaN(v) ? null : (v / scale) * 20;
+
+      const min20 = to20(min);
+      const max20 = to20(max);
+      const avg20 = to20(avg);
+      const median20 = to20(median);
+      const stdDev20 =
+        stdDev == null || Number.isNaN(stdDev) ? null : (stdDev / scale) * 20;
+
+      const distDefs = [
+        { label: "0 ≤ note < 5", from: 0, to: 5 },
+        { label: "5 ≤ note < 10", from: 5, to: 10 },
+        { label: "10 ≤ note < 15", from: 10, to: 15 },
+        { label: "15 ≤ note ≤ 20", from: 15, to: 20.00001 },
+      ];
+      const distRows = distDefs.map((d) => {
+        let count = 0;
+        scored.forEach(({ score }) => {
+          const v20 = (score / scale) * 20;
+          if (v20 >= d.from && v20 < d.to) count++;
+        });
+        const pct = nWith > 0 ? (count * 100) / nWith : 0;
+        return { ...d, count, pct };
+      });
+
+      const sorted = [...scored].sort((a, b) => b.score - a.score);
+      const bestScore = sorted[0]?.score ?? null;
+      const worstScore = sorted[sorted.length - 1]?.score ?? null;
+
+      const bestStudents =
+        bestScore == null
+          ? []
+          : sorted.filter((s) => s.score === bestScore);
+      const worstStudents =
+        worstScore == null
+          ? []
+          : sorted.filter((s) => s.score === worstScore);
+
+      const typeLabel = getTypeLabel(ev.eval_kind);
+      const dateLabel = formatDateFr(ev.eval_date) || ev.eval_date;
+      const title = `FICHE STATISTIQUE DE ${typeLabel.toUpperCase()} DU ${dateLabel}`;
+
+      const inst = institutionName || "";
+      const year = academicYearLabel || "";
+      const classLabel = selected?.class_label || "";
+      const subjectName = selected?.subject_name || "";
+
+      const w = window.open("", "_blank", "noopener,noreferrer");
+      if (!w) {
+        setMsg(
+          "Impossible d’ouvrir la fenêtre d’impression. Vérifiez le bloqueur de pop-up."
+        );
+        return;
+      }
+
+      const doc = w.document;
+      doc.title = title;
+
+      const fmt = (v: number | null, digits = 2) =>
+        v == null || Number.isNaN(v) ? "—" : v.toFixed(digits);
+
+      const html = `<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charSet="utf-8" />
+<title>${title}</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font-size: 12px;
+    color: #0f172a;
+    margin: 24px;
+  }
+  h1 {
+    font-size: 18px;
+    text-align: center;
+    margin: 0 0 4px;
+    text-transform: uppercase;
+  }
+  .subtitle {
+    text-align: center;
+    font-size: 11px;
+    color: #475569;
+    margin-bottom: 16px;
+  }
+  .section-title {
+    margin-top: 16px;
+    margin-bottom: 4px;
+    font-weight: 600;
+    font-size: 13px;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: 10px;
+  }
+  th, td {
+    border: 1px solid #cbd5e1;
+    padding: 4px 6px;
+    text-align: left;
+    vertical-align: top;
+  }
+  th {
+    background-color: #e5e7eb;
+    font-weight: 600;
+  }
+  .small {
+    font-size: 11px;
+    color: #475569;
+  }
+  .muted {
+    color: #64748b;
+    font-size: 11px;
+  }
+  ul {
+    margin: 4px 0 0 16px;
+    padding: 0;
+  }
+</style>
+</head>
+<body>
+  <h1>${title}</h1>
+  <div class="subtitle">
+    ${inst ? `${inst} — ` : ""}${classLabel || "Classe ?"}${subjectName ? ` — ${subjectName}` : ""}${year ? ` — Année scolaire ${year}` : ""}
+  </div>
+
+  <div class="section-title">1. Informations générales</div>
+  <table>
+    <tbody>
+      <tr><th>Établissement</th><td>${inst || "—"}</td></tr>
+      <tr><th>Année scolaire</th><td>${year || "—"}</td></tr>
+      <tr><th>Classe</th><td>${classLabel || "—"}</td></tr>
+      <tr><th>Discipline</th><td>${subjectName || "—"}</td></tr>
+      <tr><th>Type d’évaluation</th><td>${typeLabel}</td></tr>
+      <tr><th>Date</th><td>${dateLabel}</td></tr>
+      <tr><th>Échelle</th><td>/${scale}</td></tr>
+      <tr><th>Coefficient</th><td>${ev.coeff}</td></tr>
+    </tbody>
+  </table>
+
+  <div class="section-title">2. Synthèse des résultats</div>
+  <table>
+    <tbody>
+      <tr><th>Nombre d’élèves dans la classe</th><td>${nTotal}</td></tr>
+      <tr><th>Nombre d’élèves ayant une note</th><td>${nWith}</td></tr>
+      <tr><th>Nombre d’élèves sans note</th><td>${nWithout}</td></tr>
+      <tr><th>Note la plus élevée</th><td>${fmt(max)} / ${scale}${
+        max20 != null ? ` (soit ${fmt(max20)} / 20)` : ""
+      }</td></tr>
+      <tr><th>Note la plus faible</th><td>${fmt(min)} / ${scale}${
+        min20 != null ? ` (soit ${fmt(min20)} / 20)` : ""
+      }</td></tr>
+      <tr><th>Moyenne de la classe</th><td>${fmt(avg)} / ${scale}${
+        avg20 != null ? ` (soit ${fmt(avg20)} / 20)` : ""
+      }</td></tr>
+      <tr><th>Médiane</th><td>${fmt(median)} / ${scale}${
+        median20 != null ? ` (soit ${fmt(median20)} / 20)` : ""
+      }</td></tr>
+      <tr><th>Écart-type (sur 20)</th><td>${
+        stdDev20 != null ? fmt(stdDev20) + " / 20" : "—"
+      }</td></tr>
+    </tbody>
+  </table>
+
+  <div class="section-title">3. Répartition des notes (sur 20)</div>
+  <table>
+    <thead>
+      <tr>
+        <th>Tranche</th>
+        <th>Effectif</th>
+        <th>Pourcentage</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${distRows
+        .map(
+          (d) => `<tr>
+        <td>${d.label}</td>
+        <td>${d.count}</td>
+        <td>${nWith > 0 ? fmt(d.pct, 1) + " %" : "—"}</td>
+      </tr>`
+        )
+        .join("")}
+    </tbody>
+  </table>
+
+  <div class="section-title">4. Meilleurs résultats</div>
+  ${
+    bestStudents.length
+      ? `<div class="small">Note maximale : ${fmt(bestScore)} / ${scale}</div>
+  <ul>
+    ${bestStudents
+      .map(
+        (s) =>
+          `<li>${s.student.full_name}${
+            s.student.matricule ? ` (${s.student.matricule})` : ""
+          }</li>`
+      )
+      .join("")}
+  </ul>`
+      : '<div class="muted">Aucune note enregistrée.</div>'
+  }
+
+  <div class="section-title">5. Résultats les plus faibles</div>
+  ${
+    worstStudents.length
+      ? `<div class="small">Note minimale : ${fmt(worstScore)} / ${scale}</div>
+  <ul>
+    ${worstStudents
+      .map(
+        (s) =>
+          `<li>${s.student.full_name}${
+            s.student.matricule ? ` (${s.student.matricule})` : ""
+          }</li>`
+      )
+      .join("")}
+  </ul>`
+      : '<div class="muted">Aucune note enregistrée.</div>'
+  }
+
+  <div class="section-title">6. Élèves sans note</div>
+  ${
+    noScore.length
+      ? `<ul>
+    ${noScore
+      .map(
+        (st) =>
+          `<li>${st.full_name}${
+            st.matricule ? ` (${st.matricule})` : ""
+          }</li>`
+      )
+      .join("")}
+  </ul>`
+      : '<div class="muted">Tous les élèves ont une note pour cette évaluation.</div>'
+  }
+
+  <p class="muted" style="margin-top:16px;">
+    Fiche générée depuis Mon Cahier — ${new Date().toLocaleDateString(
+      "fr-FR"
+    )}.
+  </p>
+</body>
+</html>`;
+
+      doc.open();
+      doc.write(html);
+      doc.close();
+
+      w.focus();
+      w.print();
+    } catch (err) {
+      logError("openStatsPdfForEvaluation -> exception", err);
+      setMsg(
+        "Erreur lors de la génération de la fiche statistique. Réessayez."
+      );
+    }
+  }
 
   /* ==========================================
      Colonne active sur mobile
@@ -1153,18 +1442,6 @@ export default function TeacherNotesPage() {
   }, [isMobile, evaluations, currentActiveEvalId]);
 
   /* ==========================================
-     Helpers d'affichage
-  ========================================== */
-  function formatDateFr(value: string | null | undefined) {
-    if (!value) return "";
-    try {
-      return new Date(value).toLocaleDateString("fr-FR");
-    } catch {
-      return value;
-    }
-  }
-
-  /* ==========================================
      Rendu
   ========================================== */
   return (
@@ -1180,10 +1457,10 @@ export default function TeacherNotesPage() {
                 : ""}
             </p>
             <h1 className="text-2xl md:text-3xl font-semibold tracking-tight">
-              Cahier de notes — Espace enseignant
+              Notes — Compte classe
             </h1>
             <p className="text-xs md:text-sm text-indigo-100/85">
-              Créez vos évaluations et saisissez les notes en quelques gestes,
+              Saisissez les notes rapidement depuis le téléphone de la classe,
               même sur mobile.
             </p>
           </div>
@@ -1226,7 +1503,13 @@ export default function TeacherNotesPage() {
             </div>
             <Select
               value={selKey}
-              onChange={(e) => setSelKey(e.target.value)}
+              onChange={(e) => {
+                logInfo(
+                  "UI -> changement de classe/discipline",
+                  e.target.value
+                );
+                setSelKey(e.target.value);
+              }}
               aria-label="Classe — Discipline"
             >
               <option value="">— Sélectionner —</option>
@@ -1237,7 +1520,7 @@ export default function TeacherNotesPage() {
               ))}
             </Select>
             <div className="mt-1 text-[11px] text-slate-500">
-              Seules vos classes affectées apparaissent.
+              Classes détectées à partir du téléphone de la classe.
             </div>
           </div>
 
@@ -1252,14 +1535,26 @@ export default function TeacherNotesPage() {
                 <Input
                   type="date"
                   value={newDate}
-                  onChange={(e) => setNewDate(e.target.value)}
+                  onChange={(e) => {
+                    logInfo(
+                      "UI -> changement date nouvelle note",
+                      e.target.value
+                    );
+                    setNewDate(e.target.value);
+                  }}
                   aria-label="Date"
                 />
               </div>
               <div>
                 <Select
                   value={newType}
-                  onChange={(e) => setNewType(e.target.value as EvalKind)}
+                  onChange={(e) => {
+                    logInfo(
+                      "UI -> changement type nouvelle note",
+                      e.target.value
+                    );
+                    setNewType(e.target.value as EvalKind);
+                  }}
                   aria-label="Type d’évaluation"
                 >
                   <option value="devoir">Devoir</option>
@@ -1272,11 +1567,17 @@ export default function TeacherNotesPage() {
                 <div className="col-span-2 md:col-span-2">
                   <Select
                     value={selectedComponentId}
-                    onChange={(e) => setSelectedComponentId(e.target.value)}
+                    onChange={(e) => {
+                      logInfo(
+                        "UI -> changement sous-rubrique sélectionnée",
+                        e.target.value
+                      );
+                      setSelectedComponentId(e.target.value);
+                    }}
                     aria-label="Sous-rubrique"
                   >
                     <option value="">
-                      — Sous-rubrique (Français, etc.) —
+                      —-- Sous-rubrique --—
                     </option>
                     {components.map((c) => (
                       <option key={c.id} value={c.id}>
@@ -1295,9 +1596,13 @@ export default function TeacherNotesPage() {
               <div>
                 <Select
                   value={String(newScale)}
-                  onChange={(e) =>
-                    setNewScale(Number(e.target.value) as 5 | 10 | 20)
-                  }
+                  onChange={(e) => {
+                    logInfo(
+                      "UI -> changement échelle nouvelle note",
+                      e.target.value
+                    );
+                    setNewScale(Number(e.target.value) as 5 | 10 | 20);
+                  }}
                   aria-label="Échelle"
                 >
                   {[5, 10, 20].map((s) => (
@@ -1310,7 +1615,13 @@ export default function TeacherNotesPage() {
               <div className="col-span-2 md:col-span-2">
                 <Select
                   value={String(newCoeff)}
-                  onChange={(e) => setNewCoeff(Number(e.target.value))}
+                  onChange={(e) => {
+                    logInfo(
+                      "UI -> changement coeff nouvelle note",
+                      e.target.value
+                    );
+                    setNewCoeff(Number(e.target.value));
+                  }}
                   aria-label="Coefficient"
                 >
                   {[0.25, 0.5, 1, 2, 3].map((c) => (
@@ -1355,23 +1666,24 @@ export default function TeacherNotesPage() {
                 ? "colonne de note"
                 : "colonnes de notes"}{" "}
               • {roster.length} élèves
-              {isMobile &&
-                currentActiveEvalId &&
-                evaluations.length > 0 && (
-                  <span className="ml-1 text-xs text-slate-500">
-                    — colonne affichée :{" "}
-                    {
-                      labelByEvalId[
-                        currentActiveEvalId as keyof typeof labelByEvalId
-                      ]
-                    }
-                  </span>
-                )}
+              {isMobile && currentActiveEvalId && evaluations.length > 0 && (
+                <span className="ml-1 text-xs text-slate-500">
+                  — colonne affichée :{" "}
+                  {
+                    labelByEvalId[
+                      currentActiveEvalId as keyof typeof labelByEvalId
+                    ]
+                  }
+                </span>
+              )}
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <GhostButton
                 tone="slate"
-                onClick={() => setShowPublishPanel(true)}
+                onClick={() => {
+                  logInfo("UI -> ouverture panneau publication");
+                  setShowPublishPanel(true);
+                }}
                 disabled={!evaluations.length}
               >
                 Gérer la publication
@@ -1425,7 +1737,6 @@ export default function TeacherNotesPage() {
               <table className="min-w-full text-sm">
                 <thead className="bg-slate-50 sticky top-0 z-10">
                   <tr className="text-left text-slate-600">
-                    {/* sticky colonnes élèves */}
                     <th className="px-3 py-2 w-12 sticky left-0 z-20 bg-slate-50">
                       N°
                     </th>
@@ -1462,15 +1773,17 @@ export default function TeacherNotesPage() {
                                 )}
                               </div>
                             </div>
-                            <button
-                              type="button"
-                              onClick={() => deleteEvaluation(ev)}
-                              disabled={!!publishBusy[ev.id]}
-                              className="ml-1 inline-flex h-7 w-7 items-center justify-center rounded-lg border border-red-100 text-red-500 hover:bg-red-50 hover:text-red-700 focus:outline-none focus:ring-2 focus:ring-red-500/40 disabled:opacity-60"
-                              title="Supprimer cette colonne de notes"
-                            >
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </button>
+                            <div className="flex flex-col gap-1">
+                              <button
+                                type="button"
+                                onClick={() => deleteEvaluation(ev)}
+                                disabled={!!publishBusy[ev.id]}
+                                className="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-red-100 text-red-500 hover:bg-red-50 hover:text-red-700 focus:outline-none focus:ring-2 focus:ring-red-500/40 disabled:opacity-60"
+                                title="Supprimer cette colonne de notes"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
                           </div>
                         </th>
                       );
@@ -1706,9 +2019,16 @@ export default function TeacherNotesPage() {
                             value={bonusMap[row.student.id] ?? 0}
                             onChange={(e) => {
                               const v = Number(e.target.value || 0);
+                              logInfo("UI -> changement bonus", {
+                                student_id: row.student.id,
+                                value: v,
+                              });
                               setBonusMap((m) => ({
                                 ...m,
-                                [row.student.id]: Math.max(0, Math.min(10, v)),
+                                [row.student.id]: Math.max(
+                                  0,
+                                  Math.min(10, v)
+                                ),
                               }));
                             }}
                             aria-label={`Bonus ${row.student.full_name}`}
@@ -1731,7 +2051,7 @@ export default function TeacherNotesPage() {
             </div>
           )}
 
-          {/* MOBILE : cartes par élève */}
+          {/* MOBILE : mêmes infos → cartes par élève */}
           {isMobile && (
             <div className="space-y-2 mt-2">
               {loadingAvg ? (
@@ -1795,6 +2115,10 @@ export default function TeacherNotesPage() {
                           value={bonus}
                           onChange={(e) => {
                             const v = Number(e.target.value || 0);
+                            logInfo("UI -> changement bonus (mobile)", {
+                              student_id: row.student.id,
+                              value: v,
+                            });
                             setBonusMap((m) => ({
                               ...m,
                               [row.student.id]: Math.max(0, Math.min(10, v)),
@@ -1812,7 +2136,7 @@ export default function TeacherNotesPage() {
         </section>
       )}
 
-      {/* Panneau gestion publication + suppression */}
+      {/* Panneau publication */}
       {showPublishPanel && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
           <div className="w-full max-w-3xl rounded-2xl bg-white shadow-xl border border-slate-200 p-4 md:p-6">
@@ -1822,6 +2146,7 @@ export default function TeacherNotesPage() {
               </h2>
               <GhostButton
                 onClick={() => {
+                  logInfo("UI -> fermeture panneau publication");
                   setShowPublishPanel(false);
                 }}
               >
@@ -1830,7 +2155,8 @@ export default function TeacherNotesPage() {
             </div>
             <p className="text-xs md:text-sm text-slate-600 mb-3">
               Cochez les évaluations à publier pour les parents, ou supprimez
-              une colonne si besoin.
+              une colonne si besoin. Vous pouvez aussi générer une fiche
+              statistique PDF pour chaque évaluation.
             </p>
 
             {evaluations.length === 0 ? (
@@ -1853,12 +2179,7 @@ export default function TeacherNotesPage() {
                   </thead>
                   <tbody className="divide-y">
                     {evaluations.map((ev) => {
-                      const typeLabel =
-                        ev.eval_kind === "devoir"
-                          ? "Devoir"
-                          : ev.eval_kind === "interro_ecrite"
-                          ? "Interrogation écrite"
-                          : "Interrogation orale";
+                      const typeLabel = getTypeLabel(ev.eval_kind);
                       const shortLabel = labelByEvalId[ev.id] ?? "";
                       const comp = ev.subject_component_id
                         ? componentById[ev.subject_component_id]
@@ -1866,7 +2187,10 @@ export default function TeacherNotesPage() {
                       const rubLabel =
                         comp?.short_label || comp?.label || "";
                       return (
-                        <tr key={ev.id} className="hover:bg-slate-50/60">
+                        <tr
+                          key={ev.id}
+                          className="hover:bg-slate-50/60"
+                        >
                           <td className="px-3 py-2">
                             {formatDateFr(ev.eval_date)}
                           </td>
@@ -1908,19 +2232,14 @@ export default function TeacherNotesPage() {
                             </label>
                           </td>
                           <td className="px-3 py-2 text-right">
-                            <div className="flex justify-end gap-2">
+                            <div className="flex flex-wrap justify-end gap-2">
                               <GhostButton
                                 tone="emerald"
                                 type="button"
-                                onClick={() => exportEvalToPdf(ev)}
-                                disabled={
-                                  !roster.length ||
-                                  Object.keys(grades[ev.id] || {}).length === 0 &&
-                                  Object.keys(changed[ev.id] || {}).length === 0
-                                }
+                                onClick={() => openStatsPdfForEvaluation(ev)}
+                                disabled={!roster.length}
                               >
-                                <FileText className="h-3.5 w-3.5" />
-                                Fiche PDF
+                                Fiche statistique (PDF)
                               </GhostButton>
                               <GhostButton
                                 tone="red"
