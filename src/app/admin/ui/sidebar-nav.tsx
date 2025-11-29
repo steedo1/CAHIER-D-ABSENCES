@@ -1,3 +1,4 @@
+// src/app/admin/ui/sidebar-nav.tsx
 "use client";
 
 import Link from "next/link";
@@ -34,42 +35,42 @@ function useIsActive(pathname: string | null, href: string) {
    Top-level (hors groupes)
 ========================= */
 const BASE_NAV: NavItem[] = [
-  { href: "/admin/dashboard",       label: "Tableau de bord",           Icon: LayoutDashboard },
+  { href: "/admin/dashboard", label: "Tableau de bord", Icon: LayoutDashboard },
 
   // ⭐️ Onglet prédictions IA, très visible et distinctif
   { href: "/admin/notes/predictions", label: "Prédictions de réussite", Icon: BarChart3, badge: "IA" },
 
-  { href: "/admin/classes",         label: "Créer vos Classes",         Icon: School },
-  { href: "/admin/users",           label: "Utilisateurs & rôles",      Icon: Users },
-  { href: "/admin/affectations",    label: "Attribution des classes",   Icon: Puzzle },
-  { href: "/admin/parents",         label: "Liste des classes",         Icon: UserRoundCheck },
-  { href: "/admin/import",          label: "Import classes-enseignants", Icon: Inbox, badge: "OCT" },
+  { href: "/admin/classes", label: "Créer vos Classes", Icon: School },
+  { href: "/admin/users", label: "Utilisateurs & rôles", Icon: Users },
+  { href: "/admin/affectations", label: "Attribution des classes", Icon: Puzzle },
+  { href: "/admin/parents", label: "Liste des classes", Icon: UserRoundCheck },
+  { href: "/admin/import", label: "Import classes-enseignants", Icon: Inbox, badge: "OCT" },
   // ✅ Nouvel onglet top-level pour l'import des emplois du temps (utilisable pour absences + notes)
   { href: "/admin/import-emplois-du-temps", label: "Import emplois du temps", Icon: Inbox },
   // ✅ Nouvel onglet dédié aux règles de conduite
-  { href: "/admin/regles-conduite", label: "Règles de conduite",        Icon: ShieldCheck },
-  { href: "/admin/parametres",      label: "Paramètres",                Icon: Settings },
+  { href: "/admin/regles-conduite", label: "Règles de conduite", Icon: ShieldCheck },
+  { href: "/admin/parametres", label: "Paramètres", Icon: Settings },
 ];
 
 /* =========================
    Groupe : Cahier des absences
 ========================= */
 const ABS_ITEMS: NavItem[] = [
-  { href: "/admin/absences",            label: "Matrice des Absences",        Icon: Ban },
-  { href: "/admin/assiduite",           label: "Assiduité & justifications",  Icon: UserRoundCheck },
-  { href: "/admin/statistiques",        label: "Contrôle Enseignants",        Icon: BarChart3 },
-  { href: "/admin/absences/appels",     label: "Surveillance des appels",     Icon: BarChart3 },
-  { href: "/admin/conduite",            label: "Moyenne de Conduite",         Icon: ShieldCheck },
+  { href: "/admin/absences", label: "Matrice des Absences", Icon: Ban },
+  { href: "/admin/assiduite", label: "Assiduité & justifications", Icon: UserRoundCheck },
+  { href: "/admin/statistiques", label: "Contrôle Enseignants", Icon: BarChart3 },
+  { href: "/admin/absences/appels", label: "Surveillance des appels", Icon: BarChart3 },
+  { href: "/admin/conduite", label: "Moyenne de Conduite", Icon: ShieldCheck },
 ];
 
 /* =========================
    Groupe : Cahier de notes
 ========================= */
 const NOTES_ITEMS: NavItem[] = [
-  { href: "/admin/notes",              label: "Vue d’ensemble",        Icon: NotebookPen },
-  { href: "/admin/notes/evaluations",  label: "Évaluations",           Icon: NotebookPen },
-  { href: "/admin/bulletins",          label: "Bulletins & moyennes",  Icon: FileSpreadsheet },
-  { href: "/admin/notes/statistiques", label: "Statistiques",          Icon: BarChart3 },
+  { href: "/admin/notes", label: "Vue d’ensemble", Icon: NotebookPen },
+  { href: "/admin/notes/evaluations", label: "Évaluations", Icon: NotebookPen },
+  { href: "/admin/bulletins", label: "Bulletins & moyennes", Icon: FileSpreadsheet },
+  { href: "/admin/notes/statistiques", label: "Statistiques", Icon: BarChart3 },
 ];
 
 export default function SidebarNav() {
@@ -312,8 +313,13 @@ export default function SidebarNav() {
         )}
       </ul>
 
+      {/* ✅ Signature Nexa Digitale en bas du menu admin */}
       <div className="px-4 py-3 text-[11px] text-slate-500">
-        © {new Date().getFullYear()}
+        <div>© {new Date().getFullYear()} Mon Cahier</div>
+        <div className="text-[10px] text-slate-400">
+          Conçu et développé par{" "}
+          <span className="font-semibold text-slate-200">NEXA DIGITALE SARL</span>
+        </div>
       </div>
     </nav>
   );

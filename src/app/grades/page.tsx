@@ -10,10 +10,11 @@ import {
   RefreshCw,
   FileSpreadsheet,
   Trash2,
+  FileText,
 } from "lucide-react";
 
 /* =========================
-   Responsive helper
+   Helpers divers
 ========================= */
 const MOBILE_BREAKPOINT = 768; // < md
 
@@ -31,6 +32,15 @@ function useIsMobile() {
   }, []);
 
   return isMobile;
+}
+
+function escapeHtml(str: string) {
+  return str
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
 /* =========================
@@ -726,6 +736,243 @@ export default function TeacherNotesPage() {
   }
 
   /* ==========================================
+     Export PDF (fiche statistique par évaluation)
+  ========================================== */
+  function exportEvalToPdf(ev: Evaluation) {
+    if (!selected) {
+      setMsg("Sélectionnez une classe/discipline avant d’exporter.");
+      return;
+    }
+    if (!roster.length) {
+      setMsg("Aucun élève dans cette classe pour générer la fiche.");
+      return;
+    }
+
+    // On prend en compte les changements non enregistrés aussi
+    const evalGrades = { ...(grades[ev.id] || {}) };
+    const pending = changed[ev.id] || {};
+    for (const [sid, val] of Object.entries(pending)) {
+      evalGrades[sid] = val;
+    }
+
+    const rows = roster.map((st, idx) => {
+      const score =
+        evalGrades[st.id] == null ? null : Number(evalGrades[st.id]);
+      return { idx: idx + 1, student: st, score };
+    });
+
+    const withScores = rows.filter((r) => r.score != null);
+    if (!withScores.length) {
+      setMsg("Aucune note saisie pour cette évaluation.");
+      return;
+    }
+
+    const scores = withScores.map((r) => r.score as number);
+    const count = scores.length;
+    const sum = scores.reduce((acc, v) => acc + v, 0);
+    const minRaw = Math.min(...scores);
+    const maxRaw = Math.max(...scores);
+    const avgRaw = sum / count;
+    const scale = ev.scale || 20;
+
+    const to20 = (v: number) => (v / scale) * 20;
+    const avg20 = to20(avgRaw);
+    const min20 = to20(minRaw);
+    const max20 = to20(maxRaw);
+
+    const nbEleves = roster.length;
+    const nbSansNote = nbEleves - count;
+
+    const typeLabel =
+      ev.eval_kind === "devoir"
+        ? "Devoir"
+        : ev.eval_kind === "interro_ecrite"
+        ? "Interrogation écrite"
+        : "Interrogation orale";
+
+    const dateFr = formatDateFr(ev.eval_date);
+    const pdfTitle = `FICHE STATISTIQUE DE ${typeLabel.toUpperCase()} DU ${dateFr}`;
+
+    const inst = institutionName || "";
+    const year = academicYearLabel || "";
+    const classe = selected.class_label || "";
+    const subject = selected.subject_name || "Discipline";
+
+    const html = `<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <title>${escapeHtml(pdfTitle)}</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      margin: 24px;
+      color: #020617;
+      font-size: 12px;
+    }
+    h1 {
+      font-size: 18px;
+      text-align: center;
+      margin-bottom: 4px;
+      text-transform: uppercase;
+    }
+    h2 {
+      font-size: 14px;
+      margin-top: 16px;
+      margin-bottom: 4px;
+    }
+    .subtitle {
+      text-align: center;
+      font-size: 11px;
+      color: #475569;
+      margin-bottom: 16px;
+    }
+    .meta {
+      margin-bottom: 12px;
+      font-size: 11px;
+    }
+    .meta strong {
+      text-transform: uppercase;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 8px;
+    }
+    th, td {
+      border: 1px solid #cbd5e1;
+      padding: 4px 6px;
+      text-align: left;
+    }
+    th {
+      background: #e2e8f0;
+      font-weight: 600;
+    }
+    .text-right { text-align: right; }
+    .small {
+      font-size: 10px;
+      color: #6b7280;
+    }
+  </style>
+</head>
+<body>
+  <h1>${escapeHtml(pdfTitle)}</h1>
+  <div class="subtitle">
+    ${escapeHtml(inst)}${
+      year ? " • Année scolaire " + escapeHtml(year) : ""
+    }<br/>
+    Classe : ${escapeHtml(classe)} • Discipline : ${escapeHtml(subject)}
+  </div>
+
+  <div class="meta">
+    <div><strong>Type :</strong> ${escapeHtml(typeLabel)}</div>
+    <div><strong>Date :</strong> ${escapeHtml(dateFr)}</div>
+    <div><strong>Échelle :</strong> /${scale} (équivalent /20 indiqué)</div>
+    <div><strong>Coefficient :</strong> ${ev.coeff}</div>
+  </div>
+
+  <h2>Résumé statistique</h2>
+  <table>
+    <tbody>
+      <tr>
+        <th>Nombre d'élèves</th>
+        <td>${nbEleves}</td>
+      </tr>
+      <tr>
+        <th>Nombre de notes saisies</th>
+        <td>${count}</td>
+      </tr>
+      <tr>
+        <th>Nombre d'élèves sans note</th>
+        <td>${nbSansNote}</td>
+      </tr>
+      <tr>
+        <th>Moyenne</th>
+        <td>${avgRaw.toFixed(2)} / ${scale} (soit ${avg20.toFixed(
+      2
+    )} / 20)</td>
+      </tr>
+      <tr>
+        <th>Note minimale</th>
+        <td>${minRaw.toFixed(2)} / ${scale} (soit ${min20.toFixed(
+      2
+    )} / 20)</td>
+      </tr>
+      <tr>
+        <th>Note maximale</th>
+        <td>${maxRaw.toFixed(2)} / ${scale} (soit ${max20.toFixed(
+      2
+    )} / 20)</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>Détails par élève</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>N°</th>
+        <th>Matricule</th>
+        <th>Nom et prénoms</th>
+        <th class="text-right">Note /${scale}</th>
+        <th class="text-right">Équiv. /20</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${rows
+        .map((r) => {
+          if (r.score == null) {
+            return `<tr>
+              <td>${r.idx}</td>
+              <td>${escapeHtml(r.student.matricule || "")}</td>
+              <td>${escapeHtml(r.student.full_name)}</td>
+              <td class="text-right small">—</td>
+              <td class="text-right small">—</td>
+            </tr>`;
+          }
+          const n = r.score;
+          const n20 = to20(n);
+          return `<tr>
+            <td>${r.idx}</td>
+            <td>${escapeHtml(r.student.matricule || "")}</td>
+            <td>${escapeHtml(r.student.full_name)}</td>
+            <td class="text-right">${n.toFixed(2)}</td>
+            <td class="text-right">${n20.toFixed(2)}</td>
+          </tr>`;
+        })
+        .join("")}
+    </tbody>
+  </table>
+
+  <p class="small" style="margin-top:16px;">
+    Fiche générée depuis Mon Cahier — Espace enseignant.
+  </p>
+</body>
+</html>`;
+
+    const win = window.open("", "_blank");
+    if (!win) {
+      setMsg(
+        "Impossible d’ouvrir la fenêtre d’impression (popup peut-être bloquée)."
+      );
+      return;
+    }
+    win.document.open();
+    win.document.write(html);
+    win.document.close();
+    win.focus();
+    // L'utilisateur pourra choisir "Enregistrer en PDF" dans la fenêtre d'impression.
+    setTimeout(() => {
+      try {
+        win.print();
+      } catch {
+        // silencieux
+      }
+    }, 300);
+  }
+
+  /* ==========================================
      Export CSV / Excel
      👉 Colonnes de notes détaillées,
         moyenne finale alignée sur l’API /averages si possible.
@@ -773,7 +1020,7 @@ export default function TeacherNotesPage() {
       });
       headers.push("Moyenne finale (/20)");
 
-      const rows: string[][] = [];
+      const rowsCsv: string[][] = [];
 
       roster.forEach((st, idx) => {
         const row: (string | number)[] = [
@@ -819,13 +1066,13 @@ export default function TeacherNotesPage() {
           const v = cell == null ? "" : String(cell);
           return `"${v.replace(/"/g, '""')}"`;
         });
-        rows.push(rowStr);
+        rowsCsv.push(rowStr);
       });
 
       const headerStr = headers
         .map((h) => `"${h.replace(/"/g, '""')}"`)
         .join(";");
-      const csvLines = [headerStr, ...rows.map((r) => r.join(";"))];
+      const csvLines = [headerStr, ...rowsCsv.map((r) => r.join(";"))];
       const csvContent = csvLines.join("\r\n");
 
       const blob = new Blob([csvContent], {
@@ -1661,14 +1908,29 @@ export default function TeacherNotesPage() {
                             </label>
                           </td>
                           <td className="px-3 py-2 text-right">
-                            <GhostButton
-                              tone="red"
-                              type="button"
-                              onClick={() => deleteEvaluation(ev)}
-                              disabled={!!publishBusy[ev.id]}
-                            >
-                              Supprimer la note
-                            </GhostButton>
+                            <div className="flex justify-end gap-2">
+                              <GhostButton
+                                tone="emerald"
+                                type="button"
+                                onClick={() => exportEvalToPdf(ev)}
+                                disabled={
+                                  !roster.length ||
+                                  Object.keys(grades[ev.id] || {}).length === 0 &&
+                                  Object.keys(changed[ev.id] || {}).length === 0
+                                }
+                              >
+                                <FileText className="h-3.5 w-3.5" />
+                                Fiche PDF
+                              </GhostButton>
+                              <GhostButton
+                                tone="red"
+                                type="button"
+                                onClick={() => deleteEvaluation(ev)}
+                                disabled={!!publishBusy[ev.id]}
+                              >
+                                Supprimer la note
+                              </GhostButton>
+                            </div>
                           </td>
                         </tr>
                       );

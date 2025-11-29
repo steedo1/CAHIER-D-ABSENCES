@@ -746,6 +746,10 @@ export default function HomePage() {
             <div className="mt-1 text-indigo-300">
               Copyrights © {new Date().getFullYear()}
             </div>
+            <div className="mt-1 text-[11px] font-semibold text-indigo-200">
+              Conçu et développé par{" "}
+              <span className="text-indigo-50">NEXA DIGITALE SARL</span>
+            </div>
           </div>
           <div>
             <h3 className="text-lg font-semibold">Pour commencer</h3>

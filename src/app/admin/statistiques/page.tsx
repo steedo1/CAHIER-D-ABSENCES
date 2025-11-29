@@ -27,7 +27,8 @@ type DetailRow = {
 type SummaryRow = {
   teacher_id: string;
   teacher_name: string;
-  total_minutes: number;
+  total_minutes: number;      // on le garde pour compat, même si non affiché
+  sessions_count: number;     // ✅ nouveau : nombre de séances (1 séance = 1h)
   subject_names?: string[];
 };
 
@@ -256,10 +257,13 @@ export default function AdminStatistiquesPage() {
   const [detailMode, setDetailMode] = useState<"seances" | "inspecteur">("seances");
 
   const showDetail = teacherId !== "ALL";
-  const totalMinutesSummary = useMemo(() => {
+
+  // ✅ total des séances sur la période (synthèse)
+  const totalSessionsSummary = useMemo(() => {
     if (!summary.data) return 0;
-    return summary.data.reduce((acc, it) => acc + (it.total_minutes || 0), 0);
+    return summary.data.reduce((acc, it) => acc + (it.sessions_count || 0), 0);
   }, [summary.data]);
+
   const disciplineHeader = subjectId === "ALL" ? "Discipline(s)" : "Discipline (filtrée)";
 
   /* Agrégation hebdo pour la vue "Contrôle inspecteur" */
@@ -373,7 +377,7 @@ export default function AdminStatistiquesPage() {
   /* Exports CSV (tableau) */
   function exportSummaryCSV() {
     const items = summary.data || [];
-    const header = ["Enseignant", subjectId === "ALL" ? "Discipline(s)" : "Discipline (filtrée)", "Total minutes", "Total heures"];
+    const header = ["Enseignant", disciplineHeader, "Nombre de séances"];
     const lines = [header.join(";")];
     for (const it of items) {
       const disciplineCell =
@@ -383,13 +387,13 @@ export default function AdminStatistiquesPage() {
       const cols = [
         it.teacher_name,
         disciplineCell,
-        String(it.total_minutes),
-        minutesToHourLabel(it.total_minutes),
+        String(it.sessions_count ?? 0),
       ];
       lines.push(cols.join(";"));
     }
     downloadText(`synthese_enseignants_${from}_${to}.csv`, lines.join("\n"));
   }
+
   function exportDetailCSV() {
     const d = detail.data;
     if (!d) return;
@@ -407,7 +411,7 @@ export default function AdminStatistiquesPage() {
         String(r.expected_minutes ?? 0),
         minutesToHourLabel(r.expected_minutes ?? 0),
       ];
-      lines.push(cols.join("\n"));
+      lines.push(cols.join(";"));
     }
     downloadText(`detail_${teacherId}_${from}_${to}.csv`, lines.join("\n"));
   }
@@ -695,12 +699,12 @@ export default function AdminStatistiquesPage() {
               <div>
                 <h2 className="text-lg font-semibold text-slate-900">Synthèse par enseignant</h2>
                 <p className="text-xs text-slate-500 mt-1">
-                  Vue globale des minutes d’appel effectuées par enseignant sur la période.
+                  Vue globale du <strong>nombre de séances d’appel</strong> par enseignant sur la période.
                 </p>
               </div>
               <div className="flex items-center gap-3">
                 <div className="text-xs md:text-sm rounded-full bg-emerald-50 text-emerald-800 px-3 py-1 border border-emerald-100">
-                  Total période : <strong>{minutesToHourLabel(totalMinutesSummary)}</strong>
+                  Total période : <strong>{totalSessionsSummary}</strong> séance(s)
                 </div>
                 <Button onClick={exportSummaryCSV} disabled={summary.loading || !summary.data}>
                   Export CSV
@@ -721,8 +725,7 @@ export default function AdminStatistiquesPage() {
                     <tr>
                       <th className="text-left px-3 py-2">Enseignant</th>
                       <th className="text-left px-3 py-2">{disciplineHeader}</th>
-                      <th className="text-right px-3 py-2">Total minutes</th>
-                      <th className="text-right px-3 py-2">Total heures</th>
+                      <th className="text-right px-3 py-2">Nombre de séances</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
@@ -738,16 +741,15 @@ export default function AdminStatistiquesPage() {
                         >
                           <td className="px-3 py-2 font-medium text-slate-800">{row.teacher_name}</td>
                           <td className="px-3 py-2 text-slate-700">{disciplineCell}</td>
-                          <td className="px-3 py-2 text-right text-slate-700">{row.total_minutes}</td>
                           <td className="px-3 py-2 text-right font-semibold text-slate-900">
-                            {minutesToHourLabel(row.total_minutes)}
+                            {row.sessions_count ?? 0}
                           </td>
                         </tr>
                       );
                     })}
                     {(!summary.data || summary.data.length === 0) && (
                       <tr className="odd:bg-white">
-                        <td colSpan={4} className="px-3 py-4 text-center text-gray-500">
+                        <td colSpan={3} className="px-3 py-4 text-center text-gray-500">
                           Aucune donnée sur la période.
                         </td>
                       </tr>

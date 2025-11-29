@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { Users, BookOpen, Clock, Play, Save, Square, LogOut } from "lucide-react";
 import { getSupabaseBrowserClient } from "@/lib/supabase-browser";
 
@@ -195,9 +195,7 @@ export default function ClassDevicePage() {
   const [penaltyOpen, setPenaltyOpen] = useState(false);
   const [penRubric, setPenRubric] = useState<Rubric>("discipline");
   const [penBusy, setPenBusy] = useState(false);
-  const [penRows, setPenRows] = useState<
-    Record<string, { points: number; reason?: string }>
-  >({});
+  const [penRows, setPenRows] = useState<Record<string, { points: number; reason?: string }>>({});
   const [penMsg, setPenMsg] = useState<string | null>(null);
   const hasPenChanges = useMemo(
     () => Object.values(penRows).some((v) => (v.points || 0) > 0),
@@ -218,9 +216,7 @@ export default function ClassDevicePage() {
       const disabled = maxVal <= 0;
       const labelBase =
         r === "discipline" ? "Discipline" : r === "tenue" ? "Tenue" : "Moralité";
-      const label = disabled
-        ? `${labelBase} (désactivée)`
-        : `${labelBase} (max ${maxVal})`;
+      const label = disabled ? `${labelBase} (désactivée)` : `${labelBase} (max ${maxVal})`;
       return { value: r, label, disabled, max: maxVal };
     });
   }, [conductMax]);
@@ -246,8 +242,7 @@ export default function ClassDevicePage() {
     return opt?.max ?? undefined;
   }, [rubricOptions, penRubric]);
 
-  const rubricDisabled =
-    currentRubricMax !== undefined && currentRubricMax <= 0;
+  const rubricDisabled = currentRubricMax !== undefined && currentRubricMax <= 0;
 
   async function ensureRosterForPenalty() {
     const cid = open?.class_id || classId;
@@ -448,7 +443,7 @@ export default function ClassDevicePage() {
       instConfig = {
         tz: settings?.tz || "Africa/Abidjan",
         default_session_minutes: Number(settings?.default_session_minutes || 60),
-        auto_lateness: !!settings?.auto_lteness,
+        auto_lateness: !!settings?.auto_lateness,
         institution_name: nameFromSettings || instConfig.institution_name,
         academic_year_label: yearFromSettings || instConfig.academic_year_label || null,
       };
@@ -472,26 +467,81 @@ export default function ClassDevicePage() {
     setInst(instConfig);
     setPeriodsByDay(grouped);
 
-    // 2) config de conduite (maxima)
+    // 2) config de conduite (maxima) — loader ultra défensif
+    const defaults: ConductMax = { discipline: 7, tenue: 3, moralite: 4 };
+
     try {
-      const rawConf = (await getJson("/api/admin/conduct/settings")) as any;
-      const defaults: ConductMax = { discipline: 7, tenue: 3, moralite: 4 };
+      const rawConf =
+        ((await getJson("/api/teacher/conduct/settings")) as any) ??
+        ((await getJson("/api/institution/conduct/settings")) as any) ??
+        ((await getJson("/api/admin/conduct/settings")) as any);
+
+      console.log("[ClassDevice] conduct settings rawConf =", rawConf);
 
       if (!rawConf) {
         setConductMax(defaults);
-      } else {
-        const d = Number(rawConf.discipline_max ?? defaults.discipline);
-        const t = Number(rawConf.tenue_max ?? defaults.tenue);
-        const m = Number(rawConf.moralite_max ?? defaults.moralite);
-
-        setConductMax({
-          discipline: Number.isFinite(d) ? d : defaults.discipline,
-          tenue: Number.isFinite(t) ? t : defaults.tenue,
-          moralite: Number.isFinite(m) ? m : defaults.moralite,
-        });
+        return;
       }
-    } catch {
-      setConductMax({ discipline: 7, tenue: 3, moralite: 4 });
+
+      // On essaie de retrouver l’objet "vraiment utile"
+      let src: any = rawConf;
+
+      // cas { item: {...} }
+      if (src && typeof src === "object" && src.item) {
+        const it = src.item;
+        src = it.settings_json || it.settings || it;
+      }
+      // cas { items: [...] }
+      else if (src && typeof src === "object" && Array.isArray(src.items) && src.items.length) {
+        const it = src.items[0];
+        src = it.settings_json || it.settings || it;
+      }
+      // cas { data: [...] } (retour supabase brut)
+      else if (src && typeof src === "object" && Array.isArray(src.data) && src.data.length) {
+        const it = src.data[0];
+        src = it.settings_json || it.settings || it;
+      }
+      // cas direct settings_json / settings
+      else if (src && typeof src === "object" && (src.settings_json || src.settings)) {
+        src = src.settings_json || src.settings;
+      }
+      // cas array direct [ {...} ]
+      else if (Array.isArray(src) && src.length) {
+        const it = src[0];
+        src =
+          it && typeof it === "object" && (it.settings_json || it.settings)
+            ? it.settings_json || it.settings
+            : it;
+      }
+
+      console.log("[ClassDevice] conduct settings src (parsed) =", src);
+
+      const d = Number(
+        src?.discipline_max ??
+          src?.discipline ??
+          src?.max_discipline ??
+          src?.discipline_points_max ??
+          defaults.discipline
+      );
+      const t = Number(
+        src?.tenue_max ?? src?.tenue ?? src?.max_tenue ?? src?.tenue_points_max ?? defaults.tenue
+      );
+      const m = Number(
+        src?.moralite_max ??
+          src?.moralite ??
+          src?.max_moralite ??
+          src?.moralite_points_max ??
+          defaults.moralite
+      );
+
+      setConductMax({
+        discipline: Number.isFinite(d) ? d : defaults.discipline,
+        tenue: Number.isFinite(t) ? t : defaults.tenue,
+        moralite: Number.isFinite(m) ? m : defaults.moralite,
+      });
+    } catch (e) {
+      console.warn("[ClassDevice] erreur chargement règles de conduite:", e);
+      setConductMax(defaults);
     }
   }
 
@@ -555,8 +605,7 @@ export default function ClassDevicePage() {
     const nowMin = toMinutes(nowHM);
     // 1) créneau en cours
     let pick = slots.find(
-      (s) =>
-        nowMin >= toMinutes(s.start_time) && nowMin < toMinutes(s.end_time)
+      (s) => nowMin >= toMinutes(s.start_time) && nowMin < toMinutes(s.end_time)
     );
     // 2) sinon, prochain à venir
     if (!pick) pick = slots.find((s) => nowMin <= toMinutes(s.start_time));
@@ -696,9 +745,7 @@ export default function ClassDevicePage() {
       });
       const j = await r.json();
       if (!r.ok) throw new Error(j?.error || "Échec enregistrement");
-      setMsg(
-        `Enregistré : ${j.upserted} abs./ret. — ${j.deleted} suppressions (présent).`
-      );
+      setMsg(`Enregistré : ${j.upserted} abs./ret. — ${j.deleted} suppressions (présent).`);
     } catch (e: any) {
       setMsg(e?.message || "Échec enregistrement");
     } finally {
@@ -870,9 +917,7 @@ export default function ClassDevicePage() {
             </Button>
             <GhostButton
               tone="red"
-              onClick={() =>
-                penaltyOpen ? setPenaltyOpen(false) : openPenalty()
-              }
+              onClick={() => (penaltyOpen ? setPenaltyOpen(false) : openPenalty())}
               disabled={busy || (!classId && !penaltyOpen)}
             >
               Sanctions
@@ -886,9 +931,7 @@ export default function ClassDevicePage() {
             </Button>
             <GhostButton
               tone="red"
-              onClick={() =>
-                penaltyOpen ? setPenaltyOpen(false) : openPenalty()
-              }
+              onClick={() => (penaltyOpen ? setPenaltyOpen(false) : openPenalty())}
               disabled={busy || (!classId && !penaltyOpen)}
             >
               Sanctions
@@ -937,11 +980,7 @@ export default function ClassDevicePage() {
                 disabled={penBusy || rubricOptions.every((o) => o.disabled)}
               >
                 {rubricOptions.map((opt) => (
-                  <option
-                    key={opt.value}
-                    value={opt.value}
-                    disabled={opt.disabled}
-                  >
+                  <option key={opt.value} value={opt.value} disabled={opt.disabled}>
                     {opt.label}
                   </option>
                 ))}

@@ -1,3 +1,4 @@
+// src/app/api/admin/statistics/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
@@ -133,8 +134,7 @@ export async function GET(req: NextRequest) {
 
     /* ============================ TIMESHEET ============================ */
     if (mode === "timesheet") {
-      if (!teacher_id) return NextResponse.json({ error: "teacher_id requis pour mode=timesheet" }, { status: 400 });
-
+      // ... (inchangé, je ne répète pas les commentaires)
       const usePeriods = searchParams.get("use_periods") === "1";
       const slotMin   = Math.max(1, parseInt(searchParams.get("slot") || "60", 10));
       const startHour = Math.min(23, Math.max(0, parseInt(searchParams.get("start_hour") || "7", 10)));
@@ -142,15 +142,12 @@ export async function GET(req: NextRequest) {
 
       const dates = rangeDates(from, to);
 
-      // Institution à utiliser pour les créneaux établissement :
-      // priorité à l’institution de l’admin courant ; sinon celle du prof ciblé
       let instForSlots = inst;
       if (usePeriods && !instForSlots) {
         const { data: profInst } = await srv.from("profiles").select("institution_id").eq("id", teacher_id).maybeSingle();
         instForSlots = (profInst?.institution_id as string) || null;
       }
 
-      // Nom du prof + disciplines (si disponibles dans teacher_subjects)
       const subjectsSet = new Set<string>();
       let teacherName: string | null = null;
       {
@@ -174,19 +171,16 @@ export async function GET(req: NextRequest) {
         }
       }
 
-      // Table des sessions
       const sessionsTable =
         (await tableExists(srv, "teacher_sessions")) ? "teacher_sessions" :
         (await tableExists(srv, "class_sessions"))   ? "class_sessions"   : "sessions";
 
-      // Paires (class_id, subject_id) attribuées à CE prof
       let qCT = srv.from("class_teachers").select("class_id, subject_id").eq("teacher_id", teacher_id);
       if (inst) qCT = qCT.eq("institution_id", inst);
       const { data: ctPairs } = await qCT;
       const pairKey = (c?: string|null, s?: string|null) => `${c ?? ""}|${s ?? ""}`;
       const allowedPairs = new Set<string>((ctPairs || []).map(r => pairKey(String(r.class_id), r.subject_id ? String(r.subject_id) : null)));
 
-      // 1) séances où teacher_id == prof
       let q1 = srv.from(sessionsTable)
         .select("id, teacher_id, class_id, subject_id, started_at, actual_call_at, expected_minutes, institution_id, created_by")
         .eq("teacher_id", teacher_id)
@@ -195,7 +189,6 @@ export async function GET(req: NextRequest) {
       if (inst) q1 = q1.eq("institution_id", inst);
       const { data: sOwn } = await q1;
 
-      // 2) + séances ouvertes par un compte-classe mais attribuables au prof via class_teachers
       const classIdsForTeacher = Array.from(new Set((ctPairs || []).map(r => String(r.class_id))));
       let sFromClass: any[] = [];
       if (classIdsForTeacher.length) {
@@ -211,7 +204,6 @@ export async function GET(req: NextRequest) {
         );
       }
 
-      // union dédupliquée
       const byId = new Map<string, any>();
       for (const s of (sOwn || [])) byId.set(String(s.id), s);
       for (const s of (sFromClass || [])) byId.set(String(s.id), s);
@@ -226,7 +218,6 @@ export async function GET(req: NextRequest) {
         created_by: s.created_by ? String(s.created_by) : null,
       }));
 
-      // Colonnes = classes pivot ∪ classes vues
       const classIdsFromSessions = Array.from(new Set(sessions.map(s => s.class_id).filter(Boolean))) as string[];
       let classes: { id: string; label: string }[] = [];
       if (classIdsForTeacher.length) {
@@ -242,7 +233,6 @@ export async function GET(req: NextRequest) {
       }
       classes.sort((a, b) => a.label.localeCompare(b.label, "fr"));
 
-      // Slots (manuels ou établissement)
       let slots: { start: string; end: string }[] = [];
       if (usePeriods && instForSlots) {
         slots = await buildInstitutionSlots(srv, instForSlots);
@@ -250,7 +240,6 @@ export async function GET(req: NextRequest) {
         slots = buildUniformSlots(startHour, endHour, slotMin);
       }
 
-      // Placement en cellules + meta origine
       const TZ = "Africa/Abidjan";
       const fmtYMD = new Intl.DateTimeFormat("en-CA", { timeZone: TZ, year: "numeric", month: "2-digit", day: "2-digit" });
       const fmtHM  = new Intl.DateTimeFormat("fr-FR", { timeZone: TZ, hour: "2-digit", minute: "2-digit", hour12: false });
@@ -266,13 +255,10 @@ export async function GET(req: NextRequest) {
       const cells: Record<string, string[]> = {};
       const cellsMeta: Record<string, { hhmm: string; origin?: "teacher" | "class_device" | "other" }[]> = {};
 
-      // aide: trouver le slot pour une HH:MM selon la stratégie
       const slotStarts = slots.map(s => s.start);
       function slotStartForHM(hhmm: string): string | null {
         if (!hhmm) return null;
-        // 1) match exact sur horaire de début
         if (slotStarts.includes(hhmm)) return hhmm;
-        // 2) si usePeriods → placer dans le slot dont (start <= hhmm < end)
         if (usePeriods) {
           const t = hmToMin(hhmm);
           for (const sl of slots) {
@@ -281,7 +267,6 @@ export async function GET(req: NextRequest) {
           }
           return null;
         }
-        // 3) slots uniformes (fallback arrondi)
         const [h, m] = hhmm.split(":").map((x) => parseInt(x, 10));
         if (!isFinite(h) || !isFinite(m)) return null;
         return bucketToSlotStartAligned(h, m, slotMin, startHour, endHour);
@@ -290,14 +275,12 @@ export async function GET(req: NextRequest) {
       for (const s of sessions) {
         if (!s.class_id || !classIdSet.has(s.class_id)) continue;
 
-        const sched = new Date(s.started_at);                     // pour le créneau
-        const click = new Date(s.actual_call_at || s.started_at); // pour l'heure affichée
+        const sched = new Date(s.started_at);
+        const click = new Date(s.actual_call_at || s.started_at);
 
-        // Date de rangement (créneau) en Abidjan
-        const dateKey = fmtYMD.format(sched);                     // "YYYY-MM-DD"
+        const dateKey = fmtYMD.format(sched);
         if (!datesSet.has(dateKey)) continue;
 
-        // Déterminer le slotStart selon la stratégie
         const schedHM = (() => {
           const { h, m } = getHM(sched);
           return `${pad2(h)}:${pad2(m)}`;
@@ -305,7 +288,6 @@ export async function GET(req: NextRequest) {
         const slotKey = slotStartForHM(schedHM);
         if (!slotKey) continue;
 
-        // Heure affichée (HH:MM) = click
         const clickHM = (() => {
           const { h, m } = getHM(click);
           return `${pad2(h)}:${pad2(m)}`;
@@ -317,10 +299,9 @@ export async function GET(req: NextRequest) {
 
         if (!cells[key].includes(clickHM)) cells[key].push(clickHM);
 
-        // Origine
         let origin: "teacher" | "class_device" | "other" = "other";
         if (s.created_by && s.teacher_id && s.created_by === s.teacher_id) origin = "teacher";
-        else if (s.created_by) origin = "class_device"; // nos routes class/sessions/start mettent created_by = compte-classe
+        else if (s.created_by) origin = "class_device";
 
         if (!cellsMeta[key].some(m => m.hhmm === clickHM)) {
           cellsMeta[key].push({ hhmm: clickHM, origin });
@@ -340,9 +321,9 @@ export async function GET(req: NextRequest) {
         },
         dates,
         classes,
-        slots,     // { start:"HH:MM", end:"HH:MM" }[]
-        cells,     // { [date|slotStart|classId]: ["08:13","08:55"] }
-        cellsMeta, // { [date|slotStart|classId]: [{hhmm, origin}] }
+        slots,
+        cells,
+        cellsMeta,
       });
     }
 
@@ -449,22 +430,37 @@ export async function GET(req: NextRequest) {
       }));
 
     if (mode === "summary") {
+      // ✅ on compte maintenant les séances + on garde les minutes pour compat
       const minutesByTeacher = new Map<string, number>();
-      for (const id of teacherScope) minutesByTeacher.set(id, 0);
+      const sessionsByTeacher = new Map<string, number>();
+
+      for (const id of teacherScope) {
+        minutesByTeacher.set(id, 0);
+        sessionsByTeacher.set(id, 0);
+      }
+
       for (const r of sessions) {
         const tid = r.teacher_id || "";
         if (!tid || !minutesByTeacher.has(tid)) continue;
         minutesByTeacher.set(tid, (minutesByTeacher.get(tid) || 0) + (r.expected_minutes || 0));
+        sessionsByTeacher.set(tid, (sessionsByTeacher.get(tid) || 0) + 1);
       }
 
       const items = teacherScope.map((id) => ({
         teacher_id: id,
         teacher_name: teacherNameById.get(id) || `(enseignant ${id.slice(0, 6)})`,
         total_minutes: minutesByTeacher.get(id) || 0,
+        sessions_count: sessionsByTeacher.get(id) || 0,
         subject_names: subjectNamesPerTeacher[id] || [],
       }));
 
-      items.sort((a, b) => b.total_minutes - a.total_minutes || a.teacher_name.localeCompare(b.teacher_name, "fr"));
+      // tri principal par nombre de séances (desc), puis par nom
+      items.sort(
+        (a, b) =>
+          (b.sessions_count - a.sessions_count) ||
+          a.teacher_name.localeCompare(b.teacher_name, "fr")
+      );
+
       return NextResponse.json({ items });
     }
 
@@ -490,7 +486,6 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    // Libellés classe
     const classIds = Array.from(new Set(sessions.map((s) => s.class_id).filter(Boolean))) as string[];
     const classLabelById: Record<string, string> = {};
     if (classIds.length) {

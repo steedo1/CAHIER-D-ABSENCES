@@ -33,6 +33,7 @@ type EvalRow = {
   scale: number;
   coeff: number;
   is_published: boolean;
+  subject_component_id?: string | null; // ✅ sous-matière éventuelle
 };
 
 type ScoreRow = {
@@ -85,6 +86,16 @@ type BulletinSubjectGroup = {
   is_active: boolean;
   annual_coeff: number;
   items: BulletinSubjectGroupItem[];
+};
+
+// ✅ Sous-matières renvoyées au front
+type BulletinSubjectComponent = {
+  id: string;
+  subject_id: string; // subjects.id parent
+  label: string;
+  short_label: string | null;
+  coeff_in_subject: number;
+  order_index: number;
 };
 
 // Nettoyage des nombres et arrondi à 2 décimales
@@ -188,16 +199,25 @@ export async function GET(req: NextRequest) {
 
   if (clsErr) {
     console.error("[bulletin] classes error", clsErr);
-    return NextResponse.json({ ok: false, error: "CLASS_ERROR" }, { status: 500 });
+    return NextResponse.json(
+      { ok: false, error: "CLASS_ERROR" },
+      { status: 500 }
+    );
   }
   if (!cls) {
-    return NextResponse.json({ ok: false, error: "CLASS_NOT_FOUND" }, { status: 404 });
+    return NextResponse.json(
+      { ok: false, error: "CLASS_NOT_FOUND" },
+      { status: 404 }
+    );
   }
 
   const classRow = cls as ClassRow;
 
   if (classRow.institution_id && classRow.institution_id !== institutionId) {
-    return NextResponse.json({ ok: false, error: "CLASS_FORBIDDEN" }, { status: 403 });
+    return NextResponse.json(
+      { ok: false, error: "CLASS_FORBIDDEN" },
+      { status: 403 }
+    );
   }
 
   // 1a) Lookup du professeur principal (facultatif)
@@ -293,6 +313,7 @@ export async function GET(req: NextRequest) {
       period: periodMeta,
       subjects: [],
       subject_groups: [],
+      subject_components: [], // ✅ pour que le front ait toujours la clé
       items: [],
     });
   }
@@ -302,7 +323,9 @@ export async function GET(req: NextRequest) {
   /* 3) Récupérer les évaluations de la période pour cette classe */
   let evalQuery = supabase
     .from("grade_evaluations")
-    .select("id, class_id, subject_id, eval_date, scale, coeff, is_published")
+    .select(
+      "id, class_id, subject_id, eval_date, scale, coeff, is_published, subject_component_id"
+    )
     .eq("class_id", classId)
     .eq("is_published", true);
 
@@ -317,7 +340,10 @@ export async function GET(req: NextRequest) {
 
   if (evalErr) {
     console.error("[bulletin] evaluations error", evalErr);
-    return NextResponse.json({ ok: false, error: "EVALUATIONS_ERROR" }, { status: 500 });
+    return NextResponse.json(
+      { ok: false, error: "EVALUATIONS_ERROR" },
+      { status: 500 }
+    );
   }
 
   const evals = (evalData || []) as EvalRow[];
@@ -341,6 +367,7 @@ export async function GET(req: NextRequest) {
       period: periodMeta,
       subjects: [],
       subject_groups: [],
+      subject_components: [],
       items: classStudents.map((cs) => {
         const stu = cs.students || {};
         const fullName =
@@ -354,6 +381,7 @@ export async function GET(req: NextRequest) {
           per_subject: [],
           per_group: [],
           general_avg: null,
+          per_subject_components: [],
         };
       }),
     });
@@ -370,7 +398,10 @@ export async function GET(req: NextRequest) {
 
   if (scoreErr) {
     console.error("[bulletin] scores error", scoreErr);
-    return NextResponse.json({ ok: false, error: "SCORES_ERROR" }, { status: 500 });
+    return NextResponse.json(
+      { ok: false, error: "SCORES_ERROR" },
+      { status: 500 }
+    );
   }
 
   const scores = (scoreData || []) as ScoreRow[];
@@ -384,10 +415,13 @@ export async function GET(req: NextRequest) {
   const subjectIds = subjectIdsRaw.filter((sid) => isUuid(sid));
 
   if (subjectIds.length !== subjectIdsRaw.length) {
-    console.warn("[bulletin] some subject_ids are invalid and have been ignored", {
-      subjectIdsRaw,
-      subjectIds,
-    });
+    console.warn(
+      "[bulletin] some subject_ids are invalid and have been ignored",
+      {
+        subjectIdsRaw,
+        subjectIds,
+      }
+    );
   }
 
   if (!subjectIds.length) {
@@ -410,6 +444,7 @@ export async function GET(req: NextRequest) {
       period: periodMeta,
       subjects: [],
       subject_groups: [],
+      subject_components: [],
       items: classStudents.map((cs) => {
         const stu = cs.students || {};
         const fullName =
@@ -423,6 +458,7 @@ export async function GET(req: NextRequest) {
           per_subject: [],
           per_group: [],
           general_avg: null,
+          per_subject_components: [],
         };
       }),
     });
@@ -436,7 +472,10 @@ export async function GET(req: NextRequest) {
 
   if (subjErr) {
     console.error("[bulletin] subjects error", subjErr);
-    return NextResponse.json({ ok: false, error: "SUBJECTS_ERROR" }, { status: 500 });
+    return NextResponse.json(
+      { ok: false, error: "SUBJECTS_ERROR" },
+      { status: 500 }
+    );
   }
 
   const subjects = (subjData || []) as SubjectRow[];
@@ -458,7 +497,10 @@ export async function GET(req: NextRequest) {
 
   if (coeffErr) {
     console.error("[bulletin] coeffs error", coeffErr);
-    return NextResponse.json({ ok: false, error: "COEFFS_ERROR" }, { status: 500 });
+    return NextResponse.json(
+      { ok: false, error: "COEFFS_ERROR" },
+      { status: 500 }
+    );
   }
 
   const coeffBySubject = new Map<string, { coeff: number; include: boolean }>();
@@ -485,7 +527,57 @@ export async function GET(req: NextRequest) {
     };
   });
 
-  /* 6bis) Groupes de disciplines pour ce niveau (si configurés) */
+  /* 6bis) Sous-matières (grade_subject_components) pour ces matières
+     ➜ par défaut, toutes les sous-matières actives de la matière (ex: Français)
+       apparaîtront si la matière a des évaluations dans la période. */
+  let subjectComponentsForReport: BulletinSubjectComponent[] = [];
+  const subjectComponentById = new Map<string, BulletinSubjectComponent>();
+
+  const { data: compData, error: compErr } = await srv
+    .from("grade_subject_components")
+    .select(
+      "id, subject_id, label, short_label, coeff_in_subject, order_index, is_active"
+    )
+    .eq("institution_id", institutionId)
+    .in("subject_id", subjectIds);
+
+  if (compErr) {
+    console.error("[bulletin] subject_components error", compErr);
+  } else {
+    const rows = (compData || [])
+      .filter((r: any) => r.is_active !== false)
+      .map((r: any) => {
+        const coeff =
+          r.coeff_in_subject !== null && r.coeff_in_subject !== undefined
+            ? Number(r.coeff_in_subject)
+            : 1;
+        const ord =
+          r.order_index !== null && r.order_index !== undefined
+            ? Number(r.order_index)
+            : 1;
+        const obj: BulletinSubjectComponent = {
+          id: String(r.id),
+          subject_id: String(r.subject_id),
+          label: (r.label as string) || "Sous-matière",
+          short_label: r.short_label ? String(r.short_label) : null,
+          coeff_in_subject: cleanCoeff(coeff),
+          order_index: ord,
+        };
+        return obj;
+      }) as BulletinSubjectComponent[];
+
+    rows.sort((a, b) => {
+      if (a.subject_id !== b.subject_id) {
+        return a.subject_id.localeCompare(b.subject_id);
+      }
+      return a.order_index - b.order_index;
+    });
+
+    subjectComponentsForReport = rows;
+    rows.forEach((c) => subjectComponentById.set(c.id, c));
+  }
+
+  /* 6ter) Groupes de disciplines pour ce niveau (si configurés) */
   let subjectGroups: BulletinSubjectGroup[] = [];
   const groupedSubjectIds = new Set<string>(); // sujets réellement groupés ET notés
 
@@ -552,9 +644,7 @@ export async function GET(req: NextRequest) {
                 const instSub = row.institution_subjects || {};
                 const subj = instSub.subjects || {};
                 const subjectId: string | null =
-                  (subj && subj.id) ||
-                  instSub.subject_id ||
-                  null;
+                  (subj && subj.id) || instSub.subject_id || null;
 
                 if (!subjectId) {
                   return null;
@@ -591,8 +681,9 @@ export async function GET(req: NextRequest) {
                 return item;
               })
               .filter(
-                (it: BulletinSubjectGroupItem | null): it is BulletinSubjectGroupItem =>
-                  !!it
+                (
+                  it: BulletinSubjectGroupItem | null
+                ): it is BulletinSubjectGroupItem => !!it
               )
               .sort((a, b) => a.order_index - b.order_index);
 
@@ -620,7 +711,7 @@ export async function GET(req: NextRequest) {
   const hasGroupConfig = subjectGroups.length > 0;
   const useGroupsForAverage = groupedSubjectIds.size > 0;
 
-  /* 7) Préparer des maps pour le calcul (par matière) */
+  /* 7) Préparer des maps pour le calcul (par matière + par sous-matière) */
   const evalById = new Map<string, EvalRow>();
   for (const e of evals) {
     evalById.set(e.id, e);
@@ -629,6 +720,19 @@ export async function GET(req: NextRequest) {
   const perStudentSubject = new Map<
     string,
     Map<string, { sumWeighted: number; sumCoeff: number }>
+  >();
+
+  // ✅ nouveau : agrégats par sous-matière
+  const perStudentSubjectComponent = new Map<
+    string,
+    Map<
+      string,
+      {
+        subject_id: string;
+        sumWeighted: number;
+        sumCoeff: number;
+      }
+    >
   >();
 
   for (const sc of scores) {
@@ -645,6 +749,7 @@ export async function GET(req: NextRequest) {
     const norm20 = (score / ev.scale) * 20;
     const weight = ev.coeff ?? 1;
 
+    // 7a) par matière (logique historique, inchangée)
     let stuMap = perStudentSubject.get(sc.student_id);
     if (!stuMap) {
       stuMap = new Map();
@@ -655,6 +760,27 @@ export async function GET(req: NextRequest) {
     cell.sumWeighted += norm20 * weight;
     cell.sumCoeff += weight;
     stuMap.set(key, cell);
+
+    // 7b) par sous-matière (si l'évaluation est liée à un composant actif)
+    if (ev.subject_component_id) {
+      const comp = subjectComponentById.get(ev.subject_component_id);
+      if (comp) {
+        let stuCompMap = perStudentSubjectComponent.get(sc.student_id);
+        if (!stuCompMap) {
+          stuCompMap = new Map();
+          perStudentSubjectComponent.set(sc.student_id, stuCompMap);
+        }
+        const compCell =
+          stuCompMap.get(comp.id) || {
+            subject_id: comp.subject_id,
+            sumWeighted: 0,
+            sumCoeff: 0,
+          };
+        compCell.sumWeighted += norm20 * weight;
+        compCell.sumCoeff += weight;
+        stuCompMap.set(comp.id, compCell);
+      }
+    }
   }
 
   /* 8) Construire la réponse : par élève */
@@ -669,7 +795,18 @@ export async function GET(req: NextRequest) {
       perStudentSubject.get(cs.student_id) ||
       new Map<string, { sumWeighted: number; sumCoeff: number }>();
 
-    // Moyenne par matière (alignée avec `subjects`)
+    const stuCompMap =
+      perStudentSubjectComponent.get(cs.student_id) ||
+      new Map<
+        string,
+        {
+          subject_id: string;
+          sumWeighted: number;
+          sumCoeff: number;
+        }
+      >();
+
+    // Moyenne par matière (alignée avec `subjectsForReport`)
     const per_subject = subjectsForReport.map((s) => {
       const cell = stuMap.get(s.subject_id);
       let avg20: number | null = null;
@@ -681,6 +818,23 @@ export async function GET(req: NextRequest) {
         avg20,
       };
     });
+
+    // ✅ Moyenne par sous-matière (pour toutes les sous-matières connues du bulletin)
+    const per_subject_components =
+      subjectComponentsForReport.length === 0
+        ? []
+        : subjectComponentsForReport.map((comp) => {
+            const cell = stuCompMap.get(comp.id);
+            let avg20: number | null = null;
+            if (cell && cell.sumCoeff > 0) {
+              avg20 = cleanNumber(cell.sumWeighted / cell.sumCoeff);
+            }
+            return {
+              subject_id: comp.subject_id,
+              component_id: comp.id,
+              avg20,
+            };
+          });
 
     // Moyenne par groupe de disciplines (si config présente)
     let per_group:
@@ -724,9 +878,9 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    // Moyenne générale :
+    // Moyenne générale (inchangée) :
     // - si au moins une matière notée est rattachée à un groupe -> on utilise la logique groupe + matières non groupées
-    // - sinon -> fallback exact sur l'ancienne logique (par matière uniquement)
+    // - sinon -> fallback exact sur l’ancienne logique (par matière uniquement)
     let general_avg: number | null = null;
 
     if (useGroupsForAverage) {
@@ -797,6 +951,7 @@ export async function GET(req: NextRequest) {
       per_subject,
       per_group,
       general_avg,
+      per_subject_components,
     };
   });
 
@@ -819,6 +974,7 @@ export async function GET(req: NextRequest) {
     period: periodMeta,
     subjects: subjectsForReport,
     subject_groups: subjectGroups,
+    subject_components: subjectComponentsForReport, // ✅ envoyé au front
     items,
   });
 }

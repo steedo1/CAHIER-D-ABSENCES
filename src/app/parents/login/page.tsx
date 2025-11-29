@@ -2,6 +2,7 @@
 "use client";
 
 import { useState } from "react";
+import Image from "next/image";
 
 /** Icône Famille (inline, pas de dépendance) */
 function FamilyIcon(props: React.SVGProps<SVGSVGElement>) {
@@ -51,7 +52,10 @@ export default function ParentsLoginPage() {
         j = await res.json();
       } catch {}
 
-      console.info(`[parents.login:${_rid}] response`, { status: res.status, body: j });
+      console.info(`[parents.login:${_rid}] response`, {
+        status: res.status,
+        body: j,
+      });
 
       if (!res.ok) {
         const err = String(j?.error || "ATTACH_FAILED");
@@ -93,7 +97,8 @@ export default function ParentsLoginPage() {
                 Espace Parents
               </h1>
               <p className="mt-3 text-slate-600">
-                Suivez en temps réel la présence, les retards et la conduite de votre enfant.
+                Suivez en temps réel la présence, les retards et la conduite de
+                votre enfant.
               </p>
               {/* Grande icône déco */}
               <FamilyIcon className="mt-6 h-20 w-20 text-emerald-600" />
@@ -112,20 +117,31 @@ export default function ParentsLoginPage() {
             >
               {/* En-tête carte */}
               <div className="flex items-center gap-3">
-                <div className="grid h-10 w-10 place-items-center rounded-xl bg-emerald-600 text-white shadow">
-                  <FamilyIcon className="h-5 w-5" />
+                <div className="relative h-10 w-10 rounded-xl bg-white shadow">
+                  <Image
+                    src="/nexa-digital-logo.png" // place ton logo dans /public
+                    alt="NEXA DIGITALE FOR EDUCATION"
+                    fill
+                    className="object-contain"
+                    priority
+                  />
                 </div>
                 <div>
-                  <div className="text-sm font-semibold text-slate-800">
-                    Mon Cahier d’Absences
+                  <div className="text-xs font-semibold uppercase tracking-wide text-slate-800">
+                    NEXA DIGITALE FOR EDUCATION
                   </div>
-                  <div className="text-xs text-slate-500">Connexion par matricule élève</div>
+                  <div className="text-xs text-slate-500">
+                    Espace Parents · Connexion par matricule élève
+                  </div>
                 </div>
               </div>
 
               {/* Champ matricule */}
               <div>
-                <label htmlFor="matricule" className="block text-sm font-medium text-slate-700">
+                <label
+                  htmlFor="matricule"
+                  className="block text-sm font-medium text-slate-700"
+                >
                   Matricule élève
                 </label>
                 <input
@@ -193,8 +209,8 @@ export default function ParentsLoginPage() {
 
               {/* Aide */}
               <div className="rounded-xl bg-slate-50/80 px-4 py-3 text-sm text-slate-700">
-                Astuce : après connexion, activez les <b>notifications push</b> dans
-                le tableau de bord parent.
+                Astuce : après connexion, activez les <b>notifications push</b>{" "}
+                dans le tableau de bord parent.
               </div>
 
               {/* Mentions */}

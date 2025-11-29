@@ -200,7 +200,7 @@ function GhostButton(
 export default function ClassDeviceNotesPage() {
   const isMobile = useIsMobile();
 
-  // Nom établissement + année scolaire (best effort sans rien casser)
+  // Nom établissement + année scolaire
   const [institutionName, setInstitutionName] = useState<string | null>(null);
   const [academicYearLabel, setAcademicYearLabel] = useState<string | null>(
     null
@@ -796,9 +796,15 @@ export default function ClassDeviceNotesPage() {
       const params = new URLSearchParams({
         class_id: selected.class_id,
         published_only: "1",
+        missing: "ignore",
+        round_to_raw: "none",
+        rank_by: "average",
       });
       if (selected.subject_id) {
         params.set("subject_id", selected.subject_id);
+      }
+      if (academicYearLabel) {
+        params.set("academic_year", academicYearLabel);
       }
       const url = `/api/grades/averages?${params.toString()}`;
       logInfo("openAverages -> fetch", url);
@@ -865,9 +871,15 @@ export default function ClassDeviceNotesPage() {
       const params = new URLSearchParams({
         class_id: selected.class_id,
         published_only: "1",
+        missing: "ignore",
+        round_to_raw: "none",
+        rank_by: "average",
       });
       if (selected.subject_id) {
         params.set("subject_id", selected.subject_id);
+      }
+      if (academicYearLabel) {
+        params.set("academic_year", academicYearLabel);
       }
       const url2 = `/api/grades/averages?${params.toString()}`;
       logInfo("saveBonuses -> refetch", url2);
@@ -945,9 +957,15 @@ export default function ClassDeviceNotesPage() {
         const params = new URLSearchParams({
           class_id: selected.class_id,
           published_only: "1",
+          missing: "ignore",
+          round_to_raw: "none",
+          rank_by: "average",
         });
         if (selected.subject_id) {
           params.set("subject_id", selected.subject_id);
+        }
+        if (academicYearLabel) {
+          params.set("academic_year", academicYearLabel);
         }
         const url = `/api/grades/averages?${params.toString()}`;
         logInfo("exportToCsv -> fetch moyennes", url);
@@ -1075,6 +1093,330 @@ export default function ClassDeviceNotesPage() {
       return new Date(value).toLocaleDateString("fr-FR");
     } catch {
       return value;
+    }
+  }
+
+  function getTypeLabel(kind: EvalKind): string {
+    if (kind === "devoir") return "Devoir";
+    if (kind === "interro_ecrite") return "Interrogation écrite";
+    return "Interrogation orale";
+  }
+
+  /**
+   * Génère une fiche statistique (HTML) et ouvre la boîte d’impression du navigateur.
+   * Titre du PDF (fenêtre) : "FICHE STATISTIQUE DE TYPE_EVALUATION DU DATE"
+   */
+  function openStatsPdfForEvaluation(ev: Evaluation) {
+    try {
+      if (typeof window === "undefined") return;
+
+      // Fusion notes enregistrées + modifications en cours
+      const base = grades[ev.id] || {};
+      const overrides = changed[ev.id] || {};
+      const combined: Record<string, number | null> = { ...base, ...overrides };
+
+      const scored: { student: RosterItem; score: number }[] = [];
+      const noScore: RosterItem[] = [];
+
+      roster.forEach((st) => {
+        const raw = combined[st.id];
+        if (raw == null || Number.isNaN(raw)) {
+          noScore.push(st);
+        } else {
+          scored.push({ student: st, score: Number(raw) });
+        }
+      });
+
+      const nTotal = roster.length;
+      const nWith = scored.length;
+      const nWithout = noScore.length;
+
+      let min: number | null = null;
+      let max: number | null = null;
+      let avg: number | null = null;
+      let median: number | null = null;
+      let stdDev: number | null = null;
+
+      if (nWith > 0) {
+        const vals = scored.map((s) => s.score).sort((a, b) => a - b);
+        min = vals[0];
+        max = vals[vals.length - 1];
+        const sum = vals.reduce((a, b) => a + b, 0);
+        avg = sum / nWith;
+        if (nWith % 2 === 1) {
+          median = vals[(nWith - 1) / 2];
+        } else {
+          const mid1 = vals[nWith / 2 - 1];
+          const mid2 = vals[nWith / 2];
+          median = (mid1 + mid2) / 2;
+        }
+        const mean = avg;
+        const variance =
+          vals.reduce(
+            (acc, v) => acc + Math.pow(v - (mean as number), 2),
+            0
+          ) / nWith;
+        stdDev = Math.sqrt(variance);
+      }
+
+      const scale = ev.scale;
+      const to20 = (v: number | null) =>
+        v == null || Number.isNaN(v) ? null : (v / scale) * 20;
+
+      const min20 = to20(min);
+      const max20 = to20(max);
+      const avg20 = to20(avg);
+      const median20 = to20(median);
+      const stdDev20 =
+        stdDev == null || Number.isNaN(stdDev) ? null : (stdDev / scale) * 20;
+
+      const distDefs = [
+        { label: "0 ≤ note < 5", from: 0, to: 5 },
+        { label: "5 ≤ note < 10", from: 5, to: 10 },
+        { label: "10 ≤ note < 15", from: 10, to: 15 },
+        { label: "15 ≤ note ≤ 20", from: 15, to: 20.00001 },
+      ];
+      const distRows = distDefs.map((d) => {
+        let count = 0;
+        scored.forEach(({ score }) => {
+          const v20 = (score / scale) * 20;
+          if (v20 >= d.from && v20 < d.to) count++;
+        });
+        const pct = nWith > 0 ? (count * 100) / nWith : 0;
+        return { ...d, count, pct };
+      });
+
+      const sorted = [...scored].sort((a, b) => b.score - a.score);
+      const bestScore = sorted[0]?.score ?? null;
+      const worstScore = sorted[sorted.length - 1]?.score ?? null;
+
+      const bestStudents =
+        bestScore == null
+          ? []
+          : sorted.filter((s) => s.score === bestScore);
+      const worstStudents =
+        worstScore == null
+          ? []
+          : sorted.filter((s) => s.score === worstScore);
+
+      const typeLabel = getTypeLabel(ev.eval_kind);
+      const dateLabel = formatDateFr(ev.eval_date) || ev.eval_date;
+      const title = `FICHE STATISTIQUE DE ${typeLabel.toUpperCase()} DU ${dateLabel}`;
+
+      const inst = institutionName || "";
+      const year = academicYearLabel || "";
+      const classLabel = selected?.class_label || "";
+      const subjectName = selected?.subject_name || "";
+
+      const w = window.open("", "_blank", "noopener,noreferrer");
+      if (!w) {
+        setMsg(
+          "Impossible d’ouvrir la fenêtre d’impression. Vérifiez le bloqueur de pop-up."
+        );
+        return;
+      }
+
+      const doc = w.document;
+      doc.title = title;
+
+      const fmt = (v: number | null, digits = 2) =>
+        v == null || Number.isNaN(v) ? "—" : v.toFixed(digits);
+
+      const html = `<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charSet="utf-8" />
+<title>${title}</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font-size: 12px;
+    color: #0f172a;
+    margin: 24px;
+  }
+  h1 {
+    font-size: 18px;
+    text-align: center;
+    margin: 0 0 4px;
+    text-transform: uppercase;
+  }
+  .subtitle {
+    text-align: center;
+    font-size: 11px;
+    color: #475569;
+    margin-bottom: 16px;
+  }
+  .section-title {
+    margin-top: 16px;
+    margin-bottom: 4px;
+    font-weight: 600;
+    font-size: 13px;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: 10px;
+  }
+  th, td {
+    border: 1px solid #cbd5e1;
+    padding: 4px 6px;
+    text-align: left;
+    vertical-align: top;
+  }
+  th {
+    background-color: #e5e7eb;
+    font-weight: 600;
+  }
+  .small {
+    font-size: 11px;
+    color: #475569;
+  }
+  .muted {
+    color: #64748b;
+    font-size: 11px;
+  }
+  ul {
+    margin: 4px 0 0 16px;
+    padding: 0;
+  }
+</style>
+</head>
+<body>
+  <h1>${title}</h1>
+  <div class="subtitle">
+    ${inst ? `${inst} — ` : ""}${classLabel || "Classe ?"}${subjectName ? ` — ${subjectName}` : ""}${year ? ` — Année scolaire ${year}` : ""}
+  </div>
+
+  <div class="section-title">1. Informations générales</div>
+  <table>
+    <tbody>
+      <tr><th>Établissement</th><td>${inst || "—"}</td></tr>
+      <tr><th>Année scolaire</th><td>${year || "—"}</td></tr>
+      <tr><th>Classe</th><td>${classLabel || "—"}</td></tr>
+      <tr><th>Discipline</th><td>${subjectName || "—"}</td></tr>
+      <tr><th>Type d’évaluation</th><td>${typeLabel}</td></tr>
+      <tr><th>Date</th><td>${dateLabel}</td></tr>
+      <tr><th>Échelle</th><td>/${scale}</td></tr>
+      <tr><th>Coefficient</th><td>${ev.coeff}</td></tr>
+    </tbody>
+  </table>
+
+  <div class="section-title">2. Synthèse des résultats</div>
+  <table>
+    <tbody>
+      <tr><th>Nombre d’élèves dans la classe</th><td>${nTotal}</td></tr>
+      <tr><th>Nombre d’élèves ayant une note</th><td>${nWith}</td></tr>
+      <tr><th>Nombre d’élèves sans note</th><td>${nWithout}</td></tr>
+      <tr><th>Note la plus élevée</th><td>${fmt(max)} / ${scale}${
+        max20 != null ? ` (soit ${fmt(max20)} / 20)` : ""
+      }</td></tr>
+      <tr><th>Note la plus faible</th><td>${fmt(min)} / ${scale}${
+        min20 != null ? ` (soit ${fmt(min20)} / 20)` : ""
+      }</td></tr>
+      <tr><th>Moyenne de la classe</th><td>${fmt(avg)} / ${scale}${
+        avg20 != null ? ` (soit ${fmt(avg20)} / 20)` : ""
+      }</td></tr>
+      <tr><th>Médiane</th><td>${fmt(median)} / ${scale}${
+        median20 != null ? ` (soit ${fmt(median20)} / 20)` : ""
+      }</td></tr>
+      <tr><th>Écart-type (sur 20)</th><td>${
+        stdDev20 != null ? fmt(stdDev20) + " / 20" : "—"
+      }</td></tr>
+    </tbody>
+  </table>
+
+  <div class="section-title">3. Répartition des notes (sur 20)</div>
+  <table>
+    <thead>
+      <tr>
+        <th>Tranche</th>
+        <th>Effectif</th>
+        <th>Pourcentage</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${distRows
+        .map(
+          (d) => `<tr>
+        <td>${d.label}</td>
+        <td>${d.count}</td>
+        <td>${nWith > 0 ? fmt(d.pct, 1) + " %" : "—"}</td>
+      </tr>`
+        )
+        .join("")}
+    </tbody>
+  </table>
+
+  <div class="section-title">4. Meilleurs résultats</div>
+  ${
+    bestStudents.length
+      ? `<div class="small">Note maximale : ${fmt(bestScore)} / ${scale}</div>
+  <ul>
+    ${bestStudents
+      .map(
+        (s) =>
+          `<li>${s.student.full_name}${
+            s.student.matricule ? ` (${s.student.matricule})` : ""
+          }</li>`
+      )
+      .join("")}
+  </ul>`
+      : '<div class="muted">Aucune note enregistrée.</div>'
+  }
+
+  <div class="section-title">5. Résultats les plus faibles</div>
+  ${
+    worstStudents.length
+      ? `<div class="small">Note minimale : ${fmt(worstScore)} / ${scale}</div>
+  <ul>
+    ${worstStudents
+      .map(
+        (s) =>
+          `<li>${s.student.full_name}${
+            s.student.matricule ? ` (${s.student.matricule})` : ""
+          }</li>`
+      )
+      .join("")}
+  </ul>`
+      : '<div class="muted">Aucune note enregistrée.</div>'
+  }
+
+  <div class="section-title">6. Élèves sans note</div>
+  ${
+    noScore.length
+      ? `<ul>
+    ${noScore
+      .map(
+        (st) =>
+          `<li>${st.full_name}${
+            st.matricule ? ` (${st.matricule})` : ""
+          }</li>`
+      )
+      .join("")}
+  </ul>`
+      : '<div class="muted">Tous les élèves ont une note pour cette évaluation.</div>'
+  }
+
+  <p class="muted" style="margin-top:16px;">
+    Fiche générée depuis Mon Cahier — ${new Date().toLocaleDateString(
+      "fr-FR"
+    )}.
+  </p>
+</body>
+</html>`;
+
+      doc.open();
+      doc.write(html);
+      doc.close();
+
+      w.focus();
+      w.print();
+    } catch (err) {
+      logError("openStatsPdfForEvaluation -> exception", err);
+      setMsg(
+        "Erreur lors de la génération de la fiche statistique. Réessayez."
+      );
     }
   }
 
@@ -1232,7 +1574,7 @@ export default function ClassDeviceNotesPage() {
                     aria-label="Sous-rubrique"
                   >
                     <option value="">
-                      — Sous-rubrique (Français, etc.) —
+                      —-- Sous-rubrique --—
                     </option>
                     {components.map((c) => (
                       <option key={c.id} value={c.id}>
@@ -1428,15 +1770,17 @@ export default function ClassDeviceNotesPage() {
                                 )}
                               </div>
                             </div>
-                            <button
-                              type="button"
-                              onClick={() => deleteEvaluation(ev)}
-                              disabled={!!publishBusy[ev.id]}
-                              className="ml-1 inline-flex h-7 w-7 items-center justify-center rounded-lg border border-red-100 text-red-500 hover:bg-red-50 hover:text-red-700 focus:outline-none focus:ring-2 focus:ring-red-500/40 disabled:opacity-60"
-                              title="Supprimer cette colonne de notes"
-                            >
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </button>
+                            <div className="flex flex-col gap-1">
+                              <button
+                                type="button"
+                                onClick={() => deleteEvaluation(ev)}
+                                disabled={!!publishBusy[ev.id]}
+                                className="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-red-100 text-red-500 hover:bg-red-50 hover:text-red-700 focus:outline-none focus:ring-2 focus:ring-red-500/40 disabled:opacity-60"
+                                title="Supprimer cette colonne de notes"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
                           </div>
                         </th>
                       );
@@ -1704,7 +2048,7 @@ export default function ClassDeviceNotesPage() {
             </div>
           )}
 
-          {/* MOBILE : même style que la saisie → cartes par élève */}
+          {/* MOBILE : mêmes infos → cartes par élève */}
           {isMobile && (
             <div className="space-y-2 mt-2">
               {loadingAvg ? (
@@ -1808,7 +2152,8 @@ export default function ClassDeviceNotesPage() {
             </div>
             <p className="text-xs md:text-sm text-slate-600 mb-3">
               Cochez les évaluations à publier pour les parents, ou supprimez
-              une colonne si besoin.
+              une colonne si besoin. Vous pouvez aussi générer une fiche
+              statistique PDF pour chaque évaluation.
             </p>
 
             {evaluations.length === 0 ? (
@@ -1831,12 +2176,7 @@ export default function ClassDeviceNotesPage() {
                   </thead>
                   <tbody className="divide-y">
                     {evaluations.map((ev) => {
-                      const typeLabel =
-                        ev.eval_kind === "devoir"
-                          ? "Devoir"
-                          : ev.eval_kind === "interro_ecrite"
-                          ? "Interrogation écrite"
-                          : "Interrogation orale";
+                      const typeLabel = getTypeLabel(ev.eval_kind);
                       const shortLabel = labelByEvalId[ev.id] ?? "";
                       const comp = ev.subject_component_id
                         ? componentById[ev.subject_component_id]
@@ -1889,14 +2229,24 @@ export default function ClassDeviceNotesPage() {
                             </label>
                           </td>
                           <td className="px-3 py-2 text-right">
-                            <GhostButton
-                              tone="red"
-                              type="button"
-                              onClick={() => deleteEvaluation(ev)}
-                              disabled={!!publishBusy[ev.id]}
-                            >
-                              Supprimer la note
-                            </GhostButton>
+                            <div className="flex flex-wrap justify-end gap-2">
+                              <GhostButton
+                                tone="emerald"
+                                type="button"
+                                onClick={() => openStatsPdfForEvaluation(ev)}
+                                disabled={!roster.length}
+                              >
+                                Fiche statistique (PDF)
+                              </GhostButton>
+                              <GhostButton
+                                tone="red"
+                                type="button"
+                                onClick={() => deleteEvaluation(ev)}
+                                disabled={!!publishBusy[ev.id]}
+                              >
+                                Supprimer la note
+                              </GhostButton>
+                            </div>
                           </td>
                         </tr>
                       );

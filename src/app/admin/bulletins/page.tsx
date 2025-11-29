@@ -32,6 +32,15 @@ type BulletinSubject = {
   include_in_average?: boolean;
 };
 
+type BulletinSubjectComponent = {
+  id: string;
+  subject_id: string; // parent subject (subjects.id)
+  label: string;
+  short_label: string | null;
+  coeff_in_subject: number;
+  order_index: number;
+};
+
 type BulletinGroupItem = {
   id: string;
   group_id: string;
@@ -52,13 +61,24 @@ type BulletinGroup = {
   items: BulletinGroupItem[];
 };
 
+type PerSubjectAvg = { subject_id: string; avg20: number | null };
+type PerGroupAvg = { group_id: string; group_avg: number | null };
+
+type PerSubjectComponentAvg = {
+  subject_id: string;
+  component_id: string;
+  avg20: number | null;
+};
+
 type BulletinItemBase = {
   student_id: string;
   full_name: string;
   matricule: string | null;
-  per_subject: { subject_id: string; avg20: number | null }[];
-  per_group: { group_id: string; group_avg: number | null }[];
+  per_subject: PerSubjectAvg[];
+  per_group: PerGroupAvg[];
   general_avg: number | null;
+  // ➕ optionnel : moyennes par sous-matière
+  per_subject_components?: PerSubjectComponentAvg[];
 };
 
 type BulletinItemWithRank = BulletinItemBase & {
@@ -90,6 +110,8 @@ type BulletinResponse = {
   };
   subjects: BulletinSubject[];
   subject_groups: BulletinGroup[];
+  // ➕ optionnel : sous-matières connues du bulletin
+  subject_components?: BulletinSubjectComponent[];
   items: BulletinItemBase[];
 };
 
@@ -234,6 +256,7 @@ type StudentBulletinCardProps = {
   total: number;
   item: BulletinItemWithRank;
   subjects: BulletinSubject[];
+  subjectComponents: BulletinSubjectComponent[];
   classInfo: BulletinResponse["class"];
   period: BulletinResponse["period"];
   institution: InstitutionSettings | null;
@@ -245,6 +268,7 @@ function StudentBulletinCard({
   total,
   item,
   subjects,
+  subjectComponents,
   classInfo,
   period,
   institution,
@@ -253,11 +277,38 @@ function StudentBulletinCard({
   const coeffTotal = useMemo(
     () =>
       subjects.reduce(
-        (acc, s) => acc + (Number.isFinite(s.coeff_bulletin) ? s.coeff_bulletin : 0),
+        (acc, s) =>
+          acc + (Number.isFinite(s.coeff_bulletin) ? s.coeff_bulletin : 0),
         0
       ),
     [subjects]
   );
+
+  // Map subject_id -> liste ordonnée de sous-matières
+  const subjectCompsBySubject = useMemo(() => {
+    const map = new Map<string, BulletinSubjectComponent[]>();
+    subjectComponents.forEach((c) => {
+      const arr = map.get(c.subject_id) ?? [];
+      arr.push(c);
+      map.set(c.subject_id, arr);
+    });
+    // Tri par order_index
+    map.forEach((arr) =>
+      arr.sort((a, b) => (a.order_index || 0) - (b.order_index || 0))
+    );
+    return map;
+  }, [subjectComponents]);
+
+  // Map (subject_id + component_id) -> moyenne de l'élève
+  const perSubjectComponentMap = useMemo(() => {
+    const m = new Map<string, number | null>();
+    const per = item.per_subject_components ?? [];
+    per.forEach((psc) => {
+      const key = `${psc.subject_id}__${psc.component_id}`;
+      m.set(key, psc.avg20);
+    });
+    return m;
+  }, [item.per_subject_components]);
 
   return (
     <div
@@ -278,7 +329,9 @@ function StudentBulletinCard({
               {institution.institution_phone && (
                 <span>Tél: {institution.institution_phone}</span>
               )}
-              {institution.institution_phone && institution.institution_email && " • "}
+              {institution.institution_phone &&
+                institution.institution_email &&
+                " • "}
               {institution.institution_email && (
                 <span>Email: {institution.institution_email}</span>
               )}
@@ -382,21 +435,59 @@ function StudentBulletinCard({
             const moyCoeff =
               avg !== null ? round2(avg * (s.coeff_bulletin || 0)) : null;
 
+            const subComps =
+              subjectCompsBySubject.get(s.subject_id) ?? [];
+
             return (
-              <tr key={s.subject_id}>
-                <td className="border border-slate-400 px-1 py-0.5">
-                  {s.subject_name}
-                </td>
-                <td className="border border-slate-400 px-1 py-0.5 text-center">
-                  {formatNumber(avg)}
-                </td>
-                <td className="border border-slate-400 px-1 py-0.5 text-center">
-                  {formatNumber(s.coeff_bulletin, 0)}
-                </td>
-                <td className="border border-slate-400 px-1 py-0.5 text-center">
-                  {formatNumber(moyCoeff)}
-                </td>
-              </tr>
+              <React.Fragment key={s.subject_id}>
+                {/* Ligne principale de la matière */}
+                <tr>
+                  <td className="border border-slate-400 px-1 py-0.5">
+                    {s.subject_name}
+                  </td>
+                  <td className="border border-slate-400 px-1 py-0.5 text-center">
+                    {formatNumber(avg)}
+                  </td>
+                  <td className="border border-slate-400 px-1 py-0.5 text-center">
+                    {formatNumber(s.coeff_bulletin, 0)}
+                  </td>
+                  <td className="border border-slate-400 px-1 py-0.5 text-center">
+                    {formatNumber(moyCoeff)}
+                  </td>
+                </tr>
+
+                {/* Lignes des sous-matières, si présentes */}
+                {subComps.map((comp) => {
+                  const key = `${s.subject_id}__${comp.id}`;
+                  const cAvg = perSubjectComponentMap.get(key) ?? null;
+                  const cMoyCoeff =
+                    cAvg !== null
+                      ? round2(
+                          cAvg * (comp.coeff_in_subject || 0)
+                        )
+                      : null;
+
+                  return (
+                    <tr
+                      key={`${s.subject_id}-${comp.id}`}
+                      className="text-[0.65rem] text-slate-600"
+                    >
+                      <td className="border border-slate-400 px-1 py-0.5 pl-4">
+                        • {comp.short_label || comp.label}
+                      </td>
+                      <td className="border border-slate-400 px-1 py-0.5 text-center">
+                        {formatNumber(cAvg)}
+                      </td>
+                      <td className="border border-slate-400 px-1 py-0.5 text-center">
+                        {formatNumber(comp.coeff_in_subject, 0)}
+                      </td>
+                      <td className="border border-slate-400 px-1 py-0.5 text-center">
+                        {formatNumber(cMoyCoeff)}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </React.Fragment>
             );
           })}
           <tr className="bg-slate-50 font-semibold">
@@ -534,7 +625,9 @@ export default function BulletinsPage() {
       params.set("from", dateFrom);
       params.set("to", dateTo);
 
-      const res = await fetch(`/api/admin/grades/bulletin?${params.toString()}`);
+      const res = await fetch(
+        `/api/admin/grades/bulletin?${params.toString()}`
+      );
       if (!res.ok) {
         const txt = await res.text();
         throw new Error(
@@ -575,6 +668,8 @@ export default function BulletinsPage() {
     to: null,
   };
   const subjects = enriched?.response.subjects ?? [];
+  const subjectComponents =
+    enriched?.response.subject_components ?? [];
 
   const handlePrint = () => {
     if (!items.length) return;
@@ -611,7 +706,9 @@ export default function BulletinsPage() {
             onClick={handlePrint}
             disabled={!items.length}
             title={
-              items.length ? "Imprimer les bulletins" : "Aucun bulletin à imprimer"
+              items.length
+                ? "Imprimer les bulletins"
+                : "Aucun bulletin à imprimer"
             }
           >
             <Printer className="h-4 w-4" />
@@ -686,8 +783,8 @@ export default function BulletinsPage() {
               </div>
               {period.from && period.to && (
                 <div>
-                  Période : {period.label || period.short_label || ""}{" "}
-                  ({period.from} → {period.to})
+                  Période : {period.label || period.short_label || ""} (
+                  {period.from} → {period.to})
                 </div>
               )}
             </div>
@@ -711,7 +808,8 @@ export default function BulletinsPage() {
                 </span>
               </div>
               <div>
-                Effectif : <span className="font-semibold">{items.length}</span>
+                Effectif :{" "}
+                <span className="font-semibold">{items.length}</span>
               </div>
             </div>
           </div>
@@ -735,6 +833,7 @@ export default function BulletinsPage() {
             total={items.length}
             item={it}
             subjects={subjects}
+            subjectComponents={subjectComponents}
             classInfo={classInfo!}
             period={period}
             institution={institution}

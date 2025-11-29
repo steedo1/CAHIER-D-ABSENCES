@@ -3,6 +3,7 @@
 
 import { useEffect, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
+import Image from "next/image";
 import LoginCard from "@/components/auth/LoginCard";
 
 const DEBUG = true;
@@ -42,7 +43,7 @@ function LoginPageInner() {
       ? "Espace Enseignant — Absences & Notes"
       : book === "grades"
       ? "Mon Cahier de Notes"
-      : "Mon Cahier d’Absences";
+      : "Mon Cahier d’Absences & de Notes";
 
   useEffect(() => {
     if (!DEBUG) return;
@@ -68,21 +69,24 @@ function LoginPageInner() {
       <div className="relative z-0 mx-auto max-w-7xl px-4 py-10">
         <header className="mb-6 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="grid h-9 w-9 place-items-center rounded-xl bg-sky-700 text-white shadow-sm">
-              <svg
-                viewBox="0 0 24 24"
-                className="h-5 w-5"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth={2}
-                aria-hidden="true"
-              >
-                <path d="M4 6h16M4 12h16M4 18h10" />
-              </svg>
+            {/* Logo Nexa Digitale */}
+            <div className="relative h-10 w-10 md:h-12 md:w-12 rounded-xl bg-white/10 p-1.5 backdrop-blur-sm shadow-sm">
+              <Image
+                src="/nexa-digital-logo.png" // ⚠️ place ce fichier dans /public
+                alt="NEXA DIGITALE FOR EDUCATION"
+                fill
+                className="object-contain"
+                priority
+              />
             </div>
-            <span className="text-sm font-semibold text-white drop-shadow">
-              {headerLabel}
-            </span>
+            <div className="flex flex-col">
+              <span className="text-sm font-semibold text-white drop-shadow md:text-base">
+                NEXA DIGITALE FOR EDUCATION
+              </span>
+              <span className="text-[11px] text-white/80 drop-shadow md:text-xs">
+                {headerLabel}
+              </span>
+            </div>
           </div>
         </header>
 
@@ -90,7 +94,7 @@ function LoginPageInner() {
           {/* On propage le choix du cahier jusqu'à /redirect (si présent) */}
           <LoginCard redirectTo={redirectTo} forcedMode={forcedMode} />
           <footer className="mt-6 text-center text-xs text-white/80 drop-shadow-sm">
-            © {new Date().getFullYear()} Mon Cahier — Tous droits réservés
+            © {new Date().getFullYear()} NEXA DIGITALE SARL — Tous droits réservés
           </footer>
         </section>
       </div>

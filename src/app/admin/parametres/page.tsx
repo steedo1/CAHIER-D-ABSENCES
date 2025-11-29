@@ -1,11 +1,23 @@
 "use client";
 
-import { useEffect, useMemo, useState, ChangeEvent } from "react";
+import React, {
+  useEffect,
+  useMemo,
+  useState,
+  ChangeEvent,
+} from "react";
 
 /* =========================
    Types
 ========================= */
-type Role = "super_admin" | "admin" | "educator" | "teacher" | "parent" | string;
+type Role =
+  | "super_admin"
+  | "admin"
+  | "educator"
+  | "teacher"
+  | "parent"
+  | string;
+
 type Profile = {
   id: string;
   display_name: string | null;
@@ -19,6 +31,18 @@ type SubjectCoeffRow = {
   subject_id: string;
   subject_name: string;
   coeff: number;
+};
+
+type SubjectComponentRow = {
+  level: string;
+  subject_id: string;
+  subject_name: string;
+  component_id: string; // id en base ou temp_xxx
+  component_name: string; // libellé affiché (Ortho-Grammaire, Composition, …)
+  coeff: number; // coeff_in_subject
+  code?: string; // optionnel si un jour tu veux le remettre
+  order_index?: number;
+  is_active?: boolean;
 };
 
 type EvalPeriodRow = {
@@ -80,7 +104,9 @@ function Modal(props: {
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/30 px-4">
       <div className="w-full max-w-lg rounded-2xl bg-white shadow-xl">
         <div className="border-b p-4">
-          <div className="text-lg font-semibold text-slate-800">{props.title}</div>
+          <div className="text-lg font-semibold text-slate-800">
+            {props.title}
+          </div>
         </div>
         <div className="p-4">{props.children}</div>
         <div className="flex items-center justify-end gap-2 border-t p-3">
@@ -134,7 +160,13 @@ type Toast = { id: string; kind: ToastKind; text: string };
 
 const rid = () => Math.random().toString(36).slice(2, 8);
 
-function ToastItem({ t, onClose }: { t: Toast; onClose: (id: string) => void }) {
+function ToastItem({
+  t,
+  onClose,
+}: {
+  t: Toast;
+  onClose: (id: string) => void;
+}) {
   useEffect(() => {
     const id = setTimeout(() => onClose(t.id), 4200);
     return () => clearTimeout(id);
@@ -163,7 +195,13 @@ function ToastItem({ t, onClose }: { t: Toast; onClose: (id: string) => void }) 
   );
 }
 
-function ToastHost({ toasts, onClose }: { toasts: Toast[]; onClose: (id: string) => void }) {
+function ToastHost({
+  toasts,
+  onClose,
+}: {
+  toasts: Toast[];
+  onClose: (id: string) => void;
+}) {
   return (
     <div className="pointer-events-none fixed right-4 top-4 z-[60] flex w-[min(92vw,360px)] flex-col gap-2">
       {toasts.map((t) => (
@@ -307,13 +345,26 @@ export default function AdminSettingsPage() {
   const [msgEvalPeriods, setMsgEvalPeriods] = useState<string | null>(null);
 
   /* =======================
-     6) Coefficients des disciplines (bulletins)
+     6) Coefficients des disciplines (bulletins) + sous-matières
   ======================== */
   const [subjectCoeffs, setSubjectCoeffs] = useState<SubjectCoeffRow[]>([]);
   const [loadingCoeffs, setLoadingCoeffs] = useState(false);
   const [savingCoeffs, setSavingCoeffs] = useState(false);
   const [msgCoeffs, setMsgCoeffs] = useState<string | null>(null);
   const [selectedCoeffLevel, setSelectedCoeffLevel] = useState<string>("");
+
+  const [subjectComponents, setSubjectComponents] = useState<
+    SubjectComponentRow[]
+  >([]);
+  const [loadingComponents, setLoadingComponents] = useState(false);
+  const [savingComponents, setSavingComponents] = useState(false);
+  const [msgComponents, setMsgComponents] = useState<string | null>(null);
+  const [componentsModalOpen, setComponentsModalOpen] = useState(false);
+  const [componentsTarget, setComponentsTarget] = useState<{
+    level: string;
+    subject_id: string;
+    subject_name: string;
+  } | null>(null);
 
   const coeffLevels = useMemo(() => {
     const s = new Set<string>();
@@ -332,6 +383,38 @@ export default function AdminSettingsPage() {
         : [],
     [selectedCoeffLevel, subjectCoeffs]
   );
+
+  const componentsForTarget = useMemo(
+    () =>
+      componentsTarget
+        ? subjectComponents.filter(
+            (c) =>
+              c.level === componentsTarget.level &&
+              c.subject_id === componentsTarget.subject_id
+          )
+        : [],
+    [componentsTarget, subjectComponents]
+  );
+
+  const parentCoeffForTarget = useMemo(() => {
+    if (!componentsTarget) return 0;
+    const row = subjectCoeffs.find(
+      (r) =>
+        r.level === componentsTarget.level &&
+        r.subject_id === componentsTarget.subject_id
+    );
+    return row?.coeff ?? 0;
+  }, [componentsTarget, subjectCoeffs]);
+
+  const sumComponentsForTarget = useMemo(
+    () =>
+      componentsForTarget.reduce((sum, c) => sum + (Number(c.coeff) || 0), 0),
+    [componentsForTarget]
+  );
+
+  const coeffMatchForTarget =
+    !componentsTarget ||
+    Math.abs(sumComponentsForTarget - parentCoeffForTarget) < 1e-6;
 
   // si aucun niveau sélectionné mais des niveaux disponibles → on sélectionne le 1er
   useEffect(() => {
@@ -686,13 +769,9 @@ export default function AdminSettingsPage() {
         setEvalPeriods([]);
       }
 
-      pushToast(
-        "info",
-        `Années scolaires chargées (${mapped.length}).`
-      );
+      pushToast("info", `Années scolaires chargées (${mapped.length}).`);
     } catch (e: any) {
-      const m =
-        e?.message || "Impossible de charger les années scolaires.";
+      const m = e?.message || "Impossible de charger les années scolaires.";
       setMsgAcademicYears(m);
       setAcademicYears([]);
       pushToast("error", m);
@@ -818,9 +897,7 @@ export default function AdminSettingsPage() {
         label: String(row.label || "").trim() || "Période",
         short_label: String(row.short_label || row.label || "").trim(),
         kind: row.kind ? String(row.kind) : "",
-        start_date: row.start_date
-          ? String(row.start_date).slice(0, 10)
-          : "",
+        start_date: row.start_date ? String(row.start_date).slice(0, 10) : "",
         end_date: row.end_date ? String(row.end_date).slice(0, 10) : "",
         order_index: Number(row.order_index ?? idx + 1),
         is_active: row.is_active !== false,
@@ -1051,7 +1128,7 @@ export default function AdminSettingsPage() {
     }
   }
 
-  /* ====== Coefficients disciplines : chargement & sauvegarde ====== */
+  /* ====== Coefficients disciplines + sous-matières : chargement & sauvegarde ====== */
   async function loadSubjectCoeffs() {
     setLoadingCoeffs(true);
     setMsgCoeffs(null);
@@ -1078,13 +1155,185 @@ export default function AdminSettingsPage() {
         }).`
       );
     } catch (e: any) {
-      const m =
-        e?.message || "Impossible de charger les coefficients.";
+      const m = e?.message || "Impossible de charger les coefficients.";
       setMsgCoeffs(m);
       setSubjectCoeffs([]);
       pushToast("error", m);
     } finally {
       setLoadingCoeffs(false);
+    }
+  }
+
+  async function loadSubjectComponents() {
+    setLoadingComponents(true);
+    setMsgComponents(null);
+    try {
+      const r = await fetch("/api/admin/institution/subject-components", {
+        cache: "no-store",
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || !j?.ok) {
+        throw new Error(j?.error || "Échec chargement sous-matières");
+      }
+      const rows = Array.isArray(j.items) ? j.items : [];
+      const mapped: SubjectComponentRow[] = rows.map(
+        (row: any, idx: number) => ({
+          level: (row.level ?? "") ? String(row.level).trim() : "",
+          subject_id: String(row.subject_id),
+          subject_name: String(row.subject_name || row.parent_name || "Matière"),
+          component_id: String(row.component_id ?? row.id ?? `comp_${idx}`),
+          component_name: String(
+            row.component_name || row.label || "Sous-matière"
+          ),
+          coeff: Number(row.coeff ?? 0) || 0,
+        })
+      );
+      setSubjectComponents(mapped);
+      pushToast(
+        "info",
+        `Sous-matières chargées (${mapped.length} entrée${
+          mapped.length > 1 ? "s" : ""
+        }).`
+      );
+    } catch (e: any) {
+      const m = e?.message || "Impossible de charger les sous-matières.";
+      setMsgComponents(m);
+      setSubjectComponents([]);
+      pushToast("error", m);
+    } finally {
+      setLoadingComponents(false);
+    }
+  }
+
+  function openComponentsEditor(sc: SubjectCoeffRow) {
+    if (!sc.level || !sc.subject_id) return;
+    setComponentsTarget({
+      level: sc.level,
+      subject_id: sc.subject_id,
+      subject_name: sc.subject_name,
+    });
+    setMsgComponents(null);
+    setComponentsModalOpen(true);
+  }
+
+  function addComponentForTarget() {
+    if (!componentsTarget) return;
+    setSubjectComponents((prev) => [
+      ...prev,
+      {
+        level: componentsTarget.level,
+        subject_id: componentsTarget.subject_id,
+        subject_name: componentsTarget.subject_name,
+        component_id: `temp_${rid()}`,
+        component_name: "",
+        coeff: 0,
+      },
+    ]);
+  }
+
+  function updateComponentRow(
+    component_id: string,
+    patch: Partial<SubjectComponentRow>
+  ) {
+    setSubjectComponents((prev) =>
+      prev.map((row) =>
+        row.component_id === component_id ? { ...row, ...patch } : row
+      )
+    );
+  }
+
+  function removeComponentRow(component_id: string) {
+    setSubjectComponents((prev) =>
+      prev.filter((row) => row.component_id !== component_id)
+    );
+  }
+
+  async function saveSubjectComponents() {
+    setSavingComponents(true);
+    setMsgComponents(null);
+    try {
+      // Vérifier pour chaque (niveau, matière) que la somme des sous-coeffs = coeff parent
+      const sums = new Map<
+        string,
+        { sum: number; parent: number; subject_name: string; level: string }
+      >();
+      for (const c of subjectComponents) {
+        const key = `${c.level}__${c.subject_id}`;
+        const parentRow = subjectCoeffs.find(
+          (r) => r.level === c.level && r.subject_id === c.subject_id
+        );
+        const parentCoeff = parentRow?.coeff ?? 0;
+        const cleanCoeff =
+          !Number.isFinite(c.coeff as any) || c.coeff < 0
+            ? 0
+            : Number(c.coeff.toFixed(2));
+        const existing = sums.get(key);
+        if (existing) {
+          existing.sum += cleanCoeff;
+        } else {
+          sums.set(key, {
+            sum: cleanCoeff,
+            parent: parentCoeff,
+            subject_name: c.subject_name,
+            level: c.level,
+          });
+        }
+      }
+
+      const bad: string[] = [];
+      sums.forEach((v) => {
+        if (v.sum > 0 && Math.abs(v.sum - v.parent) > 1e-6) {
+          bad.push(
+            `${v.subject_name} (${v.level}) : somme sous-matières ${v.sum} ≠ coeff matière ${v.parent}`
+          );
+        }
+      });
+
+      if (bad.length > 0) {
+        const msg =
+          "La somme des coefficients de sous-matières doit être égale au coefficient de la matière pour chaque niveau. Vérifiez : " +
+          bad.join(" ; ");
+        setMsgComponents(msg);
+        pushToast("error", msg);
+        setSavingComponents(false);
+        return;
+      }
+
+      const payload = subjectComponents
+        .filter((row) => row.component_name.trim().length > 0)
+        .map((row) => ({
+          level: row.level,
+          subject_id: row.subject_id,
+          component_id: row.component_id.startsWith("temp_")
+            ? null
+            : row.component_id,
+          name: row.component_name.trim(),
+          coeff:
+            !Number.isFinite(row.coeff as any) || row.coeff < 0
+              ? 0
+              : Number(row.coeff.toFixed(2)),
+        }));
+
+      const r = await fetch("/api/admin/institution/subject-components", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ items: payload }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || !j?.ok) {
+        throw new Error(j?.error || "Échec enregistrement sous-matières");
+      }
+      const ok = "Sous-matières enregistrées ✅";
+      setMsgComponents(ok);
+      pushToast("success", ok);
+      await loadSubjectComponents();
+    } catch (e: any) {
+      const m =
+        e?.message || "Erreur lors de l'enregistrement des sous-matières.";
+      setMsgComponents(m);
+      pushToast("error", m);
+    } finally {
+      setSavingComponents(false);
     }
   }
 
@@ -1109,14 +1358,12 @@ export default function AdminSettingsPage() {
       if (!r.ok || !j?.ok) {
         throw new Error(j?.error || "Échec enregistrement coefficients");
       }
-      const ok =
-        "Coefficients de disciplines par niveau enregistrés ✅";
+      const ok = "Coefficients de disciplines par niveau enregistrés ✅";
       setMsgCoeffs(ok);
       pushToast("success", ok);
     } catch (e: any) {
       const m =
-        e?.message ||
-        "Erreur lors de l'enregistrement des coefficients.";
+        e?.message || "Erreur lors de l'enregistrement des coefficients.";
       setMsgCoeffs(m);
       pushToast("error", m);
     } finally {
@@ -1129,6 +1376,7 @@ export default function AdminSettingsPage() {
     loadInstitutionConfig();
     loadAcademicYears(); // charge aussi les périodes pour l'année choisie
     loadSubjectCoeffs();
+    loadSubjectComponents();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -1144,7 +1392,8 @@ export default function AdminSettingsPage() {
           <p className="text-sm text-slate-600">
             Gérez votre mot de passe, vos utilisateurs, les horaires et infos
             de l&apos;établissement, ainsi que les paramètres des bulletins
-            (années scolaires, périodes et coefficients par niveau et par période).
+            (années scolaires, périodes et coefficients par niveau et par
+            période).
           </p>
         </header>
 
@@ -1326,9 +1575,10 @@ export default function AdminSettingsPage() {
               </div>
               <p className="text-xs text-slate-500">
                 Définissez le fuseau horaire, la durée par séance, les créneaux
-                journaliers et les informations administratives de l&apos;établissement.
-                Ces paramètres pilotent le calcul des retards et alimentent les
-                bulletins, matrices et certains écrans (parents, dashboard).
+                journaliers et les informations administratives de
+                l&apos;établissement. Ces paramètres pilotent le calcul des
+                retards et alimentent les bulletins, matrices et certains écrans
+                (parents, dashboard).
               </p>
             </div>
             <button
@@ -1352,9 +1602,7 @@ export default function AdminSettingsPage() {
                 }
                 disabled={loadingCfg || savingCfg}
               >
-                <option value="Africa/Abidjan">
-                  Africa/Abidjan (UTC+0)
-                </option>
+                <option value="Africa/Abidjan">Africa/Abidjan (UTC+0)</option>
                 <option value="Africa/Lagos">Africa/Lagos (UTC+1)</option>
                 <option value="Africa/Dakar">Africa/Dakar (UTC+0)</option>
                 <option value="UTC">UTC</option>
@@ -1475,6 +1723,7 @@ export default function AdminSettingsPage() {
                 {cfg.institution_logo_url && (
                   <div className="flex items-center gap-2">
                     <div className="h-12 w-12 overflow-hidden rounded border bg-white">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img
                         src={cfg.institution_logo_url}
                         alt="Logo de l'établissement"
@@ -1482,13 +1731,15 @@ export default function AdminSettingsPage() {
                       />
                     </div>
                     <div className="text-[11px] text-slate-500">
-                      Logo actuellement utilisé dans les bulletins, exports et documents officiels.
+                      Logo actuellement utilisé dans les bulletins, exports et
+                      documents officiels.
                     </div>
                   </div>
                 )}
 
                 <div className="text-[11px] text-slate-500">
-                  Formats conseillés : PNG ou JPG, taille ≤ 1&nbsp;Mo. Le logo est enregistré avec les autres paramètres.
+                  Formats conseillés : PNG ou JPG, taille ≤ 1&nbsp;Mo. Le logo
+                  est enregistré avec les autres paramètres.
                 </div>
               </div>
             </div>
@@ -1586,9 +1837,7 @@ export default function AdminSettingsPage() {
               disabled={savingCfg || loadingCfg}
               className="rounded-lg bg-sky-700 px-3 py-1.5 text-sm font-medium text-white hover:bg-sky-800 disabled:opacity-60"
             >
-              {savingCfg
-                ? "Enregistrement…"
-                : "Enregistrer les paramètres"}
+              {savingCfg ? "Enregistrement…" : "Enregistrer les paramètres"}
             </button>
             {msgSched && (
               <span className="text-sm text-slate-700">{msgSched}</span>
@@ -1613,9 +1862,7 @@ export default function AdminSettingsPage() {
                 />
               </div>
               <div>
-                <div className="mb-1 text-xs text-slate-500">
-                  Fin journée
-                </div>
+                <div className="mb-1 text-xs text-slate-500">Fin journée</div>
                 <input
                   type="time"
                   value={genEnd}
@@ -1633,10 +1880,7 @@ export default function AdminSettingsPage() {
                   value={genDuration}
                   onChange={(e) =>
                     setGenDuration(
-                      Math.max(
-                        1,
-                        parseInt(e.target.value || "0", 10)
-                      )
+                      Math.max(1, parseInt(e.target.value || "0", 10))
                     )
                   }
                   className="w-full rounded-lg border bg-white px-3 py-1.5 text-sm"
@@ -1652,10 +1896,7 @@ export default function AdminSettingsPage() {
                   value={genGap}
                   onChange={(e) =>
                     setGenGap(
-                      Math.max(
-                        0,
-                        parseInt(e.target.value || "0", 10)
-                      )
+                      Math.max(0, parseInt(e.target.value || "0", 10))
                     )
                   }
                   className="w-full rounded-lg border bg-white px-3 py-1.5 text-sm"
@@ -1679,12 +1920,9 @@ export default function AdminSettingsPage() {
                 <input
                   type="checkbox"
                   checked={genReplace}
-                  onChange={(e) =>
-                    setGenReplace(e.target.checked)
-                  }
+                  onChange={(e) => setGenReplace(e.target.checked)}
                 />
-                Remplacer les créneaux existants (sinon, ajouter à la
-                suite)
+                Remplacer les créneaux existants (sinon, ajouter à la suite)
               </label>
 
               <button
@@ -1724,15 +1962,9 @@ export default function AdminSettingsPage() {
                     {genPreview.map((p, i) => (
                       <tr key={i}>
                         <td className="px-3 py-2">{i + 1}</td>
-                        <td className="px-3 py-2">
-                          {p.start_time}
-                        </td>
-                        <td className="px-3 py-2">
-                          {p.end_time}
-                        </td>
-                        <td className="px-3 py-2">
-                          {p.label}
-                        </td>
+                        <td className="px-3 py-2">{p.start_time}</td>
+                        <td className="px-3 py-2">{p.end_time}</td>
+                        <td className="px-3 py-2">{p.label}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -1774,27 +2006,19 @@ export default function AdminSettingsPage() {
                   <th className="w-36 px-3 py-2">Début</th>
                   <th className="w-36 px-3 py-2">Fin</th>
                   <th className="px-3 py-2">Libellé</th>
-                  <th className="w-24 px-3 py-2 text-right">
-                    Actions
-                  </th>
+                  <th className="w-24 px-3 py-2 text-right">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y">
                 {loadingCfg ? (
                   <tr>
-                    <td
-                      className="px-3 py-3 text-slate-500"
-                      colSpan={5}
-                    >
+                    <td className="px-3 py-3 text-slate-500" colSpan={5}>
                       Chargement…
                     </td>
                   </tr>
                 ) : (byDay[curDay] || []).length === 0 ? (
                   <tr>
-                    <td
-                      className="px-3 py-3 text-slate-500"
-                      colSpan={5}
-                    >
+                    <td className="px-3 py-3 text-slate-500" colSpan={5}>
                       Aucun créneau pour ce jour.
                     </td>
                   </tr>
@@ -1866,16 +2090,14 @@ export default function AdminSettingsPage() {
               disabled={savingPeriods || loadingCfg}
               className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white shadow hover:bg-emerald-700 disabled:opacity-60"
             >
-              {savingPeriods
-                ? "Enregistrement…"
-                : "Enregistrer les créneaux"}
+              {savingPeriods ? "Enregistrement…" : "Enregistrer les créneaux"}
             </button>
           </div>
 
           <div className="mt-2 text-[12px] text-slate-500">
-            Astuce : si vous laissez des jours vides, ils ne seront pas pris
-            en compte. Le calcul de retard se base sur le créneau du jour le
-            plus proche de l’heure de début de séance.
+            Astuce : si vous laissez des jours vides, ils ne seront pas pris en
+            compte. Le calcul de retard se base sur le créneau du jour le plus
+            proche de l’heure de début de séance.
           </div>
         </section>
 
@@ -1924,7 +2146,8 @@ export default function AdminSettingsPage() {
                 }}
               >
                 <option value="">
-                  — Année déduite automatiquement (serveur) —</option>
+                  — Année déduite automatiquement (serveur) —
+                </option>
                 {academicYears.map((y) => (
                   <option key={y.code || y.id} value={y.code}>
                     {y.code || "(sans code)"}
@@ -1957,21 +2180,15 @@ export default function AdminSettingsPage() {
               <tbody className="divide-y">
                 {loadingAcademicYears ? (
                   <tr>
-                    <td
-                      className="px-3 py-3 text-slate-500"
-                      colSpan={7}
-                    >
+                    <td className="px-3 py-3 text-slate-500" colSpan={7}>
                       Chargement des années scolaires…
                     </td>
                   </tr>
                 ) : academicYears.length === 0 ? (
                   <tr>
-                    <td
-                      className="px-3 py-3 text-slate-500"
-                      colSpan={7}
-                    >
-                      Aucune année scolaire définie pour l&apos;instant.
-                      Ajoutez au moins une ligne pour commencer.
+                    <td className="px-3 py-3 text-slate-500" colSpan={7}>
+                      Aucune année scolaire définie pour l&apos;instant. Ajoutez
+                      au moins une ligne pour commencer.
                     </td>
                   </tr>
                 ) : (
@@ -2096,12 +2313,11 @@ export default function AdminSettingsPage() {
                 Périodes d&apos;évaluation (bulletins)
               </div>
               <p className="text-xs text-slate-500">
-                Définissez librement les périodes utilisées pour les
-                bulletins et les moyennes : trimestres, semestres,
-                compositions de juin, etc. Chaque série de périodes est
-                rattachée à l&apos;année scolaire sélectionnée ci-dessus.
-                Le coefficient de période sera utilisé pour le calcul de la
-                moyenne annuelle générale.
+                Définissez librement les périodes utilisées pour les bulletins
+                et les moyennes : trimestres, semestres, compositions de juin,
+                etc. Chaque série de périodes est rattachée à l&apos;année
+                scolaire sélectionnée ci-dessus. Le coefficient de période sera
+                utilisé pour le calcul de la moyenne annuelle générale.
               </p>
             </div>
             <button
@@ -2126,12 +2342,8 @@ export default function AdminSettingsPage() {
                   <th className="w-10 px-3 py-2 text-left">#</th>
                   <th className="px-3 py-2 text-left">Code</th>
                   <th className="px-3 py-2 text-left">Libellé complet</th>
-                  <th className="px-3 py-2 text-left">
-                    Libellé bulletin
-                  </th>
-                  <th className="w-24 px-3 py-2 text-right">
-                    Coeff. période
-                  </th>
+                  <th className="px-3 py-2 text-left">Libellé bulletin</th>
+                  <th className="w-24 px-3 py-2 text-right">Coeff. période</th>
                   <th className="w-32 px-3 py-2 text-left">Début</th>
                   <th className="w-32 px-3 py-2 text-left">Fin</th>
                   <th className="w-24 px-3 py-2 text-center">Actif</th>
@@ -2141,21 +2353,15 @@ export default function AdminSettingsPage() {
               <tbody className="divide-y">
                 {loadingEvalPeriods ? (
                   <tr>
-                    <td
-                      className="px-3 py-3 text-slate-500"
-                      colSpan={9}
-                    >
+                    <td className="px-3 py-3 text-slate-500" colSpan={9}>
                       Chargement des périodes…
                     </td>
                   </tr>
                 ) : evalPeriods.length === 0 ? (
                   <tr>
-                    <td
-                      className="px-3 py-3 text-slate-500"
-                      colSpan={9}
-                    >
-                      Aucune période définie pour l&apos;instant. Cliquez
-                      sur « Ajouter une période » pour commencer.
+                    <td className="px-3 py-3 text-slate-500" colSpan={9}>
+                      Aucune période définie pour l&apos;instant. Cliquez sur
+                      « Ajouter une période » pour commencer.
                     </td>
                   </tr>
                 ) : (
@@ -2253,9 +2459,7 @@ export default function AdminSettingsPage() {
                         <div className="flex justify-end gap-1">
                           <button
                             type="button"
-                            onClick={() =>
-                              moveEvalPeriod(p.id, "up")
-                            }
+                            onClick={() => moveEvalPeriod(p.id, "up")}
                             disabled={index === 0}
                             className="rounded-lg border px-2 py-1 text-xs hover:bg-slate-50 disabled:opacity-40"
                             title="Monter"
@@ -2264,12 +2468,8 @@ export default function AdminSettingsPage() {
                           </button>
                           <button
                             type="button"
-                            onClick={() =>
-                              moveEvalPeriod(p.id, "down")
-                            }
-                            disabled={
-                              index === evalPeriods.length - 1
-                            }
+                            onClick={() => moveEvalPeriod(p.id, "down")}
+                            disabled={index === evalPeriods.length - 1}
                             className="rounded-lg border px-2 py-1 text-xs hover:bg-slate-50 disabled:opacity-40"
                             title="Descendre"
                           >
@@ -2317,16 +2517,15 @@ export default function AdminSettingsPage() {
           </div>
 
           <div className="mt-2 text-[11px] text-slate-500">
-            Exemple : créez trois lignes « 1er trimestre », « 2e
-            trimestre », « 3e trimestre » avec des coefficients 1, 2, 2,
-            ou deux lignes « Semestre 1 » et « Semestre 2 ». Pour le primaire,
-            vous pouvez définir « Composition de mars », « Composition de juin »,
-            etc.
+            Exemple : créez trois lignes « 1er trimestre », « 2e trimestre »,
+            « 3e trimestre » avec des coefficients 1, 2, 2, ou deux lignes
+            « Semestre 1 » et « Semestre 2 ». Pour le primaire, vous pouvez
+            définir « Composition de mars », « Composition de juin », etc.
           </div>
         </section>
 
         {/* =======================
-            6) Coefficients des disciplines (bulletins)
+            6) Coefficients des disciplines (bulletins) + sous-matières
         ======================== */}
         <section className="rounded-2xl border bg-white p-5">
           <div className="mb-3 flex items-center justify-between">
@@ -2335,37 +2534,48 @@ export default function AdminSettingsPage() {
                 Coefficients des disciplines par niveau (bulletins)
               </div>
               <p className="text-xs text-slate-500">
-                Définissez un coefficient par discipline et par niveau pour
-                le calcul des moyennes générales. Un coefficient 0 exclut la
-                matière du calcul pour le niveau sélectionné.
+                Définissez un coefficient par discipline et par niveau pour le
+                calcul des moyennes générales. Un coefficient 0 exclut la
+                matière du calcul pour le niveau sélectionné. Vous pouvez
+                également détailler certaines matières en sous-matières (dictée,
+                lecture, expression écrite, TP, etc.) avec leurs propres
+                coefficients, dont la somme doit respecter le coefficient de la
+                matière mère.
               </p>
             </div>
             <button
-              onClick={loadSubjectCoeffs}
-              disabled={loadingCoeffs}
+              onClick={() => {
+                loadSubjectCoeffs();
+                loadSubjectComponents();
+              }}
+              disabled={loadingCoeffs || loadingComponents}
               className="rounded-lg border px-3 py-1.5 text-sm hover:bg-slate-50 disabled:opacity-60"
             >
-              {loadingCoeffs ? "Chargement…" : "Rafraîchir"}
+              {loadingCoeffs || loadingComponents
+                ? "Chargement…"
+                : "Rafraîchir"}
             </button>
           </div>
 
           {msgCoeffs && (
-            <div className="mb-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
+            <div className="mb-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
               {msgCoeffs}
+            </div>
+          )}
+
+          {msgComponents && (
+            <div className="mb-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
+              {msgComponents}
             </div>
           )}
 
           <div className="mb-3 grid grid-cols-1 gap-3 md:grid-cols-3">
             <div>
-              <div className="mb-1 text-xs text-slate-500">
-                Niveau
-              </div>
+              <div className="mb-1 text-xs text-slate-500">Niveau</div>
               <select
                 className="w-full rounded-lg border px-3 py-2 text-sm"
                 value={selectedCoeffLevel}
-                onChange={(e) =>
-                  setSelectedCoeffLevel(e.target.value)
-                }
+                onChange={(e) => setSelectedCoeffLevel(e.target.value)}
               >
                 <option value="">— Choisir un niveau —</option>
                 {coeffLevels.map((lvl) => (
@@ -2375,8 +2585,8 @@ export default function AdminSettingsPage() {
                 ))}
               </select>
               <div className="mt-1 text-[11px] text-slate-500">
-                Seules les disciplines du niveau sélectionné sont affichées
-                dans le tableau ci-dessous.
+                Seules les disciplines du niveau sélectionné sont affichées dans
+                le tableau ci-dessous.
               </div>
             </div>
           </div>
@@ -2389,101 +2599,155 @@ export default function AdminSettingsPage() {
                   <th className="w-32 px-3 py-2 text-right">
                     Coefficient bulletin
                   </th>
+                  <th className="w-56 px-3 py-2 text-right">
+                    Sous-matières (optionnel)
+                  </th>
                 </tr>
               </thead>
               <tbody className="divide-y">
                 {loadingCoeffs ? (
                   <tr>
-                    <td
-                      className="px-3 py-3 text-slate-500"
-                      colSpan={2}
-                    >
+                    <td className="px-3 py-3 text-slate-500" colSpan={3}>
                       Chargement des disciplines…
                     </td>
                   </tr>
                 ) : !selectedCoeffLevel ? (
                   <tr>
-                    <td
-                      className="px-3 py-3 text-slate-500"
-                      colSpan={2}
-                    >
-                      Choisissez d&apos;abord un niveau pour voir et
-                      modifier les coefficients.
+                    <td className="px-3 py-3 text-slate-500" colSpan={3}>
+                      Choisissez d&apos;abord un niveau pour voir et modifier
+                      les coefficients.
                     </td>
                   </tr>
                 ) : coeffRowsForSelectedLevel.length === 0 ? (
                   <tr>
-                    <td
-                      className="px-3 py-3 text-slate-500"
-                      colSpan={2}
-                    >
-                      Aucune discipline n&apos;est encore paramétrée pour
-                      ce niveau. Cliquez sur « Rafraîchir » si vous venez
+                    <td className="px-3 py-3 text-slate-500" colSpan={3}>
+                      Aucune discipline n&apos;est encore paramétrée pour ce
+                      niveau. Cliquez sur « Rafraîchir » si vous venez
                       d&apos;ajouter des matières.
                     </td>
                   </tr>
                 ) : (
-                  coeffRowsForSelectedLevel.map((sc) => (
-                    <tr
-                      key={`${sc.level}-${sc.subject_id}`}
-                    >
-                      <td className="px-3 py-2 text-slate-800">
-                        {sc.subject_name}
-                      </td>
-                      <td className="px-3 py-2 text-right">
-                        <input
-                          type="number"
-                          min={0}
-                          step="0.5"
-                          className="w-24 rounded-lg border px-2 py-1 text-right text-sm"
-                          value={sc.coeff}
-                          onChange={(e) => {
-                            const raw =
-                              e.target.value.replace(",", ".");
-                            const num = parseFloat(raw);
-                            setSubjectCoeffs((prev) =>
-                              prev.map((row) =>
-                                row.subject_id === sc.subject_id &&
-                                row.level === sc.level
-                                  ? {
-                                      ...row,
-                                      coeff: isNaN(num)
-                                        ? 0
-                                        : Math.max(0, num),
-                                    }
-                                  : row
-                              )
-                            );
-                          }}
-                        />
-                      </td>
-                    </tr>
-                  ))
+                  coeffRowsForSelectedLevel.map((sc) => {
+                    const comps = subjectComponents.filter(
+                      (c) =>
+                        c.level === sc.level &&
+                        c.subject_id === sc.subject_id
+                    );
+                    const sum = comps.reduce(
+                      (s, c) => s + (Number(c.coeff) || 0),
+                      0
+                    );
+                    const ok = Math.abs(sum - sc.coeff) < 1e-6;
+
+                    return (
+                      <tr key={`${sc.level}-${sc.subject_id}`}>
+                        <td className="px-3 py-2 text-slate-800">
+                          {sc.subject_name}
+                        </td>
+                        <td className="px-3 py-2 text-right">
+                          <input
+                            type="number"
+                            min={0}
+                            step="0.5"
+                            className="w-24 rounded-lg border px-2 py-1 text-right text-sm"
+                            value={sc.coeff}
+                            onChange={(e) => {
+                              const raw = e.target.value.replace(",", ".");
+                              const num = parseFloat(raw);
+                              setSubjectCoeffs((prev) =>
+                                prev.map((row) =>
+                                  row.subject_id === sc.subject_id &&
+                                  row.level === sc.level
+                                    ? {
+                                        ...row,
+                                        coeff: isNaN(num)
+                                          ? 0
+                                          : Math.max(0, num),
+                                      }
+                                    : row
+                                )
+                              );
+                            }}
+                          />
+                        </td>
+                        <td className="px-3 py-2 text-right">
+                          <div className="flex flex-col items-end gap-1">
+                            <button
+                              type="button"
+                              onClick={() => openComponentsEditor(sc)}
+                              className="rounded-lg border px-2 py-1 text-xs hover:bg-slate-50"
+                            >
+                              {comps.length > 0
+                                ? "Modifier les sous-matières"
+                                : "Ajouter des sous-matières"}
+                            </button>
+                            {comps.length > 0 && (
+                              <div className="text-[11px] text-slate-500">
+                                {comps.length} sous-matière
+                                {comps.length > 1 ? "s" : ""} — somme&nbsp;
+                                <span
+                                  className={
+                                    "font-medium " +
+                                    (ok
+                                      ? "text-emerald-700"
+                                      : "text-rose-700")
+                                  }
+                                >
+                                  {sum}
+                                </span>
+                                {" / "}
+                                <span className="font-medium">
+                                  {sc.coeff}
+                                </span>
+                              </div>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })
                 )}
               </tbody>
             </table>
           </div>
 
-          <div className="mt-3 flex items-center justify-between">
+          <div className="mt-3 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
             <div className="text-[11px] text-slate-500">
-              Exemple : en 6e, Mathématiques coeff 4, Français coeff 3,
-              EPS coeff 1. En Terminale, vous pouvez utiliser un autre
-              barème. Un coeff à 0 retire la matière du calcul de moyenne
-              générale pour le niveau choisi.
+              Exemple : en 6e, Mathématiques coeff 4, Français coeff 3, EPS
+              coeff 1. En Terminale, vous pouvez utiliser un autre barème. Un
+              coeff à 0 retire la matière du calcul de moyenne générale pour le
+              niveau choisi. Les sous-matières (si vous en définissez)
+              apparaissent dans la saisie des notes, mais le bulletin conserve
+              le coefficient total de la matière mère.
             </div>
-            <button
-              onClick={saveSubjectCoeffs}
-              disabled={
-                savingCoeffs ||
-                loadingCoeffs ||
-                subjectCoeffs.length === 0
-              }
-              className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white shadow hover:bg-emerald-700 disabled:opacity-60"
-            >
-              {savingCoeffs
-                ? "Enregistrement…"
-                : "Enregistrer les coefficients"}
-            </button>
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+              <button
+                onClick={saveSubjectComponents}
+                disabled={
+                  savingComponents ||
+                  loadingComponents ||
+                  subjectComponents.length === 0
+                }
+                className="rounded-lg bg-sky-700 px-4 py-2 text-sm font-medium text-white shadow hover:bg-sky-800 disabled:opacity-60"
+              >
+                {savingComponents
+                  ? "Enregistrement…"
+                  : "Enregistrer les sous-matières"}
+              </button>
+              <button
+                onClick={saveSubjectCoeffs}
+                disabled={
+                  savingCoeffs ||
+                  loadingCoeffs ||
+                  subjectCoeffs.length === 0
+                }
+                className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white shadow hover:bg-emerald-700 disabled:opacity-60"
+              >
+                {savingCoeffs
+                  ? "Enregistrement…"
+                  : "Enregistrer les coefficients"}
+              </button>
+            </div>
           </div>
         </section>
 
@@ -2563,17 +2827,173 @@ export default function AdminSettingsPage() {
             </div>
 
             {customMsg && (
-              <div className="text-sm text-slate-700">
-                {customMsg}
-              </div>
+              <div className="text-sm text-slate-700">{customMsg}</div>
             )}
 
             <div className="rounded-lg border border-yellow-200 bg-yellow-50 px-3 py-2 text-[12px] text-yellow-800">
-              Astuce : laissez ce modal et utilisez{" "}
-              <b>« Réinit. temporaire »</b> si vous préférez générer un mot
-              de passe provisoire (par défaut côté serveur).
+              Astuce : laissez ce modal et utilisez <b>« Réinit. temporaire »</b>{" "}
+              si vous préférez générer un mot de passe provisoire (par défaut
+              côté serveur).
             </div>
           </div>
+        </Modal>
+
+        {/* Modal sous-matières / composants de discipline */}
+        <Modal
+          open={componentsModalOpen && !!componentsTarget}
+          title={
+            componentsTarget
+              ? `Sous-matières — ${componentsTarget.subject_name} (${componentsTarget.level})`
+              : "Sous-matières"
+          }
+          onClose={() => setComponentsModalOpen(false)}
+          actions={
+            <>
+              <button
+                onClick={saveSubjectComponents}
+                disabled={savingComponents}
+                className="rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-60"
+              >
+                {savingComponents
+                  ? "Enregistrement…"
+                  : "Enregistrer les sous-matières"}
+              </button>
+            </>
+          }
+        >
+          {!componentsTarget ? (
+            <div className="text-sm text-slate-600">
+              Aucune matière sélectionnée.
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <div className="text-sm text-slate-700">
+                Niveau{" "}
+                <span className="font-semibold">
+                  {componentsTarget.level}
+                </span>{" "}
+                — matière{" "}
+                <span className="font-semibold">
+                  {componentsTarget.subject_name}
+                </span>
+                .
+              </div>
+              <div className="rounded-lg border bg-slate-50 px-3 py-2 text-xs text-slate-700">
+                Coefficient de la matière mère pour ce niveau :{" "}
+                <span className="font-semibold">
+                  {parentCoeffForTarget}
+                </span>
+                . Somme des coefficients de sous-matières :{" "}
+                <span
+                  className={`font-semibold ${
+                    coeffMatchForTarget
+                      ? "text-emerald-700"
+                      : "text-rose-700"
+                  }`}
+                >
+                  {sumComponentsForTarget}
+                </span>
+                .
+                {!coeffMatchForTarget && (
+                  <>
+                    {" "}
+                    ⚠️ La somme doit être exactement égale au coefficient de la
+                    matière mère.
+                  </>
+                )}
+              </div>
+
+              <div className="overflow-x-auto rounded-lg border">
+                <table className="min-w-full text-sm">
+                  <thead className="bg-slate-50 text-slate-600">
+                    <tr>
+                      <th className="px-3 py-2 text-left">Sous-matière</th>
+                      <th className="w-28 px-3 py-2 text-right">Coeff.</th>
+                      <th className="w-24 px-3 py-2 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y">
+                    {componentsForTarget.length === 0 ? (
+                      <tr>
+                        <td
+                          className="px-3 py-3 text-slate-500"
+                          colSpan={3}
+                        >
+                          Aucune sous-matière définie pour l&apos;instant.
+                          Ajoutez au moins une ligne.
+                        </td>
+                      </tr>
+                    ) : (
+                      componentsForTarget.map((c) => (
+                        <tr key={c.component_id}>
+                          <td className="px-3 py-2">
+                            <input
+                              value={c.component_name}
+                              onChange={(e) =>
+                                updateComponentRow(c.component_id, {
+                                  component_name: e.target.value,
+                                })
+                              }
+                              className="w-full rounded-lg border px-2 py-1 text-sm"
+                              placeholder="Dictée, Lecture, Expression écrite…"
+                            />
+                          </td>
+                          <td className="px-3 py-2 text-right">
+                            <input
+                              type="number"
+                              min={0}
+                              step="0.5"
+                              value={c.coeff}
+                              onChange={(e) => {
+                                const raw = e.target.value.replace(",", ".");
+                                const num = parseFloat(raw);
+                                updateComponentRow(c.component_id, {
+                                  coeff: isNaN(num) ? 0 : Math.max(0, num),
+                                });
+                              }}
+                              className="w-24 rounded-lg border px-2 py-1 text-right text-sm"
+                            />
+                          </td>
+                          <td className="px-3 py-2 text-right">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                removeComponentRow(c.component_id)
+                              }
+                              className="rounded-lg border border-rose-300 bg-rose-50 px-2 py-1 text-xs font-medium text-rose-800 hover:bg-rose-100"
+                            >
+                              Suppr.
+                            </button>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="flex items-center justify-between">
+                <button
+                  type="button"
+                  onClick={addComponentForTarget}
+                  className="rounded-lg border px-3 py-1.5 text-xs hover:bg-slate-50"
+                >
+                  + Ajouter une sous-matière
+                </button>
+                <div className="text-[11px] text-slate-500">
+                  Ces sous-matières apparaîtront dans les écrans de saisie de
+                  notes pour ce niveau. Le bulletin utilise toujours le
+                  coefficient total de la matière mère.
+                </div>
+              </div>
+
+              {msgComponents && (
+                <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
+                  {msgComponents}
+                </div>
+              )}
+            </div>
+          )}
         </Modal>
       </main>
     </>
@@ -2625,9 +3045,7 @@ function FragmentRow(props: {
                 onClick={props.onToggle}
                 className="rounded-lg border px-3 py-1.5 text-xs hover:bg-slate-50"
                 title={
-                  props.expanded
-                    ? "Masquer les détails"
-                    : "Voir les détails"
+                  props.expanded ? "Masquer les détails" : "Voir les détails"
                 }
               >
                 {props.expanded ? "Masquer" : "Voir"}
@@ -2661,9 +3079,7 @@ function FragmentRow(props: {
           <td className="px-3 py-2" colSpan={3}>
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
               <div>
-                <div className="text-[11px] text-slate-500">
-                  Email
-                </div>
+                <div className="text-[11px] text-slate-500">Email</div>
                 <div className="text-sm text-slate-800">
                   {u.email || "—"}
                 </div>

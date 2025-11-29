@@ -1,6 +1,7 @@
-//src/app/api/admin/conduct/settings/route.ts
+// src/app/api/admin/conduct/settings/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
+import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -34,6 +35,52 @@ const DEFAULT_SETTINGS: Omit<ConductSettingsRow, "institution_id"> = {
   lateness_points_per_late: 0.25,
 };
 
+/* ───────────────── Contexte LECTURE (teacher autorisé) ───────────────── */
+
+async function getContextForRead() {
+  const supabase = await getSupabaseServerClient();
+
+  const {
+    data: { user },
+    error: authError,
+  } = await supabase.auth.getUser();
+
+  if (authError || !user) {
+    return {
+      error: NextResponse.json(
+        { error: "Non authentifié" },
+        { status: 401 }
+      ),
+    } as const;
+  }
+
+  // On récupère juste l'établissement lié à ce profil,
+  // sans filtrer sur le rôle (teacher compris).
+  const { data: ur, error: urError } = await supabase
+    .from("user_roles")
+    .select("institution_id")
+    .eq("profile_id", user.id)
+    .limit(1)
+    .maybeSingle();
+
+  if (urError || !ur) {
+    return {
+      error: NextResponse.json(
+        { error: "Accès refusé (rôle ou établissement introuvable)" },
+        { status: 403 }
+      ),
+    } as const;
+  }
+
+  return {
+    supabase,
+    user,
+    institutionId: ur.institution_id as string,
+  } as const;
+}
+
+/* ───────────────── Contexte ADMIN (écriture uniquement) ───────────────── */
+
 async function getContext() {
   const supabase = await getSupabaseServerClient();
 
@@ -44,7 +91,10 @@ async function getContext() {
 
   if (authError || !user) {
     return {
-      error: NextResponse.json({ error: "Non authentifié" }, { status: 401 }),
+      error: NextResponse.json(
+        { error: "Non authentifié" },
+        { status: 401 }
+      ),
     } as const;
   }
 
@@ -72,14 +122,17 @@ async function getContext() {
   } as const;
 }
 
-/* ───────────────── GET : lire les réglages ───────────────── */
+/* ───────────────── GET : lecture des réglages (teacher OK) ───────────────── */
 
 export async function GET(_req: NextRequest) {
-  const ctx = await getContext();
+  const ctx = await getContextForRead();
   if ("error" in ctx) return ctx.error;
-  const { supabase, institutionId } = ctx;
+  const { institutionId } = ctx;
 
-  const { data, error } = await supabase
+  // ✅ On lit conduct_settings avec le client service pour bypass la RLS
+  const svc = await getSupabaseServiceClient();
+
+  const { data, error } = await svc
     .from("conduct_settings")
     .select(
       [
@@ -99,7 +152,19 @@ export async function GET(_req: NextRequest) {
     .eq("institution_id", institutionId)
     .maybeSingle();
 
+  console.log("[ConductSettings/GET] institutionId =", institutionId, {
+    hasRow: !!data,
+    error: (error as any)?.message,
+  });
+
   if (error || !data) {
+    // Pas de réglages en BDD → on renvoie les défauts
+    console.warn(
+      "[ConductSettings/GET] Fallback DEFAULTS pour institutionId",
+      institutionId,
+      "error=",
+      (error as any)?.message
+    );
     return NextResponse.json(
       {
         institution_id: institutionId,
@@ -109,15 +174,44 @@ export async function GET(_req: NextRequest) {
     );
   }
 
-  return NextResponse.json(data as unknown as ConductSettingsRow, {
-    status: 200,
-  });
+  // ✅ On caste data pour calmer TypeScript (éviter GenericStringError)
+  const row = data as any;
+
+  const payload: ConductSettingsRow = {
+    institution_id: row.institution_id,
+    assiduite_max:
+      Number(row.assiduite_max) ?? DEFAULT_SETTINGS.assiduite_max,
+    tenue_max: Number(row.tenue_max) ?? DEFAULT_SETTINGS.tenue_max,
+    moralite_max: Number(row.moralite_max) ?? DEFAULT_SETTINGS.moralite_max,
+    discipline_max:
+      Number(row.discipline_max) ?? DEFAULT_SETTINGS.discipline_max,
+    points_per_absent_hour:
+      Number(row.points_per_absent_hour) ??
+      DEFAULT_SETTINGS.points_per_absent_hour,
+    absent_hours_zero_threshold:
+      Number(row.absent_hours_zero_threshold) ??
+      DEFAULT_SETTINGS.absent_hours_zero_threshold,
+    absent_hours_note_after_threshold:
+      Number(row.absent_hours_note_after_threshold) ??
+      DEFAULT_SETTINGS.absent_hours_note_after_threshold,
+    lateness_mode:
+      (row.lateness_mode as ConductSettingsRow["lateness_mode"]) ??
+      DEFAULT_SETTINGS.lateness_mode,
+    lateness_minutes_per_absent_hour:
+      Number(row.lateness_minutes_per_absent_hour) ??
+      DEFAULT_SETTINGS.lateness_minutes_per_absent_hour,
+    lateness_points_per_late:
+      Number(row.lateness_points_per_late) ??
+      DEFAULT_SETTINGS.lateness_points_per_late,
+  };
+
+  return NextResponse.json(payload, { status: 200 });
 }
 
-/* ───────────────── POST : sauvegarder / upsert ───────────────── */
+/* ───────────────── POST : sauvegarde / upsert (ADMIN ONLY) ───────────────── */
 
 export async function POST(req: NextRequest) {
-  const ctx = await getContext();
+  const ctx = await getContext(); // ⚠️ ici on reste sur admin / super_admin / educator
   if ("error" in ctx) return ctx.error;
   const { supabase, institutionId } = ctx;
 
@@ -205,6 +299,8 @@ export async function POST(req: NextRequest) {
     updated_at: new Date().toISOString(),
   };
 
+  console.log("[ConductSettings/POST] payload =", payload);
+
   const { data, error } = await supabase
     .from("conduct_settings")
     .upsert(payload, { onConflict: "institution_id" })
@@ -212,6 +308,7 @@ export async function POST(req: NextRequest) {
     .single();
 
   if (error) {
+    console.error("[ConductSettings/POST] error =", error.message);
     return NextResponse.json(
       { error: error.message ?? "Erreur enregistrement réglages" },
       { status: 500 }
