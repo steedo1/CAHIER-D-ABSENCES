@@ -35,13 +35,13 @@ type SubjectCoeffRow = {
 };
 
 type SubjectComponentRow = {
-  level: string;
   subject_id: string;
   subject_name: string;
   component_id: string; // id en base ou temp_xxx
   component_name: string; // libellé affiché (Ortho-Grammaire, Composition, …)
   coeff: number; // coeff_in_subject
-  code?: string; // optionnel si un jour tu veux le remettre
+  level?: string; // dimension purement UI (non stockée en base)
+  code?: string;
   order_index?: number;
   is_active?: boolean;
 };
@@ -395,9 +395,7 @@ export default function AdminSettingsPage() {
     () =>
       componentsTarget
         ? subjectComponents.filter(
-            (c) =>
-              c.level === componentsTarget.level &&
-              c.subject_id === componentsTarget.subject_id
+            (c) => c.subject_id === componentsTarget.subject_id
           )
         : [],
     [componentsTarget, subjectComponents]
@@ -1201,16 +1199,17 @@ export default function AdminSettingsPage() {
       const rows = Array.isArray(j.items) ? j.items : [];
       const mapped: SubjectComponentRow[] = rows.map(
         (row: any, idx: number) => ({
-          level: (row.level ?? "") ? String(row.level).trim() : "",
           subject_id: String(row.subject_id),
-          subject_name: String(
-            row.subject_name || row.parent_name || "Matière"
-          ),
-          component_id: String(row.component_id ?? row.id ?? `comp_${idx}`),
-          component_name: String(
-            row.component_name || row.label || "Sous-matière"
-          ),
-          coeff: Number(row.coeff ?? 0) || 0,
+          subject_name: String(row.subject_name || "Matière"),
+          component_id: String(row.id ?? `comp_${idx}`),
+          component_name: String(row.label || "Sous-matière"),
+          coeff:
+            Number(row.coeff_in_subject ?? row.coeff ?? 0) ||
+            0,
+          level: "", // la base ne stocke pas le niveau, dimension purement UI
+          code: row.code ? String(row.code) : undefined,
+          order_index: Number(row.order_index ?? idx + 1),
+          is_active: row.is_active !== false,
         })
       );
       setSubjectComponents(mapped);
@@ -1274,7 +1273,7 @@ export default function AdminSettingsPage() {
     );
   }
 
-  // ✅ NOUVELLE VERSION — envoie subject_id + items[] vers la route API
+  // ✅ version alignée avec la route : une seule liste de sous-matières par matière
   async function saveSubjectComponents(
     arg?: boolean | React.MouseEvent<HTMLButtonElement>
   ) {
@@ -1298,9 +1297,7 @@ export default function AdminSettingsPage() {
           return;
         }
         scope = subjectComponents.filter(
-          (c) =>
-            c.level === componentsTarget.level &&
-            c.subject_id === componentsTarget.subject_id
+          (c) => c.subject_id === componentsTarget.subject_id
         );
       }
 
@@ -1313,46 +1310,72 @@ export default function AdminSettingsPage() {
         return;
       }
 
-      // 2) Vérifier pour chaque (niveau, matière) que la somme des sous-coeffs = coeff parent
+      // 2) Vérifier, par matière, que la somme des sous-coeffs est cohérente
       const sums = new Map<
         string,
-        { sum: number; parent: number; subject_name: string; level: string }
+        { sum: number; subject_name: string }
       >();
+
       for (const c of scope) {
-        const key = `${c.level}__${c.subject_id}`;
-        const parentRow = subjectCoeffs.find(
-          (r) => r.level === c.level && r.subject_id === c.subject_id
-        );
-        const parentCoeff = parentRow?.coeff ?? 0;
+        const label = (c.component_name || "").trim();
+        if (!label) continue;
+
         const cleanCoeff =
           !Number.isFinite(c.coeff as any) || c.coeff < 0
             ? 0
             : Number(c.coeff.toFixed(2));
-        const existing = sums.get(key);
+
+        const existing = sums.get(c.subject_id);
         if (existing) {
           existing.sum += cleanCoeff;
         } else {
-          sums.set(key, {
+          sums.set(c.subject_id, {
             sum: cleanCoeff,
-            parent: parentCoeff,
             subject_name: c.subject_name,
-            level: c.level,
           });
         }
       }
 
       const bad: string[] = [];
-      sums.forEach((v) => {
-        if (v.sum > 0 && Math.abs(v.sum - v.parent) > 1e-6) {
-          bad.push(
-            `${v.subject_name} (${v.level}) : somme sous-matières ${v.sum} ≠ coeff matière ${v.parent}`
+
+      sums.forEach((info, subjectId) => {
+        let parents = subjectCoeffs.filter(
+          (r) => r.subject_id === subjectId
+        );
+
+        // En mode « modal », on ne vérifie que le niveau ciblé
+        if (targetOnly && componentsTarget) {
+          parents = parents.filter(
+            (r) => r.level === componentsTarget.level
           );
+        }
+
+        // Si aucun coeff défini pour cette matière, on laisse passer (cas limite)
+        if (parents.length === 0) return;
+
+        for (const parentRow of parents) {
+          const parentCoeff =
+            !Number.isFinite(parentRow.coeff as any) ||
+            parentRow.coeff < 0
+              ? 0
+              : Number(parentRow.coeff.toFixed(2));
+
+          if (
+            info.sum > 0 &&
+            Math.abs(info.sum - parentCoeff) > 1e-6
+          ) {
+            bad.push(
+              `${info.subject_name} (${
+                parentRow.level || "niveau ?"
+              }) : somme sous-matières ${info.sum} ≠ coeff matière ${parentCoeff}`
+            );
+          }
         }
       });
 
       if (bad.length > 0) {
         const msg =
-          "La somme des coefficients de sous-matières doit être égale au coefficient de la matière pour chaque niveau. Vérifiez : " +
+          "La somme des coefficients de sous-matières doit être égale au coefficient de la matière pour chaque niveau concerné. Vérifiez : " +
           bad.join(" ; ");
         setMsgComponents(msg);
         pushToast("error", msg);
@@ -1398,7 +1421,7 @@ export default function AdminSettingsPage() {
           short_label: label,
           coeff_in_subject: cleanCoeff,
           order_index,
-          is_active: true,
+          is_active: row.is_active !== false,
         });
       }
 
@@ -2842,9 +2865,7 @@ export default function AdminSettingsPage() {
                 ) : (
                   coeffRowsForSelectedLevel.map((sc) => {
                     const comps = subjectComponents.filter(
-                      (c) =>
-                        c.level === sc.level &&
-                        c.subject_id === sc.subject_id
+                      (c) => c.subject_id === sc.subject_id
                     );
                     const sum = comps.reduce(
                       (s, c) => s + (Number(c.coeff) || 0),
