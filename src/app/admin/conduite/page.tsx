@@ -1,4 +1,4 @@
-// src/app/admin/conduite/page.tsx
+// src/app/admin/conduite/page.tsx 
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
@@ -133,6 +133,9 @@ export default function ConduitePage() {
   const [conductSettings, setConductSettings] =
     useState<ConductSettings | null>(null);
 
+  // Nom de l'établissement (pour l'export PDF)
+  const [institutionName, setInstitutionName] = useState<string | null>(null);
+
   /* ───────── Chargement classes ───────── */
   useEffect(() => {
     fetch("/api/admin/classes?limit=500", { cache: "no-store" })
@@ -160,6 +163,52 @@ export default function ConduitePage() {
         // on garde les valeurs par défaut si ça échoue
       }
     })();
+  }, []);
+
+  /* ───────── Récupération nom établissement pour PDF ───────── */
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const body: any = document.body;
+        const fromData =
+          body?.dataset?.institutionName || body?.dataset?.institution || null;
+        const fromGlobal = (window as any).__MC_INSTITUTION_NAME__
+          ? String((window as any).__MC_INSTITUTION_NAME__)
+          : null;
+        const finalName = fromData || fromGlobal;
+
+        if (finalName && !cancelled) {
+          setInstitutionName(finalName);
+        }
+
+        // Fallback API si rien dans le DOM / global
+        if (!finalName) {
+          try {
+            const r = await fetch("/api/admin/institution/settings", {
+              cache: "no-store",
+            });
+            const j = await r.json().catch(() => ({}));
+            if (!cancelled && r.ok) {
+              const apiName = String((j as any)?.institution_name || "").trim();
+              if (apiName) {
+                setInstitutionName(apiName);
+              }
+            }
+          } catch {
+            // silencieux, pas bloquant
+          }
+        }
+      } catch {
+        // silencieux
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   /* ───────── Chargement périodes pour une année scolaire ───────── */
@@ -409,76 +458,267 @@ export default function ConduitePage() {
     URL.revokeObjectURL(url);
   }
 
+  // Export PDF — Moyenne de conduite
+  function exportPDF() {
+    if (typeof window === "undefined") return;
+    if (!classId || sortedItems.length === 0) return;
+
+    const inst = institutionName || "";
+    // Si jamais classLabel est vide, on tente de récupérer le nom à partir de la liste des classes
+    const className =
+      classLabel ||
+      classesOfLevel.find((c) => c.id === classId)?.name ||
+      "";
+
+    const academicYear =
+      selectedAcademicYear || currentAcademicYear || "";
+
+    // Trimestre / période
+    let periodLabel = "";
+    let periodRange = "";
+    if (selectedPeriodCode) {
+      const p = periods.find((per) => per.code === selectedPeriodCode);
+      if (p) {
+        periodLabel = p.short_label || p.label || p.code;
+        const fmtDate = (d: string | null) =>
+          d ? new Date(d).toLocaleDateString("fr-FR") : "";
+        const start = fmtDate(p.start_date);
+        const end = fmtDate(p.end_date);
+        if (start || end) {
+          periodRange =
+            start && end
+              ? `${start} au ${end}`
+              : start
+                ? `Depuis le ${start}`
+                : `Jusqu'au ${end}`;
+        }
+      }
+    } else if (from || to) {
+      // Si pas de période sélectionnée mais plage de dates
+      const fmtDate = (d: string) =>
+        d ? new Date(d).toLocaleDateString("fr-FR") : "";
+      const start = from ? fmtDate(from) : "";
+      const end = to ? fmtDate(to) : "";
+      periodLabel = "Plage de dates sélectionnée";
+      if (start || end) {
+        periodRange =
+          start && end
+            ? `${start} au ${end}`
+            : start
+              ? `Depuis le ${start}`
+              : `Jusqu'au ${end}`;
+      }
+    }
+
+    const title = "Moyenne de conduite";
+
+    // Sous-titre (ligne compactée)
+    const subtitleParts: string[] = [];
+    if (inst) subtitleParts.push(inst);
+    if (className) subtitleParts.push(className);
+    if (academicYear) subtitleParts.push(`Année scolaire ${academicYear}`);
+    if (periodLabel) subtitleParts.push(periodLabel);
+    const subtitle = subtitleParts.join(" — ");
+
+    // Bloc meta gauche / droite
+    const metaLeftLines: string[] = [];
+    if (className) metaLeftLines.push(`Classe : ${className}`);
+    if (periodLabel) {
+      metaLeftLines.push(
+        `Période : ${periodLabel}${
+          periodRange ? ` (${periodRange})` : ""
+        }`,
+      );
+    }
+    if (from || to) {
+      metaLeftLines.push(
+        `Plage de dates : ${from || "?"} au ${to || "?"}`,
+      );
+    }
+    const metaLeftHtml = metaLeftLines
+      .map((line) => `<div>${line}</div>`)
+      .join("");
+
+    const today = new Date().toLocaleDateString("fr-FR");
+    const metaRightLines: string[] = [];
+    if (inst) metaRightLines.push(`Établissement : ${inst}`);
+    if (academicYear) metaRightLines.push(`Année scolaire : ${academicYear}`);
+    metaRightLines.push(`Édité le : ${today}`);
+    const metaRightHtml = metaRightLines
+      .map((line) => `<div>${line}</div>`)
+      .join("");
+
+    // Lignes du tableau
+    const rowsHtml = sortedItems
+      .map((it, index) => {
+        const full = nomPrenom(it.full_name);
+        const ass = it.breakdown.assiduite.toFixed(2).replace(".", ",");
+        const ten = it.breakdown.tenue.toFixed(2).replace(".", ",");
+        const mor = it.breakdown.moralite.toFixed(2).replace(".", ",");
+        const dis = it.breakdown.discipline.toFixed(2).replace(".", ",");
+        const tot = it.total.toFixed(2).replace(".", ",");
+        return `<tr>
+<td>${index + 1}</td>
+<td>${full}</td>
+<td>${ass}</td>
+<td>${ten}</td>
+<td>${mor}</td>
+<td>${dis}</td>
+<td><strong>${tot}</strong></td>
+</tr>`;
+      })
+      .join("");
+
+    const w = window.open("", "_blank", "noopener,noreferrer");
+    if (!w) {
+      return;
+    }
+
+    const doc = w.document;
+    doc.title = title;
+
+    const html = `<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charSet="utf-8" />
+<title>${title}</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font-size: 12px;
+    color: #0f172a;
+    margin: 24px;
+  }
+  h1 {
+    font-size: 18px;
+    text-align: center;
+    margin: 0 0 4px;
+    text-transform: uppercase;
+  }
+  .subtitle {
+    text-align: center;
+    font-size: 11px;
+    color: #475569;
+    margin-bottom: 16px;
+  }
+  .meta {
+    display: flex;
+    justify-content: space-between;
+    font-size: 11px;
+    margin-bottom: 12px;
+    border-bottom: 1px solid #e5e7eb;
+    padding-bottom: 8px;
+  }
+  .meta-left, .meta-right {
+    max-width: 48%;
+  }
+  .meta-right {
+    text-align: right;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 8px;
+  }
+  th, td {
+    border: 1px solid #cbd5e1;
+    padding: 4px 6px;
+    text-align: left;
+    vertical-align: top;
+  }
+  th {
+    background-color: #e5e7eb;
+    font-weight: 600;
+  }
+  tfoot td {
+    border: none;
+    font-size: 10px;
+    color: #64748b;
+    padding-top: 8px;
+  }
+  footer {
+    margin-top: 12px;
+    font-size: 10px;
+    color: #94a3b8;
+    text-align: right;
+  }
+  @media print {
+    body {
+      margin: 16mm;
+    }
+    footer {
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      right: 0;
+    }
+  }
+</style>
+</head>
+<body>
+  <h1>${title.toUpperCase()}</h1>
+  <div class="subtitle">
+    ${subtitle || ""}
+  </div>
+
+  <div class="meta">
+    <div class="meta-left">
+      ${metaLeftHtml}
+    </div>
+    <div class="meta-right">
+      ${metaRightHtml}
+    </div>
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th>N°</th>
+        <th>Élève</th>
+        <th>Assiduité (/${maxes.ass})</th>
+        <th>Tenue (/${maxes.ten})</th>
+        <th>Moralité (/${maxes.mor})</th>
+        <th>Discipline (/${maxes.dis})</th>
+        <th>Moyenne (/${maxes.total})</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${rowsHtml}
+    </tbody>
+  </table>
+
+  <footer>
+    Fiche générée depuis Mon Cahier — ${today}
+  </footer>
+</body>
+</html>`;
+
+    doc.open();
+    doc.write(html);
+    doc.close();
+
+    w.focus();
+    w.print();
+  }
+
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-semibold">Conduite — Moyennes par élève</h1>
         <p className="text-slate-600">
-          Sélectionne un <b>niveau</b>, une <b>classe</b>, une{" "}
-          <b>année scolaire</b> et une <b>période d&apos;évaluation</b> (trimestre,
-          séquence, etc.), puis <i>Valider</i>. Les retraits automatiques sont
-          appliqués.
+          Sélectionne d&apos;abord une <b>année scolaire</b> et une{" "}
+          <b>période d&apos;évaluation</b> (trimestre, séquence…), puis le{" "}
+          <b>niveau</b> et la <b>classe</b>. Les dates <b>Du</b> / <b>Au</b> sont
+          réglées automatiquement par la période mais restent modifiables. Ensuite,
+          clique sur <i>Valider</i>.
         </p>
       </div>
 
       <Card title="Filtres">
-        {/* Ligne 1 : dates + niveau + classe */}
+        {/* Ligne 1 : année scolaire + période + niveau + classe */}
         <div className="grid grid-cols-1 gap-3 md:grid-cols-6">
-          <div>
-            <div className="mb-1 text-xs text-slate-500">Du</div>
-            <Input
-              type="date"
-              value={from}
-              onChange={(e) => {
-                setSelectedPeriodCode("");
-                setFrom(e.target.value);
-              }}
-            />
-          </div>
-          <div>
-            <div className="mb-1 text-xs text-slate-500">Au</div>
-            <Input
-              type="date"
-              value={to}
-              onChange={(e) => {
-                setSelectedPeriodCode("");
-                setTo(e.target.value);
-              }}
-            />
-          </div>
-          <div className="md:col-span-2">
-            <div className="mb-1 text-xs text-slate-500">Niveau</div>
-            <Select
-              value={level}
-              onChange={(e) => setLevel(e.target.value)}
-            >
-              <option value="">— Sélectionner un niveau —</option>
-              {levels.map((l) => (
-                <option key={l} value={l}>
-                  {l}
-                </option>
-              ))}
-            </Select>
-          </div>
-          <div className="md:col-span-2">
-            <div className="mb-1 text-xs text-slate-500">Classe</div>
-            <Select
-              value={classId}
-              onChange={(e) => setClassId(e.target.value)}
-              disabled={!level}
-            >
-              <option value="">— Sélectionner une classe —</option>
-              {classesOfLevel.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </Select>
-          </div>
-        </div>
-
-        {/* Ligne 2 : année scolaire + période bulletin */}
-        <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-6">
+          {/* Année scolaire */}
           <div className="md:col-span-2">
             <div className="mb-1 text-xs text-slate-500">Année scolaire</div>
             <Select
@@ -497,11 +737,11 @@ export default function ConduitePage() {
               )}
             </Select>
             <div className="mt-1 text-[11px] text-slate-500">
-              Choisis l&apos;année scolaire pour laquelle tu veux voir les
-              périodes (trimestres, séquences…).
+              Choisis d&apos;abord l&apos;année scolaire de travail.
             </div>
           </div>
 
+          {/* Période d'évaluation */}
           <div className="md:col-span-2">
             <div className="mb-1 text-xs text-slate-500">
               Période d&apos;évaluation (trimestre / séquence)
@@ -523,14 +763,72 @@ export default function ConduitePage() {
                 ))}
             </Select>
             <div className="mt-1 text-[11px] text-slate-500">
-              En choisissant une période (par ex.{" "}
-              <i>2024-2025 — Trimestre 1</i>), les dates <b>Du</b> et <b>Au</b>{" "}
-              sont réglées automatiquement.
+              En choisissant une période, les dates <b>Du</b> et <b>Au</b> sont
+              réglées automatiquement.
             </div>
           </div>
 
+          {/* Niveau */}
+          <div>
+            <div className="mb-1 text-xs text-slate-500">Niveau</div>
+            <Select
+              value={level}
+              onChange={(e) => setLevel(e.target.value)}
+            >
+              <option value="">— Sélectionner un niveau —</option>
+              {levels.map((l) => (
+                <option key={l} value={l}>
+                  {l}
+                </option>
+              ))}
+            </Select>
+          </div>
+
+          {/* Classe */}
+          <div>
+            <div className="mb-1 text-xs text-slate-500">Classe</div>
+            <Select
+              value={classId}
+              onChange={(e) => setClassId(e.target.value)}
+              disabled={!level}
+            >
+              <option value="">— Sélectionner une classe —</option>
+              {classesOfLevel.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </Select>
+          </div>
+        </div>
+
+        {/* Ligne 2 : dates + boutons période */}
+        <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-6">
+          <div className="md:col-span-2">
+            <div className="mb-1 text-xs text-slate-500">Du</div>
+            <Input
+              type="date"
+              value={from}
+              onChange={(e) => {
+                setSelectedPeriodCode("");
+                setFrom(e.target.value);
+              }}
+            />
+          </div>
+          <div className="md:col-span-2">
+            <div className="mb-1 text-xs text-slate-500">Au</div>
+            <Input
+              type="date"
+              value={to}
+              onChange={(e) => {
+                setSelectedPeriodCode("");
+                setTo(e.target.value);
+              }}
+            />
+          </div>
+
           <div className="md:col-span-2 flex items-end">
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
               <Button
                 type="button"
                 onClick={applyCurrentPeriodToDates}
@@ -559,7 +857,7 @@ export default function ConduitePage() {
           </div>
         )}
 
-        <div className="mt-4 flex gap-2">
+        <div className="mt-4 flex flex-wrap gap-2">
           <Button onClick={validate} disabled={!classId || loading}>
             {loading ? "…" : "Valider"}
           </Button>
@@ -568,6 +866,13 @@ export default function ConduitePage() {
             disabled={!classId || loading || sortedItems.length === 0}
           >
             Exporter CSV
+          </Button>
+          <Button
+            type="button"
+            onClick={exportPDF}
+            disabled={!classId || loading || sortedItems.length === 0}
+          >
+            Exporter PDF
           </Button>
         </div>
       </Card>

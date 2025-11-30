@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   Calendar,
   Filter,
@@ -198,6 +198,14 @@ type GradePeriod = {
   order_index: number;
 };
 
+/* ───────── Années scolaires ───────── */
+type AcademicYear = {
+  id: string;
+  code: string;
+  label: string;
+  is_current: boolean;
+};
+
 /* ───────── Formatters & constantes ───────── */
 const df = new Intl.DateTimeFormat("fr-FR", {
   day: "2-digit",
@@ -312,6 +320,11 @@ export default function AdminNotesEvaluationsPage() {
   const [subjects, setSubjects] = useState<SubjectItem[]>([]);
   const [selectedSubjectId, setSelectedSubjectId] = useState<string>("");
 
+  // Années scolaires (depuis la BDD)
+  const [academicYears, setAcademicYears] = useState<AcademicYear[]>([]);
+  const [loadingAcademicYears, setLoadingAcademicYears] = useState(false);
+  const [academicYearError, setAcademicYearError] = useState<string | null>(null);
+
   // Périodes de bulletin (grade_periods)
   const [periods, setPeriods] = useState<GradePeriod[]>([]);
   const [loadingPeriods, setLoadingPeriods] = useState(false);
@@ -338,39 +351,64 @@ export default function AdminNotesEvaluationsPage() {
   const [matrixLoading, setMatrixLoading] = useState(false);
   const [matrixError, setMatrixError] = useState<string | null>(null);
 
-  /* Liste déroulante des années scolaires disponibles (glissante sur quelques années) */
-  const academicYearOptions = useMemo(() => {
-    const now = new Date();
-    const month = now.getMonth() + 1;
-    const currentStartYear = month >= 8 ? now.getFullYear() : now.getFullYear() - 1;
-
-    const options: { code: string; label: string }[] = [];
-    // On propose par exemple les 7 dernières années scolaires
-    for (let offset = 0; offset < 7; offset++) {
-      const startYear = currentStartYear - offset;
-      const endYear = startYear + 1;
-      const code = `${startYear}-${endYear}`;
-      options.push({ code, label: code });
-    }
-    return options;
-  }, []);
-
-  // Initialiser l'année scolaire par défaut et les dates si rien n'est saisi
-  useEffect(() => {
-    if (selectedYearCode || !academicYearOptions.length) return;
-    const def = academicYearOptions[0];
-    if (!def) return;
-    setSelectedYearCode(def.code);
-    if (!from && !to) {
-      const startYear = parseInt(def.code.split("-")[0] || "", 10);
-      if (Number.isFinite(startYear)) {
-        const start = `${startYear}-08-01`;
-        const end = `${startYear + 1}-07-31`;
-        setFrom(start);
-        setTo(end);
+  /* Charger les années scolaires de l'établissement */
+  async function loadAcademicYears() {
+    setLoadingAcademicYears(true);
+    setAcademicYearError(null);
+    try {
+      const res = await fetch("/api/admin/academic-years", { cache: "no-store" });
+      const j = await res.json().catch(() => ({} as any));
+      if (!res.ok || !j?.ok) {
+        throw new Error(j?.error || "Échec du chargement des années scolaires.");
       }
+      const rows = Array.isArray(j.items) ? j.items : [];
+      const mapped: AcademicYear[] = rows
+        .map((row: any, idx: number): AcademicYear => ({
+          id: String(row.id ?? row.code ?? `row_${idx}`),
+          code: String(row.code || "").trim(),
+          label: String(row.label || row.code || "").trim() || "Année scolaire",
+          is_current: !!row.is_current,
+        }))
+        .filter((y: AcademicYear) => !!y.code);
+
+      // tri : année en cours d'abord, puis codes décroissants
+      mapped.sort((a: AcademicYear, b: AcademicYear) => {
+        if (a.is_current && !b.is_current) return -1;
+        if (!a.is_current && b.is_current) return 1;
+        return b.code.localeCompare(a.code);
+      });
+
+      setAcademicYears(mapped);
+
+      // initialiser l'année sélectionnée si vide
+      if (!selectedYearCode && mapped.length > 0) {
+        const current = mapped.find((y: AcademicYear) => y.is_current) ?? mapped[0];
+        setSelectedYearCode(current.code);
+        if (!from && !to) {
+          const startYear = parseInt(current.code.split("-")[0] || "", 10);
+          if (Number.isFinite(startYear)) {
+            const start = `${startYear}-08-01`;
+            const end = `${startYear + 1}-07-31`;
+            setFrom(start);
+            setTo(end);
+          }
+        }
+      }
+    } catch (e: any) {
+      setAcademicYearError(
+        e?.message ||
+          "Impossible de charger les années scolaires. Vérifiez les paramètres."
+      );
+      setAcademicYears([]);
+    } finally {
+      setLoadingAcademicYears(false);
     }
-  }, [academicYearOptions, selectedYearCode, from, to]);
+  }
+
+  useEffect(() => {
+    loadAcademicYears();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   /* Charger classes (comme sur la matrice d'absences) */
   useEffect(() => {
@@ -397,7 +435,7 @@ export default function AdminNotesEvaluationsPage() {
       const res = await fetch("/api/admin/institution/grading-periods", {
         cache: "no-store",
       });
-      const j = await res.json().catch(() => ({}));
+      const j = await res.json().catch(() => ({} as any));
       if (!res.ok || !j?.ok) {
         throw new Error(j?.error || "Échec du chargement des périodes de bulletin.");
       }
@@ -415,7 +453,7 @@ export default function AdminNotesEvaluationsPage() {
         }))
         .filter((p: GradePeriod) => !!p.code);
 
-      mapped.sort((a, b) => a.order_index - b.order_index);
+      mapped.sort((a: GradePeriod, b: GradePeriod) => a.order_index - b.order_index);
       setPeriods(mapped);
     } catch (e: any) {
       const m =
@@ -738,19 +776,21 @@ export default function AdminNotesEvaluationsPage() {
     const classLabel = selectedClass?.name || "";
     const subjectName = selectedSubject?.name || "";
 
-    // Année scolaire estimée à partir de la première date connue
-    const sampleDateStr =
-      from || to || matrixEvals[0]?.eval_date || new Date().toISOString();
-    let academicYearLabel = "";
-    try {
-      const d = new Date(sampleDateStr);
-      if (!Number.isNaN(d.getTime())) {
-        const month = d.getMonth() + 1;
-        const startYear = month >= 8 ? d.getFullYear() : d.getFullYear() - 1;
-        academicYearLabel = `${startYear}-${startYear + 1}`;
+    // Année scolaire : d'abord le filtre choisi, sinon estimation sur les dates
+    let academicYearLabel = selectedYearCode || "";
+    if (!academicYearLabel) {
+      const sampleDateStr =
+        from || to || matrixEvals[0]?.eval_date || new Date().toISOString();
+      try {
+        const d = new Date(sampleDateStr);
+        if (!Number.isNaN(d.getTime())) {
+          const month = d.getMonth() + 1;
+          const startYear = month >= 8 ? d.getFullYear() : d.getFullYear() - 1;
+          academicYearLabel = `${startYear}-${startYear + 1}`;
+        }
+      } catch {
+        academicYearLabel = "";
       }
-    } catch {
-      academicYearLabel = "";
     }
 
     const periodLabel =
@@ -1084,11 +1124,16 @@ export default function AdminNotesEvaluationsPage() {
         <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
           <div className="md:col-span-2">
             <div className="mb-1 text-xs text-slate-500">Année scolaire</div>
-            <Select value={selectedYearCode} onChange={handleYearChange}>
+            <Select
+              value={selectedYearCode}
+              onChange={handleYearChange}
+              disabled={loadingAcademicYears}
+            >
               <option value="">— Toutes les années —</option>
-              {academicYearOptions.map((y) => (
-                <option key={y.code} value={y.code}>
-                  {y.label}
+              {academicYears.map((y: AcademicYear) => (
+                <option key={y.id} value={y.code}>
+                  {y.label || y.code}
+                  {y.is_current ? " (en cours)" : ""}
                 </option>
               ))}
             </Select>
@@ -1098,6 +1143,12 @@ export default function AdminNotesEvaluationsPage() {
             </div>
           </div>
         </div>
+
+        {academicYearError && (
+          <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-800">
+            {academicYearError}
+          </div>
+        )}
 
         <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-7">
           <div className="md:col-span-2">
@@ -1255,6 +1306,7 @@ export default function AdminNotesEvaluationsPage() {
               setItems([]);
               setMeta({ page: 1, limit: 30, total: 0 });
               setErrorMsg(null);
+              setAcademicYearError(null);
 
               // reset aussi la matrice
               setMatrixEvals([]);

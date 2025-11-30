@@ -328,7 +328,7 @@ function StudentBulletinCard({
       style={{ pageBreakAfter: "always" }}
     >
       {/* En-tête établissement */}
-      <div className="flex items-start justify-between gap-4 border-b border-slate-400 pb-2 mb-2">
+      <div className="mb-2 flex items-start justify-between gap-4 border-b border-slate-400 pb-2">
         <div className="flex-1">
           <div className="font-semibold uppercase">
             {institution?.institution_name || "Établissement"}
@@ -505,7 +505,17 @@ function StudentBulletinCard({
             </td>
             <td className="border border-slate-400 px-1 py-0.5" />
             <td className="border border-slate-400 px-1 py-0.5 text-center">
-              {formatNumber(coeffTotal, 0)}
+              {formatNumber(
+                subjects.reduce(
+                  (acc, s) =>
+                    acc +
+                    (Number.isFinite(s.coeff_bulletin)
+                      ? s.coeff_bulletin
+                      : 0),
+                  0
+                ),
+                0
+              )}
             </td>
             <td className="border border-slate-400 px-1 py-0.5" />
           </tr>
@@ -515,7 +525,7 @@ function StudentBulletinCard({
       {/* Bloc moyennes & résultats de la classe */}
       <div className="grid grid-cols-3 gap-2 text-[0.7rem]">
         <div className="border border-slate-400 p-2">
-          <div className="font-semibold mb-1">Moyenne trimestrielle</div>
+          <div className="mb-1 font-semibold">Moyenne trimestrielle</div>
           <div>
             Moyenne :{" "}
             <span className="font-bold">
@@ -531,14 +541,14 @@ function StudentBulletinCard({
         </div>
 
         <div className="border border-slate-400 p-2">
-          <div className="font-semibold mb-1">Résultats de la classe</div>
+          <div className="mb-1 font-semibold">Résultats de la classe</div>
           <div>Moyenne générale : {formatNumber(stats.classAvg)}</div>
           <div>Moyenne la plus forte : {formatNumber(stats.highest)}</div>
           <div>Moyenne la plus faible : {formatNumber(stats.lowest)}</div>
         </div>
 
         <div className="border border-slate-400 p-2">
-          <div className="font-semibold mb-1">Observations</div>
+          <div className="mb-1 font-semibold">Observations</div>
           <div className="text-[0.65rem] text-slate-500">
             (Appréciations du conseil de classe, mentions, sanctions… seront
             ajoutées dans une étape suivante.)
@@ -605,11 +615,15 @@ export default function BulletinsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /* Quand on change de classe, si l'année scolaire est connue, on la sélectionne par défaut */
+  /* Quand on change de classe, si l'année scolaire est connue, on la sélectionne par défaut
+     et on reset la période + les dates pour rester cohérent avec le filtre Année/Période. */
   useEffect(() => {
     const cls = classes.find((c) => c.id === selectedClassId);
     if (cls?.academic_year) {
       setSelectedAcademicYear(cls.academic_year);
+      setSelectedPeriodId("");
+      setDateFrom("");
+      setDateTo("");
     }
   }, [selectedClassId, classes]);
 
@@ -658,10 +672,10 @@ export default function BulletinsPage() {
     run();
   }, []);
 
-  /* Années scolaires disponibles à partir des périodes */
+  /* Années scolaires disponibles à partir des périodes (dans la BDD) */
   const academicYears = useMemo(() => {
     const set = new Set<string>();
-    periods.forEach((p) => {
+    periods.forEach((p: GradePeriod) => {
       if (p.academic_year) set.add(p.academic_year);
     });
     return Array.from(set).sort();
@@ -678,7 +692,6 @@ export default function BulletinsPage() {
     if (!selectedPeriodId) return;
     const p = periods.find((pp) => pp.id === selectedPeriodId);
     if (!p) return;
-    // On part du principe que start_date / end_date sont en "YYYY-MM-DD"
     setDateFrom(p.start_date || "");
     setDateTo(p.end_date || "");
   }, [selectedPeriodId, periods]);
@@ -792,37 +805,18 @@ export default function BulletinsPage() {
         </div>
       </div>
 
-      {/* Filtres (non imprimés) */}
+      {/* Filtres : ANNEE SCOLAIRE d’abord, puis PÉRIODE, puis CLASSE, puis dates */}
       <div className="grid gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm print:hidden md:grid-cols-6">
-        {/* Classe */}
-        <div className="md:col-span-3">
-          <label className="mb-1 block text-xs font-semibold uppercase text-slate-500">
-            Classe
-          </label>
-          <Select
-            value={selectedClassId}
-            onChange={(e) => setSelectedClassId(e.target.value)}
-            disabled={classesLoading}
-          >
-            <option value="">Sélectionner une classe…</option>
-            {classes.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-                {c.level ? ` (${c.level})` : ""}
-              </option>
-            ))}
-          </Select>
-        </div>
-
-        {/* Année scolaire (à partir des périodes) */}
-        <div className="md:col-span-1">
+        {/* Année scolaire */}
+        <div className="md:col-span-2">
           <label className="mb-1 block text-xs font-semibold uppercase text-slate-500">
             Année scolaire
           </label>
           <Select
             value={selectedAcademicYear}
             onChange={(e) => {
-              setSelectedAcademicYear(e.target.value);
+              const year = e.target.value;
+              setSelectedAcademicYear(year);
               setSelectedPeriodId("");
               setDateFrom("");
               setDateTo("");
@@ -840,6 +834,10 @@ export default function BulletinsPage() {
               </option>
             ))}
           </Select>
+          <p className="mt-1 text-[0.7rem] text-slate-500">
+            Filtre les périodes ci-dessous. Si vous choisissez une période, les
+            dates sont remplies automatiquement.
+          </p>
         </div>
 
         {/* Période (trimestre / séquence) */}
@@ -866,6 +864,34 @@ export default function BulletinsPage() {
               </option>
             ))}
           </Select>
+          <p className="mt-1 text-[0.7rem] text-slate-500">
+            La sélection d&apos;une période positionne automatiquement les dates
+            de début et de fin du bulletin.
+          </p>
+        </div>
+
+        {/* Classe */}
+        <div className="md:col-span-2">
+          <label className="mb-1 block text-xs font-semibold uppercase text-slate-500">
+            Classe
+          </label>
+          <Select
+            value={selectedClassId}
+            onChange={(e) => setSelectedClassId(e.target.value)}
+            disabled={classesLoading}
+          >
+            <option value="">Sélectionner une classe…</option>
+            {classes.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+                {c.level ? ` (${c.level})` : ""}
+              </option>
+            ))}
+          </Select>
+          <p className="mt-1 text-[0.7rem] text-slate-500">
+            Changer de classe met à jour l&apos;année scolaire par défaut et vous
+            laisse choisir la période.
+          </p>
         </div>
 
         {/* Dates (toujours visibles, remplies automatiquement si période choisie) */}
@@ -951,8 +977,9 @@ export default function BulletinsPage() {
       {/* Bulletins par élève (imprimables) */}
       {items.length === 0 && !bulletinLoading && (
         <div className="rounded-xl border border-slate-200 bg-white px-3 py-4 text-sm text-slate-600">
-          Aucun bulletin à afficher. Choisissez une classe et une période puis
-          cliquez sur <span className="font-semibold">Recharger</span>.
+          Aucun bulletin à afficher. Choisissez une classe, une année scolaire,
+          une période puis cliquez sur{" "}
+          <span className="font-semibold">Recharger</span>.
         </div>
       )}
 
@@ -973,7 +1000,7 @@ export default function BulletinsPage() {
           />
         ))}
 
-      {/* Petite note en bas de page (non imprimée) */}
+      {/* Note bas de page (non imprimée) */}
       <div className="mt-4 text-center text-[0.65rem] text-slate-400 print:hidden">
         Première version simplifiée des bulletins. Les blocs d&apos;assiduité,
         mentions et sanctions seront ajoutés dans les prochaines étapes.
