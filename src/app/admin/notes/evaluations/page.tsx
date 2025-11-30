@@ -107,7 +107,13 @@ function escapeHtml(str: string | null | undefined) {
 /* ───────── Types ───────── */
 type EvalKind = "devoir" | "interro_ecrite" | "interro_orale";
 
-type ClassItem = { id: string; name: string; label?: string | null; level: string | null };
+type ClassItem = {
+  id: string;
+  name: string;
+  label?: string | null;
+  level: string | null;
+  academic_year?: string | null;
+};
 type SubjectItem = { id: string; name: string };
 
 type EvalItem = {
@@ -196,6 +202,7 @@ type GradePeriod = {
   end_date: string | null;
   is_active: boolean;
   order_index: number;
+  academic_year?: string | null;
 };
 
 /* ───────── Années scolaires ───────── */
@@ -320,9 +327,7 @@ export default function AdminNotesEvaluationsPage() {
   const [subjects, setSubjects] = useState<SubjectItem[]>([]);
   const [selectedSubjectId, setSelectedSubjectId] = useState<string>("");
 
-  // Années scolaires (depuis la BDD)
-  const [academicYears, setAcademicYears] = useState<AcademicYear[]>([]);
-  const [loadingAcademicYears, setLoadingAcademicYears] = useState(false);
+  // Années scolaires (dérivées des classes & périodes)
   const [academicYearError, setAcademicYearError] = useState<string | null>(null);
 
   // Périodes de bulletin (grade_periods)
@@ -330,6 +335,44 @@ export default function AdminNotesEvaluationsPage() {
   const [loadingPeriods, setLoadingPeriods] = useState(false);
   const [periodError, setPeriodError] = useState<string | null>(null);
   const [selectedPeriodCode, setSelectedPeriodCode] = useState<string>("");
+
+  // état "chargement années" conservé pour l'UI, mais désormais dérivé localement
+  const loadingAcademicYears = false;
+
+  // Années scolaires calculées à partir des classes et des périodes
+  const academicYears: AcademicYear[] = useMemo(() => {
+    const yearSet = new Set<string>();
+
+    for (const c of allClasses) {
+      const raw =
+        (c as any).academic_year != null
+          ? (c as any).academic_year
+          : (c as any).year_code;
+      if (raw) {
+        yearSet.add(String(raw).trim());
+      }
+    }
+    for (const p of periods) {
+      const raw =
+        p.academic_year != null
+          ? p.academic_year
+          : (p as any).academic_year ?? null;
+      if (raw) {
+        yearSet.add(String(raw).trim());
+      }
+    }
+
+    const years = Array.from(yearSet).sort((a, b) =>
+      a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" })
+    );
+
+    return years.map((code) => ({
+      id: code,
+      code,
+      label: code,
+      is_current: false,
+    }));
+  }, [allClasses, periods]);
 
   // Données (liste des évaluations)
   const [items, setItems] = useState<EvalItem[]>([]);
@@ -350,65 +393,6 @@ export default function AdminNotesEvaluationsPage() {
   const [matrixMarks, setMatrixMarks] = useState<MatrixMarks>({});
   const [matrixLoading, setMatrixLoading] = useState(false);
   const [matrixError, setMatrixError] = useState<string | null>(null);
-
-  /* Charger les années scolaires de l'établissement */
-  async function loadAcademicYears() {
-    setLoadingAcademicYears(true);
-    setAcademicYearError(null);
-    try {
-      const res = await fetch("/api/admin/academic-years", { cache: "no-store" });
-      const j = await res.json().catch(() => ({} as any));
-      if (!res.ok || !j?.ok) {
-        throw new Error(j?.error || "Échec du chargement des années scolaires.");
-      }
-      const rows = Array.isArray(j.items) ? j.items : [];
-      const mapped: AcademicYear[] = rows
-        .map((row: any, idx: number): AcademicYear => ({
-          id: String(row.id ?? row.code ?? `row_${idx}`),
-          code: String(row.code || "").trim(),
-          label: String(row.label || row.code || "").trim() || "Année scolaire",
-          is_current: !!row.is_current,
-        }))
-        .filter((y: AcademicYear) => !!y.code);
-
-      // tri : année en cours d'abord, puis codes décroissants
-      mapped.sort((a: AcademicYear, b: AcademicYear) => {
-        if (a.is_current && !b.is_current) return -1;
-        if (!a.is_current && b.is_current) return 1;
-        return b.code.localeCompare(a.code);
-      });
-
-      setAcademicYears(mapped);
-
-      // initialiser l'année sélectionnée si vide
-      if (!selectedYearCode && mapped.length > 0) {
-        const current = mapped.find((y: AcademicYear) => y.is_current) ?? mapped[0];
-        setSelectedYearCode(current.code);
-        if (!from && !to) {
-          const startYear = parseInt(current.code.split("-")[0] || "", 10);
-          if (Number.isFinite(startYear)) {
-            const start = `${startYear}-08-01`;
-            const end = `${startYear + 1}-07-31`;
-            setFrom(start);
-            setTo(end);
-          }
-        }
-      }
-    } catch (e: any) {
-      setAcademicYearError(
-        e?.message ||
-          "Impossible de charger les années scolaires. Vérifiez les paramètres."
-      );
-      setAcademicYears([]);
-    } finally {
-      setLoadingAcademicYears(false);
-    }
-  }
-
-  useEffect(() => {
-    loadAcademicYears();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   /* Charger classes (comme sur la matrice d'absences) */
   useEffect(() => {
@@ -432,14 +416,29 @@ export default function AdminNotesEvaluationsPage() {
     setLoadingPeriods(true);
     setPeriodError(null);
     try {
-      const res = await fetch("/api/admin/institution/grading-periods", {
-        cache: "no-store",
-      });
-      const j = await res.json().catch(() => ({} as any));
-      if (!res.ok || !j?.ok) {
-        throw new Error(j?.error || "Échec du chargement des périodes de bulletin.");
+      const params = new URLSearchParams();
+      if (selectedYearCode) {
+        params.set("academic_year", selectedYearCode);
       }
-      const rows = Array.isArray(j.items) ? j.items : [];
+      const qs = params.toString();
+      const res = await fetch(
+        "/api/admin/institution/grading-periods" + (qs ? `?${qs}` : ""),
+        {
+          cache: "no-store",
+        }
+      );
+      const j = await res.json().catch(() => ({} as any));
+      if (!res.ok) {
+        throw new Error(
+          (j && (j.error as string)) ||
+            "Échec du chargement des périodes de bulletin."
+        );
+      }
+      const rows = Array.isArray(j)
+        ? j
+        : Array.isArray(j.items)
+        ? j.items
+        : [];
       const mapped: GradePeriod[] = rows
         .map((row: any, idx: number) => ({
           id: String(row.id ?? row.code ?? `row_${idx}`),
@@ -450,6 +449,9 @@ export default function AdminNotesEvaluationsPage() {
           end_date: row.end_date ? String(row.end_date).slice(0, 10) : null,
           is_active: row.is_active !== false,
           order_index: Number(row.order_index ?? idx + 1),
+          academic_year: row.academic_year
+            ? String(row.academic_year).trim()
+            : null,
         }))
         .filter((p: GradePeriod) => !!p.code);
 
@@ -469,7 +471,7 @@ export default function AdminNotesEvaluationsPage() {
   useEffect(() => {
     loadPeriods();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [selectedYearCode]);
 
   const activePeriod = useMemo(() => {
     if (!selectedPeriodCode) return null;
@@ -502,6 +504,25 @@ export default function AdminNotesEvaluationsPage() {
     () => subjects.find((s) => s.id === selectedSubjectId) || null,
     [subjects, selectedSubjectId]
   );
+
+  // Initialiser l'année scolaire par défaut à partir des années disponibles
+  useEffect(() => {
+    if (selectedYearCode || !academicYears.length) return;
+
+    const last = academicYears[academicYears.length - 1];
+    if (!last?.code) return;
+
+    const code = last.code;
+    setSelectedYearCode(code);
+
+    if (!from && !to) {
+      const startYear = parseInt(code.split("-")[0] || "", 10);
+      if (Number.isFinite(startYear)) {
+        setFrom(`${startYear}-08-01`);
+        setTo(`${startYear + 1}-07-31`);
+      }
+    }
+  }, [academicYears, selectedYearCode, from, to]);
 
   /* Appliquer la période bulletin actuelle aux dates Du/Au */
   function applyCurrentPeriodToDates() {

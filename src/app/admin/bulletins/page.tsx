@@ -1,4 +1,4 @@
-// src/app/admin/bulletins/page.tsx
+// src/app/admin/notes/bulletins/page.tsx
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
@@ -135,8 +135,39 @@ type GradePeriod = {
   label: string | null;
   short_label: string | null;
   start_date: string; // YYYY-MM-DD
-  end_date: string;   // YYYY-MM-DD
+  end_date: string; // YYYY-MM-DD
   coeff: number | null;
+};
+
+type ConductRubricMax = {
+  assiduite: number;
+  tenue: number;
+  moralite: number;
+  discipline: number;
+};
+
+type ConductItem = {
+  student_id: string;
+  full_name: string;
+  breakdown: {
+    assiduite: number;
+    tenue: number;
+    moralite: number;
+    discipline: number;
+  };
+  total: number;
+  appreciation: string;
+  absence_count?: number;
+  tardy_count?: number;
+  absence_minutes?: number;
+  tardy_minutes?: number;
+};
+
+type ConductSummaryResponse = {
+  class_label: string;
+  rubric_max: ConductRubricMax;
+  total_max: number;
+  items: ConductItem[];
 };
 
 /* ───────── UI helpers ───────── */
@@ -273,6 +304,9 @@ type StudentBulletinCardProps = {
   period: BulletinResponse["period"];
   institution: InstitutionSettings | null;
   stats: ClassStats;
+  conduct?: ConductItem | null;
+  conductRubricMax?: ConductRubricMax;
+  conductTotalMax?: number;
 };
 
 function StudentBulletinCard({
@@ -285,6 +319,9 @@ function StudentBulletinCard({
   period,
   institution,
   stats,
+  conduct,
+  conductRubricMax,
+  conductTotalMax,
 }: StudentBulletinCardProps) {
   const coeffTotal = useMemo(
     () =>
@@ -550,9 +587,92 @@ function StudentBulletinCard({
         <div className="border border-slate-400 p-2">
           <div className="mb-1 font-semibold">Observations</div>
           <div className="text-[0.65rem] text-slate-500">
-            (Appréciations du conseil de classe, mentions, sanctions… seront
-            ajoutées dans une étape suivante.)
+            Zone réservée aux appréciations du conseil de classe, mentions et
+            sanctions.
           </div>
+        </div>
+      </div>
+
+      {/* Bloc bilan / discipline / signatures (mise en forme bulletin papier) */}
+      <div className="mt-3 grid grid-cols-2 gap-2 text-[0.7rem]">
+        <div className="border border-slate-400 p-2 min-h-[80px]">
+          <div className="mb-1 font-semibold uppercase">Bilan du trimestre</div>
+          <div className="text-[0.65rem] text-slate-500">
+            Appréciation générale du travail de l&apos;élève :
+          </div>
+        </div>
+        <div className="border border-slate-400 p-2 min-h-[80px]">
+          <div className="mb-1 font-semibold uppercase">
+            Discipline / Assiduité
+          </div>
+          {conduct ? (
+            <div className="space-y-1 text-[0.65rem]">
+              <div>
+                Absences injustifiées :{" "}
+                <span className="font-semibold">
+                  {conduct.absence_count ?? 0}
+                </span>
+              </div>
+              <div>
+                Retards injustifiés :{" "}
+                <span className="font-semibold">
+                  {conduct.tardy_count ?? 0}
+                </span>
+              </div>
+              <div className="mt-1">
+                Note de conduite :{" "}
+                <span className="font-semibold">
+                  {formatNumber(conduct.total)} /{" "}
+                  {conductTotalMax ?? 20}
+                </span>
+                {conduct.appreciation && (
+                  <span> — {conduct.appreciation}</span>
+                )}
+              </div>
+              <div className="mt-1 text-[0.6rem] text-slate-500">
+                Détail : Assiduité {formatNumber(conduct.breakdown.assiduite)} /{" "}
+                {conductRubricMax?.assiduite ?? 6}
+                {", "}Tenue {formatNumber(conduct.breakdown.tenue)} /{" "}
+                {conductRubricMax?.tenue ?? 3}
+                {", "}Moralité {formatNumber(conduct.breakdown.moralite)} /{" "}
+                {conductRubricMax?.moralite ?? 4}
+                {", "}Discipline {formatNumber(conduct.breakdown.discipline)} /{" "}
+                {conductRubricMax?.discipline ?? 7}
+              </div>
+            </div>
+          ) : (
+            <div className="text-[0.65rem] text-slate-500">
+              Retards, absences, comportement, sanctions :
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="mt-2 grid grid-cols-3 gap-2 text-[0.7rem]">
+        <div className="border border-slate-400 p-2 min-h-[60px]">
+          <div className="mb-1 font-semibold text-[0.65rem]">
+            Visa du professeur principal
+          </div>
+        </div>
+        <div className="border border-slate-400 p-2 min-h-[60px]">
+          <div className="mb-1 font-semibold text-[0.65rem]">
+            Visa du chef d&apos;établissement
+          </div>
+        </div>
+        <div className="border border-slate-400 p-2 min-h-[60px]">
+          <div className="mb-1 font-semibold text-[0.65rem]">
+            Signature des parents / tuteur
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-2 flex items-center justify-between text-[0.65rem] text-slate-500">
+        <div>
+          Fait à ......................................, le
+          ...........................................
+        </div>
+        <div className="text-[0.6rem] text-slate-400">
+          Bulletin généré avec Mon Cahier – Nexa Digitale
         </div>
       </div>
     </div>
@@ -584,6 +704,10 @@ export default function BulletinsPage() {
   const [bulletinRaw, setBulletinRaw] = useState<BulletinResponse | null>(null);
   const [bulletinLoading, setBulletinLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  // Résumé conduite / assiduité par élève (note + absences/retards)
+  const [conductSummary, setConductSummary] =
+    useState<ConductSummaryResponse | null>(null);
 
   /* Chargement des classes */
   useEffect(() => {
@@ -645,17 +769,32 @@ export default function BulletinsPage() {
     run();
   }, []);
 
-  /* Chargement des périodes (trimestres / séquences) – non bloquant :
-     si la route n'existe pas ou renvoie une erreur, on garde les dates manuelles. */
+  /* Chargement des périodes (trimestres / séquences) pour l'année sélectionnée.
+     Si la route n'existe pas ou renvoie une erreur, on garde les dates manuelles. */
   useEffect(() => {
     const run = async () => {
       try {
         setPeriodsLoading(true);
-        const res = await fetch("/api/admin/grades/periods");
+
+        const params = new URLSearchParams();
+        if (selectedAcademicYear) {
+          params.set("academic_year", selectedAcademicYear);
+        }
+
+        const qs = params.toString();
+        const url =
+          "/api/admin/institution/grading-periods" + (qs ? `?${qs}` : "");
+
+        const res = await fetch(url);
         if (!res.ok) {
-          // On ne casse rien : juste pas de périodes
+          console.warn(
+            "[Bulletins] grading-periods non disponible",
+            res.status
+          );
+          setPeriods([]);
           return;
         }
+
         const json = await res.json();
         const items: GradePeriod[] = Array.isArray(json)
           ? json
@@ -664,22 +803,38 @@ export default function BulletinsPage() {
           : [];
         setPeriods(items);
       } catch (e) {
-        console.error(e);
+        console.error("[Bulletins] erreur chargement periods", e);
+        setPeriods([]);
       } finally {
         setPeriodsLoading(false);
       }
     };
-    run();
-  }, []);
 
-  /* Années scolaires disponibles à partir des périodes (dans la BDD) */
+    run();
+  }, [selectedAcademicYear]);
+
+  /* Années scolaires disponibles
+     - à partir des classes (toutes les années de l'établissement)
+     - + des périodes déjà chargées, pour être robuste */
   const academicYears = useMemo(() => {
     const set = new Set<string>();
-    periods.forEach((p: GradePeriod) => {
-      if (p.academic_year) set.add(p.academic_year);
+
+    // 1) Années trouvées sur les classes
+    classes.forEach((c) => {
+      if (c.academic_year) {
+        set.add(c.academic_year);
+      }
     });
+
+    // 2) Années trouvées sur les périodes déjà chargées
+    periods.forEach((p: GradePeriod) => {
+      if (p.academic_year) {
+        set.add(p.academic_year);
+      }
+    });
+
     return Array.from(set).sort();
-  }, [periods]);
+  }, [classes, periods]);
 
   /* Périodes filtrées par année scolaire */
   const filteredPeriods = useMemo(() => {
@@ -709,27 +864,52 @@ export default function BulletinsPage() {
 
     try {
       setBulletinLoading(true);
+      setConductSummary(null);
+
       const params = new URLSearchParams();
       params.set("class_id", selectedClassId);
       params.set("from", dateFrom);
       params.set("to", dateTo);
 
-      const res = await fetch(
-        `/api/admin/grades/bulletin?${params.toString()}`
-      );
-      if (!res.ok) {
-        const txt = await res.text();
+      const [resBulletin, resConduct] = await Promise.all([
+        fetch(`/api/admin/grades/bulletin?${params.toString()}`),
+        fetch(`/api/admin/conduct/summary?${params.toString()}`),
+      ]);
+
+      if (!resBulletin.ok) {
+        const txt = await resBulletin.text();
         throw new Error(
-          `Erreur bulletin (${res.status}) : ${
+          `Erreur bulletin (${resBulletin.status}) : ${
             txt || "Impossible de générer le bulletin."
           }`
         );
       }
-      const json = (await res.json()) as BulletinResponse;
+
+      const json = (await resBulletin.json()) as BulletinResponse;
       if (!json.ok) {
         throw new Error("Réponse bulletin invalide (ok = false).");
       }
       setBulletinRaw(json);
+
+      if (resConduct.ok) {
+        try {
+          const conductJson =
+            (await resConduct.json()) as ConductSummaryResponse;
+          if (conductJson && Array.isArray(conductJson.items)) {
+            setConductSummary(conductJson);
+          }
+        } catch (err) {
+          console.warn(
+            "[Bulletins] Impossible de lire le résumé de conduite",
+            err
+          );
+        }
+      } else {
+        console.warn(
+          "[Bulletins] /api/admin/conduct/summary a renvoyé",
+          resConduct.status
+        );
+      }
     } catch (e: any) {
       console.error(e);
       setErrorMsg(
@@ -744,6 +924,19 @@ export default function BulletinsPage() {
     () => computeRanksAndStats(bulletinRaw),
     [bulletinRaw]
   );
+
+  // Index conduite par élève pour rattacher les infos au bulletin
+  const conductByStudentId = useMemo(() => {
+    const map = new Map<string, ConductItem>();
+    if (!conductSummary || !Array.isArray(conductSummary.items)) return map;
+    conductSummary.items.forEach((it) => {
+      map.set(it.student_id, it);
+    });
+    return map;
+  }, [conductSummary]);
+
+  const conductRubricMax = conductSummary?.rubric_max;
+  const conductTotalMax = conductSummary?.total_max;
 
   const items = enriched?.items ?? [];
   const stats = enriched?.stats ?? {
@@ -997,13 +1190,17 @@ export default function BulletinsPage() {
             period={period}
             institution={institution}
             stats={stats}
+            conduct={conductByStudentId.get(it.student_id) || null}
+            conductRubricMax={conductRubricMax}
+            conductTotalMax={conductTotalMax}
           />
         ))}
 
       {/* Note bas de page (non imprimée) */}
       <div className="mt-4 text-center text-[0.65rem] text-slate-400 print:hidden">
-        Première version simplifiée des bulletins. Les blocs d&apos;assiduité,
-        mentions et sanctions seront ajoutés dans les prochaines étapes.
+        Bulletin généré automatiquement à partir des notes publiées et du
+        résumé de conduite. Les appréciations détaillées restent à compléter
+        par l&apos;équipe pédagogique.
       </div>
     </div>
   );
