@@ -1,7 +1,7 @@
 // src/app/admin/conduite/page.tsx
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 
 /* UI helpers */
 function Select(p: React.SelectHTMLAttributes<HTMLSelectElement>) {
@@ -94,6 +94,18 @@ type ConductSettings = {
   discipline_max: number;
 };
 
+/* Périodes de bulletin (année scolaire + trimestre / période) */
+type GradePeriod = {
+  id: string;
+  code: string;
+  label: string;
+  short_label: string;
+  start_date: string | null;
+  end_date: string | null;
+  is_active: boolean;
+  order_index: number;
+};
+
 export default function ConduitePage() {
   // classes et filtres
   const [allClasses, setAllClasses] = useState<ClassItem[]>([]);
@@ -101,6 +113,16 @@ export default function ConduitePage() {
   const [classId, setClassId] = useState("");
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
+
+  // Année scolaire sélectionnée + année "courante" renvoyée par l'API
+  const [selectedAcademicYear, setSelectedAcademicYear] = useState<string>("");
+  const [currentAcademicYear, setCurrentAcademicYear] = useState<string>("");
+
+  // périodes bulletin (année scolaire + trimestre, etc.)
+  const [periods, setPeriods] = useState<GradePeriod[]>([]);
+  const [loadingPeriods, setLoadingPeriods] = useState(false);
+  const [periodError, setPeriodError] = useState<string | null>(null);
+  const [selectedPeriodCode, setSelectedPeriodCode] = useState("");
 
   // données
   const [loading, setLoading] = useState(false);
@@ -111,7 +133,7 @@ export default function ConduitePage() {
   const [conductSettings, setConductSettings] =
     useState<ConductSettings | null>(null);
 
-  // charger classes
+  /* ───────── Chargement classes ───────── */
   useEffect(() => {
     fetch("/api/admin/classes?limit=500", { cache: "no-store" })
       .then((r) => r.json())
@@ -119,7 +141,7 @@ export default function ConduitePage() {
       .catch(() => setAllClasses([]));
   }, []);
 
-  // charger les réglages de conduite
+  /* ───────── Chargement réglages conduite ───────── */
   useEffect(() => {
     (async () => {
       try {
@@ -140,6 +162,69 @@ export default function ConduitePage() {
     })();
   }, []);
 
+  /* ───────── Chargement périodes pour une année scolaire ───────── */
+  async function loadPeriods(academicYearOverride?: string) {
+    setLoadingPeriods(true);
+    setPeriodError(null);
+    try {
+      const params = new URLSearchParams();
+      const year = academicYearOverride || selectedAcademicYear;
+      if (year) {
+        params.set("academic_year", year);
+      }
+      const url =
+        "/api/admin/institution/grading-periods" +
+        (params.size ? `?${params.toString()}` : "");
+
+      const res = await fetch(url, { cache: "no-store" });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok || !j?.ok) {
+        throw new Error(
+          j?.error || "Échec du chargement des périodes d'évaluation.",
+        );
+      }
+
+      const apiYear = (j.academic_year || "").trim();
+      if (apiYear) {
+        // on mémorise l'année courante renvoyée par l'API
+        setCurrentAcademicYear((prev) => prev || apiYear);
+        setSelectedAcademicYear(apiYear);
+      }
+
+      const rows = Array.isArray(j.items) ? j.items : [];
+      const mapped: GradePeriod[] = rows
+        .map((row: any, idx: number) => ({
+          id: String(row.id ?? row.code ?? `row_${idx}`),
+          code: String(row.code || "").trim(),
+          label: String(row.label || "").trim() || "Période",
+          short_label: String(row.short_label || row.label || "").trim(),
+          start_date: row.start_date ? String(row.start_date).slice(0, 10) : null,
+          end_date: row.end_date ? String(row.end_date).slice(0, 10) : null,
+          is_active: row.is_active !== false,
+          order_index: Number(row.order_index ?? idx + 1),
+        }))
+        .filter((p: GradePeriod) => !!p.code);
+
+      mapped.sort((a, b) => a.order_index - b.order_index);
+      setPeriods(mapped);
+    } catch (e: any) {
+      setPeriodError(
+        e?.message ||
+          "Impossible de charger les périodes d'évaluation. Vérifiez les paramètres.",
+      );
+      setPeriods([]);
+    } finally {
+      setLoadingPeriods(false);
+    }
+  }
+
+  // premier chargement : année scolaire "courante"
+  useEffect(() => {
+    loadPeriods().catch(() => undefined);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /* ───────── Liste des niveaux ───────── */
   const levels = useMemo(() => {
     const s = new Set<string>();
     for (const c of allClasses) if (c.level) s.add(c.level);
@@ -162,6 +247,74 @@ export default function ConduitePage() {
     setClassId("");
   }, [level]);
 
+  /* ───────── Options d'années scolaires (fenêtre autour de l'année courante) ───────── */
+  const academicYearOptions = useMemo(() => {
+    const base = selectedAcademicYear || currentAcademicYear;
+    if (!base) return [];
+    const m = /^(\d{4})-(\d{4})$/.exec(base);
+    if (!m) return [base];
+
+    const start = parseInt(m[1], 10);
+    if (!Number.isFinite(start)) return [base];
+
+    // ex : si base = 2025-2026 → on propose 2022-2023, 2023-2024, 2024-2025, 2025-2026, 2026-2027
+    const years: string[] = [];
+    for (let y = start - 3; y <= start + 1; y++) {
+      years.push(`${y}-${y + 1}`);
+    }
+
+    // on met l'année la plus récente en premier
+    return Array.from(new Set(years)).sort().reverse();
+  }, [selectedAcademicYear, currentAcademicYear]);
+
+  /* ───────── Changement d'année scolaire ───────── */
+  async function handleAcademicYearChange(
+    e: React.ChangeEvent<HTMLSelectElement>,
+  ) {
+    const year = e.target.value;
+    setSelectedAcademicYear(year);
+    setSelectedPeriodCode("");
+    setFrom("");
+    setTo("");
+    if (year) {
+      await loadPeriods(year);
+    } else {
+      // si vide (théoriquement on ne devrait pas le faire), on recharge l'année courante
+      await loadPeriods();
+    }
+  }
+
+  /* ───────── Changement de période bulletin → applique automatiquement Du / Au ───────── */
+  function handlePeriodChange(e: React.ChangeEvent<HTMLSelectElement>) {
+    const code = e.target.value;
+    setSelectedPeriodCode(code);
+    if (!code) return;
+    const p = periods.find((per) => per.code === code);
+    if (p) {
+      if (p.start_date) setFrom(p.start_date);
+      if (p.end_date) setTo(p.end_date);
+    }
+  }
+
+  // bouton "Appliquer une période" (prend la période active si rien choisi)
+  function applyCurrentPeriodToDates() {
+    if (!periods.length) {
+      setPeriodError(
+        "Aucune période d'évaluation n'est définie pour l'établissement.",
+      );
+      return;
+    }
+    const per =
+      periods.find((p) => p.code === selectedPeriodCode) ||
+      periods.find((p) => p.is_active) ||
+      periods[0];
+    if (!per) return;
+    setSelectedPeriodCode(per.code);
+    if (per.start_date) setFrom(per.start_date);
+    if (per.end_date) setTo(per.end_date);
+  }
+
+  /* ───────── Chargement des moyennes de conduite ───────── */
   async function validate() {
     if (!classId) return;
     setLoading(true);
@@ -261,19 +414,25 @@ export default function ConduitePage() {
       <div>
         <h1 className="text-2xl font-semibold">Conduite — Moyennes par élève</h1>
         <p className="text-slate-600">
-          Sélectionne un <b>niveau</b>, une <b>classe</b>, puis <i>Valider</i>. Les
-          retraits automatiques sont appliqués.
+          Sélectionne un <b>niveau</b>, une <b>classe</b>, une{" "}
+          <b>année scolaire</b> et une <b>période d&apos;évaluation</b> (trimestre,
+          séquence, etc.), puis <i>Valider</i>. Les retraits automatiques sont
+          appliqués.
         </p>
       </div>
 
       <Card title="Filtres">
+        {/* Ligne 1 : dates + niveau + classe */}
         <div className="grid grid-cols-1 gap-3 md:grid-cols-6">
           <div>
             <div className="mb-1 text-xs text-slate-500">Du</div>
             <Input
               type="date"
               value={from}
-              onChange={(e) => setFrom(e.target.value)}
+              onChange={(e) => {
+                setSelectedPeriodCode("");
+                setFrom(e.target.value);
+              }}
             />
           </div>
           <div>
@@ -281,7 +440,10 @@ export default function ConduitePage() {
             <Input
               type="date"
               value={to}
-              onChange={(e) => setTo(e.target.value)}
+              onChange={(e) => {
+                setSelectedPeriodCode("");
+                setTo(e.target.value);
+              }}
             />
           </div>
           <div className="md:col-span-2">
@@ -314,6 +476,89 @@ export default function ConduitePage() {
             </Select>
           </div>
         </div>
+
+        {/* Ligne 2 : année scolaire + période bulletin */}
+        <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-6">
+          <div className="md:col-span-2">
+            <div className="mb-1 text-xs text-slate-500">Année scolaire</div>
+            <Select
+              value={selectedAcademicYear}
+              onChange={handleAcademicYearChange}
+              disabled={loadingPeriods || academicYearOptions.length === 0}
+            >
+              {academicYearOptions.length === 0 ? (
+                <option value="">— Année scolaire non disponible —</option>
+              ) : (
+                academicYearOptions.map((y) => (
+                  <option key={y} value={y}>
+                    {y}
+                  </option>
+                ))
+              )}
+            </Select>
+            <div className="mt-1 text-[11px] text-slate-500">
+              Choisis l&apos;année scolaire pour laquelle tu veux voir les
+              périodes (trimestres, séquences…).
+            </div>
+          </div>
+
+          <div className="md:col-span-2">
+            <div className="mb-1 text-xs text-slate-500">
+              Période d&apos;évaluation (trimestre / séquence)
+            </div>
+            <Select
+              value={selectedPeriodCode}
+              onChange={handlePeriodChange}
+              disabled={loadingPeriods || periods.length === 0}
+            >
+              <option value="">
+                — Toutes les dates (pas de période) —
+              </option>
+              {periods
+                .filter((p) => p.is_active)
+                .map((p) => (
+                  <option key={p.id} value={p.code}>
+                    {p.short_label || p.label}
+                  </option>
+                ))}
+            </Select>
+            <div className="mt-1 text-[11px] text-slate-500">
+              En choisissant une période (par ex.{" "}
+              <i>2024-2025 — Trimestre 1</i>), les dates <b>Du</b> et <b>Au</b>{" "}
+              sont réglées automatiquement.
+            </div>
+          </div>
+
+          <div className="md:col-span-2 flex items-end">
+            <div className="flex gap-2">
+              <Button
+                type="button"
+                onClick={applyCurrentPeriodToDates}
+                disabled={loadingPeriods || periods.length === 0}
+              >
+                Appliquer la période
+              </Button>
+              <Button
+                type="button"
+                onClick={() =>
+                  loadPeriods(
+                    selectedAcademicYear || currentAcademicYear || undefined,
+                  )
+                }
+                disabled={loadingPeriods}
+              >
+                {loadingPeriods ? "…" : "Rafraîchir"}
+              </Button>
+            </div>
+          </div>
+        </div>
+
+        {periodError && (
+          <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-800">
+            {periodError}
+          </div>
+        )}
+
         <div className="mt-4 flex gap-2">
           <Button onClick={validate} disabled={!classId || loading}>
             {loading ? "…" : "Valider"}

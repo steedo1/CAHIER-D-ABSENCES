@@ -1,4 +1,3 @@
-// src/app/api/admin/conduite/averages/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
@@ -273,6 +272,8 @@ export async function GET(req: NextRequest) {
   const class_id = String(searchParams.get("class_id") || "");
   const from = searchParams.get("from") || "";
   const to = searchParams.get("to") || "";
+  const hasDateFilter = !!from || !!to;
+
   if (!class_id)
     return NextResponse.json({ error: "class_id_required" }, { status: 400 });
 
@@ -293,13 +294,37 @@ export async function GET(req: NextRequest) {
   // Durée de séance (fallback pour les retards en mode as_hours)
   const defaultSessionMinutes = await loadDefaultSessionMinutes(srv, institution_id);
 
-  // Roster
-  const { data: enroll, error: eErr } = await srv
+  // ───────────────── Roster (inscriptions à la classe) ─────────────────
+  //
+  // ✅ Comportement inchangé si AUCUNE date n'est fournie :
+  //    → on ne prend que les élèves avec end_date IS NULL (inscrits actuellement).
+  //
+  // ✅ Si une période est fournie (from / to, donc année scolaire + trimestre) :
+  //    → on inclut aussi les élèves qui avaient encore la classe à cette date,
+  //       c'est-à-dire ceux dont end_date est NULL ou postérieure au début de la période.
+  //
+  let enrollQuery = srv
     .from("class_enrollments")
-    .select(`student_id, students:student_id ( id, first_name, last_name )`)
+    .select(
+      `student_id, start_date, end_date, students:student_id ( id, first_name, last_name )`,
+    )
     .eq("class_id", class_id)
-    .eq("institution_id", institution_id)
-    .is("end_date", null);
+    .eq("institution_id", institution_id);
+
+  if (!hasDateFilter) {
+    // 🔁 Comportement historique : seulement les élèves encore inscrits
+    enrollQuery = enrollQuery.is("end_date", null);
+  } else if (from) {
+    // 🕒 Photo "historique" : tout élève dont la fin d'inscription
+    //     est postérieure au début de la période OU encore inscrit.
+    enrollQuery = enrollQuery.or(
+      `end_date.gte.${from},end_date.is.null`,
+    );
+  }
+  // Si seulement "to" est rempli, on ne change pas le filtrage par end_date
+  // (cas très rare, et on continue à inclure les élèves actifs).
+
+  const { data: enroll, error: eErr } = await enrollQuery;
   if (eErr) return NextResponse.json({ error: eErr.message }, { status: 400 });
 
   const roster = (enroll ?? []).map((r: any) => {

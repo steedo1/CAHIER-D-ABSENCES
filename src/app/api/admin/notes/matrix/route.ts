@@ -77,6 +77,14 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ ok: false, error: "FORBIDDEN" }, { status: 403 });
   }
 
+  const institutionId = roleRow.institution_id as string | null;
+  if (!institutionId) {
+    return NextResponse.json(
+      { ok: false, error: "NO_INSTITUTION" },
+      { status: 400 }
+    );
+  }
+
   const url = new URL(req.url);
   const classId = url.searchParams.get("class_id");
   const subjectIdRaw = url.searchParams.get("subject_id");
@@ -117,7 +125,7 @@ export async function GET(req: NextRequest) {
     from,
     to,
     published,
-    institution_id: roleRow.institution_id,
+    institution_id: institutionId,
   });
 
   if (!canonicalSubjectId) {
@@ -174,7 +182,51 @@ export async function GET(req: NextRequest) {
 
   const evalIds = Array.from(new Set(evalRows.map((e) => e.id)));
 
-  // 2) Notes depuis grade_flat_marks
+  // 2) ROSTER HISTORIQUE : "photo" de la classe sur la période
+  const rosterFrom = from || "0001-01-01";
+  const rosterTo = to || "9999-12-31";
+
+  let enrollQuery = supabase
+    .from("class_enrollments")
+    .select(
+      "student_id, students:student_id ( id, first_name, last_name, matricule )"
+    )
+    .eq("class_id", classId)
+    .eq("institution_id", institutionId);
+
+  if (from || to) {
+    // élève présent au moins un jour entre rosterFrom et rosterTo
+    enrollQuery = enrollQuery
+      .lte("start_date", rosterTo)
+      .or(`end_date.is.null,end_date.gte.${rosterFrom}`);
+  } else {
+    // photo de la classe actuelle (élèves encore inscrits)
+    enrollQuery = enrollQuery.is("end_date", null);
+  }
+
+  const { data: enrollData, error: enrollErr } = await enrollQuery;
+  if (enrollErr) {
+    console.error("[admin.notes.matrix] class_enrollments error", enrollErr);
+    return NextResponse.json(
+      { ok: false, error: "ENROLLMENTS_ERROR" },
+      { status: 500 }
+    );
+  }
+
+  const initialStudents: StudentOut[] = (enrollData || []).map((r: any) => {
+    const s = r.students || {};
+    const ln = (s.last_name || "").trim();
+    const fn = (s.first_name || "").trim();
+    const full = (ln || fn) ? `${ln} ${fn}`.trim() : "Élève";
+    const matricule = (s.matricule ?? null) as string | null;
+    return {
+      student_id: r.student_id as string,
+      full_name: full,
+      matricule,
+    };
+  });
+
+  // 3) Notes depuis grade_flat_marks
   const { data: marksData, error: marksErr } = await supabase
     .from("grade_flat_marks")
     .select(
@@ -192,8 +244,13 @@ export async function GET(req: NextRequest) {
 
   const marksRows = (marksData || []) as MarkRow[];
 
-  // 3) Construire élèves + matrice de notes
+  // 4) Construire élèves + matrice de notes (roster ∪ élèves avec notes)
   const studentsById = new Map<string, StudentOut>();
+  for (const st of initialStudents) {
+    if (!st.student_id) continue;
+    studentsById.set(st.student_id, st);
+  }
+
   const marksByStudent: Record<
     string,
     Record<string, { raw: number | null; mark_20: number | null }>
@@ -203,6 +260,8 @@ export async function GET(req: NextRequest) {
     const sid = row.student_id;
     if (!sid) continue;
 
+    // si l'élève n'est pas dans le roster (sécurité / ancien jeu de données),
+    // on le rajoute avec les infos présentes dans grade_flat_marks
     if (!studentsById.has(sid)) {
       const ln = (row.last_name || "").trim();
       const fn = (row.first_name || "").trim();
@@ -223,7 +282,7 @@ export async function GET(req: NextRequest) {
     };
   }
 
-  // Trier les élèves par nom
+  // Trier les élèves par nom pour l'affichage
   const students = Array.from(studentsById.values()).sort((a, b) =>
     a.full_name.localeCompare(b.full_name, undefined, {
       sensitivity: "base",
@@ -231,7 +290,7 @@ export async function GET(req: NextRequest) {
     })
   );
 
-  // 4) Noms des enseignants
+  // 5) Noms des enseignants
   const teacherIds = Array.from(
     new Set(
       evalRows.map((e) => e.teacher_id).filter((x): x is string => !!x)
@@ -284,3 +343,5 @@ export async function GET(req: NextRequest) {
     marks: marksByStudent,
   });
 }
+
+

@@ -276,12 +276,27 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  /* 2) Récupérer les élèves de la classe */
-  const { data: csData, error: csErr } = await supabase
+  /* 2) Récupérer les élèves de la classe (photo historique si période) */
+  const hasDateFilter = !!dateFrom || !!dateTo;
+
+  let enrollQuery = supabase
     .from("class_enrollments")
     .select("student_id, students(matricule, first_name, last_name)")
-    .eq("class_id", classId)
-    .order("student_id", { ascending: true });
+    .eq("class_id", classId);
+
+  if (!hasDateFilter) {
+    // 🔁 Comportement historique : uniquement les élèves encore inscrits
+    enrollQuery = enrollQuery.is("end_date", null);
+  } else if (dateFrom) {
+    // 🕒 Photo historique : élèves dont la fin d'inscription
+    // est postérieure au début de la période OU encore inscrits
+    enrollQuery = enrollQuery.or(`end_date.gte.${dateFrom},end_date.is.null`);
+  }
+  // Si seulement "to" est renseigné, on garde le filtrage par défaut (élèves actifs)
+
+  enrollQuery = enrollQuery.order("student_id", { ascending: true });
+
+  const { data: csData, error: csErr } = await enrollQuery;
 
   if (csErr) {
     console.error("[bulletin] class_enrollments error", csErr);

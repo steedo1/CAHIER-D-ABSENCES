@@ -206,7 +206,7 @@ export default function ClassDeviceNotesPage() {
     null
   );
 
-  /* 🔹 OPTION A : lecture DOM + fallback API /api/admin/institution/settings */
+  /* 🔹 Lecture DOM + fallback APIs teacher/institution/settings (+ admin en dernier recours) */
   useEffect(() => {
     if (typeof window === "undefined") return;
 
@@ -216,20 +216,13 @@ export default function ClassDeviceNotesPage() {
       try {
         const body: any = document.body;
 
-        // 1) Essai via data-* + globals (comme avant)
+        // 1) Essai via data-* + globals
         const fromDataName =
           body?.dataset?.institutionName || body?.dataset?.institution || null;
         const fromGlobalName = (window as any).__MC_INSTITUTION_NAME__
           ? String((window as any).__MC_INSTITUTION_NAME__)
           : null;
-        const finalName = fromDataName || fromGlobalName;
-        if (finalName) {
-          logInfo(
-            "useEffect[institution] -> nom trouvé via DOM/global",
-            finalName
-          );
-          if (!cancelled) setInstitutionName(finalName);
-        }
+        const finalNameFromDom = fromDataName || fromGlobalName;
 
         const fromDataYear =
           body?.dataset?.academicYear ||
@@ -239,73 +232,113 @@ export default function ClassDeviceNotesPage() {
         const fromGlobalYear = (window as any).__MC_ACADEMIC_YEAR__
           ? String((window as any).__MC_ACADEMIC_YEAR__)
           : null;
-        const finalYear = fromDataYear || fromGlobalYear;
-        if (finalYear) {
+        const finalYearFromDom = fromDataYear || fromGlobalYear;
+
+        if (!cancelled && finalNameFromDom) {
           logInfo(
-            "useEffect[institution] -> année trouvée via DOM/global",
-            finalYear
+            "useEffect[institution] -> nom trouvé via DOM/global",
+            finalNameFromDom
           );
-          if (!cancelled) setAcademicYearLabel(finalYear);
+          setInstitutionName(finalNameFromDom);
         }
 
-        // 2) Fallback : si pas de nom (et/ou pas d'année), on appelle l’API admin
-        if (!finalName || !finalYear) {
+        if (!cancelled && finalYearFromDom) {
           logInfo(
-            "useEffect[institution] -> fallback API /api/admin/institution/settings"
+            "useEffect[institution] -> année trouvée via DOM/global",
+            finalYearFromDom
           );
+          setAcademicYearLabel(finalYearFromDom);
+        }
+
+        // Si on a déjà nom + année via DOM, pas besoin de réseau
+        if (finalNameFromDom && finalYearFromDom) return;
+
+        // 2) Fallback réseau : teacher/institution/settings, puis institution/settings, puis admin
+        async function getJson(url: string) {
           try {
-            const r = await fetch("/api/admin/institution/settings", {
-              cache: "no-store",
-            });
+            const r = await fetch(url, { cache: "no-store" });
             logInfo(
-              "useEffect[institution] -> status fallback API",
+              "useEffect[institution] -> fetch",
+              url,
+              "status",
               r.status
             );
+            if (!r.ok) return null;
             const j = await r.json().catch((err) => {
               logError(
-                "useEffect[institution] -> JSON parse error fallback API",
+                "useEffect[institution] -> JSON parse error",
+                url,
                 err
               );
-              return {} as any;
+              return null;
             });
-
-            if (!cancelled && r.ok) {
-              const name = String((j as any)?.institution_name || "").trim();
-              if (name) {
-                logInfo(
-                  "useEffect[institution] -> nom reçu via API",
-                  name
-                );
-                setInstitutionName(name);
-              }
-
-              const yearFromApi =
-                (j as any)?.current_academic_year_label ??
-                (j as any)?.academic_year_label ??
-                (j as any)?.academic_year ??
-                null;
-
-              if (yearFromApi && !finalYear) {
-                logInfo(
-                  "useEffect[institution] -> année reçue via API",
-                  yearFromApi
-                );
-                setAcademicYearLabel(String(yearFromApi));
-              }
-            } else if (!cancelled && !r.ok) {
-              logError(
-                "useEffect[institution] -> fallback API non OK",
-                r.status
-              );
-            }
+            return j;
           } catch (err) {
-            if (!cancelled) {
-              logError(
-                "useEffect[institution] -> erreur réseau fallback API",
-                err
-              );
+            logError("useEffect[institution] -> erreur réseau", url, err);
+            return null;
+          }
+        }
+
+        const candidates = [
+          "/api/teacher/institution/settings",
+          "/api/institution/settings",
+          "/api/admin/institution/settings",
+        ];
+
+        for (const url of candidates) {
+          const j: any = await getJson(url);
+          if (!j) continue;
+
+          // On cherche dans l’objet brut puis dans un éventuel settings_json
+          const src = j?.settings_json ? j.settings_json : j;
+
+          const nameCandidate =
+            src?.institution_name ??
+            src?.institution_label ??
+            src?.short_name ??
+            src?.name ??
+            src?.header_title ??
+            src?.school_name ??
+            null;
+
+          const yearCandidate =
+            src?.current_academic_year_label ??
+            src?.academic_year_label ??
+            src?.academic_year ??
+            src?.year_label ??
+            src?.header_academic_year ??
+            null;
+
+          if (!cancelled) {
+            if (!finalNameFromDom && nameCandidate) {
+              const cleanName = String(nameCandidate).trim();
+              if (cleanName) {
+                logInfo(
+                  "useEffect[institution] -> nom reçu via",
+                  url,
+                  "=>",
+                  cleanName
+                );
+                setInstitutionName(cleanName);
+              }
+            }
+
+            if (!finalYearFromDom && yearCandidate) {
+              const cleanYear = String(yearCandidate).trim();
+              if (cleanYear) {
+                logInfo(
+                  "useEffect[institution] -> année reçue via",
+                  url,
+                  "=>",
+                  cleanYear
+                );
+                setAcademicYearLabel(cleanYear);
+              }
             }
           }
+
+          // Si on a trouvé au moins un des deux via ce endpoint, on peut s'arrêter
+          if (nameCandidate || yearCandidate) break;
         }
       } catch (err) {
         if (!cancelled) {
@@ -647,7 +680,8 @@ export default function ClassDeviceNotesPage() {
         const next = { ...prev };
         for (const [evId, per] of Object.entries(changed)) {
           next[evId] = { ...(next[evId] || {}) };
-          for (const [sid, val] of Object.entries(per)) next[evId][sid] = val;
+          for (const [sid, val] of Object.entries(per)) next[evId][sid] =
+            val;
         }
         return next;
       });
@@ -2039,7 +2073,9 @@ export default function ClassDeviceNotesPage() {
                   const rubLabel = comp?.short_label || comp?.label || "";
                   const scale = ev.scale;
                   const current =
-                    changed[ev.id]?.[st.id] ?? grades[ev.id]?.[st.id] ?? null;
+                    changed[ev.id]?.[st.id] ??
+                    grades[ev.id]?.[st.id] ??
+                    null;
 
                   return (
                     <div

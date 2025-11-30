@@ -110,7 +110,7 @@ type BulletinResponse = {
   };
   subjects: BulletinSubject[];
   subject_groups: BulletinGroup[];
-  // ➕ optionnel : sous-matières connues du bulletin
+  // ➕ sous-matières renvoyées par l’API (toujours présent côté back, mais on garde optionnel côté TS)
   subject_components?: BulletinSubjectComponent[];
   items: BulletinItemBase[];
 };
@@ -125,6 +125,18 @@ type EnrichedBulletin = {
   response: BulletinResponse;
   items: BulletinItemWithRank[];
   stats: ClassStats;
+};
+
+/** Périodes de notes (trimestres / séquences) */
+type GradePeriod = {
+  id: string;
+  academic_year: string | null;
+  code: string | null;
+  label: string | null;
+  short_label: string | null;
+  start_date: string; // YYYY-MM-DD
+  end_date: string;   // YYYY-MM-DD
+  coeff: number | null;
 };
 
 /* ───────── UI helpers ───────── */
@@ -408,7 +420,7 @@ function StudentBulletinCard({
         </div>
       </div>
 
-      {/* Tableau disciplines */}
+      {/* Tableau disciplines + sous-matières */}
       <table className="mb-3 w-full border border-slate-400 text-[0.7rem]">
         <thead className="bg-slate-100">
           <tr>
@@ -435,8 +447,7 @@ function StudentBulletinCard({
             const moyCoeff =
               avg !== null ? round2(avg * (s.coeff_bulletin || 0)) : null;
 
-            const subComps =
-              subjectCompsBySubject.get(s.subject_id) ?? [];
+            const subComps = subjectCompsBySubject.get(s.subject_id) ?? [];
 
             return (
               <React.Fragment key={s.subject_id}>
@@ -462,9 +473,7 @@ function StudentBulletinCard({
                   const cAvg = perSubjectComponentMap.get(key) ?? null;
                   const cMoyCoeff =
                     cAvg !== null
-                      ? round2(
-                          cAvg * (comp.coeff_in_subject || 0)
-                        )
+                      ? round2(cAvg * (comp.coeff_in_subject || 0))
                       : null;
 
                   return (
@@ -552,6 +561,13 @@ export default function BulletinsPage() {
   const [institutionLoading, setInstitutionLoading] = useState(false);
 
   const [selectedClassId, setSelectedClassId] = useState<string>("");
+
+  // Filtres de période
+  const [periods, setPeriods] = useState<GradePeriod[]>([]);
+  const [periodsLoading, setPeriodsLoading] = useState(false);
+  const [selectedAcademicYear, setSelectedAcademicYear] = useState<string>("");
+  const [selectedPeriodId, setSelectedPeriodId] = useState<string>("");
+
   const [dateFrom, setDateFrom] = useState<string>("");
   const [dateTo, setDateTo] = useState<string>("");
 
@@ -589,6 +605,14 @@ export default function BulletinsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  /* Quand on change de classe, si l'année scolaire est connue, on la sélectionne par défaut */
+  useEffect(() => {
+    const cls = classes.find((c) => c.id === selectedClassId);
+    if (cls?.academic_year) {
+      setSelectedAcademicYear(cls.academic_year);
+    }
+  }, [selectedClassId, classes]);
+
   /* Chargement des infos établissement (logo, nom...) */
   useEffect(() => {
     const run = async () => {
@@ -606,6 +630,58 @@ export default function BulletinsPage() {
     };
     run();
   }, []);
+
+  /* Chargement des périodes (trimestres / séquences) – non bloquant :
+     si la route n'existe pas ou renvoie une erreur, on garde les dates manuelles. */
+  useEffect(() => {
+    const run = async () => {
+      try {
+        setPeriodsLoading(true);
+        const res = await fetch("/api/admin/grades/periods");
+        if (!res.ok) {
+          // On ne casse rien : juste pas de périodes
+          return;
+        }
+        const json = await res.json();
+        const items: GradePeriod[] = Array.isArray(json)
+          ? json
+          : Array.isArray(json.items)
+          ? json.items
+          : [];
+        setPeriods(items);
+      } catch (e) {
+        console.error(e);
+      } finally {
+        setPeriodsLoading(false);
+      }
+    };
+    run();
+  }, []);
+
+  /* Années scolaires disponibles à partir des périodes */
+  const academicYears = useMemo(() => {
+    const set = new Set<string>();
+    periods.forEach((p) => {
+      if (p.academic_year) set.add(p.academic_year);
+    });
+    return Array.from(set).sort();
+  }, [periods]);
+
+  /* Périodes filtrées par année scolaire */
+  const filteredPeriods = useMemo(() => {
+    if (!selectedAcademicYear) return periods;
+    return periods.filter((p) => p.academic_year === selectedAcademicYear);
+  }, [periods, selectedAcademicYear]);
+
+  /* Quand on sélectionne une période, on remplit automatiquement les dates */
+  useEffect(() => {
+    if (!selectedPeriodId) return;
+    const p = periods.find((pp) => pp.id === selectedPeriodId);
+    if (!p) return;
+    // On part du principe que start_date / end_date sont en "YYYY-MM-DD"
+    setDateFrom(p.start_date || "");
+    setDateTo(p.end_date || "");
+  }, [selectedPeriodId, periods]);
 
   const handleLoadBulletin = async () => {
     setErrorMsg(null);
@@ -638,7 +714,7 @@ export default function BulletinsPage() {
       }
       const json = (await res.json()) as BulletinResponse;
       if (!json.ok) {
-        throw new Error(json as any);
+        throw new Error("Réponse bulletin invalide (ok = false).");
       }
       setBulletinRaw(json);
     } catch (e: any) {
@@ -668,8 +744,7 @@ export default function BulletinsPage() {
     to: null,
   };
   const subjects = enriched?.response.subjects ?? [];
-  const subjectComponents =
-    enriched?.response.subject_components ?? [];
+  const subjectComponents = enriched?.response.subject_components ?? [];
 
   const handlePrint = () => {
     if (!items.length) return;
@@ -718,8 +793,9 @@ export default function BulletinsPage() {
       </div>
 
       {/* Filtres (non imprimés) */}
-      <div className="grid gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm print:hidden md:grid-cols-4">
-        <div className="md:col-span-2">
+      <div className="grid gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm print:hidden md:grid-cols-6">
+        {/* Classe */}
+        <div className="md:col-span-3">
           <label className="mb-1 block text-xs font-semibold uppercase text-slate-500">
             Classe
           </label>
@@ -737,7 +813,63 @@ export default function BulletinsPage() {
             ))}
           </Select>
         </div>
-        <div>
+
+        {/* Année scolaire (à partir des périodes) */}
+        <div className="md:col-span-1">
+          <label className="mb-1 block text-xs font-semibold uppercase text-slate-500">
+            Année scolaire
+          </label>
+          <Select
+            value={selectedAcademicYear}
+            onChange={(e) => {
+              setSelectedAcademicYear(e.target.value);
+              setSelectedPeriodId("");
+              setDateFrom("");
+              setDateTo("");
+            }}
+            disabled={periodsLoading || academicYears.length === 0}
+          >
+            <option value="">
+              {academicYears.length === 0
+                ? "Non configuré"
+                : "Toutes années…"}
+            </option>
+            {academicYears.map((year) => (
+              <option key={year} value={year}>
+                {year}
+              </option>
+            ))}
+          </Select>
+        </div>
+
+        {/* Période (trimestre / séquence) */}
+        <div className="md:col-span-2">
+          <label className="mb-1 block text-xs font-semibold uppercase text-slate-500">
+            Période (trimestre / séquence)
+          </label>
+          <Select
+            value={selectedPeriodId}
+            onChange={(e) => setSelectedPeriodId(e.target.value)}
+            disabled={periodsLoading || filteredPeriods.length === 0}
+          >
+            <option value="">
+              {filteredPeriods.length === 0
+                ? "Aucune période"
+                : "Sélectionner une période…"}
+            </option>
+            {filteredPeriods.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.label ||
+                  p.short_label ||
+                  p.code ||
+                  `${p.start_date} → ${p.end_date}`}
+              </option>
+            ))}
+          </Select>
+        </div>
+
+        {/* Dates (toujours visibles, remplies automatiquement si période choisie) */}
+        <div className="md:col-span-3">
           <label className="mb-1 block text-xs font-semibold uppercase text-slate-500">
             Date de début
           </label>
@@ -747,7 +879,7 @@ export default function BulletinsPage() {
             onChange={(e) => setDateFrom(e.target.value)}
           />
         </div>
-        <div>
+        <div className="md:col-span-3">
           <label className="mb-1 block text-xs font-semibold uppercase text-slate-500">
             Date de fin
           </label>

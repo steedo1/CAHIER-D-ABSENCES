@@ -460,6 +460,30 @@ export default function ClassDevicePage() {
       });
     }
 
+    // 🔁 Complément : harmoniser le nom avec /api/admin/institution/settings (comme le dashboard)
+    const adminSettings = await getJson("/api/admin/institution/settings");
+    if (adminSettings) {
+      const nameFromAdmin = String(
+        adminSettings?.institution_name ||
+          adminSettings?.name ||
+          adminSettings?.institution_label ||
+          ""
+      ).trim();
+
+      const yearFromAdmin =
+        adminSettings?.academic_year_label ||
+        adminSettings?.current_academic_year_label ||
+        adminSettings?.active_academic_year ||
+        null;
+
+      if (nameFromAdmin) {
+        instConfig.institution_name = nameFromAdmin;
+      }
+      if (yearFromAdmin && !instConfig.academic_year_label) {
+        instConfig.academic_year_label = yearFromAdmin;
+      }
+    }
+
     Object.values(grouped).forEach((arr) =>
       arr.sort((a, b) => toMinutes(a.start_time) - toMinutes(b.start_time))
     );
