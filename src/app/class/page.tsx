@@ -1,3 +1,4 @@
+// src/app/grades/class-device/page.tsx
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
@@ -100,6 +101,9 @@ type ConductMax = {
   moralite: number;
 };
 
+/* Nom par défaut (fallback local / dev) */
+const DEFAULT_INSTITUTION_NAME = "COURS SECONDAIRE CATHOLIQUE ABOISSO";
+
 /* ───────── Utils (périodes) ───────── */
 const hhmm = (d: Date) => d.toTimeString().slice(0, 5);
 function toMinutes(hm: string) {
@@ -154,7 +158,7 @@ export default function ClassDevicePage() {
     tz: "Africa/Abidjan",
     default_session_minutes: 60,
     auto_lateness: true,
-    institution_name: "COURS SECONDAIRE CATHOLIQUE ABOISSO",
+    institution_name: DEFAULT_INSTITUTION_NAME,
     academic_year_label: null,
   });
   const [periodsByDay, setPeriodsByDay] = useState<Record<number, Period[]>>({});
@@ -320,7 +324,8 @@ export default function ClassDevicePage() {
     }
   }
 
-  /* 1) charger mes classes (liées au téléphone) + éventuelle séance ouverte */
+  /* 1) charger mes classes (liées au téléphone) + éventuelle séance ouverte
+       + récupérer un nom d’établissement si disponible */
   useEffect(() => {
     (async () => {
       try {
@@ -329,15 +334,45 @@ export default function ClassDevicePage() {
           fetch("/api/teacher/sessions/open", { cache: "no-store" }).then((r) => r.json()),
         ]);
         const items = (cls.items || []) as Array<any>;
-        const mapped: MyClass[] = items.map((c: any) => ({
-          id: c.id,
-          label: c.label,
-          level: c.level ?? null,
-          institution_id: c.institution_id,
-        }));
+
+        let firstInstName: string | null = null;
+
+        const mapped: MyClass[] = items.map((c: any) => {
+          if (firstInstName == null) {
+            const candidate =
+              c.institution_name || // ajouté côté API si dispo
+              c.institution_label ||
+              c.institution?.name ||
+              c.institution?.label ||
+              c.institution?.short_name ||
+              null;
+            if (candidate) {
+              firstInstName = String(candidate);
+            }
+          }
+
+          return {
+            id: c.id,
+            label: c.label,
+            level: c.level ?? null,
+            institution_id: c.institution_id,
+          };
+        });
+
         setClasses(mapped);
         if (!classId && mapped.length) setClassId(mapped[0].id);
         setOpen((os.item as OpenSession) || null);
+
+        // On alimente le nom de l’établissement si on n’a encore que le fallback
+        if (firstInstName) {
+          setInst((prev) => ({
+            ...prev,
+            institution_name:
+              !prev.institution_name || prev.institution_name === DEFAULT_INSTITUTION_NAME
+                ? firstInstName
+                : prev.institution_name,
+          }));
+        }
       } catch {
         setClasses([]);
         setOpen(null);
@@ -363,7 +398,7 @@ export default function ClassDevicePage() {
       tz: "Africa/Abidjan",
       default_session_minutes: 60,
       auto_lateness: true,
-      institution_name: inst.institution_name || "COURS SECONDAIRE CATHOLIQUE ABOISSO",
+      institution_name: inst.institution_name || DEFAULT_INSTITUTION_NAME,
       academic_year_label: inst.academic_year_label || null,
     };
     let grouped: Record<number, Period[]> = {};
@@ -488,7 +523,23 @@ export default function ClassDevicePage() {
       arr.sort((a, b) => toMinutes(a.start_time) - toMinutes(b.start_time))
     );
 
-    setInst(instConfig);
+    // ✅ Ne pas écraser ce qui a déjà été trouvé (comme le nom via /api/class/my-classes)
+    setInst((prev) => ({
+      ...prev,
+      tz: instConfig.tz || prev.tz || "Africa/Abidjan",
+      default_session_minutes:
+        instConfig.default_session_minutes || prev.default_session_minutes || 60,
+      auto_lateness:
+        typeof instConfig.auto_lateness === "boolean"
+          ? instConfig.auto_lateness
+          : prev.auto_lateness,
+      institution_name:
+        instConfig.institution_name ||
+        prev.institution_name ||
+        DEFAULT_INSTITUTION_NAME,
+      academic_year_label:
+        instConfig.academic_year_label || prev.academic_year_label || null,
+    }));
     setPeriodsByDay(grouped);
 
     // 2) config de conduite (maxima) — loader ultra défensif
@@ -496,9 +547,9 @@ export default function ClassDevicePage() {
 
     try {
       const rawConf =
-        ((await getJson("/api/teacher/conduct/settings")) as any) ??
-        ((await getJson("/api/institution/conduct/settings")) as any) ??
-        ((await getJson("/api/admin/conduct/settings")) as any);
+        ((await getJson("/api/teacher/conduct/settings")) as any) ?? // teacher scope
+        ((await getJson("/api/institution/conduct/settings")) as any) ?? // institution
+        ((await getJson("/api/admin/conduct/settings")) as any); // admin
 
       console.log("[ClassDevice] conduct settings rawConf =", rawConf);
 
@@ -601,7 +652,10 @@ export default function ClassDevicePage() {
 
       setInst((prev) => ({
         ...prev,
-        institution_name: finalName || prev.institution_name,
+        institution_name:
+          finalName && finalName.trim().length > 0
+            ? finalName
+            : prev.institution_name || DEFAULT_INSTITUTION_NAME,
         academic_year_label: finalYear || prev.academic_year_label || null,
       }));
     } catch {
@@ -836,7 +890,7 @@ export default function ClassDevicePage() {
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="space-y-1">
             <p className="text-[11px] font-semibold uppercase tracking-[0.25em] text-indigo-200/80">
-              {inst.institution_name || "COURS SECONDAIRE CATHOLIQUE ABOISSO"}
+              {inst.institution_name || DEFAULT_INSTITUTION_NAME}
             </p>
             {inst.academic_year_label && (
               <p className="text-[11px] font-medium text-indigo-100/80">

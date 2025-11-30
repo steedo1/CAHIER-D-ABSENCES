@@ -125,9 +125,50 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  /* 5) Enrichir avec le nom d’établissement (sans casser l’ancien format) */
+  let enriched = items;
+  try {
+    const instIds = uniq<string>(
+      (items || []).map((c: any) => c?.institution_id).filter(Boolean) as string[]
+    );
+
+    if (instIds.length > 0) {
+      const { data: insts, error: instErr } = await srv
+        .from("institutions")
+        .select("id,name,short_name")
+        .in("id", instIds);
+
+      if (!instErr && insts) {
+        const instById: Record<
+          string,
+          { id: string; name?: string | null; short_name?: string | null }
+        > = {};
+        for (const it of insts) {
+          instById[it.id] = it;
+        }
+
+        enriched = (items || []).map((c: any) => {
+          const inst = instById[c.institution_id] || {};
+          const institution_name =
+            (inst as any).name || (inst as any).short_name || null;
+
+          return {
+            ...c,
+            institution_name,
+          };
+        });
+      }
+    }
+  } catch {
+    // En cas de souci, on garde simplement items tel quel (on ne casse rien)
+    enriched = items;
+  }
+
   // Debug optionnel
   const wantDebug = (new URL(req.url).searchParams.get("debug") || "") === "1";
   return NextResponse.json(
-    wantDebug ? { items, debug: { phone, ...debug, variants, likePatterns } } : { items }
+    wantDebug
+      ? { items: enriched, debug: { phone, ...debug, variants, likePatterns } }
+      : { items: enriched }
   );
 }

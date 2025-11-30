@@ -633,6 +633,11 @@ export async function GET(req: NextRequest) {
         },
         total: Number(total.toFixed(2)),
         appreciation,
+        // ➕ infos d’absences/retards pour le bulletin & autres vues
+        absence_count: absenceCount,
+        tardy_count: tardyCount,
+        absence_minutes: Number(absenceMinutes.toFixed(0)),
+        tardy_minutes: Number(tardyMinutes.toFixed(0)),
         // debug possible si besoin plus tard :
         // raw: { absenceMinutes, absenceCount, tardyMinutes, tardyCount, effectiveHours }
       };

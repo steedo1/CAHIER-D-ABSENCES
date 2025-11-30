@@ -359,6 +359,12 @@ function StudentBulletinCard({
     return m;
   }, [item.per_subject_components]);
 
+  // Durée d'absence en heures (à partir des minutes)
+  const absenceHours =
+    conduct && typeof conduct.absence_minutes === "number"
+      ? conduct.absence_minutes / 60
+      : null;
+
   return (
     <div
       className="mb-6 border border-slate-400 bg-white p-4 text-xs shadow-sm print:mb-0"
@@ -612,12 +618,12 @@ function StudentBulletinCard({
                 <span className="font-semibold">
                   {conduct.absence_count ?? 0}
                 </span>
-              </div>
-              <div>
-                Retards injustifiés :{" "}
-                <span className="font-semibold">
-                  {conduct.tardy_count ?? 0}
-                </span>
+                {absenceHours !== null && (
+                  <span className="text-[0.6rem] text-slate-500">
+                    {" "}
+                    ({formatNumber(absenceHours, 1)} h)
+                  </span>
+                )}
               </div>
               <div className="mt-1">
                 Note de conduite :{" "}
@@ -873,7 +879,8 @@ export default function BulletinsPage() {
 
       const [resBulletin, resConduct] = await Promise.all([
         fetch(`/api/admin/grades/bulletin?${params.toString()}`),
-        fetch(`/api/admin/conduct/summary?${params.toString()}`),
+        // ⬇️ nouvelle route de conduite
+        fetch(`/api/admin/conduite/averages?${params.toString()}`),
       ]);
 
       if (!resBulletin.ok) {
@@ -906,7 +913,7 @@ export default function BulletinsPage() {
         }
       } else {
         console.warn(
-          "[Bulletins] /api/admin/conduct/summary a renvoyé",
+          "[Bulletins] /api/admin/conduite/averages a renvoyé",
           resConduct.status
         );
       }
