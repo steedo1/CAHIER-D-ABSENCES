@@ -85,6 +85,13 @@ const LATE_THRESHOLD_MIN =
     ? Math.max(1, Math.floor(Number(process.env.ATTENDANCE_LATE_THRESHOLD_MIN)))
     : 15;
 
+/* Fenêtre (en minutes) avant de considérer un appel comme « manquant ».
+   Par défaut, on prend la même valeur que pour le retard. */
+const MISSING_CONTROL_WINDOW_MIN =
+  Number.isFinite(Number(process.env.ATTENDANCE_MISSING_CONTROL_WINDOW_MIN))
+    ? Math.max(1, Math.floor(Number(process.env.ATTENDANCE_MISSING_CONTROL_WINDOW_MIN)))
+    : LATE_THRESHOLD_MIN;
+
 export async function GET(req: NextRequest) {
   const supa = await getSupabaseServerClient(); // 🔧 IMPORTANT: await
   const srv = getSupabaseServiceClient();
@@ -143,9 +150,12 @@ export async function GET(req: NextRequest) {
   }
 
   // Fenêtre de dates
-  const today = new Date();
-  const defaultTo = parseYMD(toParam) ?? new Date(today); // aujourd'hui
-  const defaultFrom = parseYMD(fromParam) ?? new Date(today);
+  const now = new Date();
+  const todayYmd = toYMD(now);
+  const nowMinutes = now.getUTCHours() * 60 + now.getUTCMinutes();
+
+  const defaultTo = parseYMD(toParam) ?? new Date(now);
+  const defaultFrom = parseYMD(fromParam) ?? new Date(now);
   if (!fromParam && !toParam) {
     // par défaut : les 7 derniers jours
     defaultFrom.setUTCDate(defaultTo.getUTCDate() - 7);
@@ -391,7 +401,26 @@ export async function GET(req: NextRequest) {
         }
         opened_from = best.opened_from;
       } else {
-        status = "missing";
+        // Aucun appel détecté pour ce créneau
+        const isBeforeToday = ymd < todayYmd;
+        const isToday = ymd === todayYmd;
+        const controlLimitMin = startMin + MISSING_CONTROL_WINDOW_MIN;
+
+        if (isBeforeToday) {
+          // Journées passées : si aucun appel dans la fenêtre, c'est manquant
+          status = "missing";
+        } else if (isToday) {
+          // Aujourd'hui : on ne considère manquant qu'après la fenêtre de contrôle
+          if (nowMinutes >= controlLimitMin) {
+            status = "missing";
+          } else {
+            // trop tôt : on ne remonte pas encore ce créneau
+            continue;
+          }
+        } else {
+          // Date future : on ne remonte rien (ni ok, ni late, ni missing)
+          continue;
+        }
       }
 
       const periodLabel =
