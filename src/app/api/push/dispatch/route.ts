@@ -24,7 +24,10 @@ function safeParse<T = any>(x: any): T | null {
     return null;
   }
 }
+
 const WAIT_STATUS = (process.env.PUSH_WAIT_STATUS || "pending").trim();
+// Nombre max de tentatives avant d'abandonner définitivement
+const MAX_ATTEMPTS = Number(process.env.PUSH_MAX_ATTEMPTS || 5);
 
 /* ───────────────── Auth ───────────────── */
 function okAuth(req: Request) {
@@ -496,7 +499,9 @@ async function run(req: Request) {
             error: msg.slice(0, 500),
           });
           if (
-            /(410|404|not a valid|unsubscribe|expired|Gone)/i.test(msg)
+            /(410|404|not a valid|unsubscribe|expired|Gone|unexpected response code)/i.test(
+              msg,
+            )
           ) {
             dropped++;
             let q = srv
@@ -608,26 +613,34 @@ async function run(req: Request) {
         });
       }
     } else {
+      const statusForError =
+        lastError === "no_subscriptions" || attempts >= MAX_ATTEMPTS
+          ? "error"
+          : WAIT_STATUS;
+
       const { error: updErr } = await srv
         .from("notifications_queue")
         .update({
-          status: WAIT_STATUS,
+          status: statusForError,
           attempts,
           last_error: (lastError || "").slice(0, 300),
         } as any)
         .eq("id", n.id);
+
       if (updErr) {
-        console.error("[push/dispatch] queue_update_retry_fail", {
+        console.error("[push/dispatch] queue_update_error_fail", {
           id,
           qid: n.id,
           attempts,
+          statusForError,
           error: updErr.message,
         });
       } else {
-        console.warn("[push/dispatch] queue_update_retry_ok", {
+        console.warn("[push/dispatch] queue_update_error_ok", {
           id,
           qid: n.id,
           attempts,
+          statusForError,
           lastError: (lastError || "").slice(0, 200),
         });
       }

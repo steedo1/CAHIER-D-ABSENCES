@@ -143,11 +143,27 @@ export default function SurveillanceAppelsPage() {
 
     const hasNotif = "Notification" in window;
     const hasSW = "serviceWorker" in navigator;
-    if (!hasNotif || !hasSW) {
+    const hasPush = "PushManager" in (window as any);
+
+    if (!hasNotif || !hasSW || !hasPush) {
       setPushSupported(false);
+      setPushStatus("error");
+      setPushError(
+        "Les notifications push ne sont pas supportées sur ce navigateur ou cet appareil."
+      );
       return;
     }
+
     setPushSupported(true);
+
+    // Si le site est déjà bloqué dans le navigateur, on le signale tout de suite
+    if (Notification.permission === "denied") {
+      setPushStatus("denied");
+      setPushError(
+        "Les notifications sont bloquées pour ce site dans votre navigateur. Utilisez l’icône cadenas à côté de l’adresse pour les réactiver."
+      );
+      return;
+    }
 
     // Tenter de détecter une subscription existante
     (async () => {
@@ -160,7 +176,6 @@ export default function SurveillanceAppelsPage() {
           setPushStatus("enabled");
         }
       } catch (e) {
-        // on ne bloque pas la page pour ça, log éventuel en console
         console.warn("[SurveillanceAppels] push init error", e);
       }
     })();
@@ -169,11 +184,22 @@ export default function SurveillanceAppelsPage() {
   async function enablePush() {
     setPushError(null);
 
-    if (!pushSupported) {
+    if (typeof window === "undefined") {
+      setPushStatus("error");
+      setPushError("Contexte navigateur requis pour activer les notifications.");
+      return;
+    }
+
+    const hasNotif = "Notification" in window;
+    const hasSW = "serviceWorker" in navigator;
+    const hasPush = "PushManager" in (window as any);
+
+    if (!hasNotif || !hasSW || !hasPush) {
+      setPushSupported(false);
+      setPushStatus("error");
       setPushError(
         "Les notifications push ne sont pas supportées sur ce navigateur ou cet appareil."
       );
-      setPushStatus("error");
       return;
     }
 
@@ -186,8 +212,22 @@ export default function SurveillanceAppelsPage() {
     try {
       setPushStatus("subscribing");
 
-      const perm = await Notification.requestPermission();
-      if (perm !== "granted") {
+      // On respecte l'état actuel avant de redemander
+      let permission = Notification.permission; // "default" | "granted" | "denied"
+
+      if (permission === "denied") {
+        setPushStatus("denied");
+        setPushError(
+          "Les notifications sont bloquées pour ce site dans votre navigateur. Utilisez l’icône cadenas à côté de l’adresse pour les réactiver."
+        );
+        return;
+      }
+
+      if (permission === "default") {
+        permission = await Notification.requestPermission();
+      }
+
+      if (permission !== "granted") {
         setPushStatus("denied");
         setPushError(
           "Les notifications ont été refusées pour ce navigateur. Vous pouvez les réactiver dans les paramètres du navigateur."
@@ -195,9 +235,8 @@ export default function SurveillanceAppelsPage() {
         return;
       }
 
-      const reg =
-        (await navigator.serviceWorker.getRegistration()) ||
-        (await navigator.serviceWorker.register("/sw.js"));
+      // Service worker prêt
+      const reg = await navigator.serviceWorker.ready;
 
       let sub = await reg.pushManager.getSubscription();
       if (!sub) {
@@ -210,6 +249,7 @@ export default function SurveillanceAppelsPage() {
       const res = await fetch("/api/push/subscribe", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        credentials: "include", // important pour associer au profil connecté
         body: JSON.stringify({
           platform: "web",
           device_id: sub.endpoint,
@@ -220,8 +260,7 @@ export default function SurveillanceAppelsPage() {
       if (!res.ok) {
         const txt = await res.text().catch(() => "");
         throw new Error(
-          `Echec d'enregistrement du device push (HTTP ${res.status}) ${txt || ""
-          }`
+          `Échec d'enregistrement du device push (HTTP ${res.status}) ${txt || ""}`
         );
       }
 
@@ -231,6 +270,9 @@ export default function SurveillanceAppelsPage() {
       console.error("[SurveillanceAppels] enablePush error", e);
       setPushStatus("error");
       setPushError(e?.message || "Erreur lors de l’activation des notifications.");
+    } finally {
+      // Filet de sécurité : on ne laisse jamais "subscribing" bloqué
+      setPushStatus((prev) => (prev === "subscribing" ? "idle" : prev));
     }
   }
 
@@ -352,7 +394,7 @@ export default function SurveillanceAppelsPage() {
       <section className="rounded-2xl border border-sky-200 bg-sky-50/80 shadow-sm p-4 md:p-5 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <div className="flex items-start gap-3">
           {pushStatus === "enabled" ? (
-            <div className="mt-0.5 inline-flex h-9 w-9 items-center justify-center rounded-full bg-emerald-100 text-emerald-700">
+            <div className="mt-0.5 inline-flex h-9 w-9 items-center justify_center rounded-full bg-emerald-100 text-emerald-700">
               <Bell className="h-5 w-5" />
             </div>
           ) : (
@@ -387,7 +429,9 @@ export default function SurveillanceAppelsPage() {
           <Button
             type="button"
             onClick={enablePush}
-            disabled={!pushSupported || pushStatus === "subscribing" || pushStatus === "enabled"}
+            disabled={
+              !pushSupported || pushStatus === "subscribing" || pushStatus === "enabled"
+            }
             className={[
               "!px-4",
               pushStatus === "enabled"
