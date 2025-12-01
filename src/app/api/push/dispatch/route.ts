@@ -98,6 +98,7 @@ type QueueRow = {
   institution_id: string | null; // pour cibler les admins par établissement
   parent_id: string | null;
   student_id: string | null;
+  profile_id: string | null; // ✅ cible directe (admin, notif spécifique profil)
   channels: any;
   payload: any;
   title: string | null;
@@ -172,12 +173,12 @@ async function run(req: Request) {
 
   const srv = getSupabaseServiceClient();
 
-  // 1) Récupérer les items en attente (+ on prend student_id + meta + institution_id)
+  // 1) Récupérer les items en attente (+ on prend student_id + meta + institution_id + profile_id)
   console.info("[push/dispatch] pick_pending_query", { id });
   const { data: raw, error: pickErr } = await srv
     .from("notifications_queue")
     .select(
-      "id,institution_id,parent_id,student_id,channels,payload,title,body,status,attempts,created_at,meta",
+      "id,institution_id,parent_id,student_id,profile_id,channels,payload,title,body,status,attempts,created_at,meta",
     )
     .eq("status", WAIT_STATUS)
     .order("created_at", { ascending: true })
@@ -204,6 +205,7 @@ async function run(req: Request) {
         id: r.id,
         parent: shortId(r.parent_id),
         student: shortId(r.student_id),
+        profile: shortId(r.profile_id),
         metaDev: shortId((safeParse<any>(r.meta) || {}).device_id),
         typ: p?.type || p?.kind || p?.event || "notification",
         title: r.title || p?.title || null,
@@ -283,13 +285,23 @@ async function run(req: Request) {
     }
   }
 
-  // Pour chaque queue row, liste de user_ids cibles (parents / responsables)
+  // Pour chaque queue row, liste de user_ids cibles (parents / responsables / profil direct)
   const targetUserIdsByRow = new Map<string, string[]>();
   for (const r of rows) {
     let ids: string[] = [];
-    if (r.parent_id) ids.push(String(r.parent_id));
 
-    if (!ids.length) {
+    // ✅ 1) cible directe par profil (admin, notif ciblée)
+    if (r.profile_id) {
+      ids.push(String(r.profile_id));
+    }
+
+    // ✅ 2) parent explicite
+    if (r.parent_id) {
+      ids.push(String(r.parent_id));
+    }
+
+    // ✅ 3) device -> parent
+    if (!r.parent_id && !r.profile_id) {
       const dev = (safeParse<any>(r.meta) || {}).device_id as
         | string
         | undefined;
@@ -298,7 +310,8 @@ async function run(req: Request) {
       }
     }
 
-    if (!ids.length && r.student_id && studToParents.has(r.student_id)) {
+    // ✅ 4) student -> guardians
+    if (!r.profile_id && r.student_id && studToParents.has(r.student_id)) {
       ids.push(...(studToParents.get(r.student_id) || []));
     }
 
@@ -368,9 +381,7 @@ async function run(req: Request) {
   const { data: subs, error: subsErr } = allUserIds.length
     ? await srv
         .from("push_subscriptions")
-        .select(
-          "user_id,platform,device_id,subscription_json,fcm_token",
-        )
+        .select("user_id,platform,device_id,subscription_json,fcm_token")
         .in("user_id", allUserIds)
     : { data: [], error: null as any };
 
@@ -431,6 +442,7 @@ async function run(req: Request) {
       subs: list.length,
       parent_id: shortId(n.parent_id),
       student: shortId(n.student_id),
+      profile: shortId(n.profile_id),
     });
 
     const payloadStr = JSON.stringify({ title, body, url, data: core });
@@ -444,6 +456,7 @@ async function run(req: Request) {
         qid: n.id,
         parent_id: n.parent_id,
         student_id: n.student_id,
+        profile_id: n.profile_id,
         metaDev: shortId((safeParse<any>(n.meta) || {}).device_id),
       });
     }
