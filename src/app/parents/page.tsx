@@ -358,7 +358,7 @@ function Skeleton({ className = "" }: { className?: string }) {
   );
 }
 
-/* Jauge verticale par rubrique (mobile) */
+/* Jauge verticale par rubrique (mobile) — alignée sur rubric_max */
 function VerticalGauge({
   label,
   value,
@@ -371,12 +371,18 @@ function VerticalGauge({
   rubric: RubricKey;
 }) {
   const theme = RUBRIC_THEMES[rubric];
-  const denom = max > 0 ? max : 1;
-  const pct = Math.max(0, Math.min(100, (value / denom) * 100));
-  const vLabel =
-    value.toFixed(1).replace(".", ",") +
-    " pt" +
-    (Math.abs(value - 1) < 0.001 ? "" : "s");
+
+  const safeMax = max > 0 ? max : 1;
+  const pct = Math.max(0, Math.min(100, (value / safeMax) * 100));
+
+  const fmtNumber = (n: number) => {
+    if (Number.isInteger(n)) return String(n);
+    return n.toFixed(1).replace(".", ",");
+  };
+
+  const vLabel = `${fmtNumber(value)} / ${fmtNumber(max)} pt${
+    Math.abs(max - 1) < 0.001 ? "" : "s"
+  }`;
 
   return (
     <div className="flex min-w-[64px] flex-1 flex-col items-center">
@@ -471,13 +477,13 @@ const IconBook = () => (
 );
 const IconMenu = () => (
   <svg
-    width="16"
-    height="16"
+    width="18"
+    height="18"
     viewBox="0 0 24 24"
     className="shrink-0"
     fill="none"
     stroke="currentColor"
-    strokeWidth="2"
+    strokeWidth="2.2"
   >
     <path d="M4 6h16" />
     <path d="M4 12h16" />
@@ -556,7 +562,7 @@ function TiltCard({
   return (
     <div
       style={{ perspective: "1000px" }}
-      className="[transform-style:preserve-3d] "
+      className="[transform-style:preserve-3d]"
       onMouseMove={onMove}
       onMouseLeave={onLeave}
     >
@@ -995,33 +1001,43 @@ export default function ParentPage() {
         className={[
           "flex w-full items-center gap-2 rounded-xl px-3 py-2 text-sm transition",
           active
-            ? "bg-emerald-50 text-emerald-800 ring-1 ring-emerald-200"
-            : "text-slate-700 hover:bg-slate-100",
+            ? "bg-emerald-50 text-emerald-800 ring-1 ring-emerald-200 shadow-sm"
+            : "text-slate-200/90 hover:bg-slate-800/60 hover:text-white",
         ].join(" ")}
       >
-        <span className="text-slate-500">{icon}</span>
+        <span className="text-slate-300">{icon}</span>
         <span className="truncate">{label}</span>
       </button>
     );
   }
 
   return (
-    <div className="min-h-screen bg-slate-950/5">
+    <div className="min-h-screen bg-slate-950 text-slate-900">
+      {/* Glow global */}
+      <div
+        aria-hidden
+        className="pointer-events-none fixed inset-0 -z-10"
+        style={{
+          background:
+            "radial-gradient(circle at 0% 0%, rgba(16,185,129,0.22), transparent 55%), radial-gradient(circle at 100% 0%, rgba(56,189,248,0.16), transparent 55%)",
+        }}
+      />
+
       {/* Drawer mobile (style app, ouverture à gauche) */}
       {mobileNavOpen && (
         <div className="fixed inset-0 z-40 flex md:hidden">
           {/* Panneau gauche */}
-          <div className="relative flex h-full w-72 max-w-[80%] flex-col bg-white shadow-2xl">
-            <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
+          <div className="relative flex h-full w-72 max-w-[80%] flex-col bg-slate-950 text-slate-100 shadow-2xl shadow-emerald-500/40">
+            <div className="flex items-center justify-between border-b border-slate-800 px-4 py-3">
               <div className="flex items-center gap-2">
-                <div className="grid h-8 w-8 place-items-center rounded-lg bg-slate-900 text-xs font-semibold text-white">
+                <div className="grid h-9 w-9 place-items-center rounded-xl bg-gradient-to-br from-emerald-500 to-emerald-700 text-xs font-semibold text-slate-950 shadow-lg shadow-emerald-500/40">
                   MC
                 </div>
                 <div className="min-w-0">
-                  <div className="text-xs font-semibold text-slate-900">
+                  <div className="text-xs font-semibold text-emerald-300">
                     Mon Cahier
                   </div>
-                  <div className="text-[11px] text-slate-500">
+                  <div className="text-[11px] text-slate-400">
                     Espace parent
                   </div>
                 </div>
@@ -1030,7 +1046,7 @@ export default function ParentPage() {
                 type="button"
                 aria-label="Fermer le menu"
                 onClick={() => setMobileNavOpen(false)}
-                className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-slate-100 text-slate-700"
+                className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-slate-800 text-slate-100 shadow-md"
               >
                 <IconX />
               </button>
@@ -1038,7 +1054,7 @@ export default function ParentPage() {
 
             <div className="flex-1 overflow-y-auto">
               {/* Enfants (mobile drawer) */}
-              <div className="border-b border-slate-100 px-4 py-3">
+              <div className="border-b border-slate-800 px-4 py-3">
                 <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
                   Enfants
                 </div>
@@ -1051,12 +1067,12 @@ export default function ParentPage() {
                     className={[
                       "flex w-full items-center justify-between rounded-lg px-2 py-1.5 text-xs transition",
                       activeChildId === "all"
-                        ? "bg-slate-900 text-white"
-                        : "text-slate-700 hover:bg-slate-100",
+                        ? "bg-emerald-500 text-slate-950"
+                        : "text-slate-100 hover:bg-slate-800",
                     ].join(" ")}
                   >
                     <span>Vue globale</span>
-                    <span className="rounded-full bg-slate-900/5 px-1.5 py-0.5 text-[10px] text-slate-600">
+                    <span className="rounded-full bg-slate-900/60 px-1.5 py-0.5 text-[10px] text-emerald-200">
                       {kids.length || 0}
                     </span>
                   </button>
@@ -1072,16 +1088,16 @@ export default function ParentPage() {
                         className={[
                           "flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-xs transition",
                           active
-                            ? "bg-emerald-50 text-emerald-800 ring-1 ring-emerald-200"
-                            : "text-slate-700 hover:bg-slate-100",
+                            ? "bg-slate-800 text-emerald-200 ring-1 ring-emerald-400/80"
+                            : "text-slate-100 hover:bg-slate-900/60",
                         ].join(" ")}
                       >
-                        <div className="grid h-6 w-6 place-items-center rounded-lg bg-slate-100 text-[10px] font-semibold text-slate-700">
+                        <div className="grid h-6 w-6 place-items-center rounded-lg bg-slate-900 text-[10px] font-semibold text-emerald-200">
                           {getInitials(k.full_name)}
                         </div>
                         <div className="min-w-0 text-left">
                           <div className="truncate">{k.full_name}</div>
-                          <div className="truncate text-[10px] text-slate-500">
+                          <div className="truncate text-[10px] text-slate-400">
                             {k.class_label || "—"}
                           </div>
                         </div>
@@ -1116,7 +1132,7 @@ export default function ParentPage() {
               </div>
             </div>
 
-            <div className="border-t border-slate-200 px-4 py-3">
+            <div className="border-t border-slate-800 px-4 py-3">
               <Button
                 tone="slate"
                 onClick={safeLogout}
@@ -1134,30 +1150,33 @@ export default function ParentPage() {
           <button
             type="button"
             aria-label="Fermer le menu"
-            className="flex-1 bg-slate-950/40"
+            className="flex-1 bg-slate-950/60 backdrop-blur-sm"
             onClick={() => setMobileNavOpen(false)}
           />
         </div>
       )}
 
       <div className="flex min-h-screen">
-        {/* Sidebar desktop */}
-        <aside className="hidden w-64 flex-col border-r border-slate-200 bg-white/95 backdrop-blur md:flex">
+        {/* Sidebar desktop élargie et plus premium */}
+        <aside className="hidden w-72 flex-col border-r border-slate-800/70 bg-gradient-to-b from-slate-950 via-slate-950 to-slate-900/95 md:flex">
           {/* Brand */}
-          <div className="flex items-center gap-3 border-b border-slate-200 px-4 py-4">
-            <div className="grid h-9 w-9 place-items-center rounded-xl bg-slate-900 text-xs font-semibold text-white shadow-sm">
-              MC
+          <div className="flex items-center gap-3 border-b border-slate-800 px-4 py-4">
+            <div className="relative">
+              <div className="absolute -inset-0.5 rounded-2xl bg-gradient-to-tr from-emerald-500/60 via-cyan-400/40 to-indigo-500/60 opacity-80 blur-sm" />
+              <div className="relative grid h-10 w-10 place-items-center rounded-2xl bg-slate-950 text-xs font-semibold text-white shadow-lg shadow-emerald-500/30">
+                MC
+              </div>
             </div>
             <div className="min-w-0">
-              <div className="truncate text-sm font-semibold text-slate-900">
+              <div className="truncate text-sm font-semibold text-slate-50">
                 Mon Cahier
               </div>
-              <div className="text-xs text-slate-500">Espace parent</div>
+              <div className="text-xs text-emerald-300">Espace parent</div>
             </div>
           </div>
 
           {/* Enfants */}
-          <div className="border-b border-slate-100 px-4 py-3">
+          <div className="border-b border-slate-800 px-4 py-3">
             <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
               Enfants
             </div>
@@ -1167,12 +1186,12 @@ export default function ParentPage() {
                 className={[
                   "flex w-full items-center justify-between rounded-lg px-2 py-1.5 text-xs transition",
                   activeChildId === "all"
-                    ? "bg-slate-900 text-white"
-                    : "text-slate-700 hover:bg-slate-100",
+                    ? "bg-emerald-500 text-slate-950"
+                    : "text-slate-200 hover:bg-slate-900",
                 ].join(" ")}
               >
                 <span>Vue globale</span>
-                <span className="rounded-full bg-slate-900/5 px-1.5 py-0.5 text-[10px] text-slate-600">
+                <span className="rounded-full bg-slate-950/60 px-1.5 py-0.5 text-[10px] text-emerald-200">
                   {kids.length || 0}
                 </span>
               </button>
@@ -1185,11 +1204,11 @@ export default function ParentPage() {
                     className={[
                       "flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-xs transition",
                       active
-                        ? "bg-emerald-50 text-emerald-800 ring-1 ring-emerald-200"
-                        : "text-slate-700 hover:bg-slate-100",
+                        ? "bg-slate-900 text-emerald-200 ring-1 ring-emerald-400/80"
+                        : "text-slate-200 hover:bg-slate-900",
                     ].join(" ")}
                   >
-                    <div className="grid h-6 w-6 place-items-center rounded-lg bg-slate-100 text-[10px] font-semibold text-slate-700">
+                    <div className="grid h-6 w-6 place-items-center rounded-lg bg-slate-800 text-[10px] font-semibold text-emerald-200">
                       {getInitials(k.full_name)}
                     </div>
                     <div className="min-w-0 text-left">
@@ -1229,7 +1248,7 @@ export default function ParentPage() {
           </div>
 
           {/* Logout bas sidebar */}
-          <div className="border-t border-slate-200 px-4 py-3">
+          <div className="border-t border-slate-800 px-4 py-3">
             <Button
               tone="white"
               onClick={safeLogout}
@@ -1256,29 +1275,32 @@ export default function ParentPage() {
               className="pointer-events-none absolute inset-0 -z-10"
               style={{
                 background:
-                  "radial-gradient(90% 60% at 100% 0%, rgba(56,189,248,0.10), transparent 60%), radial-gradient(70% 50% at 0% 0%, rgba(16,185,129,0.10), transparent 60%)",
+                  "radial-gradient(90% 60% at 100% 0%, rgba(56,189,248,0.18), transparent 65%), radial-gradient(70% 50% at 0% 0%, rgba(16,185,129,0.20), transparent 60%)",
               }}
             />
 
             {/* Header */}
-            <header className="relative overflow-hidden rounded-3xl border border-slate-800/20 bg-gradient-to-br from-slate-950 via-indigo-950 to-slate-900 px-5 py-5 text-white shadow-sm md:px-7 md:py-6">
-              <div className="absolute inset-0 opacity-20 [background-image:radial-gradient(60%_50%_at_100%_0%,white,transparent_70%)]" />
+            <header className="relative overflow-hidden rounded-3xl border border-slate-700/60 bg-gradient-to-br from-slate-950 via-slate-950 to-slate-900 px-5 py-5 text-white shadow-xl shadow-slate-950/50 md:px-7 md:py-6">
+              <div className="absolute inset-0 opacity-30 [background-image:radial-gradient(60%_50%_at_100%_0%,white,transparent_70%)]" />
               <div className="relative z-10 flex flex-col gap-3">
                 {/* Ligne supérieure : menu à gauche + brand + actions */}
                 <div className="flex items-center justify-between gap-3">
                   <div className="flex min-w-0 items-center gap-3">
-                    {/* Bouton menu mobile à gauche */}
+                    {/* Bouton menu mobile très visible */}
                     <button
                       type="button"
                       aria-label="Ouvrir le menu"
                       onClick={() => setMobileNavOpen(true)}
-                      className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-white/20 bg-white/10 text-white md:hidden"
+                      className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-emerald-300/80 bg-emerald-400 text-slate-950 shadow-lg shadow-emerald-500/50 md:hidden"
                     >
                       <IconMenu />
                     </button>
 
-                    <div className="grid h-9 w-9 place-items-center rounded-xl bg-slate-950/80 text-xs font-semibold">
-                      MC
+                    <div className="relative hidden md:block">
+                      <div className="absolute -inset-0.5 rounded-2xl bg-gradient-to-tr from-emerald-500/60 via-cyan-400/40 to-indigo-500/60 opacity-80 blur-sm" />
+                      <div className="relative grid h-10 w-10 place-items-center rounded-2xl bg-slate-950 text-xs font-semibold text-white shadow-lg shadow-emerald-500/30">
+                        MC
+                      </div>
                     </div>
                     <div className="min-w-0">
                       <p className="text-[11px] font-semibold uppercase tracking-wide text-emerald-300">
@@ -1322,7 +1344,8 @@ export default function ParentPage() {
 
                 {/* Description */}
                 <p className="mt-1 max-w-2xl text-sm text-white/80">
-                  Suivez en temps réel vos enfants.
+                  Suivez en temps réel les absences, la conduite et les notes de
+                  vos enfants, sur une interface pensée pour les parents.
                 </p>
 
                 {/* Actions (push + logout) en mobile */}
@@ -1397,7 +1420,7 @@ export default function ParentPage() {
 
             {/* iOS hint */}
             {isiOS && !isStandalone && !granted && (
-              <div className="rounded-2xl border bg-amber-50 p-3 text-amber-900">
+              <div className="rounded-2xl border border-amber-200/60 bg-amber-50/90 p-3 text-amber-900 shadow-sm">
                 <div className="text-sm">
                   <b>iPhone/iPad :</b> pour recevoir les notifications, ajoutez
                   d’abord l’app à l’écran d’accueil : ouvrez cette page dans{" "}
@@ -1408,9 +1431,9 @@ export default function ParentPage() {
               </div>
             )}
 
-            {/* Conduite — points par enfant (sans note globale /20 sur mobile) */}
+            {/* Conduite — points par enfant */}
             {showConductSection && (
-              <section className="rounded-2xl border bg-white/90 p-5 shadow-sm backdrop-blur">
+              <section className="rounded-2xl border border-slate-200/70 bg-white/95 p-5 shadow-lg shadow-slate-900/5 backdrop-blur">
                 <div className="mb-3 flex items-center justify-between gap-3">
                   <div className="text-sm font-semibold uppercase tracking-wide text-slate-700">
                     Conduite — Points par rubrique
@@ -1490,7 +1513,7 @@ export default function ParentPage() {
                         return (
                           <div
                             key={k.id}
-                            className="rounded-xl border border-slate-200 p-4 ring-emerald-100 transition hover:shadow-sm hover:ring-2"
+                            className="rounded-xl border border-slate-200 p-4 ring-emerald-100 transition hover:-translate-y-0.5 hover:shadow-md hover:ring-2"
                           >
                             <div className="flex items-start justify-between gap-3">
                               <div className="min-w-0">
@@ -1546,7 +1569,7 @@ export default function ParentPage() {
                               </div>
                             ) : (
                               <div className="mt-3 text-sm text-slate-600">
-                                — 
+                                —
                               </div>
                             )}
                           </div>
@@ -1574,8 +1597,7 @@ export default function ParentPage() {
                                 <th className="px-3 py-2 text-left">Enfant</th>
                                 <th className="px-3 py-2 text-left">Classe</th>
                                 <th className="px-3 py-2 text-left">
-                                  Assiduité (/
-                                  {rubricMax.assiduite})
+                                  Assiduité (/{rubricMax.assiduite})
                                 </th>
                                 <th className="px-3 py-2 text-left">
                                   Tenue (/{rubricMax.tenue})
@@ -1654,7 +1676,7 @@ export default function ParentPage() {
 
             {/* Absences / Sanctions / Notes (vue Dashboard + onglet Absences) */}
             {showEventsSection && (
-              <section className="rounded-2xl border bg-white/90 p-5 shadow-sm backdrop-blur">
+              <section className="rounded-2xl border border-slate-200/70 bg-white/95 p-5 shadow-lg shadow-slate-900/5 backdrop-blur">
                 {(() => {
                   const title = isAbsences
                     ? "Cahier d’absences — Absences/retards récents et sanctions"
@@ -2051,7 +2073,7 @@ export default function ParentPage() {
 
             {/* Cahier de notes – vue détaillée */}
             {showNotesSection && (
-              <section className="rounded-2xl border bg-white/90 p-5 shadow-sm backdrop-blur">
+              <section className="rounded-2xl border border-slate-200/70 bg-white/95 p-5 shadow-lg shadow-slate-900/5 backdrop-blur">
                 <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                   <div className="text-sm font-semibold uppercase tracking-wide text-slate-700">
                     Cahier de notes — évaluations publiées
@@ -2262,7 +2284,7 @@ export default function ParentPage() {
             )}
 
             {msg && (
-              <div className="rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+              <div className="rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900 shadow-sm">
                 {msg}
               </div>
             )}

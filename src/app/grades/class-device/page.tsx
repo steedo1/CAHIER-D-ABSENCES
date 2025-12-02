@@ -279,7 +279,7 @@ export default function ClassDeviceNotesPage() {
           }
         }
 
-        const candidates = [
+                const candidates = [
           "/api/teacher/institution/settings",
           "/api/institution/settings",
           "/api/admin/institution/settings",
@@ -289,25 +289,41 @@ export default function ClassDeviceNotesPage() {
           const j: any = await getJson(url);
           if (!j) continue;
 
-          // On cherche dans l’objet brut puis dans un éventuel settings_json
-          const src = j?.settings_json ? j.settings_json : j;
+          // On regarde d'abord dans settings_json (s'il existe et n'est pas vide),
+          // puis on tombe ensuite sur les champs racine (name, academic_year, …)
+          const rawSettings =
+            j &&
+            typeof j.settings_json === "object" &&
+            j.settings_json &&
+            Object.keys(j.settings_json).length > 0
+              ? j.settings_json
+              : null;
 
           const nameCandidate =
-            src?.institution_name ??
-            src?.institution_label ??
-            src?.short_name ??
-            src?.name ??
-            src?.header_title ??
-            src?.school_name ??
+            rawSettings?.institution_name ??
+            rawSettings?.institution_label ??
+            rawSettings?.short_name ??
+            j?.institution_name ??
+            j?.institution_label ??
+            j?.short_name ??
+            j?.name ??
+            j?.header_title ??
+            j?.school_name ??
             null;
 
           const yearCandidate =
-            src?.current_academic_year_label ??
-            src?.academic_year_label ??
-            src?.academic_year ??
-            src?.year_label ??
-            src?.header_academic_year ??
+            rawSettings?.current_academic_year_label ??
+            rawSettings?.academic_year_label ??
+            rawSettings?.academic_year ??
+            rawSettings?.year_label ??
+            rawSettings?.header_academic_year ??
+            j?.current_academic_year_label ??
+            j?.academic_year_label ??
+            j?.academic_year ??
+            j?.year_label ??
+            j?.header_academic_year ??
             null;
+
 
           if (!cancelled) {
             if (!finalNameFromDom && nameCandidate) {

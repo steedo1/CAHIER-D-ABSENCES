@@ -534,9 +534,7 @@ export default function ClassDevicePage() {
           ? instConfig.auto_lateness
           : prev.auto_lateness,
       institution_name:
-        instConfig.institution_name ||
-        prev.institution_name ||
-        DEFAULT_INSTITUTION_NAME,
+        instConfig.institution_name || prev.institution_name || DEFAULT_INSTITUTION_NAME,
       academic_year_label:
         instConfig.academic_year_label || prev.academic_year_label || null,
     }));
@@ -700,9 +698,7 @@ export default function ClassDevicePage() {
     setDuration(
       Math.max(
         1,
-        minutesDiff(pick.start_time, pick.end_time) ||
-          inst.default_session_minutes ||
-          60
+        minutesDiff(pick.start_time, pick.end_time) || inst.default_session_minutes || 60
       )
     );
     setSlotLabel(`${pick.label} • ${pick.start_time} → ${pick.end_time}`);
