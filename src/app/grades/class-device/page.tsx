@@ -886,9 +886,7 @@ export default function ClassDeviceNotesPage() {
 
     // 🔹 Calcul des moyennes par sous-rubrique (si collège + sous-matières)
     type CompAgg = { num: number; denom: number };
-    let perStudentComp:
-      | Map<string, Record<string, CompAgg>>
-      | null = null;
+    let perStudentComp: Map<string, Record<string, CompAgg>> | null = null;
 
     if (hasComponents && evaluations.length > 0 && roster.length > 0) {
       const rosterIds = new Set(roster.map((st) => st.id));
@@ -1397,24 +1395,13 @@ export default function ClassDeviceNotesPage() {
       const classLabel = selected?.class_label || "";
       const subjectName = selected?.subject_name || "";
 
-      const w = window.open("", "_blank", "noopener,noreferrer");
-      if (!w) {
-        setMsg(
-          "Impossible d’ouvrir la fenêtre d’impression. Vérifiez le bloqueur de pop-up."
-        );
-        return;
-      }
-
-      const doc = w.document;
-      doc.title = title;
-
       const fmt = (v: number | null, digits = 2) =>
         v == null || Number.isNaN(v) ? "—" : v.toFixed(digits);
 
       const html = `<!DOCTYPE html>
 <html lang="fr">
 <head>
-<meta charSet="utf-8" />
+<meta charset="utf-8" />
 <title>${title}</title>
 <style>
   * { box-sizing: border-box; }
@@ -1474,7 +1461,9 @@ export default function ClassDeviceNotesPage() {
 <body>
   <h1>${title}</h1>
   <div class="subtitle">
-    ${inst ? `${inst} — ` : ""}${classLabel || "Classe ?"}${subjectName ? ` — ${subjectName}` : ""}${year ? ` — Année scolaire ${year}` : ""}
+    ${inst ? `${inst} — ` : ""}${classLabel || "Classe ?"}${
+        subjectName ? ` — ${subjectName}` : ""
+      }${year ? ` — Année scolaire ${year}` : ""}
   </div>
 
   <div class="section-title">1. Informations générales</div>
@@ -1595,12 +1584,28 @@ export default function ClassDeviceNotesPage() {
 </body>
 </html>`;
 
+      const w = window.open("", "_blank");
+      if (!w) {
+        setMsg(
+          "Impossible d’ouvrir la fenêtre d’impression. Vérifiez le bloqueur de pop-up."
+        );
+        return;
+      }
+
+      const doc = w.document;
       doc.open();
       doc.write(html);
       doc.close();
 
+      // Donne un petit délai au navigateur pour rendre la page avant impression
       w.focus();
-      w.print();
+      setTimeout(() => {
+        try {
+          w.print();
+        } catch (errPrint) {
+          logError("openStatsPdfForEvaluation -> erreur print", errPrint);
+        }
+      }, 200);
     } catch (err) {
       logError("openStatsPdfForEvaluation -> exception", err);
       setMsg(

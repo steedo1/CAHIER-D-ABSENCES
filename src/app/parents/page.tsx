@@ -25,7 +25,9 @@ const fmt = (iso: string) =>
   });
 function slotLabel(iso: string, expectedMinutes?: number | null): string {
   const start = new Date(iso);
-  const minutes = Number.isFinite(Number(expectedMinutes)) ? Number(expectedMinutes) : 60;
+  const minutes = Number.isFinite(Number(expectedMinutes))
+    ? Number(expectedMinutes)
+    : 60;
   const end = new Date(start.getTime() + minutes * 60_000);
 
   const sh = String(start.getHours()).padStart(2, "0");
@@ -54,7 +56,11 @@ function dayLabel(iso: string) {
     a.getDate() === b.getDate();
   if (same(d, today)) return "Aujourd’hui";
   if (same(d, yday)) return "Hier";
-  return d.toLocaleDateString([], { day: "2-digit", month: "2-digit", year: "numeric" });
+  return d.toLocaleDateString([], {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  });
 }
 function rubricLabel(r: "discipline" | "tenue" | "moralite") {
   if (r === "tenue") return "Tenue";
@@ -170,6 +176,32 @@ function themeFor(i: number) {
   return THEMES[i % THEMES.length];
 }
 
+/* ───────── thèmes par rubrique (pour jauges verticales) ───────── */
+const RUBRIC_THEMES = {
+  assiduite: {
+    bg: "bg-emerald-100",
+    fill: "bg-emerald-500",
+    text: "text-emerald-700",
+  },
+  tenue: {
+    bg: "bg-sky-100",
+    fill: "bg-sky-500",
+    text: "text-sky-700",
+  },
+  moralite: {
+    bg: "bg-violet-100",
+    fill: "bg-violet-500",
+    text: "text-violet-700",
+  },
+  discipline: {
+    bg: "bg-amber-100",
+    fill: "bg-amber-500",
+    text: "text-amber-800",
+  },
+} as const;
+
+type RubricKey = keyof typeof RUBRIC_THEMES;
+
 /* ───────── types ───────── */
 type Kid = { id: string; full_name: string; class_label: string | null };
 type Ev = {
@@ -195,9 +227,20 @@ type KidPenalty = {
   author_role_label?: string | null;
 };
 type Conduct = {
-  breakdown: { assiduite: number; tenue: number; moralite: number; discipline: number };
+  breakdown: {
+    assiduite: number;
+    tenue: number;
+    moralite: number;
+    discipline: number;
+  };
   total: number;
   appreciation: string;
+  rubric_max: {
+    assiduite: number;
+    tenue: number;
+    moralite: number;
+    discipline: number;
+  };
 };
 type KidGradeRow = {
   id: string;
@@ -218,7 +261,7 @@ function Button(
   p: React.ButtonHTMLAttributes<HTMLButtonElement> & {
     tone?: "emerald" | "slate" | "red" | "white" | "outline";
     iconLeft?: React.ReactNode;
-  }
+  },
 ) {
   const tone = p.tone ?? "emerald";
   const map: Record<NonNullable<typeof p.tone>, string> = {
@@ -287,7 +330,15 @@ function Badge({
     </span>
   );
 }
-function Meter({ value, max, label }: { value: number; max: number; label?: string }) {
+function Meter({
+  value,
+  max,
+  label,
+}: {
+  value: number;
+  max: number;
+  label?: string;
+}) {
   const pct = Math.max(0, Math.min(100, (value / max) * 100));
   return (
     <div>
@@ -302,7 +353,49 @@ function Meter({ value, max, label }: { value: number; max: number; label?: stri
   );
 }
 function Skeleton({ className = "" }: { className?: string }) {
-  return <div className={`animate-pulse rounded-xl bg-slate-200/70 ${className}`} />;
+  return (
+    <div className={`animate-pulse rounded-xl bg-slate-200/70 ${className}`} />
+  );
+}
+
+/* Jauge verticale par rubrique (mobile) */
+function VerticalGauge({
+  label,
+  value,
+  max,
+  rubric,
+}: {
+  label: string;
+  value: number;
+  max: number;
+  rubric: RubricKey;
+}) {
+  const theme = RUBRIC_THEMES[rubric];
+  const denom = max > 0 ? max : 1;
+  const pct = Math.max(0, Math.min(100, (value / denom) * 100));
+  const vLabel =
+    value.toFixed(1).replace(".", ",") +
+    " pt" +
+    (Math.abs(value - 1) < 0.001 ? "" : "s");
+
+  return (
+    <div className="flex min-w-[64px] flex-1 flex-col items-center">
+      <div
+        className={`relative flex h-24 w-7 overflow-hidden rounded-full ${theme.bg}`}
+      >
+        <div
+          className={`absolute bottom-0 left-0 right-0 ${theme.fill}`}
+          style={{ height: `${pct}%` }}
+        />
+      </div>
+      <div
+        className={`mt-1 text-[11px] font-semibold leading-tight ${theme.text}`}
+      >
+        {label}
+      </div>
+      <div className="text-[11px] text-slate-600">{vLabel}</div>
+    </div>
+  );
 }
 
 /* Petites icônes inline (pas de dépendances) */
@@ -420,7 +513,9 @@ function TiltCard({
 
   useEffect(() => {
     if (typeof window !== "undefined") {
-      setHasFinePointer(window.matchMedia?.("(pointer: fine)")?.matches ?? false);
+      setHasFinePointer(
+        window.matchMedia?.("(pointer: fine)")?.matches ?? false,
+      );
     }
   }, []);
 
@@ -437,7 +532,7 @@ function TiltCard({
 
     setStyle({
       transform: `rotateX(${rx.toFixed(2)}deg) rotateY(${ry.toFixed(
-        2
+        2,
       )}deg) translateZ(0) scale(1.01)`,
       transition: "transform 60ms linear",
       transformStyle: "preserve-3d",
@@ -470,7 +565,10 @@ function TiltCard({
         style={style}
       >
         {/* halo lumineux */}
-        <div className="pointer-events-none absolute inset-0 rounded-xl" style={shineStyle} />
+        <div
+          className="pointer-events-none absolute inset-0 rounded-xl"
+          style={shineStyle}
+        />
         {children}
       </div>
     </div>
@@ -491,7 +589,10 @@ async function ensurePushSubscription() {
     try {
       reg = await navigator.serviceWorker.register("/sw.js", { scope: "/" });
     } catch (e: any) {
-      return { ok: false, reason: "sw_register_failed:" + (e?.message || e) };
+      return {
+        ok: false,
+        reason: "sw_register_failed:" + (e?.message || e),
+      };
     }
   }
   reg = await navigator.serviceWorker.ready;
@@ -512,7 +613,10 @@ async function ensurePushSubscription() {
         applicationServerKey: urlBase64ToUint8Array(key),
       });
     } catch (e: any) {
-      return { ok: false, reason: "subscribe_failed:" + (e?.message || e) };
+      return {
+        ok: false,
+        reason: "subscribe_failed:" + (e?.message || e),
+      };
     }
   }
 
@@ -531,14 +635,22 @@ async function ensurePushSubscription() {
     body = await res.json();
   } catch {}
   if (!res.ok) {
-    const err = `${res.status} ${body?.error || ""}${body?.stage ? ` [${body.stage}]` : ""}`;
+    const err = `${res.status} ${body?.error || ""}${
+      body?.stage ? ` [${body.stage}]` : ""
+    }`;
     return { ok: false, reason: "server_upsert_failed:" + err };
   }
   return { ok: true };
 }
 
 /* ───────── group by day ───────── */
-type DayGroup = { day: string; label: string; absentCount: number; lateCount: number; items: Ev[] };
+type DayGroup = {
+  day: string;
+  label: string;
+  absentCount: number;
+  lateCount: number;
+  items: Ev[];
+};
 function groupByDay(events: Ev[]): DayGroup[] {
   const buckets = new Map<string, Ev[]>();
   for (const ev of events) {
@@ -567,7 +679,9 @@ function groupByDay(events: Ev[]): DayGroup[] {
 export default function ParentPage() {
   const [kids, setKids] = useState<Kid[]>([]);
   const [feed, setFeed] = useState<Record<string, Ev[]>>({});
-  const [kidPenalties, setKidPenalties] = useState<Record<string, KidPenalty[]>>({});
+  const [kidPenalties, setKidPenalties] = useState<
+    Record<string, KidPenalty[]>
+  >({});
   const [conduct, setConduct] = useState<Record<string, Conduct>>({});
   const [kidGrades, setKidGrades] = useState<Record<string, KidGradeRow[]>>({});
   const [loadingKids, setLoadingKids] = useState(true);
@@ -579,20 +693,24 @@ export default function ParentPage() {
   const [conductTo, setConductTo] = useState<string>("");
 
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
-  const [showAllDaysForKid, setShowAllDaysForKid] = useState<Record<string, boolean>>({});
-  const [showAllPenForKid, setShowAllPenForKid] = useState<Record<string, boolean>>({});
+  const [showAllDaysForKid, setShowAllDaysForKid] = useState<
+    Record<string, boolean>
+  >({});
+  const [showAllPenForKid, setShowAllPenForKid] = useState<
+    Record<string, boolean>
+  >({});
 
   // Filtre période pour les notes
-  const [gradeFilterMode, setGradeFilterMode] = useState<"week" | "month" | "all" | "custom">(
-    "week"
-  );
+  const [gradeFilterMode, setGradeFilterMode] = useState<
+    "week" | "month" | "all" | "custom"
+  >("week");
   const [gradeFrom, setGradeFrom] = useState<string>("");
   const [gradeTo, setGradeTo] = useState<string>("");
 
   // Matière sélectionnée par enfant (onglet Cahier de notes)
-  const [activeSubjectPerKid, setActiveSubjectPerKid] = useState<Record<string, string | null>>(
-    {}
-  );
+  const [activeSubjectPerKid, setActiveSubjectPerKid] = useState<
+    Record<string, string | null>
+  >({});
 
   // 🔔 Permission de notification déjà accordée ?
   const [granted, setGranted] = useState(false);
@@ -612,7 +730,10 @@ export default function ParentPage() {
   const [activeSection, setActiveSection] = useState<NavSection>("dashboard");
 
   const hasKids = kids.length > 0;
-  const filteredKids = activeChildId === "all" ? kids : kids.filter((k) => k.id === activeChildId);
+  const filteredKids =
+    activeChildId === "all"
+      ? kids
+      : kids.filter((k) => k.id === activeChildId);
 
   const isDashboard = activeSection === "dashboard";
   const isConduct = activeSection === "conduct";
@@ -634,7 +755,10 @@ export default function ParentPage() {
     setConductTo(t);
 
     const refresh = () =>
-      setGranted(typeof Notification !== "undefined" && Notification.permission === "granted");
+      setGranted(
+        typeof Notification !== "undefined" &&
+          Notification.permission === "granted",
+      );
     refresh();
 
     setIsiOS(/iphone|ipad|ipod/i.test(navigator.userAgent));
@@ -687,22 +811,28 @@ export default function ParentPage() {
 
       for (const k of ks) {
         const f = await fetch(
-          `/api/parent/children/events?student_id=${encodeURIComponent(k.id)}&limit=50`,
-          { cache: "no-store", credentials: "include" }
+          `/api/parent/children/events?student_id=${encodeURIComponent(
+            k.id,
+          )}&limit=50`,
+          { cache: "no-store", credentials: "include" },
         ).then((r) => r.json());
         feedEntries.push([k.id, (f.items || []) as Ev[]]);
 
         const p = await fetch(
-          `/api/parent/children/penalties?student_id=${encodeURIComponent(k.id)}&limit=20`,
-          { cache: "no-store", credentials: "include" }
+          `/api/parent/children/penalties?student_id=${encodeURIComponent(
+            k.id,
+          )}&limit=20`,
+          { cache: "no-store", credentials: "include" },
         )
           .then((r) => r.json())
           .catch(() => ({ items: [] }));
         penEntries.push([k.id, (p.items || []) as KidPenalty[]]);
 
         const g = await fetch(
-          `/api/parent/children/grades?student_id=${encodeURIComponent(k.id)}&limit=200`,
-          { cache: "no-store", credentials: "include" }
+          `/api/parent/children/grades?student_id=${encodeURIComponent(
+            k.id,
+          )}&limit=200`,
+          { cache: "no-store", credentials: "include" },
         )
           .then((r) => r.json())
           .catch(() => ({ items: [] }));
@@ -717,7 +847,8 @@ export default function ParentPage() {
       const initialExpanded: Record<string, boolean> = {};
       for (const [kidId, list] of feedEntries) {
         const groups = groupByDay(list);
-        for (const g of groups) if (g.items.length === 1) initialExpanded[`${kidId}|${g.day}`] = true;
+        for (const g of groups)
+          if (g.items.length === 1) initialExpanded[`${kidId}|${g.day}`] = true;
       }
       setExpanded(initialExpanded);
 
@@ -732,7 +863,11 @@ export default function ParentPage() {
     }
   }
 
-  async function loadConductForAll(kidsList: Kid[] = kids, from?: string, to?: string) {
+  async function loadConductForAll(
+    kidsList: Kid[] = kids,
+    from?: string,
+    to?: string,
+  ) {
     setLoadingConduct(true);
     try {
       const condEntries: Array<[string, Conduct]> = [];
@@ -740,10 +875,13 @@ export default function ParentPage() {
         const qs = new URLSearchParams({ student_id: k.id });
         if (from) qs.set("from", from);
         if (to) qs.set("to", to);
-        const c = await fetch(`/api/parent/children/conduct?${qs.toString()}`, {
-          cache: "no-store",
-          credentials: "include",
-        })
+        const c = await fetch(
+          `/api/parent/children/conduct?${qs.toString()}`,
+          {
+            cache: "no-store",
+            credentials: "include",
+          },
+        )
           .then((r) => r.json())
           .catch(() => ({}));
         if (c && c.total != null) condEntries.push([k.id, c as Conduct]);
@@ -817,7 +955,10 @@ export default function ParentPage() {
 
       // 2) Fin de session côté API (si présente)
       try {
-        await fetch("/api/auth/sync", { method: "DELETE", credentials: "include" });
+        await fetch("/api/auth/sync", {
+          method: "DELETE",
+          credentials: "include",
+        });
       } catch {}
     } finally {
       // 3) Toujours passer par /parents/logout (qui redirige vers /parents/login)
@@ -870,15 +1011,19 @@ export default function ParentPage() {
       {mobileNavOpen && (
         <div className="fixed inset-0 z-40 flex md:hidden">
           {/* Panneau gauche */}
-          <div className="relative h-full w-72 max-w-[80%] bg-white shadow-2xl flex flex-col">
+          <div className="relative flex h-full w-72 max-w-[80%] flex-col bg-white shadow-2xl">
             <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
               <div className="flex items-center gap-2">
                 <div className="grid h-8 w-8 place-items-center rounded-lg bg-slate-900 text-xs font-semibold text-white">
                   MC
                 </div>
                 <div className="min-w-0">
-                  <div className="text-xs font-semibold text-slate-900">Mon Cahier</div>
-                  <div className="text-[11px] text-slate-500">Espace parent</div>
+                  <div className="text-xs font-semibold text-slate-900">
+                    Mon Cahier
+                  </div>
+                  <div className="text-[11px] text-slate-500">
+                    Espace parent
+                  </div>
                 </div>
               </div>
               <button
@@ -936,7 +1081,7 @@ export default function ParentPage() {
                         </div>
                         <div className="min-w-0 text-left">
                           <div className="truncate">{k.full_name}</div>
-                          <div className="text-[10px] text-slate-500 truncate">
+                          <div className="truncate text-[10px] text-slate-500">
                             {k.class_label || "—"}
                           </div>
                         </div>
@@ -947,8 +1092,12 @@ export default function ParentPage() {
               </div>
 
               {/* Navigation (mobile drawer) */}
-              <div className="px-3 py-3 space-y-1">
-                <SidebarNavItem label="Tableau de bord" icon={<IconHome />} section="dashboard" />
+              <div className="space-y-1 px-3 py-3">
+                <SidebarNavItem
+                  label="Tableau de bord"
+                  icon={<IconHome />}
+                  section="dashboard"
+                />
                 <SidebarNavItem
                   label="Conduite & points"
                   icon={<IconClipboard />}
@@ -959,7 +1108,11 @@ export default function ParentPage() {
                   icon={<IconClipboard />}
                   section="absences"
                 />
-                <SidebarNavItem label="Cahier de notes" icon={<IconBook />} section="notes" />
+                <SidebarNavItem
+                  label="Cahier de notes"
+                  icon={<IconBook />}
+                  section="notes"
+                />
               </div>
             </div>
 
@@ -989,14 +1142,16 @@ export default function ParentPage() {
 
       <div className="flex min-h-screen">
         {/* Sidebar desktop */}
-        <aside className="hidden md:flex w-64 flex-col border-r border-slate-200 bg-white/95 backdrop-blur">
+        <aside className="hidden w-64 flex-col border-r border-slate-200 bg-white/95 backdrop-blur md:flex">
           {/* Brand */}
           <div className="flex items-center gap-3 border-b border-slate-200 px-4 py-4">
             <div className="grid h-9 w-9 place-items-center rounded-xl bg-slate-900 text-xs font-semibold text-white shadow-sm">
               MC
             </div>
             <div className="min-w-0">
-              <div className="text-sm font-semibold text-slate-900 truncate">Mon Cahier</div>
+              <div className="truncate text-sm font-semibold text-slate-900">
+                Mon Cahier
+              </div>
               <div className="text-xs text-slate-500">Espace parent</div>
             </div>
           </div>
@@ -1039,7 +1194,7 @@ export default function ParentPage() {
                     </div>
                     <div className="min-w-0 text-left">
                       <div className="truncate">{k.full_name}</div>
-                      <div className="text-[10px] text-slate-500 truncate">
+                      <div className="truncate text-[10px] text-slate-500">
                         {k.class_label || "—"}
                       </div>
                     </div>
@@ -1050,8 +1205,12 @@ export default function ParentPage() {
           </div>
 
           {/* Navigation */}
-          <div className="flex-1 px-3 py-3 space-y-1">
-            <SidebarNavItem label="Tableau de bord" icon={<IconHome />} section="dashboard" />
+          <div className="flex-1 space-y-1 px-3 py-3">
+            <SidebarNavItem
+              label="Tableau de bord"
+              icon={<IconHome />}
+              section="dashboard"
+            />
             <SidebarNavItem
               label="Conduite & points"
               icon={<IconClipboard />}
@@ -1062,7 +1221,11 @@ export default function ParentPage() {
               icon={<IconClipboard />}
               section="absences"
             />
-            <SidebarNavItem label="Cahier de notes" icon={<IconBook />} section="notes" />
+            <SidebarNavItem
+              label="Cahier de notes"
+              icon={<IconBook />}
+              section="notes"
+            />
           </div>
 
           {/* Logout bas sidebar */}
@@ -1084,7 +1247,7 @@ export default function ParentPage() {
         <div className="flex-1">
           <main
             className={[
-              "relative mx-auto max-w-6xl p-4 pb-24 md:px-6 md:py-6 md:pb-8 space-y-6 scroll-smooth",
+              "relative mx-auto max-w-6xl space-y-6 p-4 pb-24 scroll-smooth md:px-6 md:py-6 md:pb-8",
             ].join(" ")}
           >
             {/* Background décoratif non intrusif */}
@@ -1098,12 +1261,12 @@ export default function ParentPage() {
             />
 
             {/* Header */}
-            <header className="relative overflow-hidden rounded-3xl border border-slate-800/20 bg-gradient-to-br from-slate-950 via-indigo-950 to-slate-900 px-5 py-5 md:px-7 md:py-6 text-white shadow-sm">
+            <header className="relative overflow-hidden rounded-3xl border border-slate-800/20 bg-gradient-to-br from-slate-950 via-indigo-950 to-slate-900 px-5 py-5 text-white shadow-sm md:px-7 md:py-6">
               <div className="absolute inset-0 opacity-20 [background-image:radial-gradient(60%_50%_at_100%_0%,white,transparent_70%)]" />
               <div className="relative z-10 flex flex-col gap-3">
                 {/* Ligne supérieure : menu à gauche + brand + actions */}
                 <div className="flex items-center justify-between gap-3">
-                  <div className="flex items-center gap-3 min-w-0">
+                  <div className="flex min-w-0 items-center gap-3">
                     {/* Bouton menu mobile à gauche */}
                     <button
                       type="button"
@@ -1121,7 +1284,7 @@ export default function ParentPage() {
                       <p className="text-[11px] font-semibold uppercase tracking-wide text-emerald-300">
                         Espace parent
                       </p>
-                      <h1 className="text-lg md:text-xl font-semibold tracking-tight">
+                      <h1 className="text-lg font-semibold tracking-tight md:text-xl">
                         Mon Cahier
                       </h1>
                     </div>
@@ -1129,7 +1292,7 @@ export default function ParentPage() {
 
                   <div className="flex items-center gap-2">
                     {/* Actions (push + logout) en md+ */}
-                    <div className="hidden sm:flex items-center gap-2">
+                    <div className="hidden items-center gap-2 sm:flex">
                       {!granted ? (
                         <Button
                           tone="white"
@@ -1140,7 +1303,7 @@ export default function ParentPage() {
                           Activer les push
                         </Button>
                       ) : (
-                        <span className="hidden md:inline rounded-full bg-white px-3 py-1.5 text-sm text-slate-900 ring-1 ring-white/40">
+                        <span className="hidden rounded-full bg-white px-3 py-1.5 text-sm text-slate-900 ring-1 ring-white/40 md:inline">
                           Push activés ✅
                         </span>
                       )}
@@ -1158,7 +1321,7 @@ export default function ParentPage() {
                 </div>
 
                 {/* Description */}
-                <p className="mt-1 text-sm text-white/80 max-w-2xl">
+                <p className="mt-1 max-w-2xl text-sm text-white/80">
                   Suivez en temps réel vos enfants.
                 </p>
 
@@ -1175,7 +1338,7 @@ export default function ParentPage() {
                       Activer les push
                     </Button>
                   ) : (
-                    <div className="flex-1 rounded-full bg-white/10 px-3 py-2 text-xs text-white/90 flex items-center justify-center">
+                    <div className="flex flex-1 items-center justify-center rounded-full bg-white/10 px-3 py-2 text-xs text-white/90">
                       Push activés ✅
                     </div>
                   )}
@@ -1194,14 +1357,14 @@ export default function ParentPage() {
                 {/* Mobile : sélection enfant (liste verticale type app) */}
                 {hasKids && (
                   <div className="relative z-10 mt-4 space-y-2 md:hidden">
-                    <div className="flex flex-col gap-2 max-h-40 overflow-y-auto">
+                    <div className="flex max-h-40 flex-col gap-2 overflow-y-auto">
                       <button
                         onClick={() => setActiveChildId("all")}
                         className={[
                           "flex w-full items-center justify-between rounded-lg px-3 py-2 text-xs",
                           activeChildId === "all"
                             ? "bg-white text-slate-900"
-                            : "bg-slate-900/40 text-slate-100 border border-white/10",
+                            : "border border-white/10 bg-slate-900/40 text-slate-100",
                         ].join(" ")}
                       >
                         <span>Vue globale</span>
@@ -1217,7 +1380,7 @@ export default function ParentPage() {
                             "flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs",
                             activeChildId === k.id
                               ? "bg-emerald-300 text-slate-900"
-                              : "bg-slate-900/40 text-slate-100 border border-white/10",
+                              : "border border-white/10 bg-slate-900/40 text-slate-100",
                           ].join(" ")}
                         >
                           <span className="grid h-7 w-7 place-items-center rounded-full bg-white/10 text-[10px] font-semibold">
@@ -1234,30 +1397,31 @@ export default function ParentPage() {
 
             {/* iOS hint */}
             {isiOS && !isStandalone && !granted && (
-              <div className="rounded-2xl border p-3 bg-amber-50 text-amber-900">
+              <div className="rounded-2xl border bg-amber-50 p-3 text-amber-900">
                 <div className="text-sm">
-                  <b>iPhone/iPad :</b> pour recevoir les notifications, ajoutez d’abord l’app à
-                  l’écran d’accueil : ouvrez cette page dans <b>Safari</b> → <b>Partager</b> →{" "}
-                  <b>Ajouter à l’écran d’accueil</b>. Puis rouvrez l’app et appuyez sur{" "}
-                  <i>Activer les notifications</i>.
+                  <b>iPhone/iPad :</b> pour recevoir les notifications, ajoutez
+                  d’abord l’app à l’écran d’accueil : ouvrez cette page dans{" "}
+                  <b>Safari</b> → <b>Partager</b> →{" "}
+                  <b>Ajouter à l’écran d’accueil</b>. Puis rouvrez l’app et
+                  appuyez sur <i>Activer les notifications</i>.
                 </div>
               </div>
             )}
 
-            {/* Conduite — points par enfant (sans note globale /20) */}
+            {/* Conduite — points par enfant (sans note globale /20 sur mobile) */}
             {showConductSection && (
-              <section className="rounded-2xl border bg-white/90 backdrop-blur p-5 shadow-sm">
+              <section className="rounded-2xl border bg-white/90 p-5 shadow-sm backdrop-blur">
                 <div className="mb-3 flex items-center justify-between gap-3">
                   <div className="text-sm font-semibold uppercase tracking-wide text-slate-700">
                     Conduite — Points par rubrique
                   </div>
-                  <div className="hidden md:flex items-center gap-2">
+                  <div className="hidden items-center gap-2 md:flex">
                     <Input
                       type="date"
                       value={conductFrom}
                       onChange={(e) => setConductFrom(e.target.value)}
                     />
-                    <span className="text-slate-600 text-xs">au</span>
+                    <span className="text-xs text-slate-600">au</span>
                     <Input
                       type="date"
                       value={conductTo}
@@ -1274,7 +1438,7 @@ export default function ParentPage() {
                 </div>
 
                 {/* Filtres (mobile) */}
-                <div className="md:hidden mb-4 grid grid-cols-2 gap-2">
+                <div className="mb-4 grid grid-cols-2 gap-2 md:hidden">
                   <Input
                     type="date"
                     value={conductFrom}
@@ -1287,7 +1451,7 @@ export default function ParentPage() {
                   />
                   <div className="col-span-2 flex justify-center">
                     <Button
-                      className="w-full max-w-[160px] px-4 py-1.5 text-xs mx-auto"
+                      className="mx-auto w-full max-w-[160px] px-4 py-1.5 text-xs"
                       onClick={applyConductFilter}
                       disabled={loadingConduct}
                     >
@@ -1308,131 +1472,180 @@ export default function ParentPage() {
                       Aucun enfant lié à votre compte pour l’instant.
                     </div>
                     {!granted && (
-                      <Button tone="outline" onClick={enablePush} iconLeft={<IconBell />}>
+                      <Button
+                        tone="outline"
+                        onClick={enablePush}
+                        iconLeft={<IconBell />}
+                      >
                         Activer les push
                       </Button>
                     )}
                   </div>
                 ) : (
                   <>
-                    {/* Mobile: cartes */}
-                    <div className="md:hidden space-y-3">
+                    {/* Mobile: cartes avec jauges verticales colorées */}
+                    <div className="space-y-3 md:hidden">
                       {filteredKids.map((k) => {
                         const c = conduct[k.id];
                         return (
                           <div
                             key={k.id}
-                            className="rounded-xl border border-slate-200 p-4 hover:shadow-sm transition ring-emerald-100 hover:ring-2"
+                            className="rounded-xl border border-slate-200 p-4 ring-emerald-100 transition hover:shadow-sm hover:ring-2"
                           >
                             <div className="flex items-start justify-between gap-3">
                               <div className="min-w-0">
-                                <div className="font-medium text-slate-900">{k.full_name}</div>
+                                <div className="font-medium text-slate-900">
+                                  {k.full_name}
+                                </div>
                                 <div className="text-xs text-slate-600">
                                   {k.class_label || "—"}
                                 </div>
                               </div>
                               {c ? (
-                                <Badge tone="emerald">Points de conduite</Badge>
+                                <Badge tone="emerald">
+                                  Points de conduite
+                                </Badge>
                               ) : (
                                 <Badge>—</Badge>
                               )}
                             </div>
                             {c ? (
-                              <div className="mt-3 space-y-2">
-                                <Meter
-                                  value={c.breakdown.assiduite}
-                                  max={6}
-                                  label={`Assiduité — ${Math.round(
-                                    c.breakdown.assiduite
-                                  )}/6`}
-                                />
-                                <Meter
-                                  value={c.breakdown.tenue}
-                                  max={3}
-                                  label={`Tenue — ${Math.round(
-                                    c.breakdown.tenue
-                                  )}/3`}
-                                />
-                                <Meter
-                                  value={c.breakdown.moralite}
-                                  max={4}
-                                  label={`Moralité — ${Math.round(
-                                    c.breakdown.moralite
-                                  )}/4`}
-                                />
-                                <Meter
-                                  value={c.breakdown.discipline}
-                                  max={7}
-                                  label={`Discipline — ${Math.round(
-                                    c.breakdown.discipline
-                                  )}/7`}
-                                />
-                                <div className="pt-1 text-xs text-slate-600">
-                                  <span className="font-medium">Appréciation : </span>
+                              <div className="mt-3 space-y-3">
+                                <div className="flex items-end justify-between gap-4">
+                                  <VerticalGauge
+                                    label="Assiduité"
+                                    value={c.breakdown.assiduite}
+                                    max={c.rubric_max.assiduite}
+                                    rubric="assiduite"
+                                  />
+                                  <VerticalGauge
+                                    label="Tenue"
+                                    value={c.breakdown.tenue}
+                                    max={c.rubric_max.tenue}
+                                    rubric="tenue"
+                                  />
+                                  <VerticalGauge
+                                    label="Moralité"
+                                    value={c.breakdown.moralite}
+                                    max={c.rubric_max.moralite}
+                                    rubric="moralite"
+                                  />
+                                  <VerticalGauge
+                                    label="Discipline"
+                                    value={c.breakdown.discipline}
+                                    max={c.rubric_max.discipline}
+                                    rubric="discipline"
+                                  />
+                                </div>
+                                <div className="rounded-xl bg-slate-900/3 px-3 py-2 text-xs text-slate-700">
+                                  <span className="font-medium">
+                                    Appréciation :{" "}
+                                  </span>
                                   {c.appreciation}
                                 </div>
                               </div>
                             ) : (
-                              <div className="mt-3 text-sm text-slate-600">—</div>
+                              <div className="mt-3 text-sm text-slate-600">
+                                — 
+                              </div>
                             )}
                           </div>
                         );
                       })}
                     </div>
 
-                    {/* Desktop: tableau */}
-                    <div className="hidden md:block overflow-x-auto mt-2 rounded-xl border">
-                      <table className="min-w-full text-sm">
-                        <thead className="bg-slate-50">
-                          <tr>
-                            <th className="px-3 py-2 text-left">Enfant</th>
-                            <th className="px-3 py-2 text-left">Classe</th>
-                            <th className="px-3 py-2 text-left">Assiduité (/6)</th>
-                            <th className="px-3 py-2 text-left">Tenue (/3)</th>
-                            <th className="px-3 py-2 text-left">Moralité (/4)</th>
-                            <th className="px-3 py-2 text-left">Discipline (/7)</th>
-                            <th className="px-3 py-2 text-left">Appréciation</th>
-                          </tr>
-                        </thead>
-                        <tbody className="bg-white/60">
-                          {filteredKids.map((k) => {
-                            const c = conduct[k.id];
-                            return (
-                              <tr key={k.id} className="border-t">
-                                <td className="px-3 py-2">{k.full_name}</td>
-                                <td className="px-3 py-2">{k.class_label || "—"}</td>
-                                {c ? (
-                                  <>
-                                    <td className="px-3 py-2">
-                                      {c.breakdown.assiduite
-                                        .toFixed(2)
-                                        .replace(".", ",")}
-                                    </td>
-                                    <td className="px-3 py-2">
-                                      {c.breakdown.tenue.toFixed(2).replace(".", ",")}
-                                    </td>
-                                    <td className="px-3 py-2">
-                                      {c.breakdown.moralite
-                                        .toFixed(2)
-                                        .replace(".", ",")}
-                                    </td>
-                                    <td className="px-3 py-2">
-                                      {c.breakdown.discipline
-                                        .toFixed(2)
-                                        .replace(".", ",")}
-                                    </td>
-                                    <td className="px-3 py-2">{c.appreciation}</td>
-                                  </>
-                                ) : (
-                                  <td className="px-3 py-2 text-slate-600" colSpan={5}>
-                                    —
-                                  </td>
-                                )}
+                    {/* Desktop: tableau (cohérent avec rubric_max) */}
+                    <div className="mt-2 hidden overflow-x-auto rounded-xl border md:block">
+                      {(() => {
+                        const anyConduct = filteredKids
+                          .map((k) => conduct[k.id])
+                          .find(Boolean);
+                        const rubricMax =
+                          anyConduct?.rubric_max ?? {
+                            assiduite: 6,
+                            tenue: 3,
+                            moralite: 4,
+                            discipline: 7,
+                          };
+                        return (
+                          <table className="min-w-full text-sm">
+                            <thead className="bg-slate-50">
+                              <tr>
+                                <th className="px-3 py-2 text-left">Enfant</th>
+                                <th className="px-3 py-2 text-left">Classe</th>
+                                <th className="px-3 py-2 text-left">
+                                  Assiduité (/
+                                  {rubricMax.assiduite})
+                                </th>
+                                <th className="px-3 py-2 text-left">
+                                  Tenue (/{rubricMax.tenue})
+                                </th>
+                                <th className="px-3 py-2 text-left">
+                                  Moralité (/{rubricMax.moralite})
+                                </th>
+                                <th className="px-3 py-2 text-left">
+                                  Discipline (/{rubricMax.discipline})
+                                </th>
+                                <th className="px-3 py-2 text-left">
+                                  Appréciation
+                                </th>
                               </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
+                            </thead>
+                            <tbody className="bg-white/60">
+                              {filteredKids.map((k) => {
+                                const c = conduct[k.id];
+                                return (
+                                  <tr
+                                    key={k.id}
+                                    className="border-t last:border-b-0"
+                                  >
+                                    <td className="px-3 py-2">
+                                      {k.full_name}
+                                    </td>
+                                    <td className="px-3 py-2">
+                                      {k.class_label || "—"}
+                                    </td>
+                                    {c ? (
+                                      <>
+                                        <td className="px-3 py-2">
+                                          {c.breakdown.assiduite
+                                            .toFixed(2)
+                                            .replace(".", ",")}
+                                        </td>
+                                        <td className="px-3 py-2">
+                                          {c.breakdown.tenue
+                                            .toFixed(2)
+                                            .replace(".", ",")}
+                                        </td>
+                                        <td className="px-3 py-2">
+                                          {c.breakdown.moralite
+                                            .toFixed(2)
+                                            .replace(".", ",")}
+                                        </td>
+                                        <td className="px-3 py-2">
+                                          {c.breakdown.discipline
+                                            .toFixed(2)
+                                            .replace(".", ",")}
+                                        </td>
+                                        <td className="px-3 py-2">
+                                          {c.appreciation}
+                                        </td>
+                                      </>
+                                    ) : (
+                                      <td
+                                        className="px-3 py-2 text-slate-600"
+                                        colSpan={5}
+                                      >
+                                        —
+                                      </td>
+                                    )}
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        );
+                      })()}
                     </div>
                   </>
                 )}
@@ -1441,7 +1654,7 @@ export default function ParentPage() {
 
             {/* Absences / Sanctions / Notes (vue Dashboard + onglet Absences) */}
             {showEventsSection && (
-              <section className="rounded-2xl border bg-white/90 backdrop-blur p-5 shadow-sm">
+              <section className="rounded-2xl border bg-white/90 p-5 shadow-sm backdrop-blur">
                 {(() => {
                   const title = isAbsences
                     ? "Cahier d’absences — Absences/retards récents et sanctions"
@@ -1472,7 +1685,7 @@ export default function ParentPage() {
                 })()}
 
                 {loadingKids ? (
-                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                  <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
                     <Skeleton className="h-40 w-full" />
                     <Skeleton className="h-40 w-full" />
                     <Skeleton className="h-40 w-full" />
@@ -1497,7 +1710,7 @@ export default function ParentPage() {
                       return (
                         <TiltCard key={k.id} className={t.ring}>
                           <div
-                            className={`relative rounded-xl border ${t.border} p-4 transition shadow-sm bg-white`}
+                            className={`relative rounded-xl border ${t.border} bg-white p-4 shadow-sm transition`}
                           >
                             {/* liseré dégradé haut */}
                             <div
@@ -1508,7 +1721,7 @@ export default function ParentPage() {
                               className="flex items-center justify-between"
                               style={{ transform: "translateZ(16px)" }}
                             >
-                              <div className="flex items-center gap-3 min-w-0">
+                              <div className="flex min-w-0 items-center gap-3">
                                 {/* avatar initiales coloré */}
                                 <div
                                   className={`grid h-9 w-9 place-items-center rounded-xl text-xs font-semibold ${t.chipBg} ${t.chipText} shadow-sm`}
@@ -1516,7 +1729,7 @@ export default function ParentPage() {
                                   {getInitials(k.full_name)}
                                 </div>
                                 <div className="min-w-0">
-                                  <div className="font-medium text-slate-900 truncate">
+                                  <div className="truncate font-medium text-slate-900">
                                     {k.full_name}{" "}
                                     <span className="text-xs text-slate-600">
                                       ({k.class_label || "—"})
@@ -1533,7 +1746,7 @@ export default function ParentPage() {
                                       [k.id]: !m[k.id],
                                     }))
                                   }
-                                  className="text-xs text-slate-700 underline-offset-2 hover:underline shrink-0"
+                                  className="shrink-0 text-xs text-slate-700 underline-offset-2 hover:underline"
                                   style={{ transform: "translateZ(16px)" }}
                                 >
                                   {showAll ? "Réduire" : "Voir plus"}
@@ -1552,11 +1765,15 @@ export default function ParentPage() {
                                   const parts: string[] = [];
                                   if (g.absentCount)
                                     parts.push(
-                                      `${g.absentCount} absence${g.absentCount > 1 ? "s" : ""}`
+                                      `${g.absentCount} absence${
+                                        g.absentCount > 1 ? "s" : ""
+                                      }`,
                                     );
                                   if (g.lateCount)
                                     parts.push(
-                                      `${g.lateCount} retard${g.lateCount > 1 ? "s" : ""}`
+                                      `${g.lateCount} retard${
+                                        g.lateCount > 1 ? "s" : ""
+                                      }`,
                                     );
                                   const summary = parts.length
                                     ? parts.join(" • ")
@@ -1565,7 +1782,7 @@ export default function ParentPage() {
                                   return (
                                     <li
                                       key={g.day}
-                                      className="rounded-lg border p-3 hover:bg-slate-50/70 transition"
+                                      className="rounded-lg border p-3 transition hover:bg-slate-50/70"
                                       style={{ transform: "translateZ(10px)" }}
                                     >
                                       <div className="flex items-center justify-between gap-3">
@@ -1583,7 +1800,7 @@ export default function ParentPage() {
                                                 [key]: !m[key],
                                               }))
                                             }
-                                            className="text-xs text-emerald-700 underline-offset-2 hover:underline shrink-0"
+                                            className="shrink-0 text-xs text-emerald-700 underline-offset-2 hover:underline"
                                           >
                                             {isOpen || hasSingle
                                               ? "Masquer"
@@ -1591,44 +1808,47 @@ export default function ParentPage() {
                                           </button>
                                         )}
                                       </div>
-                                      {(isOpen || hasSingle) && g.items.length > 0 && (
-                                        <ul className="mt-2 divide-y">
-                                          {g.items.map((ev) => (
-                                            <li
-                                              key={ev.id}
-                                              className="py-2 flex items-center justify-between text-sm"
-                                            >
-                                              <div className="min-w-0">
-                                                <div className="text-slate-800 truncate">
-                                                  {ev.type === "absent" ? (
-                                                    <Badge tone="rose">Absence</Badge>
-                                                  ) : (
-                                                    <Badge tone="amber">
-                                                      Retard
-                                                    </Badge>
-                                                  )}
-                                                  <span className="ml-2">
-                                                    {ev.subject_name || "—"}
-                                                  </span>
+                                      {(isOpen || hasSingle) &&
+                                        g.items.length > 0 && (
+                                          <ul className="mt-2 divide-y">
+                                            {g.items.map((ev) => (
+                                              <li
+                                                key={ev.id}
+                                                className="flex items-center justify-between py-2 text-sm"
+                                              >
+                                                <div className="min-w-0">
+                                                  <div className="truncate text-slate-800">
+                                                    {ev.type === "absent" ? (
+                                                      <Badge tone="rose">
+                                                        Absence
+                                                      </Badge>
+                                                    ) : (
+                                                      <Badge tone="amber">
+                                                        Retard
+                                                      </Badge>
+                                                    )}
+                                                    <span className="ml-2">
+                                                      {ev.subject_name || "—"}
+                                                    </span>
+                                                  </div>
+                                                  <div className="mt-0.5 text-xs text-slate-600">
+                                                    {slotLabel(
+                                                      ev.when,
+                                                      ev.expected_minutes,
+                                                    )}{" "}
+                                                    {ev.type === "late" &&
+                                                    ev.minutes_late
+                                                      ? `• ${ev.minutes_late} min`
+                                                      : ""}
+                                                  </div>
                                                 </div>
-                                                <div className="mt-0.5 text-xs text-slate-600">
-                                                  {slotLabel(
-                                                    ev.when,
-                                                    ev.expected_minutes
-                                                  )}{" "}
-                                                  {ev.type === "late" &&
-                                                  ev.minutes_late
-                                                    ? `• ${ev.minutes_late} min`
-                                                    : ""}
+                                                <div className="shrink-0 pl-2 text-xs text-slate-500">
+                                                  {ev.class_label || ""}
                                                 </div>
-                                              </div>
-                                              <div className="text-xs text-slate-500 shrink-0 pl-2">
-                                                {ev.class_label || ""}
-                                              </div>
-                                            </li>
-                                          ))}
-                                        </ul>
-                                      )}
+                                              </li>
+                                            ))}
+                                          </ul>
+                                        )}
                                     </li>
                                   );
                                 })}
@@ -1643,7 +1863,7 @@ export default function ParentPage() {
                             {/* Sanctions */}
                             {showSanctionsBlock && (
                               <div
-                                className="mt-3 rounded-lg border p-3 bg-amber-50/40"
+                                className="mt-3 rounded-lg border bg-amber-50/40 p-3"
                                 style={{ transform: "translateZ(8px)" }}
                               >
                                 <div className="flex items-center justify-between">
@@ -1660,7 +1880,9 @@ export default function ParentPage() {
                                       }
                                       className="text-xs text-slate-700 underline-offset-2 hover:underline"
                                     >
-                                      {showAllPenForKid[k.id] ? "Réduire" : "Voir plus"}
+                                      {showAllPenForKid[k.id]
+                                        ? "Réduire"
+                                        : "Voir plus"}
                                     </button>
                                   )}
                                 </div>
@@ -1672,11 +1894,14 @@ export default function ParentPage() {
                                   <ul className="mt-2 divide-y">
                                     {(showAllPenForKid[k.id]
                                       ? kidPenalties[k.id] || []
-                                      : (kidPenalties[k.id] || []).slice(0, 5)
+                                      : (kidPenalties[k.id] || []).slice(
+                                          0,
+                                          5,
+                                        )
                                     ).map((p) => (
                                       <li
                                         key={p.id}
-                                        className="py-2 flex items-center justify-between text-sm"
+                                        className="flex items-center justify-between py-2 text-sm"
                                       >
                                         <div className="min-w-0">
                                           <div className="text-slate-800">
@@ -1685,31 +1910,65 @@ export default function ParentPage() {
                                                 {rubricLabel(p.rubric)}
                                               </Badge>
                                             </span>
-                                            −{Number(p.points || 0).toFixed(2)} pt
+                                            −
+                                            {Number(p.points || 0)
+                                              .toFixed(2)
+                                              .replace(".", ",")}{" "}
+                                            pt
                                             {(() => {
-                                              const subj =
+                                              const pts = Math.abs(
+                                                Number(p.points || 0),
+                                              );
+                                              const suffix =
+                                                pts > 1 ? "s" : "";
+                                              const reason = (p.reason || "")
+                                                .trim();
+                                              const subject = (
                                                 p.author_subject_name ||
-                                                p.subject_name;
-                                              if (p.author_role_label === "Enseignant")
-                                                return subj
-                                                  ? ` — par le prof de ${subj}`
-                                                  : " — par un enseignant";
-                                              if (
-                                                p.author_role_label ===
-                                                "Administration"
-                                              )
-                                                return " — par l’administration";
-                                              return p.author_name
-                                                ? ` — par ${p.author_name}`
-                                                : "";
+                                                p.subject_name ||
+                                                ""
+                                              ).trim();
+                                              const who = (
+                                                p.author_name || ""
+                                              ).trim();
+                                              const role = (
+                                                p.author_role_label ||
+                                                p.author_role ||
+                                                ""
+                                              ).trim();
+
+                                              return (
+                                                <>
+                                                  {suffix}
+                                                  {reason && (
+                                                    <span className="ml-1 text-xs text-slate-600">
+                                                      — {reason}
+                                                    </span>
+                                                  )}
+                                                  {(subject ||
+                                                    who ||
+                                                    role) && (
+                                                    <span className="ml-1 text-[11px] text-slate-500">
+                                                      {" — "}
+                                                      {subject}
+                                                      {subject &&
+                                                      (who || role)
+                                                        ? " • "
+                                                        : ""}
+                                                      {who}
+                                                      {who && role
+                                                        ? ` (${role})`
+                                                        : !who && role
+                                                          ? role
+                                                          : ""}
+                                                    </span>
+                                                  )}
+                                                </>
+                                              );
                                             })()}
                                           </div>
-                                          <div className="text-xs text-slate-600 truncate">
-                                            {fmt(p.when)}{" "}
-                                            {p.class_label
-                                              ? `• ${p.class_label}`
-                                              : ""}{" "}
-                                            {p.reason ? `• Motif: ${p.reason}` : ""}
+                                          <div className="shrink-0 pl-2 text-xs text-slate-500">
+                                            {fmt(p.when)}
                                           </div>
                                         </div>
                                       </li>
@@ -1719,61 +1978,64 @@ export default function ParentPage() {
                               </div>
                             )}
 
-                            {/* Notes publiées (petit résumé Dashboard uniquement) */}
+                            {/* Résumé notes publiées (Dashboard uniquement) */}
                             {showNotesBlock && (
                               <div
-                                className="mt-3 rounded-lg border p-3 bg-slate-50/60"
+                                className="mt-3 rounded-lg border bg-slate-50/80 p-3"
                                 style={{ transform: "translateZ(6px)" }}
                               >
-                                <div className="flex items-center justify-between">
+                                <div className="mb-1 flex items-center justify-between">
                                   <div className="text-sm font-medium text-slate-800">
-                                    Notes publiées (dernières)
+                                    Notes publiées récemment
                                   </div>
                                 </div>
                                 {gradesForKid.length === 0 ? (
-                                  <div className="mt-2 text-sm text-slate-600">
+                                  <div className="mt-1 text-sm text-slate-600">
                                     Aucune note publiée pour le moment.
                                   </div>
                                 ) : (
-                                  <ul className="mt-2 space-y-1">
-                                    {gradesForKid.slice(0, 5).map((gr) => (
-                                      <li
-                                        key={gr.id}
-                                        className="text-sm flex items-center justify-between gap-2"
-                                      >
-                                        <div className="min-w-0">
-                                          <div className="text-slate-800 truncate">
-                                            {gradeKindLabel(gr.eval_kind)}{" "}
-                                            <span className="text-xs text-slate-500">
-                                              (
-                                              {new Date(
-                                                gr.eval_date
-                                              ).toLocaleDateString("fr-FR")}
-                                              )
-                                            </span>
-                                            {gr.subject_name && (
-                                              <span className="ml-1 text-xs text-slate-500">
-                                                • {gr.subject_name}
+                                  <ul className="mt-2 space-y-1.5 text-xs">
+                                    {[...gradesForKid]
+                                      .filter((g) =>
+                                        isInDateRange(
+                                          g.eval_date,
+                                          gradeFrom || undefined,
+                                          gradeTo || undefined,
+                                        ),
+                                      )
+                                      .sort((a, b) =>
+                                        b.eval_date.localeCompare(a.eval_date),
+                                      )
+                                      .slice(0, 4)
+                                      .map((g) => (
+                                        <li
+                                          key={g.id}
+                                          className="flex items-center justify-between gap-2"
+                                        >
+                                          <div className="min-w-0">
+                                            <div className="truncate text-slate-800">
+                                              <span className="mr-1 rounded-full bg-slate-900/5 px-1.5 py-0.5 text-[10px] font-medium uppercase text-slate-700">
+                                                {gradeKindLabel(g.eval_kind)}
                                               </span>
-                                            )}
+                                              {g.subject_name || "—"}
+                                            </div>
+                                            <div className="mt-0.5 text-[11px] text-slate-600">
+                                              {fmt(g.eval_date)} • coeff{" "}
+                                              {g.coeff}
+                                            </div>
                                           </div>
-                                          <div className="text-xs text-slate-600">
-                                            {gr.score == null
-                                              ? "Non noté"
-                                              : `${Number(gr.score)
+                                          <div className="shrink-0 text-right text-xs font-semibold text-slate-900">
+                                            {g.score != null
+                                              ? `${g.score
                                                   .toFixed(2)
-                                                  .replace(".", ",")} / ${
-                                                  gr.scale
-                                                }`}{" "}
-                                            {gr.coeff ? (
-                                              <span className="text-[11px] text-slate-500">
-                                                • coeff {gr.coeff}
-                                              </span>
-                                            ) : null}
+                                                  .replace(
+                                                    ".",
+                                                    ",",
+                                                  )} / ${g.scale}`
+                                              : "—"}
                                           </div>
-                                        </div>
-                                      </li>
-                                    ))}
+                                        </li>
+                                      ))}
                                   </ul>
                                 )}
                               </div>
@@ -1787,403 +2049,226 @@ export default function ParentPage() {
               </section>
             )}
 
-            {/* Cahier de notes — vue dédiée par matière */}
+            {/* Cahier de notes – vue détaillée */}
             {showNotesSection && (
-              <section className="rounded-2xl border bg-white/90 backdrop-blur p-5 shadow-sm">
+              <section className="rounded-2xl border bg-white/90 p-5 shadow-sm backdrop-blur">
                 <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                  <div>
-                    <div className="text-sm font-semibold uppercase tracking-wide text-slate-700">
-                      Cahier de notes — Par matière
-                    </div>
-                    <div className="text-xs text-slate-600">
-                      Sélectionnez une période, puis une matière pour voir les notes publiées.
-                    </div>
+                  <div className="text-sm font-semibold uppercase tracking-wide text-slate-700">
+                    Cahier de notes — évaluations publiées
                   </div>
-
-                  <div className="flex flex-wrap gap-2 text-xs">
-                    <button
-                      onClick={() => setGradeFilterMode("week")}
-                      className={[
-                        "rounded-full px-3 py-1",
-                        gradeFilterMode === "week"
-                          ? "bg-emerald-600 text-white"
-                          : "bg-slate-100 text-slate-700 hover:bg-slate-200",
-                      ].join(" ")}
-                    >
-                      Cette semaine
-                    </button>
-                    <button
-                      onClick={() => setGradeFilterMode("month")}
-                      className={[
-                        "rounded-full px-3 py-1",
-                        gradeFilterMode === "month"
-                          ? "bg-emerald-600 text-white"
-                          : "bg-slate-100 text-slate-700 hover:bg-slate-200",
-                      ].join(" ")}
-                    >
-                      Ce mois-ci
-                    </button>
-                    <button
-                      onClick={() => setGradeFilterMode("all")}
-                      className={[
-                        "rounded-full px-3 py-1",
-                        gradeFilterMode === "all"
-                          ? "bg-emerald-600 text-white"
-                          : "bg-slate-100 text-slate-700 hover:bg-slate-200",
-                      ].join(" ")}
-                    >
-                      Toute l’année
-                    </button>
-                    <button
-                      onClick={() => setGradeFilterMode("custom")}
-                      className={[
-                        "rounded-full px-3 py-1",
-                        gradeFilterMode === "custom"
-                          ? "bg-emerald-600 text-white"
-                          : "bg-slate-100 text-slate-700 hover:bg-slate-200",
-                      ].join(" ")}
-                    >
-                      Perso.
-                    </button>
+                  <div className="flex flex-wrap items-center gap-2 text-xs">
+                    <div className="inline-flex rounded-full bg-slate-100 p-1">
+                      {(["week", "month", "all", "custom"] as const).map(
+                        (mode) => {
+                          const label =
+                            mode === "week"
+                              ? "Semaine"
+                              : mode === "month"
+                                ? "Mois"
+                                : mode === "all"
+                                  ? "Tout"
+                                  : "Perso.";
+                          const active = gradeFilterMode === mode;
+                          return (
+                            <button
+                              key={mode}
+                              type="button"
+                              onClick={() => setGradeFilterMode(mode)}
+                              className={[
+                                "rounded-full px-3 py-1 transition",
+                                active
+                                  ? "bg-slate-900 text-white shadow-sm"
+                                  : "text-slate-700 hover:bg-slate-200",
+                              ].join(" ")}
+                            >
+                              {label}
+                            </button>
+                          );
+                        },
+                      )}
+                    </div>
+                    {gradeFilterMode === "custom" && (
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Input
+                          type="date"
+                          value={gradeFrom}
+                          onChange={(e) => setGradeFrom(e.target.value)}
+                          className="h-8 w-32 px-2 py-1 text-xs"
+                        />
+                        <span className="text-[11px] text-slate-600">au</span>
+                        <Input
+                          type="date"
+                          value={gradeTo}
+                          onChange={(e) => setGradeTo(e.target.value)}
+                          className="h-8 w-32 px-2 py-1 text-xs"
+                        />
+                      </div>
+                    )}
                   </div>
                 </div>
 
-                {gradeFilterMode === "custom" && (
-                  <div className="mb-4 grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center">
-                    <Input
-                      type="date"
-                      value={gradeFrom}
-                      onChange={(e) => setGradeFrom(e.target.value)}
-                    />
-                    <span className="hidden sm:inline text-xs text-slate-500 text-center">
-                      au
-                    </span>
-                    <Input
-                      type="date"
-                      value={gradeTo}
-                      onChange={(e) => setGradeTo(e.target.value)}
-                    />
-                  </div>
-                )}
-
-                {(gradeFrom || gradeTo) && gradeFilterMode !== "all" && (
-                  <div className="mb-4 text-xs text-slate-600">
-                    Période sélectionnée{" "}
-                    {gradeFrom ? `du ${gradeFrom.split("-").reverse().join("/")}` : ""}{" "}
-                    {gradeTo ? `au ${gradeTo.split("-").reverse().join("/")}` : ""}
-                  </div>
-                )}
-
-                {loadingKids ? (
-                  <div className="space-y-3">
-                    <Skeleton className="h-24 w-full" />
-                    <Skeleton className="h-24 w-full" />
-                  </div>
-                ) : kids.length === 0 ? (
+                {kids.length === 0 ? (
                   <div className="rounded-xl border bg-slate-50 p-4 text-sm text-slate-700">
                     Aucun enfant lié à votre compte pour l’instant.
                   </div>
                 ) : (
-                  <div className="space-y-5">
-                    {filteredKids.map((k, kidIndex) => {
+                  <div className="space-y-4 md:grid md:grid-cols-2 md:gap-5 md:space-y-0 xl:grid-cols-3">
+                    {filteredKids.map((k, i) => {
                       const allGrades = kidGrades[k.id] || [];
-                      const filteredGrades = allGrades.filter((gr) =>
-                        isInDateRange(gr.eval_date, gradeFrom || undefined, gradeTo || undefined)
+                      const filteredByDate = allGrades.filter((g) =>
+                        isInDateRange(
+                          g.eval_date,
+                          gradeFrom || undefined,
+                          gradeTo || undefined,
+                        ),
                       );
 
-                      // Regroupement par matière (uniquement celles avec au moins une note sur la période)
+                      const sorted = [...filteredByDate].sort((a, b) =>
+                        b.eval_date.localeCompare(a.eval_date),
+                      );
+
                       const subjectMap = new Map<
                         string,
-                        { key: string; name: string; count: number }
+                        { id: string; name: string }
                       >();
-                      for (const gr of filteredGrades) {
-                        const key = gr.subject_id || gr.subject_name || "autre";
-                        const name = gr.subject_name || "Matière inconnue";
+                      for (const g of sorted) {
+                        const key =
+                          g.subject_id ||
+                          g.subject_name ||
+                          "subject-" + (subjectMap.size + 1);
                         if (!subjectMap.has(key)) {
-                          subjectMap.set(key, { key, name, count: 0 });
-                        }
-                        subjectMap.get(key)!.count += 1;
-                      }
-                      const subjects = Array.from(subjectMap.values()).sort((a, b) =>
-                        a.name.localeCompare(b.name, "fr")
-                      );
-
-                      const selectedKey = activeSubjectPerKid[k.id] || null;
-                      const selectedGrades =
-                        selectedKey == null
-                          ? []
-                          : filteredGrades
-                              .filter((gr) => {
-                                const key = gr.subject_id || gr.subject_name || "autre";
-                                return key === selectedKey;
-                              })
-                              .sort(
-                                (a, b) =>
-                                  new Date(b.eval_date).getTime() -
-                                  new Date(a.eval_date).getTime()
-                              );
-
-                      // Moyenne /20 sur la période pour la matière sélectionnée
-                      let avg20: number | null = null;
-                      if (selectedGrades.length > 0) {
-                        const numeric = selectedGrades.filter(
-                          (g) => g.score != null && g.scale > 0
-                        );
-                        if (numeric.length > 0) {
-                          const sum = numeric.reduce(
-                            (acc, g) => acc + ((g.score as number) / g.scale) * 20,
-                            0
-                          );
-                          avg20 = sum / numeric.length;
+                          subjectMap.set(key, {
+                            id: key,
+                            name: g.subject_name || "—",
+                          });
                         }
                       }
+                      const subjects = Array.from(subjectMap.values());
+                      const currentSubjectKey =
+                        activeSubjectPerKid[k.id] || subjects[0]?.id || null;
 
-                      const containerTheme = themeFor(kidIndex);
+                      const gradesForSubject =
+                        currentSubjectKey == null
+                          ? sorted
+                          : sorted.filter((g) => {
+                              const key =
+                                g.subject_id ||
+                                g.subject_name ||
+                                "subject-" + 1;
+                              return key === currentSubjectKey;
+                            });
+
+                      const t = themeFor(i);
 
                       return (
                         <div
                           key={k.id}
-                          className="rounded-2xl border border-slate-200 bg-white/95 p-4 shadow-sm"
+                          className="flex h-full flex-col rounded-xl border border-slate-200 bg-white/95 p-4 shadow-sm"
                         >
-                          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                            <div className="flex items-center gap-3 min-w-0">
-                              <div
-                                className={`grid h-9 w-9 place-items-center rounded-xl text-xs font-semibold ${containerTheme.chipBg} ${containerTheme.chipText}`}
-                              >
-                                {getInitials(k.full_name)}
+                          <div className="mb-3 flex items-center justify-between gap-2">
+                            <div className="min-w-0">
+                              <div className="text-sm font-semibold text-slate-900">
+                                {k.full_name}
                               </div>
-                              <div className="min-w-0">
-                                <div className="font-medium text-slate-900 truncate">
-                                  {k.full_name}
-                                </div>
-                                <div className="text-xs text-slate-600">
-                                  {k.class_label || "—"}
-                                </div>
+                              <div className="text-xs text-slate-600">
+                                {k.class_label || "—"}
                               </div>
                             </div>
-                            <div className="text-xs text-slate-500">
-                              {subjects.length === 0
-                                ? "Aucune note publiée sur cette période."
-                                : `${subjects.length} matière${
-                                    subjects.length > 1 ? "s" : ""
-                                  } avec au moins une note publiée.`}
-                            </div>
+                            <Badge tone="emerald">
+                              {gradesForSubject.length} note
+                              {gradesForSubject.length > 1 ? "s" : ""}
+                            </Badge>
                           </div>
 
-                          {/* Cartes matières */}
-                          {subjects.length > 0 && (
-                            <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                              {subjects.map((s, idx) => {
-                                const th = themeFor(idx);
-                                const active = selectedKey === s.key;
+                          {/* Matières disponibles */}
+                          {subjects.length > 0 ? (
+                            <div className="mb-3 flex flex-wrap gap-1.5">
+                              {subjects.map((s) => {
+                                const active =
+                                  currentSubjectKey === s.id ||
+                                  (!currentSubjectKey &&
+                                    s.id === subjects[0]?.id);
                                 return (
                                   <button
-                                    key={s.key}
+                                    key={s.id}
+                                    type="button"
                                     onClick={() =>
-                                      setActiveSubjectPerKid((prev) => ({
-                                        ...prev,
-                                        [k.id]:
-                                          prev[k.id] === s.key ? null : s.key,
+                                      setActiveSubjectPerKid((m) => ({
+                                        ...m,
+                                        [k.id]: s.id,
                                       }))
                                     }
                                     className={[
-                                      "flex flex-col items-start rounded-xl border p-3 text-left transition shadow-sm",
+                                      "inline-flex items-center rounded-full border px-2.5 py-1 text-[11px] font-medium transition",
                                       active
-                                        ? "border-slate-900 bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-white"
-                                        : `bg-white hover:shadow-md ${th.border}`,
+                                        ? `${t.chipBg} ${t.chipText} border-transparent shadow-sm`
+                                        : "border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100",
                                     ].join(" ")}
                                   >
-                                    <div className="flex items-center gap-2">
-                                      <div
-                                        className={`h-8 w-1.5 rounded-full bg-gradient-to-b ${th.bar}`}
-                                      />
-                                      <div className="min-w-0">
-                                        <div
-                                          className={[
-                                            "text-sm font-semibold",
-                                            active ? "text-white" : "text-slate-900",
-                                          ].join(" ")}
-                                        >
-                                          {s.name}
-                                        </div>
-                                        <div
-                                          className={[
-                                            "text-[11px]",
-                                            active
-                                              ? "text-slate-200"
-                                              : "text-slate-500",
-                                          ].join(" ")}
-                                        >
-                                          {s.count} note{s.count > 1 ? "s" : ""} sur la
-                                          période
-                                        </div>
-                                      </div>
-                                    </div>
+                                    {s.name || "Matière"}
                                   </button>
                                 );
                               })}
                             </div>
+                          ) : (
+                            <div className="mb-3 text-xs text-slate-500">
+                              Aucune matière pour la période choisie.
+                            </div>
                           )}
 
-                          {/* Détail notes pour la matière sélectionnée */}
-                          {selectedKey && (
-                            <div className="mt-4 rounded-xl border bg-slate-50/80 p-3">
-                              <div className="mb-2 flex items-center justify-between">
-                                <div className="text-sm font-semibold text-slate-800">
-                                  Notes détaillées en{" "}
-                                  {
-                                    subjects.find((s) => s.key === selectedKey)
-                                      ?.name
-                                  }
-                                </div>
-                                {avg20 != null && (
-                                  <div className="text-xs text-slate-700">
-                                    Moyenne sur la période :{" "}
-                                    <span className="font-semibold">
-                                      {avg20.toFixed(2).replace(".", ",")} / 20
-                                    </span>
+                          {/* Liste des notes */}
+                          {gradesForSubject.length === 0 ? (
+                            <div className="mt-auto rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">
+                              Aucune note publiée pour cette matière et cette
+                              période.
+                            </div>
+                          ) : (
+                            <ul className="space-y-2 text-xs">
+                              {gradesForSubject.slice(0, 8).map((g) => (
+                                <li
+                                  key={g.id}
+                                  className="rounded-lg border border-slate-100 bg-slate-50/60 px-3 py-2"
+                                >
+                                  <div className="flex items-center justify-between gap-2">
+                                    <div className="min-w-0">
+                                      <div className="truncate font-medium text-slate-800">
+                                        {g.title || gradeKindLabel(g.eval_kind)}
+                                      </div>
+                                      <div className="mt-0.5 text-[11px] text-slate-600">
+                                        {fmt(g.eval_date)} • coeff {g.coeff}
+                                      </div>
+                                    </div>
+                                    <div className="shrink-0 text-right text-xs font-semibold text-slate-900">
+                                      {g.score != null
+                                        ? `${g.score
+                                            .toFixed(2)
+                                            .replace(
+                                              ".",
+                                              ",",
+                                            )} / ${g.scale}`
+                                        : "—"}
+                                    </div>
                                   </div>
-                                )}
-                              </div>
-
-                              {selectedGrades.length === 0 ? (
-                                <div className="text-sm text-slate-600">
-                                  Aucune note pour cette période dans cette matière.
-                                </div>
-                              ) : (
-                                <div className="overflow-x-auto">
-                                  <table className="min-w-full text-xs">
-                                    <thead>
-                                      <tr className="border-b bg-slate-100/80">
-                                        <th className="px-2 py-1 text-left">Date</th>
-                                        <th className="px-2 py-1 text-left">Évaluation</th>
-                                        <th className="px-2 py-1 text-left">Type</th>
-                                        <th className="px-2 py-1 text-left">Note</th>
-                                        <th className="px-2 py-1 text-left">Coeff</th>
-                                      </tr>
-                                    </thead>
-                                    <tbody>
-                                      {selectedGrades.map((gr) => (
-                                        <tr key={gr.id} className="border-b last:border-0">
-                                          <td className="px-2 py-1">
-                                            {new Date(
-                                              gr.eval_date
-                                            ).toLocaleDateString("fr-FR")}
-                                          </td>
-                                          <td className="px-2 py-1">
-                                            {gr.title || "—"}
-                                          </td>
-                                          <td className="px-2 py-1">
-                                            {gradeKindLabel(gr.eval_kind)}
-                                          </td>
-                                          <td className="px-2 py-1">
-                                            {gr.score == null
-                                              ? "Non noté"
-                                              : `${Number(
-                                                  gr.score
-                                                ).toFixed(2).replace(".", ",")} / ${
-                                                  gr.scale
-                                                }`}
-                                          </td>
-                                          <td className="px-2 py-1">
-                                            {gr.coeff || 1}
-                                          </td>
-                                        </tr>
-                                      ))}
-                                    </tbody>
-                                  </table>
-                                </div>
-                              )}
-                            </div>
-                          )}
-
-                          {/* Si pas de matière et pas de notes sur la période */}
-                          {subjects.length === 0 && (
-                            <div className="mt-3 text-xs text-slate-600">
-                              Aucune matière n’a de note publiée sur cette période pour cet
-                              enfant.
-                            </div>
+                                </li>
+                              ))}
+                            </ul>
                           )}
                         </div>
                       );
                     })}
                   </div>
                 )}
-
-                {!loadingKids && kids.length > 0 && filteredKids.length === 0 && (
-                  <div className="mt-3 text-xs text-slate-600">
-                    Aucun enfant sélectionné pour l’instant.
-                  </div>
-                )}
               </section>
             )}
 
             {msg && (
-              <div className="text-sm text-slate-700" aria-live="polite">
+              <div className="rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
                 {msg}
               </div>
             )}
           </main>
         </div>
       </div>
-
-      {/* Bottom navigation mobile type app native */}
-      <nav className="fixed inset-x-0 bottom-0 z-30 border-t border-slate-200 bg-white/95 backdrop-blur md:hidden">
-        <div className="mx-auto flex max-w-6xl items-stretch justify-between">
-          <button
-            type="button"
-            onClick={() => selectSection("dashboard")}
-            className={[
-              "flex-1 flex flex-col items-center justify-center gap-0.5 py-2 text-[11px] font-medium border-t-2",
-              isDashboard ? "text-emerald-700 border-emerald-500" : "text-slate-500 border-transparent",
-            ].join(" ")}
-          >
-            <span className="mb-0.5">
-              <IconHome />
-            </span>
-            <span>Tableau</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => selectSection("conduct")}
-            className={[
-              "flex-1 flex flex-col items-center justify-center gap-0.5 py-2 text-[11px] font-medium border-t-2",
-              isConduct ? "text-emerald-700 border-emerald-500" : "text-slate-500 border-transparent",
-            ].join(" ")}
-          >
-            <span className="mb-0.5">
-              <IconClipboard />
-            </span>
-            <span>Conduite</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => selectSection("absences")}
-            className={[
-              "flex-1 flex flex-col items-center justify-center gap-0.5 py-2 text-[11px] font-medium border-t-2",
-              isAbsences ? "text-emerald-700 border-emerald-500" : "text-slate-500 border-transparent",
-            ].join(" ")}
-          >
-            <span className="mb-0.5">
-              <IconClipboard />
-            </span>
-            <span>Absences</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => selectSection("notes")}
-            className={[
-              "flex-1 flex flex-col items-center justify-center gap-0.5 py-2 text-[11px] font-medium border-t-2",
-              isNotes ? "text-emerald-700 border-emerald-500" : "text-slate-500 border-transparent",
-            ].join(" ")}
-          >
-            <span className="mb-0.5">
-              <IconBook />
-            </span>
-            <span>Notes</span>
-          </button>
-        </div>
-      </nav>
     </div>
   );
 }

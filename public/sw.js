@@ -179,21 +179,67 @@ self.addEventListener("push", (event) => {
       .join(" • ");
   }
 
-  // ───────── Absences / Retards
+  // ───────── Absences / Retards (avec cas "justifié" + date claire) ─────────
   else if (kind === "attendance" || ev === "absent" || ev === "late") {
+    const isJustified =
+      core.justified === true ||
+      String(core.action || "").toLowerCase() === "justified";
+
+    const ml = Number(core.minutes_late || core.minutesLate || 0);
+    const reason = (core.reason || core.motif || "").toString().trim();
+
+    // Date explicite (jour/mois/année + jour de semaine)
+    let dateLabel = "";
+    if (whenIso) {
+      try {
+        dateLabel = new Date(whenIso).toLocaleDateString("fr-FR", {
+          timeZone: TZ,
+          weekday: "short",
+          day: "2-digit",
+          month: "2-digit",
+          year: "numeric",
+        });
+      } catch {
+        dateLabel = whenText || "";
+      }
+    }
+
+    // Créneau / fallback heure lecture
+    const slotLabel = slot || whenText || "";
+    const dateSlotLabel =
+      dateLabel && slotLabel
+        ? `${dateLabel} • ${slotLabel}` // ex: "lun. 02/02/2025 • 08:00–09:00"
+        : slotLabel || dateLabel;
+
     if (ev === "late") {
-      const ml = Number(core.minutes_late || core.minutesLate || 0);
-      title = `Retard — ${student}`;
-      body = [subj, klass, slot || whenText, ml ? `${ml} min` : ""]
+      // RETARD
+      title = `${isJustified ? "Retard justifié" : "Retard"} — ${student}`;
+      body = [
+        subj,                    // matière
+        klass,                   // classe
+        dateSlotLabel,           // date + créneau
+        ml ? `${ml} min` : "",   // durée du retard
+        isJustified ? "Justifié" : "",
+        isJustified && reason ? `Motif : ${reason}` : "",
+      ]
         .filter(Boolean)
         .join(" • ");
     } else if (ev === "absent") {
-      title = `Absence — ${student}`;
-      body = [subj, klass, slot || whenText].filter(Boolean).join(" • ");
+      // ABSENCE
+      title = `${isJustified ? "Absence justifiée" : "Absence"} — ${student}`;
+      body = [
+        subj,                    // matière
+        klass,                   // classe
+        dateSlotLabel,           // date + créneau
+        isJustified ? "Justifiée" : "",
+        isJustified && reason ? `Motif : ${reason}` : "",
+      ]
+        .filter(Boolean)
+        .join(" • ");
     } else {
       // autre évolution éventuelle du payload "attendance"
       title = title || `Présence — ${student}`;
-      body = [subj, klass, slot || whenText].filter(Boolean).join(" • ");
+      body = [subj, klass, dateSlotLabel].filter(Boolean).join(" • ");
     }
   }
 

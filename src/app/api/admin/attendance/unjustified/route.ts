@@ -1,6 +1,8 @@
+// src/app/api/admin/attendance/unjustified/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
+import { triggerPushDispatch } from "@/lib/push-dispatch";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -168,13 +170,56 @@ async function enqueueJustifiedNotifications(
     }
   }
 
+  // 🔎 Parents à notifier (profils)
+  const guardiansByStudent = new Map<string, string[]>(); // student_id -> [profile_id]
+  if (studentIds.size) {
+    const { data: guardians, error: guardErr } = await srv
+      .from("student_guardians")
+      .select("student_id,guardian_profile_id,parent_id,notifications_enabled")
+      .in("student_id", Array.from(studentIds));
+
+    if (guardErr) {
+      console.warn(
+        "[attendance.unjustified] enqueueJustified guardiansErr",
+        guardErr.message,
+      );
+      return;
+    }
+
+    for (const g of guardians || []) {
+      const stId = String((g as any).student_id || "");
+      if (!stId) continue;
+
+      // on considère notifications_enabled === false comme désactivé
+      const enabled = (g as any).notifications_enabled !== false;
+      if (!enabled) continue;
+
+      const profileId =
+        (g as any).guardian_profile_id || (g as any).parent_id || null;
+      if (!profileId) continue;
+
+      const pid = String(profileId);
+      const arr = guardiansByStudent.get(stId) || [];
+      arr.push(pid);
+      guardiansByStudent.set(stId, Array.from(new Set(arr)));
+    }
+  }
+
+  if (!guardiansByStudent.size) {
+    console.log(
+      "[attendance.unjustified] enqueueJustified : aucun parent avec notifications actives",
+    );
+    return;
+  }
+
+  // Évite les doublons "attendance_justified" par couple (mark, profile)
   const nowIso = new Date().toISOString();
   const { data: existing, error: existingErr } = await srv
     .from("notifications_queue")
-    .select("id,mark_id,meta")
+    .select("id,mark_id,profile_id,meta")
     .in("mark_id", markIds);
 
-  const already = new Set<string>();
+  const already = new Set<string>(); // `${mark_id}:${profile_id}`
   if (existingErr) {
     console.warn(
       "[attendance.unjustified] enqueueJustified existingErr",
@@ -183,6 +228,9 @@ async function enqueueJustifiedNotifications(
   } else {
     for (const row of existing || []) {
       const mid = String((row as any).mark_id || "");
+      const prof = (row as any).profile_id
+        ? String((row as any).profile_id)
+        : "";
       const metaRaw = (row as any).meta;
       let meta: any = metaRaw;
       if (metaRaw && typeof metaRaw === "string") {
@@ -192,8 +240,8 @@ async function enqueueJustifiedNotifications(
           meta = {};
         }
       }
-      if (meta && meta.kind === "attendance_justified") {
-        already.add(mid);
+      if (mid && prof && meta && meta.kind === "attendance_justified") {
+        already.add(`${mid}:${prof}`);
       }
     }
   }
@@ -202,8 +250,6 @@ async function enqueueJustifiedNotifications(
 
   for (const m of marks as any[]) {
     const markId = String(m.id);
-    if (already.has(markId)) continue;
-
     const reason = (reasonByMarkId.get(markId) || "").trim();
     if (!reason) continue;
 
@@ -211,6 +257,9 @@ async function enqueueJustifiedNotifications(
     const student_id = String(m.student_id);
     const class_id = String(m.class_id);
     const subject_id = m.subject_id ? String(m.subject_id) : null;
+
+    const guardianProfiles = guardiansByStudent.get(student_id) || [];
+    if (!guardianProfiles.length) continue;
 
     const studentName = studentNameById.get(student_id) || "Élève";
     const classLabel = classLabelById.get(class_id) || "";
@@ -267,56 +316,60 @@ async function enqueueJustifiedNotifications(
       }
     })();
 
-    let title: string;
-    let body: string;
-    if (status === "late") {
-      title = `Retard justifié — ${studentName}`;
-      const parts = [
-        subjectName,
-        classLabel,
-        whenText,
-        minutesLate ? `${minutesLate} min` : "",
-        "Justifié",
-        reason ? `Motif : ${reason}` : "",
-      ].filter(Boolean);
-      body = parts.join(" • ");
-    } else {
-      title = `Absence justifiée — ${studentName}`;
-      const parts = [
-        subjectName,
-        classLabel,
-        whenText,
-        "Justifiée",
-        reason ? `Motif : ${reason}` : "",
-      ].filter(Boolean);
-      body = parts.join(" • ");
-    }
+    const isLate = status === "late";
 
-    rowsToInsert.push({
-      institution_id,
-      student_id,
-      session_id: m.session_id,
-      mark_id: markId,
-      parent_id: null,
-      profile_id: null,
-      channels: ["inapp", "push"],
-      channel: null,
-      payload,
-      status: WAIT_STATUS,
-      attempts: 0,
-      last_error: null,
-      title,
-      body,
-      send_after: nowIso,
-      meta: {
-        kind: "attendance_justified",
-        mark_id: markId,
+    const baseParts = isLate
+      ? [
+          subjectName,
+          classLabel,
+          whenText,
+          minutesLate ? `${minutesLate} min` : "",
+          "Justifié",
+          reason ? `Motif : ${reason}` : "",
+        ]
+      : [
+          subjectName,
+          classLabel,
+          whenText,
+          "Justifiée",
+          reason ? `Motif : ${reason}` : "",
+        ];
+
+    const body = baseParts.filter(Boolean).join(" • ");
+    const title = isLate
+      ? `Retard justifié — ${studentName}`
+      : `Absence justifiée — ${studentName}`;
+
+    for (const profileId of guardianProfiles) {
+      const key = `${markId}:${profileId}`;
+      if (already.has(key)) continue;
+
+      rowsToInsert.push({
+        institution_id,
         student_id,
-        class_id,
-        subject_id,
-      },
-      severity: "normal",
-    });
+        session_id: m.session_id,
+        mark_id: markId,
+        parent_id: null, // ✅ branche: profile_id non nul, parent_id nul
+        profile_id: profileId,
+        channels: ["inapp", "push"],
+        channel: null,
+        payload,
+        status: WAIT_STATUS,
+        attempts: 0,
+        last_error: null,
+        title,
+        body,
+        send_after: nowIso,
+        meta: {
+          kind: "attendance_justified",
+          mark_id: markId,
+          student_id,
+          class_id,
+          subject_id,
+        },
+        severity: "normal",
+      });
+    }
   }
 
   if (!rowsToInsert.length) return;
@@ -330,6 +383,10 @@ async function enqueueJustifiedNotifications(
       "[attendance.unjustified] enqueueJustified insertErr",
       insErr.message,
     );
+  } else {
+    console.log("[attendance.unjustified] enqueueJustified inserted", {
+      count: rowsToInsert.length,
+    });
   }
 }
 
@@ -399,7 +456,7 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: marksErr.message }, { status: 400 });
 
     if (!rows || rows.length === 0) {
-      return NextResponse.json({ items: [] satisfies JustifItem[] });
+      return NextResponse.json({ items: [] as JustifItem[] });
     }
 
     const markIds = Array.from(
@@ -701,6 +758,7 @@ export async function POST(req: NextRequest) {
     const toNotifyIds = markIds.filter(
       (id) => allowedMarkIds.has(id) && !!reasonByMarkId.get(id),
     );
+
     if (toNotifyIds.length) {
       await enqueueJustifiedNotifications(
         srv,
@@ -708,6 +766,24 @@ export async function POST(req: NextRequest) {
         instIds,
         reasonByMarkId,
       );
+
+      // 🔔 déclenchement immédiat du worker push pour les parents
+      try {
+        const ok = await triggerPushDispatch({
+          reason: "attendance:justified",
+          timeoutMs: 800,
+          retries: 1,
+        });
+        console.log("[admin.attendance.unjustified][POST] triggerPushDispatch", {
+          ok,
+          count: toNotifyIds.length,
+        });
+      } catch (err: any) {
+        console.warn(
+          "[admin.attendance.unjustified][POST] triggerPushDispatch_failed",
+          String(err?.message || err),
+        );
+      }
     }
 
     return NextResponse.json({ ok: true, updated });

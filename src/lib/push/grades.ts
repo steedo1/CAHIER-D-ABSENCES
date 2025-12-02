@@ -1,5 +1,6 @@
 // src/lib/push/grades.ts
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
+import { triggerPushDispatch } from "@/lib/push-dispatch";
 
 const WAIT_STATUS = (process.env.PUSH_WAIT_STATUS || "pending").trim();
 
@@ -425,4 +426,22 @@ export async function queueGradeNotificationsForEvaluation(
     evaluationId,
     count: filteredRows.length,
   });
+
+  // 6️⃣ Déclenchement immédiat du worker /api/push/dispatch
+  try {
+    const ok = await triggerPushDispatch({
+      reason: `grades:evaluation:${evaluationId}`,
+      timeoutMs: 800,
+      retries: 1,
+    });
+    console.log("[push/grades] triggerPushDispatch", {
+      evaluationId,
+      ok,
+    });
+  } catch (err: any) {
+    console.warn("[push/grades] triggerPushDispatch_failed", {
+      evaluationId,
+      error: String(err?.message || err),
+    });
+  }
 }

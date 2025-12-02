@@ -1,4 +1,3 @@
-// src/app/api/parent/children/conduct/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
@@ -9,7 +8,8 @@ export const dynamic = "force-dynamic";
 
 /* ───────── Réglages par défaut + loader depuis conduct_settings / institution_settings ───────── */
 
-const clamp = (n: number, min: number, max: number) => Math.max(min, Math.min(max, n));
+const clamp = (n: number, min: number, max: number) =>
+  Math.max(min, Math.min(max, n));
 const rid = () => Math.random().toString(36).slice(2, 8);
 
 type LatenessMode = "ignore" | "as_hours" | "direct_points";
@@ -103,23 +103,35 @@ async function loadConductSettings(
       const raw = data as any;
 
       const modeRaw = String(
-        raw.lateness_mode ?? DEFAULT_CONDUCT_SETTINGS.rules.assiduite.lateness_mode,
+        raw.lateness_mode ??
+          DEFAULT_CONDUCT_SETTINGS.rules.assiduite.lateness_mode,
       )
         .normalize("NFKC")
         .trim()
         .toLowerCase();
 
       const allowedModes: LatenessMode[] = ["ignore", "as_hours", "direct_points"];
-      const lateness_mode: LatenessMode = allowedModes.includes(modeRaw as LatenessMode)
+      const lateness_mode: LatenessMode = allowedModes.includes(
+        modeRaw as LatenessMode,
+      )
         ? (modeRaw as LatenessMode)
         : DEFAULT_CONDUCT_SETTINGS.rules.assiduite.lateness_mode;
 
       const settings: ConductSettings = {
         rubric_max: {
-          assiduite: num(raw.assiduite_max, DEFAULT_CONDUCT_SETTINGS.rubric_max.assiduite),
+          assiduite: num(
+            raw.assiduite_max,
+            DEFAULT_CONDUCT_SETTINGS.rubric_max.assiduite,
+          ),
           tenue: num(raw.tenue_max, DEFAULT_CONDUCT_SETTINGS.rubric_max.tenue),
-          moralite: num(raw.moralite_max, DEFAULT_CONDUCT_SETTINGS.rubric_max.moralite),
-          discipline: num(raw.discipline_max, DEFAULT_CONDUCT_SETTINGS.rubric_max.discipline),
+          moralite: num(
+            raw.moralite_max,
+            DEFAULT_CONDUCT_SETTINGS.rubric_max.moralite,
+          ),
+          discipline: num(
+            raw.discipline_max,
+            DEFAULT_CONDUCT_SETTINGS.rubric_max.discipline,
+          ),
         },
         rules: {
           assiduite: {
@@ -138,23 +150,29 @@ async function loadConductSettings(
             lateness_mode,
             lateness_minutes_per_absent_hour: num(
               raw.lateness_minutes_per_absent_hour,
-              DEFAULT_CONDUCT_SETTINGS.rules.assiduite.lateness_minutes_per_absent_hour,
+              DEFAULT_CONDUCT_SETTINGS.rules.assiduite
+                .lateness_minutes_per_absent_hour,
             ),
             lateness_points_per_late: num(
               raw.lateness_points_per_late,
-              DEFAULT_CONDUCT_SETTINGS.rules.assiduite.lateness_points_per_late,
+              DEFAULT_CONDUCT_SETTINGS.rules.assiduite
+                .lateness_points_per_late,
             ),
           },
           // Pour l’instant : autres rubriques = défauts (pas encore d’UI dédiée)
           tenue: {
-            warning_penalty: DEFAULT_CONDUCT_SETTINGS.rules.tenue.warning_penalty,
+            warning_penalty:
+              DEFAULT_CONDUCT_SETTINGS.rules.tenue.warning_penalty,
           },
           moralite: {
-            event_penalty: DEFAULT_CONDUCT_SETTINGS.rules.moralite.event_penalty,
+            event_penalty:
+              DEFAULT_CONDUCT_SETTINGS.rules.moralite.event_penalty,
           },
           discipline: {
-            offense_penalty: DEFAULT_CONDUCT_SETTINGS.rules.discipline.offense_penalty,
-            council_cap: DEFAULT_CONDUCT_SETTINGS.rules.discipline.council_cap,
+            offense_penalty:
+              DEFAULT_CONDUCT_SETTINGS.rules.discipline.offense_penalty,
+            council_cap:
+              DEFAULT_CONDUCT_SETTINGS.rules.discipline.council_cap,
           },
         },
       };
@@ -182,7 +200,10 @@ async function loadConductSettings(
             raw?.rubric_max?.assiduite,
             DEFAULT_CONDUCT_SETTINGS.rubric_max.assiduite,
           ),
-          tenue: num(raw?.rubric_max?.tenue, DEFAULT_CONDUCT_SETTINGS.rubric_max.tenue),
+          tenue: num(
+            raw?.rubric_max?.tenue,
+            DEFAULT_CONDUCT_SETTINGS.rubric_max.tenue,
+          ),
           moralite: num(
             raw?.rubric_max?.moralite,
             DEFAULT_CONDUCT_SETTINGS.rubric_max.moralite,
@@ -203,13 +224,16 @@ async function loadConductSettings(
               DEFAULT_CONDUCT_SETTINGS.rules.assiduite.max_hours_before_zero,
             ),
             // Champs additionnels pas présents dans l'ancien JSON → défauts
-            note_after_threshold: DEFAULT_CONDUCT_SETTINGS.rules.assiduite.note_after_threshold,
-            lateness_mode: DEFAULT_CONDUCT_SETTINGS.rules.assiduite.lateness_mode,
+            note_after_threshold:
+              DEFAULT_CONDUCT_SETTINGS.rules.assiduite.note_after_threshold,
+            lateness_mode:
+              DEFAULT_CONDUCT_SETTINGS.rules.assiduite.lateness_mode,
             lateness_minutes_per_absent_hour:
               DEFAULT_CONDUCT_SETTINGS.rules.assiduite
                 .lateness_minutes_per_absent_hour,
             lateness_points_per_late:
-              DEFAULT_CONDUCT_SETTINGS.rules.assiduite.lateness_points_per_late,
+              DEFAULT_CONDUCT_SETTINGS.rules.assiduite
+                .lateness_points_per_late,
           },
           tenue: {
             warning_penalty: num(
@@ -246,13 +270,43 @@ async function loadConductSettings(
   return DEFAULT_CONDUCT_SETTINGS;
 }
 
+/**
+ * 🔗 Durée de séance paramétrée dans l’établissement.
+ * Sert de fallback pour les retards (mode as_hours) si
+ * lateness_minutes_per_absent_hour n’est pas renseigné.
+ */
+async function loadDefaultSessionMinutes(
+  srv: any,
+  institution_id: string,
+): Promise<number> {
+  try {
+    const { data, error } = await srv
+      .from("institutions")
+      .select("default_session_minutes")
+      .eq("id", institution_id)
+      .maybeSingle();
+
+    if (error || !data) return 60;
+
+    const n = Number((data as any).default_session_minutes);
+    if (!Number.isFinite(n) || n <= 0) return 60;
+    return n;
+  } catch {
+    return 60;
+  }
+}
+
 /* ───────── Helpers temporels + appréciation ───────── */
 
 function startISO(d?: string) {
-  return d ? new Date(`${d}T00:00:00.000Z`).toISOString() : "0001-01-01T00:00:00.000Z";
+  return d
+    ? new Date(`${d}T00:00:00.000Z`).toISOString()
+    : "0001-01-01T00:00:00.000Z";
 }
 function endISO(d?: string) {
-  return d ? new Date(`${d}T23:59:59.999Z`).toISOString() : "9999-12-31T23:59:59.999Z";
+  return d
+    ? new Date(`${d}T23:59:59.999Z`).toISOString()
+    : "9999-12-31T23:59:59.999Z";
 }
 
 function appreciationFromTotal(total: number): string {
@@ -359,7 +413,13 @@ export async function GET(req: NextRequest) {
     const conductSettings = await loadConductSettings(srv, institution_id);
     const RUBRIC_MAX = conductSettings.rubric_max;
 
-    // ── Minutes d’absence/retard
+    // Durée de séance (fallback pour les retards en mode as_hours)
+    const defaultSessionMinutes = await loadDefaultSessionMinutes(
+      srv,
+      institution_id,
+    );
+
+    // ── Minutes d’absence/retard (et comptages)
     const { data: absRows } = await srv
       .from("v_mark_minutes")
       .select("minutes, started_at")
@@ -387,7 +447,9 @@ export async function GET(req: NextRequest) {
       0,
     );
     const minutes_total = absence_minutes + tardy_minutes;
-    const hours = minutes_total / 60;
+
+    const absence_count = (absRows || []).length;
+    const tardy_count = tardyRows.length;
 
     // ── Évènements & pénalités
     type Ev = {
@@ -449,19 +511,67 @@ export async function GET(req: NextRequest) {
         }));
     }
 
-    // ── Calcul barème (avec réglages dynamiques)
+    // ── Calcul barème (avec réglages dynamiques alignés sur l’admin) ──
     const { rules } = conductSettings;
+    const assRules = rules.assiduite;
 
-    let assiduite =
-      hours > rules.assiduite.max_hours_before_zero
-        ? 0
-        : clamp(
-            RUBRIC_MAX.assiduite - rules.assiduite.penalty_per_hour * hours,
-            0,
-            RUBRIC_MAX.assiduite,
-          );
+    // Absences : 1 absence injustifiée = 1 “unité” assiduité
+    const absenceUnits = Math.max(0, absence_count);
 
-    const tenueWarn = events.filter((e) => e.event_type === "uniform_warning").length;
+    // Retards : conversion minutes → unités (mode as_hours)
+    const latenessDivisor = Math.max(
+      1,
+      assRules.lateness_minutes_per_absent_hour ||
+        defaultSessionMinutes ||
+        60,
+    );
+
+    let effectiveHours = 0;
+    if (assRules.lateness_mode === "ignore") {
+      effectiveHours = absenceUnits;
+    } else if (assRules.lateness_mode === "as_hours") {
+      const tardyUnits = Math.floor(tardy_minutes / latenessDivisor);
+      effectiveHours = absenceUnits + tardyUnits;
+    } else {
+      // "direct_points" : les retards sont gérés plus bas en points directs
+      effectiveHours = absenceUnits;
+    }
+
+    let assiduite: number;
+    if (effectiveHours >= assRules.max_hours_before_zero) {
+      // À partir du seuil, on force la note à note_after_threshold
+      const cap = clamp(
+        assRules.note_after_threshold,
+        0,
+        RUBRIC_MAX.assiduite,
+      );
+      assiduite = cap;
+    } else {
+      assiduite = clamp(
+        RUBRIC_MAX.assiduite -
+          assRules.penalty_per_hour * effectiveHours,
+        0,
+        RUBRIC_MAX.assiduite,
+      );
+
+      // Mode "direct_points" : on retire en plus des points par retard
+      if (
+        assRules.lateness_mode === "direct_points" &&
+        tardy_count > 0 &&
+        assRules.lateness_points_per_late > 0
+      ) {
+        assiduite = clamp(
+          assiduite -
+            assRules.lateness_points_per_late * tardy_count,
+          0,
+          RUBRIC_MAX.assiduite,
+        );
+      }
+    }
+
+    const tenueWarn = events.filter(
+      (e) => e.event_type === "uniform_warning",
+    ).length;
     let tenue = clamp(
       RUBRIC_MAX.tenue - rules.tenue.warning_penalty * tenueWarn,
       0,
@@ -469,7 +579,9 @@ export async function GET(req: NextRequest) {
     );
 
     const moralN = events.filter(
-      (e) => e.event_type === "cheating" || e.event_type === "alcohol_or_drug",
+      (e) =>
+        e.event_type === "cheating" ||
+        e.event_type === "alcohol_or_drug",
     ).length;
     let moralite = clamp(
       RUBRIC_MAX.moralite - rules.moralite.event_penalty * moralN,
@@ -477,7 +589,9 @@ export async function GET(req: NextRequest) {
       RUBRIC_MAX.moralite,
     );
 
-    const firstWarn = events.find((e) => e.event_type === "discipline_warning");
+    const firstWarn = events.find(
+      (e) => e.event_type === "discipline_warning",
+    );
     let discN = 0;
     if (firstWarn) {
       discN = events.filter(
@@ -487,7 +601,8 @@ export async function GET(req: NextRequest) {
       ).length;
     }
     let discipline = clamp(
-      RUBRIC_MAX.discipline - rules.discipline.offense_penalty * discN,
+      RUBRIC_MAX.discipline -
+        rules.discipline.offense_penalty * discN,
       0,
       RUBRIC_MAX.discipline,
     );
@@ -500,7 +615,11 @@ export async function GET(req: NextRequest) {
       { tenue: 0, moralite: 0, discipline: 0 } as any,
     );
     tenue = clamp(tenue - (p.tenue || 0), 0, RUBRIC_MAX.tenue);
-    moralite = clamp(moralite - (p.moralite || 0), 0, RUBRIC_MAX.moralite);
+    moralite = clamp(
+      moralite - (p.moralite || 0),
+      0,
+      RUBRIC_MAX.moralite,
+    );
     discipline = clamp(
       discipline - (p.discipline || 0),
       0,
@@ -508,9 +627,14 @@ export async function GET(req: NextRequest) {
     );
 
     let total = assiduite + tenue + moralite + discipline;
-    const hasCouncil = events.some((e) => e.event_type === "discipline_council");
+    const hasCouncil = events.some(
+      (e) => e.event_type === "discipline_council",
+    );
     if (hasCouncil)
-      total = Math.min(total, conductSettings.rules.discipline.council_cap);
+      total = Math.min(
+        total,
+        conductSettings.rules.discipline.council_cap,
+      );
 
     const appreciation = appreciationFromTotal(total);
 
@@ -523,9 +647,15 @@ export async function GET(req: NextRequest) {
       },
       total: Number(total.toFixed(2)),
       appreciation,
-      // 🔎 Barème réel renvoyé au front parent
+      // 🔎 Barème réel renvoyé au front parent (cohérent avec réglages admin)
       rubric_max: conductSettings.rubric_max,
-      minutes: { absence_minutes, tardy_minutes, minutes_total },
+      minutes: {
+        absence_minutes,
+        tardy_minutes,
+        minutes_total,
+        absence_count,
+        tardy_count,
+      },
     });
   } catch (e: any) {
     console.error(`[conduct:${trace}] fatal`, e);
