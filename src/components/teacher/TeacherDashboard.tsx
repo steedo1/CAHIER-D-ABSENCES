@@ -68,6 +68,7 @@ function Select(p: React.SelectHTMLAttributes<HTMLSelectElement>) {
       className={[
         "w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm",
         "shadow-sm outline-none transition",
+        "placeholder:text-slate-400",
         "focus:border-emerald-400 focus:ring-4 focus:ring-emerald-500/20",
         "disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400",
         p.className ?? "",
@@ -285,14 +286,16 @@ export default function TeacherDashboard() {
       const c =
         (await getJson("/api/teacher/institution/settings")) ||
         (await getJson("/api/institution/settings")) ||
-        (await getJson("/api/admin/institution/settings")) ||
-        { tz: "Africa/Abidjan", default_session_minutes: 60, auto_lateness: true };
+        (await getJson("/api/admin/institution/settings")) || {
+          tz: "Africa/Abidjan",
+          default_session_minutes: 60,
+          auto_lateness: true,
+        };
 
       const p =
         (await getJson("/api/teacher/institution/periods")) ||
         (await getJson("/api/institution/periods")) ||
-        (await getJson("/api/admin/institution/periods")) ||
-        { periods: [] };
+        (await getJson("/api/admin/institution/periods")) || { periods: [] };
 
       basics = {
         tz: c?.tz || "Africa/Abidjan",
@@ -315,6 +318,41 @@ export default function TeacherDashboard() {
           null,
         periods: Array.isArray(p?.periods) ? p.periods : [],
       };
+    }
+
+    if (!basics) {
+      basics = {
+        tz: "Africa/Abidjan",
+        default_session_minutes: 60,
+        auto_lateness: true,
+        institution_name: null,
+        academic_year_label: null,
+        periods: [],
+      };
+    }
+
+    // 🔁 Complément : harmoniser le nom & l'année avec /api/admin/institution/settings
+    const adminSettings = await getJson("/api/admin/institution/settings");
+    if (adminSettings) {
+      const nameFromAdmin = String(
+        adminSettings?.institution_name ||
+          adminSettings?.name ||
+          adminSettings?.institution_label ||
+          ""
+      ).trim();
+
+      const yearFromAdmin =
+        adminSettings?.academic_year_label ||
+        adminSettings?.current_academic_year_label ||
+        adminSettings?.active_academic_year ||
+        null;
+
+      if (nameFromAdmin) {
+        basics.institution_name = nameFromAdmin;
+      }
+      if (yearFromAdmin && !basics.academic_year_label) {
+        basics.academic_year_label = yearFromAdmin;
+      }
     }
 
     // Regrouper/trier par jour
@@ -354,26 +392,80 @@ export default function TeacherDashboard() {
     }));
     setPeriodsByDay(grouped);
 
-    // 3) Config conduite (maxima par rubrique) — à partir de /api/admin/conduct/settings
+    // 3) Config conduite (maxima par rubrique) — loader ultra défensif
+    const defaults: ConductMax = { discipline: 7, tenue: 3, moralite: 4 };
+
     try {
-      const rawConf = (await getJson("/api/admin/conduct/settings")) as any;
-      const defaults: ConductMax = { discipline: 7, tenue: 3, moralite: 4 };
+      const rawConf =
+        ((await getJson("/api/teacher/conduct/settings")) as any) ??
+        ((await getJson("/api/institution/conduct/settings")) as any) ??
+        ((await getJson("/api/admin/conduct/settings")) as any);
+
+      console.log("[TeacherDashboard] conduct settings rawConf =", rawConf);
 
       if (!rawConf) {
         setConductMax(defaults);
-      } else {
-        const d = Number(rawConf.discipline_max ?? defaults.discipline);
-        const t = Number(rawConf.tenue_max ?? defaults.tenue);
-        const m = Number(rawConf.moralite_max ?? defaults.moralite);
-
-        setConductMax({
-          discipline: Number.isFinite(d) ? d : defaults.discipline,
-          tenue: Number.isFinite(t) ? t : defaults.tenue,
-          moralite: Number.isFinite(m) ? m : defaults.moralite,
-        });
+        return;
       }
-    } catch {
-      setConductMax({ discipline: 7, tenue: 3, moralite: 4 });
+
+      let src: any = rawConf;
+
+      // cas { item: {...} }
+      if (src && typeof src === "object" && src.item) {
+        const it = src.item;
+        src = it.settings_json || it.settings || it;
+      }
+      // cas { items: [...] }
+      else if (src && typeof src === "object" && Array.isArray(src.items) && src.items.length) {
+        const it = src.items[0];
+        src = it.settings_json || it.settings || it;
+      }
+      // cas { data: [...] } (retour supabase brut)
+      else if (src && typeof src === "object" && Array.isArray(src.data) && src.data.length) {
+        const it = src.data[0];
+        src = it.settings_json || it.settings || it;
+      }
+      // cas direct settings_json / settings
+      else if (src && typeof src === "object" && (src.settings_json || src.settings)) {
+        src = src.settings_json || src.settings;
+      }
+      // cas array direct [ {...} ]
+      else if (Array.isArray(src) && src.length) {
+        const it = src[0];
+        src =
+          it && typeof it === "object" && (it.settings_json || it.settings)
+            ? it.settings_json || it.settings
+            : it;
+      }
+
+      console.log("[TeacherDashboard] conduct settings src (parsed) =", src);
+
+      const d = Number(
+        src?.discipline_max ??
+          src?.discipline ??
+          src?.max_discipline ??
+          src?.discipline_points_max ??
+          defaults.discipline
+      );
+      const t = Number(
+        src?.tenue_max ?? src?.tenue ?? src?.max_tenue ?? src?.tenue_points_max ?? defaults.tenue
+      );
+      const m = Number(
+        src?.moralite_max ??
+          src?.moralite ??
+          src?.max_moralite ??
+          src?.moralite_points_max ??
+          defaults.moralite
+      );
+
+      setConductMax({
+        discipline: Number.isFinite(d) ? d : defaults.discipline,
+        tenue: Number.isFinite(t) ? t : defaults.tenue,
+        moralite: Number.isFinite(m) ? m : defaults.moralite,
+      });
+    } catch (e) {
+      console.warn("[TeacherDashboard] erreur chargement règles de conduite:", e);
+      setConductMax(defaults);
     }
   }
 

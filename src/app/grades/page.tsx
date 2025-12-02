@@ -202,6 +202,56 @@ export default function TeacherNotesPage() {
     null
   );
 
+  /* 1️⃣ Essai via API (comme compte classe) */
+  useEffect(() => {
+    async function loadInstitutionFromApi() {
+      async function getJson(url: string) {
+        try {
+          const r = await fetch(url, { cache: "no-store" });
+          if (!r.ok) return null;
+          return await r.json();
+        } catch {
+          return null;
+        }
+      }
+
+      const c: any =
+        (await getJson("/api/teacher/institution/settings")) ||
+        (await getJson("/api/institution/settings")) ||
+        (await getJson("/api/admin/institution/settings")) ||
+        null;
+
+      if (!c) return;
+
+      setInstitutionName((prev) => {
+        if (prev) return prev;
+        return (
+          c.institution_name ||
+          c.institution_label ||
+          c.short_name ||
+          c.name ||
+          c.header_title ||
+          c.school_name ||
+          null
+        );
+      });
+
+      setAcademicYearLabel((prev) => {
+        if (prev) return prev;
+        return (
+          c.academic_year_label ||
+          c.current_academic_year_label ||
+          c.academic_year ||
+          c.year_label ||
+          c.header_academic_year ||
+          null
+        );
+      });
+    }
+    loadInstitutionFromApi();
+  }, []);
+
+  /* 2️⃣ Fallback doux : dataset / globals (comme ailleurs) */
   useEffect(() => {
     if (typeof window === "undefined") return;
     try {
@@ -213,7 +263,9 @@ export default function TeacherNotesPage() {
         ? String((window as any).__MC_INSTITUTION_NAME__)
         : null;
       const finalName = fromDataName || fromGlobalName;
-      if (finalName) setInstitutionName(finalName);
+      if (finalName) {
+        setInstitutionName((prev) => prev || finalName);
+      }
 
       const fromDataYear =
         body?.dataset?.academicYear ||
@@ -224,7 +276,9 @@ export default function TeacherNotesPage() {
         ? String((window as any).__MC_ACADEMIC_YEAR__)
         : null;
       const finalYear = fromDataYear || fromGlobalYear;
-      if (finalYear) setAcademicYearLabel(finalYear);
+      if (finalYear) {
+        setAcademicYearLabel((prev) => prev || finalYear);
+      }
     } catch {
       // on ne casse rien si ça échoue
     }
@@ -736,7 +790,20 @@ export default function TeacherNotesPage() {
   }
 
   /* ==========================================
+     Helpers d'affichage
+  ========================================== */
+  function formatDateFr(value: string | null | undefined) {
+    if (!value) return "";
+    try {
+      return new Date(value).toLocaleDateString("fr-FR");
+    } catch {
+      return value;
+    }
+  }
+
+  /* ==========================================
      Export PDF (fiche statistique par évaluation)
+     👉 Avec établissement + année, comme compte classe
   ========================================== */
   function exportEvalToPdf(ev: Evaluation) {
     if (!selected) {
@@ -1151,18 +1218,6 @@ export default function TeacherNotesPage() {
     if (!currentActiveEvalId) return evaluations;
     return evaluations.filter((ev) => ev.id === currentActiveEvalId);
   }, [isMobile, evaluations, currentActiveEvalId]);
-
-  /* ==========================================
-     Helpers d'affichage
-  ========================================== */
-  function formatDateFr(value: string | null | undefined) {
-    if (!value) return "";
-    try {
-      return new Date(value).toLocaleDateString("fr-FR");
-    } catch {
-      return value;
-    }
-  }
 
   /* ==========================================
      Rendu
@@ -1915,8 +1970,10 @@ export default function TeacherNotesPage() {
                                 onClick={() => exportEvalToPdf(ev)}
                                 disabled={
                                   !roster.length ||
-                                  Object.keys(grades[ev.id] || {}).length === 0 &&
-                                  Object.keys(changed[ev.id] || {}).length === 0
+                                  (Object.keys(grades[ev.id] || {}).length ===
+                                    0 &&
+                                    Object.keys(changed[ev.id] || {}).length ===
+                                      0)
                                 }
                               >
                                 <FileText className="h-3.5 w-3.5" />
