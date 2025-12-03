@@ -279,7 +279,7 @@ export default function ClassDeviceNotesPage() {
           }
         }
 
-                const candidates = [
+        const candidates = [
           "/api/teacher/institution/settings",
           "/api/institution/settings",
           "/api/admin/institution/settings",
@@ -323,7 +323,6 @@ export default function ClassDeviceNotesPage() {
             j?.year_label ??
             j?.header_academic_year ??
             null;
-
 
           if (!cancelled) {
             if (!finalNameFromDom && nameCandidate) {
@@ -696,8 +695,7 @@ export default function ClassDeviceNotesPage() {
         const next = { ...prev };
         for (const [evId, per] of Object.entries(changed)) {
           next[evId] = { ...(next[evId] || {}) };
-          for (const [sid, val] of Object.entries(per)) next[evId][sid] =
-            val;
+          for (const [sid, val] of Object.entries(per)) next[evId][sid] = val;
         }
         return next;
       });
@@ -2264,10 +2262,7 @@ export default function ClassDeviceNotesPage() {
                               });
                               setBonusMap((m) => ({
                                 ...m,
-                                [row.student.id]: Math.max(
-                                  0,
-                                  Math.min(10, v)
-                                ),
+                                [row.student.id]: Math.max(0, Math.min(10, v)),
                               }));
                             }}
                             aria-label={`Bonus ${row.student.full_name}`}

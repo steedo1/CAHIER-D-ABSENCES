@@ -419,37 +419,114 @@ export async function GET(req: NextRequest) {
       institution_id,
     );
 
-    // ── Minutes d’absence/retard (et comptages)
-    const { data: absRows } = await srv
+    /* ───────── Minutes d’absence/retard INJUSTIFIÉES (et comptages) ─────────
+       On aligne la logique sur /api/admin/absences/by-class :
+       - v_mark_minutes + attendance_marks.reason pour filtrer les justifiées
+       - v_tardy_minutes + attendance_marks.reason pour les retards
+    */
+
+    // --- Absences injustifiées ---
+    const { data: absMarks, error: absErr } = await srv
       .from("v_mark_minutes")
-      .select("minutes, started_at")
+      .select("id, minutes, started_at")
       .eq("institution_id", institution_id)
       .eq("student_id", student_id)
+      .eq("status", "absent") // on ne garde que les absences réelles
       .gte("started_at", startISO(from))
       .lte("started_at", endISO(to));
 
-    let tardyRows: Array<{ minutes: number; started_at: string }> = [];
-    const { data: tRows } = await srv
-      .from("v_tardy_minutes")
-      .select("minutes, started_at")
-      .eq("institution_id", institution_id)
-      .eq("student_id", student_id)
-      .gte("started_at", startISO(from))
-      .lte("started_at", endISO(to));
-    if (Array.isArray(tRows)) tardyRows = tRows as any[];
+    let absence_minutes = 0;
+    let absence_count = 0;
 
-    const absence_minutes = (absRows || []).reduce(
-      (a, r: any) => a + Number(r?.minutes || 0),
-      0,
-    );
-    const tardy_minutes = (tardyRows || []).reduce(
-      (a, r: any) => a + Number(r?.minutes || 0),
-      0,
-    );
+    if (!absErr && Array.isArray(absMarks) && absMarks.length > 0) {
+      const absMarkIds = Array.from(
+        new Set(
+          absMarks
+            .map((m: any) => String(m.id || ""))
+            .filter(Boolean),
+        ),
+      );
+
+      let absReasonById = new Map<string, string | null>();
+      if (absMarkIds.length) {
+        const { data: marksInfo } = await srv
+          .from("attendance_marks")
+          .select("id, reason")
+          .in("id", absMarkIds);
+
+        absReasonById = new Map(
+          (marksInfo || []).map((m: any) => [
+            String(m.id),
+            (m.reason ?? null) as string | null,
+          ]),
+        );
+      }
+
+      for (const m of absMarks as any[]) {
+        const mark_id = String(m.id || "");
+        const reason = String(absReasonById.get(mark_id) ?? "").trim();
+        if (reason) continue; // ✅ absence justifiée → on ignore
+
+        const minutes = Number(m.minutes || 0);
+        if (!minutes) continue;
+        absence_minutes += minutes;
+        absence_count += 1;
+      }
+    }
+
+    // --- Retards injustifiés ---
+    let tardy_minutes = 0;
+    let tardy_count = 0;
+
+    try {
+      const { data: tardyMarks, error: tardyErr } = await srv
+        .from("v_tardy_minutes")
+        .select("id, minutes, started_at")
+        .eq("institution_id", institution_id)
+        .eq("student_id", student_id)
+        .gte("started_at", startISO(from))
+        .lte("started_at", endISO(to));
+
+      if (!tardyErr && Array.isArray(tardyMarks) && tardyMarks.length > 0) {
+        const tarMarkIds = Array.from(
+          new Set(
+            tardyMarks
+              .map((t: any) => String(t.id || ""))
+              .filter(Boolean),
+          ),
+        );
+
+        let tarReasonById = new Map<string, string | null>();
+        if (tarMarkIds.length) {
+          const { data: tMarksInfo } = await srv
+            .from("attendance_marks")
+            .select("id, reason")
+            .in("id", tarMarkIds);
+
+          tarReasonById = new Map(
+            (tMarksInfo || []).map((m: any) => [
+              String(m.id),
+              (m.reason ?? null) as string | null,
+            ]),
+          );
+        }
+
+        for (const t of tardyMarks as any[]) {
+          const mark_id = String(t.id || "");
+          const reason = String(tarReasonById.get(mark_id) ?? "").trim();
+          if (reason) continue; // ✅ retard justifié → on ignore
+
+          const minutes = Number(t.minutes || 0);
+          if (!minutes) continue;
+          tardy_minutes += minutes;
+          tardy_count += 1;
+        }
+      }
+    } catch {
+      // vue absente ou autre → on laisse 0
+    }
+
     const minutes_total = absence_minutes + tardy_minutes;
-
-    const absence_count = (absRows || []).length;
-    const tardy_count = tardyRows.length;
 
     // ── Évènements & pénalités
     type Ev = {

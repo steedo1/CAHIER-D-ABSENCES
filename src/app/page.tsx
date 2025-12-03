@@ -16,6 +16,7 @@ import {
   MessageSquare,
   PhoneCall,
   ArrowUp,
+  ArrowRight,
   Quote,
 } from "lucide-react";
 
@@ -59,7 +60,7 @@ function ContactCTA() {
         href={wa}
         target="_blank"
         rel="noreferrer"
-        className="rounded-lg bg-indigo-600 px-3.5 py-1.5 text-sm font-semibold text-white shadow hover:bg-indigo-700"
+        className="rounded-lg bg-indigo-600 px-3.5 py-1.5 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700"
       >
         Démarrer sur WhatsApp
       </a>
@@ -140,8 +141,8 @@ function Stat({
   value: string;
 }) {
   return (
-    <div className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white/95 p-4 shadow-sm backdrop-blur">
-      <div className="grid h-10 w-10 place-items-center rounded-xl bg-indigo-600/10 text-indigo-700">
+    <div className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+      <div className="grid h-10 w-10 place-items-center rounded-xl bg-indigo-50 text-indigo-700">
         <Icon className="h-5 w-5" />
       </div>
       <div>
@@ -164,9 +165,9 @@ function FeatureCard({
   desc: string;
 }) {
   return (
-    <TiltCard className="rounded-2xl border border-slate-200 bg-white/95 p-5 shadow-sm backdrop-blur hover:shadow-md">
+    <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm hover:shadow-md">
       <div className="flex items-start gap-3">
-        <div className="grid h-10 w-10 flex-none place-items-center rounded-xl bg-indigo-600 text-white shadow-sm">
+        <div className="grid h-10 w-10 flex-none place-items-center rounded-xl bg-indigo-50 text-indigo-700">
           <Icon className="h-5 w-5" />
         </div>
         <div>
@@ -174,22 +175,65 @@ function FeatureCard({
           <p className="mt-1 text-sm leading-6 text-slate-700">{desc}</p>
         </div>
       </div>
-    </TiltCard>
+    </div>
+  );
+}
+
+/* Boutons d’espaces de connexion : version plus pro / soft */
+function ConnectionCard({
+  icon: Icon,
+  title,
+  badge,
+  description,
+  href,
+}: {
+  icon: any;
+  title: string;
+  badge?: string;
+  description: string;
+  href: string;
+}) {
+  return (
+    <a
+      href={href}
+      className="group flex h-full flex-col justify-between rounded-2xl border border-slate-200 bg-white/95 p-4 shadow-sm transition hover:border-indigo-400 hover:shadow-md"
+    >
+      <div className="flex items-center gap-3">
+        <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-50 text-indigo-700">
+          <Icon className="h-5 w-5" />
+        </div>
+        <div>
+          <div className="text-sm font-semibold text-slate-900">{title}</div>
+          {badge && (
+            <div className="mt-0.5 text-[11px] font-medium uppercase tracking-wide text-emerald-600">
+              {badge}
+            </div>
+          )}
+        </div>
+      </div>
+      <p className="mt-3 flex-1 text-xs leading-5 text-slate-600">
+        {description}
+      </p>
+      <div className="mt-4 inline-flex items-center text-sm font-semibold text-indigo-600 group-hover:text-indigo-700">
+        <span>Se connecter</span>
+        <ArrowRight className="ml-1.5 h-3.5 w-3.5" />
+      </div>
+    </a>
   );
 }
 
 /* Marquee Banner */
 function MarqueeBanner({ text }: { text: string }) {
   return (
-    <div className="relative z-20 w-full overflow-hidden bg-gradient-to-r from-indigo-600 via-violet-600 to-fuchsia-600 text-white ring-1 ring-indigo-500/20">
+    <div className="relative z-10 w-full overflow-hidden bg-slate-900 text-slate-100">
       <div
-        className="flex w-max items-center gap-8 py-2 pl-4 pr-8 [animation:marquee_28s_linear_infinite] hover:[animation-play-state:paused]"
+        className="flex w-max items-center gap-8 py-2 pl-4 pr-8 text-xs [animation:marquee_28s_linear_infinite] hover:[animation-play-state:paused]"
         role="status"
         aria-live="polite"
         aria-label={text}
       >
         {Array.from({ length: 8 }).map((_, i) => (
-          <span key={i} className="text-sm font-semibold tracking-wide">
+          <span key={i} className="font-medium tracking-wide">
             {text} <span aria-hidden>•</span>
           </span>
         ))}
@@ -309,22 +353,22 @@ export default function HomePage() {
     "Mon Cahier : absences, notes et prédiction du taux de réussite dans un seul outil.";
 
   return (
-    <main className="relative min-h-screen bg-slate-25">
-      {/* Gradient/Aurora background */}
+    <main className="relative min-h-screen bg-slate-50">
+      {/* Background soft (légères tâches de couleur) */}
       <div
         aria-hidden
         className="pointer-events-none absolute inset-0 -z-10 overflow-hidden"
       >
-        <div className="absolute left-[5%] top-[-10%] h-64 w-64 rounded-full bg-fuchsia-300/40 blur-3xl md:h-[24rem] md:w-[24rem]" />
-        <div className="absolute right-[-10%] top-[5%] h-72 w-72 rounded-full bg-indigo-300/40 blur-3xl md:h-[26rem] md:w-[26rem]" />
-        <div className="absolute bottom-[-18%] left-[10%] h-72 w-72 rounded-full bg-emerald-300/35 blur-3xl md:h-[26rem] md:w-[26rem]" />
+        <div className="absolute left-[5%] top-[-10%] h-56 w-56 rounded-full bg-indigo-200/25 blur-3xl md:h-72 md:w-72" />
+        <div className="absolute right-[-5%] top-[30%] h-64 w-64 rounded-full bg-emerald-200/30 blur-3xl md:h-80 md:w-80" />
+        <div className="absolute bottom-[-15%] left-[15%] h-60 w-60 rounded-full bg-sky-200/25 blur-3xl md:h-72 md:w-72" />
       </div>
 
-      {/* Header */}
-      <header className="sticky top-0 z-30 w-full border-b border-white/10 bg-gradient-to-r from-indigo-700 via-violet-700 to-fuchsia-600/95 text-white shadow-sm backdrop-blur">
+      {/* Header : plus sobre / pro */}
+      <header className="sticky top-0 z-30 w-full border-b border-slate-200 bg-white/90 backdrop-blur">
         <div className="mx-auto flex max-w-7xl items-center justify-between px-4 py-3">
           <a href="#hero" className="flex items-center gap-3">
-            <div className="grid h-10 w-10 place-items-center rounded-xl bg-white/15 text-white shadow-sm">
+            <div className="grid h-10 w-10 place-items-center rounded-xl bg-indigo-50 text-indigo-700 ring-1 ring-indigo-100">
               <svg
                 viewBox="0 0 24 24"
                 className="h-5 w-5"
@@ -335,53 +379,53 @@ export default function HomePage() {
                 <path d="M12 3l7 3v6c0 5-3.5 8-7 9-3.5-1-7-4-7-9V6l7-3z" />
               </svg>
             </div>
-            <div className="text-white">
+            <div className="text-slate-900">
               <div className="text-sm font-semibold tracking-wide">
                 Mon Cahier
               </div>
-              <div className="text-xs text-white/80">
+              <div className="text-xs text-slate-500">
                 Absences, notes &amp; prédiction des résultats
               </div>
             </div>
           </a>
 
-          <nav className="hidden items-center gap-6 text-sm font-semibold text-white/85 md:flex">
-            <a href="#features" className="hover:text-white">
+          <nav className="hidden items-center gap-6 text-sm font-semibold text-slate-700 md:flex">
+            <a href="#features" className="hover:text-indigo-700">
               Fonctionnalités
             </a>
-            <a href="#steps" className="hover:text-white">
+            <a href="#steps" className="hover:text-indigo-700">
               Comment ça marche
             </a>
-            <a href="#testimonials" className="hover:text-white">
+            <a href="#testimonials" className="hover:text-indigo-700">
               Témoignages
             </a>
-            <a href="#faq" className="hover:text-white">
+            <a href="#faq" className="hover:text-indigo-700">
               FAQ
             </a>
-            <a href="#contact" className="hover:text-white">
+            <a href="#contact" className="hover:text-indigo-700">
               Contact
             </a>
           </nav>
 
-          {/* Connexions visibles - GROS BOUTONS HEADER (desktop) */}
+          {/* Connexions Header (desktop) : plus minimalistes */}
           <div className="hidden items-center gap-3 md:flex">
             <a
               href="/parents/login"
-              className="inline-flex items-center gap-2 rounded-full bg-emerald-400 px-5 py-2.5 text-sm font-semibold text-emerald-950 shadow-lg ring-2 ring-white/50 hover:bg-emerald-300"
+              className="inline-flex items-center gap-2 rounded-full border border-emerald-500 bg-white px-4 py-1.5 text-xs font-semibold text-emerald-700 shadow-sm hover:bg-emerald-50"
             >
               <Users className="h-4 w-4" />
               <span>Espace parent</span>
             </a>
             <a
               href="/login?space=direction"
-              className="inline-flex items-center gap-2 rounded-full bg-white/10 px-4 py-2 text-sm font-semibold text-white shadow ring-1 ring-white/40 hover:bg-white/20"
+              className="inline-flex items-center gap-2 rounded-full border border-slate-300 bg-white px-3.5 py-1.5 text-xs font-semibold text-slate-700 hover:border-indigo-400 hover:text-indigo-700"
             >
               <Building2 className="h-4 w-4" />
               <span>Espace direction</span>
             </a>
             <a
               href="/login?space=enseignant"
-              className="inline-flex items-center gap-2 rounded-full bg-white px-4 py-2 text-sm font-semibold text-indigo-700 shadow ring-1 ring-white/30 hover:bg-slate-50"
+              className="inline-flex items-center gap-2 rounded-full bg-indigo-600 px-4 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-indigo-700"
             >
               <FileSpreadsheet className="h-4 w-4" />
               <span>Espace enseignant</span>
@@ -391,7 +435,7 @@ export default function HomePage() {
           {/* Mobile : bouton unique qui scrolle vers le bloc de choix d’espace */}
           <a
             href="#spaces"
-            className="inline-flex items-center gap-2 rounded-full bg-white px-4 py-2 text-sm font-semibold text-indigo-700 shadow-md ring-1 ring-indigo-200 hover:bg-slate-50 md:hidden"
+            className="inline-flex items-center gap-2 rounded-full bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700 md:hidden"
           >
             <span>Se connecter</span>
           </a>
@@ -403,14 +447,14 @@ export default function HomePage() {
 
       {/* HERO */}
       <section id="hero" className="relative overflow-hidden">
-        <div className="mx-auto grid max-w-7xl grid-cols-1 items-center gap-10 px-4 py-10 md:grid-cols-2 md:py-18">
-          {/* Colonne texte + gros boutons espaces */}
+        <div className="mx-auto grid max-w-7xl grid-cols-1 items-center gap-10 px-4 py-10 md:grid-cols-2 md:py-16">
+          {/* Colonne texte + cartes de connexion plus pro */}
           <div className="relative z-10">
             <Pill>
               <Rocket className="h-3.5 w-3.5" />
-              <span>Absences, notes &amp; prédiction réunies</span>
+              <span>Solution complète pour les établissements scolaires</span>
             </Pill>
-            <h1 className="mt-4 text-[2.25rem] font-extrabold leading-tight text-slate-900 sm:text-[2.6rem] md:text-[3.2rem]">
+            <h1 className="mt-4 text-[2.25rem] font-extrabold leading-tight text-slate-900 sm:text-[2.6rem] md:text-[3.1rem]">
               Le cahier d’absences &amp; de notes{" "}
               <span className="bg-gradient-to-r from-indigo-600 via-violet-600 to-fuchsia-600 bg-clip-text text-transparent">
                 intelligent
@@ -422,78 +466,40 @@ export default function HomePage() {
               <b>modèle de prédiction du taux de réussite</b> de chaque classe.
             </p>
 
-            {/* Bloc de choix d’espace (TRÈS VISIBLE & GROS BOUTONS) */}
+            {/* Bloc de choix d’espace (soft, très professionnel) */}
             <div
               id="spaces"
-              className="mt-6 w-full max-w-xl space-y-4 rounded-3xl bg-white/95 p-4 shadow-2xl ring-1 ring-slate-200 backdrop-blur"
+              className="mt-6 w-full max-w-xl rounded-3xl border border-slate-200 bg-white/95 p-5 shadow-md"
             >
-              <p className="px-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                Choisissez votre espace de connexion
+              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+                ESPACES DE CONNEXION
+              </p>
+              <p className="mt-1 text-xs text-slate-500">
+                Chaque profil dispose de sa propre interface, sans mélange des
+                rôles.
               </p>
 
-              {/* Parent */}
-              <a
-                href="/parents/login"
-                className="group flex items-center justify-between gap-4 rounded-2xl bg-gradient-to-r from-emerald-500 to-emerald-400 px-5 py-4 text-white shadow-xl ring-1 ring-emerald-300 hover:from-emerald-400 hover:to-emerald-300 md:py-5"
-              >
-                <div className="flex items-center gap-4">
-                  <div className="grid h-12 w-12 flex-none place-items-center rounded-2xl bg-white/20">
-                    <Users className="h-6 w-6" />
-                  </div>
-                  <div>
-                    <div className="text-lg font-bold">Espace parent</div>
-                    <div className="text-xs text-emerald-50 sm:text-[13px]">
-                      Absences, retards et notes de vos enfants en temps réel.
-                    </div>
-                  </div>
-                </div>
-                <span className="ml-3 hidden rounded-full bg-white/20 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-emerald-950 shadow-sm group-hover:bg-white/30 sm:inline-block">
-                  Se connecter
-                </span>
-              </a>
-
-              {/* Direction */}
-              <a
-                href="/login?space=direction"
-                className="group flex items-center justify-between gap-4 rounded-2xl bg-gradient-to-r from-indigo-600 to-indigo-500 px-5 py-4 text-white shadow-lg ring-1 ring-indigo-300 hover:from-indigo-500 hover:to-indigo-400 md:py-5"
-              >
-                <div className="flex items-center gap-4">
-                  <div className="grid h-12 w-12 flex-none place-items-center rounded-2xl bg-white/20">
-                    <Building2 className="h-6 w-6" />
-                  </div>
-                  <div>
-                    <div className="text-lg font-bold">Espace direction</div>
-                    <div className="text-xs text-indigo-50 sm:text-[13px]">
-                      Pilotage des classes, enseignants, statistiques et
-                      prédiction.
-                    </div>
-                  </div>
-                </div>
-                <span className="ml-3 hidden rounded-full bg-white/20 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-indigo-950 shadow-sm group-hover:bg-white/30 sm:inline-block">
-                  Se connecter
-                </span>
-              </a>
-
-              {/* Enseignant */}
-              <a
-                href="/login?space=enseignant"
-                className="group flex items-center justify-between gap-4 rounded-2xl bg-gradient-to-r from-violet-600 to-fuchsia-500 px-5 py-4 text-white shadow-lg ring-1 ring-violet-300 hover:from-violet-500 hover:to-fuchsia-400 md:py-5"
-              >
-                <div className="flex items-center gap-4">
-                  <div className="grid h-12 w-12 flex-none place-items-center rounded-2xl bg-white/20">
-                    <FileSpreadsheet className="h-6 w-6" />
-                  </div>
-                  <div>
-                    <div className="text-lg font-bold">Espace enseignant</div>
-                    <div className="text-xs text-violet-50 sm:text-[13px]">
-                      Appel, notes, moyennes et bulletins en quelques clics.
-                    </div>
-                  </div>
-                </div>
-                <span className="ml-3 hidden rounded-full bg-white/20 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-violet-950 shadow-sm group-hover:bg-white/30 sm:inline-block">
-                  Se connecter
-                </span>
-              </a>
+              <div className="mt-4 grid gap-4 sm:grid-cols-3">
+                <ConnectionCard
+                  icon={Users}
+                  title="Espace parent"
+                  badge="Accès mobile"
+                  href="/parents/login"
+                  description="Suivi des absences, retards, notes et bulletins de vos enfants, depuis le smartphone."
+                />
+                <ConnectionCard
+                  icon={Building2}
+                  title="Espace direction"
+                  href="/login?space=direction"
+                  description="Vue globale des classes, enseignants, statistiques et prédiction du taux de réussite."
+                />
+                <ConnectionCard
+                  icon={FileSpreadsheet}
+                  title="Espace enseignant"
+                  href="/login?space=enseignant"
+                  description="Appel, saisie des notes, moyennes et bulletins en quelques clics, en classe ou à la maison."
+                />
+              </div>
             </div>
 
             {/* Stats */}
@@ -515,8 +521,7 @@ export default function HomePage() {
 
           {/* Colonne illustration */}
           <div className="relative">
-            <div className="pointer-events-none hidden h-full w-20 bg-gradient-to-b from-yellow-300/80 via-yellow-200/40 to-transparent md:absolute md:right-0 md:top-0 md:block" />
-            <TiltCard className="relative overflow-hidden rounded-[32px] border border-slate-200 bg-white/60 shadow-xl backdrop-blur">
+            <TiltCard className="relative overflow-hidden rounded-[32px] border border-slate-200 bg-white/80 shadow-xl">
               <Image
                 src="/accueil.png"
                 alt="Interface Mon Cahier : absences, notes et prédiction"
@@ -534,7 +539,7 @@ export default function HomePage() {
       <section id="steps" className="mx-auto max-w-7xl px-4 pb-10 md:pb-12">
         <SectionTitle>Comment ça marche</SectionTitle>
         <div className="mt-6 grid grid-cols-1 gap-6 md:grid-cols-2">
-          <div className="rounded-2xl border border-slate-200 bg-white/95 p-6 shadow-sm backdrop-blur">
+          <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
             <div className="mb-4 flex items-center gap-2 text-sm font-semibold text-indigo-700">
               <Building2 className="h-4 w-4" /> Établissement
             </div>
@@ -563,7 +568,7 @@ export default function HomePage() {
               </li>
             </ol>
           </div>
-          <div className="rounded-2xl border border-slate-200 bg-white/95 p-6 shadow-sm backdrop-blur">
+          <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
             <div className="mb-4 flex items-center gap-2 text-sm font-semibold text-emerald-700">
               <Users className="h-4 w-4" /> Parent
             </div>
@@ -643,8 +648,8 @@ export default function HomePage() {
 
         {/* Cartes témoignages */}
         <div className="mt-6 grid gap-4 md:grid-cols-3">
-          <article className="flex h-full flex-col rounded-2xl bg-gradient-to-b from-emerald-50 to-white p-5 shadow-sm ring-1 ring-emerald-100">
-            <div className="mb-3 inline-flex h-8 w-8 items-center justify-center rounded-full bg-emerald-100 text-emerald-700">
+          <article className="flex h-full flex-col rounded-2xl bg-white p-5 shadow-sm ring-1 ring-emerald-100">
+            <div className="mb-3 inline-flex h-8 w-8 items-center justify-center rounded-full bg-emerald-50 text-emerald-700">
               <Quote className="h-4 w-4" />
             </div>
             <p className="text-sm text-slate-700">
@@ -656,8 +661,8 @@ export default function HomePage() {
             </p>
           </article>
 
-          <article className="flex h-full flex-col rounded-2xl bg-gradient-to-b from-indigo-50 to-white p-5 shadow-sm ring-1 ring-indigo-100">
-            <div className="mb-3 inline-flex h-8 w-8 items-center justify-center rounded-full bg-indigo-100 text-indigo-700">
+          <article className="flex h-full flex-col rounded-2xl bg-white p-5 shadow-sm ring-1 ring-indigo-100">
+            <div className="mb-3 inline-flex h-8 w-8 items-center justify-center rounded-full bg-indigo-50 text-indigo-700">
               <Quote className="h-4 w-4" />
             </div>
             <p className="text-sm text-slate-700">
@@ -669,8 +674,8 @@ export default function HomePage() {
             </p>
           </article>
 
-          <article className="flex h-full flex-col rounded-2xl bg-gradient-to-b from-violet-50 to-white p-5 shadow-sm ring-1 ring-violet-100">
-            <div className="mb-3 inline-flex h-8 w-8 items-center justify-center rounded-full bg-violet-100 text-violet-700">
+          <article className="flex h-full flex-col rounded-2xl bg-white p-5 shadow-sm ring-1 ring-violet-100">
+            <div className="mb-3 inline-flex h-8 w-8 items-center justify-center rounded-full bg-violet-50 text-violet-700">
               <Quote className="h-4 w-4" />
             </div>
             <p className="text-sm text-slate-700">
@@ -739,21 +744,21 @@ export default function HomePage() {
       </section>
 
       {/* Footer */}
-      <footer className="bg-indigo-950 py-12 text-indigo-50">
+      <footer className="bg-slate-900 py-12 text-slate-100">
         <div className="mx-auto grid max-w-7xl grid-cols-1 gap-10 px-4 md:grid-cols-3">
           <div>
             <div className="text-2xl font-extrabold">Mon Cahier</div>
-            <div className="mt-1 text-indigo-300">
+            <div className="mt-1 text-slate-400">
               Copyrights © {new Date().getFullYear()}
             </div>
-            <div className="mt-1 text-[11px] font-semibold text-indigo-200">
+            <div className="mt-1 text-[11px] font-semibold text-slate-300">
               Conçu et développé par{" "}
-              <span className="text-indigo-50">NEXA DIGITALE SARL</span>
+              <span className="text-slate-100">NEXA DIGITALE SARL</span>
             </div>
           </div>
           <div>
             <h3 className="text-lg font-semibold">Pour commencer</h3>
-            <ul className="mt-3 space-y-2 text-indigo-200">
+            <ul className="mt-3 space-y-2 text-sm text-slate-300">
               <li>
                 <a href="#features" className="hover:text-white">
                   Fonctionnalités
@@ -778,14 +783,14 @@ export default function HomePage() {
           </div>
           <div>
             <h3 className="text-lg font-semibold">Nous contacter</h3>
-            <div className="mt-3 space-y-2 text-indigo-200 text-sm">
+            <div className="mt-3 space-y-2 text-sm text-slate-300">
               <div>WhatsApp : 07 20 67 20 94</div>
               <div>Appel : +225 07 13 02 37 62</div>
               <div>Email : moncahier.ci@gmail.com</div>
             </div>
           </div>
         </div>
-        <div className="mx-auto mt-8 max-w-7xl px-4 text-xs text-indigo-300">
+        <div className="mx-auto mt-8 max-w-7xl px-4 text-xs text-slate-400">
           Mentions légales · Données personnelles et cookies
         </div>
       </footer>
