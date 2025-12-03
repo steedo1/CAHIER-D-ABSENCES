@@ -212,7 +212,7 @@ export default function SurveillanceAppelsPage() {
     try {
       setPushStatus("subscribing");
 
-      // On respecte l'état actuel avant de redemander
+      // 1️⃣ Gestion des permissions
       let permission = Notification.permission; // "default" | "granted" | "denied"
 
       if (permission === "denied") {
@@ -235,9 +235,18 @@ export default function SurveillanceAppelsPage() {
         return;
       }
 
-      // Service worker prêt
-      const reg = await navigator.serviceWorker.ready;
+      // 2️⃣ Récupération / enregistrement du service worker (sans `ready` qui peut bloquer)
+      let reg = await navigator.serviceWorker.getRegistration();
+      if (!reg) {
+        reg = await navigator.serviceWorker.register("/sw.js");
+      }
+      if (!reg) {
+        throw new Error(
+          "Impossible de récupérer le service worker (aucun enregistrement trouvé)."
+        );
+      }
 
+      // 3️⃣ Subscription push
       let sub = await reg.pushManager.getSubscription();
       if (!sub) {
         sub = await reg.pushManager.subscribe({
@@ -260,7 +269,9 @@ export default function SurveillanceAppelsPage() {
       if (!res.ok) {
         const txt = await res.text().catch(() => "");
         throw new Error(
-          `Échec d'enregistrement du device push (HTTP ${res.status}) ${txt || ""}`
+          `Échec d'enregistrement du device push (HTTP ${res.status}) ${
+            txt || ""
+          }`
         );
       }
 
@@ -269,7 +280,10 @@ export default function SurveillanceAppelsPage() {
     } catch (e: any) {
       console.error("[SurveillanceAppels] enablePush error", e);
       setPushStatus("error");
-      setPushError(e?.message || "Erreur lors de l’activation des notifications.");
+      setPushError(
+        e?.message ||
+          "Erreur lors de l’activation des notifications. Vérifiez le HTTPS et le service worker."
+      );
     } finally {
       // Filet de sécurité : on ne laisse jamais "subscribing" bloqué
       setPushStatus((prev) => (prev === "subscribing" ? "idle" : prev));
@@ -315,7 +329,9 @@ export default function SurveillanceAppelsPage() {
       if (statusFilter !== "all" && r.status !== statusFilter) return false;
       if (
         teacherQuery.trim() &&
-        !r.teacher_name.toLowerCase().includes(teacherQuery.trim().toLowerCase())
+        !r.teacher_name
+          .toLowerCase()
+          .includes(teacherQuery.trim().toLowerCase())
       ) {
         return false;
       }
@@ -384,8 +400,8 @@ export default function SurveillanceAppelsPage() {
           </h1>
           <p className="text-sm text-slate-500 mt-1">
             Vue dédiée pour repérer les <strong>appels manquants</strong> et les{" "}
-            <strong>appels en retard</strong>, à partir des emplois du temps et des
-            séances réellement ouvertes.
+            <strong>appels en retard</strong>, à partir des emplois du temps et
+            des séances réellement ouvertes.
           </p>
         </div>
       </header>
@@ -394,7 +410,7 @@ export default function SurveillanceAppelsPage() {
       <section className="rounded-2xl border border-sky-200 bg-sky-50/80 shadow-sm p-4 md:p-5 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <div className="flex items-start gap-3">
           {pushStatus === "enabled" ? (
-            <div className="mt-0.5 inline-flex h-9 w-9 items-center justify_center rounded-full bg-emerald-100 text-emerald-700">
+            <div className="mt-0.5 inline-flex h-9 w-9 items-center justify-center rounded-full bg-emerald-100 text-emerald-700">
               <Bell className="h-5 w-5" />
             </div>
           ) : (
@@ -413,15 +429,13 @@ export default function SurveillanceAppelsPage() {
             </p>
             {!pushSupported && (
               <p className="text-[11px] text-red-700">
-                Les notifications ne sont pas supportées sur ce navigateur. Essayez
-                depuis un navigateur récent (Chrome, Edge, Firefox) sur ordinateur ou
-                mobile.
+                Les notifications ne sont pas supportées sur ce navigateur.
+                Essayez depuis un navigateur récent (Chrome, Edge, Firefox) sur
+                ordinateur ou mobile.
               </p>
             )}
             {pushError && (
-              <p className="text-[11px] text-red-700">
-                {pushError}
-              </p>
+              <p className="text-[11px] text-red-700">{pushError}</p>
             )}
           </div>
         </div>
@@ -460,8 +474,8 @@ export default function SurveillanceAppelsPage() {
           </div>
           <div className="text-2xl font-semibold text-red-900">{totalMissing}</div>
           <p className="text-[11px] text-red-800/80">
-            Créneaux où un cours était prévu mais aucun appel n&apos;a été détecté
-            dans la fenêtre de contrôle.
+            Créneaux où un cours était prévu mais aucun appel n&apos;a été
+            détecté dans la fenêtre de contrôle.
           </p>
         </div>
 
@@ -474,8 +488,8 @@ export default function SurveillanceAppelsPage() {
           </div>
           <div className="text-2xl font-semibold text-amber-900">{totalLate}</div>
           <p className="text-[11px] text-amber-900/80">
-            Appels effectués, mais avec un retard supérieur au seuil paramétré (ex.
-            15 minutes).
+            Appels effectués, mais avec un retard supérieur au seuil paramétré
+            (ex. 15 minutes).
           </p>
         </div>
 
@@ -520,11 +534,19 @@ export default function SurveillanceAppelsPage() {
 
         <div className="grid gap-3 md:grid-cols-4">
           <div className="space-y-1">
-            <label className="text-sm font-medium text-slate-700">Date de début</label>
-            <Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
+            <label className="text-sm font-medium text-slate-700">
+              Date de début
+            </label>
+            <Input
+              type="date"
+              value={from}
+              onChange={(e) => setFrom(e.target.value)}
+            />
           </div>
           <div className="space-y-1">
-            <label className="text-sm font-medium text-slate-700">Date de fin</label>
+            <label className="text-sm font-medium text-slate-700">
+              Date de fin
+            </label>
             <Input type="date" value={to} onChange={(e) => setTo(e.target.value)} />
           </div>
           <div className="space-y-1">
@@ -605,7 +627,7 @@ export default function SurveillanceAppelsPage() {
                 {filteredRows.map((r) => (
                   <tr
                     key={r.id}
-                    className="odd:bg-white even:bg-slate-50 hover:bg-emerald-50/70 transition-colors"
+                    className="odd:bg:white even:bg-slate-50 hover:bg-emerald-50/70 transition-colors"
                   >
                     <td className="px-3 py-2 text-slate-800 whitespace-nowrap">
                       {dateHumanFR(r.date)}
@@ -661,8 +683,8 @@ export default function SurveillanceAppelsPage() {
           Cette vue repose sur trois éléments :{" "}
           <strong>emplois du temps importés</strong>,{" "}
           <strong>séances (teacher_sessions)</strong> et{" "}
-          <strong>heure réelle d’appel (actual_call_at)</strong>. La route back-end
-          prévue est <code>/api/admin/attendance/monitor</code>.
+          <strong>heure réelle d’appel (actual_call_at)</strong>. La route
+          back-end prévue est <code>/api/admin/attendance/monitor</code>.
         </p>
       </section>
     </main>
