@@ -1,4 +1,3 @@
-// src/app/admin/import/page.tsx
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -46,10 +45,18 @@ function Select(p: React.SelectHTMLAttributes<HTMLSelectElement>) {
     <select
       {...p}
       className={
-        "w-full rounded-lg border bg-white px-3 py-2 text-sm " + (p.className ?? "")
+        "w-full rounded-lg border bg-white px-3 py-2 text-sm " +
+        (p.className ?? "")
       }
     />
   );
+}
+
+/* Helpers d'affichage */
+function boolLabel(v: unknown) {
+  if (v === true) return "Oui";
+  if (v === false) return "Non";
+  return "";
 }
 
 /* Types */
@@ -65,7 +72,9 @@ export default function ImportPage() {
 
   const levels = useMemo(
     () =>
-      Array.from(new Set(classes.map((c) => c.level).filter(Boolean))).sort((a, b) =>
+      Array.from(
+        new Set(classes.map((c) => c.level).filter(Boolean))
+      ).sort((a, b) =>
         String(a).localeCompare(String(b), undefined, { numeric: true })
       ),
     [classes]
@@ -92,7 +101,9 @@ export default function ImportPage() {
   }, []);
   async function loadClasses() {
     try {
-      const r = await fetch("/api/admin/classes?limit=500", { cache: "no-store" });
+      const r = await fetch("/api/admin/classes?limit=500", {
+        cache: "no-store",
+      });
       if (r.status === 401) {
         setAuthErr(true);
         return;
@@ -105,7 +116,8 @@ export default function ImportPage() {
     }
   }
 
-  const canPreview = !!csv.trim() && (mode !== "students" || !!classId) && !loading;
+  const canPreview =
+    !!csv.trim() && (mode !== "students" || !!classId) && !loading;
   const canImport = canPreview;
 
   function pickFile() {
@@ -211,7 +223,9 @@ export default function ImportPage() {
         const failed = j?.failed ?? 0;
         const subjectsAdded = j?.subjects_added ?? 0;
         setMsg(
-          `Import OK : ${created} créé(s), ${updated} mis à jour, ${subjectsAdded} matière(s), ${skipped} sans téléphone${failed ? `, ${failed} échec(s)` : ""}`
+          `Import OK : ${created} créé(s), ${updated} mis à jour, ${subjectsAdded} matière(s), ${skipped} sans téléphone${
+            failed ? `, ${failed} échec(s)` : ""
+          }`
         );
       }
       setPreview(null);
@@ -247,15 +261,23 @@ Mme KONE,kone@ecole.ci,+22505060708,Français`;
     <div className="space-y-4">
       <div>
         <h1 className="text-2xl font-semibold">Import</h1>
-        <p className="text-slate-600">Import flexible (détection automatique des colonnes).</p>
+        <p className="text-slate-600">
+          Import flexible (détection automatique des colonnes).
+        </p>
       </div>
 
       <div className="rounded-2xl border bg-white p-5 space-y-3">
         <div className="flex gap-2">
-          <Button onClick={() => setMode("students")} disabled={mode === "students"}>
+          <Button
+            onClick={() => setMode("students")}
+            disabled={mode === "students"}
+          >
             Élèves
           </Button>
-          <Button onClick={() => setMode("teachers")} disabled={mode === "teachers"}>
+          <Button
+            onClick={() => setMode("teachers")}
+            disabled={mode === "teachers"}
+          >
             Enseignants
           </Button>
         </div>
@@ -263,9 +285,11 @@ Mme KONE,kone@ecole.ci,+22505060708,Français`;
         {mode === "teachers" && (
           <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-[13px] text-amber-800">
             <b>Téléphone obligatoire</b> pour chaque enseignant (connexion par
-            <i> téléphone + mot de passe</i>). Formats : <code>+22501020304</code>,{" "}
-            <code>0022501020304</code>, <code>01020304</code>. Colonnes : <code>Nom</code>,{" "}
-            <code>Email</code>, <code>Téléphone</code>, <code>Disciplines</code>.
+            <i> téléphone + mot de passe</i>). Formats :{" "}
+            <code>+22501020304</code>, <code>0022501020304</code>,{" "}
+            <code>01020304</code>. Colonnes : <code>Nom</code>,{" "}
+            <code>Email</code>, <code>Téléphone</code>,{" "}
+            <code>Disciplines</code>.
           </div>
         )}
 
@@ -290,7 +314,10 @@ Mme KONE,kone@ecole.ci,+22505060708,Français`;
             </div>
             <div>
               <div className="mb-1 text-xs text-slate-500">Classe</div>
-              <Select value={classId} onChange={(e) => setClassId(e.target.value)}>
+              <Select
+                value={classId}
+                onChange={(e) => setClassId(e.target.value)}
+              >
                 <option value="">— Choisir —</option>
                 {classesOfLevel.map((c) => (
                   <option key={c.id} value={c.id}>
@@ -308,12 +335,19 @@ Mme KONE,kone@ecole.ci,+22505060708,Français`;
         {/* Zone CSV + barre d’actions fichiers */}
         <div className="space-y-2">
           <div className="flex flex-wrap items-center gap-2">
-            <SecondaryButton onClick={pickFile}>Choisir un fichier…</SecondaryButton>
-            <SecondaryButton onClick={clearCsv} disabled={!csv.trim() && !fileName}>
+            <SecondaryButton onClick={pickFile}>
+              Choisir un fichier…
+            </SecondaryButton>
+            <SecondaryButton
+              onClick={clearCsv}
+              disabled={!csv.trim() && !fileName}
+            >
               Effacer
             </SecondaryButton>
             {fileName && (
-              <span className="text-xs text-slate-500">Fichier sélectionné : {fileName}</span>
+              <span className="text-xs text-slate-500">
+                Fichier sélectionné : {fileName}
+              </span>
             )}
             <input
               ref={fileRef}
@@ -340,7 +374,11 @@ Mme KONE,kone@ecole.ci,+22505060708,Français`;
             {loading ? "…" : "Importer"}
           </Button>
         </div>
-        {msg && <div className="text-sm text-slate-600" aria-live="polite">{msg}</div>}
+        {msg && (
+          <div className="text-sm text-slate-600" aria-live="polite">
+            {msg}
+          </div>
+        )}
       </div>
 
       {preview && (
@@ -357,16 +395,40 @@ Mme KONE,kone@ecole.ci,+22505060708,Français`;
                     <th className="px-3 py-2 text-left">Matricule</th>
                     <th className="px-3 py-2 text-left">Nom</th>
                     <th className="px-3 py-2 text-left">Prénom</th>
+                    <th className="px-3 py-2 text-left">Sexe</th>
+                    <th className="px-3 py-2 text-left">Date naiss.</th>
+                    <th className="px-3 py-2 text-left">Lieu naiss.</th>
+                    <th className="px-3 py-2 text-left">Nationalité</th>
+                    <th className="px-3 py-2 text-left">Régime</th>
+                    <th className="px-3 py-2 text-left">Redoublant</th>
+                    <th className="px-3 py-2 text-left">Interne</th>
+                    <th className="px-3 py-2 text-left">Affecté</th>
                   </tr>
                 </thead>
                 <tbody>
                   {preview.map((r: any, idx: number) => (
                     <tr key={idx} className="border-t">
                       {/* Fallback : si la colonne N° est absente/vide, on affiche idx+1 */}
-                      <td className="px-3 py-2">{r.numero ?? String(idx + 1)}</td>
+                      <td className="px-3 py-2">
+                        {r.numero ?? String(idx + 1)}
+                      </td>
                       <td className="px-3 py-2">{r.matricule ?? ""}</td>
                       <td className="px-3 py-2">{r.last_name ?? ""}</td>
                       <td className="px-3 py-2">{r.first_name ?? ""}</td>
+                      <td className="px-3 py-2">{r.gender ?? ""}</td>
+                      <td className="px-3 py-2">{r.birthdate ?? ""}</td>
+                      <td className="px-3 py-2">{r.birth_place ?? ""}</td>
+                      <td className="px-3 py-2">{r.nationality ?? ""}</td>
+                      <td className="px-3 py-2">{r.regime ?? ""}</td>
+                      <td className="px-3 py-2">
+                        {boolLabel(r.is_repeater)}
+                      </td>
+                      <td className="px-3 py-2">
+                        {boolLabel(r.is_boarder)}
+                      </td>
+                      <td className="px-3 py-2">
+                        {boolLabel(r.is_affecte)}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -387,7 +449,9 @@ Mme KONE,kone@ecole.ci,+22505060708,Français`;
                       <td className="px-3 py-2">{r.display_name}</td>
                       <td className="px-3 py-2">{r.email ?? ""}</td>
                       <td className="px-3 py-2">{r.phone ?? ""}</td>
-                      <td className="px-3 py-2">{(r.subjects || []).join(", ")}</td>
+                      <td className="px-3 py-2">
+                        {(r.subjects || []).join(", ")}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -399,5 +463,3 @@ Mme KONE,kone@ecole.ci,+22505060708,Français`;
     </div>
   );
 }
-
-

@@ -1,4 +1,3 @@
-// src/app/api/admin/grades/bulletin/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
@@ -6,7 +5,13 @@ import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-type Role = "super_admin" | "admin" | "educator" | "teacher" | "parent" | string;
+type Role =
+  | "super_admin"
+  | "admin"
+  | "educator"
+  | "teacher"
+  | "parent"
+  | string;
 
 type ClassRow = {
   id: string;
@@ -49,6 +54,16 @@ type ClassStudentRow = {
     last_name?: string | null;
     first_name?: string | null;
     matricule?: string | null;
+
+    // 🆕 champs identité réellement présents en BDD
+    gender?: string | null;
+    birthdate?: string | null;
+    birth_place?: string | null;
+    nationality?: string | null;
+    regime?: string | null;
+    is_repeater?: boolean | null;
+    is_boarder?: boolean | null;
+    is_affecte?: boolean | null;
   } | null;
 };
 
@@ -193,7 +208,9 @@ export async function GET(req: NextRequest) {
   /* 1) Vérifier que la classe appartient à l'établissement + récupérer prof principal */
   const { data: cls, error: clsErr } = await supabase
     .from("classes")
-    .select("id, label, code, institution_id, academic_year, head_teacher_id, level")
+    .select(
+      "id, label, code, institution_id, academic_year, head_teacher_id, level"
+    )
     .eq("id", classId)
     .maybeSingle();
 
@@ -281,7 +298,25 @@ export async function GET(req: NextRequest) {
 
   let enrollQuery = supabase
     .from("class_enrollments")
-    .select("student_id, students(matricule, first_name, last_name)")
+    .select(
+      `
+      student_id,
+      students(
+        matricule,
+        first_name,
+        last_name,
+        full_name,
+        gender,
+        birthdate,
+        birth_place,
+        nationality,
+        regime,
+        is_repeater,
+        is_boarder,
+        is_affecte
+      )
+    `
+    )
     .eq("class_id", classId);
 
   if (!hasDateFilter) {
@@ -393,6 +428,14 @@ export async function GET(req: NextRequest) {
           student_id: cs.student_id,
           full_name: fullName,
           matricule: stu.matricule || null,
+          gender: stu.gender || null,
+          birth_date: stu.birthdate || null,
+          birth_place: stu.birth_place || null,
+          nationality: stu.nationality || null,
+          regime: stu.regime || null,
+          is_repeater: stu.is_repeater ?? null,
+          is_boarder: stu.is_boarder ?? null,
+          is_affecte: stu.is_affecte ?? null,
           per_subject: [],
           per_group: [],
           general_avg: null,
@@ -413,6 +456,7 @@ export async function GET(req: NextRequest) {
 
   if (scoreErr) {
     console.error("[bulletin] scores error", scoreErr);
+    // eslint-disable-next-line no-unsafe-finally
     return NextResponse.json(
       { ok: false, error: "SCORES_ERROR" },
       { status: 500 }
@@ -470,6 +514,14 @@ export async function GET(req: NextRequest) {
           student_id: cs.student_id,
           full_name: fullName,
           matricule: stu.matricule || null,
+          gender: stu.gender || null,
+          birth_date: stu.birthdate || null,
+          birth_place: stu.birth_place || null,
+          nationality: stu.nationality || null,
+          regime: stu.regime || null,
+          is_repeater: stu.is_repeater ?? null,
+          is_boarder: stu.is_boarder ?? null,
+          is_affecte: stu.is_affecte ?? null,
           per_subject: [],
           per_group: [],
           general_avg: null,
@@ -526,7 +578,7 @@ export async function GET(req: NextRequest) {
     coeffBySubject.set(sid, { coeff, include });
   }
 
-  // Liste des matières pour le bulletin (affichage + coeff + flag include_in_average)
+  // Liste des matières pour le bulletin
   const subjectsForReport = subjectIds.map((sid) => {
     const s = subjectById.get(sid);
     const name = s?.name || s?.code || "Matière";
@@ -542,9 +594,7 @@ export async function GET(req: NextRequest) {
     };
   });
 
-  /* 6bis) Sous-matières (grade_subject_components) pour ces matières
-     ➜ par défaut, toutes les sous-matières actives de la matière (ex: Français)
-       apparaîtront si la matière a des évaluations dans la période. */
+  /* 6bis) Sous-matières */
   let subjectComponentsForReport: BulletinSubjectComponent[] = [];
   const subjectComponentById = new Map<string, BulletinSubjectComponent>();
 
@@ -594,7 +644,7 @@ export async function GET(req: NextRequest) {
 
   /* 6ter) Groupes de disciplines pour ce niveau (si configurés) */
   let subjectGroups: BulletinSubjectGroup[] = [];
-  const groupedSubjectIds = new Set<string>(); // sujets réellement groupés ET notés
+  const groupedSubjectIds = new Set<string>();
 
   if (classRow.level) {
     const { data: groupsData, error: groupsErr } = await supabase
@@ -688,7 +738,6 @@ export async function GET(req: NextRequest) {
                   is_optional: row.is_optional === true,
                 };
 
-                // On ne marque comme "groupé pour la moyenne" que si la matière a des évaluations dans cette classe/période
                 if (subjectIdSet.has(item.subject_id)) {
                   groupedSubjectIds.add(item.subject_id);
                 }
@@ -737,7 +786,7 @@ export async function GET(req: NextRequest) {
     Map<string, { sumWeighted: number; sumCoeff: number }>
   >();
 
-  // ✅ nouveau : agrégats par sous-matière
+  // agrégats par sous-matière
   const perStudentSubjectComponent = new Map<
     string,
     Map<
@@ -764,7 +813,7 @@ export async function GET(req: NextRequest) {
     const norm20 = (score / ev.scale) * 20;
     const weight = ev.coeff ?? 1;
 
-    // 7a) par matière (logique historique, inchangée)
+    // 7a) par matière
     let stuMap = perStudentSubject.get(sc.student_id);
     if (!stuMap) {
       stuMap = new Map();
@@ -776,7 +825,7 @@ export async function GET(req: NextRequest) {
     cell.sumCoeff += weight;
     stuMap.set(key, cell);
 
-    // 7b) par sous-matière (si l'évaluation est liée à un composant actif)
+    // 7b) par sous-matière
     if (ev.subject_component_id) {
       const comp = subjectComponentById.get(ev.subject_component_id);
       if (comp) {
@@ -821,7 +870,7 @@ export async function GET(req: NextRequest) {
         }
       >();
 
-    // Moyenne par matière (alignée avec `subjectsForReport`)
+    // Moyenne par matière
     const per_subject = subjectsForReport.map((s) => {
       const cell = stuMap.get(s.subject_id);
       let avg20: number | null = null;
@@ -834,7 +883,7 @@ export async function GET(req: NextRequest) {
       };
     });
 
-    // ✅ Moyenne par sous-matière (pour toutes les sous-matières connues du bulletin)
+    // Moyenne par sous-matière
     const per_subject_components =
       subjectComponentsForReport.length === 0
         ? []
@@ -851,7 +900,7 @@ export async function GET(req: NextRequest) {
             };
           });
 
-    // Moyenne par groupe de disciplines (si config présente)
+    // Moyenne par groupe
     let per_group:
       | {
           group_id: string;
@@ -893,16 +942,14 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    // Moyenne générale (inchangée) :
-    // - si au moins une matière notée est rattachée à un groupe -> on utilise la logique groupe + matières non groupées
-    // - sinon -> fallback exact sur l’ancienne logique (par matière uniquement)
+    // Moyenne générale
     let general_avg: number | null = null;
 
     if (useGroupsForAverage) {
       let sumGen = 0;
       let sumCoeffGen = 0;
 
-      // 1) Contribution des groupes (avec annual_coeff)
+      // 1) Groupes
       for (const g of subjectGroups) {
         const coeffGroup = g.annual_coeff ?? 0;
         if (!coeffGroup || coeffGroup <= 0) continue;
@@ -915,9 +962,9 @@ export async function GET(req: NextRequest) {
         sumCoeffGen += coeffGroup;
       }
 
-      // 2) Matières non groupées (coeffs par matière)
+      // 2) Matières non groupées
       for (const s of subjectsForReport) {
-        if (groupedSubjectIds.has(s.subject_id)) continue; // déjà prises en compte dans un groupe
+        if (groupedSubjectIds.has(s.subject_id)) continue;
         if (s.include_in_average === false) continue;
 
         const coeffSub = s.coeff_bulletin ?? 0;
@@ -936,7 +983,6 @@ export async function GET(req: NextRequest) {
 
       general_avg = sumCoeffGen > 0 ? cleanNumber(sumGen / sumCoeffGen) : null;
     } else {
-      // Fallback : logique historique par matière uniquement
       let sumGen = 0;
       let sumCoeffGen = 0;
 
@@ -963,6 +1009,14 @@ export async function GET(req: NextRequest) {
       student_id: cs.student_id,
       full_name: fullName,
       matricule: stu.matricule || null,
+      gender: stu.gender || null,
+      birth_date: stu.birthdate || null, // 🔁 API renvoie toujours birth_date, mappée sur students.birthdate
+      birth_place: stu.birth_place || null,
+      nationality: stu.nationality || null,
+      regime: stu.regime || null,
+      is_repeater: stu.is_repeater ?? null,
+      is_boarder: stu.is_boarder ?? null,
+      is_affecte: stu.is_affecte ?? null,
       per_subject,
       per_group,
       general_avg,
@@ -989,7 +1043,7 @@ export async function GET(req: NextRequest) {
     period: periodMeta,
     subjects: subjectsForReport,
     subject_groups: subjectGroups,
-    subject_components: subjectComponentsForReport, // ✅ envoyé au front
+    subject_components: subjectComponentsForReport,
     items,
   });
 }
