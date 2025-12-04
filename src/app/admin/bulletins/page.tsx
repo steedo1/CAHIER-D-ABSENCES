@@ -23,6 +23,11 @@ type InstitutionSettings = {
   institution_status: string;
   institution_head_name: string;
   institution_head_title: string;
+  // 🆕 champs pour l'en-tête officiel du bulletin
+  country_name?: string;
+  country_motto?: string;
+  ministry_name?: string;
+  institution_code?: string;
 };
 
 type BulletinSubject = {
@@ -365,54 +370,110 @@ function StudentBulletinCard({
       ? conduct.absence_minutes / 60
       : null;
 
+  const tardyHours =
+    conduct && typeof conduct.tardy_minutes === "number"
+      ? conduct.tardy_minutes / 60
+      : null;
+
+  const schoolYear =
+    classInfo.academic_year || period.academic_year || undefined;
+
   return (
     <div
       className="mb-6 border border-slate-400 bg-white p-4 text-xs shadow-sm print:mb-0"
       style={{ pageBreakAfter: "always" }}
     >
-      {/* En-tête établissement */}
-      <div className="mb-2 flex items-start justify-between gap-4 border-b border-slate-400 pb-2">
-        <div className="flex-1">
-          <div className="font-semibold uppercase">
-            {institution?.institution_name || "Établissement"}
-          </div>
-          {institution?.institution_postal_address && (
-            <div>{institution.institution_postal_address}</div>
-          )}
-          {(institution?.institution_phone || institution?.institution_email) && (
-            <div className="text-[0.65rem] text-slate-600">
-              {institution.institution_phone && (
-                <span>Tél: {institution.institution_phone}</span>
-              )}
-              {institution.institution_phone &&
-                institution.institution_email &&
-                " • "}
-              {institution.institution_email && (
-                <span>Email: {institution.institution_email}</span>
-              )}
+      {/* En-tête officiel MEN + établissement */}
+      <div className="mb-2 border-b border-slate-400 pb-2">
+        {/* Ligne ministère / titre bulletin / année scolaire */}
+        <div className="grid grid-cols-3 gap-2 text-[0.7rem]">
+          {/* Ministère + pays + DRENA */}
+          <div className="space-y-0.5">
+            <div className="font-semibold uppercase leading-snug">
+              {institution?.ministry_name ||
+                "MINISTÈRE DE L'ÉDUCATION NATIONALE ET DE L'ALPHABÉTISATION"}
             </div>
-          )}
-        </div>
-        <div className="flex flex-col items-end text-right">
-          <div className="font-bold uppercase">
-            Bulletin de notes trimestriel
-          </div>
-          <div className="text-[0.7rem]">
-            {period.label || period.short_label || "Période"}
-            {period.from && period.to && (
-              <>
-                {" "}
-                ({period.from} → {period.to})
-              </>
+            {institution?.country_name && (
+              <div className="text-[0.65rem]">{institution.country_name}</div>
+            )}
+            {institution?.country_motto && (
+              <div className="text-[0.6rem] italic">
+                {institution.country_motto}
+              </div>
+            )}
+            {institution?.institution_region && (
+              <div className="mt-1 text-[0.65rem] uppercase">
+                {institution.institution_region}
+              </div>
             )}
           </div>
-          {classInfo.academic_year && (
-            <div className="text-[0.7rem]">
-              Année scolaire : {classInfo.academic_year}
+
+          {/* Titre du bulletin */}
+          <div className="text-center">
+            <div className="text-[0.75rem] font-semibold uppercase">
+              Bulletin trimestriel de notes
             </div>
-          )}
-          <div className="text-[0.7rem] text-slate-500">
-            Élève {index + 1} / {total}
+            <div className="text-[0.75rem] font-semibold">
+              {period.label || period.short_label || "1er Trimestre"}
+            </div>
+          </div>
+
+          {/* Année scolaire + code + statut */}
+          <div className="space-y-0.5 text-right text-[0.65rem]">
+            <div>
+              Année scolaire : {schoolYear || "........................"}
+            </div>
+            {institution?.institution_code && (
+              <div>Code : {institution.institution_code}</div>
+            )}
+            {institution?.institution_status && (
+              <div>Statut : {institution.institution_status}</div>
+            )}
+          </div>
+        </div>
+
+        {/* Ligne établissement / adresse / contacts / QR + photo */}
+        <div className="mt-2 grid grid-cols-[2fr,1fr] gap-2 text-[0.7rem]">
+          <div className="space-y-0.5">
+            <div>
+              <span className="font-semibold">Établissement : </span>
+              <span className="uppercase">
+                {institution?.institution_name || "ÉTABLISSEMENT"}
+              </span>
+            </div>
+            {institution?.institution_postal_address && (
+              <div>
+                <span className="font-semibold">Adresse postale : </span>
+                <span>{institution.institution_postal_address}</span>
+              </div>
+            )}
+            {(institution?.institution_phone ||
+              institution?.institution_email) && (
+              <div className="text-[0.65rem] text-slate-700">
+                {institution?.institution_phone && (
+                  <>
+                    <span className="font-semibold">Tél : </span>
+                    <span>{institution.institution_phone}</span>
+                  </>
+                )}
+                {institution?.institution_phone &&
+                  institution?.institution_email && <span> • </span>}
+                {institution?.institution_email && (
+                  <>
+                    <span className="font-semibold">Email : </span>
+                    <span>{institution.institution_email}</span>
+                  </>
+                )}
+              </div>
+            )}
+          </div>
+          <div className="flex items-center justify-end gap-2">
+            <div className="flex h-16 w-16 items-center justify-center border border-slate-400 text-[0.55rem] text-slate-400">
+              QR / code
+            </div>
+            <div className="flex h-16 w-14 items-center justify-center border border-slate-400 text-[0.55rem] text-slate-400">
+              Photo élève
+            </div>
           </div>
         </div>
       </div>
@@ -424,11 +485,9 @@ function StudentBulletinCard({
             <span className="font-semibold">Nom & prénom(s) : </span>
             <span className="uppercase">{item.full_name}</span>
           </div>
-          <div className="flex gap-4">
-            <div>
-              <span className="font-semibold">Matricule : </span>
-              <span>{item.matricule || "—"}</span>
-            </div>
+          <div>
+            <span className="font-semibold">Matricule : </span>
+            <span>{item.matricule || "—"}</span>
           </div>
           <div className="flex gap-4">
             <div>
@@ -460,6 +519,9 @@ function StudentBulletinCard({
               )}
             </div>
           )}
+          <div className="text-[0.65rem] text-slate-500">
+            Élève {index + 1} / {total}
+          </div>
         </div>
       </div>
 
@@ -548,69 +610,18 @@ function StudentBulletinCard({
             </td>
             <td className="border border-slate-400 px-1 py-0.5" />
             <td className="border border-slate-400 px-1 py-0.5 text-center">
-              {formatNumber(
-                subjects.reduce(
-                  (acc, s) =>
-                    acc +
-                    (Number.isFinite(s.coeff_bulletin)
-                      ? s.coeff_bulletin
-                      : 0),
-                  0
-                ),
-                0
-              )}
+              {formatNumber(coeffTotal, 0)}
             </td>
             <td className="border border-slate-400 px-1 py-0.5" />
           </tr>
         </tbody>
       </table>
 
-      {/* Bloc moyennes & résultats de la classe */}
+      {/* Bloc Assiduité / Moyenne / Résultats de classe (comme sur le bulletin papier) */}
       <div className="grid grid-cols-3 gap-2 text-[0.7rem]">
-        <div className="border border-slate-400 p-2">
-          <div className="mb-1 font-semibold">Moyenne trimestrielle</div>
-          <div>
-            Moyenne :{" "}
-            <span className="font-bold">
-              {formatNumber(item.general_avg)} / 20
-            </span>
-          </div>
-          <div>
-            Rang :{" "}
-            <span className="font-bold">
-              {item.rank ? `${item.rank}e` : "—"} / {total}
-            </span>
-          </div>
-        </div>
-
-        <div className="border border-slate-400 p-2">
-          <div className="mb-1 font-semibold">Résultats de la classe</div>
-          <div>Moyenne générale : {formatNumber(stats.classAvg)}</div>
-          <div>Moyenne la plus forte : {formatNumber(stats.highest)}</div>
-          <div>Moyenne la plus faible : {formatNumber(stats.lowest)}</div>
-        </div>
-
-        <div className="border border-slate-400 p-2">
-          <div className="mb-1 font-semibold">Observations</div>
-          <div className="text-[0.65rem] text-slate-500">
-            Zone réservée aux appréciations du conseil de classe, mentions et
-            sanctions.
-          </div>
-        </div>
-      </div>
-
-      {/* Bloc bilan / discipline / signatures (mise en forme bulletin papier) */}
-      <div className="mt-3 grid grid-cols-2 gap-2 text-[0.7rem]">
+        {/* Assiduité + conduite */}
         <div className="border border-slate-400 p-2 min-h-[80px]">
-          <div className="mb-1 font-semibold uppercase">Bilan du trimestre</div>
-          <div className="text-[0.65rem] text-slate-500">
-            Appréciation générale du travail de l&apos;élève :
-          </div>
-        </div>
-        <div className="border border-slate-400 p-2 min-h-[80px]">
-          <div className="mb-1 font-semibold uppercase">
-            Discipline / Assiduité
-          </div>
+          <div className="mb-1 font-semibold">Assiduité</div>
           {conduct ? (
             <div className="space-y-1 text-[0.65rem]">
               <div>
@@ -622,6 +633,18 @@ function StudentBulletinCard({
                   <span className="text-[0.6rem] text-slate-500">
                     {" "}
                     ({formatNumber(absenceHours, 1)} h)
+                  </span>
+                )}
+              </div>
+              <div>
+                Retards :{" "}
+                <span className="font-semibold">
+                  {conduct.tardy_count ?? 0}
+                </span>
+                {tardyHours !== null && (
+                  <span className="text-[0.6rem] text-slate-500">
+                    {" "}
+                    ({formatNumber(tardyHours, 1)} h)
                   </span>
                 )}
               </div>
@@ -648,30 +671,78 @@ function StudentBulletinCard({
             </div>
           ) : (
             <div className="text-[0.65rem] text-slate-500">
-              Retards, absences, comportement, sanctions :
+              Total d&apos;heures d&apos;absence, retards, comportement…
             </div>
           )}
         </div>
+
+        {/* Moyenne trimestrielle */}
+        <div className="border border-slate-400 p-2 min-h-[80px]">
+          <div className="mb-1 font-semibold">Moyenne trimestrielle</div>
+          <div>
+            Moyenne :{" "}
+            <span className="font-bold">
+              {formatNumber(item.general_avg)} / 20
+            </span>
+          </div>
+          <div>
+            Rang :{" "}
+            <span className="font-bold">
+              {item.rank ? `${item.rank}e` : "—"} / {total}
+            </span>
+          </div>
+        </div>
+
+        {/* Résultats de la classe */}
+        <div className="border border-slate-400 p-2 min-h-[80px]">
+          <div className="mb-1 font-semibold">Résultats de classe</div>
+          <div>Moyenne générale de la classe : {formatNumber(stats.classAvg)}</div>
+          <div>Moyenne mini : {formatNumber(stats.lowest)}</div>
+          <div>Moyenne maxi : {formatNumber(stats.highest)}</div>
+        </div>
       </div>
 
-      <div className="mt-2 grid grid-cols-3 gap-2 text-[0.7rem]">
-        <div className="border border-slate-400 p-2 min-h-[60px]">
-          <div className="mb-1 font-semibold text-[0.65rem]">
-            Visa du professeur principal
+      {/* Mentions, appréciations, chef d'établissement – bloc bas comme sur le modèle MEN */}
+      <div className="mt-3 grid grid-cols-3 gap-2 text-[0.7rem]">
+        {/* Mentions du conseil de classe */}
+        <div className="border border-slate-400 p-2 min-h-[90px]">
+          <div className="mb-1 font-semibold">
+            Mentions du conseil de classe
+          </div>
+          <div className="space-y-0.5 text-[0.65rem]">
+            <div className="font-semibold">DISTINCTIONS</div>
+            <div>☐ Tableau d&apos;Honneur + Félicitations</div>
+            <div>☐ Tableau d&apos;Honneur + Encouragements</div>
+            <div>☐ Tableau d&apos;Honneur</div>
+            <div className="mt-1 font-semibold">SANCTIONS</div>
+            <div>☐ Avertissement travail</div>
+            <div>☐ Avertissement conduite</div>
+            <div>☐ Blâme travail</div>
+            <div>☐ Blâme conduite</div>
           </div>
         </div>
-        <div className="border border-slate-400 p-2 min-h-[60px]">
-          <div className="mb-1 font-semibold text-[0.65rem]">
-            Visa du chef d&apos;établissement
+
+        {/* Appréciations du conseil de classe */}
+        <div className="border border-slate-400 p-2 min-h-[90px]">
+          <div className="mb-1 font-semibold">
+            Appréciations du conseil de classe
+          </div>
+          <div className="h-16" />
+          <div className="mt-4 text-[0.6rem] text-slate-500">
+            Nom / Signature du professeur principal
           </div>
         </div>
-        <div className="border border-slate-400 p-2 min-h-[60px]">
-          <div className="mb-1 font-semibold text-[0.65rem]">
-            Signature des parents / tuteur
+
+        {/* Chef d'établissement */}
+        <div className="border border-slate-400 p-2 min-h-[90px]">
+          <div className="mb-1 font-semibold">Chef d&apos;établissement</div>
+          <div className="mt-6 text-[0.6rem] text-slate-500">
+            Signature et cachet
           </div>
         </div>
       </div>
 
+      {/* Bas de page : lieu / date + mention Mon Cahier */}
       <div className="mt-2 flex items-center justify-between text-[0.65rem] text-slate-500">
         <div>
           Fait à ......................................, le
@@ -975,8 +1046,8 @@ export default function BulletinsPage() {
             Bulletins de notes
           </h1>
           <p className="text-sm text-slate-500">
-            Générer un bulletin simplifié par élève, basé sur les notes
-            publiées.
+            Générer un bulletin aligné sur le modèle officiel, à partir des
+            notes publiées et du résumé de conduite.
           </p>
         </div>
         <div className="flex gap-2">
@@ -1207,7 +1278,7 @@ export default function BulletinsPage() {
       <div className="mt-4 text-center text-[0.65rem] text-slate-400 print:hidden">
         Bulletin généré automatiquement à partir des notes publiées et du
         résumé de conduite. Les appréciations détaillées restent à compléter
-        par l&apos;équipe pédagogique.
+        par les équipe pédagogique.
       </div>
     </div>
   );
