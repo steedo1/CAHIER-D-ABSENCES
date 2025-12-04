@@ -24,6 +24,12 @@ type InstitutionSettingsRow = {
   status: string | null;
   head_name: string | null;
   head_title: string | null;
+
+  // 🆕 champs pour l'en-tête officiel du bulletin
+  country_name: string | null;
+  country_motto: string | null;
+  ministry_name: string | null;
+  code: string | null; // code MEN / établissement
 };
 
 async function guard(
@@ -95,6 +101,10 @@ export async function GET() {
         "status",
         "head_name",
         "head_title",
+        "country_name",
+        "country_motto",
+        "ministry_name",
+        "code",
       ].join(",")
     )
     .eq("id", g.instId)
@@ -121,6 +131,12 @@ export async function GET() {
     institution_status: row.status ?? "",
     institution_head_name: row.head_name ?? "",
     institution_head_title: row.head_title ?? "",
+
+    // 🆕 pour l'en-tête officiel (pays / devise / ministère / code MEN)
+    country_name: row.country_name ?? "",
+    country_motto: row.country_motto ?? "",
+    ministry_name: row.ministry_name ?? "",
+    institution_code: row.code ?? "",
   });
 }
 
@@ -176,6 +192,18 @@ export async function PUT(req: NextRequest) {
       ? body.institution_head_title
       : "";
 
+  // 🆕 champs officiels (pays / devise / ministère / code MEN)
+  const rawCountryName =
+    typeof body?.country_name === "string" ? body.country_name : "";
+  const rawCountryMotto =
+    typeof body?.country_motto === "string" ? body.country_motto : "";
+  const rawMinistryName =
+    typeof body?.ministry_name === "string" ? body.ministry_name : "";
+  const rawInstitutionCode =
+    typeof body?.institution_code === "string"
+      ? body.institution_code
+      : "";
+
   // On trim, et on convertit les vides en null pour la BDD
   const logo_url = rawLogo.trim() || null;
   const phone = rawPhone.trim() || null;
@@ -185,6 +213,11 @@ export async function PUT(req: NextRequest) {
   const status = rawStatus.trim() || null;
   const head_name = rawHeadName.trim() || null;
   const head_title = rawHeadTitle.trim() || null;
+
+  const country_name = rawCountryName.trim() || null;
+  const country_motto = rawCountryMotto.trim() || null;
+  const ministry_name = rawMinistryName.trim() || null;
+  const code = rawInstitutionCode.trim() || null;
 
   const { error } = await srv
     .from("institutions")
@@ -200,6 +233,12 @@ export async function PUT(req: NextRequest) {
       status,
       head_name,
       head_title,
+
+      // 🆕 champs pour le bulletin
+      country_name,
+      country_motto,
+      ministry_name,
+      code,
     })
     .eq("id", g.instId);
 
@@ -208,4 +247,3 @@ export async function PUT(req: NextRequest) {
 
   return NextResponse.json({ ok: true });
 }
-

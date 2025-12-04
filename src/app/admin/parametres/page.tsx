@@ -304,6 +304,11 @@ export default function AdminSettingsPage() {
     institution_status: "",
     institution_head_name: "",
     institution_head_title: "",
+    // 🆕 champs pour entête des bulletins
+    country_name: "",
+    country_motto: "",
+    ministry_name: "",
+    institution_code: "",
   });
   const [savingCfg, setSavingCfg] = useState(false);
 
@@ -714,6 +719,10 @@ export default function AdminSettingsPage() {
         institution_status: c?.institution_status || "",
         institution_head_name: c?.institution_head_name || "",
         institution_head_title: c?.institution_head_title || "",
+        country_name: c?.country_name || "",
+        country_motto: c?.country_motto || "",
+        ministry_name: c?.ministry_name || "",
+        institution_code: c?.institution_code || "",
       });
       const grouped: Record<number, Period[]> = {};
       (Array.isArray(p?.periods) ? p.periods : []).forEach((row: any) => {
@@ -998,68 +1007,67 @@ export default function AdminSettingsPage() {
     setEvalPeriods((prev) => prev.filter((p) => p.id !== id));
   }
 
-   async function saveEvalPeriods() {
-  setSavingEvalPeriods(true);
-  setMsgEvalPeriods(null);
-  try {
-    const academic_year = (selectedAcademicYear || "").trim();
-    if (!academic_year) {
-      const msg =
-        "Choisissez d'abord une année scolaire dans la section « Années scolaires ».";
-      setMsgEvalPeriods(msg);
-      pushToast("error", msg);
+  async function saveEvalPeriods() {
+    setSavingEvalPeriods(true);
+    setMsgEvalPeriods(null);
+    try {
+      const academic_year = (selectedAcademicYear || "").trim();
+      if (!academic_year) {
+        const msg =
+          "Choisissez d'abord une année scolaire dans la section « Années scolaires ».";
+        setMsgEvalPeriods(msg);
+        pushToast("error", msg);
+        setSavingEvalPeriods(false);
+        return;
+      }
+
+      const normalized = evalPeriods.map((p, idx) => {
+        const code = (p.code || `P${idx + 1}`).trim();
+        const label = (p.label || `Période ${idx + 1}`).trim();
+        const short_label = (p.short_label || label).trim();
+
+        // ✅ on part de p.weight (UI) mais on envoie bien coeff à l’API
+        const coeff =
+          typeof p.weight === "number" && p.weight > 0
+            ? Number(p.weight)
+            : 1;
+
+        return {
+          id: p.id,
+          code,
+          label,
+          short_label,
+          kind: p.kind && p.kind.trim() ? p.kind.trim() : null,
+          start_date: p.start_date || null,
+          end_date: p.end_date || null,
+          order_index: idx + 1,
+          is_active: !!p.is_active,
+          coeff, // ✅ c'est ce champ que la route utilise
+        };
+      });
+
+      const r = await fetch("/api/admin/institution/grading-periods", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ periods: normalized, academic_year }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || !j?.ok) {
+        throw new Error(j?.error || "Échec enregistrement périodes");
+      }
+      const ok = `Périodes d'évaluation enregistrées ✅ (${academic_year}).`;
+      setMsgEvalPeriods(ok);
+      pushToast("success", ok);
+      await loadEvalPeriods(academic_year);
+    } catch (e: any) {
+      const m =
+        e?.message || "Erreur lors de l'enregistrement des périodes.";
+      setMsgEvalPeriods(m);
+      pushToast("error", m);
+    } finally {
       setSavingEvalPeriods(false);
-      return;
     }
-
-    const normalized = evalPeriods.map((p, idx) => {
-      const code = (p.code || `P${idx + 1}`).trim();
-      const label = (p.label || `Période ${idx + 1}`).trim();
-      const short_label = (p.short_label || label).trim();
-
-      // ✅ on part de p.weight (UI) mais on envoie bien coeff à l’API
-      const coeff =
-        typeof p.weight === "number" && p.weight > 0
-          ? Number(p.weight)
-          : 1;
-
-      return {
-        id: p.id,
-        code,
-        label,
-        short_label,
-        kind: p.kind && p.kind.trim() ? p.kind.trim() : null,
-        start_date: p.start_date || null,
-        end_date: p.end_date || null,
-        order_index: idx + 1,
-        is_active: !!p.is_active,
-        coeff, // ✅ c'est ce champ que la route utilise
-      };
-    });
-
-    const r = await fetch("/api/admin/institution/grading-periods", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ periods: normalized, academic_year }),
-    });
-    const j = await r.json().catch(() => ({}));
-    if (!r.ok || !j?.ok) {
-      throw new Error(j?.error || "Échec enregistrement périodes");
-    }
-    const ok = `Périodes d'évaluation enregistrées ✅ (${academic_year}).`;
-    setMsgEvalPeriods(ok);
-    pushToast("success", ok);
-    await loadEvalPeriods(academic_year);
-  } catch (e: any) {
-    const m =
-      e?.message || "Erreur lors de l'enregistrement des périodes.";
-    setMsgEvalPeriods(m);
-    pushToast("error", m);
-  } finally {
-    setSavingEvalPeriods(false);
   }
-}
-
 
   /* ====== Horaires : helpers CRUD ====== */
   function addRow(day: number) {
@@ -1491,6 +1499,7 @@ export default function AdminSettingsPage() {
     setMsgCoeffs(null);
     try {
       const payload = subjectCoeffs.map((row) => ({
+
         level: row.level,
         subject_id: row.subject_id,
         coeff:
@@ -1824,6 +1833,77 @@ export default function AdminSettingsPage() {
 
           {/* Infos d'établissement (optionnelles) */}
           <div className="mb-4 grid grid-cols-1 gap-3 md:grid-cols-3">
+            {/* 🆕 En-tête pays / devise / ministère / code MEN */}
+            <div>
+              <div className="mb-1 text-xs text-slate-500">
+                Nom du pays pour l&apos;en-tête (optionnel)
+              </div>
+              <input
+                className="w-full rounded-lg border px-3 py-2 text-sm"
+                value={cfg.country_name}
+                onChange={(e) =>
+                  setCfg((s) => ({
+                    ...s,
+                    country_name: e.target.value,
+                  }))
+                }
+                disabled={loadingCfg || savingCfg}
+                placeholder="République de Côte d&apos;Ivoire"
+              />
+            </div>
+            <div>
+              <div className="mb-1 text-xs text-slate-500">
+                Devise nationale (optionnel)
+              </div>
+              <input
+                className="w-full rounded-lg border px-3 py-2 text-sm"
+                value={cfg.country_motto}
+                onChange={(e) =>
+                  setCfg((s) => ({
+                    ...s,
+                    country_motto: e.target.value,
+                  }))
+                }
+                disabled={loadingCfg || savingCfg}
+                placeholder="Union - Discipline - Travail"
+              />
+            </div>
+            <div>
+              <div className="mb-1 text-xs text-slate-500">
+                Nom du ministère (optionnel)
+              </div>
+              <input
+                className="w-full rounded-lg border px-3 py-2 text-sm"
+                value={cfg.ministry_name}
+                onChange={(e) =>
+                  setCfg((s) => ({
+                    ...s,
+                    ministry_name: e.target.value,
+                  }))
+                }
+                disabled={loadingCfg || savingCfg}
+                placeholder="MINISTERE DE L&apos;EDUCATION NATIONALE ET DE L&apos;ALPHABETISATION"
+              />
+            </div>
+            <div>
+              <div className="mb-1 text-xs text-slate-500">
+                Code établissement / MEN (optionnel)
+              </div>
+              <input
+                className="w-full rounded-lg border px-3 py-2 text-sm"
+                value={cfg.institution_code}
+                onChange={(e) =>
+                  setCfg((s) => ({
+                    ...s,
+                    institution_code: e.target.value,
+                  }))
+                }
+                disabled={loadingCfg || savingCfg}
+                placeholder="Code MEN : 123456"
+              />
+            </div>
+
+            {/* Téléphone & email */}
             <div>
               <div className="mb-1 text-xs text-slate-500">
                 Téléphone de l&apos;établissement (optionnel)
@@ -2335,7 +2415,7 @@ export default function AdminSettingsPage() {
                 }}
               >
                 <option value="">
-                  — Année déduite automatiquement (serveur) —
+                  — Année déduite automatiquement (serveur) —{" "}
                 </option>
                 {academicYears.map((y) => (
                   <option key={y.code || y.id} value={y.code}>
@@ -2879,6 +2959,7 @@ export default function AdminSettingsPage() {
                     return (
                       <tr
                         key={`${sc.level}-${sc.subject_id}`}
+
                       >
                         <td className="px-3 py-2 text-slate-800">
                           {sc.subject_name}
@@ -3135,6 +3216,7 @@ export default function AdminSettingsPage() {
                       ? "text-emerald-700"
                       : "text-rose-700"
                   }`}
+
                 >
                   {sumComponentsForTarget}
                 </span>
