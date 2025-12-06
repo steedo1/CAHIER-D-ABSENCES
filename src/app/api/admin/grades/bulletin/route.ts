@@ -1,3 +1,4 @@
+// src/app/api/admin/grades/bulletin/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
@@ -168,6 +169,187 @@ async function getAdminAndInstitution(
   }
 
   return { user, institutionId, role };
+}
+
+/* ───────── helper : rang par matière (subject_rank) ───────── */
+/**
+ * Ajoute ps.subject_rank dans items[*].per_subject[*]
+ * Rang 1 = meilleure moyenne, ex-aequo gérés (même moyenne → même rang).
+ */
+function applySubjectRanks(items: any[]) {
+  if (!items || !items.length) return;
+
+  type Entry = { index: number; avg: number; subject_id: string };
+
+  const bySubject = new Map<string, Entry[]>();
+
+  items.forEach((item, idx) => {
+    const perSubject = item.per_subject as any[] | undefined;
+    if (!Array.isArray(perSubject)) return;
+
+    perSubject.forEach((ps) => {
+      const avg =
+        typeof ps.avg20 === "number" && Number.isFinite(ps.avg20)
+          ? ps.avg20
+          : null;
+      const sid = ps.subject_id as string | undefined;
+      if (!sid || avg === null) return;
+
+      const arr = bySubject.get(sid) || [];
+      arr.push({ index: idx, avg, subject_id: sid });
+      bySubject.set(sid, arr);
+    });
+  });
+
+  bySubject.forEach((entries, subjectId) => {
+    // tri décroissant : meilleure moyenne → rang 1
+    entries.sort((a, b) => b.avg - a.avg);
+
+    let lastAvg: number | null = null;
+    let currentRank = 0;
+    let position = 0;
+
+    for (const { index, avg } of entries) {
+      position += 1;
+      if (lastAvg === null || avg !== lastAvg) {
+        currentRank = position;
+        lastAvg = avg;
+      }
+
+      const perSubject = items[index].per_subject as any[];
+      if (!Array.isArray(perSubject)) continue;
+
+      const cell = perSubject.find(
+        (ps: any) => ps.subject_id === subjectId
+      );
+      if (cell) {
+        (cell as any).subject_rank = currentRank;
+      }
+    }
+  });
+}
+
+/* ───────── helper : nom du professeur par matière (teacher_name) ───────── */
+/**
+ * Utilise:
+ * - class_teachers : id, class_id, subject_id, teacher_id, start_date, end_date, institution_id
+ * - teacher_subjects : profile_id, subject_id, institution_id, teacher_name, subject_name, updated_at
+ *
+ * Remplit per_subject[*].teacher_name pour la classe + période.
+ */
+async function attachTeachersToSubjects(
+  supabase: Awaited<ReturnType<typeof getSupabaseServerClient>>,
+  items: any[],
+  subjectIds: string[],
+  institutionId: string,
+  classId: string,
+  dateFrom?: string | null,
+  dateTo?: string | null
+) {
+  if (!subjectIds.length || !items.length) return;
+
+  // 1) Récupérer les lignes class_teachers pour cette classe / ces matières
+  let ctQuery = supabase
+    .from("class_teachers")
+    .select("subject_id, teacher_id, start_date, end_date")
+    .eq("institution_id", institutionId)
+    .eq("class_id", classId)
+    .in("subject_id", subjectIds);
+
+  const pivot = dateTo || dateFrom || null;
+  if (pivot) {
+    // end_date >= pivot OU end_date IS NULL
+    ctQuery = ctQuery.or(`end_date.is.null,end_date.gte.${pivot}`);
+  } else {
+    // par défaut : prof encore affecté (end_date IS NULL)
+    ctQuery = ctQuery.is("end_date", null);
+  }
+
+  const { data: ctData, error: ctErr } = await ctQuery;
+
+  if (ctErr) {
+    console.error("[bulletin] class_teachers error", ctErr);
+    return;
+  }
+  if (!ctData || !ctData.length) return;
+
+  const teacherIds = Array.from(
+    new Set(
+      (ctData as any[])
+        .map((row) => row.teacher_id as string | null)
+        .filter((v): v is string => !!v)
+    )
+  );
+  if (!teacherIds.length) return;
+
+  // 2) Noms de profs spécifiques par (subject_id, profile_id) dans teacher_subjects
+  const { data: tsData, error: tsErr } = await supabase
+    .from("teacher_subjects")
+    .select("profile_id, subject_id, teacher_name")
+    .eq("institution_id", institutionId)
+    .in("subject_id", subjectIds)
+    .in("profile_id", teacherIds);
+
+  if (tsErr) {
+    console.error("[bulletin] teacher_subjects error", tsErr);
+  }
+
+  const teacherNameBySubjectTeacher = new Map<string, string>();
+  (tsData || []).forEach((row: any) => {
+    const key = `${row.subject_id}::${row.profile_id}`;
+    if (row.teacher_name) {
+      teacherNameBySubjectTeacher.set(key, String(row.teacher_name));
+    }
+  });
+
+  // 3) Fallback : display_name dans profiles
+  const { data: profs, error: profErr } = await supabase
+    .from("profiles")
+    .select("id, display_name")
+    .in("id", teacherIds);
+
+  if (profErr) {
+    console.error("[bulletin] profiles (teachers) error", profErr);
+  }
+
+  const displayById = new Map<string, string>();
+  (profs || []).forEach((p: any) => {
+    if (p.id && p.display_name) {
+      displayById.set(p.id, String(p.display_name));
+    }
+  });
+
+  // 4) Map final subject_id → teacher_name (pour CETTE classe)
+  const teacherBySubject = new Map<string, string>();
+
+  (ctData as any[]).forEach((row) => {
+    const subjectId = String(row.subject_id);
+    const teacherId = row.teacher_id as string | null;
+    if (!subjectId || !teacherId) return;
+
+    if (teacherBySubject.has(subjectId)) return; // déjà trouvé pour cette matière
+
+    const key = `${subjectId}::${teacherId}`;
+    const name =
+      teacherNameBySubjectTeacher.get(key) || displayById.get(teacherId);
+
+    if (!name) return;
+
+    teacherBySubject.set(subjectId, name);
+  });
+
+  if (!teacherBySubject.size) return;
+
+  // 5) Injection dans items[*].per_subject[*].teacher_name
+  for (const item of items) {
+    const perSubject = item.per_subject as any[] | undefined;
+    if (!Array.isArray(perSubject)) continue;
+
+    perSubject.forEach((ps) => {
+      const name = teacherBySubject.get(ps.subject_id) ?? null;
+      (ps as any).teacher_name = name;
+    });
+  }
 }
 
 /* ───────── GET /api/admin/grades/bulletin ─────────
@@ -456,7 +638,6 @@ export async function GET(req: NextRequest) {
 
   if (scoreErr) {
     console.error("[bulletin] scores error", scoreErr);
-    // eslint-disable-next-line no-unsafe-finally
     return NextResponse.json(
       { ok: false, error: "SCORES_ERROR" },
       { status: 500 }
@@ -1023,6 +1204,20 @@ export async function GET(req: NextRequest) {
       per_subject_components,
     };
   });
+
+  // 9) Rang par matière
+  applySubjectRanks(items);
+
+  // 10) Nom du professeur par matière pour CETTE classe + période
+  await attachTeachersToSubjects(
+    supabase,
+    items,
+    subjectIds,
+    institutionId,
+    classRow.id,
+    dateFrom,
+    dateTo
+  );
 
   return NextResponse.json({
     ok: true,

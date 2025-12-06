@@ -1,4 +1,4 @@
-//src/app/admin/notes/bulletins/page.tsx
+// src/app/admin/notes/bulletins/page.tsx
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
@@ -67,7 +67,15 @@ type BulletinGroup = {
   items: BulletinGroupItem[];
 };
 
-type PerSubjectAvg = { subject_id: string; avg20: number | null };
+type PerSubjectAvg = {
+  subject_id: string;
+  avg20: number | null;
+  // 🆕 rang de l’élève dans la classe pour cette matière (optionnel)
+  subject_rank?: number | null;
+  // 🆕 nom du professeur de la matière (optionnel)
+  teacher_name?: string | null;
+};
+
 type PerGroupAvg = { group_id: string; group_avg: number | null };
 
 type PerSubjectComponentAvg = {
@@ -595,7 +603,7 @@ function StudentBulletinCard({
         <thead className="bg-slate-100">
           <tr>
             <th className="border border-slate-400 px-1 py-1 text-left">
-              Discipline
+              Disciplines
             </th>
             <th className="border border-slate-400 px-1 py-1 text-center">
               Moy./20
@@ -604,7 +612,13 @@ function StudentBulletinCard({
               Coeff
             </th>
             <th className="border border-slate-400 px-1 py-1 text-center">
-              Moy. coeff
+              Total
+            </th>
+            <th className="border border-slate-400 px-1 py-1 text-center">
+              Rang
+            </th>
+            <th className="border border-slate-400 px-1 py-1 text-left">
+              Professeur
             </th>
           </tr>
         </thead>
@@ -616,6 +630,11 @@ function StudentBulletinCard({
             const avg = cell?.avg20 ?? null;
             const moyCoeff =
               avg !== null ? round2(avg * (s.coeff_bulletin || 0)) : null;
+
+            const subjectRankLabel =
+              cell && cell.subject_rank != null ? `${cell.subject_rank}e` : "—";
+
+            const subjectTeacher = cell?.teacher_name || "";
 
             const subComps = subjectCompsBySubject.get(s.subject_id) ?? [];
 
@@ -634,6 +653,12 @@ function StudentBulletinCard({
                   </td>
                   <td className="border border-slate-400 px-1 py-0.5 text-center">
                     {formatNumber(moyCoeff)}
+                  </td>
+                  <td className="border border-slate-400 px-1 py-0.5 text-center">
+                    {subjectRankLabel}
+                  </td>
+                  <td className="border border-slate-400 px-1 py-0.5">
+                    {subjectTeacher}
                   </td>
                 </tr>
 
@@ -663,6 +688,11 @@ function StudentBulletinCard({
                       <td className="border border-slate-400 px-1 py-0.5 text-center">
                         {formatNumber(cMoyCoeff)}
                       </td>
+                      <td className="border border-slate-400 px-1 py-0.5 text-center">
+                        {/* pas de rang au niveau sous-matière */}
+                        —
+                      </td>
+                      <td className="border border-slate-400 px-1 py-0.5" />
                     </tr>
                   );
                 })}
@@ -678,12 +708,71 @@ function StudentBulletinCard({
               {formatNumber(coeffTotal, 0)}
             </td>
             <td className="border border-slate-400 px-1 py-0.5" />
+            <td className="border border-slate-400 px-1 py-0.5" />
+            <td className="border border-slate-400 px-1 py-0.5" />
           </tr>
         </tbody>
       </table>
 
-      {/* Bloc moyennes & résultats de la classe */}
+      {/* Bloc assiduité + moyenne + résultats de la classe */}
       <div className="grid grid-cols-3 gap-2 text-[0.7rem]">
+        <div className="border border-slate-400 p-2">
+          <div className="mb-1 font-semibold">Assiduité / Discipline</div>
+          {conduct ? (
+            <div className="space-y-1 text-[0.65rem]">
+              <div>
+                Absences :{" "}
+                <span className="font-semibold">
+                  {conduct.absence_count ?? 0}
+                </span>
+                {absenceHours !== null && (
+                  <span className="text-[0.6rem] text-slate-500">
+                    {" "}
+                    ({formatNumber(absenceHours, 1)} h)
+                  </span>
+                )}
+              </div>
+              <div>
+                Retards :{" "}
+                <span className="font-semibold">
+                  {conduct.tardy_count ?? 0}
+                </span>
+                {typeof conduct.tardy_minutes === "number" &&
+                  conduct.tardy_minutes > 0 && (
+                    <span className="text-[0.6rem] text-slate-500">
+                      {" "}
+                      ({formatNumber(conduct.tardy_minutes / 60, 1)} h)
+                    </span>
+                  )}
+              </div>
+              <div className="mt-1">
+                Note de conduite :{" "}
+                <span className="font-semibold">
+                  {formatNumber(conduct.total)} / {conductTotalMax ?? 20}
+                </span>
+                {conduct.appreciation && (
+                  <span> — {conduct.appreciation}</span>
+                )}
+              </div>
+              <div className="mt-1 text-[0.6rem] text-slate-500">
+                Détail : Assiduité {formatNumber(conduct.breakdown.assiduite)} /{" "}
+                {conductRubricMax?.assiduite ?? 6}
+                {", "}Tenue {formatNumber(conduct.breakdown.tenue)} /{" "}
+                {conductRubricMax?.tenue ?? 3}
+                {", "}Moralité {formatNumber(conduct.breakdown.moralite)} /{" "}
+                {conductRubricMax?.moralite ?? 4}
+                {", "}Discipline {formatNumber(
+                  conduct.breakdown.discipline
+                )} / {conductRubricMax?.discipline ?? 7}
+              </div>
+            </div>
+          ) : (
+            <div className="text-[0.65rem] text-slate-500">
+              Total d&apos;absences, retards, justifications… (à compléter).
+            </div>
+          )}
+        </div>
+
         <div className="border border-slate-400 p-2">
           <div className="mb-1 font-semibold">Moyenne trimestrielle</div>
           <div>
@@ -706,72 +795,42 @@ function StudentBulletinCard({
           <div>Moyenne la plus forte : {formatNumber(stats.highest)}</div>
           <div>Moyenne la plus faible : {formatNumber(stats.lowest)}</div>
         </div>
-
-        <div className="border border-slate-400 p-2">
-          <div className="mb-1 font-semibold">Observations</div>
-          <div className="text-[0.65rem] text-slate-500">
-            Zone réservée aux appréciations du conseil de classe, mentions et
-            sanctions.
-          </div>
-        </div>
       </div>
 
-      {/* Bloc bilan / discipline / signatures (mise en forme bulletin papier) */}
+      {/* Bloc mentions + appréciations */}
       <div className="mt-3 grid grid-cols-2 gap-2 text-[0.7rem]">
         <div className="border border-slate-400 p-2 min-h-[80px]">
-          <div className="mb-1 font-semibold uppercase">Bilan du trimestre</div>
-          <div className="text-[0.65rem] text-slate-500">
-            Appréciation générale du travail de l&apos;élève :
+          <div className="mb-1 font-semibold uppercase">
+            Mentions du conseil de classe
           </div>
+          <div className="mb-1 text-[0.65rem] font-semibold">
+            Distinctions
+          </div>
+          <ul className="mb-2 space-y-1 text-[0.65rem]">
+            <li>□ Tableau d&apos;honneur / Félicitations</li>
+            <li>□ Tableau d&apos;excellence</li>
+            <li>□ Tableau d&apos;encouragement</li>
+          </ul>
+          <div className="mb-1 text-[0.65rem] font-semibold">Sanctions</div>
+          <ul className="space-y-1 text-[0.65rem]">
+            <li>□ Avertissement travail</li>
+            <li>□ Avertissement conduite</li>
+            <li>□ Blâme travail</li>
+            <li>□ Blâme conduite</li>
+          </ul>
         </div>
         <div className="border border-slate-400 p-2 min-h-[80px]">
           <div className="mb-1 font-semibold uppercase">
-            Discipline / Assiduité
+            Appréciations du conseil de classe
           </div>
-          {conduct ? (
-            <div className="space-y-1 text-[0.65rem]">
-              <div>
-                Absences injustifiées :{" "}
-                <span className="font-semibold">
-                  {conduct.absence_count ?? 0}
-                </span>
-                {absenceHours !== null && (
-                  <span className="text-[0.6rem] text-slate-500">
-                    {" "}
-                    ({formatNumber(absenceHours, 1)} h)
-                  </span>
-                )}
-              </div>
-              <div className="mt-1">
-                Note de conduite :{" "}
-                <span className="font-semibold">
-                  {formatNumber(conduct.total)} /{" "}
-                  {conductTotalMax ?? 20}
-                </span>
-                {conduct.appreciation && (
-                  <span> — {conduct.appreciation}</span>
-                )}
-              </div>
-              <div className="mt-1 text-[0.6rem] text-slate-500">
-                Détail : Assiduité {formatNumber(conduct.breakdown.assiduite)} /{" "}
-                {conductRubricMax?.assiduite ?? 6}
-                {", "}Tenue {formatNumber(conduct.breakdown.tenue)} /{" "}
-                {conductRubricMax?.tenue ?? 3}
-                {", "}Moralité {formatNumber(conduct.breakdown.moralite)} /{" "}
-                {conductRubricMax?.moralite ?? 4}
-                {", "}Discipline {formatNumber(
-                  conduct.breakdown.discipline
-                )} / {conductRubricMax?.discipline ?? 7}
-              </div>
-            </div>
-          ) : (
-            <div className="text-[0.65rem] text-slate-500">
-              Retards, absences, comportement, sanctions :
-            </div>
-          )}
+          <div className="text-[0.65rem] text-slate-500">
+            Appréciation générale du travail de l&apos;élève à renseigner
+            manuellement (ex. : « Assez bien », « Peut mieux faire », …).
+          </div>
         </div>
       </div>
 
+      {/* Bloc signatures */}
       <div className="mt-2 grid grid-cols-3 gap-2 text-[0.7rem]">
         <div className="border border-slate-400 p-2 min-h-[60px]">
           <div className="mb-1 font-semibold text-[0.65rem]">
@@ -1326,7 +1385,7 @@ export default function BulletinsPage() {
       <div className="mt-4 text-center text-[0.65rem] text-slate-400 print:hidden">
         Bulletin généré automatiquement à partir des notes publiées et du
         résumé de conduite. Les appréciations détaillées restent à compléter
-        par l&apos;équipe pédagogique.
+        par les équipe pédagogique.
       </div>
     </div>
   );
