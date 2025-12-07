@@ -329,8 +329,10 @@ export async function GET(req: NextRequest) {
     const subjectRaw = url.searchParams.get("subject_id");
     const subjectParam = subjectRaw && subjectRaw !== "" ? subjectRaw : null;
 
-    // 🔹 sous-matière éventuelle
-    const subjectComponentRaw = url.searchParams.get("subject_component_id");
+    // 🔹 sous-matière éventuelle (snake_case OU camelCase)
+    const subjectComponentRaw =
+      url.searchParams.get("subject_component_id") ??
+      url.searchParams.get("subjectComponentId");
     const subjectComponentId =
       subjectComponentRaw && subjectComponentRaw !== ""
         ? subjectComponentRaw
@@ -429,7 +431,8 @@ export async function POST(req: NextRequest) {
     const {
       class_id,
       subject_id,
-      subject_component_id,
+      subject_component_id: subject_component_id_raw,
+      subjectComponentId,
       eval_date,
       eval_kind,
       scale,
@@ -438,6 +441,7 @@ export async function POST(req: NextRequest) {
       class_id: string;
       subject_id?: string | null;
       subject_component_id?: string | null;
+      subjectComponentId?: string | null;
       eval_date: string;
       eval_kind: EvalKind;
       scale: number;
@@ -483,6 +487,16 @@ export async function POST(req: NextRequest) {
     }
 
     const subjRaw = subject_id && subject_id !== "" ? subject_id : null;
+
+    // 🔹 Normalisation du subject_component_id (camelCase OU snake_case)
+    const subjectComponentIdNorm =
+      typeof subjectComponentId === "string" && subjectComponentId.trim() !== ""
+        ? subjectComponentId.trim()
+        : typeof subject_component_id_raw === "string" &&
+          subject_component_id_raw.trim() !== ""
+        ? subject_component_id_raw.trim()
+        : null;
+
     const resolvedSubjectId = await resolveSubjectIdToGlobal(
       srv,
       profile.institution_id,
@@ -502,7 +516,9 @@ export async function POST(req: NextRequest) {
       class_id,
       rawSubjectId: subjRaw,
       resolvedSubjectId,
-      subject_component_id: subject_component_id ?? null,
+      subjectComponentIdNorm,
+      subjectComponentId,
+      subject_component_id_raw,
       teacher_id: teacherId,
     });
 
@@ -511,7 +527,7 @@ export async function POST(req: NextRequest) {
       .insert({
         class_id,
         subject_id: resolvedSubjectId,
-        subject_component_id: subject_component_id ?? null,
+        subject_component_id: subjectComponentIdNorm,
         teacher_id: teacherId,
         eval_date,
         eval_kind,
@@ -530,6 +546,7 @@ export async function POST(req: NextRequest) {
         class_id,
         resolvedSubjectId,
         teacherId,
+        subjectComponentIdNorm,
       });
       return NextResponse.json(
         { ok: false, error: error.message },
