@@ -1,3 +1,4 @@
+//src/app/api/admin/grades/bulletin/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
@@ -231,6 +232,64 @@ function applySubjectRanks(items: any[]) {
   });
 }
 
+/* ───────── helper : rang par sous-matière (component_rank) ───────── */
+/**
+ * Ajoute psc.component_rank dans items[*].per_subject_components[*]
+ * Rang 1 = meilleure moyenne sur cette sous-matière, ex-aequo gérés.
+ */
+function applySubjectComponentRanks(items: any[]) {
+  if (!items || !items.length) return;
+
+  type Entry = { index: number; avg: number; component_id: string };
+
+  const byComponent = new Map<string, Entry[]>();
+
+  items.forEach((item, idx) => {
+    const perComp = item.per_subject_components as any[] | undefined;
+    if (!Array.isArray(perComp)) return;
+
+    perComp.forEach((psc) => {
+      const avg =
+        typeof psc.avg20 === "number" && Number.isFinite(psc.avg20)
+          ? psc.avg20
+          : null;
+      const cid = psc.component_id as string | undefined;
+      if (!cid || avg === null) return;
+
+      const arr = byComponent.get(cid) || [];
+      arr.push({ index: idx, avg, component_id: cid });
+      byComponent.set(cid, arr);
+    });
+  });
+
+  byComponent.forEach((entries, componentId) => {
+    // tri décroissant : meilleure moyenne → rang 1
+    entries.sort((a, b) => b.avg - a.avg);
+
+    let lastAvg: number | null = null;
+    let currentRank = 0;
+    let position = 0;
+
+    for (const { index, avg } of entries) {
+      position += 1;
+      if (lastAvg === null || avg !== lastAvg) {
+        currentRank = position;
+        lastAvg = avg;
+      }
+
+      const perComp = items[index].per_subject_components as any[] | undefined;
+      if (!Array.isArray(perComp)) continue;
+
+      const cell = perComp.find(
+        (psc: any) => psc.component_id === componentId
+      );
+      if (cell) {
+        (cell as any).component_rank = currentRank;
+      }
+    }
+  });
+}
+
 /* ───────── helper : nom du professeur par matière (teacher_name) ───────── */
 /**
  * Stratégie :
@@ -270,7 +329,11 @@ async function attachTeachersToSubjects(
       const date = ev.eval_date ?? "";
 
       const existing = bySubjectEval.get(sid);
-      if (!existing || (date && date > existing.lastEvalDate)) {
+      if (existing) {
+        if (date && date > existing.lastEvalDate) {
+          bySubjectEval.set(sid, { teacher_id: tid, lastEvalDate: date });
+        }
+      } else {
         bySubjectEval.set(sid, { teacher_id: tid, lastEvalDate: date });
       }
     }
@@ -1314,6 +1377,9 @@ export async function GET(req: NextRequest) {
 
   // 9) Rang par matière
   applySubjectRanks(items);
+
+  // 9bis) Rang par sous-matière
+  applySubjectComponentRanks(items);
 
   // 10) Nom du professeur par matière pour CETTE classe + période
   await attachTeachersToSubjects(
