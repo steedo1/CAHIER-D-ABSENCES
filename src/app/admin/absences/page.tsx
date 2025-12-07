@@ -3,10 +3,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Calendar, Filter, RefreshCw, Download, FileText } from "lucide-react";
 
-// ✅ imports PDF
-import jsPDF from "jspdf";
-import "jspdf-autotable";
-
 /* ───────── UI helpers ───────── */
 function Input(p: React.InputHTMLAttributes<HTMLInputElement>) {
   return (
@@ -131,6 +127,80 @@ const hoursLabel = (minutes: number) => {
   const s = h.toFixed(1).replace(".", ",");
   return s.replace(/,0$/, "") + " h";
 };
+
+/** Ouvre une fenêtre imprimable pour générer un beau PDF (via "Imprimer" → Enregistrer en PDF) */
+function openPdfPrintWindow(title: string, subtitle: string, tableHtml: string) {
+  if (typeof window === "undefined") return;
+
+  const w = window.open("", "_blank", "width=1024,height=768");
+
+  if (!w) {
+    alert(
+      "Votre navigateur a bloqué la fenêtre d'impression. " +
+        "Autorisez les fenêtres pop-up pour ce site."
+    );
+    return;
+  }
+
+  const html = `<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <title>${title}</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      margin: 24px;
+      color: #0f172a;
+    }
+    h1 {
+      font-size: 20px;
+      margin: 0 0 4px;
+    }
+    h2 {
+      font-size: 12px;
+      margin: 0 0 16px;
+      color: #6b7280;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 11px;
+      margin-bottom: 16px;
+    }
+    th, td {
+      border: 1px solid #e5e7eb;
+      padding: 4px 6px;
+      text-align: left;
+    }
+    th {
+      background-color: #f3f4f6;
+    }
+    tfoot td {
+      font-weight: 600;
+      background-color: #f9fafb;
+    }
+  </style>
+</head>
+<body>
+  <h1>${title}</h1>
+  <h2>${subtitle}</h2>
+  ${tableHtml}
+  <script>
+    window.addEventListener('load', function () {
+      window.print();
+      setTimeout(function () { window.close(); }, 300);
+    });
+  </script>
+</body>
+</html>`;
+
+  w.document.open();
+  w.document.write(html);
+  w.document.close();
+  w.focus();
+}
 
 /* CSV – échappage + export UTF-16LE (Excel-friendly) */
 function csvEscape(x: any) {
@@ -539,287 +609,107 @@ export default function AbsencesMatrixOnly() {
     );
   }
 
-  /* Export PDF – synthèse + matrice élèves × disciplines
-     (utilise jsPDF + jspdf-autotable)
-  */
+  /* Export PDF via fenêtre d'impression – matrice élèves × disciplines */
   function exportMatrixPdf() {
     if (!matrix || !globalStats) return;
 
-    try {
-      // A4 paysage
-      const doc = new jsPDF({
-        orientation: "landscape",
-        unit: "mm",
-        format: "a4",
-      });
-
-      const pageWidth = doc.internal.pageSize.getWidth();
-      const pageHeight = doc.internal.pageSize.getHeight();
-      const marginLeft = 14;
-      const marginRight = 14;
-      const centerX = pageWidth / 2;
-      const bottomY = pageHeight - 20;
-
-      const periodLabel = (() => {
-        if (selectedPeriodId) {
-          const p = periods.find((pp) => pp.id === selectedPeriodId);
-          if (p) {
-            return (
-              p.label ||
-              p.short_label ||
-              p.code ||
-              `${p.start_date} → ${p.end_date}`
-            );
-          }
+    const periodLabel = (() => {
+      if (selectedPeriodId) {
+        const p = periods.find((pp) => pp.id === selectedPeriodId);
+        if (p) {
+          return (
+            p.label ||
+            p.short_label ||
+            p.code ||
+            `${p.start_date} → ${p.end_date}`
+          );
         }
-        if (from || to) return `${from || "début"} → ${to || "fin"}`;
-        return "Toute la période";
-      })();
-
-      const classLabel = selectedClass
-        ? `${selectedClass.name} (${selectedClass.level})`
-        : "Toutes classes";
-
-      const title = "Matrice des absences — Synthèse";
-      let y = 18;
-
-      const valueLabel = (min: number) =>
-        rubrique === "absent" ? hoursLabel(min) : `${nf.format(min)} min`;
-
-      /* ───── PAGE 1 : SYNTHÈSE ───── */
-      doc.setFontSize(16);
-      doc.setFont("helvetica", "bold");
-      doc.text(title, centerX, y, { align: "center" });
-
-      y += 8;
-      doc.setFontSize(10);
-      doc.setFont("helvetica", "normal");
-      doc.text(
-        `Année scolaire : ${selectedAcademicYear || "Toutes"}`,
-        marginLeft,
-        y
-      );
-      y += 5;
-      doc.text(`Classe : ${classLabel}`, marginLeft, y);
-      y += 5;
-      doc.text(
-        `Période : ${periodLabel}  •  Rubrique : ${
-          rubrique === "absent" ? "Absences (heures)" : "Retards (minutes)"
-        }`,
-        marginLeft,
-        y
-      );
-
-      y += 8;
-      doc.setDrawColor(220);
-      doc.line(marginLeft, y, pageWidth - marginRight, y);
-      y += 6;
-
-      // chiffres clés
-      doc.setFontSize(11);
-      doc.setFont("helvetica", "bold");
-      doc.text("Chiffres clés", marginLeft, y);
-      y += 5;
-      doc.setFontSize(10);
-      doc.setFont("helvetica", "normal");
-      doc.text(
-        `Nombre d'élèves : ${globalStats.studentsCount}`,
-        marginLeft,
-        y
-      );
-      y += 5;
-      doc.text(
-        `Nombre de disciplines : ${globalStats.subjectsCount}`,
-        marginLeft,
-        y
-      );
-      y += 5;
-      doc.text(
-        `Total sur la période : ${valueLabel(globalStats.totalMinutesAll)}`,
-        marginLeft,
-        y
-      );
-      y += 5;
-      doc.text(
-        `Moyenne par élève : ${valueLabel(globalStats.avgPerStudent)}`,
-        marginLeft,
-        y
-      );
-      y += 5;
-      doc.text(
-        `Moyenne par discipline : ${valueLabel(globalStats.avgPerSubject)}`,
-        marginLeft,
-        y
-      );
-
-      y += 8;
-      doc.setDrawColor(240);
-      doc.line(marginLeft, y, pageWidth - marginRight, y);
-      y += 6;
-
-      // Top élèves
-      doc.setFontSize(11);
-      doc.setFont("helvetica", "bold");
-      doc.text("Élèves les plus concernés", marginLeft, y);
-      y += 5;
-      doc.setFontSize(9);
-      doc.setFont("helvetica", "normal");
-
-      if (!globalStats.topStudents.length) {
-        doc.text("Aucun élève concerné sur la période.", marginLeft + 2, y);
-        y += 6;
-      } else {
-        globalStats.topStudents.forEach((s, idx) => {
-          const val = valueLabel(s.total);
-          doc.text(
-            `${idx + 1}. ${s.full_name} — ${val}`,
-            marginLeft + 2,
-            y
-          );
-          y += 5;
-        });
       }
+      if (from || to) return `${from || "début"} → ${to || "fin"}`;
+      return "Toute la période";
+    })();
 
-      y += 4;
-      doc.setDrawColor(240);
-      doc.line(marginLeft, y, pageWidth - marginRight, y);
-      y += 6;
+    const classLabel = selectedClass
+      ? `${selectedClass.name} (${selectedClass.level})`
+      : selectedLevel
+      ? `Niveau ${selectedLevel}`
+      : "Classe non précisée";
 
-      // Top disciplines
-      doc.setFontSize(11);
-      doc.setFont("helvetica", "bold");
-      doc.text("Disciplines les plus concernées", marginLeft, y);
-      y += 5;
-      doc.setFontSize(9);
-      doc.setFont("helvetica", "normal");
+    const rubriqueLabel =
+      rubrique === "absent" ? "Absences (heures)" : "Retards (minutes)";
 
-      if (!globalStats.topSubjects.length) {
-        doc.text(
-          "Aucune discipline concernée sur la période.",
-          marginLeft + 2,
-          y
-        );
-        y += 6;
-      } else {
-        globalStats.topSubjects.forEach((s, idx) => {
-          const val = valueLabel(s.total);
-          doc.text(
-            `${idx + 1}. ${s.name} — ${val}`,
-            marginLeft + 2,
-            y
-          );
-          y += 5;
-        });
-      }
+    const headerHtml = `
+      <thead>
+        <tr>
+          <th>N°</th>
+          <th>Élève</th>
+          ${matrix.subjects.map((s) => `<th>${s.name}</th>`).join("")}
+          <th>Total</th>
+        </tr>
+      </thead>
+    `;
 
-      y = Math.min(y + 10, bottomY);
-      doc.setFontSize(8);
-      doc.setTextColor(120);
-      doc.text(
-        "Document généré automatiquement par Mon Cahier — Synthèse des absences/retards",
-        marginLeft,
-        y
-      );
-
-      /* ───── PAGES MATRICE ───── */
-
-      const head = [
-        "N°",
-        "Élève",
-        ...matrix.subjects.map((s) => s.name),
-        "Total",
-      ];
-
-      const body = matrix.students.map((stu, rowIndex) => {
-        const row: string[] = [];
-        row.push(String(stu.rank ?? rowIndex + 1));
-        row.push(stu.full_name);
-
+    const bodyHtml = matrix.students
+      .map((stu, idx) => {
         let totalMinutes = 0;
-        for (const subj of matrix.subjects) {
-          const minutes = matrixIndex[stu.id]?.[subj.id] || 0;
-          totalMinutes += minutes;
-          const cell =
-            rubrique === "absent"
-              ? hoursLabel(minutes)
-              : minutes
-              ? `${nf.format(minutes)}`
-              : "";
-          row.push(cell);
-        }
+        const cellsHtml = matrix.subjects
+          .map((subj) => {
+            const minutes = matrixIndex[stu.id]?.[subj.id] || 0;
+            totalMinutes += minutes;
+            const display =
+              rubrique === "absent" ? hoursLabel(minutes) : nf.format(minutes);
+            return `<td style="text-align:right;">${display}</td>`;
+          })
+          .join("");
 
-        const totalCell =
+        const totalDisplay =
           rubrique === "absent"
             ? hoursLabel(totalMinutes)
-            : `${nf.format(totalMinutes)}`;
-        row.push(totalCell);
+            : `${nf.format(totalMinutes)} min`;
 
-        return row;
-      });
+        return `
+        <tr>
+          <td>${stu.rank ?? idx + 1}</td>
+          <td>${stu.full_name}</td>
+          ${cellsHtml}
+          <td style="text-align:right;">${totalDisplay}</td>
+        </tr>
+      `;
+      })
+      .join("");
 
-      doc.addPage();
-      (doc as any).autoTable({
-        head: [head],
-        body,
-        startY: 26,
-        styles: { fontSize: 7, cellPadding: 1, valign: "middle" },
-        headStyles: {
-          fontStyle: "bold",
-          halign: "center",
-          fillColor: [16, 185, 129],
-          textColor: 255,
-        },
-        columnStyles: {
-          0: { cellWidth: 10, halign: "center" },
-          1: { cellWidth: 45 },
-        },
-        margin: { left: marginLeft, right: marginRight, top: 26, bottom: 16 },
-        didDrawPage: (data: any) => {
-          doc.setFontSize(12);
-          doc.setFont("helvetica", "bold");
-          doc.setTextColor(0);
-          doc.text(
-            rubrique === "absent"
-              ? "Matrice des absences (heures) — Élèves × Disciplines"
-              : "Matrice des retards (minutes) — Élèves × Disciplines",
-            centerX,
-            14,
-            { align: "center" }
-          );
+    const valueLabel = (min: number) =>
+      rubrique === "absent" ? hoursLabel(min) : `${nf.format(min)} min`;
 
-          doc.setFontSize(9);
-          doc.setFont("helvetica", "normal");
-          doc.text(`Classe : ${classLabel}`, marginLeft, 18);
-          doc.text(`Période : ${periodLabel}`, marginLeft, 22);
+    const totalsRowCells = matrix.subjects
+      .map((subj) => {
+        const minutes = subjectTotals.get(subj.id) || 0;
+        const display = valueLabel(minutes);
+        return `<td style="text-align:right;">${display}</td>`;
+      })
+      .join("");
 
-          const pageNumber = data.pageNumber;
-          const totalPages = (doc as any).getNumberOfPages?.() ?? pageNumber;
-          const footerY = pageHeight - 10;
+    const footerHtml = `
+      <tfoot>
+        <tr>
+          <td colspan="2">Total</td>
+          ${totalsRowCells}
+          <td style="text-align:right;">${valueLabel(
+            globalStats.totalMinutesAll
+          )}</td>
+        </tr>
+      </tfoot>
+    `;
 
-          doc.setFontSize(8);
-          doc.setTextColor(120);
-          doc.text(
-            "Document généré automatiquement par Mon Cahier — Matrice des absences/retards",
-            marginLeft,
-            footerY
-          );
-          doc.text(`Page ${pageNumber} / ${totalPages}`, centerX, footerY, {
-            align: "center",
-          });
-        },
-      });
+    const tableHtml = `<table>${headerHtml}<tbody>${bodyHtml}</tbody>${footerHtml}</table>`;
 
-      const filename = `matrice_${rubrique}_${from || "debut"}_${
-        to || "fin"
-      }.pdf`;
-      doc.save(filename);
-    } catch (err: any) {
-      console.error("[Absences] erreur export PDF", err);
-      alert(
-        "Export PDF indisponible : " +
-          (err?.message || "voir la console du navigateur pour le détail.")
-      );
-    }
+    openPdfPrintWindow(
+      `Matrice des ${
+        rubrique === "absent" ? "absences" : "retards"
+      } — élèves × disciplines`,
+      `Classe : ${classLabel} • Période : ${periodLabel} • Rubrique : ${rubriqueLabel}`,
+      tableHtml
+    );
   }
 
   const hasClass = Boolean(selectedClassId);
@@ -992,7 +882,7 @@ export default function AbsencesMatrixOnly() {
             <Download className="h-4 w-4" /> Export CSV
           </GhostButton>
           <GhostButton onClick={exportMatrixPdf} disabled={!matrix}>
-            <FileText className="h-4 w-4" /> Export PDF (matrice)
+            <FileText className="h-4 w-4" /> Imprimer / PDF (matrice)
           </GhostButton>
         </div>
       </Card>

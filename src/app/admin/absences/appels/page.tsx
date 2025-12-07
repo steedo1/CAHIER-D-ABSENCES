@@ -14,10 +14,6 @@ import {
   FileText,
 } from "lucide-react";
 
-// ✅ PDF
-import jsPDF from "jspdf";
-import "jspdf-autotable";
-
 type MonitorStatus = "missing" | "late" | "ok";
 
 type MonitorRow = {
@@ -74,6 +70,80 @@ function urlBase64ToUint8Array(base64String: string) {
     outputArray[i] = rawData.charCodeAt(i);
   }
   return outputArray;
+}
+
+/** Fenêtre imprimable (comme sur la page Statistiques) */
+function openPrintWindow(title: string, subtitle: string, tableHtml: string) {
+  if (typeof window === "undefined") return;
+
+  const w = window.open("", "_blank", "width=1024,height=768");
+
+  if (!w) {
+    alert(
+      "Votre navigateur a bloqué la fenêtre d'impression. " +
+        "Autorisez les fenêtres pop-up pour ce site."
+    );
+    return;
+  }
+
+  const html = `<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <title>${title}</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      margin: 24px;
+      color: #0f172a;
+    }
+    h1 {
+      font-size: 20px;
+      margin: 0 0 4px;
+    }
+    h2 {
+      font-size: 12px;
+      margin: 0 0 16px;
+      color: #6b7280;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 11px;
+    }
+    th, td {
+      border: 1px solid #e5e7eb;
+      padding: 4px 6px;
+      text-align: left;
+      vertical-align: top;
+    }
+    th {
+      background-color: #f3f4f6;
+    }
+    tfoot td {
+      font-weight: 600;
+      background-color: #f9fafb;
+    }
+  </style>
+</head>
+<body>
+  <h1>${title}</h1>
+  <h2>${subtitle}</h2>
+  ${tableHtml}
+  <script>
+    window.addEventListener('load', function () {
+      window.print();
+      setTimeout(function () { window.close(); }, 300);
+    });
+  </script>
+</body>
+</html>`;
+
+  w.document.open();
+  w.document.write(html);
+  w.document.close();
+  w.focus();
 }
 
 function Input(p: React.InputHTMLAttributes<HTMLInputElement>) {
@@ -163,6 +233,7 @@ export default function SurveillanceAppelsPage() {
 
     setPushSupported(true);
 
+    // Si le site est déjà bloqué dans le navigateur, on le signale tout de suite
     if (Notification.permission === "denied") {
       setPushStatus("denied");
       setPushError(
@@ -171,6 +242,7 @@ export default function SurveillanceAppelsPage() {
       return;
     }
 
+    // Tenter de détecter une subscription existante
     (async () => {
       try {
         const reg =
@@ -217,7 +289,8 @@ export default function SurveillanceAppelsPage() {
     try {
       setPushStatus("subscribing");
 
-      let permission = Notification.permission;
+      // 1️⃣ Gestion des permissions
+      let permission = Notification.permission; // "default" | "granted" | "denied"
 
       if (permission === "denied") {
         setPushStatus("denied");
@@ -239,6 +312,7 @@ export default function SurveillanceAppelsPage() {
         return;
       }
 
+      // 2️⃣ Récupération / enregistrement du service worker
       let reg = await navigator.serviceWorker.getRegistration();
       if (!reg) {
         reg = await navigator.serviceWorker.register("/sw.js");
@@ -249,6 +323,7 @@ export default function SurveillanceAppelsPage() {
         );
       }
 
+      // 3️⃣ Subscription push
       let sub = await reg.pushManager.getSubscription();
       if (!sub) {
         sub = await reg.pushManager.subscribe({
@@ -260,7 +335,7 @@ export default function SurveillanceAppelsPage() {
       const res = await fetch("/api/push/subscribe", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        credentials: "include",
+        credentials: "include", // important pour associer au profil connecté
         body: JSON.stringify({
           platform: "web",
           device_id: sub.endpoint,
@@ -287,6 +362,7 @@ export default function SurveillanceAppelsPage() {
           "Erreur lors de l’activation des notifications. Vérifiez le HTTPS et le service worker."
       );
     } finally {
+      // Filet de sécurité : on ne laisse jamais "subscribing" bloqué
       setPushStatus((prev) => (prev === "subscribing" ? "idle" : prev));
     }
   }
@@ -296,6 +372,7 @@ export default function SurveillanceAppelsPage() {
     setRowsState({ loading: true, error: null, data: null });
     try {
       const qs = new URLSearchParams({ from, to });
+      // on laisse le filtre de statut côté front pour l’instant
       const res = await fetch(`/api/admin/attendance/monitor?${qs.toString()}`, {
         cache: "no-store",
       });
@@ -351,7 +428,7 @@ export default function SurveillanceAppelsPage() {
 
   function setThisWeek() {
     const today = new Date();
-    const day = today.getDay();
+    const day = today.getDay(); // 0=dim
     const diff = day === 0 ? -6 : 1 - day;
     const monday = new Date(today);
     monday.setDate(today.getDate() + diff);
@@ -391,238 +468,96 @@ export default function SurveillanceAppelsPage() {
     return "";
   }
 
-  /* ───────── Export PDF — Synthèse + grand tableau ───────── */
+  /* ───────── Export "PDF" via fenêtre d’impression (comme Statistiques) ───────── */
   function exportPdf() {
     if (!filteredRows.length) return;
 
-    try {
-      // On part en paysage pour caser toutes les colonnes
-      const doc = new jsPDF({
-        orientation: "landscape",
-        unit: "mm",
-        format: "a4",
-      });
+    const statusLabel =
+      statusFilter === "all"
+        ? "Tous les statuts"
+        : statusFilter === "missing"
+        ? "Appels manquants"
+        : statusFilter === "late"
+        ? "Appels en retard"
+        : "Appels conformes";
 
-      const pageWidth = doc.internal.pageSize.getWidth();
-      const pageHeight = doc.internal.pageSize.getHeight();
-      const marginLeft = 14;
-      const marginRight = 14;
-      const centerX = pageWidth / 2;
+    const teacherLabelText = teacherQuery.trim()
+      ? `Enseignant : ${teacherQuery.trim()}`
+      : "Tous les enseignants";
 
-      /* ───── PAGE 1 : SYNTHÈSE ───── */
-      let y = 18;
+    const headerHtml = `
+      <thead>
+        <tr>
+          <th>Date</th>
+          <th>Créneau</th>
+          <th>Classe</th>
+          <th>Discipline</th>
+          <th>Enseignant</th>
+          <th>Statut</th>
+          <th>Détails</th>
+        </tr>
+      </thead>
+    `;
 
-      doc.setFontSize(16);
-      doc.setFont("helvetica", "bold");
-      doc.text(
-        "Surveillance des appels — Synthèse",
-        centerX,
-        y,
-        { align: "center" }
-      );
-
-      y += 8;
-      doc.setFontSize(10);
-      doc.setFont("helvetica", "normal");
-      doc.text(`Période : ${from} → ${to}`, marginLeft, y);
-      y += 5;
-
-      const statusLabelPdf =
-        statusFilter === "all"
-          ? "Tous les statuts"
-          : statusFilter === "missing"
-          ? "Appels manquants"
-          : statusFilter === "late"
-          ? "Appels en retard"
-          : "Appels conformes";
-
-      const teacherLabelPdf = teacherQuery.trim()
-        ? teacherQuery.trim()
-        : "Tous les enseignants";
-
-      doc.text(`Filtre statut : ${statusLabelPdf}`, marginLeft, y);
-      y += 5;
-      doc.text(`Filtre enseignant : ${teacherLabelPdf}`, marginLeft, y);
-
-      y += 6;
-      doc.setDrawColor(220);
-      doc.line(marginLeft, y, pageWidth - marginRight, y);
-      y += 6;
-
-      const totalSessions = filteredRows.length;
-      const missingCount = filteredRows.filter(
-        (r) => r.status === "missing"
-      ).length;
-      const lateCount = filteredRows.filter(
-        (r) => r.status === "late"
-      ).length;
-      const okCount = filteredRows.filter((r) => r.status === "ok").length;
-
-      const pct = (n: number) =>
-        totalSessions
-          ? `${((n * 100) / totalSessions).toFixed(1).replace(".", ",")} %`
-          : "—";
-
-      doc.setFontSize(11);
-      doc.setFont("helvetica", "bold");
-      doc.text("Chiffres clés sur la sélection", marginLeft, y);
-      y += 5;
-      doc.setFontSize(10);
-      doc.setFont("helvetica", "normal");
-      doc.text(`Nombre total de créneaux : ${totalSessions}`, marginLeft, y);
-      y += 5;
-      doc.text(
-        `Appels manquants : ${missingCount} (${pct(missingCount)})`,
-        marginLeft,
-        y
-      );
-      y += 5;
-      doc.text(
-        `Appels en retard : ${lateCount} (${pct(lateCount)})`,
-        marginLeft,
-        y
-      );
-      y += 5;
-      doc.text(
-        `Appels conformes : ${okCount} (${pct(okCount)})`,
-        marginLeft,
-        y
-      );
-
-      y += 10;
-      doc.setFontSize(9);
-      doc.text(
-        "La page suivante présente le détail de chaque créneau sous forme de tableau.",
-        marginLeft,
-        y
-      );
-
-      const footerY1 = pageHeight - 12;
-      doc.setFontSize(8);
-      doc.setTextColor(120);
-      doc.text(
-        "Document généré automatiquement par Mon Cahier — Surveillance des appels",
-        marginLeft,
-        footerY1
-      );
-      doc.text("Page 1 / 2+", centerX, footerY1, { align: "center" });
-
-      /* ───── PAGES SUIVANTES : TABLEAU COMPLET ───── */
-      doc.addPage();
-
-      const head = [
-        "Date",
-        "Heure / créneau",
-        "Classe",
-        "Discipline",
-        "Enseignant",
-        "Statut",
-        "Origine",
-      ];
-
-      const body = filteredRows.map((r) => {
+    const bodyHtml = filteredRows
+      .map((r, idx) => {
+        const date = dateHumanFR(r.date);
         const period =
           r.period_label ??
           (r.planned_start && r.planned_end
-            ? `${r.planned_start} – ${r.planned_end}`
+            ? `${r.planned_start} → ${r.planned_end}`
             : "—");
 
         const statusText =
           r.status === "missing"
-            ? "Manquant"
+            ? "Appel manquant"
             : r.status === "late"
-            ? `En retard${
+            ? `Appel en retard${
                 typeof r.late_minutes === "number"
                   ? ` (+${r.late_minutes} min)`
                   : ""
               }`
-            : "OK";
+            : "Appel conforme";
 
-        const originText =
+        const origin =
           r.opened_from === "class_device"
-            ? "Appareil classe"
+            ? "appareil classe"
             : r.opened_from === "teacher"
-            ? "Compte enseignant"
+            ? "compte enseignant"
             : "";
 
-        return [
-          dateHumanFR(r.date),
-          period,
-          r.class_label || "—",
-          r.subject_name || "Discipline non renseignée",
-          r.teacher_name || "—",
-          statusText,
-          originText,
-        ];
-      });
+        const detailText =
+          r.status === "missing"
+            ? `Aucun appel détecté${origin ? ` (${origin})` : ""}.`
+            : r.status === "late"
+            ? `Appel réalisé avec retard${
+                typeof r.late_minutes === "number"
+                  ? ` (+${r.late_minutes} min)`
+                  : ""
+              }${origin ? ` (${origin})` : ""}.`
+            : `Appel dans les délais${origin ? ` (${origin})` : ""}.`;
 
-      (doc as any).autoTable({
-        head: [head],
-        body,
-        startY: 24,
-        styles: { fontSize: 7, cellPadding: 1.5, valign: "middle" },
-        headStyles: {
-          fontStyle: "bold",
-          halign: "center",
-          fillColor: [15, 23, 42],
-          textColor: 255,
-        },
-        columnStyles: {
-          0: { cellWidth: 24 },
-          1: { cellWidth: 32 },
-          2: { cellWidth: 24 },
-          3: { cellWidth: 60 },
-          4: { cellWidth: 44 },
-          // 5 & 6 laissent AutoTable gérer la largeur restante
-        },
-        margin: { left: marginLeft, right: marginRight, top: 24, bottom: 16 },
-        didDrawPage: (data: any) => {
-          const pw = doc.internal.pageSize.getWidth();
-          const ph = doc.internal.pageSize.getHeight();
-          const cx = pw / 2;
+        return `
+          <tr>
+            <td>${idx + 1}. ${date}</td>
+            <td>${period}</td>
+            <td>${r.class_label || ""}</td>
+            <td>${r.subject_name || "Discipline non renseignée"}</td>
+            <td>${r.teacher_name}</td>
+            <td>${statusText}</td>
+            <td>${detailText}</td>
+          </tr>
+        `;
+      })
+      .join("");
 
-          doc.setFontSize(12);
-          doc.setFont("helvetica", "bold");
-          doc.setTextColor(0);
-          doc.text(
-            "Surveillance des appels — Détail des créneaux",
-            cx,
-            14,
-            { align: "center" }
-          );
+    const tableHtml = `<table>${headerHtml}<tbody>${bodyHtml}</tbody></table>`;
 
-          doc.setFontSize(9);
-          doc.setFont("helvetica", "normal");
-          doc.text(`Période : ${from} → ${to}`, marginLeft, 18);
-
-          const pageNumber = data.pageNumber;
-          const totalPages = (doc as any).getNumberOfPages?.() ?? pageNumber;
-          const footerY = ph - 10;
-
-          doc.setFontSize(8);
-          doc.setTextColor(120);
-          doc.text(
-            "Document généré automatiquement par Mon Cahier — Surveillance des appels",
-            marginLeft,
-            footerY
-          );
-          doc.text(
-            `Page ${pageNumber} / ${totalPages}`,
-            cx,
-            footerY,
-            { align: "center" }
-          );
-        },
-      });
-
-      const filename = `surveillance_appels_${from}_${to}.pdf`;
-      doc.save(filename);
-    } catch (err) {
-      console.error("[SurveillanceAppels] exportPdf error", err);
-      alert(
-        "Export PDF indisponible. Vérifiez que les librairies jsPDF et jspdf-autotable sont bien installées."
-      );
-    }
+    openPrintWindow(
+      "Surveillance des appels — Tableau des créneaux",
+      `Période du ${from} au ${to} • Statut : ${statusLabel} • ${teacherLabelText}`,
+      tableHtml
+    );
   }
 
   /* ───────── UI ───────── */
