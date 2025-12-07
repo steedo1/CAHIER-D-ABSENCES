@@ -11,6 +11,7 @@ import {
   Bell,
   BellOff,
   Loader2,
+  FileText,
 } from "lucide-react";
 
 type MonitorStatus = "missing" | "late" | "ok";
@@ -391,6 +392,235 @@ export default function SurveillanceAppelsPage() {
     return "";
   }
 
+  /* ───────── Export PDF — Synthèse élégante sur la période + filtres ───────── */
+  async function exportPdf() {
+    if (!filteredRows.length) return;
+    try {
+      const jsPDFModule = await import("jspdf");
+      const JsPDFConstructor =
+        (jsPDFModule as any).jsPDF || (jsPDFModule as any).default;
+
+      const doc = new JsPDFConstructor({
+        orientation: "portrait",
+        unit: "mm",
+        format: "a4",
+      });
+
+      let y = 18;
+
+      // Titre principal
+      doc.setFontSize(16);
+      doc.setFont("helvetica", "bold");
+      doc.text("Surveillance des appels — Rapport consolidé", 105, y, {
+        align: "center",
+      });
+
+      // Contexte (période + filtres)
+      y += 8;
+      doc.setFontSize(10);
+      doc.setFont("helvetica", "normal");
+      doc.text(`Période : ${from} → ${to}`, 14, y);
+      y += 5;
+
+      const statusLabel =
+        statusFilter === "all"
+          ? "Tous les statuts"
+          : statusFilter === "missing"
+          ? "Appels manquants"
+          : statusFilter === "late"
+          ? "Appels en retard"
+          : "Appels conformes";
+
+      doc.text(`Filtre statut : ${statusLabel}`, 14, y);
+      y += 5;
+
+      const teacherLabel = teacherQuery.trim()
+        ? teacherQuery.trim()
+        : "Aucun (tous les enseignants)";
+      doc.text(`Filtre enseignant : ${teacherLabel}`, 14, y);
+
+      y += 6;
+      doc.setDrawColor(220);
+      doc.line(14, y, 196, y);
+      y += 6;
+
+      // Chiffres clés sur la sélection (après filtres)
+      const totalSessions = filteredRows.length;
+      const missingCount = filteredRows.filter(
+        (r) => r.status === "missing"
+      ).length;
+      const lateCount = filteredRows.filter((r) => r.status === "late").length;
+      const okCount = filteredRows.filter((r) => r.status === "ok").length;
+
+      const pct = (n: number) =>
+        totalSessions
+          ? `${((n * 100) / totalSessions)
+              .toFixed(1)
+              .replace(".", ",")} %`
+          : "—";
+
+      doc.setFontSize(11);
+      doc.setFont("helvetica", "bold");
+      doc.text("Chiffres clés sur la sélection", 14, y);
+      y += 5;
+
+      doc.setFontSize(10);
+      doc.setFont("helvetica", "normal");
+      doc.text(`Nombre total de créneaux : ${totalSessions}`, 14, y);
+      y += 5;
+      doc.text(
+        `Appels manquants : ${missingCount} (${pct(missingCount)})`,
+        14,
+        y
+      );
+      y += 5;
+      doc.text(
+        `Appels en retard : ${lateCount} (${pct(lateCount)})`,
+        14,
+        y
+      );
+      y += 5;
+      doc.text(`Appels conformes : ${okCount} (${pct(okCount)})`, 14, y);
+      y += 8;
+
+      doc.setDrawColor(240);
+      doc.line(14, y, 196, y);
+      y += 6;
+
+      // Top enseignants (les plus "sensibles")
+      const teacherMap = new Map<
+        string,
+        { missing: number; late: number; ok: number; total: number }
+      >();
+      for (const r of filteredRows) {
+        const key = r.teacher_name || "Enseignant non renseigné";
+        const stats =
+          teacherMap.get(key) || { missing: 0, late: 0, ok: 0, total: 0 };
+        stats.total++;
+        if (r.status === "missing") stats.missing++;
+        else if (r.status === "late") stats.late++;
+        else if (r.status === "ok") stats.ok++;
+        teacherMap.set(key, stats);
+      }
+
+      const topTeachers = Array.from(teacherMap.entries())
+        .sort(
+          (a, b) =>
+            b[1].missing +
+            b[1].late -
+            (a[1].missing + a[1].late) // priorité au "risque"
+        )
+        .slice(0, 5);
+
+      doc.setFontSize(11);
+      doc.setFont("helvetica", "bold");
+      doc.text("Enseignants les plus concernés", 14, y);
+      y += 5;
+      doc.setFontSize(9);
+      doc.setFont("helvetica", "normal");
+
+      if (!topTeachers.length) {
+        doc.text(
+          "Aucun créneau sur la sélection actuelle (après filtres).",
+          16,
+          y
+        );
+        y += 6;
+      } else {
+        topTeachers.forEach(([name, s], idx) => {
+          const line = `${idx + 1}. ${name} — Manquants: ${
+            s.missing
+          }, Retards: ${s.late}, Conformes: ${s.ok}`;
+          doc.text(line, 16, y);
+          y += 5;
+          if (y > 270) {
+            doc.addPage();
+            y = 20;
+          }
+        });
+      }
+
+      y += 4;
+      doc.setDrawColor(240);
+      doc.line(14, y, 196, y);
+      y += 6;
+
+      // Détail de tous les créneaux sensibles (missing/late) sur la sélection filtrée
+      const criticalRows = filteredRows.filter(
+        (r) => r.status === "missing" || r.status === "late"
+      );
+
+      doc.setFontSize(11);
+      doc.setFont("helvetica", "bold");
+      doc.text(
+        "Détail des créneaux manquants ou en retard (après filtres)",
+        14,
+        y
+      );
+      y += 5;
+      doc.setFontSize(8);
+      doc.setFont("helvetica", "normal");
+
+      if (!criticalRows.length) {
+        doc.text(
+          "Aucun appel manquant ou en retard sur la sélection filtrée.",
+          16,
+          y
+        );
+        y += 6;
+      } else {
+        criticalRows.forEach((r, idx) => {
+          const line1 = `${idx + 1}. ${dateHumanFR(r.date)} — ${
+            r.class_label || "Classe ?"
+          } — ${r.subject_name || "Discipline ?"
+          }`;
+          const statusLabelRow =
+            r.status === "missing"
+              ? "Appel manquant"
+              : r.status === "late"
+              ? `Appel en retard${
+                  typeof r.late_minutes === "number"
+                    ? ` (+${r.late_minutes} min)`
+                    : ""
+                }`
+              : "OK";
+          const line2 = `   Enseignant : ${r.teacher_name} • ${statusLabelRow}`;
+
+          doc.text(line1, 16, y);
+          y += 4;
+          doc.text(line2, 16, y);
+          y += 5;
+
+          if (y > 280) {
+            doc.addPage();
+            y = 20;
+          }
+        });
+      }
+
+      y += 8;
+      if (y > 285) {
+        doc.addPage();
+        y = 20;
+      }
+      doc.setFontSize(8);
+      doc.setTextColor(120);
+      doc.text(
+        "Document généré automatiquement par Mon Cahier — Surveillance des appels",
+        14,
+        y
+      );
+
+      const filename = `surveillance_appels_${from}_${to}.pdf`;
+      doc.save(filename);
+    } catch (err) {
+      console.error("[SurveillanceAppels] exportPdf error", err);
+      alert(
+        "Export PDF indisponible. Vérifiez que la librairie jsPDF est bien installée."
+      );
+    }
+  }
+
   return (
     <main className="min-h-screen bg-slate-50/80 p-4 md:p-6 space-y-6">
       <header className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
@@ -584,14 +814,25 @@ export default function SurveillanceAppelsPage() {
           <span>
             Période active : <strong>{from}</strong> → <strong>{to}</strong>
           </span>
-          <button
-            type="button"
-            onClick={loadRows}
-            className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100"
-          >
-            <RefreshCw className="h-3 w-3" />
-            Actualiser
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={loadRows}
+              className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100"
+            >
+              <RefreshCw className="h-3 w-3" />
+              Actualiser
+            </button>
+            <button
+              type="button"
+              onClick={exportPdf}
+              disabled={!filteredRows.length}
+              className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-800 hover:bg-emerald-100 disabled:opacity-60 disabled:cursor-not-allowed"
+            >
+              <FileText className="h-3 w-3" />
+              Export PDF
+            </button>
+          </div>
         </div>
       </section>
 

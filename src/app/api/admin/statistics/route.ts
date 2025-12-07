@@ -1,4 +1,3 @@
-// src/app/api/admin/statistics/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
@@ -26,10 +25,17 @@ async function tableExists(db: any, name: string) {
   return !error;
 }
 /** Pour un subjects.id, renvoie tous les IDs possibles pour sessions.subject_id */
-async function resolveSessionSubjectIds(db: any, baseSubjectId: string, institutionId: string | null): Promise<string[]> {
+async function resolveSessionSubjectIds(
+  db: any,
+  baseSubjectId: string,
+  institutionId: string | null
+): Promise<string[]> {
   const ids = new Set<string>([baseSubjectId]);
   try {
-    let q = db.from("institution_subjects").select("id, subject_id").eq("subject_id", baseSubjectId);
+    let q = db
+      .from("institution_subjects")
+      .select("id, subject_id")
+      .eq("subject_id", baseSubjectId);
     if (institutionId) q = q.eq("institution_id", institutionId);
     const { data: links } = await q;
     for (const l of links || []) ids.add(String(l.id));
@@ -37,7 +43,8 @@ async function resolveSessionSubjectIds(db: any, baseSubjectId: string, institut
   return Array.from(ids);
 }
 const pad2 = (n: number) => String(n).padStart(2, "0");
-const uniq = <T,>(arr: T[]) => Array.from(new Set((arr || []).filter(Boolean))) as T[];
+const uniq = <T,>(arr: T[]) =>
+  Array.from(new Set((arr || []).filter(Boolean))) as T[];
 
 /* ───────── helpers HH:MM / dates (Abidjan) ───────── */
 function hmToMin(hhmm: string) {
@@ -49,6 +56,35 @@ function minToHM(min: number) {
   const m = min % 60;
   return `${pad2(h)}:${pad2(m)}`;
 }
+
+/** Différence (en minutes) entre startISO et actualISO (si null → 0) */
+function diffMinutes(startISO: string, actualISO: string | null) {
+  try {
+    const start = new Date(startISO);
+    const end = actualISO ? new Date(actualISO) : start;
+    const diffMs = end.getTime() - start.getTime();
+    return Math.floor(diffMs / 60000);
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * Minutes réellement effectuées = minutes prévues − retard (premier appel − heure prévue)
+ * (tout est borné à 0 pour éviter les valeurs négatives)
+ */
+function effectiveMinutesFromSession(
+  expectedMinutes: number,
+  startISO: string,
+  actualISO: string | null
+) {
+  const planned = Math.max(0, Math.round(expectedMinutes || 0));
+  const delta = diffMinutes(startISO, actualISO);
+  const lateness = Math.max(0, delta);
+  const eff = Math.max(0, planned - lateness);
+  return eff;
+}
+
 function rangeDates(from: string, to: string): string[] {
   const [fy, fm, fd] = from.split("-").map(Number);
   const [ty, tm, td] = to.split("-").map(Number);
@@ -78,10 +114,16 @@ function buildUniformSlots(startHour: number, endHour: number, slotMin: number) 
   return out;
 }
 /** ancre l’arrondi sur startHour et coupe hors plage */
-function bucketToSlotStartAligned(h: number, min: number, slotMin: number, startHour: number, endHour: number): string | null {
+function bucketToSlotStartAligned(
+  h: number,
+  min: number,
+  slotMin: number,
+  startHour: number,
+  endHour: number
+): string | null {
   const t = h * 60 + min;
   const first = startHour * 60;
-  const last  = endHour   * 60;
+  const last = endHour * 60;
   if (t < first || t >= last) return null;
   const k = Math.floor((t - first) / slotMin);
   const v = first + k * slotMin;
@@ -89,23 +131,28 @@ function bucketToSlotStartAligned(h: number, min: number, slotMin: number, start
 }
 
 /* ───────── slots établissement (institution_periods) ───────── */
-async function buildInstitutionSlots(srv: ReturnType<typeof getSupabaseServiceClient>, institutionId: string) {
+async function buildInstitutionSlots(
+  srv: ReturnType<typeof getSupabaseServiceClient>,
+  institutionId: string
+) {
   const { data: per, error } = await srv
     .from("institution_periods")
     .select("weekday, period_no, label, start_time, end_time")
     .eq("institution_id", institutionId)
-    .order("weekday",{ascending:true})
-    .order("period_no",{ascending:true});
+    .order("weekday", { ascending: true })
+    .order("period_no", { ascending: true });
   if (error) throw new Error(error.message);
 
   // Unifie par heure de début (HH:MM) — on conserve le premier end rencontré
   const firstForStart = new Map<string, { start: string; end: string }>();
   for (const p of per || []) {
-    const s = String(p.start_time || "08:00:00").slice(0,5);
-    const e = String(p.end_time   || "09:00:00").slice(0,5);
+    const s = String(p.start_time || "08:00:00").slice(0, 5);
+    const e = String(p.end_time || "09:00:00").slice(0, 5);
     if (!firstForStart.has(s)) firstForStart.set(s, { start: s, end: e });
   }
-  return Array.from(firstForStart.values()).sort((a,b)=>a.start.localeCompare(b.start));
+  return Array.from(firstForStart.values()).sort((a, b) =>
+    a.start.localeCompare(b.start)
+  );
 }
 
 /* ───────────────────────────────────── */
@@ -115,20 +162,33 @@ export async function GET(req: NextRequest) {
 
   try {
     const { searchParams } = new URL(req.url);
-    const mode = (searchParams.get("mode") || "summary") as "summary" | "detail" | "timesheet";
+    const mode = (searchParams.get("mode") || "summary") as
+      | "summary"
+      | "detail"
+      | "timesheet";
     const from = searchParams.get("from");
     const to = searchParams.get("to");
     const subject_id = searchParams.get("subject_id") || null;
     const teacher_id = searchParams.get("teacher_id") || null;
 
-    if (!from || !to) return NextResponse.json({ error: "from & to requis (YYYY-MM-DD)" }, { status: 400 });
+    if (!from || !to)
+      return NextResponse.json(
+        { error: "from & to requis (YYYY-MM-DD)" },
+        { status: 400 }
+      );
     const { fromISO, toISOExclusive } = toDayRange(from, to);
 
     // Établissement de l’utilisateur courant (RLS)
-    const { data: { user } } = await rls.auth.getUser();
+    const {
+      data: { user },
+    } = await rls.auth.getUser();
     let inst: string | null = null;
     if (user) {
-      const { data: me } = await rls.from("profiles").select("institution_id").eq("id", user.id).maybeSingle();
+      const { data: me } = await rls
+        .from("profiles")
+        .select("institution_id")
+        .eq("id", user.id)
+        .maybeSingle();
       inst = (me?.institution_id as string) || null;
     }
 
@@ -136,22 +196,34 @@ export async function GET(req: NextRequest) {
     if (mode === "timesheet") {
       // ... (inchangé, je ne répète pas les commentaires)
       const usePeriods = searchParams.get("use_periods") === "1";
-      const slotMin   = Math.max(1, parseInt(searchParams.get("slot") || "60", 10));
-      const startHour = Math.min(23, Math.max(0, parseInt(searchParams.get("start_hour") || "7", 10)));
-      const endHour   = Math.min(24, Math.max(1, parseInt(searchParams.get("end_hour") || "18", 10)));
+      const slotMin = Math.max(1, parseInt(searchParams.get("slot") || "60", 10));
+      const startHour = Math.min(
+        23,
+        Math.max(0, parseInt(searchParams.get("start_hour") || "7", 10))
+      );
+      const endHour = Math.min(
+        24,
+        Math.max(1, parseInt(searchParams.get("end_hour") || "18", 10))
+      );
 
       const dates = rangeDates(from, to);
 
       let instForSlots = inst;
       if (usePeriods && !instForSlots) {
-        const { data: profInst } = await srv.from("profiles").select("institution_id").eq("id", teacher_id).maybeSingle();
+        const { data: profInst } = await srv
+          .from("profiles")
+          .select("institution_id")
+          .eq("id", teacher_id)
+          .maybeSingle();
         instForSlots = (profInst?.institution_id as string) || null;
       }
 
       const subjectsSet = new Set<string>();
       let teacherName: string | null = null;
       {
-        let q = srv.from("teacher_subjects").select("profile_id, subject_name, teacher_name");
+        let q = srv
+          .from("teacher_subjects")
+          .select("profile_id, subject_name, teacher_name");
         if (inst) q = q.eq("institution_id", inst);
         const { data: ts } = await q.eq("profile_id", teacher_id);
         for (const r of ts || []) {
@@ -166,47 +238,72 @@ export async function GET(req: NextRequest) {
           const { data: p } = await srv
             .from("profiles")
             .select("id, display_name, first_name, last_name, email, phone")
-            .eq("id", teacher_id).maybeSingle();
+            .eq("id", teacher_id)
+            .maybeSingle();
           if (p) teacherName = niceName(p);
         }
       }
 
       const sessionsTable =
-        (await tableExists(srv, "teacher_sessions")) ? "teacher_sessions" :
-        (await tableExists(srv, "class_sessions"))   ? "class_sessions"   : "sessions";
+        (await tableExists(srv, "teacher_sessions")) ?
+          "teacher_sessions" :
+          (await tableExists(srv, "class_sessions")) ?
+            "class_sessions" :
+            "sessions";
 
-      let qCT = srv.from("class_teachers").select("class_id, subject_id").eq("teacher_id", teacher_id);
+      let qCT = srv
+        .from("class_teachers")
+        .select("class_id, subject_id")
+        .eq("teacher_id", teacher_id);
       if (inst) qCT = qCT.eq("institution_id", inst);
       const { data: ctPairs } = await qCT;
-      const pairKey = (c?: string|null, s?: string|null) => `${c ?? ""}|${s ?? ""}`;
-      const allowedPairs = new Set<string>((ctPairs || []).map(r => pairKey(String(r.class_id), r.subject_id ? String(r.subject_id) : null)));
+      const pairKey = (c?: string | null, s?: string | null) =>
+        `${c ?? ""}|${s ?? ""}`;
+      const allowedPairs = new Set<string>(
+        (ctPairs || []).map((r) =>
+          pairKey(String(r.class_id), r.subject_id ? String(r.subject_id) : null)
+        )
+      );
 
-      let q1 = srv.from(sessionsTable)
-        .select("id, teacher_id, class_id, subject_id, started_at, actual_call_at, expected_minutes, institution_id, created_by")
+      let q1 = srv
+        .from(sessionsTable)
+        .select(
+          "id, teacher_id, class_id, subject_id, started_at, actual_call_at, expected_minutes, institution_id, created_by"
+        )
         .eq("teacher_id", teacher_id)
         .gte("started_at", fromISO)
         .lt("started_at", toISOExclusive);
       if (inst) q1 = q1.eq("institution_id", inst);
       const { data: sOwn } = await q1;
 
-      const classIdsForTeacher = Array.from(new Set((ctPairs || []).map(r => String(r.class_id))));
+      const classIdsForTeacher = Array.from(
+        new Set((ctPairs || []).map((r) => String(r.class_id)))
+      );
       let sFromClass: any[] = [];
       if (classIdsForTeacher.length) {
-        let q2 = srv.from(sessionsTable)
-          .select("id, teacher_id, class_id, subject_id, started_at, actual_call_at, expected_minutes, institution_id, created_by")
+        let q2 = srv
+          .from(sessionsTable)
+          .select(
+            "id, teacher_id, class_id, subject_id, started_at, actual_call_at, expected_minutes, institution_id, created_by"
+          )
           .in("class_id", classIdsForTeacher)
           .gte("started_at", fromISO)
           .lt("started_at", toISOExclusive);
         if (inst) q2 = q2.eq("institution_id", inst);
         const { data: sRaw } = await q2;
-        sFromClass = (sRaw || []).filter(r =>
-          allowedPairs.has(pairKey(r.class_id ? String(r.class_id) : null, r.subject_id ? String(r.subject_id) : null))
+        sFromClass = (sRaw || []).filter((r) =>
+          allowedPairs.has(
+            pairKey(
+              r.class_id ? String(r.class_id) : null,
+              r.subject_id ? String(r.subject_id) : null
+            )
+          )
         );
       }
 
       const byId = new Map<string, any>();
-      for (const s of (sOwn || [])) byId.set(String(s.id), s);
-      for (const s of (sFromClass || [])) byId.set(String(s.id), s);
+      for (const s of sOwn || []) byId.set(String(s.id), s);
+      for (const s of sFromClass || []) byId.set(String(s.id), s);
       const sessions = Array.from(byId.values()).map((s: any) => ({
         id: String(s.id),
         class_id: s.class_id ? String(s.class_id) : null,
@@ -218,17 +315,31 @@ export async function GET(req: NextRequest) {
         created_by: s.created_by ? String(s.created_by) : null,
       }));
 
-      const classIdsFromSessions = Array.from(new Set(sessions.map(s => s.class_id).filter(Boolean))) as string[];
+      const classIdsFromSessions = Array.from(
+        new Set(sessions.map((s) => s.class_id).filter(Boolean))
+      ) as string[];
       let classes: { id: string; label: string }[] = [];
       if (classIdsForTeacher.length) {
-        const { data: clsA } = await srv.from("classes").select("id,label").in("id", classIdsForTeacher);
-        classes = (clsA || []).map((c: any) => ({ id: String(c.id), label: String(c.label ?? "") }));
+        const { data: clsA } = await srv
+          .from("classes")
+          .select("id,label")
+          .in("id", classIdsForTeacher);
+        classes = (clsA || []).map((c: any) => ({
+          id: String(c.id),
+          label: String(c.label ?? ""),
+        }));
       }
-      const known = new Set(classes.map(c => c.id));
-      const missing = classIdsFromSessions.filter(id => !known.has(id));
-      if (missing.length) {
-        const { data: clsB } = await srv.from("classes").select("id,label").in("id", missing);
-        const extra = (clsB || []).map((c: any) => ({ id: String(c.id), label: String(c.label ?? "") }));
+      const known = new Set(classes.map((c) => c.id));
+      const missingClasses = classIdsFromSessions.filter((id) => !known.has(id));
+      if (missingClasses.length) {
+        const { data: clsB } = await srv
+          .from("classes")
+          .select("id,label")
+          .in("id", missingClasses);
+        const extra = (clsB || []).map((c: any) => ({
+          id: String(c.id),
+          label: String(c.label ?? ""),
+        }));
         classes = [...classes, ...extra];
       }
       classes.sort((a, b) => a.label.localeCompare(b.label, "fr"));
@@ -241,28 +352,45 @@ export async function GET(req: NextRequest) {
       }
 
       const TZ = "Africa/Abidjan";
-      const fmtYMD = new Intl.DateTimeFormat("en-CA", { timeZone: TZ, year: "numeric", month: "2-digit", day: "2-digit" });
-      const fmtHM  = new Intl.DateTimeFormat("fr-FR", { timeZone: TZ, hour: "2-digit", minute: "2-digit", hour12: false });
+      const fmtYMD = new Intl.DateTimeFormat("en-CA", {
+        timeZone: TZ,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+      });
+      const fmtHM = new Intl.DateTimeFormat("fr-FR", {
+        timeZone: TZ,
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+      });
       const getHM = (d: Date) => {
         const parts = fmtHM.formatToParts(d);
-        const h = parseInt(parts.find(p => p.type === "hour")?.value || "0", 10);
-        const m = parseInt(parts.find(p => p.type === "minute")?.value || "0", 10);
+        const h = parseInt(parts.find((p) => p.type === "hour")?.value || "0", 10);
+        const m = parseInt(
+          parts.find((p) => p.type === "minute")?.value || "0",
+          10
+        );
         return { h, m };
       };
 
-      const classIdSet = new Set(classes.map(c => c.id));
+      const classIdSet = new Set(classes.map((c) => c.id));
       const datesSet = new Set(dates);
       const cells: Record<string, string[]> = {};
-      const cellsMeta: Record<string, { hhmm: string; origin?: "teacher" | "class_device" | "other" }[]> = {};
+      const cellsMeta: Record<
+        string,
+        { hhmm: string; origin?: "teacher" | "class_device" | "other" }[]
+      > = {};
 
-      const slotStarts = slots.map(s => s.start);
+      const slotStarts = slots.map((s) => s.start);
       function slotStartForHM(hhmm: string): string | null {
         if (!hhmm) return null;
         if (slotStarts.includes(hhmm)) return hhmm;
         if (usePeriods) {
           const t = hmToMin(hhmm);
           for (const sl of slots) {
-            const a = hmToMin(sl.start), b = hmToMin(sl.end);
+            const a = hmToMin(sl.start),
+              b = hmToMin(sl.end);
             if (t >= a && t < b) return sl.start;
           }
           return null;
@@ -300,17 +428,21 @@ export async function GET(req: NextRequest) {
         if (!cells[key].includes(clickHM)) cells[key].push(clickHM);
 
         let origin: "teacher" | "class_device" | "other" = "other";
-        if (s.created_by && s.teacher_id && s.created_by === s.teacher_id) origin = "teacher";
+        if (s.created_by && s.teacher_id && s.created_by === s.teacher_id)
+          origin = "teacher";
         else if (s.created_by) origin = "class_device";
 
-        if (!cellsMeta[key].some(m => m.hhmm === clickHM)) {
+        if (!cellsMeta[key].some((m) => m.hhmm === clickHM)) {
           cellsMeta[key].push({ hhmm: clickHM, origin });
         }
       }
 
       for (const k of Object.keys(cells)) cells[k].sort((a, b) => a.localeCompare(b));
 
-      const total_minutes = sessions.reduce((acc, s) => acc + (s.expected_minutes || 0), 0);
+      const total_minutes = sessions.reduce(
+        (acc, s) => acc + (s.expected_minutes || 0),
+        0
+      );
 
       return NextResponse.json({
         teacher: {
@@ -333,10 +465,14 @@ export async function GET(req: NextRequest) {
     let qUR = srv.from("user_roles").select("profile_id").eq("role", "teacher");
     if (inst) qUR = qUR.eq("institution_id", inst);
     const { data: ur } = await qUR;
-    const allTeacherIds = Array.from(new Set((ur || []).map((r: any) => String(r.profile_id))));
+    const allTeacherIds = Array.from(
+      new Set((ur || []).map((r: any) => String(r.profile_id)))
+    );
 
     // 2) Noms & disciplines depuis teacher_subjects
-    let qTS = srv.from("teacher_subjects").select("profile_id, subject_id, teacher_name, subject_name, institution_id");
+    let qTS = srv
+      .from("teacher_subjects")
+      .select("profile_id, subject_id, teacher_name, subject_name, institution_id");
     if (inst) qTS = qTS.eq("institution_id", inst);
     if (allTeacherIds.length) qTS = qTS.in("profile_id", allTeacherIds);
     if (subject_id) qTS = qTS.eq("subject_id", subject_id);
@@ -363,7 +499,8 @@ export async function GET(req: NextRequest) {
       const nm = String(r.subject_name ?? "").trim();
       if (!nm) continue;
       if (!subjectNamesPerTeacher[tid]) subjectNamesPerTeacher[tid] = [];
-      if (!subjectNamesPerTeacher[tid].includes(nm)) subjectNamesPerTeacher[tid].push(nm);
+      if (!subjectNamesPerTeacher[tid].includes(nm))
+        subjectNamesPerTeacher[tid].push(nm);
     }
     for (const k of Object.keys(subjectNamesPerTeacher)) {
       subjectNamesPerTeacher[k].sort((a, b) => a.localeCompare(b, "fr"));
@@ -375,30 +512,46 @@ export async function GET(req: NextRequest) {
       teacherScope = teacherScope.filter((id) => allowed.has(id));
     }
 
-    // 3) Séances (⚠️ on inclut class_id)
+    // 3) Séances (⚠️ on inclut class_id + actual_call_at)
     const sessionsTable2 =
-      (await tableExists(srv, "teacher_sessions")) ? "teacher_sessions" :
-      (await tableExists(srv, "class_sessions")) ? "class_sessions" : "sessions";
+      (await tableExists(srv, "teacher_sessions")) ?
+        "teacher_sessions" :
+        (await tableExists(srv, "class_sessions")) ?
+          "class_sessions" :
+          "sessions";
 
     const baseSessions = () => {
       let q = srv
         .from(sessionsTable2)
-        .select("id, teacher_id, subject_id, class_id, started_at, expected_minutes, institution_id")
+        .select(
+          "id, teacher_id, subject_id, class_id, started_at, actual_call_at, expected_minutes, institution_id"
+        )
         .gte("started_at", fromISO)
         .lt("started_at", toISOExclusive);
       if (inst) q = q.eq("institution_id", inst);
       return q;
     };
 
-    const allowedSessionSubjectIds = subject_id ? await resolveSessionSubjectIds(srv, subject_id, inst) : [];
+    const allowedSessionSubjectIds = subject_id
+      ? await resolveSessionSubjectIds(srv, subject_id, inst)
+      : [];
 
     let sessRows: any[] = [];
     if (mode === "detail") {
-      if (!teacher_id) return NextResponse.json({ error: "teacher_id requis pour mode=detail" }, { status: 400 });
+      if (!teacher_id)
+        return NextResponse.json(
+          { error: "teacher_id requis pour mode=detail" },
+          { status: 400 }
+        );
       let q = baseSessions().eq("teacher_id", teacher_id);
       if (subject_id) {
-        const { data: withSubj } = await q.in("subject_id", allowedSessionSubjectIds);
-        const { data: noSubj } = await baseSessions().eq("teacher_id", teacher_id).is("subject_id", null);
+        const { data: withSubj } = await q.in(
+          "subject_id",
+          allowedSessionSubjectIds
+        );
+        const { data: noSubj } = await baseSessions()
+          .eq("teacher_id", teacher_id)
+          .is("subject_id", null);
         sessRows = [...(withSubj || []), ...(noSubj || [])];
       } else {
         const { data } = await q;
@@ -408,8 +561,13 @@ export async function GET(req: NextRequest) {
       let q = baseSessions();
       if (teacherScope.length) q = q.in("teacher_id", teacherScope);
       if (subject_id) {
-        const { data: withSubj } = await q.in("subject_id", allowedSessionSubjectIds);
-        const { data: noSubj } = await baseSessions().in("teacher_id", teacherScope).is("subject_id", null);
+        const { data: withSubj } = await q.in(
+          "subject_id",
+          allowedSessionSubjectIds
+        );
+        const { data: noSubj } = await baseSessions()
+          .in("teacher_id", teacherScope)
+          .is("subject_id", null);
         sessRows = [...(withSubj || []), ...(noSubj || [])];
       } else {
         const { data } = await q;
@@ -426,6 +584,7 @@ export async function GET(req: NextRequest) {
         subject_id: s.subject_id ? String(s.subject_id) : null,
         class_id: s.class_id ? String(s.class_id) : null,
         started_at: String(s.started_at),
+        actual_call_at: s.actual_call_at ? String(s.actual_call_at) : null,
         expected_minutes: Number(s.expected_minutes || 0),
       }));
 
@@ -442,13 +601,20 @@ export async function GET(req: NextRequest) {
       for (const r of sessions) {
         const tid = r.teacher_id || "";
         if (!tid || !minutesByTeacher.has(tid)) continue;
-        minutesByTeacher.set(tid, (minutesByTeacher.get(tid) || 0) + (r.expected_minutes || 0));
-        sessionsByTeacher.set(tid, (sessionsByTeacher.get(tid) || 0) + 1);
+        minutesByTeacher.set(
+          tid,
+          (minutesByTeacher.get(tid) || 0) + (r.expected_minutes || 0)
+        );
+        sessionsByTeacher.set(
+          tid,
+          (sessionsByTeacher.get(tid) || 0) + 1
+        );
       }
 
       const items = teacherScope.map((id) => ({
         teacher_id: id,
-        teacher_name: teacherNameById.get(id) || `(enseignant ${id.slice(0, 6)})`,
+        teacher_name:
+          teacherNameById.get(id) || `(enseignant ${id.slice(0, 6)})`,
         total_minutes: minutesByTeacher.get(id) || 0,
         sessions_count: sessionsByTeacher.get(id) || 0,
         subject_names: subjectNamesPerTeacher[id] || [],
@@ -457,27 +623,46 @@ export async function GET(req: NextRequest) {
       // tri principal par nombre de séances (desc), puis par nom
       items.sort(
         (a, b) =>
-          (b.sessions_count - a.sessions_count) ||
+          b.sessions_count - a.sessions_count ||
           a.teacher_name.localeCompare(b.teacher_name, "fr")
       );
 
       return NextResponse.json({ items });
     }
 
-    // DETAIL (avec classe)
-    const subIds = Array.from(new Set(sessions.map((s) => s.subject_id).filter(Boolean))) as string[];
+    // DETAIL (avec classe + temps réel)
+    const subIds = Array.from(
+      new Set(sessions.map((s) => s.subject_id).filter(Boolean))
+    ) as string[];
     const subjectNameById: Record<string, string> = {};
     if (subIds.length) {
-      const { data: subs } = await srv.from("subjects").select("id,name").in("id", subIds);
-      for (const s of subs || []) subjectNameById[String(s.id)] = String(s.name ?? "");
+      const { data: subs } = await srv
+        .from("subjects")
+        .select("id,name")
+        .in("id", subIds);
+      for (const s of subs || [])
+        subjectNameById[String(s.id)] = String(s.name ?? "");
       const unresolved = subIds.filter((id) => !subjectNameById[id]);
       if (unresolved.length) {
-        const { data: links } = await srv.from("institution_subjects").select("id,subject_id").in("id", unresolved);
-        const baseIds = Array.from(new Set((links || []).map((l: any) => String(l.subject_id)).filter(Boolean)));
+        const { data: links } = await srv
+          .from("institution_subjects")
+          .select("id,subject_id")
+          .in("id", unresolved);
+        const baseIds = Array.from(
+          new Set(
+            (links || [])
+              .map((l: any) => String(l.subject_id))
+              .filter(Boolean)
+          )
+        );
         if (baseIds.length) {
-          const { data: subs2 } = await srv.from("subjects").select("id,name").in("id", baseIds);
+          const { data: subs2 } = await srv
+            .from("subjects")
+            .select("id,name")
+            .in("id", baseIds);
           const nameByBase = new Map<string, string>();
-          for (const s of subs2 || []) nameByBase.set(String(s.id), String(s.name ?? ""));
+          for (const s of subs2 || [])
+            nameByBase.set(String(s.id), String(s.name ?? ""));
           for (const l of links || []) {
             const nm = nameByBase.get(String(l.subject_id));
             if (nm) subjectNameById[String(l.id)] = nm;
@@ -486,28 +671,58 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    const classIds = Array.from(new Set(sessions.map((s) => s.class_id).filter(Boolean))) as string[];
+    const classIds = Array.from(
+      new Set(sessions.map((s) => s.class_id).filter(Boolean))
+    ) as string[];
     const classLabelById: Record<string, string> = {};
     if (classIds.length) {
-      const { data: klass } = await srv.from("classes").select("id,label").in("id", classIds);
-      for (const c of klass || []) classLabelById[String(c.id)] = String(c.label ?? "");
+      const { data: klass } = await srv
+        .from("classes")
+        .select("id,label")
+        .in("id", classIds);
+      for (const c of klass || [])
+        classLabelById[String(c.id)] = String(c.label ?? "");
     }
 
     const detailed = sessions
       .sort((a, b) => a.started_at.localeCompare(b.started_at))
-      .map((r) => ({
-        id: r.id,
-        dateISO: r.started_at,
-        subject_name: r.subject_id ? subjectNameById[r.subject_id] || "Discipline non renseignée" : "Discipline non renseignée",
-        class_id: r.class_id,
-        class_label: r.class_id ? (classLabelById[r.class_id] || null) : null,
-        expected_minutes: r.expected_minutes || 0,
-      }));
+      .map((r) => {
+        const real = effectiveMinutesFromSession(
+          r.expected_minutes || 0,
+          r.started_at,
+          r.actual_call_at || null
+        );
+        return {
+          id: r.id,
+          dateISO: r.started_at,
+          subject_name: r.subject_id
+            ? subjectNameById[r.subject_id] ||
+              "Discipline non renseignée"
+            : "Discipline non renseignée",
+          class_id: r.class_id,
+          class_label: r.class_id
+            ? classLabelById[r.class_id] || null
+            : null,
+          expected_minutes: r.expected_minutes || 0,
+          real_minutes: real,
+          actual_call_iso: r.actual_call_at || null,
+        };
+      });
 
-    const total_minutes = detailed.reduce((acc, it) => acc + (it.expected_minutes || 0), 0);
-    return NextResponse.json({ rows: detailed, count: detailed.length, total_minutes });
+    const total_minutes = detailed.reduce(
+      (acc, it) => acc + (it.real_minutes || 0),
+      0
+    );
+    return NextResponse.json({
+      rows: detailed,
+      count: detailed.length,
+      total_minutes,
+    });
   } catch (e: any) {
     console.error("/api/admin/statistics error", e);
-    return NextResponse.json({ error: e?.message || "Server error" }, { status: 500 });
+    return NextResponse.json(
+      { error: e?.message || "Server error" },
+      { status: 500 }
+    );
   }
 }

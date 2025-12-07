@@ -2,7 +2,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
-import { Calendar, Filter, RefreshCw, Download } from "lucide-react";
+import { Calendar, Filter, RefreshCw, Download, FileText } from "lucide-react";
 
 /* ───────── UI helpers ───────── */
 function Input(p: React.InputHTMLAttributes<HTMLInputElement>) {
@@ -73,7 +73,9 @@ function Card({
       <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
         <div>
           <div className="text-base font-semibold text-slate-800">{title}</div>
-          {subtitle ? <div className="mt-0.5 text-xs text-slate-500">{subtitle}</div> : null}
+          {subtitle ? (
+            <div className="mt-0.5 text-xs text-slate-500">{subtitle}</div>
+          ) : null}
         </div>
         {actions}
       </div>
@@ -111,6 +113,9 @@ type GradePeriod = {
   end_date: string; // YYYY-MM-DD
   coeff: number | null;
 };
+
+type TopStudent = MatrixStudent & { total: number };
+type TopSubject = MatrixSubject & { total: number };
 
 /* ───────── Helpers ───────── */
 const nf = new Intl.NumberFormat("fr-FR");
@@ -181,22 +186,32 @@ export default function AbsencesMatrixOnly() {
       .catch(() => setAllClasses([]));
   }, []);
 
-  /* Charger périodes */
+  /* Charger périodes (même route que les bulletins) */
   useEffect(() => {
     const run = async () => {
       try {
         setPeriodsLoading(true);
-        const res = await fetch("/api/admin/grades/periods");
-        if (!res.ok) return;
+        const res = await fetch("/api/admin/institution/grading-periods", {
+          cache: "no-store",
+        });
+        if (!res.ok) {
+          console.warn(
+            "[Absences] grading-periods non disponible",
+            res.status
+          );
+          setPeriods([]);
+          return;
+        }
         const json = await res.json();
         const items: GradePeriod[] = Array.isArray(json)
           ? json
-          : Array.isArray(json.items)
-          ? json.items
+          : Array.isArray((json as any).items)
+          ? (json as any).items
           : [];
         setPeriods(items);
       } catch (e) {
-        console.error(e);
+        console.error("[Absences] erreur chargement periods", e);
+        setPeriods([]);
       } finally {
         setPeriodsLoading(false);
       }
@@ -222,14 +237,26 @@ export default function AbsencesMatrixOnly() {
       );
   }, [allClasses, selectedLevel]);
 
-  /* Années scolaires disponibles à partir des périodes */
+  /* Années scolaires disponibles à partir des classes + périodes (comme les bulletins) */
   const academicYears = useMemo(() => {
-    const s = new Set<string>();
-    periods.forEach((p) => {
-      if (p.academic_year) s.add(p.academic_year);
+    const set = new Set<string>();
+    allClasses.forEach((c) => {
+      if (c.academic_year) set.add(c.academic_year);
     });
-    return Array.from(s).sort();
-  }, [periods]);
+    periods.forEach((p) => {
+      if (p.academic_year) set.add(p.academic_year);
+    });
+    return Array.from(set).sort();
+  }, [allClasses, periods]);
+
+  /* Quand on sélectionne une classe, on synchronise l'année scolaire */
+  useEffect(() => {
+    const cls = allClasses.find((c) => c.id === selectedClassId);
+    if (cls?.academic_year) {
+      setSelectedAcademicYear(cls.academic_year);
+      setSelectedPeriodId("");
+    }
+  }, [selectedClassId, allClasses]);
 
   /* Périodes filtrées par année scolaire */
   const filteredPeriods = useMemo(() => {
@@ -251,9 +278,7 @@ export default function AbsencesMatrixOnly() {
     setSelectedClassId("");
   }, [selectedLevel]);
 
-  /* Index minutes par élève × matière
-     👉 Jamais null : on renvoie {} quand matrix est null,
-     pour éviter les erreurs TypeScript. */
+  /* Index minutes par élève × matière */
   const matrixIndex = useMemo(() => {
     const dict: Record<string, Record<string, number>> = {};
     if (!matrix) return dict;
@@ -316,15 +341,17 @@ export default function AbsencesMatrixOnly() {
       ]);
 
       const payload: MatrixPayload =
-        mat && mat.subjects && mat.students
-          ? mat
+        mat && (mat as any).subjects && (mat as any).students
+          ? (mat as MatrixPayload)
           : { subjects: [], students: [], values: [], subjectDistinct: {} };
 
       // matières officielles de la classe
-      const classSubjects: MatrixSubject[] = (subs.items || []).map((s: any) => ({
-        id: s.id,
-        name: (s.label || s.name || "").trim() || s.id,
-      }));
+      const classSubjects: MatrixSubject[] = (subs.items || []).map(
+        (s: any) => ({
+          id: s.id,
+          name: (s.label || s.name || "").trim() || s.id,
+        })
+      );
 
       // fusion (garantit l’affichage des colonnes)
       const map = new Map<string, MatrixSubject>();
@@ -406,8 +433,65 @@ export default function AbsencesMatrixOnly() {
     return out;
   }
 
-  const hotSubjects = useMemo(() => computeHotSet(subjectTotals), [subjectTotals]);
-  const hotStudents = useMemo(() => computeHotSet(studentTotals), [studentTotals]);
+  const hotSubjects = useMemo(
+    () => computeHotSet(subjectTotals),
+    [subjectTotals]
+  );
+  const hotStudents = useMemo(
+    () => computeHotSet(studentTotals),
+    [studentTotals]
+  );
+
+  const selectedClass = useMemo(() => {
+    if (!selectedClassId) return null;
+    return allClasses.find((c) => c.id === selectedClassId) || null;
+  }, [allClasses, selectedClassId]);
+
+  const globalStats = useMemo<{
+    studentsCount: number;
+    subjectsCount: number;
+    totalMinutesAll: number;
+    avgPerStudent: number;
+    avgPerSubject: number;
+    topStudents: TopStudent[];
+    topSubjects: TopSubject[];
+  } | null>(() => {
+    if (!matrix) return null;
+    const studentsCount = matrix.students.length;
+    const subjectsCount = matrix.subjects.length;
+
+    let totalMinutesAll = 0;
+    for (const v of matrix.values) totalMinutesAll += v.minutes || 0;
+
+    const avgPerStudent = studentsCount ? totalMinutesAll / studentsCount : 0;
+    const avgPerSubject = subjectsCount ? totalMinutesAll / subjectsCount : 0;
+
+    const topStudents: TopStudent[] = [...matrix.students]
+      .map((s) => ({
+        ...s,
+        total: studentTotals.get(s.id) || 0,
+      }))
+      .sort((a, b) => b.total - a.total)
+      .slice(0, 5);
+
+    const topSubjects: TopSubject[] = [...matrix.subjects]
+      .map((s) => ({
+        ...s,
+        total: subjectTotals.get(s.id) || 0,
+      }))
+      .sort((a, b) => b.total - a.total)
+      .slice(0, 5);
+
+    return {
+      studentsCount,
+      subjectsCount,
+      totalMinutesAll,
+      avgPerStudent,
+      avgPerSubject,
+      topStudents,
+      topSubjects,
+    };
+  }, [matrix, studentTotals, subjectTotals]);
 
   /* Export CSV (UTF-16LE propre pour Excel) */
   function exportMatrixCsv() {
@@ -457,6 +541,199 @@ export default function AbsencesMatrixOnly() {
       `matrice_${rubrique}_${from || "debut"}_${to || "fin"}.csv`,
       csv
     );
+  }
+
+  /* Export PDF – synthèse élégante de la période (nécessite jsPDF) */
+  async function exportMatrixPdf() {
+    if (!matrix || !globalStats) return;
+    try {
+      const jsPDFModule = await import("jspdf");
+      const JsPDFConstructor =
+        (jsPDFModule as any).jsPDF || (jsPDFModule as any).default;
+      const doc = new JsPDFConstructor({
+        orientation: "portrait",
+        unit: "mm",
+        format: "a4",
+      });
+
+      const periodLabel = (() => {
+        if (selectedPeriodId) {
+          const p = periods.find((pp) => pp.id === selectedPeriodId);
+          if (p) {
+            return (
+              p.label ||
+              p.short_label ||
+              p.code ||
+              `${p.start_date} → ${p.end_date}`
+            );
+          }
+        }
+        if (from || to) return `${from || "début"} → ${to || "fin"}`;
+        return "Toute la période";
+      })();
+
+      const classLabel = selectedClass
+        ? `${selectedClass.name} (${selectedClass.level})`
+        : "Toutes classes";
+
+      const title = "Matrice des absences — Synthèse";
+      let y = 18;
+
+      doc.setFontSize(16);
+      doc.setFont("helvetica", "bold");
+      doc.text(title, 105, y, { align: "center" });
+
+      y += 8;
+      doc.setFontSize(10);
+      doc.setFont("helvetica", "normal");
+      doc.text(
+        `Année scolaire : ${selectedAcademicYear || "Toutes"}`,
+        14,
+        y
+      );
+      y += 5;
+      doc.text(`Classe : ${classLabel}`, 14, y);
+      y += 5;
+      doc.text(
+        `Période : ${periodLabel}  •  Rubrique : ${
+          rubrique === "absent" ? "Absences (heures)" : "Retards (minutes)"
+        }`,
+        14,
+        y
+      );
+
+      y += 8;
+      doc.setDrawColor(220);
+      doc.line(14, y, 196, y);
+      y += 6;
+
+      // Bloc chiffres clés
+      const valueLabel = (min: number) =>
+        rubrique === "absent" ? hoursLabel(min) : `${nf.format(min)} min`;
+
+      doc.setFontSize(11);
+      doc.setFont("helvetica", "bold");
+      doc.text("Chiffres clés", 14, y);
+      y += 5;
+      doc.setFontSize(10);
+      doc.setFont("helvetica", "normal");
+      doc.text(
+        `Nombre d'élèves : ${globalStats.studentsCount}`,
+        14,
+        y
+      );
+      y += 5;
+      doc.text(
+        `Nombre de disciplines : ${globalStats.subjectsCount}`,
+        14,
+        y
+      );
+      y += 5;
+      doc.text(
+        `Total sur la période : ${valueLabel(globalStats.totalMinutesAll)}`,
+        14,
+        y
+      );
+      y += 5;
+      doc.text(
+        `Moyenne par élève : ${valueLabel(globalStats.avgPerStudent)}`,
+        14,
+        y
+      );
+      y += 5;
+      doc.text(
+        `Moyenne par discipline : ${valueLabel(globalStats.avgPerSubject)}`,
+        14,
+        y
+      );
+
+      y += 8;
+      doc.setDrawColor(240);
+      doc.line(14, y, 196, y);
+      y += 6;
+
+      // Top élèves
+      doc.setFontSize(11);
+      doc.setFont("helvetica", "bold");
+      doc.text("Élèves les plus concernés", 14, y);
+      y += 5;
+      doc.setFontSize(9);
+      doc.setFont("helvetica", "normal");
+
+      if (!globalStats.topStudents.length) {
+        doc.text("Aucun élève concerné sur la période.", 16, y);
+        y += 6;
+      } else {
+        globalStats.topStudents.forEach((s, idx) => {
+          const val = valueLabel(s.total);
+          doc.text(
+            `${idx + 1}. ${s.full_name} — ${val}`,
+            16,
+            y
+          );
+          y += 5;
+          if (y > 270) {
+            doc.addPage();
+            y = 20;
+          }
+        });
+      }
+
+      y += 4;
+      doc.setDrawColor(240);
+      doc.line(14, y, 196, y);
+      y += 6;
+
+      // Top disciplines
+      doc.setFontSize(11);
+      doc.setFont("helvetica", "bold");
+      doc.text("Disciplines les plus concernées", 14, y);
+      y += 5;
+      doc.setFontSize(9);
+      doc.setFont("helvetica", "normal");
+
+      if (!globalStats.topSubjects.length) {
+        doc.text("Aucune discipline concernée sur la période.", 16, y);
+        y += 6;
+      } else {
+        globalStats.topSubjects.forEach((s, idx) => {
+          const val = valueLabel(s.total);
+          doc.text(
+            `${idx + 1}. ${s.name} — ${val}`,
+            16,
+            y
+          );
+          y += 5;
+          if (y > 270) {
+            doc.addPage();
+            y = 20;
+          }
+        });
+      }
+
+      y += 10;
+      if (y > 280) {
+        doc.addPage();
+        y = 20;
+      }
+      doc.setFontSize(8);
+      doc.setTextColor(120);
+      doc.text(
+        "Document généré automatiquement par Mon Cahier — Synthèse des absences/retards",
+        14,
+        y
+      );
+
+      const filename = `matrice_${rubrique}_${from || "debut"}_${
+        to || "fin"
+      }.pdf`;
+      doc.save(filename);
+    } catch (err) {
+      console.error("[Absences] erreur export PDF", err);
+      alert(
+        "Export PDF indisponible. Vérifie que la librairie jsPDF est bien installée."
+      );
+    }
   }
 
   const hasClass = Boolean(selectedClassId);
@@ -613,7 +890,10 @@ export default function AbsencesMatrixOnly() {
         </div>
 
         <div className="mt-4 flex flex-wrap items-center gap-2">
-          <Button onClick={refreshMatrix} disabled={Boolean(loading || !selectedClassId)}>
+          <Button
+            onClick={refreshMatrix}
+            disabled={Boolean(loading || !selectedClassId)}
+          >
             {loading ? (
               <RefreshCw className="h-4 w-4 animate-spin" />
             ) : (
@@ -622,14 +902,140 @@ export default function AbsencesMatrixOnly() {
             Actualiser
           </Button>
           <GhostButton onClick={resetAll}>Réinitialiser</GhostButton>
-          <GhostButton
-            onClick={exportMatrixCsv}
-            disabled={!matrix}
-          >
+          <GhostButton onClick={exportMatrixCsv} disabled={!matrix}>
             <Download className="h-4 w-4" /> Export CSV
+          </GhostButton>
+          <GhostButton onClick={exportMatrixPdf} disabled={!matrix}>
+            <FileText className="h-4 w-4" /> Export PDF (synthèse)
           </GhostButton>
         </div>
       </Card>
+
+      {/* Synthèse visuelle */}
+      {matrix && globalStats && (
+        <Card
+          title="Synthèse de la période sélectionnée"
+          subtitle="Vue d’ensemble des absences/retards pour cette classe et cette période."
+        >
+          <div className="grid gap-4 md:grid-cols-4">
+            <div className="rounded-xl bg-emerald-50 px-4 py-3">
+              <div className="text-[11px] font-semibold uppercase text-emerald-700">
+                Élèves
+              </div>
+              <div className="mt-1 text-xl font-bold text-emerald-900">
+                {globalStats.studentsCount}
+              </div>
+              <div className="mt-1 text-xs text-emerald-800/80">
+                Nombre d&apos;élèves dans la matrice
+              </div>
+            </div>
+            <div className="rounded-xl bg-indigo-50 px-4 py-3">
+              <div className="text-[11px] font-semibold uppercase text-indigo-700">
+                Disciplines
+              </div>
+              <div className="mt-1 text-xl font-bold text-indigo-900">
+                {globalStats.subjectsCount}
+              </div>
+              <div className="mt-1 text-xs text-indigo-800/80">
+                Colonnes de la matrice
+              </div>
+            </div>
+            <div className="rounded-xl bg-amber-50 px-4 py-3">
+              <div className="text-[11px] font-semibold uppercase text-amber-700">
+                Total sur la période
+              </div>
+              <div className="mt-1 text-xl font-bold text-amber-900">
+                {rubrique === "absent"
+                  ? hoursLabel(globalStats.totalMinutesAll)
+                  : `${nf.format(globalStats.totalMinutesAll)} min`}
+              </div>
+              <div className="mt-1 text-xs text-amber-800/80">
+                Somme sur toutes les disciplines et tous les élèves
+              </div>
+            </div>
+            <div className="rounded-xl bg-rose-50 px-4 py-3">
+              <div className="text-[11px] font-semibold uppercase text-rose-700">
+                Moyenne par élève
+              </div>
+              <div className="mt-1 text-xl font-bold text-rose-900">
+                {rubrique === "absent"
+                  ? hoursLabel(globalStats.avgPerStudent)
+                  : `${nf.format(globalStats.avgPerStudent)} min`}
+              </div>
+              <div className="mt-1 text-xs text-rose-800/80">
+                Charge moyenne par élève sur la période
+              </div>
+            </div>
+          </div>
+
+          {/* Tops */}
+          <div className="mt-4 grid gap-4 md:grid-cols-2">
+            <div className="rounded-xl border border-amber-100 bg-amber-50/40 px-4 py-3">
+              <div className="mb-2 text-xs font-semibold uppercase text-amber-700">
+                ÉLÈVES LES PLUS CONCERNÉS
+              </div>
+              {globalStats.topStudents.length === 0 ? (
+                <div className="text-xs text-amber-800/80">
+                  Aucun élève concerné sur cette période.
+                </div>
+              ) : (
+                <ul className="space-y-1 text-xs text-amber-900">
+                  {globalStats.topStudents.map((s, idx) => (
+                    <li
+                      key={s.id}
+                      className="flex items-center justify-between gap-2 rounded-lg bg-white/60 px-2 py-1"
+                    >
+                      <span className="flex items-center gap-2">
+                        <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-amber-100 text-[10px] font-semibold text-amber-800">
+                          {idx + 1}
+                        </span>
+                        <span className="truncate">{s.full_name}</span>
+                      </span>
+                      <span className="text-[11px] font-semibold text-amber-900">
+                        {rubrique === "absent"
+                          ? hoursLabel(s.total)
+                          : `${nf.format(s.total)} min`}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+
+            <div className="rounded-xl border border-rose-100 bg-rose-50/40 px-4 py-3">
+              <div className="mb-2 text-xs font-semibold uppercase text-rose-700">
+                DISCIPLINES LES PLUS CONCERNÉES
+              </div>
+              {globalStats.topSubjects.length === 0 ? (
+                <div className="text-xs text-rose-800/80">
+                  Aucune discipline concernée sur cette période.
+                </div>
+              ) : (
+                <ul className="space-y-1 text-xs text-rose-900">
+                  {globalStats.topSubjects.map((s, idx) => (
+                    <li
+                      key={s.id}
+                      className="flex items-center justify-between gap-2 rounded-lg bg-white/60 px-2 py-1"
+                    >
+                      <span className="flex items-center gap-2">
+                        <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-rose-100 text-[10px] font-semibold text-rose-800">
+                          {idx + 1}
+                        </span>
+                        <span className="truncate">{s.name}</span>
+                      </span>
+                      <span className="text-[11px] font-semibold text-rose-900">
+                        {rubrique === "absent"
+                          ? hoursLabel(s.total)
+                          : `${nf.format(s.total)} min`}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </div>
+        </Card>
+      )}
 
       {/* Matrice */}
       <Card
@@ -663,7 +1069,7 @@ export default function AbsencesMatrixOnly() {
               <thead className="sticky top-0 z-10 bg-slate-100">
                 <tr>
                   <th className="w-12 px-2 py-2 text-left align-bottom">N°</th>
-                  <th className="sticky left-0 z-20 px-3 py-2 text-left align-bottom bg-slate-100">
+                  <th className="sticky left-0 z-20 bg-slate-100 px-3 py-2 text-left align-bottom">
                     Élève
                   </th>
                   {matrix.subjects.map((subj) => {
@@ -728,7 +1134,8 @@ export default function AbsencesMatrixOnly() {
                       </td>
                       {matrix.subjects.map((subj, cIdx) => {
                         const minutes = matrixIndex[stu.id]?.[subj.id] || 0;
-                        const tipCount = matrix.subjectDistinct[subj.id] ?? 0;
+                        const tipCount =
+                          matrix.subjectDistinct[subj.id] ?? 0;
                         const zebraCol = cIdx % 2 ? "bg-slate-50/60" : "";
                         const isHotCol = hotSubjects.has(subj.id);
                         return (
