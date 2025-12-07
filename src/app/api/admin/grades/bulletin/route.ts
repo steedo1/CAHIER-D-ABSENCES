@@ -1,4 +1,3 @@
-// src/app/api/admin/grades/bulletin/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
@@ -56,7 +55,7 @@ type ClassStudentRow = {
     first_name?: string | null;
     matricule?: string | null;
 
-    // champs identité réellement présents en BDD
+    // 🆕 champs identité réellement présents en BDD
     gender?: string | null;
     birthdate?: string | null;
     birth_place?: string | null;
@@ -104,7 +103,7 @@ type BulletinSubjectGroup = {
   items: BulletinSubjectGroupItem[];
 };
 
-// Sous-matières renvoyées au front
+// ✅ Sous-matières renvoyées au front
 type BulletinSubjectComponent = {
   id: string;
   subject_id: string; // subjects.id parent
@@ -502,10 +501,10 @@ export async function GET(req: NextRequest) {
     .eq("class_id", classId);
 
   if (!hasDateFilter) {
-    // Comportement historique : uniquement les élèves encore inscrits
+    // 🔁 Comportement historique : uniquement les élèves encore inscrits
     enrollQuery = enrollQuery.is("end_date", null);
   } else if (dateFrom) {
-    // Photo historique : élèves dont la fin d'inscription
+    // 🕒 Photo historique : élèves dont la fin d'inscription
     // est postérieure au début de la période OU encore inscrits
     enrollQuery = enrollQuery.or(`end_date.gte.${dateFrom},end_date.is.null`);
   }
@@ -545,7 +544,7 @@ export async function GET(req: NextRequest) {
       period: periodMeta,
       subjects: [],
       subject_groups: [],
-      subject_components: [],
+      subject_components: [], // ✅ pour que le front ait toujours la clé
       items: [],
     });
   }
@@ -759,7 +758,7 @@ export async function GET(req: NextRequest) {
     coeffBySubject.set(sid, { coeff, include });
   }
 
-  // Liste des matières pour le bulletin (métadonnées globales)
+  // Liste des matières pour le bulletin
   const subjectsForReport = subjectIds.map((sid) => {
     const s = subjectById.get(sid);
     const name = s?.name || s?.code || "Matière";
@@ -830,9 +829,8 @@ export async function GET(req: NextRequest) {
   if (classRow.level) {
     const { data: groupsData, error: groupsErr } = await supabase
       .from("bulletin_subject_groups")
-      .select(
-        "id, level, code, label, short_label, order_index, is_active, annual_coeff"
-      )
+      // ⚠️ on ne sélectionne que les colonnes qui existent réellement
+      .select("id, level, label, order_index, is_active")
       .eq("institution_id", institutionId)
       .eq("level", classRow.level)
       .order("order_index", { ascending: true });
@@ -932,19 +930,34 @@ export async function GET(req: NextRequest) {
               )
               .sort((a, b) => a.order_index - b.order_index);
 
-            const annualCoeff =
-              g.annual_coeff !== null && g.annual_coeff !== undefined
-                ? Number(g.annual_coeff)
+            const annualCoeffRaw =
+              (g as any).annual_coeff !== null &&
+              (g as any).annual_coeff !== undefined
+                ? Number((g as any).annual_coeff)
                 : 1;
+
+            const groupCode =
+              (g as any).code !== null &&
+              (g as any).code !== undefined &&
+              String((g as any).code).trim() !== ""
+                ? String((g as any).code)
+                : String(g.label);
+
+            const shortLabel =
+              (g as any).short_label !== null &&
+              (g as any).short_label !== undefined &&
+              String((g as any).short_label).trim() !== ""
+                ? String((g as any).short_label)
+                : null;
 
             return {
               id: String(g.id),
-              code: String(g.code),
+              code: groupCode,
               label: String(g.label),
-              short_label: g.short_label ? String(g.short_label) : null,
+              short_label: shortLabel,
               order_index: Number(g.order_index ?? 1),
               is_active: g.is_active !== false,
-              annual_coeff: cleanCoeff(annualCoeff),
+              annual_coeff: cleanCoeff(annualCoeffRaw),
               items,
             };
           });
@@ -1051,31 +1064,20 @@ export async function GET(req: NextRequest) {
         }
       >();
 
-    // Moyenne par matière (avec coeff + total pour le bulletin)
+    // Moyenne par matière
     const per_subject = subjectsForReport.map((s) => {
       const cell = stuMap.get(s.subject_id);
       let avg20: number | null = null;
-      let total: number | null = null;
-
       if (cell && cell.sumCoeff > 0) {
         avg20 = cleanNumber(cell.sumWeighted / cell.sumCoeff);
-        if (avg20 !== null && s.coeff_bulletin) {
-          total = cleanNumber(avg20 * s.coeff_bulletin);
-        }
       }
-
       return {
         subject_id: s.subject_id,
-        subject_name: s.subject_name,
-        coeff: s.coeff_bulletin,
-        include_in_average: s.include_in_average,
         avg20,
-        total,
-        // subject_rank & teacher_name seront ajoutés ensuite
       };
     });
 
-    // Moyenne par sous-matière (enrichie avec labels)
+    // Moyenne par sous-matière
     const per_subject_components =
       subjectComponentsForReport.length === 0
         ? []
@@ -1088,9 +1090,6 @@ export async function GET(req: NextRequest) {
             return {
               subject_id: comp.subject_id,
               component_id: comp.id,
-              label: comp.label,
-              short_label: comp.short_label,
-              coeff_in_subject: comp.coeff_in_subject,
               avg20,
             };
           });
@@ -1205,7 +1204,7 @@ export async function GET(req: NextRequest) {
       full_name: fullName,
       matricule: stu.matricule || null,
       gender: stu.gender || null,
-      birth_date: stu.birthdate || null, // API renvoie toujours birth_date, mappée sur students.birthdate
+      birth_date: stu.birthdate || null, // 🔁 API renvoie toujours birth_date, mappée sur students.birthdate
       birth_place: stu.birth_place || null,
       nationality: stu.nationality || null,
       regime: stu.regime || null,
