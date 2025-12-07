@@ -34,6 +34,7 @@ type EvalRow = {
   id: string;
   class_id: string;
   subject_id: string | null;
+  teacher_id: string | null; // ✅ prof qui a créé l'évaluation
   eval_date: string;
   scale: number;
   coeff: number;
@@ -49,22 +50,24 @@ type ScoreRow = {
 
 type ClassStudentRow = {
   student_id: string;
-  students?: {
-    full_name?: string | null;
-    last_name?: string | null;
-    first_name?: string | null;
-    matricule?: string | null;
+  students?:
+    | {
+        full_name?: string | null;
+        last_name?: string | null;
+        first_name?: string | null;
+        matricule?: string | null;
 
-    // 🆕 champs identité réellement présents en BDD
-    gender?: string | null;
-    birthdate?: string | null;
-    birth_place?: string | null;
-    nationality?: string | null;
-    regime?: string | null;
-    is_repeater?: boolean | null;
-    is_boarder?: boolean | null;
-    is_affecte?: boolean | null;
-  } | null;
+        // 🆕 champs identité réellement présents en BDD
+        gender?: string | null;
+        birthdate?: string | null;
+        birth_place?: string | null;
+        nationality?: string | null;
+        regime?: string | null;
+        is_repeater?: boolean | null;
+        is_boarder?: boolean | null;
+        is_affecte?: boolean | null;
+      }
+    | null;
 };
 
 type SubjectRow = {
@@ -230,124 +233,205 @@ function applySubjectRanks(items: any[]) {
 
 /* ───────── helper : nom du professeur par matière (teacher_name) ───────── */
 /**
- * Utilise:
- * - class_teachers : id, class_id, subject_id, teacher_id, start_date, end_date, institution_id
- * - teacher_subjects : profile_id, subject_id, institution_id, teacher_name, subject_name, updated_at
- *
- * Remplit per_subject[*].teacher_name pour la classe + période.
+ * Stratégie :
+ *  1) On part d'abord de grade_evaluations.subject_id + teacher_id
+ *     → prof de l'évaluation la plus récente par matière (dans la période).
+ *  2) Pour les matières qui n'ont toujours pas de prof, fallback via :
+ *     - institution_subjects (subjects.id → institution_subjects.id)
+ *     - class_teachers (classe + matière établissement → teacher_id)
+ *  3) On injecte per_subject[*].teacher_name dans tous les items.
  */
 async function attachTeachersToSubjects(
   supabase: Awaited<ReturnType<typeof getSupabaseServerClient>>,
+  srv: Awaited<ReturnType<typeof getSupabaseServiceClient>>,
   items: any[],
+  evals: EvalRow[],
   subjectIds: string[],
   institutionId: string,
   classId: string,
   dateFrom?: string | null,
   dateTo?: string | null
 ) {
-  if (!subjectIds.length || !items.length) return;
+  if (!items.length || !subjectIds.length) return;
 
-  // 1) Récupérer les lignes class_teachers pour cette classe / ces matières
-  let ctQuery = supabase
-    .from("class_teachers")
-    .select("subject_id, teacher_id, start_date, end_date")
-    .eq("institution_id", institutionId)
-    .eq("class_id", classId)
-    .in("subject_id", subjectIds);
-
-  const pivot = dateTo || dateFrom || null;
-  if (pivot) {
-    // end_date >= pivot OU end_date IS NULL
-    ctQuery = ctQuery.or(`end_date.is.null,end_date.gte.${pivot}`);
-  } else {
-    // par défaut : prof encore affecté (end_date IS NULL)
-    ctQuery = ctQuery.is("end_date", null);
-  }
-
-  const { data: ctData, error: ctErr } = await ctQuery;
-
-  if (ctErr) {
-    console.error("[bulletin] class_teachers error", ctErr);
-    return;
-  }
-  if (!ctData || !ctData.length) return;
-
-  const teacherIds = Array.from(
-    new Set(
-      (ctData as any[])
-        .map((row) => row.teacher_id as string | null)
-        .filter((v): v is string => !!v)
-    )
-  );
-  if (!teacherIds.length) return;
-
-  // 2) Noms de profs spécifiques par (subject_id, profile_id) dans teacher_subjects
-  const { data: tsData, error: tsErr } = await supabase
-    .from("teacher_subjects")
-    .select("profile_id, subject_id, teacher_name")
-    .eq("institution_id", institutionId)
-    .in("subject_id", subjectIds)
-    .in("profile_id", teacherIds);
-
-  if (tsErr) {
-    console.error("[bulletin] teacher_subjects error", tsErr);
-  }
-
-  const teacherNameBySubjectTeacher = new Map<string, string>();
-  (tsData || []).forEach((row: any) => {
-    const key = `${row.subject_id}::${row.profile_id}`;
-    if (row.teacher_name) {
-      teacherNameBySubjectTeacher.set(key, String(row.teacher_name));
-    }
-  });
-
-  // 3) Fallback : display_name dans profiles
-  const { data: profs, error: profErr } = await supabase
-    .from("profiles")
-    .select("id, display_name")
-    .in("id", teacherIds);
-
-  if (profErr) {
-    console.error("[bulletin] profiles (teachers) error", profErr);
-  }
-
-  const displayById = new Map<string, string>();
-  (profs || []).forEach((p: any) => {
-    if (p.id && p.display_name) {
-      displayById.set(p.id, String(p.display_name));
-    }
-  });
-
-  // 4) Map final subject_id → teacher_name (pour CETTE classe)
   const teacherBySubject = new Map<string, string>();
 
-  (ctData as any[]).forEach((row) => {
-    const subjectId = String(row.subject_id);
-    const teacherId = row.teacher_id as string | null;
-    if (!subjectId || !teacherId) return;
+  /* ── A. À partir de grade_evaluations.teacher_id ─────────────────────── */
 
-    if (teacherBySubject.has(subjectId)) return; // déjà trouvé pour cette matière
+  if (evals.length) {
+    type ST = { teacher_id: string; lastEvalDate: string };
 
-    const key = `${subjectId}::${teacherId}`;
-    const name =
-      teacherNameBySubjectTeacher.get(key) || displayById.get(teacherId);
+    const bySubjectEval = new Map<string, ST>();
 
-    if (!name) return;
+    for (const ev of evals) {
+      if (!ev.subject_id || !ev.teacher_id) continue;
+      const sid = String(ev.subject_id);
+      const tid = String(ev.teacher_id);
+      const date = ev.eval_date ?? "";
 
-    teacherBySubject.set(subjectId, name);
-  });
+      const existing = bySubjectEval.get(sid);
+      if (!existing || (date && date > existing.lastEvalDate)) {
+        bySubjectEval.set(sid, { teacher_id: tid, lastEvalDate: date });
+      }
+    }
 
-  if (!teacherBySubject.size) return;
+    const teacherIdsEval = Array.from(
+      new Set(Array.from(bySubjectEval.values()).map((v) => v.teacher_id))
+    );
 
-  // 5) Injection dans items[*].per_subject[*].teacher_name
+    if (teacherIdsEval.length) {
+      const { data: profsEval, error: profErr } = await supabase
+        .from("profiles")
+        .select("id, display_name")
+        .in("id", teacherIdsEval);
+
+      if (profErr) {
+        console.error("[bulletin] teacher profiles (evals) error", profErr);
+      } else {
+        const nameByIdEval = new Map<string, string>();
+        (profsEval || []).forEach((p: any) => {
+          if (p.id && p.display_name) {
+            nameByIdEval.set(String(p.id), String(p.display_name));
+          }
+        });
+
+        bySubjectEval.forEach((info, sid) => {
+          const name = nameByIdEval.get(info.teacher_id);
+          if (name) teacherBySubject.set(sid, name);
+        });
+      }
+    }
+
+    console.log(
+      "[bulletin] teacherBySubject après evals",
+      Object.fromEntries(teacherBySubject)
+    );
+  }
+
+  /* ── B. Fallback via institution_subjects + class_teachers ───────────── */
+
+  const missingSubjectIds = subjectIds.filter(
+    (sid) => !teacherBySubject.has(sid)
+  );
+
+  if (missingSubjectIds.length) {
+    const { data: instSubs, error: instErr } = await srv
+      .from("institution_subjects")
+      .select("id, subject_id")
+      .eq("institution_id", institutionId)
+      .in("subject_id", missingSubjectIds);
+
+    if (instErr) {
+      console.error("[bulletin] institution_subjects error", instErr);
+    } else {
+      const instIds: string[] = [];
+      const subjectIdByInstId = new Map<string, string>();
+
+      (instSubs || []).forEach((row: any) => {
+        const sid = String(row.subject_id);
+        const instId = String(row.id);
+        if (!sid || !instId) return;
+        instIds.push(instId);
+        subjectIdByInstId.set(instId, sid);
+      });
+
+      if (instIds.length) {
+        let ctQuery = srv
+          .from("class_teachers")
+          .select("subject_id, teacher_id, start_date, end_date")
+          .eq("institution_id", institutionId)
+          .eq("class_id", classId)
+          .in("subject_id", instIds);
+
+        const pivot = dateTo || dateFrom || null;
+        if (pivot) {
+          // end_date >= pivot OU end_date IS NULL
+          ctQuery = ctQuery.or(`end_date.is.null,end_date.gte.${pivot}`);
+        } else {
+          ctQuery = ctQuery.is("end_date", null);
+        }
+
+        const { data: ctData, error: ctErr } = await ctQuery;
+
+        if (ctErr) {
+          console.error("[bulletin] class_teachers error", ctErr);
+        } else if (ctData && ctData.length) {
+          const teacherIdsCt = Array.from(
+            new Set(
+              (ctData as any[])
+                .map((row) => row.teacher_id as string | null)
+                .filter((v): v is string => !!v)
+            )
+          );
+
+          const nameByIdCt = new Map<string, string>();
+
+          if (teacherIdsCt.length) {
+            const { data: profsCt, error: profErrCt } = await supabase
+              .from("profiles")
+              .select("id, display_name")
+              .in("id", teacherIdsCt);
+
+            if (profErrCt) {
+              console.error(
+                "[bulletin] teacher profiles (class_teachers) error",
+                profErrCt
+              );
+            } else {
+              (profsCt || []).forEach((p: any) => {
+                if (p.id && p.display_name) {
+                  nameByIdCt.set(String(p.id), String(p.display_name));
+                }
+              });
+            }
+          }
+
+          (ctData as any[]).forEach((row) => {
+            const instSubId = String(row.subject_id);
+            const sid = subjectIdByInstId.get(instSubId);
+            const teacherId = row.teacher_id as string | null;
+            if (!sid || !teacherId) return;
+            if (teacherBySubject.has(sid)) return; // déjà trouvé via evals
+            const name = nameByIdCt.get(teacherId);
+            if (!name) return;
+            teacherBySubject.set(sid, name);
+          });
+        }
+      }
+    }
+  }
+
+  console.log(
+    "[bulletin] teacherBySubject final",
+    Object.fromEntries(teacherBySubject)
+  );
+
+  if (!teacherBySubject.size) {
+    console.warn(
+      "[bulletin] attachTeachersToSubjects: aucun professeur trouvé pour ces matières",
+      subjectIds
+    );
+    return;
+  }
+
+  /* ── C. Injection dans items[*].per_subject[*].teacher_name ──────────── */
+
   for (const item of items) {
     const perSubject = item.per_subject as any[] | undefined;
     if (!Array.isArray(perSubject)) continue;
 
     perSubject.forEach((ps) => {
-      const name = teacherBySubject.get(ps.subject_id) ?? null;
+      const sid = ps.subject_id as string | undefined;
+      const name = sid ? teacherBySubject.get(sid) ?? null : null;
       (ps as any).teacher_name = name;
     });
+  }
+
+  if (items.length) {
+    console.log(
+      "[bulletin] sample per_subject with teachers (eleve 1)",
+      items[0].per_subject
+    );
   }
 }
 
@@ -555,7 +639,7 @@ export async function GET(req: NextRequest) {
   let evalQuery = supabase
     .from("grade_evaluations")
     .select(
-      "id, class_id, subject_id, eval_date, scale, coeff, is_published, subject_component_id"
+      "id, class_id, subject_id, teacher_id, eval_date, scale, coeff, is_published, subject_component_id"
     )
     .eq("class_id", classId)
     .eq("is_published", true);
@@ -578,6 +662,16 @@ export async function GET(req: NextRequest) {
   }
 
   const evals = (evalData || []) as EvalRow[];
+
+  console.log("[bulletin] evals count", evals.length, {
+    sample: evals.slice(0, 5).map((e) => ({
+      id: e.id,
+      subject_id: e.subject_id,
+      teacher_id: e.teacher_id,
+      eval_date: e.eval_date,
+    })),
+  });
+
   if (!evals.length) {
     return NextResponse.json({
       ok: true,
@@ -1224,7 +1318,9 @@ export async function GET(req: NextRequest) {
   // 10) Nom du professeur par matière pour CETTE classe + période
   await attachTeachersToSubjects(
     supabase,
+    srv,
     items,
+    evals,
     subjectIds,
     institutionId,
     classRow.id,

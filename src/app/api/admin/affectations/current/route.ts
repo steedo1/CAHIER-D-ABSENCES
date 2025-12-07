@@ -1,4 +1,4 @@
-//src/app/api/admin/affectations/current/route.t
+//src/app/api/admin/affectations/current/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
