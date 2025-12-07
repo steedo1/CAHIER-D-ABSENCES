@@ -2,6 +2,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
+
 import { Printer, RefreshCw } from "lucide-react";
 
 /* ───────── Types ───────── */
@@ -70,9 +71,9 @@ type BulletinGroup = {
 type PerSubjectAvg = {
   subject_id: string;
   avg20: number | null;
-  // 🆕 rang de l’élève dans la classe pour cette matière (optionnel)
+  // 🆕 rang de l’élève dans la classe pour cette matière (optionnel, renvoyé par l’API)
   subject_rank?: number | null;
-  // 🆕 nom du professeur de la matière (optionnel)
+  // 🆕 nom du professeur de la matière (optionnel, renvoyé par l’API)
   teacher_name?: string | null;
 };
 
@@ -82,6 +83,8 @@ type PerSubjectComponentAvg = {
   subject_id: string;
   component_id: string;
   avg20: number | null;
+  // 🆕 rang dans la sous-matière (calculé côté front)
+  component_rank?: number | null;
 };
 
 type BulletinItemBase = {
@@ -89,8 +92,7 @@ type BulletinItemBase = {
   full_name: string;
   matricule: string | null;
 
-  // 🆕 infos élève pour coller au bulletin officiel
-  // On garde les anciens noms ET les nouveaux renvoyés par l’API pour compatibilité.
+  // Infos élève pour coller au bulletin officiel
   sex?: string | null;
   gender?: string | null;
   birthdate?: string | null;
@@ -107,7 +109,7 @@ type BulletinItemBase = {
   per_subject: PerSubjectAvg[];
   per_group: PerGroupAvg[];
   general_avg: number | null;
-  // ➕ optionnel : moyennes par sous-matière
+  // ➕ moyennes par sous-matière
   per_subject_components?: PerSubjectComponentAvg[];
 };
 
@@ -140,7 +142,7 @@ type BulletinResponse = {
   };
   subjects: BulletinSubject[];
   subject_groups: BulletinGroup[];
-  // ➕ sous-matières renvoyées par l’API (toujours présent côté back, mais on garde optionnel côté TS)
+  // ➕ sous-matières renvoyées par l’API (toujours présent côté back, optionnel côté TS)
   subject_components?: BulletinSubjectComponent[];
   items: BulletinItemBase[];
 };
@@ -199,6 +201,75 @@ type ConductSummaryResponse = {
   total_max: number;
   items: ConductItem[];
 };
+
+/* ───────── Mentions conseil de classe ───────── */
+
+type CouncilMentions = {
+  distinction: "excellence" | "honour" | "encouragement" | null;
+  sanction:
+    | "warningWork"
+    | "warningConduct"
+    | "blameWork"
+    | "blameConduct"
+    | null;
+};
+
+/**
+ * Règles simples (faciles à ajuster) :
+ * - ≥ 16 : Tableau d'excellence
+ * - [14 ; 16[ : Tableau d'honneur / Félicitations
+ * - [12 ; 14[ : Tableau d'encouragement
+ * - [10 ; 20[ : pas de sanction
+ * - [8 ; 10[ : Avertissement travail
+ * - < 8 : Blâme travail
+ * + si conduite très faible → avertissement / blâme conduite
+ */
+function computeCouncilMentions(
+  generalAvg: number | null | undefined,
+  conductTotal: number | null | undefined,
+  conductTotalMax: number | null | undefined
+): CouncilMentions {
+  let distinction: CouncilMentions["distinction"] = null;
+  let sanction: CouncilMentions["sanction"] = null;
+
+  if (
+    generalAvg !== null &&
+    generalAvg !== undefined &&
+    Number.isFinite(generalAvg)
+  ) {
+    const g = generalAvg;
+    if (g >= 16) {
+      distinction = "excellence";
+    } else if (g >= 14) {
+      distinction = "honour";
+    } else if (g >= 12) {
+      distinction = "encouragement";
+    } else if (g < 8) {
+      sanction = "blameWork";
+    } else if (g < 10) {
+      sanction = "warningWork";
+    }
+  }
+
+  if (
+    conductTotal !== null &&
+    conductTotal !== undefined &&
+    conductTotalMax !== null &&
+    conductTotalMax !== undefined &&
+    conductTotalMax > 0
+  ) {
+    const ratio = conductTotal / conductTotalMax;
+    if (ratio <= 0.4) {
+      // conduite très faible → blâme conduite
+      sanction = "blameConduct";
+    } else if (ratio <= 0.6 && !sanction) {
+      // conduite moyenne → avertissement conduite (sauf si déjà sanction sur le travail)
+      sanction = "warningConduct";
+    }
+  }
+
+  return { distinction, sanction };
+}
 
 /* ───────── UI helpers ───────── */
 
@@ -265,7 +336,7 @@ function round2(n: number): number {
 function formatDateFR(iso: string | null | undefined): string {
   if (!iso) return "—";
   const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso; // fallback brut si la date n’est pas ISO
+  if (Number.isNaN(d.getTime())) return iso;
   return d.toLocaleDateString("fr-FR");
 }
 
@@ -273,6 +344,54 @@ function formatYesNo(value: boolean | null | undefined): string {
   if (value === true) return "Oui";
   if (value === false) return "Non";
   return "—";
+}
+
+/* ───────── Rangs sous-matières (côté front) ───────── */
+
+function applyComponentRanksFront(
+  items: (BulletinItemBase | BulletinItemWithRank)[]
+) {
+  type Entry = {
+    itemIndex: number;
+    compIndex: number;
+    avg: number;
+    key: string;
+  };
+
+  const byKey = new Map<string, Entry[]>();
+
+  items.forEach((it, itemIndex) => {
+    const comps = it.per_subject_components ?? [];
+    comps.forEach((psc, compIndex) => {
+      const raw = psc.avg20;
+      if (raw === null || raw === undefined) return;
+      const avg = Number(raw);
+      if (!Number.isFinite(avg)) return;
+      const key = `${psc.subject_id}__${psc.component_id}`;
+      const arr = byKey.get(key) ?? [];
+      arr.push({ itemIndex, compIndex, avg, key });
+      byKey.set(key, arr);
+    });
+  });
+
+  byKey.forEach((entries) => {
+    entries.sort((a, b) => b.avg - a.avg);
+
+    let lastAvg: number | null = null;
+    let currentRank = 0;
+    let position = 0;
+
+    entries.forEach(({ itemIndex, compIndex, avg }) => {
+      position += 1;
+      if (lastAvg === null || avg !== lastAvg) {
+        currentRank = position;
+        lastAvg = avg;
+      }
+      const comps = items[itemIndex].per_subject_components;
+      if (!comps || !comps[compIndex]) return;
+      (comps[compIndex] as any).component_rank = currentRank;
+    });
+  });
 }
 
 /* ───────── Ranks + stats helper ───────── */
@@ -298,6 +417,8 @@ function computeRanksAndStats(
       ...it,
       rank: null,
     }));
+    // même si pas de moyenne générale, on peut classer les sous-matières
+    applyComponentRanksFront(itemsWithRank);
     return { response: res, items: itemsWithRank, stats };
   }
 
@@ -331,6 +452,9 @@ function computeRanksAndStats(
     ...it,
     rank: rankByStudent.get(it.student_id) ?? null,
   }));
+
+  // 🆕 on calcule aussi les rangs pour chaque sous-matière
+  applyComponentRanksFront(itemsWithRank);
 
   return { response: res, items: itemsWithRank, stats };
 }
@@ -424,13 +548,20 @@ function StudentBulletinCard({
     return map;
   }, [subjectComponents]);
 
-  // Map (subject_id + component_id) -> moyenne de l'élève
+  // Map (subject_id + component_id) -> { moyenne, rang }
   const perSubjectComponentMap = useMemo(() => {
-    const m = new Map<string, number | null>();
+    const m = new Map<
+      string,
+      { avg20: number | null; component_rank?: number | null }
+    >();
     const per = item.per_subject_components ?? [];
     per.forEach((psc) => {
       const key = `${psc.subject_id}__${psc.component_id}`;
-      m.set(key, psc.avg20);
+      m.set(key, {
+        avg20: psc.avg20 ?? null,
+        component_rank:
+          psc.component_rank !== undefined ? psc.component_rank : null,
+      });
     });
     return m;
   }, [item.per_subject_components]);
@@ -440,6 +571,15 @@ function StudentBulletinCard({
     conduct && typeof conduct.absence_minutes === "number"
       ? conduct.absence_minutes / 60
       : null;
+
+  // Mentions conseil de classe auto
+  const mentions = computeCouncilMentions(
+    item.general_avg,
+    conduct?.total ?? null,
+    conductTotalMax ?? null
+  );
+
+  const tick = (checked: boolean) => (checked ? "☑" : "□");
 
   return (
     <div
@@ -665,7 +805,9 @@ function StudentBulletinCard({
                 {/* Lignes des sous-matières, si présentes */}
                 {subComps.map((comp) => {
                   const key = `${s.subject_id}__${comp.id}`;
-                  const cAvg = perSubjectComponentMap.get(key) ?? null;
+                  const compCell = perSubjectComponentMap.get(key);
+                  const cAvg = compCell?.avg20 ?? null;
+                  const cRank = compCell?.component_rank ?? null;
                   const cMoyCoeff =
                     cAvg !== null
                       ? round2(cAvg * (comp.coeff_in_subject || 0))
@@ -689,8 +831,7 @@ function StudentBulletinCard({
                         {formatNumber(cMoyCoeff)}
                       </td>
                       <td className="border border-slate-400 px-1 py-0.5 text-center">
-                        {/* pas de rang au niveau sous-matière */}
-                        —
+                        {cRank != null ? `${cRank}e` : "—"}
                       </td>
                       <td className="border border-slate-400 px-1 py-0.5" />
                     </tr>
@@ -799,7 +940,7 @@ function StudentBulletinCard({
 
       {/* Bloc mentions + appréciations */}
       <div className="mt-3 grid grid-cols-2 gap-2 text-[0.7rem]">
-        <div className="border border-slate-400 p-2 min-h-[80px]">
+        <div className="min-h-[80px] border border-slate-400 p-2">
           <div className="mb-1 font-semibold uppercase">
             Mentions du conseil de classe
           </div>
@@ -807,19 +948,37 @@ function StudentBulletinCard({
             Distinctions
           </div>
           <ul className="mb-2 space-y-1 text-[0.65rem]">
-            <li>□ Tableau d&apos;honneur / Félicitations</li>
-            <li>□ Tableau d&apos;excellence</li>
-            <li>□ Tableau d&apos;encouragement</li>
+            <li>
+              {tick(mentions.distinction === "honour")} Tableau d&apos;honneur /
+              Félicitations
+            </li>
+            <li>
+              {tick(mentions.distinction === "excellence")} Tableau d&apos;
+              excellence
+            </li>
+            <li>
+              {tick(mentions.distinction === "encouragement")} Tableau
+              d&apos;encouragement
+            </li>
           </ul>
           <div className="mb-1 text-[0.65rem] font-semibold">Sanctions</div>
           <ul className="space-y-1 text-[0.65rem]">
-            <li>□ Avertissement travail</li>
-            <li>□ Avertissement conduite</li>
-            <li>□ Blâme travail</li>
-            <li>□ Blâme conduite</li>
+            <li>
+              {tick(mentions.sanction === "warningWork")} Avertissement travail
+            </li>
+            <li>
+              {tick(mentions.sanction === "warningConduct")}
+              {" Avertissement conduite"}
+            </li>
+            <li>
+              {tick(mentions.sanction === "blameWork")} Blâme travail
+            </li>
+            <li>
+              {tick(mentions.sanction === "blameConduct")} Blâme conduite
+            </li>
           </ul>
         </div>
-        <div className="border border-slate-400 p-2 min-h-[80px]">
+        <div className="min-h-[80px] border border-slate-400 p-2">
           <div className="mb-1 font-semibold uppercase">
             Appréciations du conseil de classe
           </div>
@@ -832,17 +991,32 @@ function StudentBulletinCard({
 
       {/* Bloc signatures */}
       <div className="mt-2 grid grid-cols-3 gap-2 text-[0.7rem]">
-        <div className="border border-slate-400 p-2 min-h-[60px]">
+        <div className="flex min-h-[80px] flex-col justify-between border border-slate-400 p-2">
           <div className="mb-1 font-semibold text-[0.65rem]">
             Visa du professeur principal
           </div>
+          {classInfo.head_teacher?.display_name && (
+            <div className="mt-4 text-center text-[0.65rem]">
+              {classInfo.head_teacher.display_name}
+            </div>
+          )}
         </div>
-        <div className="border border-slate-400 p-2 min-h-[60px]">
+        <div className="flex min-h-[80px] flex-col justify-between border border-slate-400 p-2">
           <div className="mb-1 font-semibold text-[0.65rem]">
             Visa du chef d&apos;établissement
           </div>
+          {institution?.institution_head_name && (
+            <div className="mt-4 text-center text-[0.65rem]">
+              {institution.institution_head_name}
+              {institution.institution_head_title && (
+                <div className="text-[0.6rem] text-slate-500">
+                  {institution.institution_head_title}
+                </div>
+              )}
+            </div>
+          )}
         </div>
-        <div className="border border-slate-400 p-2 min-h-[60px]">
+        <div className="flex min-h-[80px] flex-col justify-between border border-slate-400 p-2">
           <div className="mb-1 font-semibold text-[0.65rem]">
             Signature des parents / tuteur
           </div>
@@ -952,8 +1126,7 @@ export default function BulletinsPage() {
     run();
   }, []);
 
-  /* Chargement des périodes (trimestres / séquences) pour l'année sélectionnée.
-     Si la route n'existe pas ou renvoie une erreur, on garde les dates manuelles. */
+  /* Chargement des périodes (trimestres / séquences) pour l'année sélectionnée. */
   useEffect(() => {
     const run = async () => {
       try {
@@ -996,9 +1169,7 @@ export default function BulletinsPage() {
     run();
   }, [selectedAcademicYear]);
 
-  /* Années scolaires disponibles
-     - à partir des classes (toutes les années de l'établissement)
-     - + des périodes déjà chargées, pour être robuste */
+  /* Années scolaires disponibles */
   const academicYears = useMemo(() => {
     const set = new Set<string>();
 
@@ -1056,7 +1227,6 @@ export default function BulletinsPage() {
 
       const [resBulletin, resConduct] = await Promise.all([
         fetch(`/api/admin/grades/bulletin?${params.toString()}`),
-        // ⬇️ nouvelle route de conduite
         fetch(`/api/admin/conduite/averages?${params.toString()}`),
       ]);
 
@@ -1182,7 +1352,7 @@ export default function BulletinsPage() {
         </div>
       </div>
 
-      {/* Filtres : ANNEE SCOLAIRE d’abord, puis PÉRIODE, puis CLASSE, puis dates */}
+      {/* Filtres */}
       <div className="grid gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm print:hidden md:grid-cols-6">
         {/* Année scolaire */}
         <div className="md:col-span-2">
@@ -1217,7 +1387,7 @@ export default function BulletinsPage() {
           </p>
         </div>
 
-        {/* Période (trimestre / séquence) */}
+        {/* Période */}
         <div className="md:col-span-2">
           <label className="mb-1 block text-xs font-semibold uppercase text-slate-500">
             Période (trimestre / séquence)
@@ -1271,7 +1441,7 @@ export default function BulletinsPage() {
           </p>
         </div>
 
-        {/* Dates (toujours visibles, remplies automatiquement si période choisie) */}
+        {/* Dates */}
         <div className="md:col-span-3">
           <label className="mb-1 block text-xs font-semibold uppercase text-slate-500">
             Date de début
