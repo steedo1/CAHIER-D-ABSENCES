@@ -14,6 +14,10 @@ import {
   FileText,
 } from "lucide-react";
 
+// ✅ PDF
+import jsPDF from "jspdf";
+import "jspdf-autotable";
+
 type MonitorStatus = "missing" | "late" | "ok";
 
 type MonitorRow = {
@@ -159,7 +163,6 @@ export default function SurveillanceAppelsPage() {
 
     setPushSupported(true);
 
-    // Si le site est déjà bloqué dans le navigateur, on le signale tout de suite
     if (Notification.permission === "denied") {
       setPushStatus("denied");
       setPushError(
@@ -168,7 +171,6 @@ export default function SurveillanceAppelsPage() {
       return;
     }
 
-    // Tenter de détecter une subscription existante
     (async () => {
       try {
         const reg =
@@ -215,8 +217,7 @@ export default function SurveillanceAppelsPage() {
     try {
       setPushStatus("subscribing");
 
-      // 1️⃣ Gestion des permissions
-      let permission = Notification.permission; // "default" | "granted" | "denied"
+      let permission = Notification.permission;
 
       if (permission === "denied") {
         setPushStatus("denied");
@@ -238,7 +239,6 @@ export default function SurveillanceAppelsPage() {
         return;
       }
 
-      // 2️⃣ Récupération / enregistrement du service worker
       let reg = await navigator.serviceWorker.getRegistration();
       if (!reg) {
         reg = await navigator.serviceWorker.register("/sw.js");
@@ -249,7 +249,6 @@ export default function SurveillanceAppelsPage() {
         );
       }
 
-      // 3️⃣ Subscription push
       let sub = await reg.pushManager.getSubscription();
       if (!sub) {
         sub = await reg.pushManager.subscribe({
@@ -261,7 +260,7 @@ export default function SurveillanceAppelsPage() {
       const res = await fetch("/api/push/subscribe", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        credentials: "include", // important pour associer au profil connecté
+        credentials: "include",
         body: JSON.stringify({
           platform: "web",
           device_id: sub.endpoint,
@@ -288,7 +287,6 @@ export default function SurveillanceAppelsPage() {
           "Erreur lors de l’activation des notifications. Vérifiez le HTTPS et le service worker."
       );
     } finally {
-      // Filet de sécurité : on ne laisse jamais "subscribing" bloqué
       setPushStatus((prev) => (prev === "subscribing" ? "idle" : prev));
     }
   }
@@ -298,7 +296,6 @@ export default function SurveillanceAppelsPage() {
     setRowsState({ loading: true, error: null, data: null });
     try {
       const qs = new URLSearchParams({ from, to });
-      // on laisse le filtre de statut côté front pour l’instant
       const res = await fetch(`/api/admin/attendance/monitor?${qs.toString()}`, {
         cache: "no-store",
       });
@@ -354,7 +351,7 @@ export default function SurveillanceAppelsPage() {
 
   function setThisWeek() {
     const today = new Date();
-    const day = today.getDay(); // 0=dim
+    const day = today.getDay();
     const diff = day === 0 ? -6 : 1 - day;
     const monday = new Date(today);
     monday.setDate(today.getDate() + diff);
@@ -394,37 +391,43 @@ export default function SurveillanceAppelsPage() {
     return "";
   }
 
-  /* ───────── Export PDF — Synthèse élégante sur la période + filtres ───────── */
-  async function exportPdf() {
+  /* ───────── Export PDF — Synthèse + grand tableau ───────── */
+  function exportPdf() {
     if (!filteredRows.length) return;
-    try {
-      const jsPDFModule = await import("jspdf");
-      const JsPDFConstructor =
-        (jsPDFModule as any).jsPDF || (jsPDFModule as any).default;
 
-      const doc = new JsPDFConstructor({
-        orientation: "portrait",
+    try {
+      // On part en paysage pour caser toutes les colonnes
+      const doc = new jsPDF({
+        orientation: "landscape",
         unit: "mm",
         format: "a4",
       });
 
+      const pageWidth = doc.internal.pageSize.getWidth();
+      const pageHeight = doc.internal.pageSize.getHeight();
+      const marginLeft = 14;
+      const marginRight = 14;
+      const centerX = pageWidth / 2;
+
+      /* ───── PAGE 1 : SYNTHÈSE ───── */
       let y = 18;
 
-      // Titre principal
       doc.setFontSize(16);
       doc.setFont("helvetica", "bold");
-      doc.text("Surveillance des appels — Rapport consolidé", 105, y, {
-        align: "center",
-      });
+      doc.text(
+        "Surveillance des appels — Synthèse",
+        centerX,
+        y,
+        { align: "center" }
+      );
 
-      // Contexte (période + filtres)
       y += 8;
       doc.setFontSize(10);
       doc.setFont("helvetica", "normal");
-      doc.text(`Période : ${from} → ${to}`, 14, y);
+      doc.text(`Période : ${from} → ${to}`, marginLeft, y);
       y += 5;
 
-      const statusLabel =
+      const statusLabelPdf =
         statusFilter === "all"
           ? "Tous les statuts"
           : statusFilter === "missing"
@@ -433,192 +436,191 @@ export default function SurveillanceAppelsPage() {
           ? "Appels en retard"
           : "Appels conformes";
 
-      doc.text(`Filtre statut : ${statusLabel}`, 14, y);
-      y += 5;
-
-      const teacherLabel = teacherQuery.trim()
+      const teacherLabelPdf = teacherQuery.trim()
         ? teacherQuery.trim()
-        : "Aucun (tous les enseignants)";
-      doc.text(`Filtre enseignant : ${teacherLabel}`, 14, y);
+        : "Tous les enseignants";
+
+      doc.text(`Filtre statut : ${statusLabelPdf}`, marginLeft, y);
+      y += 5;
+      doc.text(`Filtre enseignant : ${teacherLabelPdf}`, marginLeft, y);
 
       y += 6;
       doc.setDrawColor(220);
-      doc.line(14, y, 196, y);
+      doc.line(marginLeft, y, pageWidth - marginRight, y);
       y += 6;
 
-      // Chiffres clés sur la sélection (après filtres)
       const totalSessions = filteredRows.length;
       const missingCount = filteredRows.filter(
         (r) => r.status === "missing"
       ).length;
-      const lateCount = filteredRows.filter((r) => r.status === "late").length;
+      const lateCount = filteredRows.filter(
+        (r) => r.status === "late"
+      ).length;
       const okCount = filteredRows.filter((r) => r.status === "ok").length;
 
       const pct = (n: number) =>
         totalSessions
-          ? `${((n * 100) / totalSessions)
-              .toFixed(1)
-              .replace(".", ",")} %`
+          ? `${((n * 100) / totalSessions).toFixed(1).replace(".", ",")} %`
           : "—";
 
       doc.setFontSize(11);
       doc.setFont("helvetica", "bold");
-      doc.text("Chiffres clés sur la sélection", 14, y);
+      doc.text("Chiffres clés sur la sélection", marginLeft, y);
       y += 5;
-
       doc.setFontSize(10);
       doc.setFont("helvetica", "normal");
-      doc.text(`Nombre total de créneaux : ${totalSessions}`, 14, y);
+      doc.text(`Nombre total de créneaux : ${totalSessions}`, marginLeft, y);
       y += 5;
       doc.text(
         `Appels manquants : ${missingCount} (${pct(missingCount)})`,
-        14,
+        marginLeft,
         y
       );
       y += 5;
       doc.text(
         `Appels en retard : ${lateCount} (${pct(lateCount)})`,
-        14,
+        marginLeft,
         y
       );
       y += 5;
-      doc.text(`Appels conformes : ${okCount} (${pct(okCount)})`, 14, y);
-      y += 8;
-
-      doc.setDrawColor(240);
-      doc.line(14, y, 196, y);
-      y += 6;
-
-      // Top enseignants (les plus "sensibles")
-      const teacherMap = new Map<
-        string,
-        { missing: number; late: number; ok: number; total: number }
-      >();
-      for (const r of filteredRows) {
-        const key = r.teacher_name || "Enseignant non renseigné";
-        const stats =
-          teacherMap.get(key) || { missing: 0, late: 0, ok: 0, total: 0 };
-        stats.total++;
-        if (r.status === "missing") stats.missing++;
-        else if (r.status === "late") stats.late++;
-        else if (r.status === "ok") stats.ok++;
-        teacherMap.set(key, stats);
-      }
-
-      const topTeachers = Array.from(teacherMap.entries())
-        .sort(
-          (a, b) =>
-            b[1].missing +
-            b[1].late -
-            (a[1].missing + a[1].late) // priorité au "risque"
-        )
-        .slice(0, 5);
-
-      doc.setFontSize(11);
-      doc.setFont("helvetica", "bold");
-      doc.text("Enseignants les plus concernés", 14, y);
-      y += 5;
-      doc.setFontSize(9);
-      doc.setFont("helvetica", "normal");
-
-      if (!topTeachers.length) {
-        doc.text(
-          "Aucun créneau sur la sélection actuelle (après filtres).",
-          16,
-          y
-        );
-        y += 6;
-      } else {
-        topTeachers.forEach(([name, s], idx) => {
-          const line = `${idx + 1}. ${name} — Manquants: ${
-            s.missing
-          }, Retards: ${s.late}, Conformes: ${s.ok}`;
-          doc.text(line, 16, y);
-          y += 5;
-          if (y > 270) {
-            doc.addPage();
-            y = 20;
-          }
-        });
-      }
-
-      y += 4;
-      doc.setDrawColor(240);
-      doc.line(14, y, 196, y);
-      y += 6;
-
-      // Détail de tous les créneaux sensibles (missing/late) sur la sélection filtrée
-      const criticalRows = filteredRows.filter(
-        (r) => r.status === "missing" || r.status === "late"
-      );
-
-      doc.setFontSize(11);
-      doc.setFont("helvetica", "bold");
       doc.text(
-        "Détail des créneaux manquants ou en retard (après filtres)",
-        14,
+        `Appels conformes : ${okCount} (${pct(okCount)})`,
+        marginLeft,
         y
       );
-      y += 5;
-      doc.setFontSize(8);
-      doc.setFont("helvetica", "normal");
 
-      if (!criticalRows.length) {
-        doc.text(
-          "Aucun appel manquant ou en retard sur la sélection filtrée.",
-          16,
-          y
-        );
-        y += 6;
-      } else {
-        criticalRows.forEach((r, idx) => {
-          const line1 = `${idx + 1}. ${dateHumanFR(r.date)} — ${
-            r.class_label || "Classe ?"
-          } — ${r.subject_name || "Discipline ?"
-          }`;
-          const statusLabelRow =
-            r.status === "missing"
-              ? "Appel manquant"
-              : r.status === "late"
-              ? `Appel en retard${
-                  typeof r.late_minutes === "number"
-                    ? ` (+${r.late_minutes} min)`
-                    : ""
-                }`
-              : "OK";
-          const line2 = `   Enseignant : ${r.teacher_name} • ${statusLabelRow}`;
+      y += 10;
+      doc.setFontSize(9);
+      doc.text(
+        "La page suivante présente le détail de chaque créneau sous forme de tableau.",
+        marginLeft,
+        y
+      );
 
-          doc.text(line1, 16, y);
-          y += 4;
-          doc.text(line2, 16, y);
-          y += 5;
-
-          if (y > 280) {
-            doc.addPage();
-            y = 20;
-          }
-        });
-      }
-
-      y += 8;
-      if (y > 285) {
-        doc.addPage();
-        y = 20;
-      }
+      const footerY1 = pageHeight - 12;
       doc.setFontSize(8);
       doc.setTextColor(120);
       doc.text(
         "Document généré automatiquement par Mon Cahier — Surveillance des appels",
-        14,
-        y
+        marginLeft,
+        footerY1
       );
+      doc.text("Page 1 / 2+", centerX, footerY1, { align: "center" });
+
+      /* ───── PAGES SUIVANTES : TABLEAU COMPLET ───── */
+      doc.addPage();
+
+      const head = [
+        "Date",
+        "Heure / créneau",
+        "Classe",
+        "Discipline",
+        "Enseignant",
+        "Statut",
+        "Origine",
+      ];
+
+      const body = filteredRows.map((r) => {
+        const period =
+          r.period_label ??
+          (r.planned_start && r.planned_end
+            ? `${r.planned_start} – ${r.planned_end}`
+            : "—");
+
+        const statusText =
+          r.status === "missing"
+            ? "Manquant"
+            : r.status === "late"
+            ? `En retard${
+                typeof r.late_minutes === "number"
+                  ? ` (+${r.late_minutes} min)`
+                  : ""
+              }`
+            : "OK";
+
+        const originText =
+          r.opened_from === "class_device"
+            ? "Appareil classe"
+            : r.opened_from === "teacher"
+            ? "Compte enseignant"
+            : "";
+
+        return [
+          dateHumanFR(r.date),
+          period,
+          r.class_label || "—",
+          r.subject_name || "Discipline non renseignée",
+          r.teacher_name || "—",
+          statusText,
+          originText,
+        ];
+      });
+
+      (doc as any).autoTable({
+        head: [head],
+        body,
+        startY: 24,
+        styles: { fontSize: 7, cellPadding: 1.5, valign: "middle" },
+        headStyles: {
+          fontStyle: "bold",
+          halign: "center",
+          fillColor: [15, 23, 42],
+          textColor: 255,
+        },
+        columnStyles: {
+          0: { cellWidth: 24 },
+          1: { cellWidth: 32 },
+          2: { cellWidth: 24 },
+          3: { cellWidth: 60 },
+          4: { cellWidth: 44 },
+          // 5 & 6 laissent AutoTable gérer la largeur restante
+        },
+        margin: { left: marginLeft, right: marginRight, top: 24, bottom: 16 },
+        didDrawPage: (data: any) => {
+          const pw = doc.internal.pageSize.getWidth();
+          const ph = doc.internal.pageSize.getHeight();
+          const cx = pw / 2;
+
+          doc.setFontSize(12);
+          doc.setFont("helvetica", "bold");
+          doc.setTextColor(0);
+          doc.text(
+            "Surveillance des appels — Détail des créneaux",
+            cx,
+            14,
+            { align: "center" }
+          );
+
+          doc.setFontSize(9);
+          doc.setFont("helvetica", "normal");
+          doc.text(`Période : ${from} → ${to}`, marginLeft, 18);
+
+          const pageNumber = data.pageNumber;
+          const totalPages = (doc as any).getNumberOfPages?.() ?? pageNumber;
+          const footerY = ph - 10;
+
+          doc.setFontSize(8);
+          doc.setTextColor(120);
+          doc.text(
+            "Document généré automatiquement par Mon Cahier — Surveillance des appels",
+            marginLeft,
+            footerY
+          );
+          doc.text(
+            `Page ${pageNumber} / ${totalPages}`,
+            cx,
+            footerY,
+            { align: "center" }
+          );
+        },
+      });
 
       const filename = `surveillance_appels_${from}_${to}.pdf`;
       doc.save(filename);
     } catch (err) {
       console.error("[SurveillanceAppels] exportPdf error", err);
       alert(
-        "Export PDF indisponible. Vérifiez que la librairie jsPDF est bien installée."
+        "Export PDF indisponible. Vérifiez que les librairies jsPDF et jspdf-autotable sont bien installées."
       );
     }
   }

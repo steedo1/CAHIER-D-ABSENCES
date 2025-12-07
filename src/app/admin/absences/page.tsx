@@ -3,6 +3,10 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Calendar, Filter, RefreshCw, Download, FileText } from "lucide-react";
 
+// ✅ imports PDF
+import jsPDF from "jspdf";
+import "jspdf-autotable";
+
 /* ───────── UI helpers ───────── */
 function Input(p: React.InputHTMLAttributes<HTMLInputElement>) {
   return (
@@ -233,7 +237,7 @@ export default function AbsencesMatrixOnly() {
       );
   }, [allClasses, selectedLevel]);
 
-  /* Années scolaires disponibles à partir des classes + périodes (comme les bulletins) */
+  /* Années scolaires disponibles */
   const academicYears = useMemo(() => {
     const set = new Set<string>();
     allClasses.forEach((c) => {
@@ -309,7 +313,7 @@ export default function AbsencesMatrixOnly() {
     }
   }
 
-  /* Rafraîchir matrice + fusionner avec les matières officielles de la classe + tri/numérotation */
+  /* Rafraîchir matrice */
   async function refreshMatrix() {
     if (!selectedClassId) {
       setMatrix(null);
@@ -342,14 +346,12 @@ export default function AbsencesMatrixOnly() {
           : { subjects: [], students: [], values: [], subjectDistinct: {} };
 
       // matières officielles de la classe
-      const classSubjects: MatrixSubject[] = (subs.items || []).map(
-        (s: any) => ({
-          id: s.id,
-          name: (s.label || s.name || "").trim() || s.id,
-        })
-      );
+      const classSubjects: MatrixSubject[] = (subs.items || []).map((s: any) => ({
+        id: s.id,
+        name: (s.label || s.name || "").trim() || s.id,
+      }));
 
-      // fusion (garantit l’affichage des colonnes)
+      // fusion
       const map = new Map<string, MatrixSubject>();
       for (const s of payload.subjects) map.set(s.id, s);
       for (const s of classSubjects) if (!map.has(s.id)) map.set(s.id, s);
@@ -357,14 +359,12 @@ export default function AbsencesMatrixOnly() {
         a.name.localeCompare(b.name, undefined, { sensitivity: "base" })
       );
 
-      // complete subjectDistinct (tooltips)
       const subjectDistinct: Record<string, number> = {
         ...(payload.subjectDistinct || {}),
       };
       for (const s of mergedSubjects)
         if (!(s.id in subjectDistinct)) subjectDistinct[s.id] = 0;
 
-      // tri alphabétique + numérotation
       const sortedStudents = [...(payload.students || [])].sort((a, b) =>
         (a.full_name || "").localeCompare(b.full_name || "", undefined, {
           sensitivity: "base",
@@ -399,7 +399,7 @@ export default function AbsencesMatrixOnly() {
     setMatrix(null);
   }
 
-  /* Totaux & éléments « chauds » (mise en évidence) */
+  /* Totaux & éléments « chauds » */
   const subjectTotals = useMemo(() => {
     const m = new Map<string, number>();
     if (!matrix) return m;
@@ -489,7 +489,7 @@ export default function AbsencesMatrixOnly() {
     };
   }, [matrix, studentTotals, subjectTotals]);
 
-  /* Export CSV (UTF-16LE propre pour Excel) */
+  /* Export CSV */
   function exportMatrixCsv() {
     if (!matrix) return;
     const sep = ";";
@@ -539,30 +539,15 @@ export default function AbsencesMatrixOnly() {
     );
   }
 
-  /* Export PDF – synthèse + vraie matrice élèves × disciplines
-     ⚠️ Nécessite : npm install jspdf jspdf-autotable
+  /* Export PDF – synthèse + matrice élèves × disciplines
+     (utilise jsPDF + jspdf-autotable)
   */
-  async function exportMatrixPdf() {
+  function exportMatrixPdf() {
     if (!matrix || !globalStats) return;
 
     try {
-      const jsPDFModule = await import("jspdf");
-      const JsPDFConstructor =
-        (jsPDFModule as any).jsPDF || (jsPDFModule as any).default;
-
-      // plugin pour le tableau automatique
-      try {
-        await import("jspdf-autotable");
-      } catch (e) {
-        console.error("[Absences] jspdf-autotable non disponible", e);
-        alert(
-          "Impossible de générer la matrice en PDF : installe d'abord la librairie 'jspdf-autotable' (npm install jspdf-autotable)."
-        );
-        return;
-      }
-
-      // A4 paysage pour avoir de la place pour les colonnes
-      const doc = new JsPDFConstructor({
+      // A4 paysage
+      const doc = new jsPDF({
         orientation: "landscape",
         unit: "mm",
         format: "a4",
@@ -601,7 +586,7 @@ export default function AbsencesMatrixOnly() {
       const valueLabel = (min: number) =>
         rubrique === "absent" ? hoursLabel(min) : `${nf.format(min)} min`;
 
-      /* ───────── PAGE 1 : SYNTHÈSE ───────── */
+      /* ───── PAGE 1 : SYNTHÈSE ───── */
       doc.setFontSize(16);
       doc.setFont("helvetica", "bold");
       doc.text(title, centerX, y, { align: "center" });
@@ -630,7 +615,7 @@ export default function AbsencesMatrixOnly() {
       doc.line(marginLeft, y, pageWidth - marginRight, y);
       y += 6;
 
-      // Bloc chiffres clés
+      // chiffres clés
       doc.setFontSize(11);
       doc.setFont("helvetica", "bold");
       doc.text("Chiffres clés", marginLeft, y);
@@ -736,9 +721,8 @@ export default function AbsencesMatrixOnly() {
         y
       );
 
-      /* ───────── PAGES SUIVANTES : VRAIE MATRICE ───────── */
+      /* ───── PAGES MATRICE ───── */
 
-      // Construction des données de la matrice pour le PDF
       const head = [
         "N°",
         "Élève",
@@ -773,7 +757,6 @@ export default function AbsencesMatrixOnly() {
         return row;
       });
 
-      // Nouvelle page pour le tableau
       doc.addPage();
       (doc as any).autoTable({
         head: [head],
@@ -783,7 +766,7 @@ export default function AbsencesMatrixOnly() {
         headStyles: {
           fontStyle: "bold",
           halign: "center",
-          fillColor: [16, 185, 129], // vert émeraude
+          fillColor: [16, 185, 129],
           textColor: 255,
         },
         columnStyles: {
@@ -792,7 +775,6 @@ export default function AbsencesMatrixOnly() {
         },
         margin: { left: marginLeft, right: marginRight, top: 26, bottom: 16 },
         didDrawPage: (data: any) => {
-          // En-tête répété sur chaque page de matrice
           doc.setFontSize(12);
           doc.setFont("helvetica", "bold");
           doc.setTextColor(0);
@@ -810,7 +792,6 @@ export default function AbsencesMatrixOnly() {
           doc.text(`Classe : ${classLabel}`, marginLeft, 18);
           doc.text(`Période : ${periodLabel}`, marginLeft, 22);
 
-          // Pied de page
           const pageNumber = data.pageNumber;
           const totalPages = (doc as any).getNumberOfPages?.() ?? pageNumber;
           const footerY = pageHeight - 10;
@@ -822,12 +803,9 @@ export default function AbsencesMatrixOnly() {
             marginLeft,
             footerY
           );
-          doc.text(
-            `Page ${pageNumber} / ${totalPages}`,
-            centerX,
-            footerY,
-            { align: "center" }
-          );
+          doc.text(`Page ${pageNumber} / ${totalPages}`, centerX, footerY, {
+            align: "center",
+          });
         },
       });
 
@@ -835,10 +813,11 @@ export default function AbsencesMatrixOnly() {
         to || "fin"
       }.pdf`;
       doc.save(filename);
-    } catch (err) {
+    } catch (err: any) {
       console.error("[Absences] erreur export PDF", err);
       alert(
-        "Export PDF indisponible. Vérifie que la librairie jsPDF est bien installée."
+        "Export PDF indisponible : " +
+          (err?.message || "voir la console du navigateur pour le détail.")
       );
     }
   }
@@ -1203,7 +1182,6 @@ export default function AbsencesMatrixOnly() {
                       </th>
                     );
                   })}
-                  {/* Colonne Total */}
                   <th className="px-2 py-2 text-center align-bottom">Total</th>
                 </tr>
               </thead>
@@ -1265,7 +1243,6 @@ export default function AbsencesMatrixOnly() {
                           </td>
                         );
                       })}
-                      {/* Total par élève */}
                       <td
                         className="px-2 py-2 text-center tabular-nums font-semibold text-slate-900"
                         title="Somme sur toutes les disciplines de la période"
