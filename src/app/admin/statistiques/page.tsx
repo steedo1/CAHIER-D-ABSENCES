@@ -21,15 +21,15 @@ type DetailRow = {
   expected_minutes: number;
   real_minutes: number;
   actual_call_iso?: string | null;
-  class_id?: string | null;     // ✅ récupéré par l’API
-  class_label?: string | null;  // ✅ récupéré par l’API
+  class_id?: string | null; // ✅ récupéré par l’API
+  class_label?: string | null; // ✅ récupéré par l’API
 };
 
 type SummaryRow = {
   teacher_id: string;
   teacher_name: string;
-  total_minutes: number;      // on le garde pour compat, même si non affiché
-  sessions_count: number;     // ✅ nouveau : nombre de séances (1 séance = 1h)
+  total_minutes: number; // on le garde pour compat, même si non affiché
+  sessions_count: number; // ✅ nouveau : nombre de séances (1 séance = 1h)
   subject_names?: string[];
 };
 
@@ -47,13 +47,16 @@ type FetchState<T> = { loading: boolean; error: string | null; data: T | null };
 /* Timesheet */
 type TimesheetClass = { id: string; label: string };
 type TimesheetSlot = { start: string; end: string };
-type CellsMetaItem = { hhmm: string; origin?: "class_device" | "teacher" | string };
+type CellsMetaItem = {
+  hhmm: string;
+  origin?: "class_device" | "teacher" | string;
+};
 
 type TimesheetPayload = {
   teacher: { id: string; name: string; subjects: string[]; total_minutes: number };
-  dates: string[];               // "YYYY-MM-DD"
-  classes: TimesheetClass[];     // classes du prof
-  slots: TimesheetSlot[];        // créneaux (lignes)
+  dates: string[]; // "YYYY-MM-DD"
+  classes: TimesheetClass[]; // classes du prof
+  slots: TimesheetSlot[]; // créneaux (lignes)
   // key = `${date}|${slotStart}|${classId}` → ["08:13","08:55", ...] (heures du clic)
   cells: Record<string, string[]>;
   // (optionnel) même clé → [{ hhmm:"08:13", origin:"class_device" }, ...]
@@ -98,11 +101,19 @@ function minutesToHourLabel(min: number) {
 /** Ouvre une fenêtre imprimable pour générer un beau PDF (via "Imprimer" → Enregistrer en PDF) */
 function openPdfPrintWindow(title: string, subtitle: string, tableHtml: string) {
   if (typeof window === "undefined") return;
-  const w = window.open("", "_blank", "noopener,noreferrer,width=1024,height=768");
-  if (!w) return;
 
-  w.document.open();
-  w.document.write(`<!doctype html>
+  // ⚠️ IMPORTANT : pas de "noopener,noreferrer" ici sinon Edge/Chrome peuvent bloquer le document.write
+  const w = window.open("", "_blank", "width=1024,height=768");
+
+  if (!w) {
+    alert(
+      "Votre navigateur a bloqué la fenêtre d'impression. " +
+        "Autorisez les fenêtres pop-up pour ce site."
+    );
+    return;
+  }
+
+  const html = `<!doctype html>
 <html lang="fr">
 <head>
   <meta charset="utf-8" />
@@ -153,21 +164,29 @@ function openPdfPrintWindow(title: string, subtitle: string, tableHtml: string) 
     });
   </script>
 </body>
-</html>`);
+</html>`;
+
+  w.document.open();
+  w.document.write(html);
   w.document.close();
+  w.focus();
 }
 
 const teacherLabel = (t: Teacher) =>
-  (t.display_name?.trim() ||
-    t.full_name?.trim() ||
-    t.email?.trim() ||
-    t.phone?.trim() ||
-    "(enseignant)");
+  t.display_name?.trim() ||
+  t.full_name?.trim() ||
+  t.email?.trim() ||
+  t.phone?.trim() ||
+  "(enseignant)";
 
 function dateHumanFR(ymd: string) {
   const [y, m, d] = ymd.split("-").map(Number);
   const dt = new Date(y, m - 1, d);
-  return dt.toLocaleDateString([], { weekday: "short", day: "2-digit", month: "2-digit" });
+  return dt.toLocaleDateString([], {
+    weekday: "short",
+    day: "2-digit",
+    month: "2-digit",
+  });
 }
 function isWeekday(ymd: string) {
   const [y, m, d] = ymd.split("-").map(Number);
@@ -324,7 +343,8 @@ export default function AdminStatistiquesPage() {
     return summary.data.reduce((acc, it) => acc + (it.sessions_count || 0), 0);
   }, [summary.data]);
 
-  const disciplineHeader = subjectId === "ALL" ? "Discipline(s)" : "Discipline (filtrée)";
+  const disciplineHeader =
+    subjectId === "ALL" ? "Discipline(s)" : "Discipline (filtrée)";
 
   /* Agrégation hebdo pour la vue "Contrôle inspecteur" */
   const inspectorRows = useMemo<InspectorWeekRow[]>(() => {
@@ -649,7 +669,8 @@ export default function AdminStatistiquesPage() {
     return localStorage.getItem("timesheet.selectedClassId") || "";
   });
   useEffect(() => {
-    if (selectedClassId) localStorage.setItem("timesheet.selectedClassId", selectedClassId);
+    if (selectedClassId)
+      localStorage.setItem("timesheet.selectedClassId", selectedClassId);
   }, [selectedClassId]);
 
   // ✅ Jours scolaires uniquement
@@ -661,7 +682,9 @@ export default function AdminStatistiquesPage() {
     (async () => {
       try {
         const url = tsSubjectId
-          ? `/api/admin/teachers/by-subject?subject_id=${encodeURIComponent(tsSubjectId)}`
+          ? `/api/admin/teachers/by-subject?subject_id=${encodeURIComponent(
+              tsSubjectId
+            )}`
           : `/api/admin/teachers/by-subject`;
         const res = await fetch(url, { cache: "no-store" });
         const j = await res.json();
@@ -846,7 +869,10 @@ export default function AdminStatistiquesPage() {
               {/* ✅ Filtre Discipline (optionnel) pour le timesheet */}
               <div className="space-y-1">
                 <label className="text-sm font-medium text-slate-700">Discipline</label>
-                <Select value={tsSubjectId} onChange={(e) => setTsSubjectId(e.target.value)}>
+                <Select
+                  value={tsSubjectId}
+                  onChange={(e) => setTsSubjectId(e.target.value)}
+                >
                   <option value="">Toutes les disciplines</option>
                   {subjects
                     .filter((s) => s.id !== "ALL")
@@ -874,7 +900,9 @@ export default function AdminStatistiquesPage() {
               </div>
 
               <div className="space-y-1">
-                <label className="text-sm font-medium text-slate-700">Mode de créneaux</label>
+                <label className="text-sm font-medium text-slate-700">
+                  Mode de créneaux
+                </label>
                 <div className="flex items-center gap-3 rounded-xl border border-slate-200 bg-slate-50/80 px-3 py-2">
                   <label className="inline-flex items-center gap-2 text-sm text-slate-700">
                     <input
@@ -895,7 +923,9 @@ export default function AdminStatistiquesPage() {
 
               <div className="grid grid-cols-3 gap-2">
                 <div className="space-y-1">
-                  <label className="text-sm font-medium text-slate-700">Créneau (min)</label>
+                  <label className="text-sm font-medium text-slate-700">
+                    Créneau (min)
+                  </label>
                   <Select
                     value={String(slot)}
                     onChange={(e) => setSlot(parseInt(e.target.value, 10))}
@@ -952,8 +982,8 @@ export default function AdminStatistiquesPage() {
                   Synthèse par enseignant
                 </h2>
                 <p className="text-xs text-slate-500 mt-1">
-                  Vue globale du <strong>nombre de séances d’appel</strong> par enseignant sur
-                  la période.
+                  Vue globale du <strong>nombre de séances d’appel</strong> par enseignant
+                  sur la période.
                 </p>
               </div>
               <div className="flex items-center gap-3">
@@ -1063,9 +1093,7 @@ export default function AdminStatistiquesPage() {
                 {detail.data && (
                   <div className="text-xs md:text-sm rounded-full bg-slate-100 text-slate-800 px-3 py-1 border border-slate-200">
                     {detail.data.count} séance(s) • Total :{" "}
-                    <strong>
-                      {minutesToHourLabel(detail.data.total_minutes)}
-                    </strong>
+                    <strong>{minutesToHourLabel(detail.data.total_minutes)}</strong>
                   </div>
                 )}
                 {detailMode === "seances" ? (
@@ -1255,9 +1283,7 @@ export default function AdminStatistiquesPage() {
                   </div>
                   <div className="text-sm rounded-xl bg-white/80 border border-emerald-100 px-3 py-1.5 text-emerald-900 shadow-sm">
                     Total période :{" "}
-                    <strong>
-                      {minutesToHourLabel(td.teacher.total_minutes)}
-                    </strong>
+                    <strong>{minutesToHourLabel(td.teacher.total_minutes)}</strong>
                   </div>
                 </div>
 
@@ -1398,8 +1424,8 @@ export default function AdminStatistiquesPage() {
                 )}
                 <p className="mt-3 text-xs text-slate-500">
                   Chaque cellule affiche la <strong>durée effective</strong> du créneau :
-                  longueur du créneau − (heure du premier clic − heure de début). Sans clic,
-                  valeur <strong>0H00</strong>.
+                  longueur du créneau − (heure du premier clic − heure de début). Sans
+                  clic, valeur <strong>0H00</strong>.
                 </p>
               </div>
             </>

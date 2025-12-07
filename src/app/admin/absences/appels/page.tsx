@@ -117,6 +117,8 @@ function Button(p: React.ButtonHTMLAttributes<HTMLButtonElement>) {
   );
 }
 
+/* ───────── Page ───────── */
+
 export default function SurveillanceAppelsPage() {
   const [from, setFrom] = useState<string>(() => {
     const d = new Date();
@@ -236,7 +238,7 @@ export default function SurveillanceAppelsPage() {
         return;
       }
 
-      // 2️⃣ Récupération / enregistrement du service worker (sans `ready` qui peut bloquer)
+      // 2️⃣ Récupération / enregistrement du service worker
       let reg = await navigator.serviceWorker.getRegistration();
       if (!reg) {
         reg = await navigator.serviceWorker.register("/sw.js");
@@ -621,313 +623,379 @@ export default function SurveillanceAppelsPage() {
     }
   }
 
-  return (
-    <main className="min-h-screen bg-slate-50/80 p-4 md:p-6 space-y-6">
-      <header className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold text-slate-900">
-            Surveillance des appels
-          </h1>
-          <p className="text-sm text-slate-500 mt-1">
-            Vue dédiée pour repérer les <strong>appels manquants</strong> et les{" "}
-            <strong>appels en retard</strong>, à partir des emplois du temps et
-            des séances réellement ouvertes.
-          </p>
-        </div>
-      </header>
+  /* ───────── UI ───────── */
 
-      {/* Bloc activation notifications admin */}
-      <section className="rounded-2xl border border-sky-200 bg-sky-50/80 shadow-sm p-4 md:p-5 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-        <div className="flex items-start gap-3">
-          {pushStatus === "enabled" ? (
-            <div className="mt-0.5 inline-flex h-9 w-9 items-center justify-center rounded-full bg-emerald-100 text-emerald-700">
-              <Bell className="h-5 w-5" />
+  return (
+    <main className="min-h-screen bg-slate-50/80 p-4 md:p-6">
+      <div className="mx-auto max-w-6xl space-y-6">
+        {/* Header */}
+        <header className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wide text-emerald-600">
+              Tableau de contrôle
+            </p>
+            <h1 className="mt-1 text-2xl font-semibold text-slate-900">
+              Surveillance des appels
+            </h1>
+            <p className="mt-1 text-sm text-slate-500 max-w-2xl">
+              Repérez en temps réel les{" "}
+              <span className="font-medium text-red-600">
+                appels manquants
+              </span>{" "}
+              et les{" "}
+              <span className="font-medium text-amber-600">
+                appels réalisés en retard
+              </span>{" "}
+              par rapport aux emplois du temps officiels.
+            </p>
+          </div>
+        </header>
+
+        {/* Bloc activation notifications admin */}
+        <section className="rounded-2xl border border-sky-200 bg-gradient-to-r from-sky-50 to-emerald-50 shadow-sm p-4 md:p-5 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+          <div className="flex items-start gap-3">
+            {pushStatus === "enabled" ? (
+              <div className="mt-0.5 inline-flex h-10 w-10 items-center justify-center rounded-full bg-emerald-100 text-emerald-700 shadow-sm">
+                <Bell className="h-5 w-5" />
+              </div>
+            ) : (
+              <div className="mt-0.5 inline-flex h-10 w-10 items-center justify-center rounded-full bg-sky-100 text-sky-700 shadow-sm">
+                <BellOff className="h-5 w-5" />
+              </div>
+            )}
+            <div className="space-y-1">
+              <h2 className="text-sm font-semibold text-slate-900">
+                Notifications instantanées pour les appels manquants
+              </h2>
+              <p className="text-xs text-slate-700">
+                Activez les notifications push pour être alerté(e) automatiquement{" "}
+                dès qu&apos;un appel est <strong>manquant</strong> ou réalisé{" "}
+                <strong>hors délai</strong>, selon la fenêtre de contrôle définie.
+              </p>
+              {!pushSupported && (
+                <p className="text-[11px] text-red-700">
+                  Les notifications ne sont pas supportées sur ce navigateur.
+                  Essayez depuis un navigateur récent (Chrome, Edge, Firefox) sur
+                  ordinateur ou mobile.
+                </p>
+              )}
+              {pushError && (
+                <p className="text-[11px] text-red-700">{pushError}</p>
+              )}
+            </div>
+          </div>
+          <div className="flex flex-col items-end gap-2 text-right">
+            <span className="text-[11px] uppercase tracking-wide text-slate-500">
+              Statut
+            </span>
+            <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                onClick={enablePush}
+                disabled={
+                  !pushSupported ||
+                  pushStatus === "subscribing" ||
+                  pushStatus === "enabled"
+                }
+                className={[
+                  "!px-4",
+                  pushStatus === "enabled"
+                    ? "bg-emerald-600 hover:bg-emerald-700"
+                    : "bg-slate-900 hover:bg-black",
+                ].join(" ")}
+              >
+                {pushStatus === "subscribing" && (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                )}
+                {pushStatus === "enabled"
+                  ? "Notifications activées sur cet appareil"
+                  : "Activer les notifications"}
+              </Button>
+            </div>
+          </div>
+        </section>
+
+        {/* Résumé / KPIs */}
+        <section className="grid gap-3 md:grid-cols-3">
+          <div className="rounded-2xl border border-red-100 bg-red-50/80 p-4 shadow-sm flex flex-col gap-2">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium text-red-800 uppercase tracking-wide">
+                Appels manquants
+              </span>
+              <AlertTriangle className="h-5 w-5 text-red-500" />
+            </div>
+            <div className="text-2xl font-semibold text-red-900">
+              {totalMissing}
+            </div>
+            <p className="text-[11px] text-red-800/80">
+              Créneaux où un cours était prévu mais aucun appel n&apos;a été
+              détecté dans la fenêtre de contrôle.
+            </p>
+          </div>
+
+          <div className="rounded-2xl border border-amber-100 bg-amber-50/80 p-4 shadow-sm flex flex-col gap-2">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium text-amber-900 uppercase tracking-wide">
+                Appels en retard
+              </span>
+              <Clock className="h-5 w-5 text-amber-500" />
+            </div>
+            <div className="text-2xl font-semibold text-amber-900">
+              {totalLate}
+            </div>
+            <p className="text-[11px] text-amber-900/80">
+              Appels effectués, mais avec un retard supérieur au seuil paramétré
+              (ex. 15 minutes).
+            </p>
+          </div>
+
+          <div className="rounded-2xl border border-emerald-100 bg-emerald-50/80 p-4 shadow-sm flex flex-col gap-2">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium text-emerald-900 uppercase tracking-wide">
+                Appels conformes
+              </span>
+              <CheckCircle2 className="h-5 w-5 text-emerald-600" />
+            </div>
+            <div className="text-2xl font-semibold text-emerald-900">
+              {totalOk}
+            </div>
+            <p className="text-[11px] text-emerald-900/80">
+              Créneaux où l’appel a été réalisé dans les délais prévus.
+            </p>
+          </div>
+        </section>
+
+        {/* Filtres */}
+        <section className="rounded-2xl border border-slate-200 bg-white/90 shadow-sm p-4 md:p-5 space-y-4">
+          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <div className="flex items-center gap-2 text-sm font-semibold text-slate-800">
+              <Filter className="h-4 w-4 text-slate-500" />
+              <span>Filtres de période et de statut</span>
+            </div>
+            <div className="flex items-center gap-2 text-xs">
+              <Button
+                type="button"
+                className="!px-3 !py-1.5 bg-slate-800 hover:bg-slate-900"
+                onClick={setToday}
+              >
+                Aujourd&apos;hui
+              </Button>
+              <Button
+                type="button"
+                className="!px-3 !py-1.5 bg-slate-800 hover:bg-slate-900"
+                onClick={setThisWeek}
+              >
+                Cette semaine
+              </Button>
+            </div>
+          </div>
+
+          <div className="grid gap-3 md:grid-cols-4">
+            <div className="space-y-1">
+              <label className="text-sm font-medium text-slate-700">
+                Date de début
+              </label>
+              <Input
+                type="date"
+                value={from}
+                onChange={(e) => setFrom(e.target.value)}
+              />
+            </div>
+            <div className="space-y-1">
+              <label className="text-sm font-medium text-slate-700">
+                Date de fin
+              </label>
+              <Input
+                type="date"
+                value={to}
+                onChange={(e) => setTo(e.target.value)}
+              />
+            </div>
+            <div className="space-y-1">
+              <label className="text-sm font-medium text-slate-700">
+                Statut
+              </label>
+              <Select
+                value={statusFilter}
+                onChange={(e) =>
+                  setStatusFilter(e.target.value as MonitorStatus | "all")
+                }
+              >
+                <option value="all">Tous les statuts</option>
+                <option value="missing">Appels manquants</option>
+                <option value="late">Appels en retard</option>
+                <option value="ok">Appels conformes</option>
+              </Select>
+            </div>
+            <div className="space-y-1">
+              <label className="text-sm font-medium text-slate-700">
+                Filtrer par enseignant
+              </label>
+              <div className="relative">
+                <Input
+                  type="text"
+                  placeholder="Nom de l’enseignant"
+                  value={teacherQuery}
+                  onChange={(e) => setTeacherQuery(e.target.value)}
+                  className="pl-8"
+                />
+                <Search className="pointer-events-none absolute left-2 top-2.5 h-4 w-4 text-slate-400" />
+              </div>
+            </div>
+          </div>
+
+          <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between text-xs text-slate-500">
+            <span>
+              Période active : <strong>{from}</strong> → <strong>{to}</strong>
+            </span>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={loadRows}
+                className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100"
+              >
+                <RefreshCw className="h-3 w-3" />
+                Actualiser
+              </button>
+              <button
+                type="button"
+                onClick={exportPdf}
+                disabled={!filteredRows.length}
+                className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-800 hover:bg-emerald-100 disabled:opacity-60 disabled:cursor-not-allowed"
+              >
+                <FileText className="h-3 w-3" />
+                Export PDF
+              </button>
+            </div>
+          </div>
+
+          {/* Légende statuts */}
+          <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
+            <span className="mr-1">Légende :</span>
+            <span className="inline-flex items-center gap-1 rounded-full bg-red-50 px-2 py-0.5 border border-red-100 text-red-700">
+              <AlertTriangle className="h-3 w-3" /> Appel manquant
+            </span>
+            <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 border border-amber-100 text-amber-800">
+              <Clock className="h-3 w-3" /> Appel en retard
+            </span>
+            <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 border border-emerald-100 text-emerald-800">
+              <CheckCircle2 className="h-3 w-3" /> Appel conforme
+            </span>
+          </div>
+        </section>
+
+        {/* Tableau principal */}
+        <section className="rounded-2xl border border-slate-200 bg-white shadow-sm p-4 md:p-5">
+          {rowsState.loading ? (
+            <div className="space-y-2">
+              {Array.from({ length: 5 }).map((_, i) => (
+                <div
+                  key={i}
+                  className="h-9 w-full animate-pulse rounded-xl bg-slate-100"
+                />
+              ))}
+            </div>
+          ) : rowsState.error ? (
+            <div className="p-4 border border-red-200 rounded-2xl bg-red-50 text-red-700 text-sm">
+              {rowsState.error}
+            </div>
+          ) : filteredRows.length === 0 ? (
+            <div className="p-4 border border-slate-200 rounded-2xl bg-slate-50 text-slate-600 text-sm">
+              Aucun créneau ne correspond aux filtres sélectionnés.
             </div>
           ) : (
-            <div className="mt-0.5 inline-flex h-9 w-9 items-center justify-center rounded-full bg-sky-100 text-sky-700">
-              <BellOff className="h-5 w-5" />
+            <div className="overflow-auto rounded-xl border border-slate-200">
+              <table className="min-w-full text-sm">
+                <thead className="bg-slate-100/90 text-slate-700">
+                  <tr>
+                    <th className="px-3 py-2 text-left">Date</th>
+                    <th className="px-3 py-2 text-left">Créneau</th>
+                    <th className="px-3 py-2 text-left">Classe</th>
+                    <th className="px-3 py-2 text-left">Discipline</th>
+                    <th className="px-3 py-2 text-left">Enseignant</th>
+                    <th className="px-3 py-2 text-left">Statut</th>
+                    <th className="px-3 py-2 text-left">Détails</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {filteredRows.map((r) => {
+                    const statusColor =
+                      r.status === "missing"
+                        ? "border-l-4 border-red-400 bg-red-50/40 hover:bg-red-50"
+                        : r.status === "late"
+                        ? "border-l-4 border-amber-400 bg-amber-50/30 hover:bg-amber-50"
+                        : "border-l-4 border-emerald-400 bg-white hover:bg-emerald-50/60";
+
+                    return (
+                      <tr
+                        key={r.id}
+                        className={`transition-colors ${statusColor}`}
+                      >
+                        <td className="px-3 py-2 text-slate-800 whitespace-nowrap">
+                          {dateHumanFR(r.date)}
+                        </td>
+                        <td className="px-3 py-2 text-slate-700 whitespace-nowrap">
+                          {r.period_label
+                            ? r.period_label
+                            : r.planned_start && r.planned_end
+                            ? `${r.planned_start} – ${r.planned_end}`
+                            : "—"}
+                        </td>
+                        <td className="px-3 py-2 text-slate-700 whitespace-nowrap">
+                          {r.class_label || "—"}
+                        </td>
+                        <td className="px-3 py-2 text-slate-700 whitespace-nowrap">
+                          {r.subject_name || "Discipline non renseignée"}
+                        </td>
+                        <td className="px-3 py-2 text-slate-700 whitespace-nowrap">
+                          {r.teacher_name}
+                        </td>
+                        <td className="px-3 py-2 text-slate-700 whitespace-nowrap">
+                          {statusBadge(r)}
+                        </td>
+                        <td className="px-3 py-2 text-xs text-slate-600">
+                          {r.status === "missing" && (
+                            <span>
+                              Aucun appel détecté pour ce créneau.{" "}
+                              {originEmoji(r.opened_from)}{" "}
+                            </span>
+                          )}
+                          {r.status === "late" && (
+                            <span>
+                              Appel réalisé avec retard.{" "}
+                              {originEmoji(r.opened_from)}{" "}
+                              {typeof r.late_minutes === "number"
+                                ? `Retard estimé : ${r.late_minutes} min.`
+                                : ""}
+                            </span>
+                          )}
+                          {r.status === "ok" && (
+                            <span>
+                              Appel dans les délais. {originEmoji(r.opened_from)}
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
             </div>
           )}
-          <div className="space-y-1">
-            <h2 className="text-sm font-semibold text-slate-900">
-              Notifications instantanées pour les appels manquants
-            </h2>
-            <p className="text-xs text-slate-700">
-              Activez les notifications push pour être alerté(e) automatiquement{" "}
-              dès qu&apos;un appel est <strong>manquant</strong> ou réalisé{" "}
-              <strong>hors délai</strong>, selon la fenêtre de contrôle définie.
-            </p>
-            {!pushSupported && (
-              <p className="text-[11px] text-red-700">
-                Les notifications ne sont pas supportées sur ce navigateur.
-                Essayez depuis un navigateur récent (Chrome, Edge, Firefox) sur
-                ordinateur ou mobile.
-              </p>
-            )}
-            {pushError && (
-              <p className="text-[11px] text-red-700">{pushError}</p>
-            )}
-          </div>
-        </div>
-        <div className="flex items-center gap-2">
-          <Button
-            type="button"
-            onClick={enablePush}
-            disabled={
-              !pushSupported || pushStatus === "subscribing" || pushStatus === "enabled"
-            }
-            className={[
-              "!px-4",
-              pushStatus === "enabled"
-                ? "bg-emerald-600 hover:bg-emerald-700"
-                : "bg-slate-900 hover:bg-black",
-            ].join(" ")}
-          >
-            {pushStatus === "subscribing" && (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            )}
-            {pushStatus === "enabled"
-              ? "Notifications activées sur cet appareil"
-              : "Activer les notifications"}
-          </Button>
-        </div>
-      </section>
 
-      {/* Résumé / KPIs */}
-      <section className="grid gap-3 md:grid-cols-3">
-        <div className="rounded-2xl border border-red-100 bg-red-50/80 p-4 shadow-sm flex flex-col gap-2">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-medium text-red-800 uppercase tracking-wide">
-              Appels manquants
-            </span>
-            <AlertTriangle className="h-5 w-5 text-red-500" />
-          </div>
-          <div className="text-2xl font-semibold text-red-900">{totalMissing}</div>
-          <p className="text-[11px] text-red-800/80">
-            Créneaux où un cours était prévu mais aucun appel n&apos;a été
-            détecté dans la fenêtre de contrôle.
+          <p className="mt-3 text-[11px] text-slate-500">
+            Cette vue repose sur trois éléments :{" "}
+            <strong>emplois du temps importés</strong>,{" "}
+            <strong>séances (teacher_sessions)</strong> et{" "}
+            <strong>heure réelle d’appel (actual_call_at)</strong>. La route
+            back-end utilisée est{" "}
+            <code className="rounded bg-slate-100 px-1 py-0.5 text-[10px]">
+              /api/admin/attendance/monitor
+            </code>
+            .
           </p>
-        </div>
-
-        <div className="rounded-2xl border border-amber-100 bg-amber-50/80 p-4 shadow-sm flex flex-col gap-2">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-medium text-amber-900 uppercase tracking-wide">
-              Appels en retard
-            </span>
-            <Clock className="h-5 w-5 text-amber-500" />
-          </div>
-          <div className="text-2xl font-semibold text-amber-900">{totalLate}</div>
-          <p className="text-[11px] text-amber-900/80">
-            Appels effectués, mais avec un retard supérieur au seuil paramétré
-            (ex. 15 minutes).
-          </p>
-        </div>
-
-        <div className="rounded-2xl border border-emerald-100 bg-emerald-50/80 p-4 shadow-sm flex flex-col gap-2">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-medium text-emerald-900 uppercase tracking-wide">
-              Appels conformes
-            </span>
-            <CheckCircle2 className="h-5 w-5 text-emerald-600" />
-          </div>
-          <div className="text-2xl font-semibold text-emerald-900">{totalOk}</div>
-          <p className="text-[11px] text-emerald-900/80">
-            Créneaux où l’appel a été réalisé dans les délais prévus.
-          </p>
-        </div>
-      </section>
-
-      {/* Filtres */}
-      <section className="rounded-2xl border border-slate-200 bg-white/90 shadow-sm p-4 md:p-5 space-y-4">
-        <div className="flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2 text-sm font-semibold text-slate-800">
-            <Filter className="h-4 w-4 text-slate-500" />
-            <span>Filtres de période et de statut</span>
-          </div>
-          <div className="flex items-center gap-2 text-xs">
-            <Button
-              type="button"
-              className="!px-3 !py-1.5 bg-slate-800 hover:bg-slate-900"
-              onClick={setToday}
-            >
-              Aujourd&apos;hui
-            </Button>
-            <Button
-              type="button"
-              className="!px-3 !py-1.5 bg-slate-800 hover:bg-slate-900"
-              onClick={setThisWeek}
-            >
-              Cette semaine
-            </Button>
-          </div>
-        </div>
-
-        <div className="grid gap-3 md:grid-cols-4">
-          <div className="space-y-1">
-            <label className="text-sm font-medium text-slate-700">
-              Date de début
-            </label>
-            <Input
-              type="date"
-              value={from}
-              onChange={(e) => setFrom(e.target.value)}
-            />
-          </div>
-          <div className="space-y-1">
-            <label className="text-sm font-medium text-slate-700">
-              Date de fin
-            </label>
-            <Input type="date" value={to} onChange={(e) => setTo(e.target.value)} />
-          </div>
-          <div className="space-y-1">
-            <label className="text-sm font-medium text-slate-700">Statut</label>
-            <Select
-              value={statusFilter}
-              onChange={(e) =>
-                setStatusFilter(e.target.value as MonitorStatus | "all")
-              }
-            >
-              <option value="all">Tous les statuts</option>
-              <option value="missing">Appels manquants</option>
-              <option value="late">Appels en retard</option>
-              <option value="ok">Appels conformes</option>
-            </Select>
-          </div>
-          <div className="space-y-1">
-            <label className="text-sm font-medium text-slate-700">
-              Filtrer par enseignant
-            </label>
-            <div className="relative">
-              <Input
-                type="text"
-                placeholder="Nom de l’enseignant"
-                value={teacherQuery}
-                onChange={(e) => setTeacherQuery(e.target.value)}
-                className="pl-8"
-              />
-              <Search className="pointer-events-none absolute left-2 top-2.5 h-4 w-4 text-slate-400" />
-            </div>
-          </div>
-        </div>
-
-        <div className="flex items-center justify-between gap-3 text-xs text-slate-500">
-          <span>
-            Période active : <strong>{from}</strong> → <strong>{to}</strong>
-          </span>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={loadRows}
-              className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100"
-            >
-              <RefreshCw className="h-3 w-3" />
-              Actualiser
-            </button>
-            <button
-              type="button"
-              onClick={exportPdf}
-              disabled={!filteredRows.length}
-              className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-800 hover:bg-emerald-100 disabled:opacity-60 disabled:cursor-not-allowed"
-            >
-              <FileText className="h-3 w-3" />
-              Export PDF
-            </button>
-          </div>
-        </div>
-      </section>
-
-      {/* Tableau principal */}
-      <section className="rounded-2xl border border-slate-200 bg-white shadow-sm p-4 md:p-5">
-        {rowsState.loading ? (
-          <div className="p-4 border border-slate-200 rounded-2xl bg-slate-50 text-slate-700">
-            Chargement des données…
-          </div>
-        ) : rowsState.error ? (
-          <div className="p-4 border border-red-200 rounded-2xl bg-red-50 text-red-700 text-sm">
-            {rowsState.error}
-          </div>
-        ) : filteredRows.length === 0 ? (
-          <div className="p-4 border border-slate-200 rounded-2xl bg-slate-50 text-slate-600 text-sm">
-            Aucun créneau ne correspond aux filtres sélectionnés.
-          </div>
-        ) : (
-          <div className="overflow-auto rounded-xl border border-slate-200">
-            <table className="min-w-full text-sm">
-              <thead className="bg-slate-100/90 text-slate-700">
-                <tr>
-                  <th className="px-3 py-2 text-left">Date</th>
-                  <th className="px-3 py-2 text-left">Créneau</th>
-                  <th className="px-3 py-2 text-left">Classe</th>
-                  <th className="px-3 py-2 text-left">Discipline</th>
-                  <th className="px-3 py-2 text-left">Enseignant</th>
-                  <th className="px-3 py-2 text-left">Statut</th>
-                  <th className="px-3 py-2 text-left">Détails</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {filteredRows.map((r) => (
-                  <tr
-                    key={r.id}
-                    className="odd:bg:white even:bg-slate-50 hover:bg-emerald-50/70 transition-colors"
-                  >
-                    <td className="px-3 py-2 text-slate-800 whitespace-nowrap">
-                      {dateHumanFR(r.date)}
-                    </td>
-                    <td className="px-3 py-2 text-slate-700 whitespace-nowrap">
-                      {r.period_label
-                        ? r.period_label
-                        : r.planned_start && r.planned_end
-                        ? `${r.planned_start} – ${r.planned_end}`
-                        : "—"}
-                    </td>
-                    <td className="px-3 py-2 text-slate-700 whitespace-nowrap">
-                      {r.class_label || "—"}
-                    </td>
-                    <td className="px-3 py-2 text-slate-700 whitespace-nowrap">
-                      {r.subject_name || "Discipline non renseignée"}
-                    </td>
-                    <td className="px-3 py-2 text-slate-700 whitespace-nowrap">
-                      {r.teacher_name}
-                    </td>
-                    <td className="px-3 py-2 text-slate-700 whitespace-nowrap">
-                      {statusBadge(r)}
-                    </td>
-                    <td className="px-3 py-2 text-xs text-slate-600">
-                      {r.status === "missing" && (
-                        <span>
-                          Aucun appel détecté pour ce créneau.{" "}
-                          {originEmoji(r.opened_from)}{" "}
-                        </span>
-                      )}
-                      {r.status === "late" && (
-                        <span>
-                          Appel réalisé avec retard. {originEmoji(r.opened_from)}{" "}
-                          {typeof r.late_minutes === "number"
-                            ? `Retard estimé : ${r.late_minutes} min.`
-                            : ""}
-                        </span>
-                      )}
-                      {r.status === "ok" && (
-                        <span>
-                          Appel dans les délais. {originEmoji(r.opened_from)}
-                        </span>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-
-        <p className="mt-3 text-[11px] text-slate-500">
-          Cette vue repose sur trois éléments :{" "}
-          <strong>emplois du temps importés</strong>,{" "}
-          <strong>séances (teacher_sessions)</strong> et{" "}
-          <strong>heure réelle d’appel (actual_call_at)</strong>. La route
-          back-end prévue est <code>/api/admin/attendance/monitor</code>.
-        </p>
-      </section>
+        </section>
+      </div>
     </main>
   );
 }

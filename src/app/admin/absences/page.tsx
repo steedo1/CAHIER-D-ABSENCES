@@ -1,4 +1,3 @@
-// src/app/admin/absences/page.tsx
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
@@ -195,10 +194,7 @@ export default function AbsencesMatrixOnly() {
           cache: "no-store",
         });
         if (!res.ok) {
-          console.warn(
-            "[Absences] grading-periods non disponible",
-            res.status
-          );
+          console.warn("[Absences] grading-periods non disponible", res.status);
           setPeriods([]);
           return;
         }
@@ -543,18 +539,41 @@ export default function AbsencesMatrixOnly() {
     );
   }
 
-  /* Export PDF – synthèse élégante de la période (nécessite jsPDF) */
+  /* Export PDF – synthèse + vraie matrice élèves × disciplines
+     ⚠️ Nécessite : npm install jspdf jspdf-autotable
+  */
   async function exportMatrixPdf() {
     if (!matrix || !globalStats) return;
+
     try {
       const jsPDFModule = await import("jspdf");
       const JsPDFConstructor =
         (jsPDFModule as any).jsPDF || (jsPDFModule as any).default;
+
+      // plugin pour le tableau automatique
+      try {
+        await import("jspdf-autotable");
+      } catch (e) {
+        console.error("[Absences] jspdf-autotable non disponible", e);
+        alert(
+          "Impossible de générer la matrice en PDF : installe d'abord la librairie 'jspdf-autotable' (npm install jspdf-autotable)."
+        );
+        return;
+      }
+
+      // A4 paysage pour avoir de la place pour les colonnes
       const doc = new JsPDFConstructor({
-        orientation: "portrait",
+        orientation: "landscape",
         unit: "mm",
         format: "a4",
       });
+
+      const pageWidth = doc.internal.pageSize.getWidth();
+      const pageHeight = doc.internal.pageSize.getHeight();
+      const marginLeft = 14;
+      const marginRight = 14;
+      const centerX = pageWidth / 2;
+      const bottomY = pageHeight - 20;
 
       const periodLabel = (() => {
         if (selectedPeriodId) {
@@ -579,150 +598,238 @@ export default function AbsencesMatrixOnly() {
       const title = "Matrice des absences — Synthèse";
       let y = 18;
 
+      const valueLabel = (min: number) =>
+        rubrique === "absent" ? hoursLabel(min) : `${nf.format(min)} min`;
+
+      /* ───────── PAGE 1 : SYNTHÈSE ───────── */
       doc.setFontSize(16);
       doc.setFont("helvetica", "bold");
-      doc.text(title, 105, y, { align: "center" });
+      doc.text(title, centerX, y, { align: "center" });
 
       y += 8;
       doc.setFontSize(10);
       doc.setFont("helvetica", "normal");
       doc.text(
         `Année scolaire : ${selectedAcademicYear || "Toutes"}`,
-        14,
+        marginLeft,
         y
       );
       y += 5;
-      doc.text(`Classe : ${classLabel}`, 14, y);
+      doc.text(`Classe : ${classLabel}`, marginLeft, y);
       y += 5;
       doc.text(
         `Période : ${periodLabel}  •  Rubrique : ${
           rubrique === "absent" ? "Absences (heures)" : "Retards (minutes)"
         }`,
-        14,
+        marginLeft,
         y
       );
 
       y += 8;
       doc.setDrawColor(220);
-      doc.line(14, y, 196, y);
+      doc.line(marginLeft, y, pageWidth - marginRight, y);
       y += 6;
 
       // Bloc chiffres clés
-      const valueLabel = (min: number) =>
-        rubrique === "absent" ? hoursLabel(min) : `${nf.format(min)} min`;
-
       doc.setFontSize(11);
       doc.setFont("helvetica", "bold");
-      doc.text("Chiffres clés", 14, y);
+      doc.text("Chiffres clés", marginLeft, y);
       y += 5;
       doc.setFontSize(10);
       doc.setFont("helvetica", "normal");
       doc.text(
         `Nombre d'élèves : ${globalStats.studentsCount}`,
-        14,
+        marginLeft,
         y
       );
       y += 5;
       doc.text(
         `Nombre de disciplines : ${globalStats.subjectsCount}`,
-        14,
+        marginLeft,
         y
       );
       y += 5;
       doc.text(
         `Total sur la période : ${valueLabel(globalStats.totalMinutesAll)}`,
-        14,
+        marginLeft,
         y
       );
       y += 5;
       doc.text(
         `Moyenne par élève : ${valueLabel(globalStats.avgPerStudent)}`,
-        14,
+        marginLeft,
         y
       );
       y += 5;
       doc.text(
         `Moyenne par discipline : ${valueLabel(globalStats.avgPerSubject)}`,
-        14,
+        marginLeft,
         y
       );
 
       y += 8;
       doc.setDrawColor(240);
-      doc.line(14, y, 196, y);
+      doc.line(marginLeft, y, pageWidth - marginRight, y);
       y += 6;
 
       // Top élèves
       doc.setFontSize(11);
       doc.setFont("helvetica", "bold");
-      doc.text("Élèves les plus concernés", 14, y);
+      doc.text("Élèves les plus concernés", marginLeft, y);
       y += 5;
       doc.setFontSize(9);
       doc.setFont("helvetica", "normal");
 
       if (!globalStats.topStudents.length) {
-        doc.text("Aucun élève concerné sur la période.", 16, y);
+        doc.text("Aucun élève concerné sur la période.", marginLeft + 2, y);
         y += 6;
       } else {
         globalStats.topStudents.forEach((s, idx) => {
           const val = valueLabel(s.total);
           doc.text(
             `${idx + 1}. ${s.full_name} — ${val}`,
-            16,
+            marginLeft + 2,
             y
           );
           y += 5;
-          if (y > 270) {
-            doc.addPage();
-            y = 20;
-          }
         });
       }
 
       y += 4;
       doc.setDrawColor(240);
-      doc.line(14, y, 196, y);
+      doc.line(marginLeft, y, pageWidth - marginRight, y);
       y += 6;
 
       // Top disciplines
       doc.setFontSize(11);
       doc.setFont("helvetica", "bold");
-      doc.text("Disciplines les plus concernées", 14, y);
+      doc.text("Disciplines les plus concernées", marginLeft, y);
       y += 5;
       doc.setFontSize(9);
       doc.setFont("helvetica", "normal");
 
       if (!globalStats.topSubjects.length) {
-        doc.text("Aucune discipline concernée sur la période.", 16, y);
+        doc.text(
+          "Aucune discipline concernée sur la période.",
+          marginLeft + 2,
+          y
+        );
         y += 6;
       } else {
         globalStats.topSubjects.forEach((s, idx) => {
           const val = valueLabel(s.total);
           doc.text(
             `${idx + 1}. ${s.name} — ${val}`,
-            16,
+            marginLeft + 2,
             y
           );
           y += 5;
-          if (y > 270) {
-            doc.addPage();
-            y = 20;
-          }
         });
       }
 
-      y += 10;
-      if (y > 280) {
-        doc.addPage();
-        y = 20;
-      }
+      y = Math.min(y + 10, bottomY);
       doc.setFontSize(8);
       doc.setTextColor(120);
       doc.text(
         "Document généré automatiquement par Mon Cahier — Synthèse des absences/retards",
-        14,
+        marginLeft,
         y
       );
+
+      /* ───────── PAGES SUIVANTES : VRAIE MATRICE ───────── */
+
+      // Construction des données de la matrice pour le PDF
+      const head = [
+        "N°",
+        "Élève",
+        ...matrix.subjects.map((s) => s.name),
+        "Total",
+      ];
+
+      const body = matrix.students.map((stu, rowIndex) => {
+        const row: string[] = [];
+        row.push(String(stu.rank ?? rowIndex + 1));
+        row.push(stu.full_name);
+
+        let totalMinutes = 0;
+        for (const subj of matrix.subjects) {
+          const minutes = matrixIndex[stu.id]?.[subj.id] || 0;
+          totalMinutes += minutes;
+          const cell =
+            rubrique === "absent"
+              ? hoursLabel(minutes)
+              : minutes
+              ? `${nf.format(minutes)}`
+              : "";
+          row.push(cell);
+        }
+
+        const totalCell =
+          rubrique === "absent"
+            ? hoursLabel(totalMinutes)
+            : `${nf.format(totalMinutes)}`;
+        row.push(totalCell);
+
+        return row;
+      });
+
+      // Nouvelle page pour le tableau
+      doc.addPage();
+      (doc as any).autoTable({
+        head: [head],
+        body,
+        startY: 26,
+        styles: { fontSize: 7, cellPadding: 1, valign: "middle" },
+        headStyles: {
+          fontStyle: "bold",
+          halign: "center",
+          fillColor: [16, 185, 129], // vert émeraude
+          textColor: 255,
+        },
+        columnStyles: {
+          0: { cellWidth: 10, halign: "center" },
+          1: { cellWidth: 45 },
+        },
+        margin: { left: marginLeft, right: marginRight, top: 26, bottom: 16 },
+        didDrawPage: (data: any) => {
+          // En-tête répété sur chaque page de matrice
+          doc.setFontSize(12);
+          doc.setFont("helvetica", "bold");
+          doc.setTextColor(0);
+          doc.text(
+            rubrique === "absent"
+              ? "Matrice des absences (heures) — Élèves × Disciplines"
+              : "Matrice des retards (minutes) — Élèves × Disciplines",
+            centerX,
+            14,
+            { align: "center" }
+          );
+
+          doc.setFontSize(9);
+          doc.setFont("helvetica", "normal");
+          doc.text(`Classe : ${classLabel}`, marginLeft, 18);
+          doc.text(`Période : ${periodLabel}`, marginLeft, 22);
+
+          // Pied de page
+          const pageNumber = data.pageNumber;
+          const totalPages = (doc as any).getNumberOfPages?.() ?? pageNumber;
+          const footerY = pageHeight - 10;
+
+          doc.setFontSize(8);
+          doc.setTextColor(120);
+          doc.text(
+            "Document généré automatiquement par Mon Cahier — Matrice des absences/retards",
+            marginLeft,
+            footerY
+          );
+          doc.text(
+            `Page ${pageNumber} / ${totalPages}`,
+            centerX,
+            footerY,
+            { align: "center" }
+          );
+        },
+      });
 
       const filename = `matrice_${rubrique}_${from || "debut"}_${
         to || "fin"
@@ -906,7 +1013,7 @@ export default function AbsencesMatrixOnly() {
             <Download className="h-4 w-4" /> Export CSV
           </GhostButton>
           <GhostButton onClick={exportMatrixPdf} disabled={!matrix}>
-            <FileText className="h-4 w-4" /> Export PDF (synthèse)
+            <FileText className="h-4 w-4" /> Export PDF (matrice)
           </GhostButton>
         </div>
       </Card>
