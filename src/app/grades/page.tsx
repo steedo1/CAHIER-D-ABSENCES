@@ -677,17 +677,84 @@ export default function TeacherNotesPage() {
   /* ==========================================
      Moyennes (vue dédiée)
      🚨 Basées sur /api/teacher/grades/averages
+     + calcul local des moyennes par sous-rubrique
   ========================================== */
   type RowAvg = {
     student: RosterItem;
-    avg20: number; // moyenne brute avant bonus
+    avg20: number; // moyenne brute avant bonus (API)
     bonus: number;
     final: number; // après bonus (et éventuel arrondi côté API)
     rank: number;
+    componentsAvg?: Record<string, number>; // ✅ moyenne /20 par sous-rubrique (subject_component_id -> moyenne)
   };
   const [avgRows, setAvgRows] = useState<RowAvg[]>([]);
   const [bonusMap, setBonusMap] = useState<Record<string, number>>({});
   const [loadingAvg, setLoadingAvg] = useState(false);
+
+  // Quand on est en mode "moyennes", on recalcule les moyennes par sous-rubrique
+  // à partir des évaluations + notes (comme sur le compte classe).
+  useEffect(() => {
+    if (mode !== "moyennes") return;
+    if (!hasComponents) return;
+    if (!components.length) return;
+    if (!evaluations.length) return;
+    if (!roster.length) return;
+
+    // Groupement des évaluations par sous-rubrique
+    const evalsByComponent: Record<string, Evaluation[]> = {};
+    for (const ev of evaluations) {
+      const compId = ev.subject_component_id;
+      if (!compId) continue;
+      if (!evalsByComponent[compId]) evalsByComponent[compId] = [];
+      evalsByComponent[compId].push(ev);
+    }
+
+    const componentAvgsByStudent: Record<string, Record<string, number>> = {};
+
+    for (const st of roster) {
+      const perComp: Record<string, number> = {};
+
+      for (const comp of components) {
+        const list = evalsByComponent[comp.id];
+        if (!list || !list.length) continue;
+
+        let num = 0;
+        let den = 0;
+
+        for (const ev of list) {
+          const raw = grades[ev.id]?.[st.id]; // on se base sur les notes en base
+          if (raw == null) continue;
+          const score = Number(raw);
+          if (!Number.isFinite(score)) continue;
+
+          const normalized20 = (score / ev.scale) * 20;
+          const coeffEval = Number(ev.coeff || 1);
+          num += normalized20 * coeffEval;
+          den += coeffEval;
+        }
+
+        if (den > 0) {
+          const avg = num / den;
+          // Arrondi à 2 décimales comme sur le compte classe
+          perComp[comp.id] = Math.round(avg * 100) / 100;
+        }
+      }
+
+      if (Object.keys(perComp).length > 0) {
+        componentAvgsByStudent[st.id] = perComp;
+      }
+    }
+
+    if (!Object.keys(componentAvgsByStudent).length) return;
+
+    setAvgRows((prev) =>
+      prev.map((row) => ({
+        ...row,
+        componentsAvg:
+          componentAvgsByStudent[row.student.id] || row.componentsAvg || {},
+      }))
+    );
+  }, [mode, hasComponents, components, evaluations, grades, roster]);
 
   function applyAveragesFromApi(items: AverageApiRow[]) {
     const map = new Map(items.map((row) => [row.student_id, row]));
@@ -1454,6 +1521,10 @@ export default function TeacherNotesPage() {
               {evaluations.map((ev) => {
                 const label = labelByEvalId[ev.id] ?? "NOTE";
                 const isActive = currentActiveEvalId === ev.id;
+                const comp = ev.subject_component_id
+                  ? componentById[ev.subject_component_id]
+                  : undefined;
+                const rubLabel = comp?.short_label || comp?.label || "";
                 return (
                   <button
                     key={ev.id}
@@ -1466,6 +1537,13 @@ export default function TeacherNotesPage() {
                         ? "border-emerald-500 bg-emerald-50 text-emerald-700"
                         : "border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100",
                     ].join(" ")}
+                    title={
+                      rubLabel
+                        ? `${label} — ${rubLabel} (/ ${
+                            evaluations.find((e) => e.id === ev.id)?.scale
+                          })`
+                        : label
+                    }
                   >
                     {label}
                   </button>
@@ -1715,6 +1793,23 @@ export default function TeacherNotesPage() {
                     <th className="px-3 py-2 w-64 sticky left-[13rem] z-20 bg-slate-50">
                       Nom et prénoms
                     </th>
+
+                    {/* ✅ colonnes de moyennes par sous-rubrique, comme sur le compte classe */}
+                    {hasComponents &&
+                      components.map((comp) => (
+                        <th
+                          key={comp.id}
+                          className="px-3 py-2 text-right whitespace-nowrap"
+                        >
+                          <div className="font-semibold text-xs md:text-sm">
+                            {comp.short_label || comp.label}
+                          </div>
+                          <div className="text-[10px] text-slate-500">
+                            coeff {comp.coeff_in_subject}
+                          </div>
+                        </th>
+                      ))}
+
                     <th className="px-3 py-2 text-right">Moyenne (/20)</th>
                     <th className="px-3 py-2 text-right">Bonus</th>
                     <th className="px-3 py-2 text-right">Finale (/20)</th>
@@ -1735,51 +1830,71 @@ export default function TeacherNotesPage() {
                       </td>
                     </tr>
                   ) : (
-                    avgRows.map((row, idx) => (
-                      <tr
-                        key={row.student.id}
-                        className="hover:bg-slate-50/60"
-                      >
-                        <td className="px-3 py-2 w-12 sticky left-0 z-10 bg-white">
-                          {idx + 1}
-                        </td>
-                        <td className="px-3 py-2 w-40 sticky left-[3rem] z-10 bg-white">
-                          {row.student.matricule ?? ""}
-                        </td>
-                        <td className="px-3 py-2 w-64 sticky left-[13rem] z-10 bg-white">
-                          {row.student.full_name}
-                        </td>
-                        <td className="px-3 py-2 text-right tabular-nums">
-                          {row.avg20.toFixed(2)}
-                        </td>
-                        <td className="px-3 py-2 w-24">
-                          <Input
-                            type="number"
-                            step="0.25"
-                            min={0}
-                            max={10}
-                            value={bonusMap[row.student.id] ?? 0}
-                            onChange={(e) => {
-                              const v = Number(e.target.value || 0);
-                              setBonusMap((m) => ({
-                                ...m,
-                                [row.student.id]: Math.max(0, Math.min(10, v)),
-                              }));
-                            }}
-                            aria-label={`Bonus ${row.student.full_name}`}
-                          />
-                        </td>
-                        <td className="px-3 py-2 text-right tabular-nums">
-                          {Math.min(
-                            20,
-                            row.avg20 + (bonusMap[row.student.id] ?? 0)
-                          ).toFixed(2)}
-                        </td>
-                        <td className="px-3 py-2 text-right">
-                          {row.rank || ""}
-                        </td>
-                      </tr>
-                    ))
+                    avgRows.map((row, idx) => {
+                      const bonus = bonusMap[row.student.id] ?? row.bonus ?? 0;
+                      const final = Math.min(20, row.avg20 + bonus);
+                      return (
+                        <tr
+                          key={row.student.id}
+                          className="hover:bg-slate-50/60"
+                        >
+                          <td className="px-3 py-2 w-12 sticky left-0 z-10 bg-white">
+                            {idx + 1}
+                          </td>
+                          <td className="px-3 py-2 w-40 sticky left-[3rem] z-10 bg-white">
+                            {row.student.matricule ?? ""}
+                          </td>
+                          <td className="px-3 py-2 w-64 sticky left-[13rem] z-10 bg-white">
+                            {row.student.full_name}
+                          </td>
+
+                          {/* valeurs /20 pour chaque sous-rubrique */}
+                          {hasComponents &&
+                            components.map((comp) => {
+                              const v =
+                                row.componentsAvg?.[comp.id] ?? undefined;
+                              return (
+                                <td
+                                  key={comp.id}
+                                  className="px-3 py-2 text-right tabular-nums"
+                                >
+                                  {v != null ? v.toFixed(2) : "—"}
+                                </td>
+                              );
+                            })}
+
+                          <td className="px-3 py-2 text-right tabular-nums">
+                            {row.avg20.toFixed(2)}
+                          </td>
+                          <td className="px-3 py-2 w-24">
+                            <Input
+                              type="number"
+                              step="0.25"
+                              min={0}
+                              max={10}
+                              value={bonusMap[row.student.id] ?? row.bonus ?? 0}
+                              onChange={(e) => {
+                                const v = Number(e.target.value || 0);
+                                setBonusMap((m) => ({
+                                  ...m,
+                                  [row.student.id]: Math.max(
+                                    0,
+                                    Math.min(10, v)
+                                  ),
+                                }));
+                              }}
+                              aria-label={`Bonus ${row.student.full_name}`}
+                            />
+                          </td>
+                          <td className="px-3 py-2 text-right tabular-nums">
+                            {final.toFixed(2)}
+                          </td>
+                          <td className="px-3 py-2 text-right">
+                            {row.rank || ""}
+                          </td>
+                        </tr>
+                      );
+                    })
                   )}
                 </tbody>
               </table>
@@ -1799,7 +1914,7 @@ export default function TeacherNotesPage() {
                 </div>
               ) : (
                 avgRows.map((row, idx) => {
-                  const bonus = bonusMap[row.student.id] ?? 0;
+                  const bonus = bonusMap[row.student.id] ?? row.bonus ?? 0;
                   const final = Math.min(20, row.avg20 + bonus);
                   return (
                     <div
@@ -1820,6 +1935,8 @@ export default function TeacherNotesPage() {
                       <div className="mt-1 text-sm font-medium text-slate-900">
                         {row.student.full_name}
                       </div>
+
+                      {/* bloc moyennes globale + finale */}
                       <div className="mt-2 grid grid-cols-2 gap-2 text-xs text-slate-700">
                         <div>
                           <div className="text-[11px] uppercase tracking-wide text-slate-500">
@@ -1838,6 +1955,35 @@ export default function TeacherNotesPage() {
                           </div>
                         </div>
                       </div>
+
+                      {/* ✅ détail par sous-rubrique sur mobile aussi */}
+                      {hasComponents && (
+                        <div className="mt-2 text-xs text-slate-700">
+                          <div className="text-[11px] uppercase tracking-wide text-slate-500">
+                            Sous-rubriques (/20)
+                          </div>
+                          <div className="mt-1 flex flex-wrap gap-1">
+                            {components.map((comp) => {
+                              const v =
+                                row.componentsAvg?.[comp.id] ?? undefined;
+                              return (
+                                <span
+                                  key={comp.id}
+                                  className="inline-flex items-center rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[11px]"
+                                >
+                                  <span className="font-medium mr-1">
+                                    {comp.short_label || comp.label}:
+                                  </span>
+                                  <span className="tabular-nums">
+                                    {v != null ? v.toFixed(2) : "—"}
+                                  </span>
+                                </span>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+
                       <div className="mt-2">
                         <div className="text-[11px] mb-1 text-slate-500">
                           Bonus (0 à 10)
