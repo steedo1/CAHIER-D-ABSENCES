@@ -187,6 +187,7 @@ export async function GET(req: NextRequest) {
     { data: classes, error: cErr },
     { data: subjects, error: sErr },
     { data: teachers, error: tErr },
+    { data: teacherSubjects, error: tsErr },
   ] = await Promise.all([
     srv
       .from("institution_periods")
@@ -200,11 +201,16 @@ export async function GET(req: NextRequest) {
     srv.from("classes").select("id,label").eq("institution_id", institution_id),
     srv
       .from("institution_subjects")
-      .select("id,custom_name,subjects:subject_id(name)")
+      // On récupère aussi l'id du subject de base pour croiser avec teacher_subjects
+      .select("id,custom_name,subjects:subject_id(id,name)")
       .eq("institution_id", institution_id),
     srv
       .from("profiles")
       .select("id,display_name,email,phone")
+      .eq("institution_id", institution_id),
+    srv
+      .from("teacher_subjects")
+      .select("profile_id,subject_id,institution_id")
       .eq("institution_id", institution_id),
   ]);
 
@@ -227,6 +233,10 @@ export async function GET(req: NextRequest) {
   if (tErr) {
     console.error("[attendance/monitor] teachers_err", { error: tErr.message });
     return NextResponse.json({ error: tErr.message }, { status: 400 });
+  }
+  if (tsErr) {
+    console.error("[attendance/monitor] teacher_subjects_err", { error: tsErr.message });
+    // On ne bloque pas la route : dans ce cas, aucune filtration par affectations officielles
   }
 
   const dateMinIso = new Date(fromDate.getTime());
@@ -286,17 +296,33 @@ export async function GET(req: NextRequest) {
   });
 
   const subjectNameById = new Map<string, string>();
+  const instSubjectIdsByBaseId = new Map<string, string[]>();
+
   (subjects || []).forEach((row: any) => {
-    const id = String(row.id);
+    const instId = String(row.id);
     const cname = (row.custom_name as string | null) || "";
+
     let baseName = "";
+    let baseId: string | null = null;
+
     if (Array.isArray(row.subjects)) {
-      baseName = row.subjects[0]?.name || "";
+      const first = row.subjects[0] || {};
+      baseName = first.name || "";
+      if (first.id) baseId = String(first.id);
     } else if (row.subjects && typeof row.subjects === "object") {
-      baseName = (row.subjects as any).name || "";
+      const sObj: any = row.subjects;
+      baseName = sObj.name || "";
+      if (sObj.id) baseId = String(sObj.id);
     }
+
     const name = (cname || baseName || "").trim() || "Discipline";
-    subjectNameById.set(id, name);
+    subjectNameById.set(instId, name);
+
+    if (baseId) {
+      const arr = instSubjectIdsByBaseId.get(baseId) || [];
+      arr.push(instId);
+      instSubjectIdsByBaseId.set(baseId, arr);
+    }
   });
 
   const teacherNameById = new Map<string, string>();
@@ -307,6 +333,23 @@ export async function GET(req: NextRequest) {
     const phone = (t.phone as string | null) || "";
     const name = disp.trim() || email.trim() || phone.trim() || "Enseignant";
     teacherNameById.set(id, name);
+  });
+
+  // Index des affectations officielles : (teacher_id, institution_subject_id) autorisés
+  const teacherHasSubjects = new Set<string>();
+  const allowedPairs = new Set<string>(); // `${teacherId}|${institutionSubjectId}`
+
+  (teacherSubjects || []).forEach((ts: any) => {
+    const teacherId = String(ts.profile_id);
+    const subjBaseId = ts.subject_id ? String(ts.subject_id) : "";
+    if (!subjBaseId) return;
+
+    teacherHasSubjects.add(teacherId);
+
+    const instIds = instSubjectIdsByBaseId.get(subjBaseId) || [];
+    instIds.forEach((instSubjId) => {
+      allowedPairs.add(`${teacherId}|${instSubjId}`);
+    });
   });
 
   // Index des séances par (date|class|subject|teacher)
@@ -368,6 +411,18 @@ export async function GET(req: NextRequest) {
     const classId = String(tt.class_id);
     const subjectId = String(tt.subject_id || "");
     const teacherId = String(tt.teacher_id);
+
+    // Filtre : ne garder que les créneaux cohérents avec les affectations officielles
+    // - On ne filtre que si le prof a au moins une affectation dans teacher_subjects
+    // - Et seulement pour les créneaux avec subject_id renseigné
+    if (subjectId && teacherHasSubjects.has(teacherId)) {
+      const pairKey = `${teacherId}|${subjectId}`;
+      if (!allowedPairs.has(pairKey)) {
+        // Incohérent : emploi du temps ne correspond pas aux matières attribuées à ce prof.
+        // On ignore ce créneau dans le moniteur.
+        return;
+      }
+    }
 
     const classLabel = classLabelById.get(classId) || "";
     const subjName = subjectNameById.get(subjectId) || "Discipline";
