@@ -1,4 +1,4 @@
-OK DONC REDONNE MOI LE FICHIER COMPLET SANS RIEN CASSER AILLEURS // src/app/admin/parametres/page.tsx
+// src/app/admin/parametres/page.tsx
 "use client";
 
 import React, {
