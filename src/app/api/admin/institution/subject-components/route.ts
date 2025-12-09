@@ -25,6 +25,7 @@ type SubjectComponentRow = {
   id: string;
   subject_id: string;
   subject_name: string;
+  level: string | null;       // 🆕 niveau (6e, 5e, 3e, ...)
   code: string;
   label: string;
   short_label: string | null;
@@ -111,6 +112,7 @@ export async function GET(req: NextRequest) {
 
   const url = new URL(req.url);
   const subjectIdFilter = (url.searchParams.get("subject_id") || "").trim();
+  const levelFilter = (url.searchParams.get("level") || "").trim(); // 🆕 niveau
 
   let query = srv
     .from("grade_subject_components")
@@ -124,6 +126,7 @@ export async function GET(req: NextRequest) {
       coeff_in_subject,
       order_index,
       is_active,
+      level,            -- 🆕
       subjects (
         name
       )
@@ -135,6 +138,9 @@ export async function GET(req: NextRequest) {
 
   if (subjectIdFilter) {
     query = query.eq("subject_id", subjectIdFilter);
+  }
+  if (levelFilter) {
+    query = query.eq("level", levelFilter);
   }
 
   const { data, error: dbErr } = await query;
@@ -151,6 +157,7 @@ export async function GET(req: NextRequest) {
       subject_name: row.subjects?.name
         ? String(row.subjects.name)
         : "Matière",
+      level: row.level ? String(row.level) : null, // 🆕
       code: String(row.code || ""),
       label: String(row.label || ""),
       short_label: row.short_label ? String(row.short_label) : null,
@@ -164,7 +171,7 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({ ok: true, items });
 }
 
-/* ───────── PUT : remplace les sous-matières d’un sujet ───────── */
+/* ───────── PUT : remplace les sous-matières d’un sujet/niveau ───────── */
 
 export async function PUT(req: NextRequest) {
   const supa = (await getSupabaseServerClient()) as unknown as SupabaseClient;
@@ -179,6 +186,7 @@ export async function PUT(req: NextRequest) {
 
   const body = (await req.json().catch(() => ({}))) as {
     subject_id?: string;
+    level?: string | null;       // 🆕 niveau
     items?: IncomingComponent[];
   };
 
@@ -187,19 +195,30 @@ export async function PUT(req: NextRequest) {
     return error("Champ 'subject_id' obligatoire dans le body.", 400);
   }
 
+  const level = (body.level ?? "").trim() || null; // "" → null = global
+
   const rawItems = Array.isArray(body.items) ? body.items : [];
-  // On autorise de tout supprimer pour ce sujet
+  // On autorise de tout supprimer pour ce sujet/niveau
   if (rawItems.length === 0) {
-    const { error: delErr } = await srv
+    let delQuery = srv
       .from("grade_subject_components")
       .delete()
       .eq("institution_id", g.instId)
       .eq("subject_id", subject_id);
 
+    if (level === null) {
+      delQuery = delQuery.is("level", null);
+    } else {
+      delQuery = delQuery.eq("level", level);
+    }
+
+    const { error: delErr } = await delQuery;
     if (delErr) return error(delErr.message, 400);
+
     return NextResponse.json({
       ok: true,
       subject_id,
+      level,
       inserted: 0,
     });
   }
@@ -257,19 +276,29 @@ export async function PUT(req: NextRequest) {
     is_active: boolean;
   }[];
 
-  // 1) On supprime tout pour (institution, sujet)
-  const { error: delErr } = await srv
-    .from("grade_subject_components")
-    .delete()
-    .eq("institution_id", g.instId)
-    .eq("subject_id", subject_id);
+  // 1) On supprime tout pour (institution, sujet, niveau)
+  {
+    let delQuery = srv
+      .from("grade_subject_components")
+      .delete()
+      .eq("institution_id", g.instId)
+      .eq("subject_id", subject_id);
 
-  if (delErr) return error(delErr.message, 400);
+    if (level === null) {
+      delQuery = delQuery.is("level", null);
+    } else {
+      delQuery = delQuery.eq("level", level);
+    }
+
+    const { error: delErr } = await delQuery;
+    if (delErr) return error(delErr.message, 400);
+  }
 
   // 2) On insère la nouvelle liste
   const payload = normalized.map((c) => ({
     institution_id: g.instId,
     subject_id,
+    level, // 🆕
     code: c.code,
     label: c.label,
     short_label: c.short_label,
@@ -288,6 +317,7 @@ export async function PUT(req: NextRequest) {
   return NextResponse.json({
     ok: true,
     subject_id,
+    level,
     inserted: data?.length ?? 0,
   });
 }
