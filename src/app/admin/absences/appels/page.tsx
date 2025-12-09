@@ -502,11 +502,14 @@ export default function SurveillanceAppelsPage() {
     const bodyHtml = filteredRows
       .map((r, idx) => {
         const date = dateHumanFR(r.date);
+
+        // 🔁 NOUVEAU : on PREFERE toujours l'horaire, puis on retombe sur period_label
         const period =
-          r.period_label ??
           (r.planned_start && r.planned_end
             ? `${r.planned_start} → ${r.planned_end}`
-            : "—");
+            : null) ??
+          r.period_label ??
+          "—";
 
         const statusText =
           r.status === "missing"
@@ -863,6 +866,12 @@ export default function SurveillanceAppelsPage() {
                         ? "border-l-4 border-amber-400 bg-amber-50/30 hover:bg-amber-50"
                         : "border-l-4 border-emerald-400 bg-white hover:bg-emerald-50/60";
 
+                    // 🔁 NOUVEAU : on préfère l'horaire, puis on retombe sur period_label
+                    const timeRange =
+                      r.planned_start && r.planned_end
+                        ? `${r.planned_start} – ${r.planned_end}`
+                        : null;
+
                     return (
                       <tr
                         key={r.id}
@@ -872,11 +881,7 @@ export default function SurveillanceAppelsPage() {
                           {dateHumanFR(r.date)}
                         </td>
                         <td className="px-3 py-2 text-slate-700 whitespace-nowrap">
-                          {r.period_label
-                            ? r.period_label
-                            : r.planned_start && r.planned_end
-                            ? `${r.planned_start} – ${r.planned_end}`
-                            : "—"}
+                          {timeRange ?? r.period_label ?? "—"}
                         </td>
                         <td className="px-3 py-2 text-slate-700 whitespace-nowrap">
                           {r.class_label || "—"}

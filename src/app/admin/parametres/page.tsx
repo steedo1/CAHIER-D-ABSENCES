@@ -1,4 +1,4 @@
-// src/app/admin/parametres/page.tsx
+OK DONC REDONNE MOI LE FICHIER COMPLET SANS RIEN CASSER AILLEURS // src/app/admin/parametres/page.tsx
 "use client";
 
 import React, {
@@ -1499,6 +1499,7 @@ export default function AdminSettingsPage() {
     setMsgCoeffs(null);
     try {
       const payload = subjectCoeffs.map((row) => ({
+
         level: row.level,
         subject_id: row.subject_id,
         coeff:
@@ -1847,7 +1848,7 @@ export default function AdminSettingsPage() {
                   }))
                 }
                 disabled={loadingCfg || savingCfg}
-                placeholder="République de Côte d'Ivoire"
+                placeholder="République de Côte d&apos;Ivoire"
               />
             </div>
             <div>
@@ -1881,7 +1882,7 @@ export default function AdminSettingsPage() {
                   }))
                 }
                 disabled={loadingCfg || savingCfg}
-                placeholder="MINISTERE DE L'EDUCATION NATIONALE ET DE L'ALPHABETISATION"
+                placeholder="MINISTERE DE L&apos;EDUCATION NATIONALE ET DE L&apos;ALPHABETISATION"
               />
             </div>
             <div>
@@ -2958,6 +2959,7 @@ export default function AdminSettingsPage() {
                     return (
                       <tr
                         key={`${sc.level}-${sc.subject_id}`}
+
                       >
                         <td className="px-3 py-2 text-slate-800">
                           {sc.subject_name}
@@ -3214,6 +3216,7 @@ export default function AdminSettingsPage() {
                       ? "text-emerald-700"
                       : "text-rose-700"
                   }`}
+
                 >
                   {sumComponentsForTarget}
                 </span>

@@ -1,4 +1,3 @@
-//src/app/admin/timetables/import/page.tsx
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
@@ -10,6 +9,7 @@ import {
   FileText,
   CalendarDays,
   Users,
+  Trash2,
 } from "lucide-react";
 
 type UploadState =
@@ -126,7 +126,7 @@ type Mode = "csv" | "manual";
 export default function ImportEmploisDuTempsPage() {
   const [mode, setMode] = useState<Mode>("csv");
 
-  // ---------- ÉTAT CSV EXISTANT ----------
+  // ---------- ÉTAT CSV ----------
   const [file, setFile] = useState<File | null>(null);
   const [sampleLines, setSampleLines] = useState<string[]>([]);
   const [uploadState, setUploadState] = useState<UploadState>({
@@ -451,6 +451,16 @@ export default function ImportEmploisDuTempsPage() {
     });
   }
 
+  // Vider complètement un créneau (toutes les classes) pour la cellule active
+  function clearActiveCell() {
+    if (!activeCell) return;
+    const key = keyForCell(activeCell.weekday, activeCell.period_id);
+    setCellSelection((prev) => {
+      const { [key]: _toRemove, ...rest } = prev;
+      return rest;
+    });
+  }
+
   async function handleSaveManual() {
     if (!selectedSubjectId || !selectedTeacherId) {
       setSaveManualError(
@@ -501,7 +511,7 @@ export default function ImportEmploisDuTempsPage() {
         json?.message || "Emploi du temps enregistré avec succès."
       );
 
-      // on recharge pour être certain d’être aligné avec la BDD
+      // Recharger l’existant pour être aligné avec la BDD
       await fetchManualMeta(selectedSubjectId, selectedTeacherId);
       setActiveCell(null);
     } catch (e: any) {
@@ -1001,6 +1011,7 @@ export default function ImportEmploisDuTempsPage() {
                             const label = period
                               ? `${slot.label}`
                               : "Aucun créneau";
+
                             return (
                               <td key={`${wd}_${slot.period_no}`}>
                                 <button
@@ -1030,18 +1041,29 @@ export default function ImportEmploisDuTempsPage() {
                                         {slot.label}
                                       </div>
                                       <div className="mt-1 text-[10px]">
-                                        {active
-                                          ? (() => {
-                                              const key = keyForCell(
-                                                wd,
-                                                period.id
-                                              );
-                                              const count =
-                                                (cellSelection[key] || [])
-                                                  .length || 0;
-                                              return `${count} classe(s)`;
-                                            })()
-                                          : "Aucun cours"}
+                                        {(() => {
+                                          const key = keyForCell(
+                                            wd,
+                                            period.id
+                                          );
+                                          const selectedIds =
+                                            cellSelection[key] || [];
+                                          if (!selectedIds.length) {
+                                            return "Aucun cours";
+                                          }
+                                          const labels =
+                                            classesForSelectedTeacher
+                                              .filter((c) =>
+                                                selectedIds.includes(c.id)
+                                              )
+                                              .map((c) => c.label);
+
+                                          if (labels.length > 0) {
+                                            return labels.join(", ");
+                                          }
+                                          // fallback si pour une raison X on n'a pas les labels :
+                                          return `${selectedIds.length} classe(s)`;
+                                        })()}
                                       </div>
                                     </>
                                   ) : (
@@ -1092,17 +1114,30 @@ export default function ImportEmploisDuTempsPage() {
                         (p) => p.id === activeCell.period_id
                       );
                       if (!period) return "Créneau inconnu";
-                      return `${period.start_time?.slice(0, 5)}–${period.end_time?.slice(0, 5)}`;
+                      return `${period.start_time?.slice(
+                        0,
+                        5
+                      )}–${period.end_time?.slice(0, 5)}`;
                     })()}
                   </div>
                 </div>
-                <button
-                  type="button"
-                  className="text-xs text-slate-500 hover:text-slate-700"
-                  onClick={() => setActiveCell(null)}
-                >
-                  Fermer
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={clearActiveCell}
+                    className="inline-flex items-center gap-1 rounded-full border border-red-100 bg-red-50 px-2 py-1 text-[11px] text-red-600 hover:bg-red-100"
+                  >
+                    <Trash2 className="h-3 w-3" />
+                    Vider ce créneau
+                  </button>
+                  <button
+                    type="button"
+                    className="text-xs text-slate-500 hover:text-slate-700"
+                    onClick={() => setActiveCell(null)}
+                  >
+                    Fermer
+                  </button>
+                </div>
               </div>
 
               {classesForSelectedTeacher.length === 0 ? (
@@ -1144,9 +1179,12 @@ export default function ImportEmploisDuTempsPage() {
               )}
 
               <p className="text-[11px] text-slate-500 mt-1">
-                Les classes cochées seront enregistrées pour ce professeur /
-                cette matière sur ce créneau au moment où vous cliquez sur
-                &laquo;&nbsp;Enregistrer pour ce professeur&nbsp;&raquo;.
+                Les classes cochées (ou décochées) seront synchronisées en BDD
+                pour ce professeur / cette matière sur ce créneau lorsque vous
+                cliquez sur &laquo;&nbsp;Enregistrer pour ce
+                professeur&nbsp;&raquo;. Le bouton &laquo; Vider ce
+                créneau&nbsp;&raquo; supprime toutes les classes sur ce
+                créneau.
               </p>
             </div>
           )}
