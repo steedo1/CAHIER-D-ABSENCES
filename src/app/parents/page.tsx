@@ -84,6 +84,33 @@ function getInitials(name: string) {
   if (parts.length === 1) return pick(parts[0]);
   return pick(parts[0]) + pick(parts[parts.length - 1]);
 }
+
+/** NOM + 1 seul prénom pour le mobile */
+function mobileShortName(fullName: string) {
+  const parts = (fullName || "").trim().split(/\s+/);
+  if (parts.length <= 2) return fullName;
+  return `${parts[0]} ${parts[1]}`;
+}
+
+/** Affichage responsive du nom : mobile = NOM + 1 prénom, desktop = nom complet */
+function KidName({
+  name,
+  className = "",
+}: {
+  name: string;
+  className?: string;
+}) {
+  const short = mobileShortName(name);
+  return (
+    <span className={["inline-block max-w-full", className].join(" ")}>
+      {/* Mobile : NOM + 1 prénom, avec truncate */}
+      <span className="block max-w-full truncate sm:hidden">{short}</span>
+      {/* À partir de sm : nom complet */}
+      <span className="hidden max-w-full truncate sm:block">{name}</span>
+    </span>
+  );
+}
+
 function startOfWeek(date: Date) {
   const d = new Date(date);
   const day = d.getDay(); // 0 (dimanche) -> 6 (samedi)
@@ -109,66 +136,66 @@ function isInDateRange(iso: string, from?: string | null, to?: string | null) {
 const THEMES = [
   {
     name: "emerald",
-    ring: "hover:ring-emerald-300",
-    border: "border-emerald-200",
+    ring: "hover:ring-emerald-200",
+    border: "border-emerald-100",
     bar: "from-emerald-500 to-teal-500",
-    chipBg: "bg-emerald-100",
+    chipBg: "bg-emerald-50",
     chipText: "text-emerald-800",
   },
   {
     name: "indigo",
-    ring: "hover:ring-indigo-300",
-    border: "border-indigo-200",
+    ring: "hover:ring-indigo-200",
+    border: "border-indigo-100",
     bar: "from-indigo-500 to-blue-500",
-    chipBg: "bg-indigo-100",
+    chipBg: "bg-indigo-50",
     chipText: "text-indigo-800",
   },
   {
     name: "violet",
-    ring: "hover:ring-violet-300",
-    border: "border-violet-200",
+    ring: "hover:ring-violet-200",
+    border: "border-violet-100",
     bar: "from-violet-500 to-fuchsia-500",
-    chipBg: "bg-violet-100",
+    chipBg: "bg-violet-50",
     chipText: "text-violet-800",
   },
   {
     name: "sky",
-    ring: "hover:ring-sky-300",
-    border: "border-sky-200",
+    ring: "hover:ring-sky-200",
+    border: "border-sky-100",
     bar: "from-sky-500 to-cyan-500",
-    chipBg: "bg-sky-100",
+    chipBg: "bg-sky-50",
     chipText: "text-sky-800",
   },
   {
     name: "amber",
-    ring: "hover:ring-amber-300",
-    border: "border-amber-200",
+    ring: "hover:ring-amber-200",
+    border: "border-amber-100",
     bar: "from-amber-500 to-orange-500",
-    chipBg: "bg-amber-100",
+    chipBg: "bg-amber-50",
     chipText: "text-amber-900",
   },
   {
     name: "rose",
-    ring: "hover:ring-rose-300",
-    border: "border-rose-200",
+    ring: "hover:ring-rose-200",
+    border: "border-rose-100",
     bar: "from-rose-500 to-pink-500",
-    chipBg: "bg-rose-100",
+    chipBg: "bg-rose-50",
     chipText: "text-rose-800",
   },
   {
     name: "teal",
-    ring: "hover:ring-teal-300",
-    border: "border-teal-200",
+    ring: "hover:ring-teal-200",
+    border: "border-teal-100",
     bar: "from-teal-500 to-emerald-500",
-    chipBg: "bg-teal-100",
+    chipBg: "bg-teal-50",
     chipText: "text-teal-800",
   },
   {
     name: "cyan",
-    ring: "hover:ring-cyan-300",
-    border: "border-cyan-200",
+    ring: "hover:ring-cyan-200",
+    border: "border-cyan-100",
     bar: "from-cyan-500 to-sky-500",
-    chipBg: "bg-cyan-100",
+    chipBg: "bg-cyan-50",
     chipText: "text-cyan-800",
   },
 ] as const;
@@ -179,22 +206,22 @@ function themeFor(i: number) {
 /* ───────── thèmes par rubrique (pour jauges verticales) ───────── */
 const RUBRIC_THEMES = {
   assiduite: {
-    bg: "bg-emerald-100",
+    bg: "bg-emerald-50",
     fill: "bg-emerald-500",
     text: "text-emerald-700",
   },
   tenue: {
-    bg: "bg-sky-100",
+    bg: "bg-sky-50",
     fill: "bg-sky-500",
     text: "text-sky-700",
   },
   moralite: {
-    bg: "bg-violet-100",
+    bg: "bg-violet-50",
     fill: "bg-violet-500",
     text: "text-violet-700",
   },
   discipline: {
-    bg: "bg-amber-100",
+    bg: "bg-amber-50",
     fill: "bg-amber-500",
     text: "text-amber-800",
   },
@@ -271,7 +298,7 @@ function Button(
       "bg-slate-900 text-white hover:bg-slate-800 active:bg-slate-900 focus:ring-slate-700",
     red: "bg-rose-600 text-white hover:bg-rose-700 active:bg-rose-800 focus:ring-rose-500",
     white:
-      "bg-white text-slate-900 hover:bg-white/90 ring-1 ring-slate-200 focus:ring-slate-300 active:bg-slate-50",
+      "bg-white text-slate-900 hover:bg-slate-50 ring-1 ring-slate-200 focus:ring-slate-300 active:bg-slate-100",
     outline:
       "bg-transparent text-emerald-700 ring-1 ring-emerald-300 hover:bg-emerald-50 focus:ring-emerald-400",
   };
@@ -297,7 +324,7 @@ function Input(p: React.InputHTMLAttributes<HTMLInputElement>) {
     <input
       {...p}
       className={[
-        "w-full rounded-xl border border-slate-200 bg-white/90 backdrop-blur px-3 py-2.5 text-sm shadow-sm outline-none transition",
+        "w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm shadow-sm outline-none transition",
         "placeholder:text-slate-400",
         "focus:ring-2 focus:ring-emerald-500 focus:ring-offset-1 focus:border-emerald-500",
         "disabled:cursor-not-allowed disabled:bg-slate-50",
@@ -532,14 +559,14 @@ function TiltCard({
     const px = (e.clientX - rect.left) / rect.width; // 0..1
     const py = (e.clientY - rect.top) / rect.height; // 0..1
 
-    const rotMax = 8; // degrés
+    const rotMax = 6; // degrés (un peu plus soft)
     const rx = (py - 0.5) * -2 * rotMax;
     const ry = (px - 0.5) * 2 * rotMax;
 
     setStyle({
       transform: `rotateX(${rx.toFixed(2)}deg) rotateY(${ry.toFixed(
         2,
-      )}deg) translateZ(0) scale(1.01)`,
+      )}deg) translateZ(0) scale(1.005)`,
       transition: "transform 60ms linear",
       transformStyle: "preserve-3d",
     });
@@ -547,7 +574,7 @@ function TiltCard({
     const x = Math.round(px * rect.width);
     const y = Math.round(py * rect.height);
     setShineStyle({
-      background: `radial-gradient(300px circle at ${x}px ${y}px, rgba(255,255,255,0.18), transparent 45%)`,
+      background: `radial-gradient(260px circle at ${x}px ${y}px, rgba(255,255,255,0.16), transparent 50%)`,
     });
   }
   function onLeave() {
@@ -1002,24 +1029,30 @@ export default function ParentPage() {
           "flex w-full items-center gap-2 rounded-xl px-3 py-2 text-sm transition",
           active
             ? "bg-emerald-50 text-emerald-800 ring-1 ring-emerald-200 shadow-sm"
-            : "text-slate-200/90 hover:bg-slate-800/60 hover:text-white",
+            : "text-slate-600 hover:bg-slate-100 hover:text-slate-900",
         ].join(" ")}
       >
-        <span className="text-slate-300">{icon}</span>
+        <span
+          className={
+            active ? "text-emerald-600" : "text-slate-400 transition-colors"
+          }
+        >
+          {icon}
+        </span>
         <span className="truncate">{label}</span>
       </button>
     );
   }
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-900">
-      {/* Glow global */}
+    <div className="min-h-screen bg-slate-50 text-slate-900">
+      {/* Glow global doux */}
       <div
         aria-hidden
         className="pointer-events-none fixed inset-0 -z-10"
         style={{
           background:
-            "radial-gradient(circle at 0% 0%, rgba(16,185,129,0.22), transparent 55%), radial-gradient(circle at 100% 0%, rgba(56,189,248,0.16), transparent 55%)",
+            "radial-gradient(circle at 0% 0%, rgba(16,185,129,0.18), transparent 55%), radial-gradient(circle at 100% 0%, rgba(56,189,248,0.12), transparent 55%)",
         }}
       />
 
@@ -1027,17 +1060,17 @@ export default function ParentPage() {
       {mobileNavOpen && (
         <div className="fixed inset-0 z-40 flex md:hidden">
           {/* Panneau gauche */}
-          <div className="relative flex h-full w-72 max-w-[80%] flex-col bg-slate-950 text-slate-100 shadow-2xl shadow-emerald-500/40">
-            <div className="flex items-center justify-between border-b border-slate-800 px-4 py-3">
+          <div className="relative flex h-full w-72 max-w-[80%] flex-col bg-white text-slate-900 shadow-2xl shadow-slate-900/10">
+            <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
               <div className="flex items-center gap-2">
-                <div className="grid h-9 w-9 place-items-center rounded-xl bg-gradient-to-br from-emerald-500 to-emerald-700 text-xs font-semibold text-slate-950 shadow-lg shadow-emerald-500/40">
+                <div className="grid h-9 w-9 place-items-center rounded-xl bg-gradient-to-br from-emerald-500 to-emerald-600 text-xs font-semibold text-white shadow-lg shadow-emerald-500/40">
                   MC
                 </div>
                 <div className="min-w-0">
-                  <div className="text-xs font-semibold text-emerald-300">
+                  <div className="text-xs font-semibold text-slate-800">
                     Mon Cahier
                   </div>
-                  <div className="text-[11px] text-slate-400">
+                  <div className="text-[11px] text-slate-500">
                     Espace parent
                   </div>
                 </div>
@@ -1046,7 +1079,7 @@ export default function ParentPage() {
                 type="button"
                 aria-label="Fermer le menu"
                 onClick={() => setMobileNavOpen(false)}
-                className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-slate-800 text-slate-100 shadow-md"
+                className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-slate-100 text-slate-700 shadow-sm"
               >
                 <IconX />
               </button>
@@ -1054,7 +1087,7 @@ export default function ParentPage() {
 
             <div className="flex-1 overflow-y-auto">
               {/* Enfants (mobile drawer) */}
-              <div className="border-b border-slate-800 px-4 py-3">
+              <div className="border-b border-slate-200 px-4 py-3">
                 <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
                   Enfants
                 </div>
@@ -1067,12 +1100,12 @@ export default function ParentPage() {
                     className={[
                       "flex w-full items-center justify-between rounded-lg px-2 py-1.5 text-xs transition",
                       activeChildId === "all"
-                        ? "bg-emerald-500 text-slate-950"
-                        : "text-slate-100 hover:bg-slate-800",
+                        ? "bg-emerald-500 text-white"
+                        : "text-slate-700 hover:bg-slate-50",
                     ].join(" ")}
                   >
                     <span>Vue globale</span>
-                    <span className="rounded-full bg-slate-900/60 px-1.5 py-0.5 text-[10px] text-emerald-200">
+                    <span className="rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] text-emerald-700">
                       {kids.length || 0}
                     </span>
                   </button>
@@ -1088,16 +1121,19 @@ export default function ParentPage() {
                         className={[
                           "flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-xs transition",
                           active
-                            ? "bg-slate-800 text-emerald-200 ring-1 ring-emerald-400/80"
-                            : "text-slate-100 hover:bg-slate-900/60",
+                            ? "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-300"
+                            : "text-slate-700 hover:bg-slate-50",
                         ].join(" ")}
                       >
-                        <div className="grid h-6 w-6 place-items-center rounded-lg bg-slate-900 text-[10px] font-semibold text-emerald-200">
+                        <div className="grid h-6 w-6 place-items-center rounded-lg bg-slate-100 text-[10px] font-semibold text-emerald-600">
                           {getInitials(k.full_name)}
                         </div>
                         <div className="min-w-0 text-left">
-                          <div className="truncate">{k.full_name}</div>
-                          <div className="truncate text-[10px] text-slate-400">
+                          <KidName
+                            name={k.full_name}
+                            className="text-[12px] font-medium"
+                          />
+                          <div className="mt-0.5 truncate text-[10px] text-slate-500">
                             {k.class_label || "—"}
                           </div>
                         </div>
@@ -1132,7 +1168,7 @@ export default function ParentPage() {
               </div>
             </div>
 
-            <div className="border-t border-slate-800 px-4 py-3">
+            <div className="border-t border-slate-200 px-4 py-3">
               <Button
                 tone="slate"
                 onClick={safeLogout}
@@ -1150,33 +1186,33 @@ export default function ParentPage() {
           <button
             type="button"
             aria-label="Fermer le menu"
-            className="flex-1 bg-slate-950/60 backdrop-blur-sm"
+            className="flex-1 bg-slate-900/20 backdrop-blur-sm"
             onClick={() => setMobileNavOpen(false)}
           />
         </div>
       )}
 
       <div className="flex min-h-screen">
-        {/* Sidebar desktop élargie et plus premium */}
-        <aside className="hidden w-72 flex-col border-r border-slate-800/70 bg-gradient-to-b from-slate-950 via-slate-950 to-slate-900/95 md:flex">
+        {/* Sidebar desktop claire et propre */}
+        <aside className="hidden w-72 flex-col border-r border-slate-200 bg-white/90 backdrop-blur-sm md:flex">
           {/* Brand */}
-          <div className="flex items-center gap-3 border-b border-slate-800 px-4 py-4">
+          <div className="flex items-center gap-3 border-b border-slate-200 px-4 py-4">
             <div className="relative">
-              <div className="absolute -inset-0.5 rounded-2xl bg-gradient-to-tr from-emerald-500/60 via-cyan-400/40 to-indigo-500/60 opacity-80 blur-sm" />
-              <div className="relative grid h-10 w-10 place-items-center rounded-2xl bg-slate-950 text-xs font-semibold text-white shadow-lg shadow-emerald-500/30">
+              <div className="absolute -inset-0.5 rounded-2xl bg-gradient-to-tr from-emerald-400/70 via-cyan-300/50 to-indigo-400/70 opacity-80 blur-sm" />
+              <div className="relative grid h-10 w-10 place-items-center rounded-2xl bg-emerald-500 text-xs font-semibold text-white shadow-lg shadow-emerald-400/40">
                 MC
               </div>
             </div>
             <div className="min-w-0">
-              <div className="truncate text-sm font-semibold text-slate-50">
+              <div className="truncate text-sm font-semibold text-slate-900">
                 Mon Cahier
               </div>
-              <div className="text-xs text-emerald-300">Espace parent</div>
+              <div className="text-xs text-emerald-600">Espace parent</div>
             </div>
           </div>
 
           {/* Enfants */}
-          <div className="border-b border-slate-800 px-4 py-3">
+          <div className="border-b border-slate-200 px-4 py-3">
             <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
               Enfants
             </div>
@@ -1186,12 +1222,12 @@ export default function ParentPage() {
                 className={[
                   "flex w-full items-center justify-between rounded-lg px-2 py-1.5 text-xs transition",
                   activeChildId === "all"
-                    ? "bg-emerald-500 text-slate-950"
-                    : "text-slate-200 hover:bg-slate-900",
+                    ? "bg-emerald-500 text-white"
+                    : "text-slate-700 hover:bg-slate-50",
                 ].join(" ")}
               >
                 <span>Vue globale</span>
-                <span className="rounded-full bg-slate-950/60 px-1.5 py-0.5 text-[10px] text-emerald-200">
+                <span className="rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] text-emerald-700">
                   {kids.length || 0}
                 </span>
               </button>
@@ -1204,15 +1240,18 @@ export default function ParentPage() {
                     className={[
                       "flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-xs transition",
                       active
-                        ? "bg-slate-900 text-emerald-200 ring-1 ring-emerald-400/80"
-                        : "text-slate-200 hover:bg-slate-900",
+                        ? "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-300"
+                        : "text-slate-700 hover:bg-slate-50",
                     ].join(" ")}
                   >
-                    <div className="grid h-6 w-6 place-items-center rounded-lg bg-slate-800 text-[10px] font-semibold text-emerald-200">
+                    <div className="grid h-6 w-6 place-items-center rounded-lg bg-slate-100 text-[10px] font-semibold text-emerald-600">
                       {getInitials(k.full_name)}
                     </div>
                     <div className="min-w-0 text-left">
-                      <div className="truncate">{k.full_name}</div>
+                      <KidName
+                        name={k.full_name}
+                        className="text-[12px] font-medium"
+                      />
                       <div className="truncate text-[10px] text-slate-500">
                         {k.class_label || "—"}
                       </div>
@@ -1248,7 +1287,7 @@ export default function ParentPage() {
           </div>
 
           {/* Logout bas sidebar */}
-          <div className="border-t border-slate-800 px-4 py-3">
+          <div className="border-t border-slate-200 px-4 py-3">
             <Button
               tone="white"
               onClick={safeLogout}
@@ -1264,26 +1303,25 @@ export default function ParentPage() {
 
         {/* Contenu principal */}
         <div className="flex-1">
-          <main
-            className={[
-              "relative mx-auto max-w-6xl space-y-6 p-4 pb-24 scroll-smooth md:px-6 md:py-6 md:pb-8",
-            ].join(" ")}
-          >
+          <main className="relative mx-auto max-w-6xl space-y-6 p-4 pb-24 scroll-smooth md:px-6 md:py-6 md:pb-8">
             {/* Background décoratif non intrusif */}
             <div
               aria-hidden
               className="pointer-events-none absolute inset-0 -z-10"
               style={{
                 background:
-                  "radial-gradient(90% 60% at 100% 0%, rgba(56,189,248,0.18), transparent 65%), radial-gradient(70% 50% at 0% 0%, rgba(16,185,129,0.20), transparent 60%)",
+                  "radial-gradient(90% 60% at 100% 0%, rgba(56,189,248,0.10), transparent 65%), radial-gradient(70% 50% at 0% 0%, rgba(16,185,129,0.12), transparent 60%)",
               }}
             />
 
-            {/* Header */}
-            <header className="relative overflow-hidden rounded-3xl border border-slate-700/60 bg-gradient-to-br from-slate-950 via-slate-950 to-slate-900 px-5 py-5 text-white shadow-xl shadow-slate-950/50 md:px-7 md:py-6">
-              <div className="absolute inset-0 opacity-30 [background-image:radial-gradient(60%_50%_at_100%_0%,white,transparent_70%)]" />
+            {/* Header clair, style app */}
+            <header className="relative overflow-hidden rounded-3xl border border-slate-200 bg-white/95 px-5 py-5 shadow-sm shadow-slate-200 md:px-7 md:py-6">
+              <div
+                className="pointer-events-none absolute inset-y-0 right-0 w-64 bg-gradient-to-l from-emerald-50 to-transparent"
+                aria-hidden
+              />
               <div className="relative z-10 flex flex-col gap-3">
-                {/* Ligne supérieure : menu à gauche + brand + actions */}
+                {/* Ligne supérieure : menu + marque + actions desktop */}
                 <div className="flex items-center justify-between gap-3">
                   <div className="flex min-w-0 items-center gap-3">
                     {/* Bouton menu mobile très visible */}
@@ -1291,59 +1329,57 @@ export default function ParentPage() {
                       type="button"
                       aria-label="Ouvrir le menu"
                       onClick={() => setMobileNavOpen(true)}
-                      className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-emerald-300/80 bg-emerald-400 text-slate-950 shadow-lg shadow-emerald-500/50 md:hidden"
+                      className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-emerald-200 bg-emerald-500 text-white shadow-md shadow-emerald-300 md:hidden"
                     >
                       <IconMenu />
                     </button>
 
+                    {/* Logo desktop dans le header (mobile : dans le drawer) */}
                     <div className="relative hidden md:block">
-                      <div className="absolute -inset-0.5 rounded-2xl bg-gradient-to-tr from-emerald-500/60 via-cyan-400/40 to-indigo-500/60 opacity-80 blur-sm" />
-                      <div className="relative grid h-10 w-10 place-items-center rounded-2xl bg-slate-950 text-xs font-semibold text-white shadow-lg shadow-emerald-500/30">
+                      <div className="absolute -inset-0.5 rounded-2xl bg-gradient-to-tr from-emerald-400/70 via-cyan-300/50 to-indigo-400/70 opacity-80 blur-sm" />
+                      <div className="relative grid h-10 w-10 place-items-center rounded-2xl bg-emerald-500 text-xs font-semibold text-white shadow-lg shadow-emerald-400/40">
                         MC
                       </div>
                     </div>
                     <div className="min-w-0">
-                      <p className="text-[11px] font-semibold uppercase tracking-wide text-emerald-300">
+                      <p className="text-[11px] font-semibold uppercase tracking-wide text-emerald-600">
                         Espace parent
                       </p>
-                      <h1 className="text-lg font-semibold tracking-tight md:text-xl">
+                      <h1 className="text-lg font-semibold tracking-tight text-slate-900 md:text-xl">
                         Mon Cahier
                       </h1>
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-2">
-                    {/* Actions (push + logout) en md+ */}
-                    <div className="hidden items-center gap-2 sm:flex">
-                      {!granted ? (
-                        <Button
-                          tone="white"
-                          onClick={enablePush}
-                          title="Activer les notifications push"
-                          iconLeft={<IconBell />}
-                        >
-                          Activer les push
-                        </Button>
-                      ) : (
-                        <span className="hidden rounded-full bg-white px-3 py-1.5 text-sm text-slate-900 ring-1 ring-white/40 md:inline">
-                          Push activés ✅
-                        </span>
-                      )}
+                  <div className="hidden items-center gap-2 sm:flex">
+                    {!granted ? (
                       <Button
                         tone="white"
-                        onClick={safeLogout}
-                        disabled={loggingOut}
-                        title="Se déconnecter"
-                        iconLeft={<IconPower />}
+                        onClick={enablePush}
+                        title="Activer les notifications push"
+                        iconLeft={<IconBell />}
                       >
-                        {loggingOut ? "Déconnexion…" : "Déconnexion"}
+                        Activer les notifications
                       </Button>
-                    </div>
+                    ) : (
+                      <span className="rounded-full bg-emerald-50 px-3 py-1.5 text-xs text-emerald-700 ring-1 ring-emerald-100">
+                        Notifications activées ✅
+                      </span>
+                    )}
+                    <Button
+                      tone="white"
+                      onClick={safeLogout}
+                      disabled={loggingOut}
+                      title="Se déconnecter"
+                      iconLeft={<IconPower />}
+                    >
+                      {loggingOut ? "Déconnexion…" : "Déconnexion"}
+                    </Button>
                   </div>
                 </div>
 
                 {/* Description */}
-                <p className="mt-1 max-w-2xl text-sm text-white/80">
+                <p className="mt-1 max-w-2xl text-sm text-slate-600">
                   Suivez en temps réel les absences, la conduite et les notes de
                   vos enfants, sur une interface pensée pour les parents.
                 </p>
@@ -1358,11 +1394,11 @@ export default function ParentPage() {
                       iconLeft={<IconBell />}
                       className="flex-1"
                     >
-                      Activer les push
+                      Activer les notifications
                     </Button>
                   ) : (
-                    <div className="flex flex-1 items-center justify-center rounded-full bg-white/10 px-3 py-2 text-xs text-white/90">
-                      Push activés ✅
+                    <div className="flex flex-1 items-center justify-center rounded-full bg-emerald-50 px-3 py-2 text-xs text-emerald-700 ring-1 ring-emerald-100">
+                      Notifications activées ✅
                     </div>
                   )}
                   <Button
@@ -1384,14 +1420,14 @@ export default function ParentPage() {
                       <button
                         onClick={() => setActiveChildId("all")}
                         className={[
-                          "flex w-full items-center justify-between rounded-lg px-3 py-2 text-xs",
+                          "flex w-full items-center justify-between rounded-xl px-3 py-2 text-xs",
                           activeChildId === "all"
-                            ? "bg-white text-slate-900"
-                            : "border border-white/10 bg-slate-900/40 text-slate-100",
+                            ? "bg-emerald-500 text-white"
+                            : "border border-slate-200 bg-white text-slate-800",
                         ].join(" ")}
                       >
                         <span>Vue globale</span>
-                        <span className="rounded-full bg-slate-900/10 px-2 py-0.5 text-[10px]">
+                        <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] text-emerald-700">
                           {kids.length || 0}
                         </span>
                       </button>
@@ -1400,16 +1436,24 @@ export default function ParentPage() {
                           key={k.id}
                           onClick={() => setActiveChildId(k.id)}
                           className={[
-                            "flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs",
+                            "flex w-full items-center gap-2 rounded-xl px-3 py-2 text-xs",
                             activeChildId === k.id
-                              ? "bg-emerald-300 text-slate-900"
-                              : "border border-white/10 bg-slate-900/40 text-slate-100",
+                              ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                              : "border border-slate-200 bg-white text-slate-800",
                           ].join(" ")}
                         >
-                          <span className="grid h-7 w-7 place-items-center rounded-full bg-white/10 text-[10px] font-semibold">
+                          <span className="grid h-7 w-7 place-items-center rounded-full bg-emerald-50 text-[10px] font-semibold text-emerald-700">
                             {getInitials(k.full_name)}
                           </span>
-                          <span className="truncate">{k.full_name}</span>
+                          <div className="min-w-0">
+                            <KidName
+                              name={k.full_name}
+                              className="text-[12px] font-medium"
+                            />
+                            <div className="mt-0.5 text-[11px] text-slate-500">
+                              {k.class_label || "—"}
+                            </div>
+                          </div>
                         </button>
                       ))}
                     </div>
@@ -1433,7 +1477,7 @@ export default function ParentPage() {
 
             {/* Conduite — points par enfant */}
             {showConductSection && (
-              <section className="rounded-2xl border border-slate-200/70 bg-white/95 p-5 shadow-lg shadow-slate-900/5 backdrop-blur">
+              <section className="rounded-2xl border border-slate-200 bg-white/95 p-5 shadow-sm shadow-slate-200 backdrop-blur">
                 <div className="mb-3 flex items-center justify-between gap-3">
                   <div className="text-sm font-semibold uppercase tracking-wide text-slate-700">
                     Conduite — Points par rubrique
@@ -1500,7 +1544,7 @@ export default function ParentPage() {
                         onClick={enablePush}
                         iconLeft={<IconBell />}
                       >
-                        Activer les push
+                        Activer les notifications
                       </Button>
                     )}
                   </div>
@@ -1513,13 +1557,14 @@ export default function ParentPage() {
                         return (
                           <div
                             key={k.id}
-                            className="rounded-xl border border-slate-200 p-4 ring-emerald-100 transition hover:-translate-y-0.5 hover:shadow-md hover:ring-2"
+                            className="rounded-xl border border-slate-200 bg-white p-4 ring-emerald-50 transition hover:-translate-y-0.5 hover:shadow-md hover:ring-2"
                           >
                             <div className="flex items-start justify-between gap-3">
                               <div className="min-w-0">
-                                <div className="font-medium text-slate-900">
-                                  {k.full_name}
-                                </div>
+                                <KidName
+                                  name={k.full_name}
+                                  className="font-medium text-slate-900"
+                                />
                                 <div className="text-xs text-slate-600">
                                   {k.class_label || "—"}
                                 </div>
@@ -1560,7 +1605,7 @@ export default function ParentPage() {
                                     rubric="discipline"
                                   />
                                 </div>
-                                <div className="rounded-xl bg-slate-900/3 px-3 py-2 text-xs text-slate-700">
+                                <div className="rounded-xl bg-slate-50 px-3 py-2 text-xs text-slate-700">
                                   <span className="font-medium">
                                     Appréciation :{" "}
                                   </span>
@@ -1578,7 +1623,7 @@ export default function ParentPage() {
                     </div>
 
                     {/* Desktop: tableau (cohérent avec rubric_max) */}
-                    <div className="mt-2 hidden overflow-x-auto rounded-xl border md:block">
+                    <div className="mt-2 hidden overflow-x-auto rounded-xl border border-slate-200 bg-white md:block">
                       {(() => {
                         const anyConduct = filteredKids
                           .map((k) => conduct[k.id])
@@ -1619,10 +1664,10 @@ export default function ParentPage() {
                                 return (
                                   <tr
                                     key={k.id}
-                                    className="border-t last:border-b-0"
+                                    className="border-t border-slate-100 last:border-b-0"
                                   >
                                     <td className="px-3 py-2">
-                                      {k.full_name}
+                                      <KidName name={k.full_name} />
                                     </td>
                                     <td className="px-3 py-2">
                                       {k.class_label || "—"}
@@ -1676,7 +1721,7 @@ export default function ParentPage() {
 
             {/* Absences / Sanctions / Notes (vue Dashboard + onglet Absences) */}
             {showEventsSection && (
-              <section className="rounded-2xl border border-slate-200/70 bg-white/95 p-5 shadow-lg shadow-slate-900/5 backdrop-blur">
+              <section className="rounded-2xl border border-slate-200 bg-white/95 p-5 shadow-sm shadow-slate-200 backdrop-blur">
                 {(() => {
                   const title = isAbsences
                     ? "Cahier d’absences — Absences/retards récents et sanctions"
@@ -1698,7 +1743,7 @@ export default function ParentPage() {
                             title="Activer les notifications push"
                             iconLeft={<IconBell />}
                           >
-                            Activer les push
+                            Activer les notifications
                           </Button>
                         )}
                       </div>
@@ -1751,10 +1796,18 @@ export default function ParentPage() {
                                   {getInitials(k.full_name)}
                                 </div>
                                 <div className="min-w-0">
-                                  <div className="truncate font-medium text-slate-900">
-                                    {k.full_name}{" "}
-                                    <span className="text-xs text-slate-600">
-                                      ({k.class_label || "—"})
+                                  <div className="flex flex-col">
+                                    <div className="flex min-w-0 items-center gap-1">
+                                      <KidName
+                                        name={k.full_name}
+                                        className="font-medium text-slate-900"
+                                      />
+                                      <span className="hidden text-xs text-slate-600 sm:inline">
+                                        ({k.class_label || "—"})
+                                      </span>
+                                    </div>
+                                    <span className="text-[11px] text-slate-500 sm:hidden">
+                                      {k.class_label || "—"}
                                     </span>
                                   </div>
                                 </div>
@@ -1804,7 +1857,7 @@ export default function ParentPage() {
                                   return (
                                     <li
                                       key={g.day}
-                                      className="rounded-lg border p-3 transition hover:bg-slate-50/70"
+                                      className="rounded-lg border border-slate-100 bg-slate-50/60 p-3 transition hover:bg-slate-50"
                                       style={{ transform: "translateZ(10px)" }}
                                     >
                                       <div className="flex items-center justify-between gap-3">
@@ -1832,7 +1885,7 @@ export default function ParentPage() {
                                       </div>
                                       {(isOpen || hasSingle) &&
                                         g.items.length > 0 && (
-                                          <ul className="mt-2 divide-y">
+                                          <ul className="mt-2 divide-y divide-slate-100">
                                             {g.items.map((ev) => (
                                               <li
                                                 key={ev.id}
@@ -1885,7 +1938,7 @@ export default function ParentPage() {
                             {/* Sanctions */}
                             {showSanctionsBlock && (
                               <div
-                                className="mt-3 rounded-lg border bg-amber-50/40 p-3"
+                                className="mt-3 rounded-lg border border-amber-100 bg-amber-50/60 p-3"
                                 style={{ transform: "translateZ(8px)" }}
                               >
                                 <div className="flex items-center justify-between">
@@ -1913,7 +1966,7 @@ export default function ParentPage() {
                                     Aucune sanction récente.
                                   </div>
                                 ) : (
-                                  <ul className="mt-2 divide-y">
+                                  <ul className="mt-2 divide-y divide-amber-100/80">
                                     {(showAllPenForKid[k.id]
                                       ? kidPenalties[k.id] || []
                                       : (kidPenalties[k.id] || []).slice(
@@ -2003,7 +2056,7 @@ export default function ParentPage() {
                             {/* Résumé notes publiées (Dashboard uniquement) */}
                             {showNotesBlock && (
                               <div
-                                className="mt-3 rounded-lg border bg-slate-50/80 p-3"
+                                className="mt-3 rounded-lg border border-slate-100 bg-slate-50/80 p-3"
                                 style={{ transform: "translateZ(6px)" }}
                               >
                                 <div className="mb-1 flex items-center justify-between">
@@ -2073,7 +2126,7 @@ export default function ParentPage() {
 
             {/* Cahier de notes – vue détaillée */}
             {showNotesSection && (
-              <section className="rounded-2xl border border-slate-200/70 bg-white/95 p-5 shadow-lg shadow-slate-900/5 backdrop-blur">
+              <section className="rounded-2xl border border-slate-200 bg-white/95 p-5 shadow-sm shadow-slate-200 backdrop-blur">
                 <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                   <div className="text-sm font-semibold uppercase tracking-wide text-slate-700">
                     Cahier de notes — évaluations publiées
@@ -2189,9 +2242,10 @@ export default function ParentPage() {
                         >
                           <div className="mb-3 flex items-center justify-between gap-2">
                             <div className="min-w-0">
-                              <div className="text-sm font-semibold text-slate-900">
-                                {k.full_name}
-                              </div>
+                              <KidName
+                                name={k.full_name}
+                                className="text-sm font-semibold text-slate-900"
+                              />
                               <div className="text-xs text-slate-600">
                                 {k.class_label || "—"}
                               </div>
@@ -2254,7 +2308,8 @@ export default function ParentPage() {
                                   <div className="flex items-center justify-between gap-2">
                                     <div className="min-w-0">
                                       <div className="truncate font-medium text-slate-800">
-                                        {g.title || gradeKindLabel(g.eval_kind)}
+                                        {g.title ||
+                                          gradeKindLabel(g.eval_kind)}
                                       </div>
                                       <div className="mt-0.5 text-[11px] text-slate-600">
                                         {fmt(g.eval_date)} • coeff {g.coeff}
