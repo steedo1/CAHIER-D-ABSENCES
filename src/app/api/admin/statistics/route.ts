@@ -576,7 +576,7 @@ export async function GET(req: NextRequest) {
     }
 
     const seen = new Set<string>();
-    const sessions = (sessRows || [])
+    const sessionsRaw = (sessRows || [])
       .filter((r: any) => (seen.has(r.id) ? false : (seen.add(r.id), true)))
       .map((s: any) => ({
         id: String(s.id),
@@ -588,8 +588,98 @@ export async function GET(req: NextRequest) {
         expected_minutes: Number(s.expected_minutes || 0),
       }));
 
+    /**
+     * DÉDOUBLONNAGE PAR CRÉNEAU
+     * ─────────────────────────
+     * clé = teacher_id | class_id | subject_id | date(Abidjan) | HH:MM(started_at)
+     * On fusionne :
+     *  - started_at    → le plus ancien
+     *  - actual_call_at→ le plus ancien non nul
+     *  - expected_minutes → le max
+     */
+    const TZ2 = "Africa/Abidjan";
+    const fmtYMD2 = new Intl.DateTimeFormat("en-CA", {
+      timeZone: TZ2,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    });
+    const fmtHM2 = new Intl.DateTimeFormat("fr-FR", {
+      timeZone: TZ2,
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    });
+
+    const getDateKeyFromISO = (iso: string) => {
+      try {
+        return fmtYMD2.format(new Date(iso)); // YYYY-MM-DD
+      } catch {
+        return String(iso).slice(0, 10);
+      }
+    };
+
+    const getHMKeyFromISO = (iso: string) => {
+      try {
+        const parts = fmtHM2.formatToParts(new Date(iso));
+        const hh = parts.find((p) => p.type === "hour")?.value ?? "00";
+        const mm = parts.find((p) => p.type === "minute")?.value ?? "00";
+        const hNum = Number.parseInt(hh, 10);
+        const mNum = Number.parseInt(mm, 10);
+        return `${pad2(Number.isFinite(hNum) ? hNum : 0)}:${pad2(
+          Number.isFinite(mNum) ? mNum : 0
+        )}`;
+      } catch {
+        return "00:00";
+      }
+    };
+
+    type SessionRow = {
+      id: string;
+      teacher_id: string | null;
+      subject_id: string | null;
+      class_id: string | null;
+      started_at: string;
+      actual_call_at: string | null;
+      expected_minutes: number;
+    };
+
+    const sessionsBySlot = new Map<string, SessionRow>();
+
+    for (const s of sessionsRaw) {
+      const tid = s.teacher_id || "";
+      const cid = s.class_id || "";
+      const sid = s.subject_id || "";
+      const day = getDateKeyFromISO(s.started_at);
+      const hm = getHMKeyFromISO(s.started_at);
+      const key = `${tid}|${cid}|${sid}|${day}|${hm}`;
+
+      const existing = sessionsBySlot.get(key);
+      if (!existing) {
+        // première séance pour ce créneau
+        sessionsBySlot.set(key, { ...s });
+      } else {
+        // fusion : on prend les valeurs les plus "complètes"
+        if (s.started_at < existing.started_at) {
+          existing.started_at = s.started_at;
+        }
+        if (s.actual_call_at) {
+          if (!existing.actual_call_at || s.actual_call_at < existing.actual_call_at) {
+            existing.actual_call_at = s.actual_call_at;
+          }
+        }
+        if ((s.expected_minutes || 0) > (existing.expected_minutes || 0)) {
+          existing.expected_minutes = s.expected_minutes;
+        }
+      }
+    }
+
+    // ✅ liste finale de séances DÉDOUBLONNÉES (1 par créneau)
+    const sessions = Array.from(sessionsBySlot.values());
+
+    /* ======================== SUMMARY (après dédoublonnage) ======================== */
     if (mode === "summary") {
-      // ✅ on compte maintenant les séances + on garde les minutes pour compat
+      // on compte maintenant les séances + on garde les minutes pour compat
       const minutesByTeacher = new Map<string, number>();
       const sessionsByTeacher = new Map<string, number>();
 
@@ -607,7 +697,7 @@ export async function GET(req: NextRequest) {
         );
         sessionsByTeacher.set(
           tid,
-          (sessionsByTeacher.get(tid) || 0) + 1
+          (sessionsByTeacher.get(tid) || 0) + 1 // ✅ 1 seule fois par créneau
         );
       }
 
@@ -623,14 +713,16 @@ export async function GET(req: NextRequest) {
       // tri principal par nombre de séances (desc), puis par nom
       items.sort(
         (a, b) =>
-          b.sessions_count - a.sessions_count ||
+          (b.sessions_count || 0) - (a.sessions_count || 0) ||
           a.teacher_name.localeCompare(b.teacher_name, "fr")
       );
 
       return NextResponse.json({ items });
     }
 
-    // DETAIL (avec classe + temps réel)
+    /* ======================== DETAIL (après dédoublonnage) ======================== */
+
+    // On travaille maintenant sur sessions (dédoublonné)
     const subIds = Array.from(
       new Set(sessions.map((s) => s.subject_id).filter(Boolean))
     ) as string[];

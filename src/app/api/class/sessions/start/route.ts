@@ -195,6 +195,8 @@ export async function POST(req: NextRequest) {
     if (pErr) return NextResponse.json({ error: pErr.message }, { status: 400 });
 
     let periodDuration: number | null = null;
+    let currentPeriod: { startMin: number; endMin: number } | null = null;
+
     if (Array.isArray(periods) && periods.length) {
       const expanded = periods.map((p: any) => ({
         startMin: hmsToMin(p.start_time),
@@ -208,7 +210,13 @@ export async function POST(req: NextRequest) {
         expanded.find((p) => callMin >= p.startMin && callMin < p.endMin) ??
         [...expanded].reverse().find((p) => callMin >= p.startMin) ??
         null;
-      periodDuration = cur?.durationMin ?? null;
+      if (cur) {
+        currentPeriod = { startMin: cur.startMin, endMin: cur.endMin };
+        periodDuration = cur.durationMin ?? null;
+      } else {
+        currentPeriod = null;
+        periodDuration = null;
+      }
     }
 
     // expected_minutes : priorité à la valeur fournie ; null => Auto ; sinon calcul établissement
@@ -221,7 +229,90 @@ export async function POST(req: NextRequest) {
       expected_minutes = periodDuration ?? defSessionMin; // par créneau ou fallback
     }
 
-    // Insertion séance
+    // Libellé matière (optionnel pour l’UI) — commun à la réutilisation OU à l’insert
+    let subject_name: string | null = null;
+    if (subject_id) {
+      const { data: subj } = await srv
+        .from("institution_subjects")
+        .select("custom_name,subjects:subject_id(name)")
+        .eq("id", subject_id)
+        .maybeSingle();
+      subject_name = (subj as any)?.custom_name ?? (subj as any)?.subjects?.name ?? null;
+    }
+
+    // ───────── RÉUTILISATION : 1 SEULE SÉANCE PAR CRÉNEAU ─────────
+    let existingSession:
+      | {
+          id: string;
+          class_id: string;
+          subject_id: string;
+          teacher_id: string;
+          started_at: string;
+          expected_minutes: number | null;
+        }
+      | null = null;
+
+    if (currentPeriod) {
+      // bornes de la journée en UTC pour limiter la recherche
+      const dayStartUTC = new Date(startedAt);
+      dayStartUTC.setUTCHours(0, 0, 0, 0);
+      const dayEndUTC = new Date(startedAt);
+      dayEndUTC.setUTCHours(23, 59, 59, 999);
+
+      const dayStartISO = dayStartUTC.toISOString();
+      const dayEndISO = dayEndUTC.toISOString();
+
+      const { data: sameDaySessions, error: sessErr } = await srv
+        .from("teacher_sessions")
+        .select("id,class_id,subject_id,teacher_id,started_at,expected_minutes,ended_at")
+        .eq("class_id", class_id)
+        .eq("subject_id", subject_id)
+        .eq("teacher_id", teacher_id)
+        .is("ended_at", null) // uniquement séances ouvertes
+        .gte("started_at", dayStartISO)
+        .lte("started_at", dayEndISO);
+
+      if (sessErr)
+        return NextResponse.json({ error: sessErr.message }, { status: 400 });
+
+      if (sameDaySessions && sameDaySessions.length) {
+        for (const s of sameDaySessions as any[]) {
+          const { hm } = localHMAndWeekday(String(s.started_at), tz);
+          const min = hmToMin(hm);
+          if (min >= currentPeriod.startMin && min < currentPeriod.endMin) {
+            existingSession = {
+              id: s.id,
+              class_id: s.class_id,
+              subject_id: s.subject_id,
+              teacher_id: s.teacher_id,
+              started_at: s.started_at,
+              expected_minutes: s.expected_minutes,
+            };
+            break;
+          }
+        }
+      }
+    }
+
+    // Si une séance existe déjà sur ce créneau : on la réutilise
+    if (existingSession) {
+      return NextResponse.json({
+        item: {
+          id: existingSession.id as string,
+          class_id,
+          class_label: cls.label as string,
+          subject_id,
+          subject_name,
+          started_at: existingSession.started_at as string,
+          expected_minutes:
+            (existingSession.expected_minutes as number | null) ??
+            expected_minutes ??
+            null,
+        },
+      });
+    }
+
+    // ───────── INSERTION SÉANCE (si aucune séance trouvée sur ce créneau) ─────────
     const { data: inserted, error: insErr } = await srv
       .from("teacher_sessions")
       .insert({
@@ -239,17 +330,6 @@ export async function POST(req: NextRequest) {
       .maybeSingle();
 
     if (insErr) return NextResponse.json({ error: insErr.message }, { status: 400 });
-
-    // Libellé matière (optionnel pour l’UI)
-    let subject_name: string | null = null;
-    if (subject_id) {
-      const { data: subj } = await srv
-        .from("institution_subjects")
-        .select("custom_name,subjects:subject_id(name)")
-        .eq("id", subject_id)
-        .maybeSingle();
-      subject_name = (subj as any)?.custom_name ?? (subj as any)?.subjects?.name ?? null;
-    }
 
     return NextResponse.json({
       item: {
