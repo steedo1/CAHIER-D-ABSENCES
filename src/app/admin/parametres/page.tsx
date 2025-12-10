@@ -40,7 +40,7 @@ type SubjectComponentRow = {
   component_id: string; // id en base ou temp_xxx
   component_name: string; // libellé affiché (Ortho-Grammaire, Composition, …)
   coeff: number; // coeff_in_subject
-  level?: string; // dimension purement UI (non stockée en base)
+  level?: string; // niveau (6e, 5e, 4e, 3e…) → pour que chaque niveau ait ses propres sous-matières
   code?: string;
   order_index?: number;
   is_active?: boolean;
@@ -56,7 +56,7 @@ type EvalPeriodRow = {
   end_date: string;
   order_index: number;
   is_active: boolean;
-  weight: number; // ✅ coefficient de la période (pour la moyenne annuelle)
+  weight: number; // coefficient de la période (pour la moyenne annuelle)
 };
 
 type AcademicYearRow = {
@@ -109,7 +109,9 @@ function Modal(props: {
             {props.title}
           </div>
         </div>
-        <div className="p-4">{props.children}</div>
+        <div className="p-4 max-h-[70vh] overflow-auto">
+          {props.children}
+        </div>
         <div className="flex items-center justify-end gap-2 border-t p-3">
           {props.actions}
           <button
@@ -213,6 +215,126 @@ function ToastHost({
 }
 
 /* =========================
+   Ligne utilisateur
+========================= */
+type FragmentRowProps = {
+  user: Profile;
+  compact: boolean;
+  expanded: boolean;
+  onToggle: () => void;
+  onResetTemp: () => void;
+  onOpenCustom: () => void;
+  roleColor: (r?: Role | null) => "violet" | "sky" | "rose" | "slate";
+};
+
+function FragmentRow({
+  user,
+  compact,
+  expanded,
+  onToggle,
+  onResetTemp,
+  onOpenCustom,
+  roleColor,
+}: FragmentRowProps) {
+  const label =
+    user.display_name || user.email || user.phone || "Utilisateur";
+  const contactLine =
+    user.email && user.phone
+      ? `${user.email} · ${user.phone}`
+      : user.email || user.phone || "—";
+  const roleLabel = user.role || "—";
+
+  if (compact) {
+    return (
+      <React.Fragment>
+        <tr className="align-top">
+          <td className="px-3 py-2">
+            <button
+              type="button"
+              onClick={onToggle}
+              className="mb-0.5 text-[11px] text-sky-700 hover:underline"
+            >
+              {expanded ? "Masquer les détails" : "Voir les détails"}
+            </button>
+            <div className="font-medium text-slate-900">{label}</div>
+            <div className="max-w-xs truncate text-[11px] text-slate-500">
+              {contactLine}
+            </div>
+          </td>
+          <td className="px-3 py-2">
+            <Badge color={roleColor(user.role)}>{roleLabel}</Badge>
+          </td>
+          <td className="px-3 py-2 text-right">
+            <div className="flex justify-end gap-1">
+              <button
+                type="button"
+                onClick={onResetTemp}
+                className="rounded-lg border px-2 py-1 text-[11px] hover:bg-slate-50"
+              >
+                Réinit. temporaire
+              </button>
+              <button
+                type="button"
+                onClick={onOpenCustom}
+                className="rounded-lg bg-sky-700 px-2 py-1 text-[11px] font-medium text-white hover:bg-sky-800"
+              >
+                Mot de passe…
+              </button>
+            </div>
+          </td>
+        </tr>
+        {expanded && (
+          <tr className="bg-slate-50/60">
+            <td
+              className="px-3 py-2 text-[12px] text-slate-600"
+              colSpan={3}
+            >
+              <div>Email : {user.email || "—"}</div>
+              <div>Téléphone : {user.phone || "—"}</div>
+              <div>Rôle : {roleLabel}</div>
+            </td>
+          </tr>
+        )}
+      </React.Fragment>
+    );
+  }
+
+  // Mode non compact : 4 colonnes (Util, Contact, Rôle, Actions)
+  return (
+    <tr className="align-top">
+      <td className="px-3 py-2">
+        <div className="font-medium text-slate-900">{label}</div>
+      </td>
+      <td className="px-3 py-2">
+        <div className="text-[12px] text-slate-600">{user.email || "—"}</div>
+        <div className="text-[12px] text-slate-600">{user.phone || "—"}</div>
+      </td>
+      <td className="px-3 py-2">
+        <Badge color={roleColor(user.role)}>{roleLabel}</Badge>
+      </td>
+      <td className="px-3 py-2 text-right">
+        <div className="flex justify-end gap-1">
+          <button
+            type="button"
+            onClick={onResetTemp}
+            className="rounded-lg border px-2 py-1 text-[11px] hover:bg-slate-50"
+          >
+            Réinit. temporaire
+          </button>
+          <button
+            type="button"
+            onClick={onOpenCustom}
+            className="rounded-lg bg-sky-700 px-2 py-1 text-[11px] font-medium text-white hover:bg-sky-800"
+          >
+            Mot de passe…
+          </button>
+        </div>
+      </td>
+    </tr>
+  );
+}
+
+/* =========================
    Petits helpers horaires
 ========================= */
 function timeStrToMin(t: string): number {
@@ -261,7 +383,7 @@ export default function AdminSettingsPage() {
   // Liste repliable
   const [userListOpen, setUserListOpen] = useState(false);
 
-  // Mode compact / détails dépliables (reste utile une fois déroulé)
+  // Mode compact / détails dépliables
   const [compactUsers, setCompactUsers] = useState<boolean>(true);
   const [expandedUserIds, setExpandedUserIds] = useState<Set<string>>(
     new Set()
@@ -304,7 +426,7 @@ export default function AdminSettingsPage() {
     institution_status: "",
     institution_head_name: "",
     institution_head_title: "",
-    // 🆕 champs pour entête des bulletins
+    // champs pour entête des bulletins
     country_name: "",
     country_motto: "",
     ministry_name: "",
@@ -334,7 +456,7 @@ export default function AdminSettingsPage() {
   const [genReplace, setGenReplace] = useState<boolean>(true); // remplacer ou ajouter
 
   /* =======================
-     4) Années scolaires (archives & bulletins)
+     4) Années scolaires
   ======================== */
   const [academicYears, setAcademicYears] = useState<AcademicYearRow[]>([]);
   const [loadingAcademicYears, setLoadingAcademicYears] = useState(false);
@@ -346,7 +468,7 @@ export default function AdminSettingsPage() {
     useState<string>("");
 
   /* =======================
-     5) Périodes d'évaluation (bulletins)
+     5) Périodes d'évaluation
   ======================== */
   const [evalPeriods, setEvalPeriods] = useState<EvalPeriodRow[]>([]);
   const [loadingEvalPeriods, setLoadingEvalPeriods] = useState(false);
@@ -356,7 +478,7 @@ export default function AdminSettingsPage() {
   );
 
   /* =======================
-     6) Coefficients des disciplines (bulletins) + sous-matières
+     6) Coeffs disciplines + sous-matières
   ======================== */
   const [subjectCoeffs, setSubjectCoeffs] = useState<SubjectCoeffRow[]>([]);
   const [loadingCoeffs, setLoadingCoeffs] = useState(false);
@@ -400,7 +522,9 @@ export default function AdminSettingsPage() {
     () =>
       componentsTarget
         ? subjectComponents.filter(
-            (c) => c.subject_id === componentsTarget.subject_id
+            (c) =>
+              c.subject_id === componentsTarget.subject_id &&
+              (c.level || "") === (componentsTarget.level || "")
           )
         : [],
     [componentsTarget, subjectComponents]
@@ -655,7 +779,7 @@ export default function AdminSettingsPage() {
     );
   }
 
-  // ✅ Import du logo par fichier (image → data URL stockée dans institution_logo_url)
+  // Import du logo par fichier (image → data URL stockée dans institution_logo_url)
   function handleLogoFileChange(e: ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -799,7 +923,7 @@ export default function AdminSettingsPage() {
       setAcademicYears([]);
       pushToast("error", m);
 
-      // ⚠️ fallback : on charge quand même les périodes selon l'année courante serveur
+      // fallback : on charge quand même les périodes selon l'année courante serveur
       await loadEvalPeriods();
     } finally {
       setLoadingAcademicYears(false);
@@ -1026,7 +1150,7 @@ export default function AdminSettingsPage() {
         const label = (p.label || `Période ${idx + 1}`).trim();
         const short_label = (p.short_label || label).trim();
 
-        // ✅ on part de p.weight (UI) mais on envoie bien coeff à l’API
+        // on part de p.weight (UI) mais on envoie bien coeff à l’API
         const coeff =
           typeof p.weight === "number" && p.weight > 0
             ? Number(p.weight)
@@ -1042,7 +1166,7 @@ export default function AdminSettingsPage() {
           end_date: p.end_date || null,
           order_index: idx + 1,
           is_active: !!p.is_active,
-          coeff, // ✅ c'est ce champ que la route utilise
+          coeff, // champ utilisé côté API
         };
       });
 
@@ -1207,22 +1331,32 @@ export default function AdminSettingsPage() {
       if (!r.ok || !j?.ok) {
         throw new Error(j?.error || "Échec chargement sous-matières");
       }
+
       const rows = Array.isArray(j.items) ? j.items : [];
+
       const mapped: SubjectComponentRow[] = rows.map(
-        (row: any, idx: number) => ({
-          subject_id: String(row.subject_id),
-          subject_name: String(row.subject_name || "Matière"),
-          component_id: String(row.id ?? `comp_${idx}`),
-          component_name: String(row.label || "Sous-matière"),
-          coeff:
-            Number(row.coeff_in_subject ?? row.coeff ?? 0) ||
-            0,
-          level: "", // la base ne stocke pas le niveau, dimension purement UI
-          code: row.code ? String(row.code) : undefined,
-          order_index: Number(row.order_index ?? idx + 1),
-          is_active: row.is_active !== false,
-        })
+        (row: any, idx: number) => {
+          const level =
+            row.level !== undefined && row.level !== null
+              ? String(row.level).trim()
+              : "";
+
+          return {
+            subject_id: String(row.subject_id),
+            subject_name: String(row.subject_name || "Matière"),
+            component_id: String(row.id ?? `comp_${idx}`),
+            component_name: String(row.label || "Sous-matière"),
+            coeff:
+              Number(row.coeff_in_subject ?? row.coeff ?? 0) ||
+              0,
+            level, // niveau depuis l'API
+            code: row.code ? String(row.code) : undefined,
+            order_index: Number(row.order_index ?? idx + 1),
+            is_active: row.is_active !== false,
+          };
+        }
       );
+
       setSubjectComponents(mapped);
       pushToast(
         "info",
@@ -1284,7 +1418,7 @@ export default function AdminSettingsPage() {
     );
   }
 
-  // ✅ version alignée avec la route : une seule liste de sous-matières par matière
+  // version alignée avec la route : une liste de sous-matières par (matière, niveau)
   async function saveSubjectComponents(
     arg?: boolean | React.MouseEvent<HTMLButtonElement>
   ) {
@@ -1295,7 +1429,7 @@ export default function AdminSettingsPage() {
     setMsgComponents(null);
 
     try {
-      // 1) Déterminer le périmètre : tout / matière ciblée
+      // 1) Déterminer le périmètre : tout / matière + niveau ciblés
       let scope = subjectComponents;
 
       if (targetOnly) {
@@ -1308,7 +1442,9 @@ export default function AdminSettingsPage() {
           return;
         }
         scope = subjectComponents.filter(
-          (c) => c.subject_id === componentsTarget.subject_id
+          (c) =>
+            c.subject_id === componentsTarget.subject_id &&
+            (c.level || "") === (componentsTarget.level || "")
         );
       }
 
@@ -1321,47 +1457,51 @@ export default function AdminSettingsPage() {
         return;
       }
 
-      // 2) Vérifier, par matière, que la somme des sous-coeffs est cohérente
-      const sums = new Map<
-        string,
-        { sum: number; subject_name: string }
-      >();
+      // 2) Vérifier, par (matière, niveau), que la somme des sous-coeffs est cohérente
+      type SumInfo = {
+        sum: number;
+        subject_name: string;
+        level: string;
+      };
+
+      const sums = new Map<string, SumInfo>();
 
       for (const c of scope) {
         const label = (c.component_name || "").trim();
         if (!label) continue;
+
+        const lvl = (c.level || "").trim();
+        const key = `${c.subject_id}::${lvl}`;
 
         const cleanCoeff =
           !Number.isFinite(c.coeff as any) || c.coeff < 0
             ? 0
             : Number(c.coeff.toFixed(2));
 
-        const existing = sums.get(c.subject_id);
+        const existing = sums.get(key);
         if (existing) {
           existing.sum += cleanCoeff;
         } else {
-          sums.set(c.subject_id, {
+          sums.set(key, {
             sum: cleanCoeff,
             subject_name: c.subject_name,
+            level: lvl,
           });
         }
       }
 
       const bad: string[] = [];
 
-      sums.forEach((info, subjectId) => {
-        let parents = subjectCoeffs.filter(
-          (r) => r.subject_id === subjectId
+      sums.forEach((info, key) => {
+        const [subjectId, lvl] = key.split("::");
+
+        const parents = subjectCoeffs.filter(
+          (r) =>
+            r.subject_id === subjectId &&
+            (r.level || "").trim() === lvl
         );
 
-        // En mode « modal », on ne vérifie que le niveau ciblé
-        if (targetOnly && componentsTarget) {
-          parents = parents.filter(
-            (r) => r.level === componentsTarget.level
-          );
-        }
-
-        // Si aucun coeff défini pour cette matière, on laisse passer (cas limite)
+        // Si aucun coeff défini pour cette matière à ce niveau, on laisse passer (cas limite)
         if (parents.length === 0) return;
 
         for (const parentRow of parents) {
@@ -1377,7 +1517,7 @@ export default function AdminSettingsPage() {
           ) {
             bad.push(
               `${info.subject_name} (${
-                parentRow.level || "niveau ?"
+                info.level || parentRow.level || "niveau ?"
               }) : somme sous-matières ${info.sum} ≠ coeff matière ${parentCoeff}`
             );
           }
@@ -1394,37 +1534,46 @@ export default function AdminSettingsPage() {
         return;
       }
 
-      // 3) On groupe par subject_id pour appeler la route API une fois par matière
-      const bySubject = new Map<
-        string,
-        {
-          subject_name: string;
-          items: {
-            label: string;
-            short_label: string;
-            coeff_in_subject: number;
-            order_index: number;
-            is_active: boolean;
-          }[];
-        }
-      >();
+      // 3) Grouper par (subject_id, level) pour appeler la route API une fois par couple
+      type GroupItem = {
+        label: string;
+        short_label: string;
+        coeff_in_subject: number;
+        order_index: number;
+        is_active: boolean;
+      };
+
+      type Group = {
+        subject_id: string;
+        subject_name: string;
+        level: string;
+        items: GroupItem[];
+      };
+
+      const bySubjectLevel = new Map<string, Group>();
 
       for (const row of scope) {
-        const label = row.component_name.trim();
+        const label = (row.component_name || "").trim();
         if (!label) continue;
+
+        const lvl = (row.level || "").trim();
+        const key = `${row.subject_id}::${lvl}`;
 
         const cleanCoeff =
           !Number.isFinite(row.coeff as any) || row.coeff < 0
             ? 0
             : Number(row.coeff.toFixed(2));
 
-        if (!bySubject.has(row.subject_id)) {
-          bySubject.set(row.subject_id, {
+        if (!bySubjectLevel.has(key)) {
+          bySubjectLevel.set(key, {
+            subject_id: row.subject_id,
             subject_name: row.subject_name,
+            level: lvl,
             items: [],
           });
         }
-        const group = bySubject.get(row.subject_id)!;
+
+        const group = bySubjectLevel.get(key)!;
         const order_index = group.items.length + 1;
 
         group.items.push({
@@ -1436,7 +1585,7 @@ export default function AdminSettingsPage() {
         });
       }
 
-      if (bySubject.size === 0) {
+      if (bySubjectLevel.size === 0) {
         const msg =
           "Aucune sous-matière valide à enregistrer (toutes les lignes sont vides).";
         setMsgComponents(msg);
@@ -1445,17 +1594,18 @@ export default function AdminSettingsPage() {
         return;
       }
 
-      // 4) Appels API : PUT /subject-components par matière avec subject_id + items[]
+      // 4) Appels API : PUT /subject-components par matière + niveau
       let totalInserted = 0;
 
-      for (const [subjectId, group] of bySubject.entries()) {
+      for (const [, group] of bySubjectLevel) {
         const res = await fetch(
           "/api/admin/institution/subject-components",
           {
             method: "PUT",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-              subject_id: subjectId,
+              subject_id: group.subject_id,
+              level: group.level || null,
               items: group.items,
             }),
           }
@@ -1464,7 +1614,9 @@ export default function AdminSettingsPage() {
         if (!res.ok || !j?.ok) {
           throw new Error(
             j?.error ||
-              `Échec enregistrement sous-matières pour la matière ${group.subject_name}.`
+              `Échec enregistrement sous-matières pour la matière ${group.subject_name}${
+                group.level ? ` (${group.level})` : ""
+              }.`
           );
         }
         if (typeof j.inserted === "number") {
@@ -1499,7 +1651,6 @@ export default function AdminSettingsPage() {
     setMsgCoeffs(null);
     try {
       const payload = subjectCoeffs.map((row) => ({
-
         level: row.level,
         subject_id: row.subject_id,
         coeff:
@@ -1531,14 +1682,19 @@ export default function AdminSettingsPage() {
     }
   }
 
-  /* ====== chargement initial : paramètres établissement + années + coeffs ====== */
+  /* ====== chargement initial ====== */
   useEffect(() => {
     loadInstitutionConfig();
-    loadAcademicYears(); // charge aussi les périodes pour l'année choisie
+    loadAcademicYears(); // charge aussi les périodes
     loadSubjectCoeffs();
     loadSubjectComponents();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const disableComponentsSaveAll =
+    savingComponents || loadingComponents || subjectComponents.length === 0;
+  const disableCoeffsSaveAll =
+    savingCoeffs || loadingCoeffs || subjectCoeffs.length === 0;
 
   return (
     <>
@@ -1550,10 +1706,8 @@ export default function AdminSettingsPage() {
             Paramètres
           </h1>
           <p className="text-sm text-slate-600">
-            Gérez votre mot de passe, vos utilisateurs, les horaires et infos
-            de l&apos;établissement, ainsi que les paramètres des bulletins
-            (années scolaires, périodes et coefficients par niveau et par
-            période).
+            Mot de passe, utilisateurs, horaires, années scolaires, périodes
+            d&apos;évaluation et coefficients des disciplines par niveau.
           </p>
         </header>
 
@@ -1650,7 +1804,6 @@ export default function AdminSettingsPage() {
             </button>
           </div>
 
-          {/* Contenu déroulant */}
           {userListOpen && (
             <>
               <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
@@ -1744,11 +1897,9 @@ export default function AdminSettingsPage() {
                 Horaires & séances de l’établissement
               </div>
               <p className="text-xs text-slate-500">
-                Définissez le fuseau horaire, la durée par séance, les créneaux
-                journaliers et les informations administratives de
-                l&apos;établissement. Ces paramètres pilotent le calcul des
-                retards et alimentent les bulletins, matrices et certains écrans
-                (parents, dashboard).
+                Fuseau horaire, durée de séance, créneaux journaliers et infos
+                administratives (logo, ministère, téléphone…). Ces paramètres
+                pilotent les retards et certains documents (bulletins, exports).
               </p>
             </div>
             <button
@@ -1833,7 +1984,6 @@ export default function AdminSettingsPage() {
 
           {/* Infos d'établissement (optionnelles) */}
           <div className="mb-4 grid grid-cols-1 gap-3 md:grid-cols-3">
-            {/* 🆕 En-tête pays / devise / ministère / code MEN */}
             <div>
               <div className="mb-1 text-xs text-slate-500">
                 Nom du pays pour l&apos;en-tête (optionnel)
@@ -1903,7 +2053,6 @@ export default function AdminSettingsPage() {
               />
             </div>
 
-            {/* Téléphone & email */}
             <div>
               <div className="mb-1 text-xs text-slate-500">
                 Téléphone de l&apos;établissement (optionnel)
@@ -1941,7 +2090,7 @@ export default function AdminSettingsPage() {
               />
             </div>
 
-            {/* ✅ Logo importé par fichier plutôt que saisir une URL à la main */}
+            {/* Logo importé par fichier */}
             <div>
               <div className="mb-1 text-xs text-slate-500">
                 Logo de l&apos;établissement (import d&apos;image)
@@ -1986,15 +2135,14 @@ export default function AdminSettingsPage() {
                       />
                     </div>
                     <div className="text-[11px] text-slate-500">
-                      Logo actuellement utilisé dans les bulletins, exports et
+                      Logo actuellement utilisé pour les bulletins et autres
                       documents officiels.
                     </div>
                   </div>
                 )}
 
                 <div className="text-[11px] text-slate-500">
-                  Formats conseillés : PNG ou JPG, taille ≤ 1&nbsp;Mo. Le logo
-                  est enregistré avec les autres paramètres.
+                  Formats conseillés : PNG ou JPG, taille ≤ 1&nbsp;Mo.
                 </div>
               </div>
             </div>
@@ -2369,7 +2517,7 @@ export default function AdminSettingsPage() {
         </section>
 
         {/* =======================
-            4) Années scolaires (archives & bulletins)
+            4) Années scolaires
         ======================== */}
         <section className="rounded-2xl border bg-white p-5">
           <div className="mb-3 flex items-center justify-between">
@@ -2378,9 +2526,8 @@ export default function AdminSettingsPage() {
                 Années scolaires (archives & bulletins)
               </div>
               <p className="text-xs text-slate-500">
-                Définissez les années scolaires de l&apos;établissement. Elles
-                seront utilisées pour l&apos;archivage des absences, des notes
-                et pour filtrer les bulletins.
+                Permet d&apos;archiver absences et notes et de filtrer les
+                bulletins par année.
               </p>
             </div>
             <button
@@ -2415,7 +2562,7 @@ export default function AdminSettingsPage() {
                 }}
               >
                 <option value="">
-                  — Année déduite automatiquement (serveur) —{" "}
+                  — Année déduite automatiquement (serveur) —
                 </option>
                 {academicYears.map((y) => (
                   <option key={y.code || y.id} value={y.code}>
@@ -2425,8 +2572,7 @@ export default function AdminSettingsPage() {
                 ))}
               </select>
               <div className="mt-1 text-[11px] text-slate-500">
-                Cette année sera utilisée lors de l&apos;enregistrement des
-                périodes d&apos;évaluation.
+                Utilisée lors de l&apos;enregistrement des périodes d&apos;évaluation.
               </div>
             </div>
           </div>
@@ -2466,8 +2612,8 @@ export default function AdminSettingsPage() {
                       className="px-3 py-3 text-slate-500"
                       colSpan={7}
                     >
-                      Aucune année scolaire définie pour l&apos;instant. Ajoutez
-                      au moins une ligne pour commencer.
+                      Aucune année scolaire définie. Ajoutez au moins une ligne
+                      pour commencer.
                     </td>
                   </tr>
                 ) : (
@@ -2592,11 +2738,8 @@ export default function AdminSettingsPage() {
                 Périodes d&apos;évaluation (bulletins)
               </div>
               <p className="text-xs text-slate-500">
-                Définissez librement les périodes utilisées pour les bulletins
-                et les moyennes : trimestres, semestres, compositions de juin,
-                etc. Chaque série de périodes est rattachée à l&apos;année
-                scolaire sélectionnée ci-dessus. Le coefficient de période sera
-                utilisé pour le calcul de la moyenne annuelle générale.
+                Trimestres, semestres, compositions… Chaque période a un
+                coefficient utilisé pour la moyenne annuelle.
               </p>
             </div>
             <button
@@ -2661,8 +2804,8 @@ export default function AdminSettingsPage() {
                       className="px-3 py-3 text-slate-500"
                       colSpan={9}
                     >
-                      Aucune période définie pour l&apos;instant. Cliquez sur
-                      « Ajouter une période » pour commencer.
+                      Aucune période définie. Cliquez sur « Ajouter une période »
+                      pour commencer.
                     </td>
                   </tr>
                 ) : (
@@ -2825,15 +2968,15 @@ export default function AdminSettingsPage() {
           </div>
 
           <div className="mt-2 text-[11px] text-slate-500">
-            Exemple : créez trois lignes « 1er trimestre », « 2e trimestre »,
-            « 3e trimestre » avec des coefficients 1, 2, 2, ou deux lignes
+            Exemple : trois périodes « 1er trimestre », « 2e trimestre »,
+            « 3e trimestre » avec des coefficients 1, 2, 2 ; ou deux lignes
             « Semestre 1 » et « Semestre 2 ». Pour le primaire, vous pouvez
             définir « Composition de mars », « Composition de juin », etc.
           </div>
         </section>
 
         {/* =======================
-            6) Coefficients des disciplines (bulletins) + sous-matières
+            6) Coefficients des disciplines + sous-matières
         ======================== */}
         <section className="rounded-2xl border bg-white p-5">
           <div className="mb-3 flex items-center justify-between">
@@ -2842,13 +2985,10 @@ export default function AdminSettingsPage() {
                 Coefficients des disciplines par niveau (bulletins)
               </div>
               <p className="text-xs text-slate-500">
-                Définissez un coefficient par discipline et par niveau pour le
-                calcul des moyennes générales. Un coefficient 0 exclut la
-                matière du calcul pour le niveau sélectionné. Vous pouvez
-                également détailler certaines matières en sous-matières (dictée,
-                lecture, expression écrite, TP, etc.) avec leurs propres
-                coefficients, dont la somme doit respecter le coefficient de la
-                matière mère.
+                Coefficient par discipline et par niveau pour la moyenne
+                générale. Certaines matières peuvent être détaillées en
+                sous-matières (dictée, lecture, expression écrite, TP, etc.)
+                dont la somme doit respecter le coefficient de la matière.
               </p>
             </div>
             <button
@@ -2895,8 +3035,8 @@ export default function AdminSettingsPage() {
                 ))}
               </select>
               <div className="mt-1 text-[11px] text-slate-500">
-                Seules les disciplines du niveau sélectionné sont affichées dans
-                le tableau ci-dessous.
+                Seules les disciplines du niveau sélectionné sont affichées
+                ci-dessous.
               </div>
             </div>
           </div>
@@ -2948,7 +3088,9 @@ export default function AdminSettingsPage() {
                 ) : (
                   coeffRowsForSelectedLevel.map((sc) => {
                     const comps = subjectComponents.filter(
-                      (c) => c.subject_id === sc.subject_id
+                      (c) =>
+                        c.subject_id === sc.subject_id &&
+                        (c.level || "") === (sc.level || "")
                     );
                     const sum = comps.reduce(
                       (s, c) => s + (Number(c.coeff) || 0),
@@ -2959,7 +3101,6 @@ export default function AdminSettingsPage() {
                     return (
                       <tr
                         key={`${sc.level}-${sc.subject_id}`}
-
                       >
                         <td className="px-3 py-2 text-slate-800">
                           {sc.subject_name}
@@ -3036,34 +3177,24 @@ export default function AdminSettingsPage() {
 
           <div className="mt-3 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
             <div className="text-[11px] text-slate-500">
-              Exemple : en 6e, Mathématiques coeff 4, Français coeff 3, EPS
-              coeff 1. En Terminale, vous pouvez utiliser un autre barème. Un
-              coeff à 0 retire la matière du calcul de moyenne générale pour le
-              niveau choisi. Les sous-matières (si vous en définissez)
-              apparaissent dans la saisie des notes, mais le bulletin conserve
-              le coefficient total de la matière mère.
+              Un coeff à 0 retire la matière du calcul de moyenne générale pour
+              le niveau choisi. Les sous-matières (si définies) apparaissent
+              dans la saisie des notes, mais le bulletin conserve le coefficient
+              total de la matière mère.
             </div>
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
               <button
                 onClick={saveSubjectComponents}
-                disabled={
-                  savingComponents ||
-                  loadingComponents ||
-                  subjectComponents.length === 0
-                }
+                disabled={disableComponentsSaveAll}
                 className="rounded-lg bg-sky-700 px-4 py-2 text-sm font-medium text-white shadow hover:bg-sky-800 disabled:opacity-60"
               >
                 {savingComponents
                   ? "Enregistrement…"
-                  : "Enregistrer les sous-matières"}
+                  : "Enregistrer toutes les sous-matières"}
               </button>
               <button
                 onClick={saveSubjectCoeffs}
-                disabled={
-                  savingCoeffs ||
-                  loadingCoeffs ||
-                  subjectCoeffs.length === 0
-                }
+                disabled={disableCoeffsSaveAll}
                 className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white shadow hover:bg-emerald-700 disabled:opacity-60"
               >
                 {savingCoeffs
@@ -3073,383 +3204,269 @@ export default function AdminSettingsPage() {
             </div>
           </div>
         </section>
-
-        {/* Modal mot de passe personnalisé */}
-        <Modal
-          open={modalOpen}
-          title={`Définir un mot de passe — ${
-            targetUser?.display_name ||
-            targetUser?.email ||
-            targetUser?.phone ||
-            "Utilisateur"
-          }`}
-          onClose={() => setModalOpen(false)}
-          actions={
-            <>
-              <button
-                onClick={submitCustom}
-                disabled={disableCustom}
-                className="rounded-lg bg-sky-700 px-3 py-1.5 text-sm font-medium text-white hover:bg-sky-800 disabled:opacity-60"
-              >
-                {busyCustom ? "Mise à jour…" : "Valider"}
-              </button>
-            </>
-          }
-        >
-          <div className="space-y-3">
-            <div>
-              <div className="mb-1 flex items-center justify-between text-xs text-slate-500">
-                <span>Nouveau mot de passe</span>
-                <button
-                  type="button"
-                  className="inline-flex items-center gap-1 text-[11px] text-sky-700 hover:underline"
-                  onClick={() => setShowCP1((v) => !v)}
-                >
-                  {showCP1 ? (
-                    <EyeOffIcon className="h-4 w-4" />
-                  ) : (
-                    <EyeIcon className="h-4 w-4" />
-                  )}{" "}
-                  {showCP1 ? "Masquer" : "Afficher"}
-                </button>
-              </div>
-              <input
-                type={showCP1 ? "text" : "password"}
-                className="w-full rounded-lg border px-3 py-2 text-sm"
-                value={customPwd}
-                onChange={(e) => setCustomPwd(e.target.value)}
-                disabled={disableCustom}
-                placeholder="••••••••"
-              />
-            </div>
-
-            <div>
-              <div className="mb-1 flex items-center justify-between text-xs text-slate-500">
-                <span>Confirmer</span>
-                <button
-                  type="button"
-                  className="inline-flex items-center gap-1 text-[11px] text-sky-700 hover:underline"
-                  onClick={() => setShowCP2((v) => !v)}
-                >
-                  {showCP2 ? (
-                    <EyeOffIcon className="h-4 w-4" />
-                  ) : (
-                    <EyeIcon className="h-4 w-4" />
-                  )}{" "}
-                  {showCP2 ? "Masquer" : "Afficher"}
-                </button>
-              </div>
-              <input
-                type={showCP2 ? "text" : "password"}
-                className="w-full rounded-lg border px-3 py-2 text-sm"
-                value={customPwd2}
-                onChange={(e) => setCustomPwd2(e.target.value)}
-                disabled={disableCustom}
-                placeholder="••••••••"
-              />
-            </div>
-
-            {customMsg && (
-              <div className="text-sm text-slate-700">
-                {customMsg}
-              </div>
-            )}
-
-            <div className="rounded-lg border border-yellow-200 bg-yellow-50 px-3 py-2 text-[12px] text-yellow-800">
-              Astuce : laissez ce modal et utilisez{" "}
-              <b>« Réinit. temporaire »</b>{" "}
-              si vous préférez générer un mot de passe provisoire (par défaut
-              côté serveur).
-            </div>
-          </div>
-        </Modal>
-
-        {/* Modal sous-matières / composants de discipline */}
-        <Modal
-          open={componentsModalOpen && !!componentsTarget}
-          title={
-            componentsTarget
-              ? `Sous-matières — ${componentsTarget.subject_name} (${componentsTarget.level})`
-              : "Sous-matières"
-          }
-          onClose={() => setComponentsModalOpen(false)}
-          actions={
-            <>
-              <button
-                onClick={() => saveSubjectComponents(true)}
-                disabled={savingComponents}
-                className="rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-60"
-              >
-                {savingComponents
-                  ? "Enregistrement…"
-                  : "Enregistrer les sous-matières"}
-              </button>
-            </>
-          }
-        >
-          {!componentsTarget ? (
-            <div className="text-sm text-slate-600">
-              Aucune matière sélectionnée.
-            </div>
-          ) : (
-            <div className="space-y-3">
-              <div className="text-sm text-slate-700">
-                Niveau{" "}
-                <span className="font-semibold">
-                  {componentsTarget.level}
-                </span>{" "}
-                — matière{" "}
-                <span className="font-semibold">
-                  {componentsTarget.subject_name}
-                </span>
-                .
-              </div>
-              <div className="rounded-lg border bg-slate-50 px-3 py-2 text-xs text-slate-700">
-                Coefficient de la matière mère pour ce niveau :{" "}
-                <span className="font-semibold">
-                  {parentCoeffForTarget}
-                </span>
-                . Somme des coefficients de sous-matières :{" "}
-                <span
-                  className={`font-semibold ${
-                    coeffMatchForTarget
-                      ? "text-emerald-700"
-                      : "text-rose-700"
-                  }`}
-
-                >
-                  {sumComponentsForTarget}
-                </span>
-                .
-                {!coeffMatchForTarget && (
-                  <>
-                    {" "}
-                    ⚠️ La somme doit être exactement égale au coefficient de la
-                    matière mère.
-                  </>
-                )}
-              </div>
-
-              <div className="overflow-x-auto rounded-lg border">
-                <table className="min-w-full text-sm">
-                  <thead className="bg-slate-50 text-slate-600">
-                    <tr>
-                      <th className="px-3 py-2 text-left">
-                        Sous-matière
-                      </th>
-                      <th className="w-28 px-3 py-2 text-right">
-                        Coeff.
-                      </th>
-                      <th className="w-24 px-3 py-2 text-right">
-                        Actions
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y">
-                    {componentsForTarget.length === 0 ? (
-                      <tr>
-                        <td
-                          className="px-3 py-3 text-slate-500"
-                          colSpan={3}
-                        >
-                          Aucune sous-matière définie pour l&apos;instant.
-                          Ajoutez au moins une ligne.
-                        </td>
-                      </tr>
-                    ) : (
-                      componentsForTarget.map((c) => (
-                        <tr key={c.component_id}>
-                          <td className="px-3 py-2">
-                            <input
-                              value={c.component_name}
-                              onChange={(e) =>
-                                updateComponentRow(c.component_id, {
-                                  component_name: e.target.value,
-                                })
-                              }
-                              className="w-full rounded-lg border px-2 py-1 text-sm"
-                              placeholder="Dictée, Lecture, Expression écrite…"
-                            />
-                          </td>
-                          <td className="px-3 py-2 text-right">
-                            <input
-                              type="number"
-                              min={0}
-                              step="0.5"
-                              value={c.coeff}
-                              onChange={(e) => {
-                                const raw =
-                                  e.target.value.replace(",", ".");
-                                const num = parseFloat(raw);
-                                updateComponentRow(c.component_id, {
-                                  coeff: isNaN(num)
-                                    ? 0
-                                    : Math.max(0, num),
-                                });
-                              }}
-                              className="w-24 rounded-lg border px-2 py-1 text-right text-sm"
-                            />
-                          </td>
-                          <td className="px-3 py-2 text-right">
-                            <button
-                              type="button"
-                              onClick={() =>
-                                removeComponentRow(c.component_id)
-                              }
-                              className="rounded-lg border border-rose-300 bg-rose-50 px-2 py-1 text-xs font-medium text-rose-800 hover:bg-rose-100"
-                            >
-                              Suppr.
-                            </button>
-                          </td>
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
-              </div>
-
-              <div className="flex items-center justify-between">
-                <button
-                  type="button"
-                  onClick={addComponentForTarget}
-                  className="rounded-lg border px-3 py-1.5 text-xs hover:bg-slate-50"
-                >
-                  + Ajouter une sous-matière
-                </button>
-                <div className="text-[11px] text-slate-500">
-                  Ces sous-matières apparaîtront dans les écrans de saisie de
-                  notes pour ce niveau. Le bulletin utilise toujours le
-                  coefficient total de la matière mère.
-                </div>
-              </div>
-
-              {msgComponents && (
-                <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
-                  {msgComponents}
-                </div>
-              )}
-            </div>
-          )}
-        </Modal>
       </main>
-    </>
-  );
-}
 
-/* =========================
-   Ligne utilisateur (compact + détail)
-========================= */
-function FragmentRow(props: {
-  user: Profile;
-  compact: boolean;
-  expanded: boolean;
-  onToggle: () => void;
-  onResetTemp: () => void;
-  onOpenCustom: () => void;
-  roleColor: (r?: Role | null) => "violet" | "sky" | "rose" | "slate";
-}) {
-  const u = props.user;
-  return (
-    <>
-      <tr className="border-b align-top">
-        <td className="px-3 py-2">
-          <div className="font-medium text-slate-800">
-            {u.display_name || "—"}
-          </div>
-          <div className="text-[11px] text-slate-500">{u.id}</div>
-        </td>
-
-        {!props.compact && (
-          <td className="px-3 py-2">
-            <div className="text-slate-700">{u.email || "—"}</div>
-            <div className="text-[12px] text-slate-500">
-              {u.phone || ""}
-            </div>
-          </td>
-        )}
-
-        <td className="px-3 py-2">
-          <Badge color={props.roleColor(u.role || undefined)}>
-            {u.role || "—"}
-          </Badge>
-        </td>
-
-        <td className="px-3 py-2">
-          <div className="flex items-center justify-end gap-2">
-            {props.compact && (
+      {/* Modal mot de passe personnalisé */}
+      <Modal
+        open={modalOpen}
+        title={`Définir un mot de passe — ${
+          targetUser?.display_name ||
+          targetUser?.email ||
+          targetUser?.phone ||
+          "Utilisateur"
+        }`}
+        onClose={() => setModalOpen(false)}
+        actions={
+          <button
+            onClick={submitCustom}
+            disabled={disableCustom}
+            className="rounded-lg bg-sky-700 px-3 py-1.5 text-sm font-medium text-white hover:bg-sky-800 disabled:opacity-60"
+          >
+            {busyCustom ? "Mise à jour…" : "Valider"}
+          </button>
+        }
+      >
+        <div className="space-y-3">
+          <div>
+            <div className="mb-1 flex items-center justify-between text-xs text-slate-500">
+              <span>Nouveau mot de passe</span>
               <button
-                onClick={props.onToggle}
-                className="rounded-lg border px-3 py-1.5 text-xs hover:bg-slate-50"
-                title={
-                  props.expanded
-                    ? "Masquer les détails"
-                    : "Voir les détails"
+                type="button"
+                className="inline-flex items-center gap-1 text-[11px] text-sky-700 hover:underline"
+                onClick={() => setShowCP1((v) => !v)}
+              >
+                {showCP1 ? (
+                  <EyeOffIcon className="h-4 w-4" />
+                ) : (
+                  <EyeIcon className="h-4 w-4" />
+                )}{" "}
+                {showCP1 ? "Masquer" : "Afficher"}
+              </button>
+            </div>
+            <input
+              type={showCP1 ? "text" : "password"}
+              className="w-full rounded-lg border px-3 py-2 text-sm"
+              value={customPwd}
+              onChange={(e) => setCustomPwd(e.target.value)}
+              disabled={disableCustom}
+              placeholder="••••••••"
+            />
+          </div>
+
+          <div>
+            <div className="mb-1 flex items-center justify-between text-xs text-slate-500">
+              <span>Confirmer</span>
+              <button
+                type="button"
+                className="inline-flex items-center gap-1 text-[11px] text-sky-700 hover:underline"
+                onClick={() => setShowCP2((v) => !v)}
+              >
+                {showCP2 ? (
+                  <EyeOffIcon className="h-4 w-4" />
+                ) : (
+                  <EyeIcon className="h-4 w-4" />
+                )}{" "}
+                {showCP2 ? "Masquer" : "Afficher"}
+              </button>
+            </div>
+            <input
+              type={showCP2 ? "text" : "password"}
+              className="w-full rounded-lg border px-3 py-2 text-sm"
+              value={customPwd2}
+              onChange={(e) => setCustomPwd2(e.target.value)}
+              disabled={disableCustom}
+              placeholder="••••••••"
+            />
+          </div>
+
+          {customMsg && (
+            <div className="text-sm text-slate-700">{customMsg}</div>
+          )}
+
+          <div className="rounded-lg border border-yellow-200 bg-yellow-50 px-3 py-2 text-[12px] text-yellow-800">
+            Astuce : laissez ce modal et utilisez{" "}
+            <b>« Réinit. temporaire »</b>{" "}
+            si vous préférez générer un mot de passe provisoire côté serveur.
+          </div>
+        </div>
+      </Modal>
+
+      {/* Modal sous-matières / composants de discipline */}
+      <Modal
+        open={componentsModalOpen && !!componentsTarget}
+        title={
+          componentsTarget
+            ? `Sous-matières — ${componentsTarget.subject_name} (${componentsTarget.level})`
+            : "Sous-matières"
+        }
+        onClose={() => setComponentsModalOpen(false)}
+        actions={
+          componentsTarget && (
+            <button
+              type="button"
+              onClick={() => saveSubjectComponents(true)}
+              disabled={savingComponents}
+              className="rounded-lg bg-sky-700 px-3 py-1.5 text-sm font-medium text-white hover:bg-sky-800 disabled:opacity-60"
+            >
+              {savingComponents
+                ? "Enregistrement…"
+                : "Enregistrer pour cette matière / niveau"}
+            </button>
+          )
+        }
+      >
+        {!componentsTarget ? (
+          <div className="text-sm text-slate-600">
+            Aucune matière sélectionnée.
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <div className="rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-700">
+              Coefficient de la matière (
+              <span className="font-semibold">
+                {componentsTarget.subject_name}
+              </span>
+              ) au niveau{" "}
+              <span className="font-semibold">
+                {componentsTarget.level}
+              </span>
+              :{" "}
+              <span className="font-semibold">
+                {parentCoeffForTarget}
+              </span>
+              . Somme des coefficients de sous-matières :{" "}
+              <span
+                className={
+                  "font-semibold " +
+                  (coeffMatchForTarget
+                    ? "text-emerald-700"
+                    : "text-rose-700")
                 }
               >
-                {props.expanded ? "Masquer" : "Voir"}
+                {sumComponentsForTarget}
+              </span>
+              .
+              {!coeffMatchForTarget && (
+                <span className="ml-1 text-rose-700">
+                  (La somme doit être égale au coefficient de la matière.)
+                </span>
+              )}
+            </div>
+
+            <div className="flex justify-between gap-2">
+              <button
+                type="button"
+                onClick={addComponentForTarget}
+                className="rounded-lg border px-3 py-1.5 text-xs hover:bg-slate-50"
+              >
+                + Ajouter une sous-matière
               </button>
-            )}
-            {!props.compact && (
-              <>
-                <button
-                  onClick={props.onResetTemp}
-                  className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-1.5 text-xs font-medium text-amber-800 hover:bg-amber-100"
-                  title="Réinitialiser avec mot de passe temporaire"
-                >
-                  Réinit. temporaire
-                </button>
-                <button
-                  onClick={props.onOpenCustom}
-                  className="rounded-lg border border-sky-300 bg-sky-50 px-3 py-1.5 text-xs font-medium text-sky-800 hover:bg-sky-100"
-                  title="Définir un mot de passe"
-                >
-                  Définir…
-                </button>
-              </>
+            </div>
+
+            <div className="overflow-x-auto rounded-lg border">
+              <table className="min-w-full text-sm">
+                <thead className="bg-slate-50 text-slate-600">
+                  <tr>
+                    <th className="w-10 px-3 py-2 text-left">#</th>
+                    <th className="px-3 py-2 text-left">
+                      Libellé de la sous-matière
+                    </th>
+                    <th className="w-24 px-3 py-2 text-right">
+                      Coeff.
+                    </th>
+                    <th className="w-20 px-3 py-2 text-center">
+                      Actif
+                    </th>
+                    <th className="w-24 px-3 py-2 text-right">
+                      Actions
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y">
+                  {componentsForTarget.length === 0 ? (
+                    <tr>
+                      <td
+                        className="px-3 py-3 text-[12px] text-slate-500"
+                        colSpan={5}
+                      >
+                        Aucune sous-matière définie pour cette matière et ce
+                        niveau. Cliquez sur « Ajouter une sous-matière ».
+                      </td>
+                    </tr>
+                  ) : (
+                    componentsForTarget.map((c, idx) => (
+                      <tr key={c.component_id}>
+                        <td className="px-3 py-2">{idx + 1}</td>
+                        <td className="px-3 py-2">
+                          <input
+                            value={c.component_name}
+                            onChange={(e) =>
+                              updateComponentRow(c.component_id, {
+                                component_name: e.target.value,
+                              })
+                            }
+                            className="w-full rounded-lg border px-2 py-1 text-sm"
+                            placeholder="Dictée / Lecture / Expression écrite / TP…"
+                          />
+                        </td>
+                        <td className="px-3 py-2 text-right">
+                          <input
+                            type="number"
+                            min={0}
+                            step="0.5"
+                            className="w-20 rounded-lg border px-2 py-1 text-right text-sm"
+                            value={c.coeff}
+                            onChange={(e) => {
+                              const raw =
+                                e.target.value.replace(",", ".");
+                              const num = parseFloat(raw);
+                              updateComponentRow(c.component_id, {
+                                coeff: isNaN(num)
+                                  ? 0
+                                  : Math.max(0, num),
+                              });
+                            }}
+                          />
+                        </td>
+                        <td className="px-3 py-2 text-center">
+                          <input
+                            type="checkbox"
+                            checked={c.is_active !== false}
+                            onChange={(e) =>
+                              updateComponentRow(c.component_id, {
+                                is_active: e.target.checked,
+                              })
+                            }
+                          />
+                        </td>
+                        <td className="px-3 py-2 text-right">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              removeComponentRow(c.component_id)
+                            }
+                            className="rounded-lg border border-rose-300 bg-rose-50 px-2 py-1 text-[11px] font-medium text-rose-800 hover:bg-rose-100"
+                          >
+                            Suppr.
+                          </button>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            {!coeffMatchForTarget && (
+              <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-[12px] text-rose-800">
+                Pour pouvoir enregistrer, la somme des coefficients de
+                sous-matières doit être exactement égale au coefficient de la
+                matière pour ce niveau.
+              </div>
             )}
           </div>
-        </td>
-      </tr>
-
-      {/* Ligne de détails seulement en mode compact */}
-      {props.compact && props.expanded && (
-        <tr className="border-b bg-slate-50/50">
-          <td className="px-3 py-2" colSpan={3}>
-            <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-              <div>
-                <div className="text-[11px] text-slate-500">
-                  Email
-                </div>
-                <div className="text-sm text-slate-800">
-                  {u.email || "—"}
-                </div>
-              </div>
-              <div>
-                <div className="text-[11px] text-slate-500">
-                  Téléphone
-                </div>
-                <div className="text-sm text-slate-800">
-                  {u.phone || "—"}
-                </div>
-              </div>
-              <div className="flex items-end justify-end gap-2">
-                <button
-                  onClick={props.onResetTemp}
-                  className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-1.5 text-xs font-medium text-amber-800 hover:bg-amber-100"
-                >
-                  Réinit. temporaire
-                </button>
-                <button
-                  onClick={props.onOpenCustom}
-                  className="rounded-lg border border-sky-300 bg-sky-50 px-3 py-1.5 text-xs font-medium text-sky-800 hover:bg-sky-100"
-                >
-                  Définir…
-                </button>
-              </div>
-            </div>
-          </td>
-        </tr>
-      )}
+        )}
+      </Modal>
     </>
   );
 }
