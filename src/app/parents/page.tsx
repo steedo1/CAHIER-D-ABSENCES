@@ -84,33 +84,6 @@ function getInitials(name: string) {
   if (parts.length === 1) return pick(parts[0]);
   return pick(parts[0]) + pick(parts[parts.length - 1]);
 }
-
-/** NOM + 1 seul prénom pour le mobile */
-function mobileShortName(fullName: string) {
-  const parts = (fullName || "").trim().split(/\s+/);
-  if (parts.length <= 2) return fullName;
-  return `${parts[0]} ${parts[1]}`;
-}
-
-/** Affichage responsive du nom : mobile = NOM + 1 prénom, desktop = nom complet */
-function KidName({
-  name,
-  className = "",
-}: {
-  name: string;
-  className?: string;
-}) {
-  const short = mobileShortName(name);
-  return (
-    <span className={["inline-block max-w-full", className].join(" ")}>
-      {/* Mobile : NOM + 1 prénom, avec truncate */}
-      <span className="block max-w-full truncate sm:hidden">{short}</span>
-      {/* À partir de sm : nom complet */}
-      <span className="hidden max-w-full truncate sm:block">{name}</span>
-    </span>
-  );
-}
-
 function startOfWeek(date: Date) {
   const d = new Date(date);
   const day = d.getDay(); // 0 (dimanche) -> 6 (samedi)
@@ -136,66 +109,66 @@ function isInDateRange(iso: string, from?: string | null, to?: string | null) {
 const THEMES = [
   {
     name: "emerald",
-    ring: "hover:ring-emerald-200",
-    border: "border-emerald-100",
+    ring: "hover:ring-emerald-300",
+    border: "border-emerald-200",
     bar: "from-emerald-500 to-teal-500",
-    chipBg: "bg-emerald-50",
+    chipBg: "bg-emerald-100",
     chipText: "text-emerald-800",
   },
   {
     name: "indigo",
-    ring: "hover:ring-indigo-200",
-    border: "border-indigo-100",
+    ring: "hover:ring-indigo-300",
+    border: "border-indigo-200",
     bar: "from-indigo-500 to-blue-500",
-    chipBg: "bg-indigo-50",
+    chipBg: "bg-indigo-100",
     chipText: "text-indigo-800",
   },
   {
     name: "violet",
-    ring: "hover:ring-violet-200",
-    border: "border-violet-100",
+    ring: "hover:ring-violet-300",
+    border: "border-violet-200",
     bar: "from-violet-500 to-fuchsia-500",
-    chipBg: "bg-violet-50",
+    chipBg: "bg-violet-100",
     chipText: "text-violet-800",
   },
   {
     name: "sky",
-    ring: "hover:ring-sky-200",
-    border: "border-sky-100",
+    ring: "hover:ring-sky-300",
+    border: "border-sky-200",
     bar: "from-sky-500 to-cyan-500",
-    chipBg: "bg-sky-50",
+    chipBg: "bg-sky-100",
     chipText: "text-sky-800",
   },
   {
     name: "amber",
-    ring: "hover:ring-amber-200",
-    border: "border-amber-100",
+    ring: "hover:ring-amber-300",
+    border: "border-amber-200",
     bar: "from-amber-500 to-orange-500",
-    chipBg: "bg-amber-50",
+    chipBg: "bg-amber-100",
     chipText: "text-amber-900",
   },
   {
     name: "rose",
-    ring: "hover:ring-rose-200",
-    border: "border-rose-100",
+    ring: "hover:ring-rose-300",
+    border: "border-rose-200",
     bar: "from-rose-500 to-pink-500",
-    chipBg: "bg-rose-50",
+    chipBg: "bg-rose-100",
     chipText: "text-rose-800",
   },
   {
     name: "teal",
-    ring: "hover:ring-teal-200",
-    border: "border-teal-100",
+    ring: "hover:ring-teal-300",
+    border: "border-teal-200",
     bar: "from-teal-500 to-emerald-500",
-    chipBg: "bg-teal-50",
+    chipBg: "bg-teal-100",
     chipText: "text-teal-800",
   },
   {
     name: "cyan",
-    ring: "hover:ring-cyan-200",
-    border: "border-cyan-100",
+    ring: "hover:ring-cyan-300",
+    border: "border-cyan-200",
     bar: "from-cyan-500 to-sky-500",
-    chipBg: "bg-cyan-50",
+    chipBg: "bg-cyan-100",
     chipText: "text-cyan-800",
   },
 ] as const;
@@ -206,22 +179,22 @@ function themeFor(i: number) {
 /* ───────── thèmes par rubrique (pour jauges verticales) ───────── */
 const RUBRIC_THEMES = {
   assiduite: {
-    bg: "bg-emerald-50",
+    bg: "bg-emerald-100",
     fill: "bg-emerald-500",
     text: "text-emerald-700",
   },
   tenue: {
-    bg: "bg-sky-50",
+    bg: "bg-sky-100",
     fill: "bg-sky-500",
     text: "text-sky-700",
   },
   moralite: {
-    bg: "bg-violet-50",
+    bg: "bg-violet-100",
     fill: "bg-violet-500",
     text: "text-violet-700",
   },
   discipline: {
-    bg: "bg-amber-50",
+    bg: "bg-amber-100",
     fill: "bg-amber-500",
     text: "text-amber-800",
   },
@@ -298,7 +271,7 @@ function Button(
       "bg-slate-900 text-white hover:bg-slate-800 active:bg-slate-900 focus:ring-slate-700",
     red: "bg-rose-600 text-white hover:bg-rose-700 active:bg-rose-800 focus:ring-rose-500",
     white:
-      "bg-white text-slate-900 hover:bg-slate-50 ring-1 ring-slate-200 focus:ring-slate-300 active:bg-slate-100",
+      "bg-white text-slate-900 hover:bg-white/90 ring-1 ring-slate-200 focus:ring-slate-300 active:bg-slate-50",
     outline:
       "bg-transparent text-emerald-700 ring-1 ring-emerald-300 hover:bg-emerald-50 focus:ring-emerald-400",
   };
@@ -355,28 +328,6 @@ function Badge({
     >
       {children}
     </span>
-  );
-}
-function Meter({
-  value,
-  max,
-  label,
-}: {
-  value: number;
-  max: number;
-  label?: string;
-}) {
-  const pct = Math.max(0, Math.min(100, (value / max) * 100));
-  return (
-    <div>
-      {label && <div className="mb-1 text-xs text-slate-600">{label}</div>}
-      <div className="h-2 w-full rounded-full bg-slate-100">
-        <div
-          className="h-2 rounded-full bg-gradient-to-r from-emerald-500 to-emerald-400"
-          style={{ width: `${pct}%` }}
-        />
-      </div>
-    </div>
   );
 }
 function Skeleton({ className = "" }: { className?: string }) {
@@ -532,7 +483,7 @@ const IconX = () => (
   </svg>
 );
 
-/* ───────── Carte 3D (tilt) réutilisable ───────── */
+/* ───────── Carte “tilt” ───────── */
 function TiltCard({
   children,
   className = "",
@@ -559,14 +510,14 @@ function TiltCard({
     const px = (e.clientX - rect.left) / rect.width; // 0..1
     const py = (e.clientY - rect.top) / rect.height; // 0..1
 
-    const rotMax = 6; // degrés (un peu plus soft)
+    const rotMax = 6;
     const rx = (py - 0.5) * -2 * rotMax;
     const ry = (px - 0.5) * 2 * rotMax;
 
     setStyle({
       transform: `rotateX(${rx.toFixed(2)}deg) rotateY(${ry.toFixed(
         2,
-      )}deg) translateZ(0) scale(1.005)`,
+      )}deg) translateZ(0)`,
       transition: "transform 60ms linear",
       transformStyle: "preserve-3d",
     });
@@ -574,13 +525,13 @@ function TiltCard({
     const x = Math.round(px * rect.width);
     const y = Math.round(py * rect.height);
     setShineStyle({
-      background: `radial-gradient(260px circle at ${x}px ${y}px, rgba(255,255,255,0.16), transparent 50%)`,
+      background: `radial-gradient(280px circle at ${x}px ${y}px, rgba(255,255,255,0.16), transparent 45%)`,
     });
   }
   function onLeave() {
     setStyle({
       transform: "rotateX(0deg) rotateY(0deg) translateZ(0)",
-      transition: "transform 180ms ease",
+      transition: "transform 160ms ease",
       transformStyle: "preserve-3d",
     });
     setShineStyle({});
@@ -597,7 +548,6 @@ function TiltCard({
         className={`relative rounded-xl bg-white transition-shadow will-change-transform ${className}`}
         style={style}
       >
-        {/* halo lumineux */}
         <div
           className="pointer-events-none absolute inset-0 rounded-xl"
           style={shineStyle}
@@ -742,7 +692,7 @@ export default function ParentPage() {
 
   // Matière sélectionnée par enfant (onglet Cahier de notes)
   const [activeSubjectPerKid, setActiveSubjectPerKid] = useState<
-    Record<string, string | null>
+    Record<string, string | "all" | null>
   >({});
 
   // 🔔 Permission de notification déjà accordée ?
@@ -778,7 +728,6 @@ export default function ParentPage() {
 
   // — init des dates par défaut + états push
   useEffect(() => {
-    // Dates par défaut : aujourd’hui et J-90 pour la conduite
     const today = new Date();
     const start = new Date();
     start.setDate(start.getDate() - 90);
@@ -817,8 +766,37 @@ export default function ParentPage() {
       setGradeFrom("");
       setGradeTo("");
     }
-    // custom : on ne touche pas aux valeurs, c'est l'utilisateur qui choisit
   }, [gradeFilterMode]);
+
+  async function loadConductForAll(
+    kidsList: Kid[] = kids,
+    from?: string,
+    to?: string,
+  ) {
+    setLoadingConduct(true);
+    try {
+      const condEntries: Array<[string, Conduct]> = [];
+      for (const k of kidsList) {
+        const qs = new URLSearchParams({ student_id: k.id });
+        if (from) qs.set("from", from);
+        if (to) qs.set("to", to);
+        const c = await fetch(
+          `/api/parent/children/conduct?${qs.toString()}`,
+          {
+            cache: "no-store",
+            credentials: "include",
+          },
+        )
+          .then((r) => r.json())
+          .catch(() => ({}));
+        if (c && (c as any).total != null)
+          condEntries.push([k.id, c as Conduct]);
+      }
+      setConduct(Object.fromEntries(condEntries));
+    } finally {
+      setLoadingConduct(false);
+    }
+  }
 
   async function loadKids(from?: string, to?: string) {
     setLoadingKids(true);
@@ -865,7 +843,10 @@ export default function ParentPage() {
           `/api/parent/children/grades?student_id=${encodeURIComponent(
             k.id,
           )}&limit=200`,
-          { cache: "no-store", credentials: "include" },
+          {
+            cache: "no-store",
+            credentials: "include",
+          },
         )
           .then((r) => r.json())
           .catch(() => ({ items: [] }));
@@ -896,42 +877,13 @@ export default function ParentPage() {
     }
   }
 
-  async function loadConductForAll(
-    kidsList: Kid[] = kids,
-    from?: string,
-    to?: string,
-  ) {
-    setLoadingConduct(true);
-    try {
-      const condEntries: Array<[string, Conduct]> = [];
-      for (const k of kidsList) {
-        const qs = new URLSearchParams({ student_id: k.id });
-        if (from) qs.set("from", from);
-        if (to) qs.set("to", to);
-        const c = await fetch(
-          `/api/parent/children/conduct?${qs.toString()}`,
-          {
-            cache: "no-store",
-            credentials: "include",
-          },
-        )
-          .then((r) => r.json())
-          .catch(() => ({}));
-        if (c && c.total != null) condEntries.push([k.id, c as Conduct]);
-      }
-      setConduct(Object.fromEntries(condEntries));
-    } finally {
-      setLoadingConduct(false);
-    }
-  }
-
   async function applyConductFilter() {
     await loadConductForAll(kids, conductFrom, conductTo);
   }
 
-  // premier chargement (après que les dates par défaut aient été posées)
+  // premier chargement
   useEffect(() => {
-    if (!conductFrom || !conductTo) return; // attend l'init des dates
+    if (!conductFrom || !conductTo) return;
     loadKids(conductFrom, conductTo);
     ensurePushSubscription().then((r) => {
       if (r.ok) setGranted(true);
@@ -950,14 +902,13 @@ export default function ParentPage() {
     }
   }
 
-  /* ───────── Déconnexion “propre” (parents d’abord) ───────── */
+  /* ───────── Déconnexion “propre” ───────── */
   async function safeLogout() {
     if (loggingOut) return;
     setLoggingOut(true);
     setMsg("Déconnexion en cours…");
 
     try {
-      // 1) Tentative de désinscription push (silencieuse)
       if ("serviceWorker" in navigator) {
         const reg = await navigator.serviceWorker.getRegistration();
         const sub = await reg?.pushManager.getSubscription();
@@ -986,7 +937,6 @@ export default function ParentPage() {
         } catch {}
       }
 
-      // 2) Fin de session côté API (si présente)
       try {
         await fetch("/api/auth/sync", {
           method: "DELETE",
@@ -994,7 +944,6 @@ export default function ParentPage() {
         });
       } catch {}
     } finally {
-      // 3) Toujours passer par /parents/logout (qui redirige vers /parents/login)
       window.location.assign(LOGOUT_PARENTS);
       setTimeout(() => {
         if (document.visibilityState === "visible") {
@@ -1026,52 +975,46 @@ export default function ParentPage() {
       <button
         onClick={() => selectSection(section)}
         className={[
-          "flex w-full items-center gap-2 rounded-xl px-3 py-2 text-sm transition",
+          "flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm transition",
           active
-            ? "bg-emerald-50 text-emerald-800 ring-1 ring-emerald-200 shadow-sm"
-            : "text-slate-600 hover:bg-slate-100 hover:text-slate-900",
+            ? "bg-white text-[#003766] font-semibold shadow-sm"
+            : "text-white/90 hover:bg-[#02427e]",
         ].join(" ")}
       >
-        <span
-          className={
-            active ? "text-emerald-600" : "text-slate-400 transition-colors"
-          }
-        >
-          {icon}
-        </span>
+        <span className="text-white/80">{icon}</span>
         <span className="truncate">{label}</span>
       </button>
     );
   }
 
-  return (
-    <div className="min-h-screen bg-slate-50 text-slate-900">
-      {/* Glow global doux */}
-      <div
-        aria-hidden
-        className="pointer-events-none fixed inset-0 -z-10"
-        style={{
-          background:
-            "radial-gradient(circle at 0% 0%, rgba(16,185,129,0.18), transparent 55%), radial-gradient(circle at 100% 0%, rgba(56,189,248,0.12), transparent 55%)",
-        }}
-      />
+  function gradeFilterLabel(mode: typeof gradeFilterMode): string {
+    if (mode === "week") return "Semaine";
+    if (mode === "month") return "Mois";
+    if (mode === "all") return "Toute l’année";
+    return "Période libre";
+  }
 
-      {/* Drawer mobile (style app, ouverture à gauche) */}
+  /* ───────── RENDER ───────── */
+  return (
+    <div className="min-h-screen bg-slate-100 text-slate-900">
+      {/* ───── Drawer mobile style EcoleMedia ───── */}
       {mobileNavOpen && (
-        <div className="fixed inset-0 z-40 flex md:hidden">
-          {/* Panneau gauche */}
-          <div className="relative flex h-full w-72 max-w-[80%] flex-col bg-white text-slate-900 shadow-2xl shadow-slate-900/10">
-            <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
+        <div className="fixed inset-0 z-40 flex lg:hidden">
+          <div className="relative flex h-full w-72 max-w-[80%] flex-col bg-[#003766] text-white shadow-2xl">
+            {/* header avatar + titre + close */}
+            <div className="flex items-center justify-between border-b border-white/15 px-4 py-3">
               <div className="flex items-center gap-2">
-                <div className="grid h-9 w-9 place-items-center rounded-xl bg-gradient-to-br from-emerald-500 to-emerald-600 text-xs font-semibold text-white shadow-lg shadow-emerald-500/40">
+                <div className="grid h-10 w-10 place-items-center rounded-full bg-white/20 text-sm font-semibold">
                   MC
                 </div>
-                <div className="min-w-0">
-                  <div className="text-xs font-semibold text-slate-800">
-                    Mon Cahier
+                <div className="min-w-0 leading-tight">
+                  <div className="text-xs">Bienvenue</div>
+                  <div className="text-sm font-semibold">
+                    Espace parent Mon Cahier
                   </div>
-                  <div className="text-[11px] text-slate-500">
-                    Espace parent
+                  <div className="mt-0.5 flex items-center gap-1 text-[11px] text-emerald-200">
+                    <span className="h-2 w-2 rounded-full bg-emerald-400" />
+                    <span>En ligne</span>
                   </div>
                 </div>
               </div>
@@ -1079,155 +1022,197 @@ export default function ParentPage() {
                 type="button"
                 aria-label="Fermer le menu"
                 onClick={() => setMobileNavOpen(false)}
-                className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-slate-100 text-slate-700 shadow-sm"
+                className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-white/10"
               >
                 <IconX />
               </button>
             </div>
 
-            <div className="flex-1 overflow-y-auto">
-              {/* Enfants (mobile drawer) */}
-              <div className="border-b border-slate-200 px-4 py-3">
-                <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-                  Enfants
-                </div>
-                <div className="space-y-1">
-                  <button
-                    onClick={() => {
-                      setActiveChildId("all");
-                      setMobileNavOpen(false);
-                    }}
-                    className={[
-                      "flex w-full items-center justify-between rounded-lg px-2 py-1.5 text-xs transition",
-                      activeChildId === "all"
-                        ? "bg-emerald-500 text-white"
-                        : "text-slate-700 hover:bg-slate-50",
-                    ].join(" ")}
-                  >
-                    <span>Vue globale</span>
-                    <span className="rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] text-emerald-700">
-                      {kids.length || 0}
-                    </span>
-                  </button>
-                  {kids.map((k) => {
-                    const active = activeChildId === k.id;
-                    return (
-                      <button
-                        key={k.id}
-                        onClick={() => {
-                          setActiveChildId(k.id);
-                          setMobileNavOpen(false);
-                        }}
-                        className={[
-                          "flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-xs transition",
-                          active
-                            ? "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-300"
-                            : "text-slate-700 hover:bg-slate-50",
-                        ].join(" ")}
-                      >
-                        <div className="grid h-6 w-6 place-items-center rounded-lg bg-slate-100 text-[10px] font-semibold text-emerald-600">
-                          {getInitials(k.full_name)}
-                        </div>
-                        <div className="min-w-0 text-left">
-                          <KidName
-                            name={k.full_name}
-                            className="text-[12px] font-medium"
-                          />
-                          <div className="mt-0.5 truncate text-[10px] text-slate-500">
-                            {k.class_label || "—"}
-                          </div>
-                        </div>
-                      </button>
-                    );
-                  })}
-                </div>
+            {/* Enfants */}
+            <div className="border-b border-white/10 px-4 py-3">
+              <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-amber-200">
+                Enfants
               </div>
-
-              {/* Navigation (mobile drawer) */}
-              <div className="space-y-1 px-3 py-3">
-                <SidebarNavItem
-                  label="Tableau de bord"
-                  icon={<IconHome />}
-                  section="dashboard"
-                />
-                <SidebarNavItem
-                  label="Conduite & points"
-                  icon={<IconClipboard />}
-                  section="conduct"
-                />
-                <SidebarNavItem
-                  label="Cahier d’absences"
-                  icon={<IconClipboard />}
-                  section="absences"
-                />
-                <SidebarNavItem
-                  label="Cahier de notes"
-                  icon={<IconBook />}
-                  section="notes"
-                />
+              <div className="space-y-1">
+                <button
+                  onClick={() => {
+                    setActiveChildId("all");
+                    setMobileNavOpen(false);
+                  }}
+                  className={[
+                    "flex w-full items-center justify-between rounded-md px-2 py-1.5 text-xs",
+                    activeChildId === "all"
+                      ? "bg-white text-[#003766]"
+                      : "text-white hover:bg-white/10",
+                  ].join(" ")}
+                >
+                  <span>Vue globale</span>
+                  <span className="rounded-full bg-black/20 px-1.5 py-0.5 text-[10px]">
+                    {kids.length || 0}
+                  </span>
+                </button>
+                {kids.map((k) => {
+                  const active = activeChildId === k.id;
+                  return (
+                    <button
+                      key={k.id}
+                      onClick={() => {
+                        setActiveChildId(k.id);
+                        setMobileNavOpen(false);
+                      }}
+                      className={[
+                        "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-xs",
+                        active
+                          ? "bg-white/90 text-[#003766]"
+                          : "text-white hover:bg-white/10",
+                      ].join(" ")}
+                    >
+                      <div className="grid h-6 w-6 place-items-center rounded-md bg-white/20 text-[10px] font-semibold">
+                        {getInitials(k.full_name)}
+                      </div>
+                      <div className="min-w-0 text-left">
+                        <div className="truncate">{k.full_name}</div>
+                        <div className="truncate text-[10px] text-emerald-100">
+                          {k.class_label || "—"}
+                        </div>
+                      </div>
+                    </button>
+                  );
+                })}
               </div>
             </div>
 
-            <div className="border-t border-slate-200 px-4 py-3">
+            {/* Navigation */}
+            <nav className="flex-1 space-y-1 px-3 py-3 text-sm">
+              <SidebarNavItem
+                label="Tableau de bord"
+                icon={<IconHome />}
+                section="dashboard"
+              />
+              <SidebarNavItem
+                label="Conduite & points"
+                icon={<IconClipboard />}
+                section="conduct"
+              />
+              <SidebarNavItem
+                label="Cahier d’absences"
+                icon={<IconClipboard />}
+                section="absences"
+              />
+              <SidebarNavItem
+                label="Cahier de notes"
+                icon={<IconBook />}
+                section="notes"
+              />
+            </nav>
+
+            {/* Footer */}
+            <div className="border-t border-white/15 px-4 py-3 text-[11px]">
               <Button
-                tone="slate"
+                tone="white"
                 onClick={safeLogout}
                 disabled={loggingOut}
-                title="Se déconnecter"
                 iconLeft={<IconPower />}
-                className="w-full justify-start"
+                className="w-full justify-start rounded-xl px-3 py-2 text-xs"
               >
                 {loggingOut ? "Déconnexion…" : "Se déconnecter"}
               </Button>
+              <div className="mt-3 leading-tight text-white/80">
+                <div className="text-[10px] opacity-80">Développé par</div>
+                <div className="font-semibold text-amber-300">
+                  Nexa Digitale
+                </div>
+              </div>
             </div>
           </div>
 
-          {/* Overlay à droite */}
           <button
             type="button"
             aria-label="Fermer le menu"
-            className="flex-1 bg-slate-900/20 backdrop-blur-sm"
+            className="flex-1 bg-black/30"
             onClick={() => setMobileNavOpen(false)}
           />
         </div>
       )}
 
-      <div className="flex min-h-screen">
-        {/* Sidebar desktop claire et propre */}
-        <aside className="hidden w-72 flex-col border-r border-slate-200 bg-white/90 backdrop-blur-sm md:flex">
-          {/* Brand */}
-          <div className="flex items-center gap-3 border-b border-slate-200 px-4 py-4">
-            <div className="relative">
-              <div className="absolute -inset-0.5 rounded-2xl bg-gradient-to-tr from-emerald-400/70 via-cyan-300/50 to-indigo-400/70 opacity-80 blur-sm" />
-              <div className="relative grid h-10 w-10 place-items-center rounded-2xl bg-emerald-500 text-xs font-semibold text-white shadow-lg shadow-emerald-400/40">
+      {/* ───── HEADER PRINCIPAL type EcoleMedia ───── */}
+      <header className="bg-[#003766] text-white shadow">
+        <div className="mx-auto flex max-w-6xl items-center justify-between px-3 py-2 lg:px-4">
+          <div className="flex items-center gap-3">
+            {/* burger mobile */}
+            <button
+              type="button"
+              onClick={() => setMobileNavOpen(true)}
+              className="inline-flex h-9 w-9 items-center justify-center rounded-md bg-[#006633] text-white lg:hidden"
+              aria-label="Ouvrir le menu"
+            >
+              <IconMenu />
+            </button>
+
+            {/* logo + nom appli */}
+            <div className="flex items-center gap-2">
+              <div className="grid h-9 w-9 place-items-center rounded-full bg-white/10 text-xs font-semibold">
                 MC
               </div>
-            </div>
-            <div className="min-w-0">
-              <div className="truncate text-sm font-semibold text-slate-900">
-                Mon Cahier
+              <div className="leading-tight">
+                <div className="text-xs font-semibold uppercase tracking-wide">
+                  Mon Cahier
+                </div>
+                <div className="text-[11px] opacity-80">Espace parent</div>
               </div>
-              <div className="text-xs text-emerald-600">Espace parent</div>
             </div>
           </div>
 
-          {/* Enfants */}
-          <div className="border-b border-slate-200 px-4 py-3">
-            <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+          {/* rôle + année à droite */}
+          <div className="text-right text-[11px] leading-tight">
+            <div className="font-semibold uppercase tracking-[0.2em] text-amber-300">
+              PARENT
+            </div>
+            <div className="text-xs font-semibold">2025-2026</div>
+          </div>
+        </div>
+      </header>
+
+      {/* ───── CORPS AVEC SIDEBAR + CONTENU ───── */}
+      <div className="mx-auto flex w-full max-w-6xl">
+        {/* Sidebar desktop */}
+        <aside className="hidden w-64 flex-col bg-[#003766] text-white lg:flex">
+          {/* bloc utilisateur */}
+          <div className="border-b border-white/15 px-4 py-4">
+            <div className="flex items-center gap-3">
+              <div className="grid h-10 w-10 place-items-center rounded-full bg:white/20 bg-white/20 text-sm font-semibold">
+                MC
+              </div>
+              <div className="min-w-0 leading-tight">
+                <div className="text-xs">Bienvenue</div>
+                <div className="text-sm font-semibold">
+                  Espace parent Mon Cahier
+                </div>
+                <div className="mt-0.5 flex items-center gap-1 text-[11px] text-emerald-200">
+                  <span className="h-2 w-2 rounded-full bg-emerald-400" />
+                  <span>En ligne</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* enfants */}
+          <div className="border-b border-white/15 px-4 py-3">
+            <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-amber-200">
               Enfants
             </div>
             <div className="space-y-1">
               <button
                 onClick={() => setActiveChildId("all")}
                 className={[
-                  "flex w-full items-center justify-between rounded-lg px-2 py-1.5 text-xs transition",
+                  "flex w-full items-center justify-between rounded-md px-2 py-1.5 text-xs",
                   activeChildId === "all"
-                    ? "bg-emerald-500 text-white"
-                    : "text-slate-700 hover:bg-slate-50",
+                    ? "bg-white text-[#003766]"
+                    : "text-white hover:bg-white/10",
                 ].join(" ")}
               >
                 <span>Vue globale</span>
-                <span className="rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] text-emerald-700">
+                <span className="rounded-full bg-black/20 px-1.5 py-0.5 text-[10px]">
                   {kids.length || 0}
                 </span>
               </button>
@@ -1238,21 +1223,18 @@ export default function ParentPage() {
                     key={k.id}
                     onClick={() => setActiveChildId(k.id)}
                     className={[
-                      "flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-xs transition",
+                      "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-xs",
                       active
-                        ? "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-300"
-                        : "text-slate-700 hover:bg-slate-50",
+                        ? "bg-white/90 text-[#003766]"
+                        : "text-white hover:bg-white/10",
                     ].join(" ")}
                   >
-                    <div className="grid h-6 w-6 place-items-center rounded-lg bg-slate-100 text-[10px] font-semibold text-emerald-600">
+                    <div className="grid h-6 w-6 place-items-center rounded-md bg-white/20 text-[10px] font-semibold">
                       {getInitials(k.full_name)}
                     </div>
                     <div className="min-w-0 text-left">
-                      <KidName
-                        name={k.full_name}
-                        className="text-[12px] font-medium"
-                      />
-                      <div className="truncate text-[10px] text-slate-500">
+                      <div className="truncate">{k.full_name}</div>
+                      <div className="truncate text-[10px] text-emerald-100">
                         {k.class_label || "—"}
                       </div>
                     </div>
@@ -1262,8 +1244,8 @@ export default function ParentPage() {
             </div>
           </div>
 
-          {/* Navigation */}
-          <div className="flex-1 space-y-1 px-3 py-3">
+          {/* navigation */}
+          <nav className="flex-1 space-y-1 px-3 py-3 text-sm">
             <SidebarNavItem
               label="Tableau de bord"
               icon={<IconHome />}
@@ -1284,1067 +1266,955 @@ export default function ParentPage() {
               icon={<IconBook />}
               section="notes"
             />
-          </div>
+          </nav>
 
-          {/* Logout bas sidebar */}
-          <div className="border-t border-slate-200 px-4 py-3">
+          {/* footer */}
+          <div className="border-t border-white/15 px-4 py-3 text-[11px]">
             <Button
               tone="white"
               onClick={safeLogout}
               disabled={loggingOut}
-              title="Se déconnecter"
               iconLeft={<IconPower />}
-              className="w-full justify-start"
+              className="w-full justify-start rounded-xl px-3 py-2 text-xs"
             >
               {loggingOut ? "Déconnexion…" : "Se déconnecter"}
             </Button>
+            <div className="mt-3 leading-tight text-white/80">
+              <div className="text-[10px] opacity-80">Développé par</div>
+              <div className="font-semibold text-amber-300">Nexa Digitale</div>
+            </div>
           </div>
         </aside>
 
         {/* Contenu principal */}
-        <div className="flex-1">
-          <main className="relative mx-auto max-w-6xl space-y-6 p-4 pb-24 scroll-smooth md:px-6 md:py-6 md:pb-8">
-            {/* Background décoratif non intrusif */}
-            <div
-              aria-hidden
-              className="pointer-events-none absolute inset-0 -z-10"
-              style={{
-                background:
-                  "radial-gradient(90% 60% at 100% 0%, rgba(56,189,248,0.10), transparent 65%), radial-gradient(70% 50% at 0% 0%, rgba(16,185,129,0.12), transparent 60%)",
-              }}
-            />
+        <main className="flex-1 px-3 py-4 lg:px-6 lg:py-6">
+          {/* breadcrumb + titre */}
+          <div className="mb-1 text-[11px] text-slate-500">
+            Vous êtes ici : <span className="mx-1">›</span> Accueil
+          </div>
+          <h1 className="mb-3 text-xl font-semibold text-slate-800">
+            Bienvenue sur Mon Cahier
+          </h1>
 
-            {/* Header clair, style app */}
-            <header className="relative overflow-hidden rounded-3xl border border-slate-200 bg-white/95 px-5 py-5 shadow-sm shadow-slate-200 md:px-7 md:py-6">
-              <div
-                className="pointer-events-none absolute inset-y-0 right-0 w-64 bg-gradient-to-l from-emerald-50 to-transparent"
-                aria-hidden
-              />
-              <div className="relative z-10 flex flex-col gap-3">
-                {/* Ligne supérieure : menu + marque + actions desktop */}
-                <div className="flex items-center justify-between gap-3">
-                  <div className="flex min-w-0 items-center gap-3">
-                    {/* Bouton menu mobile très visible */}
-                    <button
-                      type="button"
-                      aria-label="Ouvrir le menu"
-                      onClick={() => setMobileNavOpen(true)}
-                      className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-emerald-200 bg-emerald-500 text-white shadow-md shadow-emerald-300 md:hidden"
-                    >
-                      <IconMenu />
-                    </button>
+          {/* message global */}
+          {msg && (
+            <div className="mb-4 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
+              {msg}
+            </div>
+          )}
 
-                    {/* Logo desktop dans le header (mobile : dans le drawer) */}
-                    <div className="relative hidden md:block">
-                      <div className="absolute -inset-0.5 rounded-2xl bg-gradient-to-tr from-emerald-400/70 via-cyan-300/50 to-indigo-400/70 opacity-80 blur-sm" />
-                      <div className="relative grid h-10 w-10 place-items-center rounded-2xl bg-emerald-500 text-xs font-semibold text-white shadow-lg shadow-emerald-400/40">
-                        MC
-                      </div>
-                    </div>
-                    <div className="min-w-0">
-                      <p className="text-[11px] font-semibold uppercase tracking-wide text-emerald-600">
-                        Espace parent
-                      </p>
-                      <h1 className="text-lg font-semibold tracking-tight text-slate-900 md:text-xl">
-                        Mon Cahier
-                      </h1>
-                    </div>
-                  </div>
+          {/* onglet ACCUEIL */}
+          <div className="mb-4 border-b border-slate-200">
+            <button className="rounded-t-md border border-b-0 border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-[#003766]">
+              Accueil
+            </button>
+          </div>
 
-                  <div className="hidden items-center gap-2 sm:flex">
-                    {!granted ? (
-                      <Button
-                        tone="white"
-                        onClick={enablePush}
-                        title="Activer les notifications push"
-                        iconLeft={<IconBell />}
-                      >
-                        Activer les notifications
-                      </Button>
-                    ) : (
-                      <span className="rounded-full bg-emerald-50 px-3 py-1.5 text-xs text-emerald-700 ring-1 ring-emerald-100">
-                        Notifications activées ✅
-                      </span>
-                    )}
-                    <Button
-                      tone="white"
-                      onClick={safeLogout}
-                      disabled={loggingOut}
-                      title="Se déconnecter"
-                      iconLeft={<IconPower />}
-                    >
-                      {loggingOut ? "Déconnexion…" : "Déconnexion"}
-                    </Button>
-                  </div>
+          {/* Carte “Bienvenue” type EcoleMedia */}
+          <section className="mb-5 rounded-md border border-slate-200 bg-white shadow-sm">
+            <div className="border-b border-slate-200 bg-slate-50 px-4 py-3">
+              <div className="inline-flex items-center gap-2 text-sm font-semibold text-[#003766]">
+                <span className="flex h-6 w-6 items-center justify-center rounded-full border border-[#003766] text-xs">
+                  →
+                </span>
+                <span>Bienvenue</span>
+              </div>
+            </div>
+            <div className="space-y-3 px-4 py-4 text-sm text-slate-700">
+              <p>
+                Bienvenue sur Mon Cahier – espace parents. Consultez les
+                absences, la conduite et les notes de vos enfants pour l’année
+                2025-2026.
+              </p>
+
+              <div className="rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">
+                <div className="text-base font-bold uppercase">
+                  Information !
                 </div>
-
-                {/* Description */}
-                <p className="mt-1 max-w-2xl text-sm text-slate-600">
-                  Suivez en temps réel les absences, la conduite et les notes de
-                  vos enfants, sur une interface pensée pour les parents.
+                <p className="mt-1">
+                  Pour recevoir une alerte dès qu&apos;une absence, un retard
+                  ou une note est enregistrée, activez les notifications push
+                  sur votre téléphone.
                 </p>
+              </div>
 
-                {/* Actions (push + logout) en mobile */}
-                <div className="mt-3 flex gap-2 sm:hidden">
-                  {!granted ? (
-                    <Button
-                      tone="white"
-                      onClick={enablePush}
-                      title="Activer les notifications push"
-                      iconLeft={<IconBell />}
-                      className="flex-1"
-                    >
-                      Activer les notifications
-                    </Button>
-                  ) : (
-                    <div className="flex flex-1 items-center justify-center rounded-full bg-emerald-50 px-3 py-2 text-xs text-emerald-700 ring-1 ring-emerald-100">
-                      Notifications activées ✅
-                    </div>
-                  )}
+              <div className="flex flex-wrap items-center gap-2 pt-1">
+                {!granted ? (
                   <Button
-                    tone="white"
-                    onClick={safeLogout}
-                    disabled={loggingOut}
-                    title="Se déconnecter"
-                    iconLeft={<IconPower />}
-                    className="flex-1"
+                    tone="emerald"
+                    onClick={enablePush}
+                    title="Activer les notifications push"
+                    iconLeft={<IconBell />}
                   >
-                    {loggingOut ? "Déconnexion…" : "Déconnexion"}
+                    Activer les notifications
                   </Button>
-                </div>
-
-                {/* Mobile : sélection enfant (liste verticale type app) */}
-                {hasKids && (
-                  <div className="relative z-10 mt-4 space-y-2 md:hidden">
-                    <div className="flex max-h-40 flex-col gap-2 overflow-y-auto">
-                      <button
-                        onClick={() => setActiveChildId("all")}
-                        className={[
-                          "flex w-full items-center justify-between rounded-xl px-3 py-2 text-xs",
-                          activeChildId === "all"
-                            ? "bg-emerald-500 text-white"
-                            : "border border-slate-200 bg-white text-slate-800",
-                        ].join(" ")}
-                      >
-                        <span>Vue globale</span>
-                        <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] text-emerald-700">
-                          {kids.length || 0}
-                        </span>
-                      </button>
-                      {kids.map((k) => (
-                        <button
-                          key={k.id}
-                          onClick={() => setActiveChildId(k.id)}
-                          className={[
-                            "flex w-full items-center gap-2 rounded-xl px-3 py-2 text-xs",
-                            activeChildId === k.id
-                              ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
-                              : "border border-slate-200 bg-white text-slate-800",
-                          ].join(" ")}
-                        >
-                          <span className="grid h-7 w-7 place-items-center rounded-full bg-emerald-50 text-[10px] font-semibold text-emerald-700">
-                            {getInitials(k.full_name)}
-                          </span>
-                          <div className="min-w-0">
-                            <KidName
-                              name={k.full_name}
-                              className="text-[12px] font-medium"
-                            />
-                            <div className="mt-0.5 text-[11px] text-slate-500">
-                              {k.class_label || "—"}
-                            </div>
-                          </div>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
+                ) : (
+                  <span className="text-xs font-medium text-emerald-700">
+                    Notifications push activées ✅
+                  </span>
                 )}
+                <Button
+                  tone="slate"
+                  onClick={safeLogout}
+                  disabled={loggingOut}
+                  iconLeft={<IconPower />}
+                >
+                  {loggingOut ? "Déconnexion…" : "Se déconnecter"}
+                </Button>
               </div>
-            </header>
+            </div>
+          </section>
 
-            {/* iOS hint */}
-            {isiOS && !isStandalone && !granted && (
-              <div className="rounded-2xl border border-amber-200/60 bg-amber-50/90 p-3 text-amber-900 shadow-sm">
-                <div className="text-sm">
-                  <b>iPhone/iPad :</b> pour recevoir les notifications, ajoutez
-                  d’abord l’app à l’écran d’accueil : ouvrez cette page dans{" "}
-                  <b>Safari</b> → <b>Partager</b> →{" "}
-                  <b>Ajouter à l’écran d’accueil</b>. Puis rouvrez l’app et
-                  appuyez sur <i>Activer les notifications</i>.
+          {/* Hint iOS */}
+          {isiOS && !isStandalone && !granted && (
+            <div className="mb-4 rounded-md border border-amber-200/60 bg-amber-50/90 p-3 text-xs text-amber-900 shadow-sm">
+              <b>iPhone/iPad :</b> pour recevoir les notifications, ajoutez
+              d’abord l’application à l’écran d’accueil : ouvrez cette page dans{" "}
+              <b>Safari</b> → <b>Partager</b> →{" "}
+              <b>Ajouter à l’écran d’accueil</b>, puis rouvrez l’app et
+              appuyez sur « Activer les notifications ».
+            </div>
+          )}
+
+          {/* ───── CONDUITE ───── */}
+          {showConductSection && (
+            <section className="mb-5 rounded-md border border-slate-200 bg-white p-5 shadow-sm">
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <div className="text-sm font-semibold uppercase tracking-wide text-slate-700">
+                  Conduite — points par rubrique
                 </div>
-              </div>
-            )}
-
-            {/* Conduite — points par enfant */}
-            {showConductSection && (
-              <section className="rounded-2xl border border-slate-200 bg-white/95 p-5 shadow-sm shadow-slate-200 backdrop-blur">
-                <div className="mb-3 flex items-center justify-between gap-3">
-                  <div className="text-sm font-semibold uppercase tracking-wide text-slate-700">
-                    Conduite — Points par rubrique
-                  </div>
-                  <div className="hidden items-center gap-2 md:flex">
-                    <Input
-                      type="date"
-                      value={conductFrom}
-                      onChange={(e) => setConductFrom(e.target.value)}
-                    />
-                    <span className="text-xs text-slate-600">au</span>
-                    <Input
-                      type="date"
-                      value={conductTo}
-                      onChange={(e) => setConductTo(e.target.value)}
-                    />
-                    <Button
-                      onClick={applyConductFilter}
-                      disabled={loadingConduct}
-                      className="px-3 py-1.5 text-xs"
-                    >
-                      {loadingConduct ? "…" : "Valider"}
-                    </Button>
-                  </div>
-                </div>
-
-                {/* Filtres (mobile) */}
-                <div className="mb-4 grid grid-cols-2 gap-2 md:hidden">
+                <div className="hidden items-center gap-2 md:flex">
                   <Input
                     type="date"
                     value={conductFrom}
                     onChange={(e) => setConductFrom(e.target.value)}
                   />
+                  <span className="text-xs text-slate-600">au</span>
                   <Input
                     type="date"
                     value={conductTo}
                     onChange={(e) => setConductTo(e.target.value)}
                   />
-                  <div className="col-span-2 flex justify-center">
+                  <Button
+                    onClick={applyConductFilter}
+                    disabled={loadingConduct}
+                    className="px-3 py-1.5 text-xs"
+                  >
+                    {loadingConduct ? "…" : "Valider"}
+                  </Button>
+                </div>
+              </div>
+
+              {/* filtres mobile */}
+              <div className="mb-4 grid grid-cols-2 gap-2 md:hidden">
+                <Input
+                  type="date"
+                  value={conductFrom}
+                  onChange={(e) => setConductFrom(e.target.value)}
+                />
+                <Input
+                  type="date"
+                  value={conductTo}
+                  onChange={(e) => setConductTo(e.target.value)}
+                />
+                <div className="col-span-2 flex justify-center">
+                  <Button
+                    className="mx-auto w-full max-w-[160px] px-4 py-1.5 text-xs"
+                    onClick={applyConductFilter}
+                    disabled={loadingConduct}
+                  >
+                    {loadingConduct ? "…" : "Valider"}
+                  </Button>
+                </div>
+              </div>
+
+              {loadingKids ? (
+                <div className="space-y-3">
+                  <Skeleton className="h-16 w-full" />
+                  <Skeleton className="h-16 w-full" />
+                  <Skeleton className="h-16 w-full" />
+                </div>
+              ) : !hasKids ? (
+                <div className="flex items-center justify-between rounded-md border bg-slate-50 p-4 text-sm text-slate-700">
+                  <div>Aucun enfant lié à votre compte pour l’instant.</div>
+                  {!granted && (
                     <Button
-                      className="mx-auto w-full max-w-[160px] px-4 py-1.5 text-xs"
-                      onClick={applyConductFilter}
-                      disabled={loadingConduct}
+                      tone="outline"
+                      onClick={enablePush}
+                      iconLeft={<IconBell />}
                     >
-                      {loadingConduct ? "…" : "Valider"}
+                      Activer les push
                     </Button>
-                  </div>
+                  )}
                 </div>
-
-                {loadingKids ? (
-                  <div className="space-y-3">
-                    <Skeleton className="h-16 w-full" />
-                    <Skeleton className="h-16 w-full" />
-                    <Skeleton className="h-16 w-full" />
-                  </div>
-                ) : kids.length === 0 ? (
-                  <div className="flex items-center justify-between rounded-xl border bg-slate-50 p-4">
-                    <div className="text-sm text-slate-700">
-                      Aucun enfant lié à votre compte pour l’instant.
-                    </div>
-                    {!granted && (
-                      <Button
-                        tone="outline"
-                        onClick={enablePush}
-                        iconLeft={<IconBell />}
-                      >
-                        Activer les notifications
-                      </Button>
-                    )}
-                  </div>
-                ) : (
-                  <>
-                    {/* Mobile: cartes avec jauges verticales colorées */}
-                    <div className="space-y-3 md:hidden">
-                      {filteredKids.map((k) => {
-                        const c = conduct[k.id];
-                        return (
-                          <div
-                            key={k.id}
-                            className="rounded-xl border border-slate-200 bg-white p-4 ring-emerald-50 transition hover:-translate-y-0.5 hover:shadow-md hover:ring-2"
-                          >
-                            <div className="flex items-start justify-between gap-3">
-                              <div className="min-w-0">
-                                <KidName
-                                  name={k.full_name}
-                                  className="font-medium text-slate-900"
-                                />
-                                <div className="text-xs text-slate-600">
-                                  {k.class_label || "—"}
-                                </div>
-                              </div>
-                              {c ? (
-                                <Badge tone="emerald">
-                                  Points de conduite
-                                </Badge>
-                              ) : (
-                                <Badge>—</Badge>
-                              )}
-                            </div>
-                            {c ? (
-                              <div className="mt-3 space-y-3">
-                                <div className="flex items-end justify-between gap-4">
-                                  <VerticalGauge
-                                    label="Assiduité"
-                                    value={c.breakdown.assiduite}
-                                    max={c.rubric_max.assiduite}
-                                    rubric="assiduite"
-                                  />
-                                  <VerticalGauge
-                                    label="Tenue"
-                                    value={c.breakdown.tenue}
-                                    max={c.rubric_max.tenue}
-                                    rubric="tenue"
-                                  />
-                                  <VerticalGauge
-                                    label="Moralité"
-                                    value={c.breakdown.moralite}
-                                    max={c.rubric_max.moralite}
-                                    rubric="moralite"
-                                  />
-                                  <VerticalGauge
-                                    label="Discipline"
-                                    value={c.breakdown.discipline}
-                                    max={c.rubric_max.discipline}
-                                    rubric="discipline"
-                                  />
-                                </div>
-                                <div className="rounded-xl bg-slate-50 px-3 py-2 text-xs text-slate-700">
-                                  <span className="font-medium">
-                                    Appréciation :{" "}
-                                  </span>
-                                  {c.appreciation}
-                                </div>
-                              </div>
-                            ) : (
-                              <div className="mt-3 text-sm text-slate-600">
-                                —
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-
-                    {/* Desktop: tableau (cohérent avec rubric_max) */}
-                    <div className="mt-2 hidden overflow-x-auto rounded-xl border border-slate-200 bg-white md:block">
-                      {(() => {
-                        const anyConduct = filteredKids
-                          .map((k) => conduct[k.id])
-                          .find(Boolean);
-                        const rubricMax =
-                          anyConduct?.rubric_max ?? {
-                            assiduite: 6,
-                            tenue: 3,
-                            moralite: 4,
-                            discipline: 7,
-                          };
-                        return (
-                          <table className="min-w-full text-sm">
-                            <thead className="bg-slate-50">
-                              <tr>
-                                <th className="px-3 py-2 text-left">Enfant</th>
-                                <th className="px-3 py-2 text-left">Classe</th>
-                                <th className="px-3 py-2 text-left">
-                                  Assiduité (/{rubricMax.assiduite})
-                                </th>
-                                <th className="px-3 py-2 text-left">
-                                  Tenue (/{rubricMax.tenue})
-                                </th>
-                                <th className="px-3 py-2 text-left">
-                                  Moralité (/{rubricMax.moralite})
-                                </th>
-                                <th className="px-3 py-2 text-left">
-                                  Discipline (/{rubricMax.discipline})
-                                </th>
-                                <th className="px-3 py-2 text-left">
-                                  Appréciation
-                                </th>
-                              </tr>
-                            </thead>
-                            <tbody className="bg-white/60">
-                              {filteredKids.map((k) => {
-                                const c = conduct[k.id];
-                                return (
-                                  <tr
-                                    key={k.id}
-                                    className="border-t border-slate-100 last:border-b-0"
-                                  >
-                                    <td className="px-3 py-2">
-                                      <KidName name={k.full_name} />
-                                    </td>
-                                    <td className="px-3 py-2">
-                                      {k.class_label || "—"}
-                                    </td>
-                                    {c ? (
-                                      <>
-                                        <td className="px-3 py-2">
-                                          {c.breakdown.assiduite
-                                            .toFixed(2)
-                                            .replace(".", ",")}
-                                        </td>
-                                        <td className="px-3 py-2">
-                                          {c.breakdown.tenue
-                                            .toFixed(2)
-                                            .replace(".", ",")}
-                                        </td>
-                                        <td className="px-3 py-2">
-                                          {c.breakdown.moralite
-                                            .toFixed(2)
-                                            .replace(".", ",")}
-                                        </td>
-                                        <td className="px-3 py-2">
-                                          {c.breakdown.discipline
-                                            .toFixed(2)
-                                            .replace(".", ",")}
-                                        </td>
-                                        <td className="px-3 py-2">
-                                          {c.appreciation}
-                                        </td>
-                                      </>
-                                    ) : (
-                                      <td
-                                        className="px-3 py-2 text-slate-600"
-                                        colSpan={5}
-                                      >
-                                        —
-                                      </td>
-                                    )}
-                                  </tr>
-                                );
-                              })}
-                            </tbody>
-                          </table>
-                        );
-                      })()}
-                    </div>
-                  </>
-                )}
-              </section>
-            )}
-
-            {/* Absences / Sanctions / Notes (vue Dashboard + onglet Absences) */}
-            {showEventsSection && (
-              <section className="rounded-2xl border border-slate-200 bg-white/95 p-5 shadow-sm shadow-slate-200 backdrop-blur">
-                {(() => {
-                  const title = isAbsences
-                    ? "Cahier d’absences — Absences/retards récents et sanctions"
-                    : "Mes enfants — Absences/retards récents, sanctions et notes publiées";
-                  return (
-                    <div className="mb-3 flex items-center justify-between">
-                      <div className="text-sm font-semibold uppercase tracking-wide text-slate-700">
-                        {title}
-                      </div>
-                      <div className="flex items-center gap-2">
-                        {granted ? (
-                          <span className="text-xs text-emerald-700">
-                            Notifications déjà activées ✅
-                          </span>
-                        ) : (
-                          <Button
-                            tone="outline"
-                            onClick={enablePush}
-                            title="Activer les notifications push"
-                            iconLeft={<IconBell />}
-                          >
-                            Activer les notifications
-                          </Button>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })()}
-
-                {loadingKids ? (
-                  <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-                    <Skeleton className="h-40 w-full" />
-                    <Skeleton className="h-40 w-full" />
-                    <Skeleton className="h-40 w-full" />
-                  </div>
-                ) : kids.length === 0 ? (
-                  <div className="rounded-xl border bg-slate-50 p-4 text-sm text-slate-700">
-                    Aucun enfant lié à votre compte pour l’instant.
-                  </div>
-                ) : (
-                  <div className="space-y-4 md:grid md:grid-cols-2 md:gap-5 md:space-y-0 xl:grid-cols-3">
-                    {filteredKids.map((k, i) => {
-                      const groups = groupByDay(feed[k.id] || []);
-                      const showAll = !!showAllDaysForKid[k.id];
-                      const visibleGroups = showAll ? groups : groups.slice(0, 3);
-                      const t = themeFor(i);
-                      const gradesForKid = kidGrades[k.id] || [];
-
-                      const showEventsBlock = isDashboard || isAbsences;
-                      const showSanctionsBlock = isDashboard || isAbsences;
-                      const showNotesBlock = isDashboard; // résumé notes sur Dashboard
-
-                      return (
-                        <TiltCard key={k.id} className={t.ring}>
-                          <div
-                            className={`relative rounded-xl border ${t.border} bg-white p-4 shadow-sm transition`}
-                          >
-                            {/* liseré dégradé haut */}
-                            <div
-                              className={`absolute inset-x-0 top-0 h-1 rounded-t-xl bg-gradient-to-r ${t.bar}`}
-                              style={{ transform: "translateZ(20px)" }}
-                            />
-                            <div
-                              className="flex items-center justify-between"
-                              style={{ transform: "translateZ(16px)" }}
-                            >
-                              <div className="flex min-w-0 items-center gap-3">
-                                {/* avatar initiales coloré */}
-                                <div
-                                  className={`grid h-9 w-9 place-items-center rounded-xl text-xs font-semibold ${t.chipBg} ${t.chipText} shadow-sm`}
-                                >
-                                  {getInitials(k.full_name)}
-                                </div>
-                                <div className="min-w-0">
-                                  <div className="flex flex-col">
-                                    <div className="flex min-w-0 items-center gap-1">
-                                      <KidName
-                                        name={k.full_name}
-                                        className="font-medium text-slate-900"
-                                      />
-                                      <span className="hidden text-xs text-slate-600 sm:inline">
-                                        ({k.class_label || "—"})
-                                      </span>
-                                    </div>
-                                    <span className="text-[11px] text-slate-500 sm:hidden">
-                                      {k.class_label || "—"}
-                                    </span>
-                                  </div>
-                                </div>
-                              </div>
-
-                              {groups.length > 3 && showEventsBlock && (
-                                <button
-                                  onClick={() =>
-                                    setShowAllDaysForKid((m) => ({
-                                      ...m,
-                                      [k.id]: !m[k.id],
-                                    }))
-                                  }
-                                  className="shrink-0 text-xs text-slate-700 underline-offset-2 hover:underline"
-                                  style={{ transform: "translateZ(16px)" }}
-                                >
-                                  {showAll ? "Réduire" : "Voir plus"}
-                                </button>
-                              )}
-                            </div>
-
-                            {/* Absences / retards par jour */}
-                            {showEventsBlock && (
-                              <ul className="mt-3 space-y-2">
-                                {visibleGroups.map((g) => {
-                                  const key = `${k.id}|${g.day}`;
-                                  const isOpen = !!expanded[key];
-                                  const hasSingle = g.items.length === 1;
-
-                                  const parts: string[] = [];
-                                  if (g.absentCount)
-                                    parts.push(
-                                      `${g.absentCount} absence${
-                                        g.absentCount > 1 ? "s" : ""
-                                      }`,
-                                    );
-                                  if (g.lateCount)
-                                    parts.push(
-                                      `${g.lateCount} retard${
-                                        g.lateCount > 1 ? "s" : ""
-                                      }`,
-                                    );
-                                  const summary = parts.length
-                                    ? parts.join(" • ")
-                                    : "Aucun évènement";
-
-                                  return (
-                                    <li
-                                      key={g.day}
-                                      className="rounded-lg border border-slate-100 bg-slate-50/60 p-3 transition hover:bg-slate-50"
-                                      style={{ transform: "translateZ(10px)" }}
-                                    >
-                                      <div className="flex items-center justify-between gap-3">
-                                        <div className="text-sm font-medium text-slate-800">
-                                          {g.label} :{" "}
-                                          <span className="font-normal text-slate-700">
-                                            {summary}
-                                          </span>
-                                        </div>
-                                        {g.items.length > 0 && (
-                                          <button
-                                            onClick={() =>
-                                              setExpanded((m) => ({
-                                                ...m,
-                                                [key]: !m[key],
-                                              }))
-                                            }
-                                            className="shrink-0 text-xs text-emerald-700 underline-offset-2 hover:underline"
-                                          >
-                                            {isOpen || hasSingle
-                                              ? "Masquer"
-                                              : "Voir détails"}
-                                          </button>
-                                        )}
-                                      </div>
-                                      {(isOpen || hasSingle) &&
-                                        g.items.length > 0 && (
-                                          <ul className="mt-2 divide-y divide-slate-100">
-                                            {g.items.map((ev) => (
-                                              <li
-                                                key={ev.id}
-                                                className="flex items-center justify-between py-2 text-sm"
-                                              >
-                                                <div className="min-w-0">
-                                                  <div className="truncate text-slate-800">
-                                                    {ev.type === "absent" ? (
-                                                      <Badge tone="rose">
-                                                        Absence
-                                                      </Badge>
-                                                    ) : (
-                                                      <Badge tone="amber">
-                                                        Retard
-                                                      </Badge>
-                                                    )}
-                                                    <span className="ml-2">
-                                                      {ev.subject_name || "—"}
-                                                    </span>
-                                                  </div>
-                                                  <div className="mt-0.5 text-xs text-slate-600">
-                                                    {slotLabel(
-                                                      ev.when,
-                                                      ev.expected_minutes,
-                                                    )}{" "}
-                                                    {ev.type === "late" &&
-                                                    ev.minutes_late
-                                                      ? `• ${ev.minutes_late} min`
-                                                      : ""}
-                                                  </div>
-                                                </div>
-                                                <div className="shrink-0 pl-2 text-xs text-slate-500">
-                                                  {ev.class_label || ""}
-                                                </div>
-                                              </li>
-                                            ))}
-                                          </ul>
-                                        )}
-                                    </li>
-                                  );
-                                })}
-                                {visibleGroups.length === 0 && (
-                                  <li className="py-2 text-sm text-slate-600">
-                                    Aucun évènement récent.
-                                  </li>
-                                )}
-                              </ul>
-                            )}
-
-                            {/* Sanctions */}
-                            {showSanctionsBlock && (
-                              <div
-                                className="mt-3 rounded-lg border border-amber-100 bg-amber-50/60 p-3"
-                                style={{ transform: "translateZ(8px)" }}
-                              >
-                                <div className="flex items-center justify-between">
-                                  <div className="text-sm font-medium text-slate-800">
-                                    Sanctions récentes
-                                  </div>
-                                  {(kidPenalties[k.id]?.length || 0) > 5 && (
-                                    <button
-                                      onClick={() =>
-                                        setShowAllPenForKid((m) => ({
-                                          ...m,
-                                          [k.id]: !m[k.id],
-                                        }))
-                                      }
-                                      className="text-xs text-slate-700 underline-offset-2 hover:underline"
-                                    >
-                                      {showAllPenForKid[k.id]
-                                        ? "Réduire"
-                                        : "Voir plus"}
-                                    </button>
-                                  )}
-                                </div>
-                                {(kidPenalties[k.id]?.length || 0) === 0 ? (
-                                  <div className="mt-2 text-sm text-slate-600">
-                                    Aucune sanction récente.
-                                  </div>
-                                ) : (
-                                  <ul className="mt-2 divide-y divide-amber-100/80">
-                                    {(showAllPenForKid[k.id]
-                                      ? kidPenalties[k.id] || []
-                                      : (kidPenalties[k.id] || []).slice(
-                                          0,
-                                          5,
-                                        )
-                                    ).map((p) => (
-                                      <li
-                                        key={p.id}
-                                        className="flex items-center justify-between py-2 text-sm"
-                                      >
-                                        <div className="min-w-0">
-                                          <div className="text-slate-800">
-                                            <span className="mr-2">
-                                              <Badge tone="amber">
-                                                {rubricLabel(p.rubric)}
-                                              </Badge>
-                                            </span>
-                                            −
-                                            {Number(p.points || 0)
-                                              .toFixed(2)
-                                              .replace(".", ",")}{" "}
-                                            pt
-                                            {(() => {
-                                              const pts = Math.abs(
-                                                Number(p.points || 0),
-                                              );
-                                              const suffix =
-                                                pts > 1 ? "s" : "";
-                                              const reason = (p.reason || "")
-                                                .trim();
-                                              const subject = (
-                                                p.author_subject_name ||
-                                                p.subject_name ||
-                                                ""
-                                              ).trim();
-                                              const who = (
-                                                p.author_name || ""
-                                              ).trim();
-                                              const role = (
-                                                p.author_role_label ||
-                                                p.author_role ||
-                                                ""
-                                              ).trim();
-
-                                              return (
-                                                <>
-                                                  {suffix}
-                                                  {reason && (
-                                                    <span className="ml-1 text-xs text-slate-600">
-                                                      — {reason}
-                                                    </span>
-                                                  )}
-                                                  {(subject ||
-                                                    who ||
-                                                    role) && (
-                                                    <span className="ml-1 text-[11px] text-slate-500">
-                                                      {" — "}
-                                                      {subject}
-                                                      {subject &&
-                                                      (who || role)
-                                                        ? " • "
-                                                        : ""}
-                                                      {who}
-                                                      {who && role
-                                                        ? ` (${role})`
-                                                        : !who && role
-                                                          ? role
-                                                          : ""}
-                                                    </span>
-                                                  )}
-                                                </>
-                                              );
-                                            })()}
-                                          </div>
-                                          <div className="shrink-0 pl-2 text-xs text-slate-500">
-                                            {fmt(p.when)}
-                                          </div>
-                                        </div>
-                                      </li>
-                                    ))}
-                                  </ul>
-                                )}
-                              </div>
-                            )}
-
-                            {/* Résumé notes publiées (Dashboard uniquement) */}
-                            {showNotesBlock && (
-                              <div
-                                className="mt-3 rounded-lg border border-slate-100 bg-slate-50/80 p-3"
-                                style={{ transform: "translateZ(6px)" }}
-                              >
-                                <div className="mb-1 flex items-center justify-between">
-                                  <div className="text-sm font-medium text-slate-800">
-                                    Notes publiées récemment
-                                  </div>
-                                </div>
-                                {gradesForKid.length === 0 ? (
-                                  <div className="mt-1 text-sm text-slate-600">
-                                    Aucune note publiée pour le moment.
-                                  </div>
-                                ) : (
-                                  <ul className="mt-2 space-y-1.5 text-xs">
-                                    {[...gradesForKid]
-                                      .filter((g) =>
-                                        isInDateRange(
-                                          g.eval_date,
-                                          gradeFrom || undefined,
-                                          gradeTo || undefined,
-                                        ),
-                                      )
-                                      .sort((a, b) =>
-                                        b.eval_date.localeCompare(a.eval_date),
-                                      )
-                                      .slice(0, 4)
-                                      .map((g) => (
-                                        <li
-                                          key={g.id}
-                                          className="flex items-center justify-between gap-2"
-                                        >
-                                          <div className="min-w-0">
-                                            <div className="truncate text-slate-800">
-                                              <span className="mr-1 rounded-full bg-slate-900/5 px-1.5 py-0.5 text-[10px] font-medium uppercase text-slate-700">
-                                                {gradeKindLabel(g.eval_kind)}
-                                              </span>
-                                              {g.subject_name || "—"}
-                                            </div>
-                                            <div className="mt-0.5 text-[11px] text-slate-600">
-                                              {fmt(g.eval_date)} • coeff{" "}
-                                              {g.coeff}
-                                            </div>
-                                          </div>
-                                          <div className="shrink-0 text-right text-xs font-semibold text-slate-900">
-                                            {g.score != null
-                                              ? `${g.score
-                                                  .toFixed(2)
-                                                  .replace(
-                                                    ".",
-                                                    ",",
-                                                  )} / ${g.scale}`
-                                              : "—"}
-                                          </div>
-                                        </li>
-                                      ))}
-                                  </ul>
-                                )}
-                              </div>
-                            )}
-                          </div>
-                        </TiltCard>
-                      );
-                    })}
-                  </div>
-                )}
-              </section>
-            )}
-
-            {/* Cahier de notes – vue détaillée */}
-            {showNotesSection && (
-              <section className="rounded-2xl border border-slate-200 bg-white/95 p-5 shadow-sm shadow-slate-200 backdrop-blur">
-                <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                  <div className="text-sm font-semibold uppercase tracking-wide text-slate-700">
-                    Cahier de notes — évaluations publiées
-                  </div>
-                  <div className="flex flex-wrap items-center gap-2 text-xs">
-                    <div className="inline-flex rounded-full bg-slate-100 p-1">
-                      {(["week", "month", "all", "custom"] as const).map(
-                        (mode) => {
-                          const label =
-                            mode === "week"
-                              ? "Semaine"
-                              : mode === "month"
-                                ? "Mois"
-                                : mode === "all"
-                                  ? "Tout"
-                                  : "Perso.";
-                          const active = gradeFilterMode === mode;
-                          return (
-                            <button
-                              key={mode}
-                              type="button"
-                              onClick={() => setGradeFilterMode(mode)}
-                              className={[
-                                "rounded-full px-3 py-1 transition",
-                                active
-                                  ? "bg-slate-900 text-white shadow-sm"
-                                  : "text-slate-700 hover:bg-slate-200",
-                              ].join(" ")}
-                            >
-                              {label}
-                            </button>
-                          );
-                        },
-                      )}
-                    </div>
-                    {gradeFilterMode === "custom" && (
-                      <div className="flex flex-wrap items-center gap-2">
-                        <Input
-                          type="date"
-                          value={gradeFrom}
-                          onChange={(e) => setGradeFrom(e.target.value)}
-                          className="h-8 w-32 px-2 py-1 text-xs"
-                        />
-                        <span className="text-[11px] text-slate-600">au</span>
-                        <Input
-                          type="date"
-                          value={gradeTo}
-                          onChange={(e) => setGradeTo(e.target.value)}
-                          className="h-8 w-32 px-2 py-1 text-xs"
-                        />
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                {kids.length === 0 ? (
-                  <div className="rounded-xl border bg-slate-50 p-4 text-sm text-slate-700">
-                    Aucun enfant lié à votre compte pour l’instant.
-                  </div>
-                ) : (
-                  <div className="space-y-4 md:grid md:grid-cols-2 md:gap-5 md:space-y-0 xl:grid-cols-3">
-                    {filteredKids.map((k, i) => {
-                      const allGrades = kidGrades[k.id] || [];
-                      const filteredByDate = allGrades.filter((g) =>
-                        isInDateRange(
-                          g.eval_date,
-                          gradeFrom || undefined,
-                          gradeTo || undefined,
-                        ),
-                      );
-
-                      const sorted = [...filteredByDate].sort((a, b) =>
-                        b.eval_date.localeCompare(a.eval_date),
-                      );
-
-                      const subjectMap = new Map<
-                        string,
-                        { id: string; name: string }
-                      >();
-                      for (const g of sorted) {
-                        const key =
-                          g.subject_id ||
-                          g.subject_name ||
-                          "subject-" + (subjectMap.size + 1);
-                        if (!subjectMap.has(key)) {
-                          subjectMap.set(key, {
-                            id: key,
-                            name: g.subject_name || "—",
-                          });
-                        }
-                      }
-                      const subjects = Array.from(subjectMap.values());
-                      const currentSubjectKey =
-                        activeSubjectPerKid[k.id] || subjects[0]?.id || null;
-
-                      const gradesForSubject =
-                        currentSubjectKey == null
-                          ? sorted
-                          : sorted.filter((g) => {
-                              const key =
-                                g.subject_id ||
-                                g.subject_name ||
-                                "subject-" + 1;
-                              return key === currentSubjectKey;
-                            });
-
-                      const t = themeFor(i);
-
+              ) : (
+                <>
+                  {/* mobile : cartes */}
+                  <div className="space-y-3 md:hidden">
+                    {filteredKids.map((k) => {
+                      const c = conduct[k.id];
                       return (
                         <div
                           key={k.id}
-                          className="flex h-full flex-col rounded-xl border border-slate-200 bg-white/95 p-4 shadow-sm"
+                          className="rounded-md border border-slate-200 p-4"
                         >
-                          <div className="mb-3 flex items-center justify-between gap-2">
+                          <div className="flex items-start justify-between gap-3">
                             <div className="min-w-0">
-                              <KidName
-                                name={k.full_name}
-                                className="text-sm font-semibold text-slate-900"
-                              />
+                              <div className="font-medium text-slate-900">
+                                {k.full_name}
+                              </div>
                               <div className="text-xs text-slate-600">
                                 {k.class_label || "—"}
                               </div>
                             </div>
-                            <Badge tone="emerald">
-                              {gradesForSubject.length} note
-                              {gradesForSubject.length > 1 ? "s" : ""}
-                            </Badge>
+                            {c ? (
+                              <Badge tone="emerald">
+                                Points de conduite
+                              </Badge>
+                            ) : (
+                              <Badge>—</Badge>
+                            )}
                           </div>
-
-                          {/* Matières disponibles */}
-                          {subjects.length > 0 ? (
-                            <div className="mb-3 flex flex-wrap gap-1.5">
-                              {subjects.map((s) => {
-                                const active =
-                                  currentSubjectKey === s.id ||
-                                  (!currentSubjectKey &&
-                                    s.id === subjects[0]?.id);
-                                return (
-                                  <button
-                                    key={s.id}
-                                    type="button"
-                                    onClick={() =>
-                                      setActiveSubjectPerKid((m) => ({
-                                        ...m,
-                                        [k.id]: s.id,
-                                      }))
-                                    }
-                                    className={[
-                                      "inline-flex items-center rounded-full border px-2.5 py-1 text-[11px] font-medium transition",
-                                      active
-                                        ? `${t.chipBg} ${t.chipText} border-transparent shadow-sm`
-                                        : "border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100",
-                                    ].join(" ")}
-                                  >
-                                    {s.name || "Matière"}
-                                  </button>
-                                );
-                              })}
+                          {c ? (
+                            <div className="mt-3 space-y-3">
+                              <div className="flex items-end justify-between gap-4">
+                                <VerticalGauge
+                                  label="Assiduité"
+                                  value={c.breakdown.assiduite}
+                                  max={c.rubric_max.assiduite}
+                                  rubric="assiduite"
+                                />
+                                <VerticalGauge
+                                  label="Tenue"
+                                  value={c.breakdown.tenue}
+                                  max={c.rubric_max.tenue}
+                                  rubric="tenue"
+                                />
+                                <VerticalGauge
+                                  label="Moralité"
+                                  value={c.breakdown.moralite}
+                                  max={c.rubric_max.moralite}
+                                  rubric="moralite"
+                                />
+                                <VerticalGauge
+                                  label="Discipline"
+                                  value={c.breakdown.discipline}
+                                  max={c.rubric_max.discipline}
+                                  rubric="discipline"
+                                />
+                              </div>
+                              <div className="rounded-md bg-slate-50 px-3 py-2 text-xs text-slate-700">
+                                <span className="font-medium">
+                                  Appréciation :{" "}
+                                </span>
+                                {c.appreciation}
+                              </div>
                             </div>
                           ) : (
-                            <div className="mb-3 text-xs text-slate-500">
-                              Aucune matière pour la période choisie.
+                            <div className="mt-3 text-sm text-slate-600">
+                              —
                             </div>
-                          )}
-
-                          {/* Liste des notes */}
-                          {gradesForSubject.length === 0 ? (
-                            <div className="mt-auto rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">
-                              Aucune note publiée pour cette matière et cette
-                              période.
-                            </div>
-                          ) : (
-                            <ul className="space-y-2 text-xs">
-                              {gradesForSubject.slice(0, 8).map((g) => (
-                                <li
-                                  key={g.id}
-                                  className="rounded-lg border border-slate-100 bg-slate-50/60 px-3 py-2"
-                                >
-                                  <div className="flex items-center justify-between gap-2">
-                                    <div className="min-w-0">
-                                      <div className="truncate font-medium text-slate-800">
-                                        {g.title ||
-                                          gradeKindLabel(g.eval_kind)}
-                                      </div>
-                                      <div className="mt-0.5 text-[11px] text-slate-600">
-                                        {fmt(g.eval_date)} • coeff {g.coeff}
-                                      </div>
-                                    </div>
-                                    <div className="shrink-0 text-right text-xs font-semibold text-slate-900">
-                                      {g.score != null
-                                        ? `${g.score
-                                            .toFixed(2)
-                                            .replace(
-                                              ".",
-                                              ",",
-                                            )} / ${g.scale}`
-                                        : "—"}
-                                    </div>
-                                  </div>
-                                </li>
-                              ))}
-                            </ul>
                           )}
                         </div>
                       );
                     })}
                   </div>
-                )}
-              </section>
-            )}
 
-            {msg && (
-              <div className="rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900 shadow-sm">
-                {msg}
+                  {/* desktop : tableau */}
+                  <div className="mt-2 hidden overflow-x-auto rounded-md border md:block">
+                    {(() => {
+                      const anyConduct = filteredKids
+                        .map((k) => conduct[k.id])
+                        .find(Boolean);
+                      const rubricMax =
+                        anyConduct?.rubric_max ?? {
+                          assiduite: 6,
+                          tenue: 3,
+                          moralite: 4,
+                          discipline: 7,
+                        };
+                      return (
+                        <table className="min-w-full text-sm">
+                          <thead className="bg-slate-50">
+                            <tr>
+                              <th className="px-3 py-2 text-left">Enfant</th>
+                              <th className="px-3 py-2 text-left">Classe</th>
+                              <th className="px-3 py-2 text-left">
+                                Assiduité (/{rubricMax.assiduite})
+                              </th>
+                              <th className="px-3 py-2 text-left">
+                                Tenue (/{rubricMax.tenue})
+                              </th>
+                              <th className="px-3 py-2 text-left">
+                                Moralité (/{rubricMax.moralite})
+                              </th>
+                              <th className="px-3 py-2 text-left">
+                                Discipline (/{rubricMax.discipline})
+                              </th>
+                              <th className="px-3 py-2 text-left">
+                                Appréciation
+                              </th>
+                            </tr>
+                          </thead>
+                          <tbody className="bg-white">
+                            {filteredKids.map((k) => {
+                              const c = conduct[k.id];
+                              return (
+                                <tr
+                                  key={k.id}
+                                  className="border-t last:border-b-0"
+                                >
+                                  <td className="px-3 py-2">{k.full_name}</td>
+                                  <td className="px-3 py-2">
+                                    {k.class_label || "—"}
+                                  </td>
+                                  {c ? (
+                                    <>
+                                      <td className="px-3 py-2">
+                                        {c.breakdown.assiduite
+                                          .toFixed(2)
+                                          .replace(".", ",")}
+                                      </td>
+                                      <td className="px-3 py-2">
+                                        {c.breakdown.tenue
+                                          .toFixed(2)
+                                          .replace(".", ",")}
+                                      </td>
+                                      <td className="px-3 py-2">
+                                        {c.breakdown.moralite
+                                          .toFixed(2)
+                                          .replace(".", ",")}
+                                      </td>
+                                      <td className="px-3 py-2">
+                                        {c.breakdown.discipline
+                                          .toFixed(2)
+                                          .replace(".", ",")}
+                                      </td>
+                                      <td className="px-3 py-2">
+                                        {c.appreciation}
+                                      </td>
+                                    </>
+                                  ) : (
+                                    <td
+                                      className="px-3 py-2 text-slate-600"
+                                      colSpan={5}
+                                    >
+                                      —
+                                    </td>
+                                  )}
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      );
+                    })()}
+                  </div>
+                </>
+              )}
+            </section>
+          )}
+
+          {/* ───── ABSENCES / SANCTIONS ───── */}
+          {showEventsSection && (
+            <section className="mb-5 rounded-md border border-slate-200 bg-white p-5 shadow-sm">
+              {(() => {
+                const title = isAbsences
+                  ? "Cahier d’absences — absences/retards récents et sanctions"
+                  : "Mes enfants — absences/retards récents, sanctions et notes publiées";
+                return (
+                  <div className="mb-3 flex items-center justify-between">
+                    <div className="text-sm font-semibold uppercase tracking-wide text-slate-700">
+                      {title}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {granted ? (
+                        <span className="text-xs text-emerald-700">
+                          Notifications déjà activées ✅
+                        </span>
+                      ) : (
+                        <Button
+                          tone="outline"
+                          onClick={enablePush}
+                          title="Activer les notifications push"
+                          iconLeft={<IconBell />}
+                        >
+                          Activer les push
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {loadingKids ? (
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+                  <Skeleton className="h-40 w-full" />
+                  <Skeleton className="h-40 w-full" />
+                  <Skeleton className="h-40 w-full" />
+                </div>
+              ) : !hasKids ? (
+                <div className="rounded-md border bg-slate-50 p-4 text-sm text-slate-700">
+                  Aucun enfant lié à votre compte pour l’instant.
+                </div>
+              ) : (
+                <div className="space-y-4 md:grid md:grid-cols-2 md:gap-5 md:space-y-0 xl:grid-cols-3">
+                  {filteredKids.map((k, i) => {
+                    const groups = groupByDay(feed[k.id] || []);
+                    const showAll = !!showAllDaysForKid[k.id];
+                    const visibleGroups = showAll ? groups : groups.slice(0, 3);
+                    const t = themeFor(i);
+                    const gradesForKid = kidGrades[k.id] || [];
+
+                    const showEventsBlock = isDashboard || isAbsences;
+                    const showSanctionsBlock = isDashboard || isAbsences;
+                    const showNotesBlock = isDashboard && gradesForKid.length > 0;
+
+                    return (
+                      <TiltCard key={k.id} className={t.ring}>
+                        <div
+                          className={`relative rounded-xl border ${t.border} bg-white p-4 shadow-sm`}
+                        >
+                          {/* liseré */}
+                          <div
+                            className={`absolute inset-x-0 top-0 h-1 rounded-t-xl bg-gradient-to-r ${t.bar}`}
+                          />
+                          <div className="mt-1 flex items-center justify-between">
+                            <div className="flex min-w-0 items-center gap-3">
+                              <div
+                                className={`grid h-9 w-9 place-items-center rounded-xl text-xs font-semibold ${t.chipBg} ${t.chipText}`}
+                              >
+                                {getInitials(k.full_name)}
+                              </div>
+                              <div className="min-w-0">
+                                <div className="truncate font-medium text-slate-900">
+                                  {k.full_name}{" "}
+                                  <span className="text-xs text-slate-600">
+                                    ({k.class_label || "—"})
+                                  </span>
+                                </div>
+                              </div>
+                            </div>
+
+                            {groups.length > 3 && showEventsBlock && (
+                              <button
+                                onClick={() =>
+                                  setShowAllDaysForKid((m) => ({
+                                    ...m,
+                                    [k.id]: !m[k.id],
+                                  }))
+                                }
+                                className="shrink-0 text-xs text-slate-700 underline-offset-2 hover:underline"
+                              >
+                                {showAll ? "Réduire" : "Voir plus"}
+                              </button>
+                            )}
+                          </div>
+
+                          {/* évènements */}
+                          {showEventsBlock && (
+                            <ul className="mt-3 space-y-2">
+                              {visibleGroups.map((g) => {
+                                const key = `${k.id}|${g.day}`;
+                                const isOpen = !!expanded[key];
+                                const hasSingle = g.items.length === 1;
+
+                                const parts: string[] = [];
+                                if (g.absentCount)
+                                  parts.push(
+                                    `${g.absentCount} absence${
+                                      g.absentCount > 1 ? "s" : ""
+                                    }`,
+                                  );
+                                if (g.lateCount)
+                                  parts.push(
+                                    `${g.lateCount} retard${
+                                      g.lateCount > 1 ? "s" : ""
+                                    }`,
+                                  );
+                                const summary = parts.length
+                                  ? parts.join(" • ")
+                                  : "Aucun évènement";
+
+                                return (
+                                  <li
+                                    key={g.day}
+                                    className="rounded-lg border p-3 transition hover:bg-slate-50/70"
+                                  >
+                                    <div className="flex items-center justify-between gap-3">
+                                      <div className="text-sm font-medium text-slate-800">
+                                        {g.label} :{" "}
+                                        <span className="font-normal text-slate-700">
+                                          {summary}
+                                        </span>
+                                      </div>
+                                      {g.items.length > 0 && (
+                                        <button
+                                          onClick={() =>
+                                            setExpanded((m) => ({
+                                              ...m,
+                                              [key]: !m[key],
+                                            }))
+                                          }
+                                          className="shrink-0 text-xs text-emerald-700 underline-offset-2 hover:underline"
+                                        >
+                                          {isOpen || hasSingle
+                                            ? "Masquer"
+                                            : "Voir détails"}
+                                        </button>
+                                      )}
+                                    </div>
+                                    {(isOpen || hasSingle) &&
+                                      g.items.length > 0 && (
+                                        <ul className="mt-2 divide-y">
+                                          {g.items.map((ev) => (
+                                            <li
+                                              key={ev.id}
+                                              className="flex items-center justify-between py-2 text-sm"
+                                            >
+                                              <div className="min-w-0">
+                                                <div className="truncate text-slate-800">
+                                                  {ev.type === "absent" ? (
+                                                    <Badge tone="rose">
+                                                      Absence
+                                                    </Badge>
+                                                  ) : (
+                                                    <Badge tone="amber">
+                                                      Retard
+                                                    </Badge>
+                                                  )}
+                                                  <span className="ml-2">
+                                                    {ev.subject_name || "—"}
+                                                  </span>
+                                                </div>
+                                                <div className="mt-0.5 text-xs text-slate-600">
+                                                  {slotLabel(
+                                                    ev.when,
+                                                    ev.expected_minutes,
+                                                  )}{" "}
+                                                  {ev.type === "late" &&
+                                                  ev.minutes_late
+                                                    ? `• ${ev.minutes_late} min`
+                                                    : ""}
+                                                </div>
+                                              </div>
+                                              <div className="shrink-0 pl-2 text-xs text-slate-500">
+                                                {ev.class_label || ""}
+                                              </div>
+                                            </li>
+                                          ))}
+                                        </ul>
+                                      )}
+                                  </li>
+                                );
+                              })}
+                              {visibleGroups.length === 0 && (
+                                <li className="py-2 text-sm text-slate-600">
+                                  Aucun évènement récent.
+                                </li>
+                              )}
+                            </ul>
+                          )}
+
+                          {/* sanctions */}
+                          {showSanctionsBlock && (
+                            <div className="mt-3 rounded-lg border bg-amber-50/40 p-3">
+                              <div className="flex items-center justify-between">
+                                <div className="text-sm font-medium text-slate-800">
+                                  Sanctions récentes
+                                </div>
+                                {(kidPenalties[k.id]?.length || 0) > 5 && (
+                                  <button
+                                    onClick={() =>
+                                      setShowAllPenForKid((m) => ({
+                                        ...m,
+                                        [k.id]: !m[k.id],
+                                      }))
+                                    }
+                                    className="text-xs text-slate-700 underline-offset-2 hover:underline"
+                                  >
+                                    {showAllPenForKid[k.id]
+                                      ? "Réduire"
+                                      : "Voir plus"}
+                                  </button>
+                                )}
+                              </div>
+                              {(kidPenalties[k.id]?.length || 0) === 0 ? (
+                                <div className="mt-2 text-sm text-slate-600">
+                                  Aucune sanction récente.
+                                </div>
+                              ) : (
+                                <ul className="mt-2 divide-y">
+                                  {(showAllPenForKid[k.id]
+                                    ? kidPenalties[k.id] || []
+                                    : (kidPenalties[k.id] || []).slice(0, 5)
+                                  ).map((p) => (
+                                    <li
+                                      key={p.id}
+                                      className="flex items-center justify-between py-2 text-sm"
+                                    >
+                                      <div className="min-w-0">
+                                        <div className="text-slate-800">
+                                          <span className="mr-2">
+                                            <Badge tone="amber">
+                                              {rubricLabel(p.rubric)}
+                                            </Badge>
+                                          </span>
+                                          −
+                                          {Number(p.points || 0)
+                                            .toFixed(2)
+                                            .replace(".", ",")}{" "}
+                                          pt
+                                          {(() => {
+                                            const pts = Math.abs(
+                                              Number(p.points || 0),
+                                            );
+                                            const suffix =
+                                              pts > 1 ? "s" : "";
+                                            const reason = (p.reason || "")
+                                              .trim();
+                                            const subject = (
+                                              p.author_subject_name ||
+                                              p.subject_name ||
+                                              ""
+                                            ).trim();
+                                            const who = (
+                                              p.author_name || ""
+                                            ).trim();
+                                            const role = (
+                                              p.author_role_label ||
+                                              p.author_role ||
+                                              ""
+                                            ).trim();
+
+                                            return (
+                                              <>
+                                                {suffix}
+                                                {reason && (
+                                                  <span className="ml-1 text-xs text-slate-600">
+                                                    — {reason}
+                                                  </span>
+                                                )}
+                                                {(subject || who || role) && (
+                                                  <span className="ml-1 text-[11px] text-slate-500">
+                                                    {" — "}
+                                                    {subject}
+                                                    {subject &&
+                                                    (who || role)
+                                                      ? " • "
+                                                      : ""}
+                                                    {who}
+                                                    {who && role
+                                                      ? ` (${role})`
+                                                      : !who && role
+                                                      ? role
+                                                      : ""}
+                                                  </span>
+                                                )}
+                                              </>
+                                            );
+                                          })()}
+                                        </div>
+                                        <div className="mt-0.5 text-[11px] text-slate-500">
+                                          {fmt(p.when)}
+                                          {p.class_label
+                                            ? ` • ${p.class_label}`
+                                            : ""}
+                                        </div>
+                                      </div>
+                                    </li>
+                                  ))}
+                                </ul>
+                              )}
+                            </div>
+                          )}
+
+                          {/* petit bloc notes (résumé) sur dashboard */}
+                          {showNotesBlock && (
+                            <div className="mt-3 rounded-lg border bg-slate-50 p-3">
+                              <div className="mb-1 text-sm font-medium text-slate-800">
+                                Notes publiées (aperçu)
+                              </div>
+                              <ul className="space-y-1 text-xs text-slate-700">
+                                {gradesForKid.slice(0, 3).map((g) => (
+                                  <li
+                                    key={g.id}
+                                    className="flex items-center justify-between"
+                                  >
+                                    <div className="min-w-0">
+                                      <div className="truncate">
+                                        {g.subject_name || "—"} ·{" "}
+                                        {gradeKindLabel(g.eval_kind)}
+                                      </div>
+                                      <div className="text-[11px] text-slate-500">
+                                        {fmt(g.eval_date)}
+                                      </div>
+                                    </div>
+                                    <div className="shrink-0 pl-2 text-right">
+                                      {g.score == null ? (
+                                        <span className="text-[11px] text-slate-500">
+                                          —
+                                        </span>
+                                      ) : (
+                                        <span className="text-xs font-semibold text-slate-900">
+                                          {g.score
+                                            .toFixed(2)
+                                            .replace(".", ",")}
+                                          /{g.scale}
+                                        </span>
+                                      )}
+                                    </div>
+                                  </li>
+                                ))}
+                                {gradesForKid.length === 0 && (
+                                  <li className="text-xs text-slate-500">
+                                    Aucune note publiée pour l’instant.
+                                  </li>
+                                )}
+                              </ul>
+                            </div>
+                          )}
+                        </div>
+                      </TiltCard>
+                    );
+                  })}
+                </div>
+              )}
+            </section>
+          )}
+
+          {/* ───── CAHIER DE NOTES — onglet dédié ───── */}
+          {showNotesSection && (
+            <section className="mb-6 rounded-md border border-slate-200 bg-white p-5 shadow-sm">
+              <div className="mb-3 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                <div>
+                  <div className="text-sm font-semibold uppercase tracking-wide text-slate-700">
+                    Cahier de notes
+                  </div>
+                  <div className="text-xs text-slate-500">
+                    Notes publiées par les enseignants, filtrées par période.
+                  </div>
+                </div>
+                <div className="flex flex-wrap items-center gap-2 text-[11px]">
+                  {(["week", "month", "all", "custom"] as const).map((m) => {
+                    const active = gradeFilterMode === m;
+                    return (
+                      <button
+                        key={m}
+                        type="button"
+                        onClick={() => setGradeFilterMode(m)}
+                        className={[
+                          "rounded-full px-3 py-1",
+                          active
+                            ? "bg-[#003766] text-white"
+                            : "bg-slate-100 text-slate-700 hover:bg-slate-200",
+                        ].join(" ")}
+                      >
+                        {gradeFilterLabel(m)}
+                      </button>
+                    );
+                  })}
+                  <div className="flex items-center gap-1">
+                    <Input
+                      type="date"
+                      value={gradeFrom}
+                      disabled={gradeFilterMode !== "custom"}
+                      onChange={(e) => setGradeFrom(e.target.value)}
+                      className="h-8 w-32 px-2 py-1 text-[11px]"
+                    />
+                    <span className="text-[11px] text-slate-500">au</span>
+                    <Input
+                      type="date"
+                      value={gradeTo}
+                      disabled={gradeFilterMode !== "custom"}
+                      onChange={(e) => setGradeTo(e.target.value)}
+                      className="h-8 w-32 px-2 py-1 text-[11px]"
+                    />
+                  </div>
+                </div>
               </div>
-            )}
-          </main>
-        </div>
+
+              {loadingKids ? (
+                <div className="space-y-3">
+                  <Skeleton className="h-24 w-full" />
+                  <Skeleton className="h-24 w-full" />
+                </div>
+              ) : !hasKids ? (
+                <div className="rounded-md border bg-slate-50 p-4 text-sm text-slate-700">
+                  Aucun enfant lié à votre compte pour l’instant.
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {filteredKids.map((k, idx) => {
+                    const allGrades = kidGrades[k.id] || [];
+                    const byDate = allGrades.filter((g) =>
+                      isInDateRange(
+                        g.eval_date,
+                        gradeFrom || undefined,
+                        gradeTo || undefined,
+                      ),
+                    );
+                    const subjectKey = (g: KidGradeRow) =>
+                      g.subject_id || g.subject_name || "";
+                    const subjectMap = new Map<string, string>();
+                    for (const g of byDate) {
+                      const key = subjectKey(g);
+                      if (!key) continue;
+                      if (!subjectMap.has(key)) {
+                        subjectMap.set(key, g.subject_name || "—");
+                      }
+                    }
+                    const subjectList = Array.from(subjectMap.entries());
+                    const activeSubject =
+                      activeSubjectPerKid[k.id] && activeSubjectPerKid[k.id] !== "all"
+                        ? activeSubjectPerKid[k.id]
+                        : "all";
+
+                    const filtered =
+                      activeSubject === "all"
+                        ? byDate
+                        : byDate.filter(
+                            (g) => subjectKey(g) === activeSubject,
+                          );
+
+                    const t = themeFor(idx);
+
+                    return (
+                      <div
+                        key={k.id}
+                        className="rounded-md border border-slate-200 bg-slate-50/60 p-4"
+                      >
+                        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                          <div className="flex min-w-0 items-center gap-2">
+                            <div
+                              className={`grid h-8 w-8 place-items-center rounded-lg text-[11px] font-semibold ${t.chipBg} ${t.chipText}`}
+                            >
+                              {getInitials(k.full_name)}
+                            </div>
+                            <div className="min-w-0">
+                              <div className="truncate text-sm font-semibold text-slate-900">
+                                {k.full_name}
+                              </div>
+                              <div className="text-[11px] text-slate-600">
+                                {k.class_label || "—"}
+                              </div>
+                            </div>
+                          </div>
+                          <div className="flex flex-wrap items-center gap-1 text-[11px]">
+                            <span className="text-slate-500">Matières :</span>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setActiveSubjectPerKid((m) => ({
+                                  ...m,
+                                  [k.id]: "all",
+                                }))
+                              }
+                              className={[
+                                "rounded-full px-2 py-0.5",
+                                activeSubject === "all"
+                                  ? "bg-slate-900 text-white"
+                                  : "bg-white text-slate-700 hover:bg-slate-200",
+                              ].join(" ")}
+                            >
+                              Toutes
+                            </button>
+                            {subjectList.map(([id, label]) => (
+                              <button
+                                key={id}
+                                type="button"
+                                onClick={() =>
+                                  setActiveSubjectPerKid((m) => ({
+                                    ...m,
+                                    [k.id]: id,
+                                  }))
+                                }
+                                className={[
+                                  "max-w-[120px] truncate rounded-full px-2 py-0.5",
+                                  activeSubject === id
+                                    ? "bg-[#003766] text-white"
+                                    : "bg-white text-slate-700 hover:bg-slate-200",
+                                ].join(" ")}
+                                title={label}
+                              >
+                                {label}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        {filtered.length === 0 ? (
+                          <div className="rounded-md bg-white px-3 py-2 text-xs text-slate-600">
+                            Aucune note publiée pour cette période.
+                          </div>
+                        ) : (
+                          <div className="overflow-x-auto rounded-md border bg-white">
+                            <table className="min-w-full text-xs">
+                              <thead className="bg-slate-50">
+                                <tr>
+                                  <th className="px-2 py-1.5 text-left">
+                                    Date
+                                  </th>
+                                  <th className="px-2 py-1.5 text-left">
+                                    Matière
+                                  </th>
+                                  <th className="px-2 py-1.5 text-left">
+                                    Type
+                                  </th>
+                                  <th className="px-2 py-1.5 text-left">
+                                    Titre
+                                  </th>
+                                  <th className="px-2 py-1.5 text-right">
+                                    Note
+                                  </th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {filtered.map((g) => (
+                                  <tr
+                                    key={g.id}
+                                    className="border-t last:border-b-0"
+                                  >
+                                    <td className="px-2 py-1.5">
+                                      {fmt(g.eval_date)}
+                                    </td>
+                                    <td className="px-2 py-1.5">
+                                      {g.subject_name || "—"}
+                                    </td>
+                                    <td className="px-2 py-1.5">
+                                      {gradeKindLabel(g.eval_kind)}
+                                    </td>
+                                    <td className="px-2 py-1.5">
+                                      {g.title || "—"}
+                                    </td>
+                                    <td className="px-2 py-1.5 text-right">
+                                      {g.score == null ? (
+                                        <span className="text-slate-500">
+                                          —
+                                        </span>
+                                      ) : (
+                                        <span className="font-semibold text-slate-900">
+                                          {g.score
+                                            .toFixed(2)
+                                            .replace(".", ",")}
+                                          /{g.scale}
+                                        </span>
+                                      )}
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </section>
+          )}
+        </main>
       </div>
     </div>
   );

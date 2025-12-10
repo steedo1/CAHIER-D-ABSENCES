@@ -27,6 +27,8 @@ type JustifItem = {
   minutes: number;
   minutes_late: number;
   reason: string | null;
+  // nombre de marques d'ABSENCE pour cet élève sur la période filtrée
+  absence_mark_count_for_student?: number;
 };
 
 type JustifyBody = {
@@ -71,7 +73,10 @@ async function enqueueJustifiedNotifications(
     .in("institution_id", instIds);
 
   if (vmErr) {
-    console.warn("[attendance.unjustified] enqueueJustified vmErr", vmErr.message);
+    console.warn(
+      "[attendance.unjustified] enqueueJustified vmErr",
+      vmErr.message,
+    );
     return;
   }
   if (!marks || !marks.length) return;
@@ -398,8 +403,10 @@ export async function GET(req: NextRequest) {
     const {
       data: { user },
     } = await supa.auth.getUser();
-    if (!user)
+
+    if (!user) {
       return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+    }
 
     const srv = getSupabaseServiceClient();
 
@@ -408,8 +415,9 @@ export async function GET(req: NextRequest) {
       .select("role,institution_id")
       .eq("profile_id", user.id);
 
-    if (rolesErr)
+    if (rolesErr) {
       return NextResponse.json({ error: rolesErr.message }, { status: 400 });
+    }
 
     const roles = (rawRoles || []) as RoleRow[];
     const instIds = pickInstitutions(roles);
@@ -440,8 +448,10 @@ export async function GET(req: NextRequest) {
     if (statusParam === "absent") {
       q = q.eq("status", "absent");
     } else if (statusParam === "late") {
+      // on garde tout ce qui n'est pas "present" ni "absent"
       q = q.neq("status", "present").neq("status", "absent");
     } else {
+      // "all" : tout sauf "present"
       q = q.neq("status", "present");
     }
 
@@ -452,13 +462,15 @@ export async function GET(req: NextRequest) {
     q = q.order("started_at", { ascending: false }).limit(500);
 
     const { data: rows, error: marksErr } = await q;
-    if (marksErr)
+    if (marksErr) {
       return NextResponse.json({ error: marksErr.message }, { status: 400 });
+    }
 
     if (!rows || rows.length === 0) {
       return NextResponse.json({ items: [] as JustifItem[] });
     }
 
+    // IDs de base
     const markIds = Array.from(
       new Set(rows.map((r: any) => String(r.id)).filter(Boolean)),
     );
@@ -468,9 +480,25 @@ export async function GET(req: NextRequest) {
     const classIds = Array.from(
       new Set(rows.map((r: any) => String(r.class_id)).filter(Boolean)),
     );
-    const subjectIds = Array.from(
-      new Set(rows.map((r: any) => String(r.subject_id)).filter(Boolean)),
-    );
+
+    // Matières + compteur d'absences par élève
+    const subjectIdsSet = new Set<string>();
+    const absenceCountByStudent = new Map<string, number>();
+
+    for (const r of rows as any[]) {
+      if (r.subject_id) {
+        subjectIdsSet.add(String(r.subject_id));
+      }
+      if (r.status === "absent" && r.student_id) {
+        const sid = String(r.student_id);
+        absenceCountByStudent.set(
+          sid,
+          (absenceCountByStudent.get(sid) ?? 0) + 1,
+        );
+      }
+    }
+
+    const subjectIds = Array.from(subjectIdsSet);
 
     // Justifs
     const { data: marksInfo, error: marksInfoErr } = await srv
@@ -478,15 +506,16 @@ export async function GET(req: NextRequest) {
       .select("id, reason")
       .in("id", markIds);
 
-    if (marksInfoErr)
+    if (marksInfoErr) {
       return NextResponse.json(
         { error: marksInfoErr.message },
         { status: 400 },
       );
+    }
 
     const reasonById = new Map<string, string | null>();
     for (const m of marksInfo || []) {
-      reasonById.set(String(m.id), (m as any).reason ?? null);
+      reasonById.set(String((m as any).id), (m as any).reason ?? null);
     }
 
     // Élèves
@@ -495,18 +524,23 @@ export async function GET(req: NextRequest) {
       .select("id, first_name, last_name, matricule")
       .in("id", studentIds);
 
-    if (studentsErr)
+    if (studentsErr) {
       return NextResponse.json(
         { error: studentsErr.message },
         { status: 400 },
       );
+    }
 
     const studentsById = new Map<
       string,
-      { first_name: string | null; last_name: string | null; matricule: string | null }
+      {
+        first_name: string | null;
+        last_name: string | null;
+        matricule: string | null;
+      }
     >();
     for (const s of students || []) {
-      studentsById.set(String(s.id), {
+      studentsById.set(String((s as any).id), {
         first_name: (s as any).first_name ?? null,
         last_name: (s as any).last_name ?? null,
         matricule: (s as any).matricule ?? null,
@@ -519,83 +553,68 @@ export async function GET(req: NextRequest) {
       .select("id, label, level")
       .in("id", classIds);
 
-    if (classesErr)
+    if (classesErr) {
       return NextResponse.json(
         { error: classesErr.message },
         { status: 400 },
       );
+    }
 
     const classesById = new Map<
       string,
       { label: string | null; level: string | null }
     >();
     for (const c of classes || []) {
-      classesById.set(String(c.id), {
+      classesById.set(String((c as any).id), {
         label: (c as any).label ?? null,
         level: (c as any).level ?? null,
       });
     }
 
-    // Matières de base
-    const subjectsById = new Map<string, string | null>();
+    // Matières : nom de base + nom personnalisé
+    const subjectNameBaseById = new Map<string, string | null>();
+    const instSubjectNameBySubjectId = new Map<string, string | null>();
+
     if (subjectIds.length > 0) {
+      // nom officiel (subjects)
       const { data: subjects, error: subjectsErr } = await srv
         .from("subjects")
         .select("id, name")
         .in("id", subjectIds);
-      if (subjectsErr)
+
+      if (subjectsErr) {
         return NextResponse.json(
           { error: subjectsErr.message },
           { status: 400 },
         );
-      for (const s of subjects || []) {
-        subjectsById.set(String(s.id), (s as any).name ?? null);
       }
-    }
 
-    // Noms personnalisés (2 cas possibles)
-    const instSubjectNameByInstId = new Map<string, string | null>();
-    const instSubjectNameBySubjectId = new Map<string, string | null>();
-
-    if (subjectIds.length > 0) {
-      // Cas 1 : v_mark_minutes.subject_id = institution_subjects.id
-      const { data: instById, error: instByIdErr } = await srv
-        .from("institution_subjects")
-        .select("id, subject_id, custom_name")
-        .eq("institution_id", institution_id)
-        .in("id", subjectIds);
-      if (instByIdErr) {
-        return NextResponse.json(
-          { error: instByIdErr.message },
-          { status: 400 },
+      for (const s of subjects || []) {
+        subjectNameBaseById.set(
+          String((s as any).id),
+          (s as any).name ?? null,
         );
       }
-      for (const is of instById || []) {
-        const instId = String((is as any).id);
-        const subjId = String((is as any).subject_id);
-        const name = (is as any).custom_name ?? null;
-        instSubjectNameByInstId.set(instId, name);
-        instSubjectNameBySubjectId.set(subjId, name);
-      }
 
-      // Cas 2 : v_mark_minutes.subject_id = subjects.id
-      const { data: instBySubj, error: instBySubjErr } = await srv
+      // nom perso (institution_subjects)
+      const { data: instSubjects, error: instSubjectsErr } = await srv
         .from("institution_subjects")
-        .select("id, subject_id, custom_name")
+        .select("subject_id, custom_name")
         .eq("institution_id", institution_id)
         .in("subject_id", subjectIds);
-      if (instBySubjErr) {
+
+      if (instSubjectsErr) {
         return NextResponse.json(
-          { error: instBySubjErr.message },
+          { error: instSubjectsErr.message },
           { status: 400 },
         );
       }
-      for (const is of instBySubj || []) {
-        const instId = String((is as any).id);
-        const subjId = String((is as any).subject_id);
-        const name = (is as any).custom_name ?? null;
-        instSubjectNameByInstId.set(instId, name);
-        instSubjectNameBySubjectId.set(subjId, name);
+
+      for (const is of instSubjects || []) {
+        instSubjectNameBySubjectId.set(
+          String((is as any).subject_id),
+          (is as any).custom_name ?? null,
+        );
       }
     }
 
@@ -626,11 +645,10 @@ export async function GET(req: NextRequest) {
 
       let subject_name: string | null = null;
       if (subject_id) {
-        subject_name =
-          instSubjectNameByInstId.get(subject_id) ??
-          instSubjectNameBySubjectId.get(subject_id) ??
-          subjectsById.get(subject_id) ??
-          null;
+        const baseSubj = subjectNameBaseById.get(subject_id) || "";
+        const customSubj = instSubjectNameBySubjectId.get(subject_id) || "";
+        const name = (customSubj || baseSubj || "").trim();
+        subject_name = name || null;
       }
 
       const fullName = [student.last_name, student.first_name]
@@ -653,6 +671,8 @@ export async function GET(req: NextRequest) {
         minutes: Number(r.minutes ?? 0),
         minutes_late: Number(r.minutes_late ?? 0),
         reason,
+        absence_mark_count_for_student:
+          absenceCountByStudent.get(student_id) ?? 0,
       });
     }
 
