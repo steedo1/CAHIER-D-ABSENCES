@@ -571,50 +571,90 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    // Matières : nom de base + nom personnalisé
-    const subjectNameBaseById = new Map<string, string | null>();
-    const instSubjectNameBySubjectId = new Map<string, string | null>();
+    // ───── Résolution robuste des matières ─────
+    const subjectNameById = new Map<string, string | null>(); // subjects.id -> name
+    const instById = new Map<
+      string,
+      { subject_id: string | null; custom_name: string | null }
+    >(); // institution_subjects.id -> ...
+    const instBySubjectId = new Map<
+      string,
+      { inst_id: string; custom_name: string | null }
+    >(); // subject_id -> ...
 
     if (subjectIds.length > 0) {
-      // nom officiel (subjects)
-      const { data: subjects, error: subjectsErr } = await srv
-        .from("subjects")
-        .select("id, name")
+      // 1) institution_subjects vus comme id (cas v_mark_minutes.subject_id = institution_subjects.id)
+      const { data: instByIdRows, error: instByIdErr } = await srv
+        .from("institution_subjects")
+        .select("id, subject_id, custom_name")
+        .eq("institution_id", institution_id)
         .in("id", subjectIds);
 
-      if (subjectsErr) {
+      if (instByIdErr) {
         return NextResponse.json(
-          { error: subjectsErr.message },
+          { error: instByIdErr.message },
           { status: 400 },
         );
       }
 
-      for (const s of subjects || []) {
-        subjectNameBaseById.set(
-          String((s as any).id),
-          (s as any).name ?? null,
-        );
-      }
-
-      // nom perso (institution_subjects)
-      const { data: instSubjects, error: instSubjectsErr } = await srv
+      // 2) institution_subjects vus comme subject_id (cas v_mark_minutes.subject_id = subjects.id)
+      const { data: instBySubjRows, error: instBySubjErr } = await srv
         .from("institution_subjects")
-        .select("subject_id, custom_name")
+        .select("id, subject_id, custom_name")
         .eq("institution_id", institution_id)
         .in("subject_id", subjectIds);
 
-      if (instSubjectsErr) {
+      if (instBySubjErr) {
         return NextResponse.json(
-          { error: instSubjectsErr.message },
+          { error: instBySubjErr.message },
           { status: 400 },
         );
       }
 
-      for (const is of instSubjects || []) {
-        instSubjectNameBySubjectId.set(
-          String((is as any).subject_id),
-          (is as any).custom_name ?? null,
-        );
+      const allInst = [...(instByIdRows || []), ...(instBySubjRows || [])];
+
+      const baseSubjectIds = new Set<string>();
+
+      for (const is of allInst) {
+        const instId = String((is as any).id);
+        const subjId = (is as any).subject_id
+          ? String((is as any).subject_id)
+          : null;
+        const custom = (is as any).custom_name ?? null;
+
+        if (instId) {
+          instById.set(instId, { subject_id: subjId, custom_name: custom });
+        }
+        if (subjId) {
+          instBySubjectId.set(subjId, { inst_id: instId, custom_name: custom });
+          baseSubjectIds.add(subjId);
+        }
+      }
+
+      // On ajoute aussi les subjectIds bruts au cas où v_mark_minutes.subject_id = subjects.id
+      for (const sid of subjectIds) {
+        baseSubjectIds.add(sid);
+      }
+
+      if (baseSubjectIds.size > 0) {
+        const { data: subjects, error: subjectsErr } = await srv
+          .from("subjects")
+          .select("id, name")
+          .in("id", Array.from(baseSubjectIds));
+
+        if (subjectsErr) {
+          return NextResponse.json(
+            { error: subjectsErr.message },
+            { status: 400 },
+          );
+        }
+
+        for (const s of subjects || []) {
+          subjectNameById.set(
+            String((s as any).id),
+            (s as any).name ?? null,
+          );
+        }
       }
     }
 
@@ -643,12 +683,49 @@ export async function GET(req: NextRequest) {
         level: null,
       };
 
+      // Résolution du nom de matière
       let subject_name: string | null = null;
+
       if (subject_id) {
-        const baseSubj = subjectNameBaseById.get(subject_id) || "";
-        const customSubj = instSubjectNameBySubjectId.get(subject_id) || "";
-        const name = (customSubj || baseSubj || "").trim();
-        subject_name = name || null;
+        // Cas 1 : v_mark_minutes.subject_id = institution_subjects.id
+        const instFromId = instById.get(subject_id);
+        if (instFromId) {
+          if (instFromId.custom_name && instFromId.custom_name.trim() !== "") {
+            subject_name = instFromId.custom_name.trim();
+          } else if (
+            instFromId.subject_id &&
+            subjectNameById.get(instFromId.subject_id)
+          ) {
+            subject_name = subjectNameById
+              .get(instFromId.subject_id)!
+              ?.toString()
+              .trim();
+          }
+        }
+
+        // Cas 2 : v_mark_minutes.subject_id = subjects.id
+        if (!subject_name && subjectNameById.get(subject_id)) {
+          subject_name = subjectNameById.get(subject_id) || null;
+        }
+
+        // Cas 3 : aucun des deux, mais on a un institution_subjects basé sur ce subject_id
+        if (!subject_name) {
+          const instFromSubj = instBySubjectId.get(subject_id);
+          if (instFromSubj) {
+            if (
+              instFromSubj.custom_name &&
+              instFromSubj.custom_name.trim() !== ""
+            ) {
+              subject_name = instFromSubj.custom_name.trim();
+            } else if (subjectNameById.get(subject_id)) {
+              subject_name = subjectNameById.get(subject_id) || null;
+            }
+          }
+        }
+
+        if (subject_name) {
+          subject_name = subject_name.trim() || null;
+        }
       }
 
       const fullName = [student.last_name, student.first_name]
