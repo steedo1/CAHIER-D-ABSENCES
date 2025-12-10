@@ -27,8 +27,6 @@ type JustifItem = {
   minutes: number;
   minutes_late: number;
   reason: string | null;
-  // nombre de marques d'ABSENCE pour cet élève sur la période filtrée
-  absence_mark_count_for_student?: number;
 };
 
 type JustifyBody = {
@@ -195,7 +193,6 @@ async function enqueueJustifiedNotifications(
       const stId = String((g as any).student_id || "");
       if (!stId) continue;
 
-      // on considère notifications_enabled === false comme désactivé
       const enabled = (g as any).notifications_enabled !== false;
       if (!enabled) continue;
 
@@ -354,7 +351,7 @@ async function enqueueJustifiedNotifications(
         student_id,
         session_id: m.session_id,
         mark_id: markId,
-        parent_id: null, // ✅ branche: profile_id non nul, parent_id nul
+        parent_id: null,
         profile_id: profileId,
         channels: ["inapp", "push"],
         channel: null,
@@ -448,10 +445,8 @@ export async function GET(req: NextRequest) {
     if (statusParam === "absent") {
       q = q.eq("status", "absent");
     } else if (statusParam === "late") {
-      // on garde tout ce qui n'est pas "present" ni "absent"
       q = q.neq("status", "present").neq("status", "absent");
     } else {
-      // "all" : tout sauf "present"
       q = q.neq("status", "present");
     }
 
@@ -470,7 +465,6 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ items: [] as JustifItem[] });
     }
 
-    // IDs de base
     const markIds = Array.from(
       new Set(rows.map((r: any) => String(r.id)).filter(Boolean)),
     );
@@ -481,23 +475,13 @@ export async function GET(req: NextRequest) {
       new Set(rows.map((r: any) => String(r.class_id)).filter(Boolean)),
     );
 
-    // Matières + compteur d'absences par élève
+    // Matières : on ne cumule plus les heures d'absence par élève ici.
     const subjectIdsSet = new Set<string>();
-    const absenceCountByStudent = new Map<string, number>();
-
     for (const r of rows as any[]) {
       if (r.subject_id) {
         subjectIdsSet.add(String(r.subject_id));
       }
-      if (r.status === "absent" && r.student_id) {
-        const sid = String(r.student_id);
-        absenceCountByStudent.set(
-          sid,
-          (absenceCountByStudent.get(sid) ?? 0) + 1,
-        );
-      }
     }
-
     const subjectIds = Array.from(subjectIdsSet);
 
     // Justifs
@@ -572,18 +556,17 @@ export async function GET(req: NextRequest) {
     }
 
     // ───── Résolution robuste des matières ─────
-    const subjectNameById = new Map<string, string | null>(); // subjects.id -> name
+    const subjectNameById = new Map<string, string | null>();
     const instById = new Map<
       string,
       { subject_id: string | null; custom_name: string | null }
-    >(); // institution_subjects.id -> ...
+    >();
     const instBySubjectId = new Map<
       string,
       { inst_id: string; custom_name: string | null }
-    >(); // subject_id -> ...
+    >();
 
     if (subjectIds.length > 0) {
-      // 1) institution_subjects vus comme id (cas v_mark_minutes.subject_id = institution_subjects.id)
       const { data: instByIdRows, error: instByIdErr } = await srv
         .from("institution_subjects")
         .select("id, subject_id, custom_name")
@@ -597,7 +580,6 @@ export async function GET(req: NextRequest) {
         );
       }
 
-      // 2) institution_subjects vus comme subject_id (cas v_mark_minutes.subject_id = subjects.id)
       const { data: instBySubjRows, error: instBySubjErr } = await srv
         .from("institution_subjects")
         .select("id, subject_id, custom_name")
@@ -631,7 +613,6 @@ export async function GET(req: NextRequest) {
         }
       }
 
-      // On ajoute aussi les subjectIds bruts au cas où v_mark_minutes.subject_id = subjects.id
       for (const sid of subjectIds) {
         baseSubjectIds.add(sid);
       }
@@ -687,7 +668,6 @@ export async function GET(req: NextRequest) {
       let subject_name: string | null = null;
 
       if (subject_id) {
-        // Cas 1 : v_mark_minutes.subject_id = institution_subjects.id
         const instFromId = instById.get(subject_id);
         if (instFromId) {
           if (instFromId.custom_name && instFromId.custom_name.trim() !== "") {
@@ -703,12 +683,10 @@ export async function GET(req: NextRequest) {
           }
         }
 
-        // Cas 2 : v_mark_minutes.subject_id = subjects.id
         if (!subject_name && subjectNameById.get(subject_id)) {
           subject_name = subjectNameById.get(subject_id) || null;
         }
 
-        // Cas 3 : aucun des deux, mais on a un institution_subjects basé sur ce subject_id
         if (!subject_name) {
           const instFromSubj = instBySubjectId.get(subject_id);
           if (instFromSubj) {
@@ -748,8 +726,6 @@ export async function GET(req: NextRequest) {
         minutes: Number(r.minutes ?? 0),
         minutes_late: Number(r.minutes_late ?? 0),
         reason,
-        absence_mark_count_for_student:
-          absenceCountByStudent.get(student_id) ?? 0,
       });
     }
 
@@ -864,7 +840,6 @@ export async function POST(req: NextRequest) {
         reasonByMarkId,
       );
 
-      // 🔔 déclenchement immédiat du worker push pour les parents
       try {
         const ok = await triggerPushDispatch({
           reason: "attendance:justified",

@@ -33,8 +33,7 @@ type JustifRow = {
   minutes_late: number;
   reason: string | null;
 
-  // ✅ nouveau, renvoyé par /api/admin/attendance/unjustified
-  // = nombre de marques d'ABSENCE pour cet élève sur la période filtrée
+  // champ optionnel (plus utilisé pour l'affichage, chaque ligne = 1 marque)
   absence_mark_count_for_student?: number;
 };
 
@@ -99,17 +98,13 @@ function formatDateTime(iso: string) {
 }
 
 function formatStatus(row: JustifRow) {
-  // ✅ Absence : on raisonne en MARQUES / HEURES, pas en minutes brutes
+  // ✅ ABSENCE : chaque ligne représente UNE marque pour UN créneau.
+  // On n'affiche plus le cumul d'heures sur la période pour l'élève.
   if (row.status === "absent") {
-    const marks = row.absence_mark_count_for_student ?? 0;
-    // au moins 1h si on n'a pas l'info
-    const hours = Math.max(1, marks || 1);
-    const label =
-      hours > 1 ? `${hours}h d’absence (marques)` : "1h d’absence (1 marque)";
-    return `Absent • ${label}`;
+    return "Absent • 1h d’absence (1 marque)";
   }
 
-  // ✅ Retard : on garde les minutes réelles de retard
+  // ✅ RETARD : on garde les minutes réelles de retard
   if (row.minutes_late > 0) {
     return `Retard • ${Math.round(row.minutes_late)} min`;
   }
