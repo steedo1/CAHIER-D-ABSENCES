@@ -346,6 +346,37 @@ function formatYesNo(value: boolean | null | undefined): string {
   return "—";
 }
 
+/**
+ * Appréciation automatique par matière en fonction de la moyenne /20
+ *
+ * | Moyenne | Appréciation |
+ * | ------- | ------------ |
+ * | ≥ 18    | Excellent    |
+ * | 16 – 18 | TRES bien    |
+ * | 14 – 16 | bien         |
+ * | 12 – 14 | ASSEZ Bien   |
+ * | 10 – 12 | PASSABLE     |
+ * | 8 – 10  | Insuffisant  |
+ * | 6 – 8   | FAIBLE       |
+ * | < 6     | BLAME        |
+ */
+function computeSubjectAppreciation(
+  avg: number | null | undefined
+): string {
+  if (avg === null || avg === undefined) return "";
+  if (!Number.isFinite(avg)) return "";
+
+  const a = Number(avg);
+  if (a >= 18) return "Excellent";
+  if (a >= 16) return "TRES bien";
+  if (a >= 14) return "bien";
+  if (a >= 12) return "ASSEZ Bien";
+  if (a >= 10) return "PASSABLE";
+  if (a >= 8) return "Insuffisant";
+  if (a >= 6) return "FAIBLE";
+  return "BLAME";
+}
+
 /* ───────── Rangs sous-matières (côté front) ───────── */
 
 function applyComponentRanksFront(
@@ -758,7 +789,13 @@ function StudentBulletinCard({
               Rang
             </th>
             <th className="border border-slate-400 px-1 py-1 text-left">
-              Professeur
+              Appréciations
+            </th>
+            <th className="border border-slate-400 px-1 py-1 text-left">
+              Professeurs
+            </th>
+            <th className="border border-slate-400 px-1 py-1 text-center">
+              Signature
             </th>
           </tr>
         </thead>
@@ -775,6 +812,8 @@ function StudentBulletinCard({
               cell && cell.subject_rank != null ? `${cell.subject_rank}e` : "—";
 
             const subjectTeacher = cell?.teacher_name || "";
+
+            const appreciationLabel = computeSubjectAppreciation(avg);
 
             const subComps = subjectCompsBySubject.get(s.subject_id) ?? [];
 
@@ -798,7 +837,13 @@ function StudentBulletinCard({
                     {subjectRankLabel}
                   </td>
                   <td className="border border-slate-400 px-1 py-0.5">
+                    {appreciationLabel}
+                  </td>
+                  <td className="border border-slate-400 px-1 py-0.5">
                     {subjectTeacher}
+                  </td>
+                  <td className="border border-slate-400 px-1 py-2 align-bottom">
+                    <div className="h-[1px] w-full border-b border-slate-500" />
                   </td>
                 </tr>
 
@@ -834,6 +879,8 @@ function StudentBulletinCard({
                         {cRank != null ? `${cRank}e` : "—"}
                       </td>
                       <td className="border border-slate-400 px-1 py-0.5" />
+                      <td className="border border-slate-400 px-1 py-0.5" />
+                      <td className="border border-slate-400 px-1 py-0.5" />
                     </tr>
                   );
                 })}
@@ -848,6 +895,8 @@ function StudentBulletinCard({
             <td className="border border-slate-400 px-1 py-0.5 text-center">
               {formatNumber(coeffTotal, 0)}
             </td>
+            <td className="border border-slate-400 px-1 py-0.5" />
+            <td className="border border-slate-400 px-1 py-0.5" />
             <td className="border border-slate-400 px-1 py-0.5" />
             <td className="border border-slate-400 px-1 py-0.5" />
             <td className="border border-slate-400 px-1 py-0.5" />

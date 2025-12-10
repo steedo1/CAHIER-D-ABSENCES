@@ -94,8 +94,19 @@ export async function POST(req: NextRequest) {
 
   const body = await req.json().catch(() => ({} as any));
   const session_id = String(body?.session_id || "");
-  const marks: Mark[] = Array.isArray(body?.marks) ? body.marks : [];
-  if (!session_id) return NextResponse.json({ error: "missing_session" }, { status: 400 });
+
+  // 🔹 on récupère le payload brut
+  const rawMarks: Mark[] = Array.isArray(body?.marks) ? body.marks : [];
+  if (!session_id)
+    return NextResponse.json({ error: "missing_session" }, { status: 400 });
+
+  // 🔹 de-duplication : un seul Mark par student_id (on garde le DERNIER dans le tableau)
+  const marksByStudent = new Map<string, Mark>();
+  for (const m of rawMarks) {
+    if (!m || !m.student_id) continue;
+    marksByStudent.set(String(m.student_id), m);
+  }
+  const marks = Array.from(marksByStudent.values());
 
   // 1) Charger la séance (+ started_at pour cohérence)
   const { data: sess, error: sErr } = await srv
@@ -150,7 +161,10 @@ export async function POST(req: NextRequest) {
     .maybeSingle();
   if (cErr) return NextResponse.json({ error: cErr.message }, { status: 400 });
   if (!clsRow?.institution_id)
-    return NextResponse.json({ error: "class_institution_missing" }, { status: 400 });
+    return NextResponse.json(
+      { error: "class_institution_missing" },
+      { status: 400 }
+    );
 
   const { data: inst, error: iErr } = await srv
     .from("institutions")
@@ -228,7 +242,10 @@ export async function POST(req: NextRequest) {
       // fallback : si pas de période trouvée, essayer vs started_at ; sinon 0
       if (session.started_at) {
         // comparer l'heure locale de callAt vs l'heure locale de started_at
-        const { hm: startedHM } = localHMAndWeekday(String(session.started_at), tz);
+        const { hm: startedHM } = localHMAndWeekday(
+          String(session.started_at),
+          tz
+        );
         const diff = callMin - hmToMin(startedHM);
         return Math.max(0, Math.floor(diff));
       }
@@ -242,6 +259,7 @@ export async function POST(req: NextRequest) {
   const toDelete: string[] = [];
   const absentHours = Math.round((expectedMin / 60) * 100) / 100;
 
+  // 🔹 on travaille avec le tableau "marks" déjà dédupliqué
   for (const m of marks) {
     if (!m?.student_id) continue;
     const reason = (m?.reason ?? null) ? String(m.reason).trim() : null;
@@ -291,7 +309,8 @@ export async function POST(req: NextRequest) {
         onConflict: "session_id,student_id",
         count: "exact",
       });
-    if (error) return NextResponse.json({ error: error.message }, { status: 400 });
+    if (error)
+      return NextResponse.json({ error: error.message }, { status: 400 });
     upserted = count || toUpsert.length;
   }
 
@@ -301,7 +320,8 @@ export async function POST(req: NextRequest) {
       .delete({ count: "exact" })
       .eq("session_id", session_id)
       .in("student_id", toDelete);
-    if (error) return NextResponse.json({ error: error.message }, { status: 400 });
+    if (error)
+      return NextResponse.json({ error: error.message }, { status: 400 });
     deleted = count || toDelete.length;
   }
 
