@@ -10,6 +10,7 @@ function toDayRange(from: string, to: string) {
   const toLocalNext = new Date(ty, tm - 1, td + 1, 0, 0, 0, 0);
   return { fromISO: fromLocal.toISOString(), toISOExclusive: toLocalNext.toISOString() };
 }
+
 function niceName(p: any) {
   const dn = String(p?.display_name ?? "").trim();
   const ln = String(p?.last_name ?? "").trim();
@@ -20,10 +21,12 @@ function niceName(p: any) {
   const id = String(p?.id ?? "");
   return dn || `${ln} ${fn}`.trim() || emLocal || ph || `(enseignant ${id.slice(0, 6)})`;
 }
+
 async function tableExists(db: any, name: string) {
   const { error } = await db.from(name).select("*").limit(1);
   return !error;
 }
+
 /** Pour un subjects.id, renvoie tous les IDs possibles pour sessions.subject_id */
 async function resolveSessionSubjectIds(
   db: any,
@@ -42,15 +45,15 @@ async function resolveSessionSubjectIds(
   } catch {}
   return Array.from(ids);
 }
+
 const pad2 = (n: number) => String(n).padStart(2, "0");
-const uniq = <T,>(arr: T[]) =>
-  Array.from(new Set((arr || []).filter(Boolean))) as T[];
 
 /* ───────── helpers HH:MM / dates (Abidjan) ───────── */
 function hmToMin(hhmm: string) {
   const [h, m] = (hhmm || "00:00").split(":").map((x) => parseInt(x, 10));
   return (isFinite(h) ? h : 0) * 60 + (isFinite(m) ? m : 0);
 }
+
 function minToHM(min: number) {
   const h = Math.floor(min / 60);
   const m = min % 60;
@@ -113,6 +116,7 @@ function buildUniformSlots(startHour: number, endHour: number, slotMin: number) 
   }
   return out;
 }
+
 /** ancre l’arrondi sur startHour et coupe hors plage */
 function bucketToSlotStartAligned(
   h: number,
@@ -176,6 +180,7 @@ export async function GET(req: NextRequest) {
         { error: "from & to requis (YYYY-MM-DD)" },
         { status: 400 }
       );
+
     const { fromISO, toISOExclusive } = toDayRange(from, to);
 
     // Établissement de l’utilisateur courant (RLS)
@@ -194,7 +199,6 @@ export async function GET(req: NextRequest) {
 
     /* ============================ TIMESHEET ============================ */
     if (mode === "timesheet") {
-      // ... (inchangé, je ne répète pas les commentaires)
       const usePeriods = searchParams.get("use_periods") === "1";
       const slotMin = Math.max(1, parseInt(searchParams.get("slot") || "60", 10));
       const startHour = Math.min(
@@ -257,8 +261,10 @@ export async function GET(req: NextRequest) {
         .eq("teacher_id", teacher_id);
       if (inst) qCT = qCT.eq("institution_id", inst);
       const { data: ctPairs } = await qCT;
+
       const pairKey = (c?: string | null, s?: string | null) =>
         `${c ?? ""}|${s ?? ""}`;
+
       const allowedPairs = new Set<string>(
         (ctPairs || []).map((r) =>
           pairKey(String(r.class_id), r.subject_id ? String(r.subject_id) : null)
@@ -304,6 +310,7 @@ export async function GET(req: NextRequest) {
       const byId = new Map<string, any>();
       for (const s of sOwn || []) byId.set(String(s.id), s);
       for (const s of sFromClass || []) byId.set(String(s.id), s);
+
       const sessions = Array.from(byId.values()).map((s: any) => ({
         id: String(s.id),
         class_id: s.class_id ? String(s.class_id) : null,
@@ -318,6 +325,7 @@ export async function GET(req: NextRequest) {
       const classIdsFromSessions = Array.from(
         new Set(sessions.map((s) => s.class_id).filter(Boolean))
       ) as string[];
+
       let classes: { id: string; label: string }[] = [];
       if (classIdsForTeacher.length) {
         const { data: clsA } = await srv
@@ -329,6 +337,7 @@ export async function GET(req: NextRequest) {
           label: String(c.label ?? ""),
         }));
       }
+
       const known = new Set(classes.map((c) => c.id));
       const missingClasses = classIdsFromSessions.filter((id) => !known.has(id));
       if (missingClasses.length) {
@@ -342,6 +351,7 @@ export async function GET(req: NextRequest) {
         }));
         classes = [...classes, ...extra];
       }
+
       classes.sort((a, b) => a.label.localeCompare(b.label, "fr"));
 
       let slots: { start: string; end: string }[] = [];
@@ -364,6 +374,7 @@ export async function GET(req: NextRequest) {
         minute: "2-digit",
         hour12: false,
       });
+
       const getHM = (d: Date) => {
         const parts = fmtHM.formatToParts(d);
         const h = parseInt(parts.find((p) => p.type === "hour")?.value || "0", 10);
@@ -383,14 +394,15 @@ export async function GET(req: NextRequest) {
       > = {};
 
       const slotStarts = slots.map((s) => s.start);
+
       function slotStartForHM(hhmm: string): string | null {
         if (!hhmm) return null;
         if (slotStarts.includes(hhmm)) return hhmm;
         if (usePeriods) {
           const t = hmToMin(hhmm);
           for (const sl of slots) {
-            const a = hmToMin(sl.start),
-              b = hmToMin(sl.end);
+            const a = hmToMin(sl.start);
+            const b = hmToMin(sl.end);
             if (t >= a && t < b) return sl.start;
           }
           return null;
@@ -437,7 +449,9 @@ export async function GET(req: NextRequest) {
         }
       }
 
-      for (const k of Object.keys(cells)) cells[k].sort((a, b) => a.localeCompare(b));
+      for (const k of Object.keys(cells)) {
+        cells[k].sort((a, b) => a.localeCompare(b));
+      }
 
       const total_minutes = sessions.reduce(
         (acc, s) => acc + (s.expected_minutes || 0),
@@ -465,6 +479,7 @@ export async function GET(req: NextRequest) {
     let qUR = srv.from("user_roles").select("profile_id").eq("role", "teacher");
     if (inst) qUR = qUR.eq("institution_id", inst);
     const { data: ur } = await qUR;
+
     const allTeacherIds = Array.from(
       new Set((ur || []).map((r: any) => String(r.profile_id)))
     );
@@ -484,6 +499,7 @@ export async function GET(req: NextRequest) {
       const nm = String(r.teacher_name ?? "").trim();
       if (!teacherNameById.has(pid) && nm) teacherNameById.set(pid, nm);
     }
+
     const missing = allTeacherIds.filter((id) => !teacherNameById.has(id));
     if (missing.length) {
       const { data: profs } = await srv
@@ -499,9 +515,11 @@ export async function GET(req: NextRequest) {
       const nm = String(r.subject_name ?? "").trim();
       if (!nm) continue;
       if (!subjectNamesPerTeacher[tid]) subjectNamesPerTeacher[tid] = [];
-      if (!subjectNamesPerTeacher[tid].includes(nm))
+      if (!subjectNamesPerTeacher[tid].includes(nm)) {
         subjectNamesPerTeacher[tid].push(nm);
+      }
     }
+
     for (const k of Object.keys(subjectNamesPerTeacher)) {
       subjectNamesPerTeacher[k].sort((a, b) => a.localeCompare(b, "fr"));
     }
@@ -512,7 +530,7 @@ export async function GET(req: NextRequest) {
       teacherScope = teacherScope.filter((id) => allowed.has(id));
     }
 
-    // 3) Séances (⚠️ on inclut class_id + actual_call_at)
+    // 3) Séances (avec class_id + actual_call_at)
     const sessionsTable2 =
       (await tableExists(srv, "teacher_sessions")) ?
         "teacher_sessions" :
@@ -538,17 +556,15 @@ export async function GET(req: NextRequest) {
 
     let sessRows: any[] = [];
     if (mode === "detail") {
-      if (!teacher_id)
+      if (!teacher_id) {
         return NextResponse.json(
           { error: "teacher_id requis pour mode=detail" },
           { status: 400 }
         );
+      }
       let q = baseSessions().eq("teacher_id", teacher_id);
       if (subject_id) {
-        const { data: withSubj } = await q.in(
-          "subject_id",
-          allowedSessionSubjectIds
-        );
+        const { data: withSubj } = await q.in("subject_id", allowedSessionSubjectIds);
         const { data: noSubj } = await baseSessions()
           .eq("teacher_id", teacher_id)
           .is("subject_id", null);
@@ -561,10 +577,7 @@ export async function GET(req: NextRequest) {
       let q = baseSessions();
       if (teacherScope.length) q = q.in("teacher_id", teacherScope);
       if (subject_id) {
-        const { data: withSubj } = await q.in(
-          "subject_id",
-          allowedSessionSubjectIds
-        );
+        const { data: withSubj } = await q.in("subject_id", allowedSessionSubjectIds);
         const { data: noSubj } = await baseSessions()
           .in("teacher_id", teacherScope)
           .is("subject_id", null);
@@ -575,8 +588,19 @@ export async function GET(req: NextRequest) {
       }
     }
 
+    // 3.a on enlève les *mêmes id* (au cas où)
     const seen = new Set<string>();
-    const sessionsRaw = (sessRows || [])
+    type SessionRow = {
+      id: string;
+      teacher_id: string | null;
+      subject_id: string | null;
+      class_id: string | null;
+      started_at: string;
+      actual_call_at: string | null;
+      expected_minutes: number;
+    };
+
+    const sessionsRaw: SessionRow[] = (sessRows || [])
       .filter((r: any) => (seen.has(r.id) ? false : (seen.add(r.id), true)))
       .map((s: any) => ({
         id: String(s.id),
@@ -589,14 +613,11 @@ export async function GET(req: NextRequest) {
       }));
 
     /**
-     * DÉDOUBLONNAGE PAR CRÉNEAU
-     * ─────────────────────────
-     * clé = teacher_id | class_id | subject_id | date(Abidjan) | HH:MM(started_at)
-     * On fusionne :
-     *  - started_at    → le plus ancien
-     *  - actual_call_at→ le plus ancien non nul
-     *  - expected_minutes → le max
+     * 3.b DÉDOUBLONNAGE PAR CRÉNEAU (AGRESSIF)
+     *  1 séance = 1 prof + 1 classe + 1 jour (Abidjan) + 1 HH:MM (Abidjan)
+     *  → on ignore subject_id & institution_id pour compter les séances.
      */
+
     const TZ2 = "Africa/Abidjan";
     const fmtYMD2 = new Intl.DateTimeFormat("en-CA", {
       timeZone: TZ2,
@@ -634,52 +655,45 @@ export async function GET(req: NextRequest) {
       }
     };
 
-    type SessionRow = {
-      id: string;
-      teacher_id: string | null;
-      subject_id: string | null;
-      class_id: string | null;
-      started_at: string;
-      actual_call_at: string | null;
-      expected_minutes: number;
-    };
-
     const sessionsBySlot = new Map<string, SessionRow>();
 
     for (const s of sessionsRaw) {
       const tid = s.teacher_id || "";
       const cid = s.class_id || "";
-      const sid = s.subject_id || "";
       const day = getDateKeyFromISO(s.started_at);
       const hm = getHMKeyFromISO(s.started_at);
-      const key = `${tid}|${cid}|${sid}|${day}|${hm}`;
+      const key = `${tid}|${cid}|${day}|${hm}`;
 
       const existing = sessionsBySlot.get(key);
       if (!existing) {
-        // première séance pour ce créneau
         sessionsBySlot.set(key, { ...s });
       } else {
-        // fusion : on prend les valeurs les plus "complètes"
+        // on garde la plus ancienne heure prévue
         if (s.started_at < existing.started_at) {
           existing.started_at = s.started_at;
         }
+        // on garde le 1er appel réel non nul
         if (s.actual_call_at) {
           if (!existing.actual_call_at || s.actual_call_at < existing.actual_call_at) {
             existing.actual_call_at = s.actual_call_at;
           }
         }
+        // minutes prévues = max des deux
         if ((s.expected_minutes || 0) > (existing.expected_minutes || 0)) {
           existing.expected_minutes = s.expected_minutes;
+        }
+        // si la séance canonique n'a pas encore de subject_id, on prend celui-ci
+        if (!existing.subject_id && s.subject_id) {
+          existing.subject_id = s.subject_id;
         }
       }
     }
 
-    // ✅ liste finale de séances DÉDOUBLONNÉES (1 par créneau)
+    // ✅ liste finale dédoublonnée (1 entrée par créneau)
     const sessions = Array.from(sessionsBySlot.values());
 
     /* ======================== SUMMARY (après dédoublonnage) ======================== */
     if (mode === "summary") {
-      // on compte maintenant les séances + on garde les minutes pour compat
       const minutesByTeacher = new Map<string, number>();
       const sessionsByTeacher = new Map<string, number>();
 
@@ -697,7 +711,7 @@ export async function GET(req: NextRequest) {
         );
         sessionsByTeacher.set(
           tid,
-          (sessionsByTeacher.get(tid) || 0) + 1 // ✅ 1 seule fois par créneau
+          (sessionsByTeacher.get(tid) || 0) + 1 // ✅ 1 seule séance par créneau
         );
       }
 
@@ -722,18 +736,19 @@ export async function GET(req: NextRequest) {
 
     /* ======================== DETAIL (après dédoublonnage) ======================== */
 
-    // On travaille maintenant sur sessions (dédoublonné)
     const subIds = Array.from(
       new Set(sessions.map((s) => s.subject_id).filter(Boolean))
     ) as string[];
+
     const subjectNameById: Record<string, string> = {};
     if (subIds.length) {
       const { data: subs } = await srv
         .from("subjects")
         .select("id,name")
         .in("id", subIds);
-      for (const s of subs || [])
+      for (const s of subs || []) {
         subjectNameById[String(s.id)] = String(s.name ?? "");
+      }
       const unresolved = subIds.filter((id) => !subjectNameById[id]);
       if (unresolved.length) {
         const { data: links } = await srv
@@ -753,8 +768,9 @@ export async function GET(req: NextRequest) {
             .select("id,name")
             .in("id", baseIds);
           const nameByBase = new Map<string, string>();
-          for (const s of subs2 || [])
+          for (const s of subs2 || []) {
             nameByBase.set(String(s.id), String(s.name ?? ""));
+          }
           for (const l of links || []) {
             const nm = nameByBase.get(String(l.subject_id));
             if (nm) subjectNameById[String(l.id)] = nm;
@@ -766,14 +782,16 @@ export async function GET(req: NextRequest) {
     const classIds = Array.from(
       new Set(sessions.map((s) => s.class_id).filter(Boolean))
     ) as string[];
+
     const classLabelById: Record<string, string> = {};
     if (classIds.length) {
       const { data: klass } = await srv
         .from("classes")
         .select("id,label")
         .in("id", classIds);
-      for (const c of klass || [])
+      for (const c of klass || []) {
         classLabelById[String(c.id)] = String(c.label ?? "");
+      }
     }
 
     const detailed = sessions
@@ -788,8 +806,7 @@ export async function GET(req: NextRequest) {
           id: r.id,
           dateISO: r.started_at,
           subject_name: r.subject_id
-            ? subjectNameById[r.subject_id] ||
-              "Discipline non renseignée"
+            ? subjectNameById[r.subject_id] || "Discipline non renseignée"
             : "Discipline non renseignée",
           class_id: r.class_id,
           class_label: r.class_id
@@ -805,6 +822,7 @@ export async function GET(req: NextRequest) {
       (acc, it) => acc + (it.real_minutes || 0),
       0
     );
+
     return NextResponse.json({
       rows: detailed,
       count: detailed.length,
