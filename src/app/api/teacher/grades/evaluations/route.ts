@@ -19,6 +19,14 @@ async function getCurrentUser() {
   return { user: data.user, error: null as string | null };
 }
 
+function normalizeRoleSet(input: Array<string | null | undefined>) {
+  return new Set(
+    input
+      .map((r) => (typeof r === "string" ? r.trim() : ""))
+      .filter((r) => r.length > 0)
+  );
+}
+
 /**
  * Renvoie le "mode" d'accès de l'utilisateur pour une classe :
  * - "admin"        : admin/super_admin de l'établissement
@@ -31,67 +39,91 @@ async function getAccessModeForClass(
   userId: string,
   classId: string
 ): Promise<"admin" | "teacher" | "class_device" | null> {
-  // Profil (institution + téléphone)
+  // 1) Profil (institution + téléphone + rôle éventuel)
   const { data: profile, error: pErr } = await svc
     .from("profiles")
-    .select("id,institution_id,phone")
+    .select("id,institution_id,phone,role")
     .eq("id", userId)
     .maybeSingle();
 
-  if (pErr || !profile?.institution_id) return null;
+  if (pErr || !profile?.id) return null;
 
-  // Classe (pour vérifier l'établissement + les téléphones associés)
+  // 2) Classe (pour vérifier l'établissement + téléphones associés)
   const { data: cls, error: cErr } = await svc
     .from("classes")
     .select("id,institution_id,class_phone_e164,device_phone_e164")
     .eq("id", classId)
     .maybeSingle();
 
-  if (cErr || !cls) return null;
+  if (cErr || !cls?.id) return null;
 
-  // Rôles de l'utilisateur dans cet établissement
+  /**
+   * IMPORTANT :
+   * On “ancre” l’accès sur l’institution de la CLASSE quand elle existe,
+   * pour éviter les refus à cause d’un profile.institution_id null/mal renseigné,
+   * et éviter des accès croisés inter-établissements.
+   */
+  const classInstitutionId = (cls as any)?.institution_id as string | null | undefined;
+  const profileInstitutionId = (profile as any)?.institution_id as string | null | undefined;
+  const institutionId = classInstitutionId || profileInstitutionId || null;
+
+  if (!institutionId) return null;
+
+  // 3) Rôles (table user_roles) + fallback éventuel via profiles.role
   const { data: roles, error: rErr } = await svc
     .from("user_roles")
     .select("role")
     .eq("profile_id", profile.id)
-    .eq("institution_id", profile.institution_id);
+    .eq("institution_id", institutionId);
 
   if (rErr) {
     console.error("[grades/evaluations] roles error", rErr);
   }
 
-  const roleSet = new Set<string>((roles ?? []).map((r: any) => r.role as string));
+  const roleSet = normalizeRoleSet([
+    ...(roles ?? []).map((r: any) => r?.role as string | null),
+    (profile as any)?.role as string | null, // fallback (si chez toi le rôle est stocké dans profiles)
+  ]);
 
-  // 1) Admins (super_admin / admin)
+  // 4) Compte classe (téléphone associé à la classe) :
+  //    on se base sur le téléphone, même si user_roles est incomplet,
+  //    sinon tu te retrouves “accès refusé” sur les comptes téléphone.
+  const phone = (profile as any)?.phone as string | null | undefined;
+  if (
+    phone &&
+    (phone === (cls as any)?.class_phone_e164 ||
+      phone === (cls as any)?.device_phone_e164)
+  ) {
+    return "class_device";
+  }
+
+  // 5) Admins (super_admin / admin)
   if (roleSet.has("super_admin") || roleSet.has("admin")) {
     return "admin";
   }
 
-  // 2) Prof affecté à la classe
-  if (roleSet.has("teacher")) {
-    const { data: ct } = await svc
+  // 6) Prof affecté à la classe :
+  //    - accepte teacher OU educator (compat)
+  //    - et surtout : si l’affectation existe dans class_teachers, on autorise,
+  //      même si le rôle est mal renseigné.
+  if (roleSet.has("teacher") || roleSet.has("educator") || roleSet.size === 0) {
+    const { data: ct, error: ctErr } = await svc
       .from("class_teachers")
       .select("id")
       .eq("class_id", classId)
       .eq("teacher_id", profile.id)
-      .eq("institution_id", profile.institution_id)
+      .eq("institution_id", institutionId)
       .is("end_date", null)
       .maybeSingle();
 
+    if (ctErr) {
+      console.error("[grades/evaluations] class_teachers error", ctErr);
+    }
     if (ct) return "teacher";
   }
 
-  // 3) Compte classe (téléphone associé à la classe)
-  if (roleSet.has("class_device")) {
-    const phone = profile.phone;
-    if (
-      phone &&
-      (phone === cls.class_phone_e164 || phone === cls.device_phone_e164)
-    ) {
-      return "class_device";
-    }
-  }
-
+  // 7) Dernier fallback : certains projets ont un rôle “teacher/educator”
+  //    sans user_roles, mais sans affectation => on refuse (normal).
   return null;
 }
 
@@ -222,7 +254,6 @@ export async function GET(req: NextRequest) {
       { status: 403 }
     );
   }
-  const isAdmin = mode === "admin";
 
   // On ne filtre par subject_id que s'il est VALIDE dans subjects
   const safeSubjectId = await getValidSubjectId(svc, subject_id);
@@ -237,11 +268,6 @@ export async function GET(req: NextRequest) {
   if (safeSubjectId) {
     query = query.eq("subject_id", safeSubjectId);
   }
-
-  // ⚠️ On NE filtre plus sur teacher_id :
-  // - un prof autorisé à cette classe voit toutes les évaluations de la matière
-  // - le compte classe aussi
-  // - l'admin voit tout (via isAdmin si on veut étendre plus tard)
 
   const { data, error } = await query
     .order("eval_date", { ascending: true })
