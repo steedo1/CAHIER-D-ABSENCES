@@ -8,7 +8,8 @@ import { Printer, RefreshCw } from "lucide-react";
 
 type ClassRow = {
   id: string;
-  name: string;
+  name?: string;
+  label?: string | null;
   level?: string | null;
   academic_year?: string | null;
 };
@@ -223,7 +224,11 @@ function computeCouncilMentions(
   let distinction: CouncilMentions["distinction"] = null;
   let sanction: CouncilMentions["sanction"] = null;
 
-  if (generalAvg !== null && generalAvg !== undefined && Number.isFinite(generalAvg)) {
+  if (
+    generalAvg !== null &&
+    generalAvg !== undefined &&
+    Number.isFinite(generalAvg)
+  ) {
     const g = generalAvg;
     if (g >= 16) distinction = "excellence";
     else if (g >= 14) distinction = "honour";
@@ -336,9 +341,51 @@ function computeSubjectAppreciation(avg: number | null | undefined): string {
   return "Blâme";
 }
 
+/* ───────── QR Code (dans le carré en haut à droite) ───────── */
+
+const QR_SIZE = 58;
+const __QR_CACHE = new Map<string, string>();
+
+async function generateQrDataUrl(
+  text: string,
+  size: number = QR_SIZE
+): Promise<string | null> {
+  const cacheKey = `${size}|${text}`;
+  const cached = __QR_CACHE.get(cacheKey);
+  if (cached) return cached;
+
+  try {
+    // ⚠️ Import dynamique NON statique pour éviter de casser le build si qrcode n’est pas installé.
+    // Si tu veux l’activer : npm i qrcode
+    const dynamicImport: any = new Function("m", "return import(m)");
+    const mod: any = await dynamicImport("qrcode");
+    const toDataURL =
+      (mod && typeof mod.toDataURL === "function" && mod.toDataURL) ||
+      (mod?.default &&
+        typeof mod.default.toDataURL === "function" &&
+        mod.default.toDataURL);
+
+    if (typeof toDataURL !== "function") return null;
+
+    const url: string = await toDataURL(text, {
+      width: size,
+      margin: 0,
+      errorCorrectionLevel: "M",
+    });
+
+    if (url) __QR_CACHE.set(cacheKey, url);
+    return url || null;
+  } catch (e) {
+    console.warn("[Bulletins] QR indisponible (module qrcode manquant ?)", e);
+    return null;
+  }
+}
+
 /* ───────── Rangs sous-matières (côté front) ───────── */
 
-function applyComponentRanksFront(items: (BulletinItemBase | BulletinItemWithRank)[]) {
+function applyComponentRanksFront(
+  items: (BulletinItemBase | BulletinItemWithRank)[]
+) {
   type Entry = { itemIndex: number; compIndex: number; avg: number; key: string };
   const byKey = new Map<string, Entry[]>();
 
@@ -379,7 +426,12 @@ function applyComponentRanksFront(items: (BulletinItemBase | BulletinItemWithRan
 /* ───────── Rangs groupes de matières ───────── */
 
 function applyGroupRanksFront(items: (BulletinItemBase | BulletinItemWithRank)[]) {
-  type Entry = { itemIndex: number; groupIndex: number; avg: number; groupId: string };
+  type Entry = {
+    itemIndex: number;
+    groupIndex: number;
+    avg: number;
+    groupId: string;
+  };
   const byGroup = new Map<string, Entry[]>();
 
   items.forEach((it, itemIndex) => {
@@ -422,7 +474,9 @@ function computeRanksAndStats(res: BulletinResponse | null): EnrichedBulletin | 
   if (!res) return null;
   const items = res.items ?? [];
 
-  const withAvg = items.filter((it) => typeof it.general_avg === "number" && it.general_avg !== null);
+  const withAvg = items.filter(
+    (it) => typeof it.general_avg === "number" && it.general_avg !== null
+  );
 
   const stats: ClassStats = { highest: null, lowest: null, classAvg: null };
 
@@ -538,16 +592,17 @@ function StudentBulletinCard({
   const nationalityLabel = item.nationality || "—";
   const regimeLabel =
     item.regime ||
-    (item.is_scholarship === true ? "Boursier" : item.is_scholarship === false ? "Non boursier" : "—");
+    (item.is_scholarship === true
+      ? "Boursier"
+      : item.is_scholarship === false
+      ? "Non boursier"
+      : "—");
   const boarderLabel = item.is_boarder == null ? "—" : item.is_boarder ? "Interne" : "Externe";
   const repeaterLabel = formatYesNo(item.is_repeater);
   const assignedLabel = formatYesNo(item.is_assigned ?? item.is_affecte ?? null);
 
   // Photo (optionnel)
-  const photoUrl =
-    (item as any).photo_url ||
-    (item as any).student_photo_url ||
-    null;
+  const photoUrl = (item as any).photo_url || (item as any).student_photo_url || null;
 
   const subjectCompsBySubject = useMemo(() => {
     const map = new Map<string, BulletinSubjectComponent[]>();
@@ -594,9 +649,55 @@ function StudentBulletinCard({
   const absenceHours =
     conduct && typeof conduct.absence_minutes === "number" ? conduct.absence_minutes / 60 : null;
 
-  const mentions = computeCouncilMentions(item.general_avg, conduct?.total ?? null, conductTotalMax ?? null);
+  const mentions = computeCouncilMentions(
+    item.general_avg,
+    conduct?.total ?? null,
+    conductTotalMax ?? null
+  );
 
   const tick = (checked: boolean) => (checked ? "☑" : "□");
+
+  // ✅ QR payload (pas de nom complet) + rendu dans le carré en haut à droite
+  const qrText = useMemo(() => {
+    const payload = {
+      v: 1,
+      inst: (institution?.institution_code || "").trim() || undefined,
+      year: academicYear || undefined,
+      class_id: classInfo.id,
+      from: period.from,
+      to: period.to,
+      student_id: item.student_id,
+      matricule: item.matricule || undefined,
+    };
+    return JSON.stringify(payload);
+  }, [
+    institution?.institution_code,
+    academicYear,
+    classInfo.id,
+    period.from,
+    period.to,
+    item.student_id,
+    item.matricule,
+  ]);
+
+  const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const url = await generateQrDataUrl(qrText, QR_SIZE);
+      if (!cancelled) setQrDataUrl(url);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [qrText]);
+
+  const renderSignatureLine = () => (
+    <div className="flex h-[14px] items-end">
+      <div className="w-full border-t border-black" />
+    </div>
+  );
 
   const renderSubjectBlock = (s: BulletinSubject) => {
     const cell = item.per_subject.find((ps) => ps.subject_id === s.subject_id);
@@ -612,16 +713,14 @@ function StudentBulletinCard({
     return (
       <React.Fragment key={s.subject_id}>
         <tr>
-          <td className="bdr px-1 py-[1px]">
-            {s.subject_name}
-          </td>
+          <td className="bdr px-1 py-[1px]">{s.subject_name}</td>
           <td className="bdr px-1 py-[1px] text-center">{formatNumber(avg)}</td>
           <td className="bdr px-1 py-[1px] text-center">{formatNumber(s.coeff_bulletin, 0)}</td>
           <td className="bdr px-1 py-[1px] text-center">{formatNumber(moyCoeff)}</td>
           <td className="bdr px-1 py-[1px] text-center">{subjectRankLabel}</td>
           <td className="bdr px-1 py-[1px]">{appreciationLabel}</td>
           <td className="bdr px-1 py-[1px]">{subjectTeacher}</td>
-          <td className="bdr px-1 py-[1px]" />
+          <td className="bdr px-1 py-[1px]">{renderSignatureLine()}</td>
         </tr>
 
         {subComps.map((comp) => {
@@ -633,11 +732,11 @@ function StudentBulletinCard({
 
           return (
             <tr key={`${s.subject_id}-${comp.id}`} className="text-[9px] text-slate-700">
-              <td className="bdr px-1 py-[1px] pl-4">
-                {comp.short_label || comp.label}
-              </td>
+              <td className="bdr px-1 py-[1px] pl-4">{comp.short_label || comp.label}</td>
               <td className="bdr px-1 py-[1px] text-center">{formatNumber(cAvg)}</td>
-              <td className="bdr px-1 py-[1px] text-center">{formatNumber(comp.coeff_in_subject, 0)}</td>
+              <td className="bdr px-1 py-[1px] text-center">
+                {formatNumber(comp.coeff_in_subject, 0)}
+              </td>
               <td className="bdr px-1 py-[1px] text-center">{formatNumber(cMoyCoeff)}</td>
               <td className="bdr px-1 py-[1px] text-center">{cRank != null ? `${cRank}e` : "—"}</td>
               <td className="bdr px-1 py-[1px]" />
@@ -653,19 +752,22 @@ function StudentBulletinCard({
   const groupedSubjectIds = new Set<string>();
   const hasGroups = subjectGroups && subjectGroups.length > 0;
 
+  const countryName = safeUpper((institution?.country_name || "RÉPUBLIQUE DE CÔTE D'IVOIRE").trim());
+  const countryMotto = (institution?.country_motto || "Union - Discipline - Travail").trim();
+  const ministryName = safeUpper(
+    (institution?.ministry_name || "MINISTÈRE DE L'ÉDUCATION NATIONALE").trim()
+  );
+
   return (
     <div className="print-page print-break mx-auto bg-white text-black">
       {/* ───────── ENTÊTE OFFICIEL (centre Bulletin) ───────── */}
       <div className="bdr mb-1 p-1">
         <div className="grid grid-cols-3 items-start gap-2">
-          {/* Gauche : Ministère */}
+          {/* Gauche : République / devise / ministère */}
           <div className="text-center text-[9px] leading-tight">
-            <div className="font-semibold uppercase">
-              {(institution?.ministry_name || "MINISTÈRE DE L'ÉDUCATION NATIONALE").trim()}
-            </div>
-            <div className="text-[8px]">
-              {(institution?.country_motto || "Union - Discipline - Travail").trim()}
-            </div>
+            <div className="font-semibold uppercase">{countryName}</div>
+            <div className="text-[8px]">{countryMotto}</div>
+            <div className="mt-1 text-[8px] font-semibold uppercase">{ministryName}</div>
             <div className="mt-1 text-[8px] uppercase">
               {(institution?.institution_region || "").trim()}
             </div>
@@ -679,21 +781,33 @@ function StudentBulletinCard({
             <div className="text-[10px] font-semibold">{periodTitle(period)}</div>
           </div>
 
-          {/* Droite : Année scolaire + emplacement QR (ignoré) */}
+          {/* Droite : Année scolaire + QR */}
           <div className="flex justify-end gap-2">
             <div className="text-right text-[9px] leading-tight">
               <div>Année scolaire</div>
               <div className="font-semibold">{academicYear || "—"}</div>
               {institution?.institution_code && (
                 <div className="mt-1 text-[8px]">
-                  Code : <span className="font-semibold">{institution.institution_code}</span>
+                  Code :{" "}
+                  <span className="font-semibold">{institution.institution_code}</span>
+                </div>
+              )}
+              {(period.from || period.to) && (
+                <div className="mt-1 text-[8px]">
+                  {period.from ? formatDateFR(period.from) : "—"} →{" "}
+                  {period.to ? formatDateFR(period.to) : "—"}
                 </div>
               )}
             </div>
 
-            {/* QR ignoré : on garde un cadre vide (modèle) */}
-            <div className="bdr flex h-[58px] w-[58px] items-center justify-center text-[8px] text-slate-500">
-              {/* QR */}
+            {/* ✅ QR dans le carré en haut à droite */}
+            <div className="bdr flex h-[58px] w-[58px] items-center justify-center overflow-hidden bg-white">
+              {qrDataUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={qrDataUrl} alt="QR" className="h-full w-full object-contain" />
+              ) : (
+                <div className="text-[8px] text-slate-500">QR</div>
+              )}
             </div>
           </div>
         </div>
@@ -720,6 +834,7 @@ function StudentBulletinCard({
             <div className="text-[9px]">
               {institution?.institution_postal_address || ""}
               {institution?.institution_phone ? ` • Tél : ${institution.institution_phone}` : ""}
+              {institution?.institution_status ? ` • ${institution.institution_status}` : ""}
             </div>
           </div>
         </div>
@@ -805,9 +920,7 @@ function StudentBulletinCard({
               // eslint-disable-next-line @next/next/no-img-element
               <img src={photoUrl} alt="Photo élève" className="h-full w-full object-cover" />
             ) : (
-              <div className="text-center text-[8px] text-slate-500">
-                Photo
-              </div>
+              <div className="text-center text-[8px] text-slate-500">Photo</div>
             )}
           </div>
         </div>
@@ -846,9 +959,11 @@ function StudentBulletinCard({
 
                 const groupInfo = perGroupMap.get(g.id);
                 const groupAvg = groupInfo?.group_avg ?? null;
-                const groupRankLabel = groupInfo?.group_rank != null ? `${groupInfo.group_rank}e` : "—";
+                const groupRankLabel =
+                  groupInfo?.group_rank != null ? `${groupInfo.group_rank}e` : "—";
                 const groupCoeff = g.annual_coeff ?? 0;
-                const groupTotal = groupAvg !== null && groupCoeff ? round2(groupAvg * groupCoeff) : null;
+                const groupTotal =
+                  groupAvg !== null && groupCoeff ? round2(groupAvg * groupCoeff) : null;
 
                 const bilanLabel = (g.label || g.code || "BILAN").toUpperCase();
 
@@ -857,12 +972,16 @@ function StudentBulletinCard({
                   <tr key={`group-${g.id}`} className="bg-slate-50 font-bold">
                     <td className="bdr px-1 py-[1px]">{bilanLabel}</td>
                     <td className="bdr px-1 py-[1px] text-center">{formatNumber(groupAvg)}</td>
-                    <td className="bdr px-1 py-[1px] text-center">{groupCoeff ? formatNumber(groupCoeff, 0) : ""}</td>
-                    <td className="bdr px-1 py-[1px] text-center">{groupCoeff ? formatNumber(groupTotal) : ""}</td>
+                    <td className="bdr px-1 py-[1px] text-center">
+                      {groupCoeff ? formatNumber(groupCoeff, 0) : ""}
+                    </td>
+                    <td className="bdr px-1 py-[1px] text-center">
+                      {groupCoeff ? formatNumber(groupTotal) : ""}
+                    </td>
                     <td className="bdr px-1 py-[1px] text-center">{groupRankLabel}</td>
                     <td className="bdr px-1 py-[1px]" />
                     <td className="bdr px-1 py-[1px]" />
-                    <td className="bdr px-1 py-[1px]" />
+                    <td className="bdr px-1 py-[1px]">{renderSignatureLine()}</td>
                   </tr>,
                 ];
               })}
@@ -895,10 +1014,12 @@ function StudentBulletinCard({
           {conduct ? (
             <div className="mt-[2px] space-y-[2px]">
               <div>
-                Total d&apos;heures d&apos;absence :{" "}
-                <span className="font-semibold">{conduct.absence_count ?? 0}</span>
+                Absences : <span className="font-semibold">{conduct.absence_count ?? 0}</span>
                 {absenceHours !== null && (
-                  <span className="text-[8px] text-slate-600"> ({formatNumber(absenceHours, 1)} h)</span>
+                  <span className="text-[8px] text-slate-600">
+                    {" "}
+                    ({formatNumber(absenceHours, 1)} h)
+                  </span>
                 )}
               </div>
               <div>
@@ -910,9 +1031,28 @@ function StudentBulletinCard({
                   {formatNumber(conduct.total)} / {conductTotalMax ?? 20}
                 </span>
               </div>
+
+              {conductRubricMax && conduct?.breakdown && (
+                <div className="mt-1 grid grid-cols-2 gap-x-2 gap-y-[2px] text-[8px] text-slate-700">
+                  <div>
+                    Assiduité : {conduct.breakdown.assiduite} / {conductRubricMax.assiduite}
+                  </div>
+                  <div>
+                    Tenue : {conduct.breakdown.tenue} / {conductRubricMax.tenue}
+                  </div>
+                  <div>
+                    Moralité : {conduct.breakdown.moralite} / {conductRubricMax.moralite}
+                  </div>
+                  <div>
+                    Discipline : {conduct.breakdown.discipline} / {conductRubricMax.discipline}
+                  </div>
+                </div>
+              )}
             </div>
           ) : (
-            <div className="mt-[2px] text-[8px] text-slate-600">Données de conduite indisponibles.</div>
+            <div className="mt-[2px] text-[8px] text-slate-600">
+              Données de conduite indisponibles.
+            </div>
           )}
         </div>
 
@@ -922,7 +1062,8 @@ function StudentBulletinCard({
             {formatNumber(item.general_avg)} / 20
           </div>
           <div className="mt-[2px]">
-            Rang : <span className="font-semibold">{item.rank ? `${item.rank}e` : "—"}</span> / {total}
+            Rang : <span className="font-semibold">{item.rank ? `${item.rank}e` : "—"}</span> /{" "}
+            {total}
           </div>
         </div>
 
@@ -989,9 +1130,7 @@ function StudentBulletinCard({
       </div>
 
       <div className="mt-1 flex items-center justify-between text-[8px] text-black">
-        <div>
-          Fait à ......................................, le ...........................................
-        </div>
+        <div>Fait à ......................................, le ...........................................</div>
         <div className="print:hidden text-[8px] text-slate-500">
           Élève {index + 1} / {total}
         </div>
@@ -1033,7 +1172,11 @@ export default function BulletinsPage() {
         const res = await fetch("/api/admin/classes");
         if (!res.ok) throw new Error(`Erreur classes: ${res.status}`);
         const json = await res.json();
-        const items: ClassRow[] = Array.isArray(json) ? json : Array.isArray(json.items) ? json.items : [];
+        const items: ClassRow[] = Array.isArray(json)
+          ? json
+          : Array.isArray(json.items)
+          ? json.items
+          : [];
         setClasses(items);
         if (items.length > 0 && !selectedClassId) setSelectedClassId(items[0].id);
       } catch (e: any) {
@@ -1095,7 +1238,11 @@ export default function BulletinsPage() {
         }
 
         const json = await res.json();
-        const items: GradePeriod[] = Array.isArray(json) ? json : Array.isArray(json.items) ? json.items : [];
+        const items: GradePeriod[] = Array.isArray(json)
+          ? json
+          : Array.isArray(json.items)
+          ? json.items
+          : [];
         setPeriods(items);
       } catch (e) {
         console.error("[Bulletins] erreur chargement periods", e);
@@ -1156,7 +1303,9 @@ export default function BulletinsPage() {
       if (!resBulletin.ok) {
         const txt = await resBulletin.text();
         throw new Error(
-          `Erreur bulletin (${resBulletin.status}) : ${txt || "Impossible de générer le bulletin."}`
+          `Erreur bulletin (${resBulletin.status}) : ${
+            txt || "Impossible de générer le bulletin."
+          }`
         );
       }
 
@@ -1311,7 +1460,9 @@ export default function BulletinsPage() {
             onChange={(e) => setSelectedPeriodId(e.target.value)}
             disabled={periodsLoading || filteredPeriods.length === 0}
           >
-            <option value="">{filteredPeriods.length === 0 ? "Aucune période" : "Sélectionner une période…"}</option>
+            <option value="">
+              {filteredPeriods.length === 0 ? "Aucune période" : "Sélectionner une période…"}
+            </option>
             {filteredPeriods.map((p) => (
               <option key={p.id} value={p.id}>
                 {p.label || p.short_label || p.code || `${p.start_date} → ${p.end_date}`}
@@ -1324,21 +1475,22 @@ export default function BulletinsPage() {
         </div>
 
         <div className="md:col-span-2">
-          <label className="mb-1 block text-xs font-semibold uppercase text-slate-500">
-            Classe
-          </label>
+          <label className="mb-1 block text-xs font-semibold uppercase text-slate-500">Classe</label>
           <Select
             value={selectedClassId}
             onChange={(e) => setSelectedClassId(e.target.value)}
             disabled={classesLoading}
           >
             <option value="">Sélectionner une classe…</option>
-            {classes.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-                {c.level ? ` (${c.level})` : ""}
-              </option>
-            ))}
+            {classes.map((c) => {
+              const label = (c.name || c.label || "").trim();
+              return (
+                <option key={c.id} value={c.id}>
+                  {label || "Classe"}
+                  {c.level ? ` (${c.level})` : ""}
+                </option>
+              );
+            })}
           </Select>
         </div>
 
@@ -1349,9 +1501,7 @@ export default function BulletinsPage() {
           <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
         </div>
         <div className="md:col-span-3">
-          <label className="mb-1 block text-xs font-semibold uppercase text-slate-500">
-            Date de fin
-          </label>
+          <label className="mb-1 block text-xs font-semibold uppercase text-slate-500">Date de fin</label>
           <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
         </div>
       </div>
