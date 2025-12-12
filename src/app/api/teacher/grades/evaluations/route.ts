@@ -7,11 +7,19 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 type EvalKind = "devoir" | "interro_ecrite" | "interro_orale";
+type Role =
+  | "super_admin"
+  | "admin"
+  | "educator"
+  | "teacher"
+  | "parent"
+  | "class_device"
+  | string;
 
 type EvalRow = {
   id: string;
   class_id: string;
-  subject_id: string | null; // subjects.id (global)
+  subject_id: string | null;
   subject_component_id: string | null;
   teacher_id: string | null;
   eval_date: string;
@@ -22,82 +30,85 @@ type EvalRow = {
   published_at?: string | null;
 };
 
-type Role =
-  | "super_admin"
-  | "admin"
-  | "educator"
-  | "teacher"
-  | "class_device"
-  | string;
+type Ctx =
+  | {
+      ok: true;
+      supa: any;
+      srv: ReturnType<typeof getSupabaseServiceClient>;
+      userId: string;
+      profileId: string;
+      institutionId: string;
+      roles: Set<Role>;
+    }
+  | {
+      ok: false;
+      supa: any;
+      status: 401 | 403;
+      error: string;
+    };
 
-/* ───────── Context + roles ───────── */
+/* ───────── Context ───────── */
 
-async function getContext() {
+async function getContext(): Promise<Ctx> {
   const supa = await getSupabaseServerClient();
   const {
     data: { user },
+    error: authErr,
   } = await supa.auth.getUser();
 
-  if (!user) {
-    return {
-      supa,
-      user: null as any,
-      profile: null as any,
-      institutionId: null as any,
-      roles: new Set<Role>(),
-      srv: null as any,
-    };
+  if (authErr || !user?.id) {
+    return { ok: false, supa, status: 401, error: "unauthorized" };
   }
 
-  const { data: profile, error } = await supa
+  // ✅ IMPORTANT: pas de profiles.role chez toi
+  const { data: profile, error: profErr } = await supa
     .from("profiles")
-    .select("id,institution_id,role")
+    .select("id,institution_id")
     .eq("id", user.id)
     .maybeSingle();
 
-  if (error || !profile?.institution_id) {
-    console.error("[teacher/grades/evaluations] profile error", error);
-    return {
-      supa,
-      user,
-      profile: null as any,
-      institutionId: null as any,
-      roles: new Set<Role>(),
-      srv: null as any,
-    };
+  if (profErr) {
+    console.error("[teacher/grades/evaluations] profile error", profErr);
+    return { ok: false, supa, status: 401, error: "profile_error" };
+  }
+
+  if (!profile?.id || !profile?.institution_id) {
+    return { ok: false, supa, status: 403, error: "no_institution" };
   }
 
   const srv = getSupabaseServiceClient();
 
-  // roles via user_roles (si table utilisée) + fallback profile.role
+  // ✅ roles dans user_roles
   const roles = new Set<Role>();
-  if (profile?.role) roles.add(String(profile.role) as Role);
+  const { data: roleRows, error: rolesErr } = await srv
+    .from("user_roles")
+    .select("role")
+    .eq("profile_id", profile.id)
+    .eq("institution_id", profile.institution_id);
 
-  try {
-    const { data: roleRows, error: rolesErr } = await srv
-      .from("user_roles")
-      .select("role")
-      .eq("profile_id", profile.id)
-      .eq("institution_id", profile.institution_id);
-
-    if (!rolesErr && Array.isArray(roleRows)) {
-      for (const r of roleRows) roles.add(String((r as any).role) as Role);
-    }
-  } catch (e) {
-    // si table user_roles absente ou autre, on ignore (fallback profile.role)
+  if (rolesErr) {
+    console.error("[teacher/grades/evaluations] user_roles error", rolesErr);
+    // on continue quand même : l’accès prof sera validé par class_teachers
+  } else if (Array.isArray(roleRows)) {
+    for (const r of roleRows) roles.add(String((r as any).role) as Role);
   }
 
   return {
+    ok: true,
     supa,
-    user,
-    profile,
-    institutionId: profile.institution_id as string,
-    roles,
     srv,
+    userId: user.id,
+    profileId: profile.id,
+    institutionId: profile.institution_id,
+    roles,
   };
 }
 
-/* ───────── Helpers accès ───────── */
+/* ───────── Helpers ───────── */
+
+function isPrivileged(roles: Set<Role>) {
+  return roles.has("super_admin") || roles.has("admin") || roles.has("educator");
+}
 
 async function ensureClassInInstitution(
   srv: ReturnType<typeof getSupabaseServiceClient>,
@@ -121,9 +132,10 @@ async function ensureClassInInstitution(
 }
 
 /**
- * Retourne:
- * - globalId = subjects.id (utilisable dans grade_evaluations.subject_id)
- * - instId   = institution_subjects.id (souvent utilisé dans class_teachers.subject_id selon les projets)
+ * Comme ton /api/teacher/grades/components :
+ * - si subject_id est un subjects.id => globalId = subject_id
+ * - si subject_id est un institution_subjects.id => globalId = subject_id lié
+ * - si aucune correspondance => globalId = raw
  */
 async function resolveSubjectIds(
   srv: ReturnType<typeof getSupabaseServiceClient>,
@@ -136,14 +148,8 @@ async function resolveSubjectIds(
   const raw = rawSubjectId;
 
   // 1) raw est-il un subjects.id ?
-  const { data: subj } = await srv
-    .from("subjects")
-    .select("id")
-    .eq("id", raw)
-    .maybeSingle();
-
+  const { data: subj } = await srv.from("subjects").select("id").eq("id", raw).maybeSingle();
   if (subj?.id) {
-    // on tente de trouver institution_subjects correspondant
     const { data: instSub } = await srv
       .from("institution_subjects")
       .select("id,subject_id")
@@ -154,7 +160,7 @@ async function resolveSubjectIds(
     return { raw, globalId: subj.id, instId: instSub?.id ?? null };
   }
 
-  // 2) sinon raw est-il un institution_subjects.id ?
+  // 2) raw est-il un institution_subjects.id ?
   const { data: instSub2 } = await srv
     .from("institution_subjects")
     .select("id,subject_id")
@@ -163,61 +169,50 @@ async function resolveSubjectIds(
     .maybeSingle();
 
   if (instSub2?.id) {
-    return { raw, globalId: instSub2.subject_id ?? null, instId: instSub2.id };
+    return {
+      raw,
+      globalId: (instSub2.subject_id as string | null) ?? raw,
+      instId: instSub2.id,
+    };
   }
 
-  // 3) inconnu → on laisse raw, mais globalId null (évite insert FK foireux)
-  return { raw, globalId: null, instId: null };
+  // 3) fallback
+  return { raw, globalId: raw, instId: null };
 }
 
-async function ensureTeacherAccessForClass(
+async function teacherHasAccessToClass(
   srv: ReturnType<typeof getSupabaseServiceClient>,
   institutionId: string,
   profileId: string,
-  roles: Set<Role>,
   classId: string,
-  subjectCandidates: Array<string>
+  subjectCandidates: string[]
 ) {
-  // admins: accès total établissement
-  if (
-    roles.has("super_admin") ||
-    roles.has("admin") ||
-    roles.has("educator")
-  ) {
-    return true;
-  }
-
-  // teacher: doit être affecté à la classe
-  if (roles.has("teacher")) {
-    // 1) essaie avec match matière si on en a
-    if (subjectCandidates.length > 0) {
-      const { data } = await srv
-        .from("class_teachers")
-        .select("id")
-        .eq("institution_id", institutionId)
-        .eq("class_id", classId)
-        .eq("teacher_id", profileId)
-        .is("end_date", null)
-        .in("subject_id", subjectCandidates)
-        .limit(1);
-
-      if (data && data.length > 0) return true;
-    }
-
-    // 2) fallback: affecté à la classe (même si subject_id stocké différemment)
-    const { data: anyRow } = await srv
+  // affectation prof + matière si possible
+  if (subjectCandidates.length > 0) {
+    const { data } = await srv
       .from("class_teachers")
       .select("id")
       .eq("institution_id", institutionId)
       .eq("class_id", classId)
       .eq("teacher_id", profileId)
       .is("end_date", null)
+      .in("subject_id", subjectCandidates)
       .limit(1);
 
-    return !!(anyRow && anyRow.length > 0);
+    if (data && data.length > 0) return true;
   }
 
-  return false;
+  // sinon affectation prof à la classe (fallback)
+  const { data: anyRow } = await srv
+    .from("class_teachers")
+    .select("id")
+    .eq("institution_id", institutionId)
+    .eq("class_id", classId)
+    .eq("teacher_id", profileId)
+    .is("end_date", null)
+    .limit(1);
+
+  return !!(anyRow && anyRow.length > 0);
 }
 
 /* ───────────────── Push dispatch immédiat ───────────────── */
@@ -229,12 +224,10 @@ async function triggerImmediatePushDispatch(originHint?: string | null) {
       process.env.NEXT_PUBLIC_SITE_URL ||
       process.env.SITE_URL ||
       "";
-
     if (!base) return;
 
     const url = new URL("/api/push/dispatch", base).toString();
     const headers: Record<string, string> = { "content-type": "application/json" };
-
     if (process.env.PUSH_DISPATCH_SECRET) {
       headers["x-push-dispatch-secret"] = process.env.PUSH_DISPATCH_SECRET;
     }
@@ -251,14 +244,14 @@ async function triggerImmediatePushDispatch(originHint?: string | null) {
 }
 
 /* ==========================================
-   GET : liste des évaluations
+   GET
 ========================================== */
 export async function GET(req: NextRequest) {
   try {
     const url = new URL(req.url);
     const classId = url.searchParams.get("class_id") || "";
-    const subjectRaw = url.searchParams.get("subject_id");
-    const subjectParam = subjectRaw && subjectRaw !== "" ? subjectRaw : null;
+    const rawSubjectId = url.searchParams.get("subject_id");
+    const subjectParam = rawSubjectId && rawSubjectId !== "" ? rawSubjectId : null;
 
     const subjectComponentRaw =
       url.searchParams.get("subject_component_id") ??
@@ -270,10 +263,12 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ items: [] as EvalRow[] }, { status: 200 });
     }
 
-    const { user, profile, institutionId, roles, srv } = await getContext();
-    if (!user || !profile || !srv || !institutionId) {
-      return NextResponse.json({ items: [] as EvalRow[] }, { status: 401 });
+    const ctx = await getContext();
+    if (!ctx.ok) {
+      return NextResponse.json({ items: [] as EvalRow[] }, { status: ctx.status });
     }
+
+    const { srv, institutionId, profileId, roles } = ctx;
 
     const classOk = await ensureClassInInstitution(srv, classId, institutionId);
     if (!classOk) {
@@ -281,28 +276,13 @@ export async function GET(req: NextRequest) {
     }
 
     const { raw, globalId, instId } = await resolveSubjectIds(srv, institutionId, subjectParam);
+    const subjectCandidates = [raw, globalId, instId].filter((x): x is string => !!x);
 
-    const subjectCandidates = [raw, globalId, instId].filter(
-      (x): x is string => !!x
-    );
-
-    const accessOk = await ensureTeacherAccessForClass(
-      srv,
-      institutionId,
-      profile.id,
-      roles,
-      classId,
-      subjectCandidates
-    );
+    const accessOk = isPrivileged(roles)
+      ? true
+      : await teacherHasAccessToClass(srv, institutionId, profileId, classId, subjectCandidates);
 
     if (!accessOk) {
-      console.warn("[teacher/grades/evaluations] forbidden", {
-        classId,
-        subjectParam,
-        subjectCandidates,
-        profileId: profile.id,
-        roles: Array.from(roles),
-      });
       return NextResponse.json({ items: [] as EvalRow[] }, { status: 403 });
     }
 
@@ -313,15 +293,17 @@ export async function GET(req: NextRequest) {
       )
       .eq("class_id", classId);
 
-    // filtre matière : grade_evaluations.subject_id = subjects.id (global)
+    // ✅ un prof ne voit que ses évaluations (admins/educator voient tout)
+    if (!isPrivileged(roles)) {
+      q = q.eq("teacher_id", profileId);
+    }
+
     if (subjectComponentId) {
       q = q.eq("subject_component_id", subjectComponentId);
     } else if (subjectParam === null) {
       q = q.is("subject_id", null);
     } else {
-      // si on n'arrive pas à résoudre vers subjects.id, on renvoie vide (pas 403)
-      if (!globalId) return NextResponse.json({ items: [] as EvalRow[] }, { status: 200 });
-      q = q.eq("subject_id", globalId);
+      q = q.eq("subject_id", globalId as string);
     }
 
     const { data, error } = await q.order("eval_date", { ascending: true });
@@ -338,7 +320,7 @@ export async function GET(req: NextRequest) {
 }
 
 /* ==========================================
-   POST : création d’une évaluation
+   POST
 ========================================== */
 export async function POST(req: NextRequest) {
   try {
@@ -367,14 +349,16 @@ export async function POST(req: NextRequest) {
       coeff: number;
     };
 
-    if (!class_id || !eval_date || !eval_kind || !scale) {
+    if (!class_id || !eval_date || !eval_kind || typeof scale !== "number") {
       return NextResponse.json({ ok: false, error: "missing_fields" }, { status: 400 });
     }
 
-    const { user, profile, institutionId, roles, srv } = await getContext();
-    if (!user || !profile || !srv || !institutionId) {
-      return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
+    const ctx = await getContext();
+    if (!ctx.ok) {
+      return NextResponse.json({ ok: false, error: ctx.error }, { status: ctx.status });
     }
+
+    const { srv, institutionId, profileId, roles } = ctx;
 
     const classOk = await ensureClassInInstitution(srv, class_id, institutionId);
     if (!classOk) {
@@ -383,25 +367,16 @@ export async function POST(req: NextRequest) {
 
     const subjRaw = subject_id && subject_id !== "" ? subject_id : null;
     const { raw, globalId, instId } = await resolveSubjectIds(srv, institutionId, subjRaw);
+    const subjectCandidates = [raw, globalId, instId].filter((x): x is string => !!x);
 
-    const subjectCandidates = [raw, globalId, instId].filter(
-      (x): x is string => !!x
-    );
-
-    const accessOk = await ensureTeacherAccessForClass(
-      srv,
-      institutionId,
-      profile.id,
-      roles,
-      class_id,
-      subjectCandidates
-    );
+    const accessOk = isPrivileged(roles)
+      ? true
+      : await teacherHasAccessToClass(srv, institutionId, profileId, class_id, subjectCandidates);
 
     if (!accessOk) {
       return NextResponse.json({ ok: false, error: "forbidden" }, { status: 403 });
     }
 
-    // Normalisation du subject_component_id (camelCase OU snake_case)
     const subjectComponentIdNorm =
       typeof subjectComponentId === "string" && subjectComponentId.trim() !== ""
         ? subjectComponentId.trim()
@@ -409,26 +384,17 @@ export async function POST(req: NextRequest) {
         ? subject_component_id_raw.trim()
         : null;
 
-    // IMPORTANT: grade_evaluations.subject_id doit être un subjects.id
-    const effectiveGlobalSubjectId = subjRaw ? globalId : null;
-    if (subjRaw && !effectiveGlobalSubjectId) {
-      return NextResponse.json(
-        { ok: false, error: "invalid_subject_id" },
-        { status: 400 }
-      );
-    }
-
     const { data, error } = await srv
       .from("grade_evaluations")
       .insert({
         class_id,
-        subject_id: effectiveGlobalSubjectId,
+        subject_id: subjRaw ? (globalId as string) : null,
         subject_component_id: subjectComponentIdNorm,
-        teacher_id: profile.id,
+        teacher_id: profileId,
         eval_date,
         eval_kind,
         scale,
-        coeff,
+        coeff: typeof coeff === "number" ? coeff : 1,
         is_published: false,
         published_at: null,
       })
@@ -453,7 +419,7 @@ export async function POST(req: NextRequest) {
 }
 
 /* ==========================================
-   PATCH : publication
+   PATCH : publish/unpublish
 ========================================== */
 export async function PATCH(req: NextRequest) {
   try {
@@ -471,14 +437,16 @@ export async function PATCH(req: NextRequest) {
       return NextResponse.json({ ok: false, error: "missing_id" }, { status: 400 });
     }
 
-    const { profile, institutionId, roles, srv } = await getContext();
-    if (!profile || !srv || !institutionId) {
-      return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
+    const ctx = await getContext();
+    if (!ctx.ok) {
+      return NextResponse.json({ ok: false, error: ctx.error }, { status: ctx.status });
     }
+
+    const { srv, institutionId, profileId, roles } = ctx;
 
     const { data: evalRow, error: evErr } = await srv
       .from("grade_evaluations")
-      .select("id,class_id,subject_id,is_published")
+      .select("id,class_id,subject_id,teacher_id,is_published")
       .eq("id", evaluation_id)
       .maybeSingle();
 
@@ -491,18 +459,8 @@ export async function PATCH(req: NextRequest) {
       return NextResponse.json({ ok: false, error: "forbidden" }, { status: 403 });
     }
 
-    const subjectCandidates = [evalRow.subject_id].filter((x): x is string => !!x);
-
-    const accessOk = await ensureTeacherAccessForClass(
-      srv,
-      institutionId,
-      profile.id,
-      roles,
-      evalRow.class_id,
-      subjectCandidates
-    );
-
-    if (!accessOk) {
+    // ✅ un prof ne publie que SES évaluations
+    if (!isPrivileged(roles) && evalRow.teacher_id !== profileId) {
       return NextResponse.json({ ok: false, error: "forbidden" }, { status: 403 });
     }
 
@@ -544,7 +502,7 @@ export async function PATCH(req: NextRequest) {
 }
 
 /* ==========================================
-   DELETE : supprime aussi student_grades
+   DELETE
 ========================================== */
 export async function DELETE(req: NextRequest) {
   try {
@@ -558,14 +516,16 @@ export async function DELETE(req: NextRequest) {
       return NextResponse.json({ ok: false, error: "missing_id" }, { status: 400 });
     }
 
-    const { profile, institutionId, roles, srv } = await getContext();
-    if (!profile || !srv || !institutionId) {
-      return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
+    const ctx = await getContext();
+    if (!ctx.ok) {
+      return NextResponse.json({ ok: false, error: ctx.error }, { status: ctx.status });
     }
+
+    const { srv, institutionId, profileId, roles } = ctx;
 
     const { data: evalRow, error: evErr } = await srv
       .from("grade_evaluations")
-      .select("id,class_id,subject_id")
+      .select("id,class_id,subject_id,teacher_id")
       .eq("id", evaluation_id)
       .maybeSingle();
 
@@ -578,18 +538,8 @@ export async function DELETE(req: NextRequest) {
       return NextResponse.json({ ok: false, error: "forbidden" }, { status: 403 });
     }
 
-    const subjectCandidates = [evalRow.subject_id].filter((x): x is string => !!x);
-
-    const accessOk = await ensureTeacherAccessForClass(
-      srv,
-      institutionId,
-      profile.id,
-      roles,
-      evalRow.class_id,
-      subjectCandidates
-    );
-
-    if (!accessOk) {
+    // ✅ un prof ne supprime que SES évaluations
+    if (!isPrivileged(roles) && evalRow.teacher_id !== profileId) {
       return NextResponse.json({ ok: false, error: "forbidden" }, { status: 403 });
     }
 
@@ -602,10 +552,7 @@ export async function DELETE(req: NextRequest) {
       return NextResponse.json({ ok: false, error: delScoresErr.message }, { status: 400 });
     }
 
-    const { error } = await srv
-      .from("grade_evaluations")
-      .delete()
-      .eq("id", evaluation_id);
+    const { error } = await srv.from("grade_evaluations").delete().eq("id", evaluation_id);
 
     if (error) {
       return NextResponse.json({ ok: false, error: error.message }, { status: 400 });
