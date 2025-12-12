@@ -86,7 +86,7 @@ type SubjectCoeffRow = {
 type BulletinSubjectGroupItem = {
   id: string;
   group_id: string;
-  subject_id: string; // uuid
+  subject_id: string;
   subject_name: string;
   order_index: number;
   subject_coeff_override: number | null;
@@ -104,6 +104,7 @@ type BulletinSubjectGroup = {
   items: BulletinSubjectGroupItem[];
 };
 
+// ✅ Sous-matières renvoyées au front
 type BulletinSubjectComponent = {
   id: string;
   subject_id: string; // subjects.id parent
@@ -113,10 +114,14 @@ type BulletinSubjectComponent = {
   order_index: number;
 };
 
-function cleanNumber(x: any): number | null {
+/* ───────── helpers nombres ───────── */
+
+// ✅ IMPORTANT: on garde plus de précision (4 décimales) pour éviter
+// les écarts Total vs somme/pondération (ex: Français = sous-matières).
+function cleanNumber(x: any, precision: number = 2): number | null {
   const n = Number(x);
   if (!Number.isFinite(n)) return null;
-  return Number(n.toFixed(2));
+  return Number(n.toFixed(precision));
 }
 
 function cleanCoeff(c: any): number {
@@ -131,6 +136,7 @@ function isUuid(v: string): boolean {
   );
 }
 
+// ✅ Normalisation du niveau "bulletin"
 function normalizeBulletinLevel(level?: string | null): string | null {
   if (!level) return null;
   const x = String(level).trim().toLowerCase();
@@ -145,6 +151,49 @@ function normalizeBulletinLevel(level?: string | null): string | null {
   if (x.startsWith("t")) return "terminale";
 
   return null;
+}
+
+/* ───────── classification bilans (API) ───────── */
+
+function normText(s?: string | null) {
+  return (s ?? "").toString().trim().toLowerCase();
+}
+
+// ⚠️ EPS / EDHC / Musique / Arts / Conduite / Vie scolaire => AUTRES
+function isOtherSubject(name?: string | null, code?: string | null): boolean {
+  const n = normText(name);
+  const c = normText(code);
+
+  return (
+    /(^|\b)(eps|e\.p\.s|sport)(\b|$)/.test(c) ||
+    /(^|\b)(eps|e\.p\.s|sport)(\b|$)/.test(n) ||
+    /(education\s*physique|éducation\s*physique|sportive|eps)/.test(n) ||
+    /(edhc|civique|citoyenn|vie\s*scolaire|conduite)/.test(n) ||
+    /(musique|chant|arts?\s*plastiques|dessin|th[eé]atre)/.test(n) ||
+    /(tic|tice|informatique\s*(de\s*base)?)/.test(n) ||
+    /(entrepreneuriat|travail\s*manuel|tm|bonus)/.test(n)
+  );
+}
+
+// ✅ PHILO => LETTRES
+function isPhiloSubject(name?: string | null, code?: string | null): boolean {
+  const n = normText(name);
+  const c = normText(code);
+  return /(philo|philosoph)/.test(n) || /(philo|philosoph)/.test(c);
+}
+
+// ✅ Sciences
+function isScienceSubject(name?: string | null, code?: string | null): boolean {
+  const n = normText(name);
+  const c = normText(code);
+
+  // ⚠️ ne PAS classer EPS/EDHC/Musique en sciences
+  if (isOtherSubject(name, code)) return false;
+
+  return (
+    /(math|math[ée]m|phys|chim|svt|bio|science|info|algo|stat|techno)/.test(c) ||
+    /(math|math[ée]m|phys|chim|svt|bio|science|informat|algo|stat|technolog)/.test(n)
+  );
 }
 
 /* ───────── helper : récup user_roles + institution ───────── */
@@ -338,11 +387,6 @@ async function attachTeachersToSubjects(
         });
       }
     }
-
-    console.log(
-      "[bulletin] teacherBySubject après evals",
-      Object.fromEntries(teacherBySubject)
-    );
   }
 
   /* ── B. Fallback via institution_subjects + class_teachers ───────────── */
@@ -406,10 +450,7 @@ async function attachTeachersToSubjects(
               .in("id", teacherIdsCt);
 
             if (profErrCt) {
-              console.error(
-                "[bulletin] teacher profiles (class_teachers) error",
-                profErrCt
-              );
+              console.error("[bulletin] teacher profiles (class_teachers) error", profErrCt);
             } else {
               (profsCt || []).forEach((p: any) => {
                 if (p.id && p.display_name) nameByIdCt.set(String(p.id), String(p.display_name));
@@ -432,15 +473,7 @@ async function attachTeachersToSubjects(
     }
   }
 
-  console.log("[bulletin] teacherBySubject final", Object.fromEntries(teacherBySubject));
-
-  if (!teacherBySubject.size) {
-    console.warn(
-      "[bulletin] attachTeachersToSubjects: aucun professeur trouvé pour ces matières",
-      subjectIds
-    );
-    return;
-  }
+  if (!teacherBySubject.size) return;
 
   for (const item of items) {
     const perSubject = item.per_subject as any[] | undefined;
@@ -452,10 +485,6 @@ async function attachTeachersToSubjects(
       (ps as any).teacher_name = name;
     });
   }
-
-  if (items.length) {
-    console.log("[bulletin] sample per_subject with teachers (eleve 1)", items[0].per_subject);
-  }
 }
 
 /* ───────── GET /api/admin/grades/bulletin ───────── */
@@ -466,7 +495,11 @@ export async function GET(req: NextRequest) {
 
   if ("error" in ctx) {
     const status =
-      ctx.error === "UNAUTHENTICATED" ? 401 : ctx.error === "FORBIDDEN" ? 403 : 400;
+      ctx.error === "UNAUTHENTICATED"
+        ? 401
+        : ctx.error === "FORBIDDEN"
+        ? 403
+        : 400;
     return NextResponse.json({ ok: false, error: ctx.error }, { status });
   }
 
@@ -481,7 +514,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ ok: false, error: "MISSING_CLASS_ID" }, { status: 400 });
   }
 
-  /* 1) Classe + appartenance établissement + prof principal */
+  /* 1) Vérifier que la classe appartient à l'établissement + récupérer prof principal */
   const { data: cls, error: clsErr } = await supabase
     .from("classes")
     .select("id, label, code, institution_id, academic_year, head_teacher_id, level")
@@ -507,11 +540,7 @@ export async function GET(req: NextRequest) {
 
   const bulletinLevel = normalizeBulletinLevel(classRow.level);
 
-  console.log("[bulletin] class level raw -> bulletin level", {
-    raw: classRow.level,
-    bulletinLevel,
-  });
-
+  // 1a) Lookup du professeur principal (facultatif)
   let headTeacher: HeadTeacherRow | null = null;
   if (classRow.head_teacher_id) {
     const { data: ht, error: htErr } = await supabase
@@ -524,7 +553,7 @@ export async function GET(req: NextRequest) {
     else if (ht) headTeacher = ht as HeadTeacherRow;
   }
 
-  /* 1bis) Période bulletin */
+  /* 1bis) Retrouver éventuellement la période de bulletin (grade_periods) + son coeff */
   let periodMeta: {
     from: string | null;
     to: string | null;
@@ -544,9 +573,8 @@ export async function GET(req: NextRequest) {
       .eq("end_date", dateTo)
       .maybeSingle();
 
-    if (gpErr) {
-      console.error("[bulletin] grade_periods lookup error", gpErr);
-    } else if (gp) {
+    if (gpErr) console.error("[bulletin] grade_periods lookup error", gpErr);
+    else if (gp) {
       periodMeta = {
         from: dateFrom,
         to: dateTo,
@@ -559,7 +587,7 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  /* 2) Élèves */
+  /* 2) Récupérer les élèves */
   const hasDateFilter = !!dateFrom || !!dateTo;
 
   let enrollQuery = supabase
@@ -585,11 +613,8 @@ export async function GET(req: NextRequest) {
     )
     .eq("class_id", classId);
 
-  if (!hasDateFilter) {
-    enrollQuery = enrollQuery.is("end_date", null);
-  } else if (dateFrom) {
-    enrollQuery = enrollQuery.or(`end_date.gte.${dateFrom},end_date.is.null`);
-  }
+  if (!hasDateFilter) enrollQuery = enrollQuery.is("end_date", null);
+  else if (dateFrom) enrollQuery = enrollQuery.or(`end_date.gte.${dateFrom},end_date.is.null`);
 
   enrollQuery = enrollQuery.order("student_id", { ascending: true });
 
@@ -631,7 +656,7 @@ export async function GET(req: NextRequest) {
 
   const studentIds = classStudents.map((cs) => cs.student_id);
 
-  /* 3) Évaluations */
+  /* 3) Evaluations publiées */
   let evalQuery = supabase
     .from("grade_evaluations")
     .select(
@@ -651,15 +676,6 @@ export async function GET(req: NextRequest) {
   }
 
   const evals = (evalData || []) as EvalRow[];
-
-  console.log("[bulletin] evals count", evals.length, {
-    sample: evals.slice(0, 5).map((e) => ({
-      id: e.id,
-      subject_id: e.subject_id,
-      teacher_id: e.teacher_id,
-      eval_date: e.eval_date,
-    })),
-  });
 
   if (!evals.length) {
     return NextResponse.json({
@@ -687,9 +703,7 @@ export async function GET(req: NextRequest) {
       items: classStudents.map((cs) => {
         const stu = cs.students || {};
         const fullName =
-          stu.full_name ||
-          [stu.last_name, stu.first_name].filter(Boolean).join(" ") ||
-          "Élève";
+          stu.full_name || [stu.last_name, stu.first_name].filter(Boolean).join(" ") || "Élève";
         return {
           student_id: cs.student_id,
           full_name: fullName,
@@ -727,20 +741,12 @@ export async function GET(req: NextRequest) {
 
   const scores = (scoreData || []) as ScoreRow[];
 
-  /* 5) Matières depuis évaluations */
+  /* 5) Matières concernées */
   const subjectIdSet = new Set<string>();
-  for (const e of evals) {
-    if (e.subject_id) subjectIdSet.add(String(e.subject_id));
-  }
+  for (const e of evals) if (e.subject_id) subjectIdSet.add(String(e.subject_id));
+
   const subjectIdsRaw = Array.from(subjectIdSet);
   const subjectIds = subjectIdsRaw.filter((sid) => isUuid(sid));
-
-  if (subjectIds.length !== subjectIdsRaw.length) {
-    console.warn("[bulletin] some subject_ids are invalid and have been ignored", {
-      subjectIdsRaw,
-      subjectIds,
-    });
-  }
 
   if (!subjectIds.length) {
     return NextResponse.json({
@@ -765,34 +771,11 @@ export async function GET(req: NextRequest) {
       subjects: [],
       subject_groups: [],
       subject_components: [],
-      items: classStudents.map((cs) => {
-        const stu = cs.students || {};
-        const fullName =
-          stu.full_name ||
-          [stu.last_name, stu.first_name].filter(Boolean).join(" ") ||
-          "Élève";
-        return {
-          student_id: cs.student_id,
-          full_name: fullName,
-          matricule: stu.matricule || null,
-          gender: stu.gender || null,
-          birth_date: stu.birthdate || null,
-          birth_place: stu.birth_place || null,
-          nationality: stu.nationality || null,
-          regime: stu.regime || null,
-          is_repeater: stu.is_repeater ?? null,
-          is_boarder: stu.is_boarder ?? null,
-          is_affecte: stu.is_affecte ?? null,
-          per_subject: [],
-          per_group: [],
-          general_avg: null,
-          per_subject_components: [],
-        };
-      }),
+      items: [],
     });
   }
 
-  /* 5bis) Noms matières */
+  /* 5bis) Noms/code matières */
   const { data: subjData, error: subjErr } = await srv
     .from("subjects")
     .select("id, name, code")
@@ -807,7 +790,7 @@ export async function GET(req: NextRequest) {
   const subjectById = new Map<string, SubjectRow>();
   for (const s of subjects) subjectById.set(s.id, s);
 
-  /* 6) Coeffs bulletin */
+  /* 6) Coefficients bulletin par matière */
   let coeffQuery = supabase
     .from("institution_subject_coeffs")
     .select("subject_id, coeff, include_in_average, level")
@@ -846,15 +829,10 @@ export async function GET(req: NextRequest) {
     };
   });
 
-  // ✅ Map coeff bulletin par matière (pour pondérer les bilans)
-  const bulletinCoeffBySubject = new Map<string, number>();
-  subjectsForReport.forEach((s) => {
-    bulletinCoeffBySubject.set(s.subject_id, cleanCoeff(s.coeff_bulletin ?? 1));
-  });
-
   /* 6bis) Sous-matières */
   let subjectComponentsForReport: BulletinSubjectComponent[] = [];
   const subjectComponentById = new Map<string, BulletinSubjectComponent>();
+  const compsBySubject = new Map<string, BulletinSubjectComponent[]>();
 
   const { data: compData, error: compErr } = await srv
     .from("grade_subject_components")
@@ -892,12 +870,23 @@ export async function GET(req: NextRequest) {
     });
 
     subjectComponentsForReport = rows;
-    rows.forEach((c) => subjectComponentById.set(c.id, c));
+    rows.forEach((c) => {
+      subjectComponentById.set(c.id, c);
+      const arr = compsBySubject.get(c.subject_id) || [];
+      arr.push(c);
+      compsBySubject.set(c.subject_id, arr);
+    });
   }
 
-  /* 6ter) Groupes de disciplines */
+  /* 6ter) Groupes (BILAN LETTRES / SCIENCES / AUTRES) */
   let subjectGroups: BulletinSubjectGroup[] = [];
-  const groupedSubjectIds = new Set<string>();
+  let groupedSubjectIds = new Set<string>();
+
+  // Helpers pour (re)router vers le bon bilan (EPS => AUTRES)
+  const subjectInfoById = new Map<string, { name: string; code: string }>();
+  subjects.forEach((s) =>
+    subjectInfoById.set(s.id, { name: s.name ?? "", code: s.code ?? "" })
+  );
 
   if (bulletinLevel) {
     const { data: groupsData, error: groupsErr } = await srv
@@ -933,6 +922,7 @@ export async function GET(req: NextRequest) {
           return ac.localeCompare(bc);
         });
 
+        // sujets listés dans items
         const groupSubjectIds = Array.from(
           new Set(
             rawItems
@@ -941,7 +931,7 @@ export async function GET(req: NextRequest) {
           )
         );
 
-        const nameBySubjectId = new Map<string, string>();
+        const subjMetaInGroups = new Map<string, { name: string; code: string }>();
         if (groupSubjectIds.length) {
           const { data: sRows, error: sErr } = await srv
             .from("subjects")
@@ -952,8 +942,10 @@ export async function GET(req: NextRequest) {
           else {
             (sRows || []).forEach((s: any) => {
               const sid = String(s.id);
-              const name = s.name || s.code || "Matière";
-              nameBySubjectId.set(sid, String(name));
+              subjMetaInGroups.set(sid, {
+                name: String(s.name || ""),
+                code: String(s.code || ""),
+              });
             });
           }
         }
@@ -966,14 +958,16 @@ export async function GET(req: NextRequest) {
           itemsByGroup.set(gId, arr);
         });
 
-        subjectGroups = activeGroups.map((g: any) => {
+        // 1) fabriquer groupes depuis DB
+        const builtGroups: BulletinSubjectGroup[] = activeGroups.map((g: any) => {
           const rows = itemsByGroup.get(String(g.id)) || [];
-
           const items: BulletinSubjectGroupItem[] = rows.flatMap((row: any, idx: number) => {
             const sid = row.subject_id ? String(row.subject_id) : "";
             if (!sid || !isUuid(sid)) return [];
 
-            const subjectName = nameBySubjectId.get(sid) || "Matière";
+            const meta =
+              subjMetaInGroups.get(sid) || subjectInfoById.get(sid) || { name: "", code: "" };
+            const subjectName = meta.name || meta.code || "Matière";
 
             const it: BulletinSubjectGroupItem = {
               id: String(row.id),
@@ -994,16 +988,12 @@ export async function GET(req: NextRequest) {
               : 1;
 
           const groupCode =
-            (g as any).code !== null &&
-            (g as any).code !== undefined &&
-            String((g as any).code).trim() !== ""
+            (g as any).code && String((g as any).code).trim() !== ""
               ? String((g as any).code)
               : String(g.label);
 
           const shortLabel =
-            (g as any).short_label !== null &&
-            (g as any).short_label !== undefined &&
-            String((g as any).short_label).trim() !== ""
+            (g as any).short_label && String((g as any).short_label).trim() !== ""
               ? String((g as any).short_label)
               : null;
 
@@ -1019,36 +1009,100 @@ export async function GET(req: NextRequest) {
           };
         });
 
-        // ✅ Anti-doublon inter-bilans (une matière ne peut être que dans 1 bilan)
-        const groupPriority = (code: string) =>
-          code === "BILAN_AUTRES" ? 0 : code === "BILAN_SCIENCES" ? 1 : 2;
+        // 2) ROUTAGE + ANTI-DOUBLONS + EPS=>AUTRES + PHILO=>LETTRES
+        const byCode = new Map<string, BulletinSubjectGroup>();
+        builtGroups.forEach((g) => byCode.set(g.code, g));
 
-        const sortedForAssignment = [...subjectGroups].sort(
-          (a, b) =>
-            groupPriority(a.code) - groupPriority(b.code) || a.order_index - b.order_index
-        );
+        const gLetters = byCode.get("BILAN_LETTRES") || null;
+        const gSciences = byCode.get("BILAN_SCIENCES") || null;
+        const gAutres = byCode.get("BILAN_AUTRES") || null;
 
-        const subjectToGroup = new Map<string, string>();
-        for (const g of sortedForAssignment) {
-          for (const it of g.items) {
-            if (!subjectToGroup.has(it.subject_id)) subjectToGroup.set(it.subject_id, g.id);
-          }
-        }
+        // Choix final: 1 seul groupe par subject_id
+        const chosenGroupIdBySubject = new Map<string, string>();
+        const firstSeenOrder = new Map<string, number>();
 
-        subjectGroups = subjectGroups
+        const groupOrder = builtGroups
+          .slice()
           .sort((a, b) => a.order_index - b.order_index)
-          .map((g) => ({
-            ...g,
-            items: g.items.filter((it) => subjectToGroup.get(it.subject_id) === g.id),
-          }));
+          .map((g) => g.id);
 
-        // ✅ Recalcule le set des matières réellement groupées (après dédoublonnage)
-        groupedSubjectIds.clear();
-        for (const g of subjectGroups) {
+        const groupById = new Map<string, BulletinSubjectGroup>();
+        builtGroups.forEach((g) => groupById.set(g.id, g));
+
+        function desiredGroupIdForSubject(sid: string): string | null {
+          const meta = subjectInfoById.get(sid) || { name: "", code: "" };
+          const name = meta.name;
+          const code = meta.code;
+
+          // forçages
+          if (isOtherSubject(name, code)) return gAutres?.id ?? null;
+          if (isPhiloSubject(name, code)) return gLetters?.id ?? null;
+          if (isScienceSubject(name, code)) return gSciences?.id ?? null;
+
+          // défaut = lettres si existe, sinon null
+          return gLetters?.id ?? null;
+        }
+
+        // 2a) passer sur items DB dans l’ordre et enregistrer "first seen"
+        for (const gid of groupOrder) {
+          const g = groupById.get(gid);
+          if (!g) continue;
           for (const it of g.items) {
-            if (subjectIdSet.has(it.subject_id)) groupedSubjectIds.add(it.subject_id);
+            const sid = it.subject_id;
+            if (!isUuid(sid)) continue;
+            if (!firstSeenOrder.has(sid)) firstSeenOrder.set(sid, it.order_index);
+            // tentative initiale: ce que dit la DB
+            if (!chosenGroupIdBySubject.has(sid)) chosenGroupIdBySubject.set(sid, g.id);
           }
         }
+
+        // 2b) appliquer forçages (EPS=>AUTRES, etc.)
+        for (const sid of chosenGroupIdBySubject.keys()) {
+          const desired = desiredGroupIdForSubject(sid);
+          if (desired) chosenGroupIdBySubject.set(sid, desired);
+        }
+
+        // 2c) reconstruire items par groupe, sans doublons
+        const rebuilt = builtGroups.map((g) => ({ ...g, items: [] as BulletinSubjectGroupItem[] }));
+
+        const rebuiltById = new Map<string, BulletinSubjectGroup>();
+        rebuilt.forEach((g) => rebuiltById.set(g.id, g));
+
+        // injecter sujets présents dans les items DB
+        for (const [sid, gid] of chosenGroupIdBySubject.entries()) {
+          const target = rebuiltById.get(gid);
+          if (!target) continue;
+
+          const meta = subjectInfoById.get(sid) || { name: "", code: "" };
+          const subjectName = meta.name || meta.code || "Matière";
+
+          target.items.push({
+            id: `virt-${sid}`, // id virtuel (ne casse pas le front)
+            group_id: gid,
+            subject_id: sid,
+            subject_name: subjectName,
+            order_index: firstSeenOrder.get(sid) ?? 9999,
+            subject_coeff_override: null,
+            is_optional: false,
+          });
+        }
+
+        // trier items par order_index
+        rebuilt.forEach((g) => {
+          g.items.sort((a, b) => a.order_index - b.order_index);
+          // re-indexer proprement
+          g.items = g.items.map((it, idx) => ({ ...it, order_index: idx + 1 }));
+        });
+
+        subjectGroups = rebuilt;
+
+        // ✅ recalcul groupedSubjectIds sur base finale
+        groupedSubjectIds = new Set<string>();
+        subjectGroups.forEach((g) => {
+          g.items.forEach((it) => {
+            if (subjectIdSet.has(it.subject_id)) groupedSubjectIds.add(it.subject_id);
+          });
+        });
       }
     }
   }
@@ -1063,14 +1117,7 @@ export async function GET(req: NextRequest) {
 
   const perStudentSubjectComponent = new Map<
     string,
-    Map<
-      string,
-      {
-        subject_id: string;
-        sumWeighted: number;
-        sumCoeff: number;
-      }
-    >
+    Map<string, { subject_id: string; sumWeighted: number; sumCoeff: number }>
   >();
 
   for (const sc of scores) {
@@ -1114,7 +1161,7 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  /* 8) Réponse par élève */
+  /* 8) Construire la réponse (par élève) */
   const items = classStudents.map((cs) => {
     const stu = cs.students || {};
     const fullName =
@@ -1126,29 +1173,18 @@ export async function GET(req: NextRequest) {
 
     const stuCompMap =
       perStudentSubjectComponent.get(cs.student_id) ||
-      new Map<
-        string,
-        {
-          subject_id: string;
-          sumWeighted: number;
-          sumCoeff: number;
-        }
-      >();
+      new Map<string, { subject_id: string; sumWeighted: number; sumCoeff: number }>();
 
-    const per_subject = subjectsForReport.map((s) => {
-      const cell = stuMap.get(s.subject_id);
-      let avg20: number | null = null;
-      if (cell && cell.sumCoeff > 0) avg20 = cleanNumber(cell.sumWeighted / cell.sumCoeff);
-      return { subject_id: s.subject_id, avg20 };
-    });
-
+    // sous-matières
     const per_subject_components =
       subjectComponentsForReport.length === 0
         ? []
         : subjectComponentsForReport.map((comp) => {
             const cell = stuCompMap.get(comp.id);
             let avg20: number | null = null;
-            if (cell && cell.sumCoeff > 0) avg20 = cleanNumber(cell.sumWeighted / cell.sumCoeff);
+            if (cell && cell.sumCoeff > 0) {
+              avg20 = cleanNumber(cell.sumWeighted / cell.sumCoeff, 4);
+            }
             return {
               subject_id: comp.subject_id,
               component_id: comp.id,
@@ -1156,6 +1192,52 @@ export async function GET(req: NextRequest) {
             };
           });
 
+    // matière: ✅ si elle a des composants, on recalcule avg depuis les sous-matières
+    const per_subject = subjectsForReport.map((s) => {
+      const comps = compsBySubject.get(s.subject_id) || [];
+
+      let avg20: number | null = null;
+
+      // ✅ priorité: calcul depuis sous-matières si au moins 1 sous-matière notée
+      if (comps.length) {
+        let sum = 0;
+        let sumW = 0;
+
+        for (const comp of comps) {
+          const cell = stuCompMap.get(comp.id);
+          if (!cell || cell.sumCoeff <= 0) continue;
+
+          const compAvgRaw = cell.sumWeighted / cell.sumCoeff;
+          if (!Number.isFinite(compAvgRaw)) continue;
+
+          const w = comp.coeff_in_subject ?? 1;
+          if (!w || w <= 0) continue;
+
+          sum += compAvgRaw * w;
+          sumW += w;
+        }
+
+        if (sumW > 0) {
+          // 4 décimales => total (avg*coeff) colle à la pondération/somme
+          avg20 = cleanNumber(sum / sumW, 4);
+        }
+      }
+
+      // fallback: calcul direct via évaluations de la matière
+      if (avg20 === null) {
+        const cell = stuMap.get(s.subject_id);
+        if (cell && cell.sumCoeff > 0) {
+          avg20 = cleanNumber(cell.sumWeighted / cell.sumCoeff, 4);
+        }
+      }
+
+      return {
+        subject_id: s.subject_id,
+        avg20,
+      };
+    });
+
+    // moyennes par bilan (pondérées par coeff bulletin des matières)
     let per_group:
       | {
           group_id: string;
@@ -1164,35 +1246,44 @@ export async function GET(req: NextRequest) {
       | [] = [];
 
     if (hasGroupConfig) {
+      const coeffBulletinBySubject = new Map<string, number>();
+      subjectsForReport.forEach((s) =>
+        coeffBulletinBySubject.set(s.subject_id, Number(s.coeff_bulletin ?? 1))
+      );
+
       per_group = subjectGroups.map((g) => {
         let sum = 0;
         let sumCoeffLocal = 0;
 
         for (const it of g.items) {
-          const cell = stuMap.get(it.subject_id);
-          if (!cell || cell.sumCoeff <= 0) continue;
+          const sid = it.subject_id;
 
-          const subAvgRaw = cell.sumWeighted / cell.sumCoeff;
-          if (!Number.isFinite(subAvgRaw)) continue;
+          // récupérer avg calculée (incluant recalcul via sous-matières)
+          const ps = (per_subject as any[]).find((x) => x.subject_id === sid);
+          const subAvg = ps?.avg20 ?? null;
+          if (subAvg === null || subAvg === undefined) continue;
 
           const w =
             it.subject_coeff_override !== null && it.subject_coeff_override !== undefined
               ? Number(it.subject_coeff_override)
-              : bulletinCoeffBySubject.get(it.subject_id) ?? 1;
+              : coeffBulletinBySubject.get(sid) ?? 1;
 
           if (!w || w <= 0) continue;
 
-          sum += subAvgRaw * w;
+          sum += Number(subAvg) * w;
           sumCoeffLocal += w;
         }
 
-        const groupAvg = sumCoeffLocal > 0 ? cleanNumber(sum / sumCoeffLocal) : null;
+        const groupAvg = sumCoeffLocal > 0 ? cleanNumber(sum / sumCoeffLocal, 4) : null;
 
-        return { group_id: g.id, group_avg: groupAvg };
+        return {
+          group_id: g.id,
+          group_avg: groupAvg,
+        };
       });
     }
 
-    // ✅ Moyenne générale = UNIQUEMENT pondérée par les matières (jamais par les bilans)
+    // ✅ moyenne générale: uniquement matières (pas bilans)
     let general_avg: number | null = null;
     {
       let sumGen = 0;
@@ -1200,21 +1291,18 @@ export async function GET(req: NextRequest) {
 
       for (const s of subjectsForReport) {
         if (s.include_in_average === false) continue;
-
-        const coeffSub = s.coeff_bulletin ?? 0;
+        const coeffSub = Number(s.coeff_bulletin ?? 0);
         if (!coeffSub || coeffSub <= 0) continue;
 
-        const cell = stuMap.get(s.subject_id);
-        if (!cell || cell.sumCoeff <= 0) continue;
+        const ps = (per_subject as any[]).find((x) => x.subject_id === s.subject_id);
+        const subAvg = ps?.avg20 ?? null;
+        if (subAvg === null || subAvg === undefined) continue;
 
-        const subAvgRaw = cell.sumWeighted / cell.sumCoeff;
-        if (!Number.isFinite(subAvgRaw)) continue;
-
-        sumGen += subAvgRaw * coeffSub;
+        sumGen += Number(subAvg) * coeffSub;
         sumCoeffGen += coeffSub;
       }
 
-      general_avg = sumCoeffGen > 0 ? cleanNumber(sumGen / sumCoeffGen) : null;
+      general_avg = sumCoeffGen > 0 ? cleanNumber(sumGen / sumCoeffGen, 4) : null;
     }
 
     return {
@@ -1236,11 +1324,11 @@ export async function GET(req: NextRequest) {
     };
   });
 
-  /* 9) Rangs */
+  // Rang matière / sous-matière
   applySubjectRanks(items);
   applySubjectComponentRanks(items);
 
-  /* 10) Profs par matière */
+  // Professeurs par matière
   await attachTeachersToSubjects(
     supabase,
     srv,
