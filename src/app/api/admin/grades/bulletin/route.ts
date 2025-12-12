@@ -58,6 +58,9 @@ type ClassStudentRow = {
         first_name?: string | null;
         matricule?: string | null;
 
+        // ✅ photo (ajouté sans retirer quoi que ce soit)
+        photo_url?: string | null;
+
         gender?: string | null;
         birthdate?: string | null;
         birth_place?: string | null;
@@ -600,6 +603,7 @@ export async function GET(req: NextRequest) {
         first_name,
         last_name,
         full_name,
+        photo_url,
         gender,
         birthdate,
         birth_place,
@@ -708,6 +712,10 @@ export async function GET(req: NextRequest) {
           student_id: cs.student_id,
           full_name: fullName,
           matricule: stu.matricule || null,
+
+          // ✅ photo (ajouté sans retirer quoi que ce soit)
+          photo_url: stu.photo_url || null,
+
           gender: stu.gender || null,
           birth_date: stu.birthdate || null,
           birth_place: stu.birth_place || null,
@@ -1309,6 +1317,10 @@ export async function GET(req: NextRequest) {
       student_id: cs.student_id,
       full_name: fullName,
       matricule: stu.matricule || null,
+
+      // ✅ photo (ajouté sans retirer quoi que ce soit)
+      photo_url: stu.photo_url || null,
+
       gender: stu.gender || null,
       birth_date: stu.birthdate || null,
       birth_place: stu.birth_place || null,

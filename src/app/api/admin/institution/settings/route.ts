@@ -1,4 +1,3 @@
-// src/app/api/admin/institution/settings/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
@@ -30,6 +29,9 @@ type InstitutionSettingsRow = {
   country_motto: string | null;
   ministry_name: string | null;
   code: string | null; // code MEN / établissement
+
+  // ✅ fallback (si name vide)
+  settings_json?: any;
 };
 
 async function guard(
@@ -64,8 +66,7 @@ async function guard(
     );
     if (adminRow) {
       roleFromUR = String(adminRow.role);
-      if (!instId && adminRow.institution_id)
-        instId = String(adminRow.institution_id);
+      if (!instId && adminRow.institution_id) instId = String(adminRow.institution_id);
     }
   }
 
@@ -78,12 +79,28 @@ async function guard(
   return { user: { id: user.id }, instId };
 }
 
+function pickInstitutionName(row: InstitutionSettingsRow): string {
+  const direct = String(row?.name || "").trim();
+  if (direct) return direct;
+
+  const sj = row?.settings_json;
+  const fallback =
+    (sj && typeof sj === "object" && (
+      sj.institution_name ||
+      sj.school_name ||
+      sj.header_title ||
+      sj.name ||
+      sj.label
+    )) || "";
+
+  return String(fallback || "").trim();
+}
+
 export async function GET() {
   const supa = (await getSupabaseServerClient()) as unknown as SupabaseClient;
   const srv = getSupabaseServiceClient() as unknown as SupabaseClient;
   const g = await guard(supa, srv);
-  if ("error" in g)
-    return NextResponse.json({ error: g.error }, { status: 403 });
+  if ("error" in g) return NextResponse.json({ error: g.error }, { status: 403 });
 
   const { data, error } = await srv
     .from("institutions")
@@ -105,25 +122,29 @@ export async function GET() {
         "country_motto",
         "ministry_name",
         "code",
+        "settings_json", // ✅ ajouté
       ].join(",")
     )
     .eq("id", g.instId)
     .maybeSingle();
 
-  if (error)
-    return NextResponse.json({ error: error.message }, { status: 400 });
+  if (error) return NextResponse.json({ error: error.message }, { status: 400 });
 
   const row = (data ?? {}) as InstitutionSettingsRow;
+  const institution_name = pickInstitutionName(row);
 
   return NextResponse.json({
-    // ✅ Nom de l'établissement exposé pour le dashboard & autres écrans
-    institution_name: row.name ?? "",
+    // ✅ clé principale (celle que tes écrans doivent utiliser)
+    institution_name,
+
+    // ✅ aliases compat (au cas où un écran attend encore name/label)
+    name: institution_name,
+    institution_label: institution_name,
 
     tz: row.tz ?? "Africa/Abidjan",
     auto_lateness: Boolean(row.auto_lateness ?? true),
     default_session_minutes: Number(row.default_session_minutes ?? 60),
 
-    // ✅ mapping vers les clés utilisées côté front
     institution_logo_url: row.logo_url ?? "",
     institution_phone: row.phone ?? "",
     institution_email: row.email ?? "",
@@ -133,11 +154,14 @@ export async function GET() {
     institution_head_name: row.head_name ?? "",
     institution_head_title: row.head_title ?? "",
 
-    // 🆕 pour l'en-tête officiel (pays / devise / ministère / code MEN)
     country_name: row.country_name ?? "",
     country_motto: row.country_motto ?? "",
     ministry_name: row.ministry_name ?? "",
     institution_code: row.code ?? "",
+
+    // ✅ utile si tu fais des fallbacks côté front
+    settings_json:
+      row.settings_json && typeof row.settings_json === "object" ? row.settings_json : {},
   });
 }
 
@@ -145,8 +169,7 @@ export async function PUT(req: NextRequest) {
   const supa = (await getSupabaseServerClient()) as unknown as SupabaseClient;
   const srv = getSupabaseServiceClient() as unknown as SupabaseClient;
   const g = await guard(supa, srv);
-  if ("error" in g)
-    return NextResponse.json({ error: g.error }, { status: 403 });
+  if ("error" in g) return NextResponse.json({ error: g.error }, { status: 403 });
 
   const body = await req.json().catch(() => ({}));
 
@@ -156,6 +179,8 @@ export async function PUT(req: NextRequest) {
       ? body.institution_name
       : typeof body?.name === "string"
       ? body.name
+      : typeof body?.institution_label === "string"
+      ? body.institution_label
       : "";
 
   const institution_name = rawInstitutionName.trim();
@@ -167,41 +192,27 @@ export async function PUT(req: NextRequest) {
   const defMin =
     Number.isFinite(defMinRaw) && defMinRaw > 0 ? Math.floor(defMinRaw) : 60;
 
-  // ✅ Récupération des infos d'établissement envoyées par la page Paramètres
   const rawLogo =
-    typeof body?.institution_logo_url === "string"
-      ? body.institution_logo_url
-      : "";
+    typeof body?.institution_logo_url === "string" ? body.institution_logo_url : "";
   const rawPhone =
-    typeof body?.institution_phone === "string"
-      ? body.institution_phone
-      : "";
+    typeof body?.institution_phone === "string" ? body.institution_phone : "";
   const rawEmail =
-    typeof body?.institution_email === "string"
-      ? body.institution_email
-      : "";
+    typeof body?.institution_email === "string" ? body.institution_email : "";
   const rawRegion =
-    typeof body?.institution_region === "string"
-      ? body.institution_region
-      : "";
+    typeof body?.institution_region === "string" ? body.institution_region : "";
   const rawPostal =
     typeof body?.institution_postal_address === "string"
       ? body.institution_postal_address
       : "";
   const rawStatus =
-    typeof body?.institution_status === "string"
-      ? body.institution_status
-      : "";
+    typeof body?.institution_status === "string" ? body.institution_status : "";
   const rawHeadName =
-    typeof body?.institution_head_name === "string"
-      ? body.institution_head_name
-      : "";
+    typeof body?.institution_head_name === "string" ? body.institution_head_name : "";
   const rawHeadTitle =
     typeof body?.institution_head_title === "string"
       ? body.institution_head_title
       : "";
 
-  // 🆕 champs officiels (pays / devise / ministère / code MEN)
   const rawCountryName =
     typeof body?.country_name === "string" ? body.country_name : "";
   const rawCountryMotto =
@@ -211,7 +222,6 @@ export async function PUT(req: NextRequest) {
   const rawInstitutionCode =
     typeof body?.institution_code === "string" ? body.institution_code : "";
 
-  // On trim, et on convertit les vides en null pour la BDD
   const logo_url = rawLogo.trim() || null;
   const phone = rawPhone.trim() || null;
   const email = rawEmail.trim() || null;
@@ -227,7 +237,6 @@ export async function PUT(req: NextRequest) {
   const code = rawInstitutionCode.trim() || null;
 
   // ⚠️ Si on envoie institution_name vide, on n’écrase pas en BDD.
-  // (Sinon tu risques de te retrouver avec un établissement sans nom.)
   const updatePayload: any = {
     tz,
     auto_lateness: auto,
@@ -247,13 +256,9 @@ export async function PUT(req: NextRequest) {
   };
   if (institution_name) updatePayload.name = institution_name;
 
-  const { error } = await srv
-    .from("institutions")
-    .update(updatePayload)
-    .eq("id", g.instId);
+  const { error } = await srv.from("institutions").update(updatePayload).eq("id", g.instId);
 
-  if (error)
-    return NextResponse.json({ error: error.message }, { status: 400 });
+  if (error) return NextResponse.json({ error: error.message }, { status: 400 });
 
   return NextResponse.json({ ok: true });
 }
