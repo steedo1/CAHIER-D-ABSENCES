@@ -3,6 +3,7 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import { Printer, RefreshCw } from "lucide-react";
+import QRCode from "react-qr-code";
 
 /* ───────── Types ───────── */
 
@@ -15,21 +16,21 @@ type ClassRow = {
 };
 
 type InstitutionSettings = {
-  institution_name: string;
-  institution_logo_url: string;
-  institution_phone: string;
-  institution_email: string;
-  institution_region: string;
-  institution_postal_address: string;
-  institution_status: string;
-  institution_head_name: string;
-  institution_head_title: string;
+  institution_name?: string | null;
+  institution_logo_url?: string | null;
+  institution_phone?: string | null;
+  institution_email?: string | null;
+  institution_region?: string | null;
+  institution_postal_address?: string | null;
+  institution_status?: string | null;
+  institution_head_name?: string | null;
+  institution_head_title?: string | null;
 
   // 🆕 pour l’en-tête officiel façon MEN
-  country_name?: string;
-  country_motto?: string;
-  ministry_name?: string;
-  institution_code?: string;
+  country_name?: string | null;
+  country_motto?: string | null;
+  ministry_name?: string | null;
+  institution_code?: string | null;
 };
 
 type BulletinSubject = {
@@ -109,6 +110,10 @@ type BulletinItemBase = {
 
   // 🆕 PHOTO (optionnel : si tu ajoutes une url plus tard côté API)
   photo_url?: string | null;
+
+  // ✅ QR renvoyé par l’API (non cassant)
+  qr_url?: string | null;
+  qr_token?: string | null;
 
   per_subject: PerSubjectAvg[];
   per_group: PerGroupAvg[];
@@ -341,46 +346,6 @@ function computeSubjectAppreciation(avg: number | null | undefined): string {
   return "Blâme";
 }
 
-/* ───────── QR Code (dans le carré en haut à droite) ───────── */
-
-const QR_SIZE = 58;
-const __QR_CACHE = new Map<string, string>();
-
-async function generateQrDataUrl(
-  text: string,
-  size: number = QR_SIZE
-): Promise<string | null> {
-  const cacheKey = `${size}|${text}`;
-  const cached = __QR_CACHE.get(cacheKey);
-  if (cached) return cached;
-
-  try {
-    // ⚠️ Import dynamique NON statique pour éviter de casser le build si qrcode n’est pas installé.
-    // Si tu veux l’activer : npm i qrcode
-    const dynamicImport: any = new Function("m", "return import(m)");
-    const mod: any = await dynamicImport("qrcode");
-    const toDataURL =
-      (mod && typeof mod.toDataURL === "function" && mod.toDataURL) ||
-      (mod?.default &&
-        typeof mod.default.toDataURL === "function" &&
-        mod.default.toDataURL);
-
-    if (typeof toDataURL !== "function") return null;
-
-    const url: string = await toDataURL(text, {
-      width: size,
-      margin: 0,
-      errorCorrectionLevel: "M",
-    });
-
-    if (url) __QR_CACHE.set(cacheKey, url);
-    return url || null;
-  } catch (e) {
-    console.warn("[Bulletins] QR indisponible (module qrcode manquant ?)", e);
-    return null;
-  }
-}
-
 /* ───────── Rangs sous-matières (côté front) ───────── */
 
 function applyComponentRanksFront(
@@ -602,7 +567,7 @@ function StudentBulletinCard({
   const assignedLabel = formatYesNo(item.is_assigned ?? item.is_affecte ?? null);
 
   // Photo (optionnel)
-  const photoUrl = (item as any).photo_url || (item as any).student_photo_url || null;
+  const photoUrl = item.photo_url || (item as any).student_photo_url || null;
 
   const subjectCompsBySubject = useMemo(() => {
     const map = new Map<string, BulletinSubjectComponent[]>();
@@ -657,8 +622,12 @@ function StudentBulletinCard({
 
   const tick = (checked: boolean) => (checked ? "☑" : "□");
 
-  // ✅ QR payload (pas de nom complet) + rendu dans le carré en haut à droite
+  // ✅ QR payload : PRIORITÉ au lien vérifiable de l’API (qr_url)
   const qrText = useMemo(() => {
+    const apiUrl = (item.qr_url || "").trim();
+    if (apiUrl) return apiUrl; // ✅ scan => /verify/bulletin?t=...
+
+    // fallback (si qr_url absent)
     const payload = {
       v: 1,
       inst: (institution?.institution_code || "").trim() || undefined,
@@ -671,6 +640,7 @@ function StudentBulletinCard({
     };
     return JSON.stringify(payload);
   }, [
+    item.qr_url,
     institution?.institution_code,
     academicYear,
     classInfo.id,
@@ -679,19 +649,6 @@ function StudentBulletinCard({
     item.student_id,
     item.matricule,
   ]);
-
-  const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      const url = await generateQrDataUrl(qrText, QR_SIZE);
-      if (!cancelled) setQrDataUrl(url);
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [qrText]);
 
   const renderSignatureLine = () => (
     <div className="flex h-[14px] items-end">
@@ -752,10 +709,12 @@ function StudentBulletinCard({
   const groupedSubjectIds = new Set<string>();
   const hasGroups = subjectGroups && subjectGroups.length > 0;
 
-  const countryName = safeUpper((institution?.country_name || "RÉPUBLIQUE DE CÔTE D'IVOIRE").trim());
-  const countryMotto = (institution?.country_motto || "Union - Discipline - Travail").trim();
+  const countryName = safeUpper(
+    String((institution?.country_name || "RÉPUBLIQUE DE CÔTE D'IVOIRE").trim())
+  );
+  const countryMotto = String((institution?.country_motto || "Union - Discipline - Travail").trim());
   const ministryName = safeUpper(
-    (institution?.ministry_name || "MINISTÈRE DE L'ÉDUCATION NATIONALE").trim()
+    String((institution?.ministry_name || "MINISTÈRE DE L'ÉDUCATION NATIONALE").trim())
   );
 
   return (
@@ -769,7 +728,7 @@ function StudentBulletinCard({
             <div className="text-[8px]">{countryMotto}</div>
             <div className="mt-1 text-[8px] font-semibold uppercase">{ministryName}</div>
             <div className="mt-1 text-[8px] uppercase">
-              {(institution?.institution_region || "").trim()}
+              {String((institution?.institution_region || "").trim())}
             </div>
           </div>
 
@@ -789,7 +748,7 @@ function StudentBulletinCard({
               {institution?.institution_code && (
                 <div className="mt-1 text-[8px]">
                   Code :{" "}
-                  <span className="font-semibold">{institution.institution_code}</span>
+                  <span className="font-semibold">{String(institution.institution_code)}</span>
                 </div>
               )}
               {(period.from || period.to) && (
@@ -800,14 +759,11 @@ function StudentBulletinCard({
               )}
             </div>
 
-            {/* ✅ QR dans le carré en haut à droite */}
+            {/* ✅ QR SVG (react-qr-code) */}
             <div className="bdr flex h-[58px] w-[58px] items-center justify-center overflow-hidden bg-white">
-              {qrDataUrl ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={qrDataUrl} alt="QR" className="h-full w-full object-contain" />
-              ) : (
-                <div className="text-[8px] text-slate-500">QR</div>
-              )}
+              <div className="h-[54px] w-[54px] bg-white p-[2px]">
+                <QRCode value={qrText} size={50} />
+              </div>
             </div>
           </div>
         </div>
@@ -818,7 +774,7 @@ function StudentBulletinCard({
             {institution?.institution_logo_url ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img
-                src={institution.institution_logo_url}
+                src={String(institution.institution_logo_url)}
                 alt="Logo"
                 className="h-full w-full object-contain"
               />
@@ -829,10 +785,10 @@ function StudentBulletinCard({
 
           <div className="text-center">
             <div className="text-[11px] font-bold uppercase">
-              {safeUpper(institution?.institution_name || "ÉTABLISSEMENT")}
+              {safeUpper(String((institution?.institution_name || "ÉTABLISSEMENT").trim()))}
             </div>
             <div className="text-[9px]">
-              {institution?.institution_postal_address || ""}
+              {String(institution?.institution_postal_address || "")}
               {institution?.institution_phone ? ` • Tél : ${institution.institution_phone}` : ""}
               {institution?.institution_status ? ` • ${institution.institution_status}` : ""}
             </div>
@@ -1116,7 +1072,7 @@ function StudentBulletinCard({
           {institution?.institution_head_name && (
             <div className="text-center text-[8px]">
               {institution.institution_head_name}
-              {institution.institution_head_title ? (
+              {institution?.institution_head_title ? (
                 <div className="text-[7px] text-slate-600">{institution.institution_head_title}</div>
               ) : null}
             </div>
@@ -1303,9 +1259,7 @@ export default function BulletinsPage() {
       if (!resBulletin.ok) {
         const txt = await resBulletin.text();
         throw new Error(
-          `Erreur bulletin (${resBulletin.status}) : ${
-            txt || "Impossible de générer le bulletin."
-          }`
+          `Erreur bulletin (${resBulletin.status}) : ${txt || "Impossible de générer le bulletin."}`
         );
       }
 
@@ -1439,7 +1393,9 @@ export default function BulletinsPage() {
             }}
             disabled={periodsLoading || academicYears.length === 0}
           >
-            <option value="">{academicYears.length === 0 ? "Non configuré" : "Toutes années…"}</option>
+            <option value="">
+              {academicYears.length === 0 ? "Non configuré" : "Toutes années…"}
+            </option>
             {academicYears.map((year) => (
               <option key={year} value={year}>
                 {year}
