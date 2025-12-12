@@ -1,4 +1,4 @@
-// src/app/admin/notes/bulletins/page.tsx
+
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
