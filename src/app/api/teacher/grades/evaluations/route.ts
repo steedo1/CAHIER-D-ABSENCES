@@ -1,182 +1,223 @@
-// src/app/api/teacher/grades/evaluations/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
-import type { SupabaseClient } from "@supabase/supabase-js";
 import { queueGradeNotificationsForEvaluation } from "@/lib/push/grades";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-/* ───────────────── Helpers auth ───────────────── */
+type EvalKind = "devoir" | "interro_ecrite" | "interro_orale";
 
-async function getCurrentUser() {
-  const supabase = await getSupabaseServerClient();
-  const { data, error } = await supabase.auth.getUser();
-  if (error || !data?.user) {
-    return { user: null, error: "Non authentifié" };
+type EvalRow = {
+  id: string;
+  class_id: string;
+  subject_id: string | null; // subjects.id (global)
+  subject_component_id: string | null;
+  teacher_id: string | null;
+  eval_date: string;
+  eval_kind: EvalKind;
+  scale: number;
+  coeff: number;
+  is_published: boolean;
+  published_at?: string | null;
+};
+
+type Role =
+  | "super_admin"
+  | "admin"
+  | "educator"
+  | "teacher"
+  | "class_device"
+  | string;
+
+/* ───────── Context + roles ───────── */
+
+async function getContext() {
+  const supa = await getSupabaseServerClient();
+  const {
+    data: { user },
+  } = await supa.auth.getUser();
+
+  if (!user) {
+    return {
+      supa,
+      user: null as any,
+      profile: null as any,
+      institutionId: null as any,
+      roles: new Set<Role>(),
+      srv: null as any,
+    };
   }
-  return { user: data.user, error: null as string | null };
-}
 
-function normalizeRoleSet(input: Array<string | null | undefined>) {
-  return new Set(
-    input
-      .map((r) => (typeof r === "string" ? r.trim() : ""))
-      .filter((r) => r.length > 0)
-  );
-}
-
-/**
- * Renvoie le "mode" d'accès de l'utilisateur pour une classe :
- * - "admin"        : admin/super_admin de l'établissement
- * - "teacher"      : enseignant affecté à cette classe
- * - "class_device" : téléphone associé à cette classe
- * - null           : aucun droit
- */
-async function getAccessModeForClass(
-  svc: SupabaseClient,
-  userId: string,
-  classId: string
-): Promise<"admin" | "teacher" | "class_device" | null> {
-  // 1) Profil (institution + téléphone + rôle éventuel)
-  const { data: profile, error: pErr } = await svc
+  const { data: profile, error } = await supa
     .from("profiles")
-    .select("id,institution_id,phone,role")
-    .eq("id", userId)
+    .select("id,institution_id,role")
+    .eq("id", user.id)
     .maybeSingle();
 
-  if (pErr || !profile?.id) return null;
+  if (error || !profile?.institution_id) {
+    console.error("[teacher/grades/evaluations] profile error", error);
+    return {
+      supa,
+      user,
+      profile: null as any,
+      institutionId: null as any,
+      roles: new Set<Role>(),
+      srv: null as any,
+    };
+  }
 
-  // 2) Classe (pour vérifier l'établissement + téléphones associés)
-  const { data: cls, error: cErr } = await svc
+  const srv = getSupabaseServiceClient();
+
+  // roles via user_roles (si table utilisée) + fallback profile.role
+  const roles = new Set<Role>();
+  if (profile?.role) roles.add(String(profile.role) as Role);
+
+  try {
+    const { data: roleRows, error: rolesErr } = await srv
+      .from("user_roles")
+      .select("role")
+      .eq("profile_id", profile.id)
+      .eq("institution_id", profile.institution_id);
+
+    if (!rolesErr && Array.isArray(roleRows)) {
+      for (const r of roleRows) roles.add(String((r as any).role) as Role);
+    }
+  } catch (e) {
+    // si table user_roles absente ou autre, on ignore (fallback profile.role)
+  }
+
+  return {
+    supa,
+    user,
+    profile,
+    institutionId: profile.institution_id as string,
+    roles,
+    srv,
+  };
+}
+
+/* ───────── Helpers accès ───────── */
+
+async function ensureClassInInstitution(
+  srv: ReturnType<typeof getSupabaseServiceClient>,
+  classId: string,
+  institutionId: string
+) {
+  const { data: cls, error } = await srv
     .from("classes")
-    .select("id,institution_id,class_phone_e164,device_phone_e164")
+    .select("id,institution_id")
     .eq("id", classId)
     .maybeSingle();
 
-  if (cErr || !cls?.id) return null;
-
-  /**
-   * IMPORTANT :
-   * On “ancre” l’accès sur l’institution de la CLASSE quand elle existe,
-   * pour éviter les refus à cause d’un profile.institution_id null/mal renseigné,
-   * et éviter des accès croisés inter-établissements.
-   */
-  const classInstitutionId = (cls as any)?.institution_id as string | null | undefined;
-  const profileInstitutionId = (profile as any)?.institution_id as string | null | undefined;
-  const institutionId = classInstitutionId || profileInstitutionId || null;
-
-  if (!institutionId) return null;
-
-  // 3) Rôles (table user_roles) + fallback éventuel via profiles.role
-  const { data: roles, error: rErr } = await svc
-    .from("user_roles")
-    .select("role")
-    .eq("profile_id", profile.id)
-    .eq("institution_id", institutionId);
-
-  if (rErr) {
-    console.error("[grades/evaluations] roles error", rErr);
+  if (error) {
+    console.error("[teacher/grades/evaluations] class check error", error, {
+      classId,
+      institutionId,
+    });
+    return false;
   }
-
-  const roleSet = normalizeRoleSet([
-    ...(roles ?? []).map((r: any) => r?.role as string | null),
-    (profile as any)?.role as string | null, // fallback (si chez toi le rôle est stocké dans profiles)
-  ]);
-
-  // 4) Compte classe (téléphone associé à la classe) :
-  //    on se base sur le téléphone, même si user_roles est incomplet,
-  //    sinon tu te retrouves “accès refusé” sur les comptes téléphone.
-  const phone = (profile as any)?.phone as string | null | undefined;
-  if (
-    phone &&
-    (phone === (cls as any)?.class_phone_e164 ||
-      phone === (cls as any)?.device_phone_e164)
-  ) {
-    return "class_device";
-  }
-
-  // 5) Admins (super_admin / admin)
-  if (roleSet.has("super_admin") || roleSet.has("admin")) {
-    return "admin";
-  }
-
-  // 6) Prof affecté à la classe :
-  //    - accepte teacher OU educator (compat)
-  //    - et surtout : si l’affectation existe dans class_teachers, on autorise,
-  //      même si le rôle est mal renseigné.
-  if (roleSet.has("teacher") || roleSet.has("educator") || roleSet.size === 0) {
-    const { data: ct, error: ctErr } = await svc
-      .from("class_teachers")
-      .select("id")
-      .eq("class_id", classId)
-      .eq("teacher_id", profile.id)
-      .eq("institution_id", institutionId)
-      .is("end_date", null)
-      .maybeSingle();
-
-    if (ctErr) {
-      console.error("[grades/evaluations] class_teachers error", ctErr);
-    }
-    if (ct) return "teacher";
-  }
-
-  // 7) Dernier fallback : certains projets ont un rôle “teacher/educator”
-  //    sans user_roles, mais sans affectation => on refuse (normal).
-  return null;
-}
-
-// Vérifie que le subject_id existe vraiment dans subjects, sinon retourne null
-async function getValidSubjectId(
-  svc: SupabaseClient,
-  subject_id: string | null
-): Promise<string | null> {
-  if (!subject_id) return null;
-  const trimmed = subject_id.trim();
-  if (!trimmed) return null;
-
-  const { data } = await svc
-    .from("subjects")
-    .select("id")
-    .eq("id", trimmed)
-    .maybeSingle();
-
-  return data ? (data.id as string) : null;
+  return !!cls && cls.institution_id === institutionId;
 }
 
 /**
- * Pour la création d'une évaluation :
- * - admin / teacher → on met teacher_id = user.id
- * - class_device    → on va chercher le vrai prof de la classe/matière
- *                     dans class_teachers, sinon fallback user.id
+ * Retourne:
+ * - globalId = subjects.id (utilisable dans grade_evaluations.subject_id)
+ * - instId   = institution_subjects.id (souvent utilisé dans class_teachers.subject_id selon les projets)
  */
-async function resolveTeacherIdForInsert(
-  svc: SupabaseClient,
-  mode: "admin" | "teacher" | "class_device",
-  userId: string,
+async function resolveSubjectIds(
+  srv: ReturnType<typeof getSupabaseServiceClient>,
+  institutionId: string,
+  rawSubjectId?: string | null
+): Promise<{ raw: string | null; globalId: string | null; instId: string | null }> {
+  if (!rawSubjectId || rawSubjectId.trim() === "") {
+    return { raw: null, globalId: null, instId: null };
+  }
+  const raw = rawSubjectId;
+
+  // 1) raw est-il un subjects.id ?
+  const { data: subj } = await srv
+    .from("subjects")
+    .select("id")
+    .eq("id", raw)
+    .maybeSingle();
+
+  if (subj?.id) {
+    // on tente de trouver institution_subjects correspondant
+    const { data: instSub } = await srv
+      .from("institution_subjects")
+      .select("id,subject_id")
+      .eq("institution_id", institutionId)
+      .eq("subject_id", subj.id)
+      .maybeSingle();
+
+    return { raw, globalId: subj.id, instId: instSub?.id ?? null };
+  }
+
+  // 2) sinon raw est-il un institution_subjects.id ?
+  const { data: instSub2 } = await srv
+    .from("institution_subjects")
+    .select("id,subject_id")
+    .eq("institution_id", institutionId)
+    .eq("id", raw)
+    .maybeSingle();
+
+  if (instSub2?.id) {
+    return { raw, globalId: instSub2.subject_id ?? null, instId: instSub2.id };
+  }
+
+  // 3) inconnu → on laisse raw, mais globalId null (évite insert FK foireux)
+  return { raw, globalId: null, instId: null };
+}
+
+async function ensureTeacherAccessForClass(
+  srv: ReturnType<typeof getSupabaseServiceClient>,
+  institutionId: string,
+  profileId: string,
+  roles: Set<Role>,
   classId: string,
-  safeSubjectId: string | null
-): Promise<string> {
-  if (mode === "admin" || mode === "teacher") {
-    return userId;
+  subjectCandidates: Array<string>
+) {
+  // admins: accès total établissement
+  if (
+    roles.has("super_admin") ||
+    roles.has("admin") ||
+    roles.has("educator")
+  ) {
+    return true;
   }
 
-  // mode = class_device → chercher le prof affecté
-  let q = svc
-    .from("class_teachers")
-    .select("teacher_id")
-    .eq("class_id", classId)
-    .is("end_date", null)
-    .limit(1);
+  // teacher: doit être affecté à la classe
+  if (roles.has("teacher")) {
+    // 1) essaie avec match matière si on en a
+    if (subjectCandidates.length > 0) {
+      const { data } = await srv
+        .from("class_teachers")
+        .select("id")
+        .eq("institution_id", institutionId)
+        .eq("class_id", classId)
+        .eq("teacher_id", profileId)
+        .is("end_date", null)
+        .in("subject_id", subjectCandidates)
+        .limit(1);
 
-  if (safeSubjectId) {
-    q = q.eq("subject_id", safeSubjectId);
+      if (data && data.length > 0) return true;
+    }
+
+    // 2) fallback: affecté à la classe (même si subject_id stocké différemment)
+    const { data: anyRow } = await srv
+      .from("class_teachers")
+      .select("id")
+      .eq("institution_id", institutionId)
+      .eq("class_id", classId)
+      .eq("teacher_id", profileId)
+      .is("end_date", null)
+      .limit(1);
+
+    return !!(anyRow && anyRow.length > 0);
   }
 
-  const { data: ct } = await q.maybeSingle();
-  const teacherId = (ct as any)?.teacher_id as string | undefined;
-  return teacherId || userId;
+  return false;
 }
 
 /* ───────────────── Push dispatch immédiat ───────────────── */
@@ -189,27 +230,14 @@ async function triggerImmediatePushDispatch(originHint?: string | null) {
       process.env.SITE_URL ||
       "";
 
-    if (!base) {
-      console.warn(
-        "[teacher/grades/evaluations] no base URL for push dispatch"
-      );
-      return;
-    }
+    if (!base) return;
 
     const url = new URL("/api/push/dispatch", base).toString();
-
-    const headers: Record<string, string> = {
-      "content-type": "application/json",
-    };
+    const headers: Record<string, string> = { "content-type": "application/json" };
 
     if (process.env.PUSH_DISPATCH_SECRET) {
       headers["x-push-dispatch-secret"] = process.env.PUSH_DISPATCH_SECRET;
     }
-
-    console.log(
-      "[teacher/grades/evaluations] triggerImmediatePushDispatch →",
-      url
-    );
 
     await fetch(url, {
       method: "POST",
@@ -218,311 +246,376 @@ async function triggerImmediatePushDispatch(originHint?: string | null) {
       cache: "no-store",
     });
   } catch (err) {
-    console.error(
-      "[teacher/grades/evaluations] triggerImmediatePushDispatch error",
-      err
-    );
+    console.error("[teacher/grades/evaluations] triggerImmediatePushDispatch error", err);
   }
 }
 
-/* ========== GET: liste des évaluations pour une classe/matière ========== */
+/* ==========================================
+   GET : liste des évaluations
+========================================== */
 export async function GET(req: NextRequest) {
-  const url = new URL(req.url);
-  const class_id = url.searchParams.get("class_id");
-  const subject_idParam = url.searchParams.get("subject_id");
-  const subject_id =
-    subject_idParam && subject_idParam.trim() !== "" ? subject_idParam : null;
+  try {
+    const url = new URL(req.url);
+    const classId = url.searchParams.get("class_id") || "";
+    const subjectRaw = url.searchParams.get("subject_id");
+    const subjectParam = subjectRaw && subjectRaw !== "" ? subjectRaw : null;
 
-  if (!class_id) {
-    return NextResponse.json(
-      { ok: false, error: "class_id manquant" },
-      { status: 400 }
+    const subjectComponentRaw =
+      url.searchParams.get("subject_component_id") ??
+      url.searchParams.get("subjectComponentId");
+    const subjectComponentId =
+      subjectComponentRaw && subjectComponentRaw !== "" ? subjectComponentRaw : null;
+
+    if (!classId) {
+      return NextResponse.json({ items: [] as EvalRow[] }, { status: 200 });
+    }
+
+    const { user, profile, institutionId, roles, srv } = await getContext();
+    if (!user || !profile || !srv || !institutionId) {
+      return NextResponse.json({ items: [] as EvalRow[] }, { status: 401 });
+    }
+
+    const classOk = await ensureClassInInstitution(srv, classId, institutionId);
+    if (!classOk) {
+      return NextResponse.json({ items: [] as EvalRow[] }, { status: 403 });
+    }
+
+    const { raw, globalId, instId } = await resolveSubjectIds(srv, institutionId, subjectParam);
+
+    const subjectCandidates = [raw, globalId, instId].filter(
+      (x): x is string => !!x
     );
-  }
 
-  const { user, error: authErr } = await getCurrentUser();
-  if (!user) {
-    return NextResponse.json({ ok: false, error: authErr }, { status: 401 });
-  }
-
-  const svc = getSupabaseServiceClient();
-  const mode = await getAccessModeForClass(svc, user.id, class_id);
-
-  if (!mode) {
-    return NextResponse.json(
-      { ok: false, error: "Accès refusé à cette classe" },
-      { status: 403 }
+    const accessOk = await ensureTeacherAccessForClass(
+      srv,
+      institutionId,
+      profile.id,
+      roles,
+      classId,
+      subjectCandidates
     );
+
+    if (!accessOk) {
+      console.warn("[teacher/grades/evaluations] forbidden", {
+        classId,
+        subjectParam,
+        subjectCandidates,
+        profileId: profile.id,
+        roles: Array.from(roles),
+      });
+      return NextResponse.json({ items: [] as EvalRow[] }, { status: 403 });
+    }
+
+    let q = srv
+      .from("grade_evaluations")
+      .select(
+        "id,class_id,subject_id,subject_component_id,teacher_id,eval_date,eval_kind,scale,coeff,is_published,published_at"
+      )
+      .eq("class_id", classId);
+
+    // filtre matière : grade_evaluations.subject_id = subjects.id (global)
+    if (subjectComponentId) {
+      q = q.eq("subject_component_id", subjectComponentId);
+    } else if (subjectParam === null) {
+      q = q.is("subject_id", null);
+    } else {
+      // si on n'arrive pas à résoudre vers subjects.id, on renvoie vide (pas 403)
+      if (!globalId) return NextResponse.json({ items: [] as EvalRow[] }, { status: 200 });
+      q = q.eq("subject_id", globalId);
+    }
+
+    const { data, error } = await q.order("eval_date", { ascending: true });
+    if (error) {
+      console.error("[teacher/grades/evaluations] GET error", error);
+      return NextResponse.json({ items: [] as EvalRow[] }, { status: 200 });
+    }
+
+    return NextResponse.json({ items: (data ?? []) as EvalRow[] }, { status: 200 });
+  } catch (e) {
+    console.error("[teacher/grades/evaluations] unexpected GET", e);
+    return NextResponse.json({ items: [] as EvalRow[] }, { status: 500 });
   }
-
-  // On ne filtre par subject_id que s'il est VALIDE dans subjects
-  const safeSubjectId = await getValidSubjectId(svc, subject_id);
-
-  let query = svc
-    .from("grade_evaluations")
-    .select(
-      "id, class_id, subject_id, subject_component_id, teacher_id, eval_date, eval_kind, scale, coeff, is_published, published_at"
-    )
-    .eq("class_id", class_id);
-
-  if (safeSubjectId) {
-    query = query.eq("subject_id", safeSubjectId);
-  }
-
-  const { data, error } = await query
-    .order("eval_date", { ascending: true })
-    .order("created_at", { ascending: true });
-
-  if (error) {
-    console.error("GET /teacher/grades/evaluations error:", error);
-    return NextResponse.json(
-      { ok: false, error: error.message },
-      { status: 500 }
-    );
-  }
-
-  return NextResponse.json({ ok: true, items: data ?? [] });
 }
 
-/* ========== POST: création d’une nouvelle évaluation (NOTE) ========== */
+/* ==========================================
+   POST : création d’une évaluation
+========================================== */
 export async function POST(req: NextRequest) {
-  const body = await req.json().catch(() => null);
-  if (!body) {
-    return NextResponse.json(
-      { ok: false, error: "JSON invalide" },
-      { status: 400 }
-    );
-  }
+  try {
+    const body = await req.json().catch(() => null);
+    if (!body) {
+      return NextResponse.json({ ok: false, error: "invalid_body" }, { status: 400 });
+    }
 
-  const {
-    class_id,
-    subject_id: rawSubjectId,
-    eval_date,
-    eval_kind,
-    scale,
-    coeff,
-    subject_component_id: rawSubjectComponentId,
-  } = body;
-
-  if (!class_id || !eval_date || !eval_kind || !scale) {
-    return NextResponse.json(
-      { ok: false, error: "Champs obligatoires manquants" },
-      { status: 400 }
-    );
-  }
-
-  const { user, error: authErr } = await getCurrentUser();
-  if (!user) {
-    return NextResponse.json({ ok: false, error: authErr }, { status: 401 });
-  }
-
-  const svc = getSupabaseServiceClient();
-  const mode = await getAccessModeForClass(svc, user.id, class_id);
-
-  if (!mode) {
-    return NextResponse.json(
-      { ok: false, error: "Accès refusé à cette classe" },
-      { status: 403 }
-    );
-  }
-
-  // ⚠️ Sujet sécurisé : seulement si l’ID existe dans subjects, sinon NULL
-  const safeSubjectId = await getValidSubjectId(
-    svc,
-    rawSubjectId && typeof rawSubjectId === "string" ? rawSubjectId : null
-  );
-
-  // subject_component_id : optionnel, on accepte une string vide -> null
-  const safeSubjectComponentId =
-    rawSubjectComponentId && typeof rawSubjectComponentId === "string"
-      ? rawSubjectComponentId.trim() || null
-      : null;
-
-  // Déterminer le teacher_id à stocker
-  const teacherId = await resolveTeacherIdForInsert(
-    svc,
-    mode,
-    user.id,
-    class_id,
-    safeSubjectId
-  );
-
-  const { data, error } = await svc
-    .from("grade_evaluations")
-    .insert({
+    const {
       class_id,
-      subject_id: safeSubjectId, // ✅ ne casse jamais la FK
-      subject_component_id: safeSubjectComponentId, // ✅ nouveau champ (peut être null)
-      teacher_id: teacherId,
+      subject_id,
+      subject_component_id: subject_component_id_raw,
+      subjectComponentId,
       eval_date,
       eval_kind,
       scale,
-      coeff: coeff ?? 1,
-    })
-    .select(
-      "id, class_id, subject_id, subject_component_id, teacher_id, eval_date, eval_kind, scale, coeff, is_published, published_at"
-    )
-    .single();
+      coeff,
+    } = body as {
+      class_id: string;
+      subject_id?: string | null;
+      subject_component_id?: string | null;
+      subjectComponentId?: string | null;
+      eval_date: string;
+      eval_kind: EvalKind;
+      scale: number;
+      coeff: number;
+    };
 
-  if (error) {
-    console.error("POST /teacher/grades/evaluations error:", error);
-    return NextResponse.json(
-      { ok: false, error: error.message },
-      { status: 500 }
+    if (!class_id || !eval_date || !eval_kind || !scale) {
+      return NextResponse.json({ ok: false, error: "missing_fields" }, { status: 400 });
+    }
+
+    const { user, profile, institutionId, roles, srv } = await getContext();
+    if (!user || !profile || !srv || !institutionId) {
+      return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
+    }
+
+    const classOk = await ensureClassInInstitution(srv, class_id, institutionId);
+    if (!classOk) {
+      return NextResponse.json({ ok: false, error: "forbidden" }, { status: 403 });
+    }
+
+    const subjRaw = subject_id && subject_id !== "" ? subject_id : null;
+    const { raw, globalId, instId } = await resolveSubjectIds(srv, institutionId, subjRaw);
+
+    const subjectCandidates = [raw, globalId, instId].filter(
+      (x): x is string => !!x
     );
-  }
 
-  return NextResponse.json({ ok: true, item: data });
-}
-
-/* ========== PATCH: publier / dépublier une évaluation ========== */
-export async function PATCH(req: NextRequest) {
-  const body = await req.json().catch(() => null);
-  if (!body || !body.evaluation_id || typeof body.is_published !== "boolean") {
-    return NextResponse.json(
-      { ok: false, error: "evaluation_id ou is_published manquant" },
-      { status: 400 }
+    const accessOk = await ensureTeacherAccessForClass(
+      srv,
+      institutionId,
+      profile.id,
+      roles,
+      class_id,
+      subjectCandidates
     );
-  }
 
-  const { evaluation_id, is_published } = body;
+    if (!accessOk) {
+      return NextResponse.json({ ok: false, error: "forbidden" }, { status: 403 });
+    }
 
-  const { user, error: authErr } = await getCurrentUser();
-  if (!user) {
-    return NextResponse.json({ ok: false, error: authErr }, { status: 401 });
-  }
+    // Normalisation du subject_component_id (camelCase OU snake_case)
+    const subjectComponentIdNorm =
+      typeof subjectComponentId === "string" && subjectComponentId.trim() !== ""
+        ? subjectComponentId.trim()
+        : typeof subject_component_id_raw === "string" && subject_component_id_raw.trim() !== ""
+        ? subject_component_id_raw.trim()
+        : null;
 
-  const svc = getSupabaseServiceClient();
-
-  // On récupère l’évaluation pour vérifier la classe + état précédent
-  const { data: ev, error: evErr } = await svc
-    .from("grade_evaluations")
-    .select("id, class_id, is_published")
-    .eq("id", evaluation_id)
-    .maybeSingle();
-
-  if (evErr || !ev) {
-    console.error("PATCH /teacher/grades/evaluations read error:", evErr);
-    return NextResponse.json(
-      { ok: false, error: "Évaluation introuvable" },
-      { status: 404 }
-    );
-  }
-
-  const wasPublished = !!ev.is_published;
-
-  // Vérifier que l'utilisateur a le droit sur CETTE classe
-  const mode = await getAccessModeForClass(svc, user.id, ev.class_id);
-  if (!mode) {
-    return NextResponse.json(
-      { ok: false, error: "Accès refusé à cette évaluation" },
-      { status: 403 }
-    );
-  }
-
-  const { data, error } = await svc
-    .from("grade_evaluations")
-    .update({
-      is_published,
-      published_at: is_published ? new Date().toISOString() : null,
-    })
-    .eq("id", evaluation_id)
-    .select(
-      "id, class_id, subject_id, subject_component_id, teacher_id, eval_date, eval_kind, scale, coeff, is_published, published_at"
-    )
-    .single();
-
-  if (error) {
-    console.error("PATCH /teacher/grades/evaluations update error:", error);
-    return NextResponse.json(
-      { ok: false, error: error.message },
-      { status: 500 }
-    );
-  }
-
-  // 👉 Si on vient de passer de non publié → publié :
-  // 1) on met en file les notifications
-  // 2) on déclenche immédiatement le dispatch
-  if (!wasPublished && is_published) {
-    queueGradeNotificationsForEvaluation(evaluation_id)
-      .then(() => {
-        triggerImmediatePushDispatch(req.headers.get("origin"));
-      })
-      .catch((e) => {
-        console.error(
-          "[teacher/grades/evaluations] queue_grade_notifications_error",
-          e
-        );
-      });
-  }
-
-  return NextResponse.json({ ok: true, item: data });
-}
-
-/* ========== DELETE: supprimer une évaluation (colonne) ========== */
-export async function DELETE(req: NextRequest) {
-  try {
-    const body = await req.json().catch(() => null);
-    if (!body || !body.evaluation_id) {
+    // IMPORTANT: grade_evaluations.subject_id doit être un subjects.id
+    const effectiveGlobalSubjectId = subjRaw ? globalId : null;
+    if (subjRaw && !effectiveGlobalSubjectId) {
       return NextResponse.json(
-        { ok: false, error: "evaluation_id manquant" },
+        { ok: false, error: "invalid_subject_id" },
         { status: 400 }
       );
     }
 
-    const { evaluation_id } = body;
+    const { data, error } = await srv
+      .from("grade_evaluations")
+      .insert({
+        class_id,
+        subject_id: effectiveGlobalSubjectId,
+        subject_component_id: subjectComponentIdNorm,
+        teacher_id: profile.id,
+        eval_date,
+        eval_kind,
+        scale,
+        coeff,
+        is_published: false,
+        published_at: null,
+      })
+      .select(
+        "id,class_id,subject_id,subject_component_id,teacher_id,eval_date,eval_kind,scale,coeff,is_published,published_at"
+      )
+      .single();
 
-    const { user, error: authErr } = await getCurrentUser();
-    if (!user) {
-      return NextResponse.json({ ok: false, error: authErr }, { status: 401 });
+    if (error) {
+      console.error("[teacher/grades/evaluations] POST error", error);
+      return NextResponse.json({ ok: false, error: error.message }, { status: 400 });
     }
 
-    const svc = getSupabaseServiceClient();
+    return NextResponse.json({ ok: true, item: data as EvalRow }, { status: 200 });
+  } catch (e: any) {
+    console.error("[teacher/grades/evaluations] unexpected POST", e);
+    return NextResponse.json(
+      { ok: false, error: e?.message || "eval_create_failed" },
+      { status: 500 }
+    );
+  }
+}
 
-    // Récupérer l’évaluation pour vérifier la classe
-    const { data: ev, error: evErr } = await svc
+/* ==========================================
+   PATCH : publication
+========================================== */
+export async function PATCH(req: NextRequest) {
+  try {
+    const body = await req.json().catch(() => null);
+    if (!body) {
+      return NextResponse.json({ ok: false, error: "invalid_body" }, { status: 400 });
+    }
+
+    const { evaluation_id, is_published } = body as {
+      evaluation_id: string;
+      is_published?: boolean;
+    };
+
+    if (!evaluation_id) {
+      return NextResponse.json({ ok: false, error: "missing_id" }, { status: 400 });
+    }
+
+    const { profile, institutionId, roles, srv } = await getContext();
+    if (!profile || !srv || !institutionId) {
+      return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
+    }
+
+    const { data: evalRow, error: evErr } = await srv
       .from("grade_evaluations")
-      .select("id, class_id")
+      .select("id,class_id,subject_id,is_published")
       .eq("id", evaluation_id)
       .maybeSingle();
 
-    if (evErr || !ev) {
-      console.error("DELETE /teacher/grades/evaluations read error:", evErr);
-      return NextResponse.json(
-        { ok: false, error: "Évaluation introuvable" },
-        { status: 404 }
-      );
+    if (evErr || !evalRow) {
+      return NextResponse.json({ ok: false, error: "evaluation_not_found" }, { status: 404 });
     }
 
-    // Vérifier que l'utilisateur a le droit sur CETTE classe
-    const mode = await getAccessModeForClass(svc, user.id, ev.class_id);
-    if (!mode) {
-      return NextResponse.json(
-        { ok: false, error: "Accès refusé à cette évaluation" },
-        { status: 403 }
-      );
+    const classOk = await ensureClassInInstitution(srv, evalRow.class_id, institutionId);
+    if (!classOk) {
+      return NextResponse.json({ ok: false, error: "forbidden" }, { status: 403 });
     }
 
-    // On NE TOUCHE PAS à student_grades ici : la FK fait ON DELETE CASCADE.
-    const { error: evalErr } = await svc
+    const subjectCandidates = [evalRow.subject_id].filter((x): x is string => !!x);
+
+    const accessOk = await ensureTeacherAccessForClass(
+      srv,
+      institutionId,
+      profile.id,
+      roles,
+      evalRow.class_id,
+      subjectCandidates
+    );
+
+    if (!accessOk) {
+      return NextResponse.json({ ok: false, error: "forbidden" }, { status: 403 });
+    }
+
+    const patch: any = {};
+    if (typeof is_published === "boolean") {
+      patch.is_published = is_published;
+      patch.published_at = is_published ? new Date().toISOString() : null;
+    }
+
+    const wasPublished = !!evalRow.is_published;
+
+    const { data, error } = await srv
+      .from("grade_evaluations")
+      .update(patch)
+      .eq("id", evaluation_id)
+      .select(
+        "id,class_id,subject_id,subject_component_id,teacher_id,eval_date,eval_kind,scale,coeff,is_published,published_at"
+      )
+      .maybeSingle();
+
+    if (error) {
+      return NextResponse.json({ ok: false, error: error.message }, { status: 400 });
+    }
+
+    if (typeof is_published === "boolean" && !wasPublished && is_published) {
+      queueGradeNotificationsForEvaluation(evaluation_id)
+        .then(() => triggerImmediatePushDispatch(req.headers.get("origin")))
+        .catch((e) => console.error("[teacher/grades/evaluations] push queue error", e));
+    }
+
+    return NextResponse.json({ ok: true, item: data as EvalRow }, { status: 200 });
+  } catch (e: any) {
+    console.error("[teacher/grades/evaluations] unexpected PATCH", e);
+    return NextResponse.json(
+      { ok: false, error: e?.message || "eval_update_failed" },
+      { status: 500 }
+    );
+  }
+}
+
+/* ==========================================
+   DELETE : supprime aussi student_grades
+========================================== */
+export async function DELETE(req: NextRequest) {
+  try {
+    const body = await req.json().catch(() => null);
+    if (!body) {
+      return NextResponse.json({ ok: false, error: "invalid_body" }, { status: 400 });
+    }
+
+    const { evaluation_id } = body as { evaluation_id: string };
+    if (!evaluation_id) {
+      return NextResponse.json({ ok: false, error: "missing_id" }, { status: 400 });
+    }
+
+    const { profile, institutionId, roles, srv } = await getContext();
+    if (!profile || !srv || !institutionId) {
+      return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
+    }
+
+    const { data: evalRow, error: evErr } = await srv
+      .from("grade_evaluations")
+      .select("id,class_id,subject_id")
+      .eq("id", evaluation_id)
+      .maybeSingle();
+
+    if (evErr || !evalRow) {
+      return NextResponse.json({ ok: false, error: "evaluation_not_found" }, { status: 404 });
+    }
+
+    const classOk = await ensureClassInInstitution(srv, evalRow.class_id, institutionId);
+    if (!classOk) {
+      return NextResponse.json({ ok: false, error: "forbidden" }, { status: 403 });
+    }
+
+    const subjectCandidates = [evalRow.subject_id].filter((x): x is string => !!x);
+
+    const accessOk = await ensureTeacherAccessForClass(
+      srv,
+      institutionId,
+      profile.id,
+      roles,
+      evalRow.class_id,
+      subjectCandidates
+    );
+
+    if (!accessOk) {
+      return NextResponse.json({ ok: false, error: "forbidden" }, { status: 403 });
+    }
+
+    const { error: delScoresErr } = await srv
+      .from("student_grades")
+      .delete()
+      .eq("evaluation_id", evaluation_id);
+
+    if (delScoresErr) {
+      return NextResponse.json({ ok: false, error: delScoresErr.message }, { status: 400 });
+    }
+
+    const { error } = await srv
       .from("grade_evaluations")
       .delete()
-      .eq("id", evaluation_id)
-      .single();
+      .eq("id", evaluation_id);
 
-    if (evalErr) {
-      console.error("DELETE /teacher/grades/evaluations eval error:", evalErr);
-      return NextResponse.json(
-        { ok: false, error: evalErr.message },
-        { status: 500 }
-      );
+    if (error) {
+      return NextResponse.json({ ok: false, error: error.message }, { status: 400 });
     }
 
-    return NextResponse.json({ ok: true });
-  } catch (err) {
-    console.error("DELETE /teacher/grades/evaluations unexpected error:", err);
+    return NextResponse.json({ ok: true }, { status: 200 });
+  } catch (e: any) {
+    console.error("[teacher/grades/evaluations] unexpected DELETE", e);
     return NextResponse.json(
-      { ok: false, error: "Erreur serveur pendant la suppression." },
+      { ok: false, error: e?.message || "eval_delete_failed" },
       { status: 500 }
     );
   }
