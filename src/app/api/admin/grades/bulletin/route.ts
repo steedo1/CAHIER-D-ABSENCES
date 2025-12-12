@@ -1,4 +1,4 @@
-//src/app/api/admin/grades/bulletin/route.ts
+// src/app/api/admin/grades/bulletin/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
@@ -136,6 +136,25 @@ function isUuid(v: string): boolean {
   );
 }
 
+// ✅ Normalisation du niveau "bulletin" (évite 1reD, 2ndeA, TA, etc.)
+function normalizeBulletinLevel(level?: string | null): string | null {
+  if (!level) return null;
+  const x = String(level).trim().toLowerCase();
+
+  // déjà au bon format
+  if (["6e", "5e", "4e", "3e", "seconde", "première", "terminale"].includes(x)) {
+    return x;
+  }
+  if (x === "premiere") return "première";
+
+  // variantes courantes
+  if (x.startsWith("2de") || x.startsWith("2nde") || x.startsWith("2")) return "seconde";
+  if (x.startsWith("1re") || x.startsWith("1ere") || x.startsWith("1")) return "première";
+  if (x.startsWith("t")) return "terminale";
+
+  return null;
+}
+
 /* ───────── helper : récup user_roles + institution ───────── */
 async function getAdminAndInstitution(
   supabase: Awaited<ReturnType<typeof getSupabaseServerClient>>
@@ -222,9 +241,7 @@ function applySubjectRanks(items: any[]) {
       const perSubject = items[index].per_subject as any[];
       if (!Array.isArray(perSubject)) continue;
 
-      const cell = perSubject.find(
-        (ps: any) => ps.subject_id === subjectId
-      );
+      const cell = perSubject.find((ps: any) => ps.subject_id === subjectId);
       if (cell) {
         (cell as any).subject_rank = currentRank;
       }
@@ -280,9 +297,7 @@ function applySubjectComponentRanks(items: any[]) {
       const perComp = items[index].per_subject_components as any[] | undefined;
       if (!Array.isArray(perComp)) continue;
 
-      const cell = perComp.find(
-        (psc: any) => psc.component_id === componentId
-      );
+      const cell = perComp.find((psc: any) => psc.component_id === componentId);
       if (cell) {
         (cell as any).component_rank = currentRank;
       }
@@ -373,9 +388,7 @@ async function attachTeachersToSubjects(
 
   /* ── B. Fallback via institution_subjects + class_teachers ───────────── */
 
-  const missingSubjectIds = subjectIds.filter(
-    (sid) => !teacherBySubject.has(sid)
-  );
+  const missingSubjectIds = subjectIds.filter((sid) => !teacherBySubject.has(sid));
 
   if (missingSubjectIds.length) {
     const { data: instSubs, error: instErr } = await srv
@@ -536,34 +549,38 @@ export async function GET(req: NextRequest) {
   /* 1) Vérifier que la classe appartient à l'établissement + récupérer prof principal */
   const { data: cls, error: clsErr } = await supabase
     .from("classes")
-    .select(
-      "id, label, code, institution_id, academic_year, head_teacher_id, level"
-    )
+    .select("id, label, code, institution_id, academic_year, head_teacher_id, level")
     .eq("id", classId)
     .maybeSingle();
 
   if (clsErr) {
     console.error("[bulletin] classes error", clsErr);
-    return NextResponse.json(
-      { ok: false, error: "CLASS_ERROR" },
-      { status: 500 }
-    );
+    return NextResponse.json({ ok: false, error: "CLASS_ERROR" }, { status: 500 });
   }
   if (!cls) {
-    return NextResponse.json(
-      { ok: false, error: "CLASS_NOT_FOUND" },
-      { status: 404 }
-    );
+    return NextResponse.json({ ok: false, error: "CLASS_NOT_FOUND" }, { status: 404 });
   }
 
   const classRow = cls as ClassRow;
 
-  if (classRow.institution_id && classRow.institution_id !== institutionId) {
+  if (!classRow.institution_id) {
     return NextResponse.json(
-      { ok: false, error: "CLASS_FORBIDDEN" },
-      { status: 403 }
+      { ok: false, error: "CLASS_NO_INSTITUTION" },
+      { status: 400 }
     );
   }
+
+  if (classRow.institution_id !== institutionId) {
+    return NextResponse.json({ ok: false, error: "CLASS_FORBIDDEN" }, { status: 403 });
+  }
+
+  // ✅ niveau normalisé pour les configs bulletin (groups/coeffs)
+  const bulletinLevel = normalizeBulletinLevel(classRow.level);
+
+  console.log("[bulletin] class level raw -> bulletin level", {
+    raw: classRow.level,
+    bulletinLevel,
+  });
 
   // 1a) Lookup du professeur principal (facultatif)
   let headTeacher: HeadTeacherRow | null = null;
@@ -595,9 +612,7 @@ export async function GET(req: NextRequest) {
   if (dateFrom && dateTo) {
     const { data: gp, error: gpErr } = await supabase
       .from("grade_periods")
-      .select(
-        "id, academic_year, code, label, short_label, start_date, end_date, coeff"
-      )
+      .select("id, academic_year, code, label, short_label, start_date, end_date, coeff")
       .eq("institution_id", institutionId)
       .eq("start_date", dateFrom)
       .eq("end_date", dateTo)
@@ -614,9 +629,7 @@ export async function GET(req: NextRequest) {
         short_label: gp.short_label ?? null,
         academic_year: gp.academic_year ?? null,
         coeff:
-          gp.coeff === null || gp.coeff === undefined
-            ? null
-            : cleanCoeff(gp.coeff),
+          gp.coeff === null || gp.coeff === undefined ? null : cleanCoeff(gp.coeff),
       };
     }
   }
@@ -655,7 +668,6 @@ export async function GET(req: NextRequest) {
     // est postérieure au début de la période OU encore inscrits
     enrollQuery = enrollQuery.or(`end_date.gte.${dateFrom},end_date.is.null`);
   }
-  // Si seulement "to" est renseigné, on garde le filtrage par défaut (élèves actifs)
 
   enrollQuery = enrollQuery.order("student_id", { ascending: true });
 
@@ -663,10 +675,7 @@ export async function GET(req: NextRequest) {
 
   if (csErr) {
     console.error("[bulletin] class_enrollments error", csErr);
-    return NextResponse.json(
-      { ok: false, error: "CLASS_STUDENTS_ERROR" },
-      { status: 500 }
-    );
+    return NextResponse.json({ ok: false, error: "CLASS_STUDENTS_ERROR" }, { status: 500 });
   }
 
   const classStudents = (csData || []) as ClassStudentRow[];
@@ -679,6 +688,8 @@ export async function GET(req: NextRequest) {
         label: classRow.label || classRow.code || "Classe",
         code: classRow.code || null,
         academic_year: classRow.academic_year || null,
+        level: classRow.level || null,
+        bulletin_level: bulletinLevel,
         head_teacher: headTeacher
           ? {
               id: headTeacher.id,
@@ -691,7 +702,7 @@ export async function GET(req: NextRequest) {
       period: periodMeta,
       subjects: [],
       subject_groups: [],
-      subject_components: [], // ✅ pour que le front ait toujours la clé
+      subject_components: [],
       items: [],
     });
   }
@@ -718,10 +729,7 @@ export async function GET(req: NextRequest) {
 
   if (evalErr) {
     console.error("[bulletin] evaluations error", evalErr);
-    return NextResponse.json(
-      { ok: false, error: "EVALUATIONS_ERROR" },
-      { status: 500 }
-    );
+    return NextResponse.json({ ok: false, error: "EVALUATIONS_ERROR" }, { status: 500 });
   }
 
   const evals = (evalData || []) as EvalRow[];
@@ -743,6 +751,8 @@ export async function GET(req: NextRequest) {
         label: classRow.label || classRow.code || "Classe",
         code: classRow.code || null,
         academic_year: classRow.academic_year || null,
+        level: classRow.level || null,
+        bulletin_level: bulletinLevel,
         head_teacher: headTeacher
           ? {
               id: headTeacher.id,
@@ -759,9 +769,7 @@ export async function GET(req: NextRequest) {
       items: classStudents.map((cs) => {
         const stu = cs.students || {};
         const fullName =
-          stu.full_name ||
-          [stu.last_name, stu.first_name].filter(Boolean).join(" ") ||
-          "Élève";
+          stu.full_name || [stu.last_name, stu.first_name].filter(Boolean).join(" ") || "Élève";
         return {
           student_id: cs.student_id,
           full_name: fullName,
@@ -794,10 +802,7 @@ export async function GET(req: NextRequest) {
 
   if (scoreErr) {
     console.error("[bulletin] scores error", scoreErr);
-    return NextResponse.json(
-      { ok: false, error: "SCORES_ERROR" },
-      { status: 500 }
-    );
+    return NextResponse.json({ ok: false, error: "SCORES_ERROR" }, { status: 500 });
   }
 
   const scores = (scoreData || []) as ScoreRow[];
@@ -811,13 +816,10 @@ export async function GET(req: NextRequest) {
   const subjectIds = subjectIdsRaw.filter((sid) => isUuid(sid));
 
   if (subjectIds.length !== subjectIdsRaw.length) {
-    console.warn(
-      "[bulletin] some subject_ids are invalid and have been ignored",
-      {
-        subjectIdsRaw,
-        subjectIds,
-      }
-    );
+    console.warn("[bulletin] some subject_ids are invalid and have been ignored", {
+      subjectIdsRaw,
+      subjectIds,
+    });
   }
 
   if (!subjectIds.length) {
@@ -828,6 +830,8 @@ export async function GET(req: NextRequest) {
         label: classRow.label || classRow.code || "Classe",
         code: classRow.code || null,
         academic_year: classRow.academic_year || null,
+        level: classRow.level || null,
+        bulletin_level: bulletinLevel,
         head_teacher: headTeacher
           ? {
               id: headTeacher.id,
@@ -844,9 +848,7 @@ export async function GET(req: NextRequest) {
       items: classStudents.map((cs) => {
         const stu = cs.students || {};
         const fullName =
-          stu.full_name ||
-          [stu.last_name, stu.first_name].filter(Boolean).join(" ") ||
-          "Élève";
+          stu.full_name || [stu.last_name, stu.first_name].filter(Boolean).join(" ") || "Élève";
         return {
           student_id: cs.student_id,
           full_name: fullName,
@@ -876,10 +878,7 @@ export async function GET(req: NextRequest) {
 
   if (subjErr) {
     console.error("[bulletin] subjects error", subjErr);
-    return NextResponse.json(
-      { ok: false, error: "SUBJECTS_ERROR" },
-      { status: 500 }
-    );
+    return NextResponse.json({ ok: false, error: "SUBJECTS_ERROR" }, { status: 500 });
   }
 
   const subjects = (subjData || []) as SubjectRow[];
@@ -893,18 +892,15 @@ export async function GET(req: NextRequest) {
     .eq("institution_id", institutionId)
     .in("subject_id", subjectIds);
 
-  if (classRow.level) {
-    coeffQuery = coeffQuery.eq("level", classRow.level);
+  if (bulletinLevel) {
+    coeffQuery = coeffQuery.eq("level", bulletinLevel);
   }
 
   const { data: coeffData, error: coeffErr } = await coeffQuery;
 
   if (coeffErr) {
     console.error("[bulletin] coeffs error", coeffErr);
-    return NextResponse.json(
-      { ok: false, error: "COEFFS_ERROR" },
-      { status: 500 }
-    );
+    return NextResponse.json({ ok: false, error: "COEFFS_ERROR" }, { status: 500 });
   }
 
   const coeffBySubject = new Map<string, { coeff: number; include: boolean }>();
@@ -937,9 +933,7 @@ export async function GET(req: NextRequest) {
 
   const { data: compData, error: compErr } = await srv
     .from("grade_subject_components")
-    .select(
-      "id, subject_id, label, short_label, coeff_in_subject, order_index, is_active"
-    )
+    .select("id, subject_id, label, short_label, coeff_in_subject, order_index, is_active")
     .eq("institution_id", institutionId)
     .in("subject_id", subjectIds);
 
@@ -954,9 +948,8 @@ export async function GET(req: NextRequest) {
             ? Number(r.coeff_in_subject)
             : 1;
         const ord =
-          r.order_index !== null && r.order_index !== undefined
-            ? Number(r.order_index)
-            : 1;
+          r.order_index !== null && r.order_index !== undefined ? Number(r.order_index) : 1;
+
         const obj: BulletinSubjectComponent = {
           id: String(r.id),
           subject_id: String(r.subject_id),
@@ -969,9 +962,7 @@ export async function GET(req: NextRequest) {
       }) as BulletinSubjectComponent[];
 
     rows.sort((a, b) => {
-      if (a.subject_id !== b.subject_id) {
-        return a.subject_id.localeCompare(b.subject_id);
-      }
+      if (a.subject_id !== b.subject_id) return a.subject_id.localeCompare(b.subject_id);
       return a.order_index - b.order_index;
     });
 
@@ -983,21 +974,19 @@ export async function GET(req: NextRequest) {
   let subjectGroups: BulletinSubjectGroup[] = [];
   const groupedSubjectIds = new Set<string>();
 
-  if (classRow.level) {
-    const { data: groupsData, error: groupsErr } = await supabase
+  if (bulletinLevel) {
+    const { data: groupsData, error: groupsErr } = await srv
       .from("bulletin_subject_groups")
-      // ⚠️ on ne sélectionne que les colonnes qui existent réellement
-      .select("id, level, label, order_index, is_active")
+      .select("id, level, label, order_index, is_active, code, short_label, annual_coeff")
       .eq("institution_id", institutionId)
-      .eq("level", classRow.level)
+      .eq("level", bulletinLevel)
       .order("order_index", { ascending: true });
 
     if (groupsErr) {
       console.error("[bulletin] groups error", groupsErr);
     } else if (groupsData && groupsData.length) {
-      const activeGroups = (groupsData as any[]).filter(
-        (g) => g.is_active !== false
-      );
+      const activeGroups = (groupsData as any[]).filter((g) => g.is_active !== false);
+
       if (activeGroups.length) {
         const groupIds = activeGroups.map((g) => String(g.id));
 
@@ -1040,23 +1029,17 @@ export async function GET(req: NextRequest) {
 
           subjectGroups = activeGroups.map((g: any) => {
             const rows = itemsByGroup.get(String(g.id)) || [];
+
             const items: BulletinSubjectGroupItem[] = rows
               .map((row: any) => {
                 const instSub = row.institution_subjects || {};
                 const subj = instSub.subjects || {};
-                const subjectId: string | null =
-                  (subj && subj.id) || instSub.subject_id || null;
+                const subjectId: string | null = (subj && subj.id) || instSub.subject_id || null;
 
-                if (!subjectId) {
-                  return null;
-                }
+                if (!subjectId) return null;
 
                 const subjectName =
-                  instSub.label ||
-                  instSub.short_label ||
-                  subj.name ||
-                  subj.code ||
-                  "Matière";
+                  instSub.label || instSub.short_label || subj.name || subj.code || "Matière";
 
                 const item: BulletinSubjectGroupItem = {
                   id: String(row.id),
@@ -1067,8 +1050,7 @@ export async function GET(req: NextRequest) {
                   level: instSub.level ?? null,
                   order_index: Number(row.order_index ?? 1),
                   subject_coeff_override:
-                    row.subject_coeff_override !== null &&
-                    row.subject_coeff_override !== undefined
+                    row.subject_coeff_override !== null && row.subject_coeff_override !== undefined
                       ? Number(row.subject_coeff_override)
                       : null,
                   is_optional: row.is_optional === true,
@@ -1080,16 +1062,11 @@ export async function GET(req: NextRequest) {
 
                 return item;
               })
-              .filter(
-                (
-                  it: BulletinSubjectGroupItem | null
-                ): it is BulletinSubjectGroupItem => !!it
-              )
+              .filter((it: BulletinSubjectGroupItem | null): it is BulletinSubjectGroupItem => !!it)
               .sort((a, b) => a.order_index - b.order_index);
 
             const annualCoeffRaw =
-              (g as any).annual_coeff !== null &&
-              (g as any).annual_coeff !== undefined
+              (g as any).annual_coeff !== null && (g as any).annual_coeff !== undefined
                 ? Number((g as any).annual_coeff)
                 : 1;
 
@@ -1132,10 +1109,7 @@ export async function GET(req: NextRequest) {
     evalById.set(e.id, e);
   }
 
-  const perStudentSubject = new Map<
-    string,
-    Map<string, { sumWeighted: number; sumCoeff: number }>
-  >();
+  const perStudentSubject = new Map<string, Map<string, { sumWeighted: number; sumCoeff: number }>>();
 
   // agrégats par sous-matière
   const perStudentSubjectComponent = new Map<
@@ -1155,7 +1129,6 @@ export async function GET(req: NextRequest) {
     if (!ev) continue;
     if (!ev.subject_id) continue;
     if (!ev.scale || ev.scale <= 0) continue;
-
     if (sc.score === null || sc.score === undefined) continue;
 
     const score = Number(sc.score);
@@ -1186,11 +1159,7 @@ export async function GET(req: NextRequest) {
           perStudentSubjectComponent.set(sc.student_id, stuCompMap);
         }
         const compCell =
-          stuCompMap.get(comp.id) || {
-            subject_id: comp.subject_id,
-            sumWeighted: 0,
-            sumCoeff: 0,
-          };
+          stuCompMap.get(comp.id) || { subject_id: comp.subject_id, sumWeighted: 0, sumCoeff: 0 };
         compCell.sumWeighted += norm20 * weight;
         compCell.sumCoeff += weight;
         stuCompMap.set(comp.id, compCell);
@@ -1202,9 +1171,7 @@ export async function GET(req: NextRequest) {
   const items = classStudents.map((cs) => {
     const stu = cs.students || {};
     const fullName =
-      stu.full_name ||
-      [stu.last_name, stu.first_name].filter(Boolean).join(" ") ||
-      "Élève";
+      stu.full_name || [stu.last_name, stu.first_name].filter(Boolean).join(" ") || "Élève";
 
     const stuMap =
       perStudentSubject.get(cs.student_id) ||
@@ -1273,8 +1240,7 @@ export async function GET(req: NextRequest) {
 
           const subAvg = subAvgRaw;
           const w =
-            it.subject_coeff_override !== null &&
-            it.subject_coeff_override !== undefined
+            it.subject_coeff_override !== null && it.subject_coeff_override !== undefined
               ? Number(it.subject_coeff_override)
               : 1;
           if (w <= 0) continue;
@@ -1283,8 +1249,7 @@ export async function GET(req: NextRequest) {
           sumCoeffLocal += w;
         }
 
-        const groupAvg =
-          sumCoeffLocal > 0 ? cleanNumber(sum / sumCoeffLocal) : null;
+        const groupAvg = sumCoeffLocal > 0 ? cleanNumber(sum / sumCoeffLocal) : null;
 
         return {
           group_id: g.id,
@@ -1305,7 +1270,7 @@ export async function GET(req: NextRequest) {
         const coeffGroup = g.annual_coeff ?? 0;
         if (!coeffGroup || coeffGroup <= 0) continue;
 
-        const pg = per_group.find((x) => x.group_id === g.id);
+        const pg = (per_group as any[]).find((x) => x.group_id === g.id);
         const groupAvg = pg?.group_avg ?? null;
         if (groupAvg === null || groupAvg === undefined) continue;
 
@@ -1339,6 +1304,7 @@ export async function GET(req: NextRequest) {
 
       for (const s of subjectsForReport) {
         if (s.include_in_average === false) continue;
+
         const coeffSub = s.coeff_bulletin ?? 0;
         if (!coeffSub || coeffSub <= 0) continue;
 
@@ -1361,7 +1327,7 @@ export async function GET(req: NextRequest) {
       full_name: fullName,
       matricule: stu.matricule || null,
       gender: stu.gender || null,
-      birth_date: stu.birthdate || null, // 🔁 API renvoie toujours birth_date, mappée sur students.birthdate
+      birth_date: stu.birthdate || null, // 🔁 API renvoie toujours birth_date
       birth_place: stu.birth_place || null,
       nationality: stu.nationality || null,
       regime: stu.regime || null,
@@ -1401,6 +1367,8 @@ export async function GET(req: NextRequest) {
       label: classRow.label || classRow.code || "Classe",
       code: classRow.code || null,
       academic_year: classRow.academic_year || null,
+      level: classRow.level || null,
+      bulletin_level: bulletinLevel,
       head_teacher: headTeacher
         ? {
             id: headTeacher.id,
