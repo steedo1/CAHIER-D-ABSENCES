@@ -58,7 +58,6 @@ type ClassStudentRow = {
         first_name?: string | null;
         matricule?: string | null;
 
-        // 🆕 champs identité réellement présents en BDD
         gender?: string | null;
         birthdate?: string | null;
         birth_place?: string | null;
@@ -87,17 +86,9 @@ type SubjectCoeffRow = {
 type BulletinSubjectGroupItem = {
   id: string;
   group_id: string;
-
-  // ✅ ton schéma: bulletin_subject_group_items.subject_id (uuid)
-  subject_id: string;
-
-  // ✅ on fabrique le nom depuis subjects
+  subject_id: string; // uuid
   subject_name: string;
-
-  // ✅ pas dans ta table → on fabrique
   order_index: number;
-
-  // ✅ pas dans ta table → on met null/false
   subject_coeff_override: number | null;
   is_optional: boolean;
 };
@@ -113,7 +104,6 @@ type BulletinSubjectGroup = {
   items: BulletinSubjectGroupItem[];
 };
 
-// ✅ Sous-matières renvoyées au front
 type BulletinSubjectComponent = {
   id: string;
   subject_id: string; // subjects.id parent
@@ -123,7 +113,6 @@ type BulletinSubjectComponent = {
   order_index: number;
 };
 
-// Nettoyage des nombres et arrondi à 2 décimales
 function cleanNumber(x: any): number | null {
   const n = Number(x);
   if (!Number.isFinite(n)) return null;
@@ -142,18 +131,15 @@ function isUuid(v: string): boolean {
   );
 }
 
-// ✅ Normalisation du niveau "bulletin" (évite 1reD, 2ndeA, TA, etc.)
 function normalizeBulletinLevel(level?: string | null): string | null {
   if (!level) return null;
   const x = String(level).trim().toLowerCase();
 
-  // déjà au bon format
   if (["6e", "5e", "4e", "3e", "seconde", "première", "terminale"].includes(x)) {
     return x;
   }
   if (x === "premiere") return "première";
 
-  // variantes courantes
   if (x.startsWith("2de") || x.startsWith("2nde") || x.startsWith("2")) return "seconde";
   if (x.startsWith("1re") || x.startsWith("1ere") || x.startsWith("1")) return "première";
   if (x.startsWith("t")) return "terminale";
@@ -212,9 +198,7 @@ function applySubjectRanks(items: any[]) {
 
     perSubject.forEach((ps) => {
       const avg =
-        typeof ps.avg20 === "number" && Number.isFinite(ps.avg20)
-          ? ps.avg20
-          : null;
+        typeof ps.avg20 === "number" && Number.isFinite(ps.avg20) ? ps.avg20 : null;
       const sid = ps.subject_id as string | undefined;
       if (!sid || avg === null) return;
 
@@ -242,9 +226,7 @@ function applySubjectRanks(items: any[]) {
       if (!Array.isArray(perSubject)) continue;
 
       const cell = perSubject.find((ps: any) => ps.subject_id === subjectId);
-      if (cell) {
-        (cell as any).subject_rank = currentRank;
-      }
+      if (cell) (cell as any).subject_rank = currentRank;
     }
   });
 }
@@ -262,9 +244,7 @@ function applySubjectComponentRanks(items: any[]) {
 
     perComp.forEach((psc) => {
       const avg =
-        typeof psc.avg20 === "number" && Number.isFinite(psc.avg20)
-          ? psc.avg20
-          : null;
+        typeof psc.avg20 === "number" && Number.isFinite(psc.avg20) ? psc.avg20 : null;
       const cid = psc.component_id as string | undefined;
       if (!cid || avg === null) return;
 
@@ -292,9 +272,7 @@ function applySubjectComponentRanks(items: any[]) {
       if (!Array.isArray(perComp)) continue;
 
       const cell = perComp.find((psc: any) => psc.component_id === componentId);
-      if (cell) {
-        (cell as any).component_rank = currentRank;
-      }
+      if (cell) (cell as any).component_rank = currentRank;
     }
   });
 }
@@ -316,7 +294,6 @@ async function attachTeachersToSubjects(
   const teacherBySubject = new Map<string, string>();
 
   /* ── A. À partir de grade_evaluations.teacher_id ─────────────────────── */
-
   if (evals.length) {
     type ST = { teacher_id: string; lastEvalDate: string };
     const bySubjectEval = new Map<string, ST>();
@@ -352,9 +329,7 @@ async function attachTeachersToSubjects(
       } else {
         const nameByIdEval = new Map<string, string>();
         (profsEval || []).forEach((p: any) => {
-          if (p.id && p.display_name) {
-            nameByIdEval.set(String(p.id), String(p.display_name));
-          }
+          if (p.id && p.display_name) nameByIdEval.set(String(p.id), String(p.display_name));
         });
 
         bySubjectEval.forEach((info, sid) => {
@@ -371,7 +346,6 @@ async function attachTeachersToSubjects(
   }
 
   /* ── B. Fallback via institution_subjects + class_teachers ───────────── */
-
   const missingSubjectIds = subjectIds.filter((sid) => !teacherBySubject.has(sid));
 
   if (missingSubjectIds.length) {
@@ -438,9 +412,7 @@ async function attachTeachersToSubjects(
               );
             } else {
               (profsCt || []).forEach((p: any) => {
-                if (p.id && p.display_name) {
-                  nameByIdCt.set(String(p.id), String(p.display_name));
-                }
+                if (p.id && p.display_name) nameByIdCt.set(String(p.id), String(p.display_name));
               });
             }
           }
@@ -460,10 +432,7 @@ async function attachTeachersToSubjects(
     }
   }
 
-  console.log(
-    "[bulletin] teacherBySubject final",
-    Object.fromEntries(teacherBySubject)
-  );
+  console.log("[bulletin] teacherBySubject final", Object.fromEntries(teacherBySubject));
 
   if (!teacherBySubject.size) {
     console.warn(
@@ -485,26 +454,19 @@ async function attachTeachersToSubjects(
   }
 
   if (items.length) {
-    console.log(
-      "[bulletin] sample per_subject with teachers (eleve 1)",
-      items[0].per_subject
-    );
+    console.log("[bulletin] sample per_subject with teachers (eleve 1)", items[0].per_subject);
   }
 }
 
 /* ───────── GET /api/admin/grades/bulletin ───────── */
 export async function GET(req: NextRequest) {
   const supabase = await getSupabaseServerClient();
-  const srv = getSupabaseServiceClient(); // service-role pour certaines tables
+  const srv = getSupabaseServiceClient();
   const ctx = await getAdminAndInstitution(supabase);
 
   if ("error" in ctx) {
     const status =
-      ctx.error === "UNAUTHENTICATED"
-        ? 401
-        : ctx.error === "FORBIDDEN"
-        ? 403
-        : 400;
+      ctx.error === "UNAUTHENTICATED" ? 401 : ctx.error === "FORBIDDEN" ? 403 : 400;
     return NextResponse.json({ ok: false, error: ctx.error }, { status });
   }
 
@@ -516,13 +478,10 @@ export async function GET(req: NextRequest) {
   const dateTo = searchParams.get("to");
 
   if (!classId) {
-    return NextResponse.json(
-      { ok: false, error: "MISSING_CLASS_ID" },
-      { status: 400 }
-    );
+    return NextResponse.json({ ok: false, error: "MISSING_CLASS_ID" }, { status: 400 });
   }
 
-  /* 1) Vérifier que la classe appartient à l'établissement + récupérer prof principal */
+  /* 1) Classe + appartenance établissement + prof principal */
   const { data: cls, error: clsErr } = await supabase
     .from("classes")
     .select("id, label, code, institution_id, academic_year, head_teacher_id, level")
@@ -540,17 +499,12 @@ export async function GET(req: NextRequest) {
   const classRow = cls as ClassRow;
 
   if (!classRow.institution_id) {
-    return NextResponse.json(
-      { ok: false, error: "CLASS_NO_INSTITUTION" },
-      { status: 400 }
-    );
+    return NextResponse.json({ ok: false, error: "CLASS_NO_INSTITUTION" }, { status: 400 });
   }
-
   if (classRow.institution_id !== institutionId) {
     return NextResponse.json({ ok: false, error: "CLASS_FORBIDDEN" }, { status: 403 });
   }
 
-  // ✅ niveau normalisé pour les configs bulletin (groups/coeffs)
   const bulletinLevel = normalizeBulletinLevel(classRow.level);
 
   console.log("[bulletin] class level raw -> bulletin level", {
@@ -558,7 +512,6 @@ export async function GET(req: NextRequest) {
     bulletinLevel,
   });
 
-  // 1a) Lookup du professeur principal (facultatif)
   let headTeacher: HeadTeacherRow | null = null;
   if (classRow.head_teacher_id) {
     const { data: ht, error: htErr } = await supabase
@@ -567,14 +520,11 @@ export async function GET(req: NextRequest) {
       .eq("id", classRow.head_teacher_id)
       .maybeSingle();
 
-    if (htErr) {
-      console.error("[bulletin] head_teacher lookup error", htErr);
-    } else if (ht) {
-      headTeacher = ht as HeadTeacherRow;
-    }
+    if (htErr) console.error("[bulletin] head_teacher lookup error", htErr);
+    else if (ht) headTeacher = ht as HeadTeacherRow;
   }
 
-  /* 1bis) Retrouver éventuellement la période de bulletin (grade_periods) + son coeff */
+  /* 1bis) Période bulletin */
   let periodMeta: {
     from: string | null;
     to: string | null;
@@ -604,13 +554,12 @@ export async function GET(req: NextRequest) {
         label: gp.label ?? null,
         short_label: gp.short_label ?? null,
         academic_year: gp.academic_year ?? null,
-        coeff:
-          gp.coeff === null || gp.coeff === undefined ? null : cleanCoeff(gp.coeff),
+        coeff: gp.coeff === null || gp.coeff === undefined ? null : cleanCoeff(gp.coeff),
       };
     }
   }
 
-  /* 2) Récupérer les élèves de la classe (photo historique si période) */
+  /* 2) Élèves */
   const hasDateFilter = !!dateFrom || !!dateTo;
 
   let enrollQuery = supabase
@@ -682,7 +631,7 @@ export async function GET(req: NextRequest) {
 
   const studentIds = classStudents.map((cs) => cs.student_id);
 
-  /* 3) Récupérer les évaluations de la période pour cette classe */
+  /* 3) Évaluations */
   let evalQuery = supabase
     .from("grade_evaluations")
     .select(
@@ -691,12 +640,8 @@ export async function GET(req: NextRequest) {
     .eq("class_id", classId)
     .eq("is_published", true);
 
-  if (dateFrom) {
-    evalQuery = evalQuery.gte("eval_date", dateFrom);
-  }
-  if (dateTo) {
-    evalQuery = evalQuery.lte("eval_date", dateTo);
-  }
+  if (dateFrom) evalQuery = evalQuery.gte("eval_date", dateFrom);
+  if (dateTo) evalQuery = evalQuery.lte("eval_date", dateTo);
 
   const { data: evalData, error: evalErr } = await evalQuery;
 
@@ -742,7 +687,9 @@ export async function GET(req: NextRequest) {
       items: classStudents.map((cs) => {
         const stu = cs.students || {};
         const fullName =
-          stu.full_name || [stu.last_name, stu.first_name].filter(Boolean).join(" ") || "Élève";
+          stu.full_name ||
+          [stu.last_name, stu.first_name].filter(Boolean).join(" ") ||
+          "Élève";
         return {
           student_id: cs.student_id,
           full_name: fullName,
@@ -766,7 +713,7 @@ export async function GET(req: NextRequest) {
 
   const evalIds = evals.map((e) => e.id);
 
-  /* 4) Récupérer les notes (depuis student_grades) */
+  /* 4) Notes */
   const { data: scoreData, error: scoreErr } = await supabase
     .from("student_grades")
     .select("evaluation_id, student_id, score")
@@ -780,7 +727,7 @@ export async function GET(req: NextRequest) {
 
   const scores = (scoreData || []) as ScoreRow[];
 
-  /* 5) Matières concernées (à partir des évaluations) */
+  /* 5) Matières depuis évaluations */
   const subjectIdSet = new Set<string>();
   for (const e of evals) {
     if (e.subject_id) subjectIdSet.add(String(e.subject_id));
@@ -821,7 +768,9 @@ export async function GET(req: NextRequest) {
       items: classStudents.map((cs) => {
         const stu = cs.students || {};
         const fullName =
-          stu.full_name || [stu.last_name, stu.first_name].filter(Boolean).join(" ") || "Élève";
+          stu.full_name ||
+          [stu.last_name, stu.first_name].filter(Boolean).join(" ") ||
+          "Élève";
         return {
           student_id: cs.student_id,
           full_name: fullName,
@@ -843,7 +792,7 @@ export async function GET(req: NextRequest) {
     });
   }
 
-  // Noms des matières (via service client pour éviter les soucis RLS)
+  /* 5bis) Noms matières */
   const { data: subjData, error: subjErr } = await srv
     .from("subjects")
     .select("id, name, code")
@@ -858,16 +807,14 @@ export async function GET(req: NextRequest) {
   const subjectById = new Map<string, SubjectRow>();
   for (const s of subjects) subjectById.set(s.id, s);
 
-  /* 6) Coefficients bulletin par matière pour cet établissement + niveau */
+  /* 6) Coeffs bulletin */
   let coeffQuery = supabase
     .from("institution_subject_coeffs")
     .select("subject_id, coeff, include_in_average, level")
     .eq("institution_id", institutionId)
     .in("subject_id", subjectIds);
 
-  if (bulletinLevel) {
-    coeffQuery = coeffQuery.eq("level", bulletinLevel);
-  }
+  if (bulletinLevel) coeffQuery = coeffQuery.eq("level", bulletinLevel);
 
   const { data: coeffData, error: coeffErr } = await coeffQuery;
 
@@ -880,11 +827,10 @@ export async function GET(req: NextRequest) {
   for (const row of (coeffData || []) as SubjectCoeffRow[]) {
     const sid = row.subject_id;
     const coeff = cleanCoeff(row.coeff);
-    const include = row.include_in_average !== false; // par défaut on inclut
+    const include = row.include_in_average !== false;
     coeffBySubject.set(sid, { coeff, include });
   }
 
-  // Liste des matières pour le bulletin
   const subjectsForReport = subjectIds.map((sid) => {
     const s = subjectById.get(sid);
     const name = s?.name || s?.code || "Matière";
@@ -898,6 +844,12 @@ export async function GET(req: NextRequest) {
       coeff_bulletin: coeffBulletin,
       include_in_average: includeInAverage,
     };
+  });
+
+  // ✅ Map coeff bulletin par matière (pour pondérer les bilans)
+  const bulletinCoeffBySubject = new Map<string, number>();
+  subjectsForReport.forEach((s) => {
+    bulletinCoeffBySubject.set(s.subject_id, cleanCoeff(s.coeff_bulletin ?? 1));
   });
 
   /* 6bis) Sous-matières */
@@ -943,7 +895,7 @@ export async function GET(req: NextRequest) {
     rows.forEach((c) => subjectComponentById.set(c.id, c));
   }
 
-  /* 6ter) Groupes de disciplines pour ce niveau (✅ FIX selon ton schéma) */
+  /* 6ter) Groupes de disciplines */
   let subjectGroups: BulletinSubjectGroup[] = [];
   const groupedSubjectIds = new Set<string>();
 
@@ -963,19 +915,15 @@ export async function GET(req: NextRequest) {
       if (activeGroups.length) {
         const groupIds = activeGroups.map((g) => String(g.id));
 
-        // ✅ ta table a juste: id, group_id, subject_id, created_at, updated_at
         const { data: itemsData, error: itemsErr } = await srv
           .from("bulletin_subject_group_items")
           .select("id, group_id, subject_id, created_at")
           .in("group_id", groupIds);
 
-        if (itemsErr) {
-          console.error("[bulletin] group_items error", itemsErr);
-        }
+        if (itemsErr) console.error("[bulletin] group_items error", itemsErr);
 
         const rawItems = (itemsData || []) as any[];
 
-        // ordonner proprement (created_at) puis fabriquer order_index
         rawItems.sort((a, b) => {
           const ag = String(a.group_id || "");
           const bg = String(b.group_id || "");
@@ -985,7 +933,6 @@ export async function GET(req: NextRequest) {
           return ac.localeCompare(bc);
         });
 
-        // récupérer les noms de matières depuis subjects
         const groupSubjectIds = Array.from(
           new Set(
             rawItems
@@ -1001,9 +948,8 @@ export async function GET(req: NextRequest) {
             .select("id, name, code")
             .in("id", groupSubjectIds);
 
-          if (sErr) {
-            console.error("[bulletin] subjects lookup for group items error", sErr);
-          } else {
+          if (sErr) console.error("[bulletin] subjects lookup for group items error", sErr);
+          else {
             (sRows || []).forEach((s: any) => {
               const sid = String(s.id);
               const name = s.name || s.code || "Matière";
@@ -1012,7 +958,6 @@ export async function GET(req: NextRequest) {
           }
         }
 
-        // indexer par groupe
         const itemsByGroup = new Map<string, any[]>();
         rawItems.forEach((row) => {
           const gId = String(row.group_id);
@@ -1024,29 +969,24 @@ export async function GET(req: NextRequest) {
         subjectGroups = activeGroups.map((g: any) => {
           const rows = itemsByGroup.get(String(g.id)) || [];
 
-         const items: BulletinSubjectGroupItem[] = rows.flatMap((row: any, idx: number) => {
-  const sid = row.subject_id ? String(row.subject_id) : "";
-  if (!sid || !isUuid(sid)) return [];
+          const items: BulletinSubjectGroupItem[] = rows.flatMap((row: any, idx: number) => {
+            const sid = row.subject_id ? String(row.subject_id) : "";
+            if (!sid || !isUuid(sid)) return [];
 
-  const subjectName = nameBySubjectId.get(sid) || "Matière";
+            const subjectName = nameBySubjectId.get(sid) || "Matière";
 
-  if (subjectIdSet.has(sid)) {
-    groupedSubjectIds.add(sid);
-  }
+            const it: BulletinSubjectGroupItem = {
+              id: String(row.id),
+              group_id: String(row.group_id),
+              subject_id: sid,
+              subject_name: String(subjectName),
+              order_index: idx + 1,
+              subject_coeff_override: null,
+              is_optional: false,
+            };
 
-  const it: BulletinSubjectGroupItem = {
-    id: String(row.id),
-    group_id: String(row.group_id),
-    subject_id: sid,
-    subject_name: String(subjectName),
-    order_index: idx + 1,
-    subject_coeff_override: null,
-    is_optional: false,
-  };
-
-  return [it];
-});
-
+            return [it];
+          });
 
           const annualCoeffRaw =
             (g as any).annual_coeff !== null && (g as any).annual_coeff !== undefined
@@ -1078,18 +1018,46 @@ export async function GET(req: NextRequest) {
             items,
           };
         });
+
+        // ✅ Anti-doublon inter-bilans (une matière ne peut être que dans 1 bilan)
+        const groupPriority = (code: string) =>
+          code === "BILAN_AUTRES" ? 0 : code === "BILAN_SCIENCES" ? 1 : 2;
+
+        const sortedForAssignment = [...subjectGroups].sort(
+          (a, b) =>
+            groupPriority(a.code) - groupPriority(b.code) || a.order_index - b.order_index
+        );
+
+        const subjectToGroup = new Map<string, string>();
+        for (const g of sortedForAssignment) {
+          for (const it of g.items) {
+            if (!subjectToGroup.has(it.subject_id)) subjectToGroup.set(it.subject_id, g.id);
+          }
+        }
+
+        subjectGroups = subjectGroups
+          .sort((a, b) => a.order_index - b.order_index)
+          .map((g) => ({
+            ...g,
+            items: g.items.filter((it) => subjectToGroup.get(it.subject_id) === g.id),
+          }));
+
+        // ✅ Recalcule le set des matières réellement groupées (après dédoublonnage)
+        groupedSubjectIds.clear();
+        for (const g of subjectGroups) {
+          for (const it of g.items) {
+            if (subjectIdSet.has(it.subject_id)) groupedSubjectIds.add(it.subject_id);
+          }
+        }
       }
     }
   }
 
   const hasGroupConfig = subjectGroups.length > 0;
-  const useGroupsForAverage = groupedSubjectIds.size > 0;
 
-  /* 7) Préparer des maps pour le calcul (par matière + par sous-matière) */
+  /* 7) Maps calcul */
   const evalById = new Map<string, EvalRow>();
-  for (const e of evals) {
-    evalById.set(e.id, e);
-  }
+  for (const e of evals) evalById.set(e.id, e);
 
   const perStudentSubject = new Map<string, Map<string, { sumWeighted: number; sumCoeff: number }>>();
 
@@ -1146,7 +1114,7 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  /* 8) Construire la réponse : par élève */
+  /* 8) Réponse par élève */
   const items = classStudents.map((cs) => {
     const stu = cs.students || {};
     const fullName =
@@ -1170,13 +1138,8 @@ export async function GET(req: NextRequest) {
     const per_subject = subjectsForReport.map((s) => {
       const cell = stuMap.get(s.subject_id);
       let avg20: number | null = null;
-      if (cell && cell.sumCoeff > 0) {
-        avg20 = cleanNumber(cell.sumWeighted / cell.sumCoeff);
-      }
-      return {
-        subject_id: s.subject_id,
-        avg20,
-      };
+      if (cell && cell.sumCoeff > 0) avg20 = cleanNumber(cell.sumWeighted / cell.sumCoeff);
+      return { subject_id: s.subject_id, avg20 };
     });
 
     const per_subject_components =
@@ -1185,9 +1148,7 @@ export async function GET(req: NextRequest) {
         : subjectComponentsForReport.map((comp) => {
             const cell = stuCompMap.get(comp.id);
             let avg20: number | null = null;
-            if (cell && cell.sumCoeff > 0) {
-              avg20 = cleanNumber(cell.sumWeighted / cell.sumCoeff);
-            }
+            if (cell && cell.sumCoeff > 0) avg20 = cleanNumber(cell.sumWeighted / cell.sumCoeff);
             return {
               subject_id: comp.subject_id,
               component_id: comp.id,
@@ -1214,64 +1175,26 @@ export async function GET(req: NextRequest) {
           const subAvgRaw = cell.sumWeighted / cell.sumCoeff;
           if (!Number.isFinite(subAvgRaw)) continue;
 
-          const subAvg = subAvgRaw;
           const w =
             it.subject_coeff_override !== null && it.subject_coeff_override !== undefined
               ? Number(it.subject_coeff_override)
-              : 1;
-          if (w <= 0) continue;
+              : bulletinCoeffBySubject.get(it.subject_id) ?? 1;
 
-          sum += subAvg * w;
+          if (!w || w <= 0) continue;
+
+          sum += subAvgRaw * w;
           sumCoeffLocal += w;
         }
 
         const groupAvg = sumCoeffLocal > 0 ? cleanNumber(sum / sumCoeffLocal) : null;
 
-        return {
-          group_id: g.id,
-          group_avg: groupAvg,
-        };
+        return { group_id: g.id, group_avg: groupAvg };
       });
     }
 
+    // ✅ Moyenne générale = UNIQUEMENT pondérée par les matières (jamais par les bilans)
     let general_avg: number | null = null;
-
-    if (useGroupsForAverage) {
-      let sumGen = 0;
-      let sumCoeffGen = 0;
-
-      for (const g of subjectGroups) {
-        const coeffGroup = g.annual_coeff ?? 0;
-        if (!coeffGroup || coeffGroup <= 0) continue;
-
-        const pg = (per_group as any[]).find((x) => x.group_id === g.id);
-        const groupAvg = pg?.group_avg ?? null;
-        if (groupAvg === null || groupAvg === undefined) continue;
-
-        sumGen += groupAvg * coeffGroup;
-        sumCoeffGen += coeffGroup;
-      }
-
-      for (const s of subjectsForReport) {
-        if (groupedSubjectIds.has(s.subject_id)) continue;
-        if (s.include_in_average === false) continue;
-
-        const coeffSub = s.coeff_bulletin ?? 0;
-        if (!coeffSub || coeffSub <= 0) continue;
-
-        const cell = stuMap.get(s.subject_id);
-        if (!cell || cell.sumCoeff <= 0) continue;
-
-        const subAvgRaw = cell.sumWeighted / cell.sumCoeff;
-        if (!Number.isFinite(subAvgRaw)) continue;
-        const subAvg = subAvgRaw;
-
-        sumGen += subAvg * coeffSub;
-        sumCoeffGen += coeffSub;
-      }
-
-      general_avg = sumCoeffGen > 0 ? cleanNumber(sumGen / sumCoeffGen) : null;
-    } else {
+    {
       let sumGen = 0;
       let sumCoeffGen = 0;
 
@@ -1286,9 +1209,8 @@ export async function GET(req: NextRequest) {
 
         const subAvgRaw = cell.sumWeighted / cell.sumCoeff;
         if (!Number.isFinite(subAvgRaw)) continue;
-        const subAvg = subAvgRaw;
 
-        sumGen += subAvg * coeffSub;
+        sumGen += subAvgRaw * coeffSub;
         sumCoeffGen += coeffSub;
       }
 
@@ -1300,7 +1222,7 @@ export async function GET(req: NextRequest) {
       full_name: fullName,
       matricule: stu.matricule || null,
       gender: stu.gender || null,
-      birth_date: stu.birthdate || null, // 🔁 API renvoie toujours birth_date
+      birth_date: stu.birthdate || null,
       birth_place: stu.birth_place || null,
       nationality: stu.nationality || null,
       regime: stu.regime || null,
@@ -1314,13 +1236,11 @@ export async function GET(req: NextRequest) {
     };
   });
 
-  // 9) Rang par matière
+  /* 9) Rangs */
   applySubjectRanks(items);
-
-  // 9bis) Rang par sous-matière
   applySubjectComponentRanks(items);
 
-  // 10) Nom du professeur par matière
+  /* 10) Profs par matière */
   await attachTeachersToSubjects(
     supabase,
     srv,
