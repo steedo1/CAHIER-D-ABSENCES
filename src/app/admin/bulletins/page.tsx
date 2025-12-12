@@ -77,7 +77,12 @@ type PerSubjectAvg = {
   teacher_name?: string | null;
 };
 
-type PerGroupAvg = { group_id: string; group_avg: number | null };
+type PerGroupAvg = {
+  group_id: string;
+  group_avg: number | null;
+  // 🆕 rang de l’élève dans le groupe de matières (calculé côté front)
+  group_rank?: number | null;
+};
 
 type PerSubjectComponentAvg = {
   subject_id: string;
@@ -425,6 +430,54 @@ function applyComponentRanksFront(
   });
 }
 
+/* ───────── Rangs groupes de matières (BILAN LETTRES / SCIENCES) ───────── */
+
+function applyGroupRanksFront(
+  items: (BulletinItemBase | BulletinItemWithRank)[]
+) {
+  type Entry = {
+    itemIndex: number;
+    groupIndex: number;
+    avg: number;
+    groupId: string;
+  };
+
+  const byGroup = new Map<string, Entry[]>();
+
+  items.forEach((it, itemIndex) => {
+    const groups = it.per_group ?? [];
+    groups.forEach((g, groupIndex) => {
+      const raw = g.group_avg;
+      if (raw === null || raw === undefined) return;
+      const avg = Number(raw);
+      if (!Number.isFinite(avg)) return;
+      const groupId = g.group_id;
+      const arr = byGroup.get(groupId) ?? [];
+      arr.push({ itemIndex, groupIndex, avg, groupId });
+      byGroup.set(groupId, arr);
+    });
+  });
+
+  byGroup.forEach((entries) => {
+    entries.sort((a, b) => b.avg - a.avg);
+
+    let lastAvg: number | null = null;
+    let currentRank = 0;
+    let position = 0;
+
+    entries.forEach(({ itemIndex, groupIndex, avg }) => {
+      position += 1;
+      if (lastAvg === null || avg !== lastAvg) {
+        currentRank = position;
+        lastAvg = avg;
+      }
+      const groups = items[itemIndex].per_group;
+      if (!groups || !groups[groupIndex]) return;
+      (groups[groupIndex] as any).group_rank = currentRank;
+    });
+  });
+}
+
 /* ───────── Ranks + stats helper ───────── */
 
 function computeRanksAndStats(
@@ -448,8 +501,9 @@ function computeRanksAndStats(
       ...it,
       rank: null,
     }));
-    // même si pas de moyenne générale, on peut classer les sous-matières
+    // même si pas de moyenne générale, on peut classer les sous-matières et les groupes
     applyComponentRanksFront(itemsWithRank);
+    applyGroupRanksFront(itemsWithRank);
     return { response: res, items: itemsWithRank, stats };
   }
 
@@ -484,8 +538,9 @@ function computeRanksAndStats(
     rank: rankByStudent.get(it.student_id) ?? null,
   }));
 
-  // 🆕 on calcule aussi les rangs pour chaque sous-matière
+  // 🆕 on calcule aussi les rangs pour chaque sous-matière et chaque BILAN (groupe)
   applyComponentRanksFront(itemsWithRank);
+  applyGroupRanksFront(itemsWithRank);
 
   return { response: res, items: itemsWithRank, stats };
 }
@@ -498,6 +553,7 @@ type StudentBulletinCardProps = {
   item: BulletinItemWithRank;
   subjects: BulletinSubject[];
   subjectComponents: BulletinSubjectComponent[];
+  subjectGroups: BulletinGroup[];
   classInfo: BulletinResponse["class"];
   period: BulletinResponse["period"];
   institution: InstitutionSettings | null;
@@ -513,6 +569,7 @@ function StudentBulletinCard({
   item,
   subjects,
   subjectComponents,
+  subjectGroups,
   classInfo,
   period,
   institution,
@@ -597,6 +654,27 @@ function StudentBulletinCard({
     return m;
   }, [item.per_subject_components]);
 
+  // Map group_id -> { group_avg, group_rank }
+  const perGroupMap = useMemo(() => {
+    const m = new Map<string, { group_avg: number | null; group_rank?: number | null }>();
+    const per = item.per_group ?? [];
+    per.forEach((g) => {
+      m.set(g.group_id, {
+        group_avg: g.group_avg ?? null,
+        group_rank:
+          g.group_rank !== undefined ? g.group_rank : null,
+      });
+    });
+    return m;
+  }, [item.per_group]);
+
+  // Map subject_id -> BulletinSubject (utile pour les groupes)
+  const subjectsById = useMemo(() => {
+    const m = new Map<string, BulletinSubject>();
+    subjects.forEach((s) => m.set(s.subject_id, s));
+    return m;
+  }, [subjects]);
+
   // Durée d'absence en heures (à partir des minutes)
   const absenceHours =
     conduct && typeof conduct.absence_minutes === "number"
@@ -611,6 +689,99 @@ function StudentBulletinCard({
   );
 
   const tick = (checked: boolean) => (checked ? "☑" : "□");
+
+  // Helper d’affichage d’une matière + ses sous-matières
+  const renderSubjectBlock = (s: BulletinSubject) => {
+    const cell = item.per_subject.find(
+      (ps) => ps.subject_id === s.subject_id
+    );
+    const avg = cell?.avg20 ?? null;
+    const moyCoeff =
+      avg !== null ? round2(avg * (s.coeff_bulletin || 0)) : null;
+
+    const subjectRankLabel =
+      cell && cell.subject_rank != null ? `${cell.subject_rank}e` : "—";
+
+    const subjectTeacher = cell?.teacher_name || "";
+
+    const appreciationLabel = computeSubjectAppreciation(avg);
+
+    const subComps = subjectCompsBySubject.get(s.subject_id) ?? [];
+
+    return (
+      <React.Fragment key={s.subject_id}>
+        {/* Ligne principale de la matière */}
+        <tr>
+          <td className="border border-slate-400 px-1 py-0.5">
+            {s.subject_name}
+          </td>
+          <td className="border border-slate-400 px-1 py-0.5 text-center">
+            {formatNumber(avg)}
+          </td>
+          <td className="border border-slate-400 px-1 py-0.5 text-center">
+            {formatNumber(s.coeff_bulletin, 0)}
+          </td>
+          <td className="border border-slate-400 px-1 py-0.5 text-center">
+            {formatNumber(moyCoeff)}
+          </td>
+          <td className="border border-slate-400 px-1 py-0.5 text-center">
+            {subjectRankLabel}
+          </td>
+          <td className="border border-slate-400 px-1 py-0.5">
+            {appreciationLabel}
+          </td>
+          <td className="border border-slate-400 px-1 py-0.5">
+            {subjectTeacher}
+          </td>
+          {/* Signature : case VIDE, comme sur le modèle (pas de tiret) */}
+          <td className="border border-slate-400 px-1 py-0.5" />
+        </tr>
+
+        {/* Lignes des sous-matières, si présentes */}
+        {subComps.map((comp) => {
+          const key = `${s.subject_id}__${comp.id}`;
+          const compCell = perSubjectComponentMap.get(key);
+          const cAvg = compCell?.avg20 ?? null;
+          const cRank = compCell?.component_rank ?? null;
+          const cMoyCoeff =
+            cAvg !== null
+              ? round2(cAvg * (comp.coeff_in_subject || 0))
+              : null;
+
+          return (
+            <tr
+              key={`${s.subject_id}-${comp.id}`}
+              className="text-[0.65rem] text-slate-600"
+            >
+              <td className="border border-slate-400 px-1 py-0.5 pl-4">
+                • {comp.short_label || comp.label}
+              </td>
+              <td className="border border-slate-400 px-1 py-0.5 text-center">
+                {formatNumber(cAvg)}
+              </td>
+              <td className="border border-slate-400 px-1 py-0.5 text-center">
+                {formatNumber(comp.coeff_in_subject, 0)}
+              </td>
+              <td className="border border-slate-400 px-1 py-0.5 text-center">
+                {formatNumber(cMoyCoeff)}
+              </td>
+              <td className="border border-slate-400 px-1 py-0.5 text-center">
+                {cRank != null ? `${cRank}e` : "—"}
+              </td>
+              <td className="border border-slate-400 px-1 py-0.5" />
+              <td className="border border-slate-400 px-1 py-0.5" />
+              <td className="border border-slate-400 px-1 py-0.5" />
+            </tr>
+          );
+        })}
+      </React.Fragment>
+    );
+  };
+
+  // Sujet déjà utilisés dans un groupe (pour ne pas les doubler)
+  const groupedSubjectIds = new Set<string>();
+
+  const hasGroups = subjectGroups && subjectGroups.length > 0;
 
   return (
     <div
@@ -769,7 +940,7 @@ function StudentBulletinCard({
         </div>
       </div>
 
-      {/* Tableau disciplines + sous-matières */}
+      {/* Tableau disciplines + sous-matières + BILAN LETTRES / SCIENCES */}
       <table className="mb-3 w-full border border-slate-400 text-[0.7rem]">
         <thead className="bg-slate-100">
           <tr>
@@ -800,93 +971,76 @@ function StudentBulletinCard({
           </tr>
         </thead>
         <tbody>
-          {subjects.map((s) => {
-            const cell = item.per_subject.find(
-              (ps) => ps.subject_id === s.subject_id
-            );
-            const avg = cell?.avg20 ?? null;
-            const moyCoeff =
-              avg !== null ? round2(avg * (s.coeff_bulletin || 0)) : null;
+          {hasGroups ? (
+            <>
+              {/* 1) Matières organisées par groupes + lignes BILAN */}
+              {subjectGroups.map((g) => {
+                if (!g.is_active) return null;
 
-            const subjectRankLabel =
-              cell && cell.subject_rank != null ? `${cell.subject_rank}e` : "—";
+                const groupSubjects: BulletinSubject[] = [];
+                g.items.forEach((it) => {
+                  const subj = subjectsById.get(it.subject_id);
+                  if (subj) {
+                    groupSubjects.push(subj);
+                    groupedSubjectIds.add(subj.subject_id);
+                  }
+                });
 
-            const subjectTeacher = cell?.teacher_name || "";
+                if (!groupSubjects.length) return null;
 
-            const appreciationLabel = computeSubjectAppreciation(avg);
+                const groupInfo = perGroupMap.get(g.id);
+                const groupAvg = groupInfo?.group_avg ?? null;
+                const groupRankLabel =
+                  groupInfo?.group_rank != null
+                    ? `${groupInfo.group_rank}e`
+                    : "—";
+                const groupCoeff = g.annual_coeff ?? 0;
+                const groupTotal =
+                  groupAvg !== null && groupCoeff
+                    ? round2(groupAvg * groupCoeff)
+                    : null;
 
-            const subComps = subjectCompsBySubject.get(s.subject_id) ?? [];
+                const bilanLabel = g.label || g.code || "Bilan";
 
-            return (
-              <React.Fragment key={s.subject_id}>
-                {/* Ligne principale de la matière */}
-                <tr>
-                  <td className="border border-slate-400 px-1 py-0.5">
-                    {s.subject_name}
-                  </td>
-                  <td className="border border-slate-400 px-1 py-0.5 text-center">
-                    {formatNumber(avg)}
-                  </td>
-                  <td className="border border-slate-400 px-1 py-0.5 text-center">
-                    {formatNumber(s.coeff_bulletin, 0)}
-                  </td>
-                  <td className="border border-slate-400 px-1 py-0.5 text-center">
-                    {formatNumber(moyCoeff)}
-                  </td>
-                  <td className="border border-slate-400 px-1 py-0.5 text-center">
-                    {subjectRankLabel}
-                  </td>
-                  <td className="border border-slate-400 px-1 py-0.5">
-                    {appreciationLabel}
-                  </td>
-                  <td className="border border-slate-400 px-1 py-0.5">
-                    {subjectTeacher}
-                  </td>
-                  <td className="border border-slate-400 px-1 py-2 align-bottom">
-                    <div className="h-[1px] w-full border-b border-slate-500" />
-                  </td>
-                </tr>
+                return [
+                  ...groupSubjects.map((s) => renderSubjectBlock(s)),
+                  <tr
+                    key={`group-${g.id}`}
+                    className="bg-slate-50 font-semibold"
+                  >
+                    <td className="border border-slate-400 px-1 py-0.5">
+                      {bilanLabel}
+                    </td>
+                    <td className="border border-slate-400 px-1 py-0.5 text-center">
+                      {formatNumber(groupAvg)}
+                    </td>
+                    <td className="border border-slate-400 px-1 py-0.5 text-center">
+                      {groupCoeff ? formatNumber(groupCoeff, 0) : ""}
+                    </td>
+                    <td className="border border-slate-400 px-1 py-0.5 text-center">
+                      {groupCoeff ? formatNumber(groupTotal) : ""}
+                    </td>
+                    <td className="border border-slate-400 px-1 py-0.5 text-center">
+                      {groupRankLabel}
+                    </td>
+                    <td className="border border-slate-400 px-1 py-0.5" />
+                    <td className="border border-slate-400 px-1 py-0.5" />
+                    {/* Signature vide */}
+                    <td className="border border-slate-400 px-1 py-0.5" />
+                  </tr>,
+                ];
+              })}
 
-                {/* Lignes des sous-matières, si présentes */}
-                {subComps.map((comp) => {
-                  const key = `${s.subject_id}__${comp.id}`;
-                  const compCell = perSubjectComponentMap.get(key);
-                  const cAvg = compCell?.avg20 ?? null;
-                  const cRank = compCell?.component_rank ?? null;
-                  const cMoyCoeff =
-                    cAvg !== null
-                      ? round2(cAvg * (comp.coeff_in_subject || 0))
-                      : null;
+              {/* 2) Matières non groupées (hors BILAN) */}
+              {subjects
+                .filter((s) => !groupedSubjectIds.has(s.subject_id))
+                .map((s) => renderSubjectBlock(s))}
+            </>
+          ) : (
+            // Pas de groupes configurés : on affiche simplement toutes les matières
+            subjects.map((s) => renderSubjectBlock(s))
+          )}
 
-                  return (
-                    <tr
-                      key={`${s.subject_id}-${comp.id}`}
-                      className="text-[0.65rem] text-slate-600"
-                    >
-                      <td className="border border-slate-400 px-1 py-0.5 pl-4">
-                        • {comp.short_label || comp.label}
-                      </td>
-                      <td className="border border-slate-400 px-1 py-0.5 text-center">
-                        {formatNumber(cAvg)}
-                      </td>
-                      <td className="border border-slate-400 px-1 py-0.5 text-center">
-                        {formatNumber(comp.coeff_in_subject, 0)}
-                      </td>
-                      <td className="border border-slate-400 px-1 py-0.5 text-center">
-                        {formatNumber(cMoyCoeff)}
-                      </td>
-                      <td className="border border-slate-400 px-1 py-0.5 text-center">
-                        {cRank != null ? `${cRank}e` : "—"}
-                      </td>
-                      <td className="border border-slate-400 px-1 py-0.5" />
-                      <td className="border border-slate-400 px-1 py-0.5" />
-                      <td className="border border-slate-400 px-1 py-0.5" />
-                    </tr>
-                  );
-                })}
-              </React.Fragment>
-            );
-          })}
           <tr className="bg-slate-50 font-semibold">
             <td className="border border-slate-400 px-1 py-0.5 text-right">
               Totaux
@@ -1354,6 +1508,7 @@ export default function BulletinsPage() {
   };
   const subjects = enriched?.response.subjects ?? [];
   const subjectComponents = enriched?.response.subject_components ?? [];
+  const subjectGroups = enriched?.response.subject_groups ?? [];
 
   const handlePrint = () => {
     if (!items.length) return;
@@ -1590,6 +1745,7 @@ export default function BulletinsPage() {
             item={it}
             subjects={subjects}
             subjectComponents={subjectComponents}
+            subjectGroups={subjectGroups}
             classInfo={classInfo}
             period={period}
             institution={institution}
