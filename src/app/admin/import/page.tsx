@@ -1,5 +1,6 @@
 "use client";
 
+import type React from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 /* UI helpers */
@@ -60,7 +61,7 @@ function boolLabel(v: unknown) {
 }
 
 /* Types */
-type ClassItem = { id: string; name: string; level: string };
+type ClassItem = { id: string; name: string; level?: string | null };
 type Mode = "students" | "teachers" | "student_photos";
 type MatchMode = "auto" | "matricule" | "full_name";
 
@@ -74,7 +75,7 @@ export default function ImportPage() {
 
   const levels = useMemo(
     () =>
-      Array.from(new Set(classes.map((c) => c.level).filter(Boolean))).sort(
+      Array.from(new Set(classes.map((c) => c.level).filter(Boolean) as string[])).sort(
         (a, b) => String(a).localeCompare(String(b), undefined, { numeric: true })
       ),
     [classes]
@@ -278,15 +279,12 @@ Mme KONE,kone@ecole.ci,+22505060708,Français`;
     if (photoRef.current) photoRef.current.value = "";
   }
 
-  async function onPhotosChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const files = Array.from(e.target.files || []);
-    setPhotoFiles(files);
-    setPhotoPreview(null);
+  async function runPhotoPreview(files: File[], mm: MatchMode) {
+    if (!files.length) {
+      setPhotoPreview(null);
+      return;
+    }
     setPhotoMsg(null);
-
-    if (!files.length) return;
-
-    // preview server: envoie uniquement les filenames (pas les bytes)
     setPhotoLoading(true);
     try {
       const r = await fetch("/api/admin/students/photos/import", {
@@ -294,7 +292,7 @@ Mme KONE,kone@ecole.ci,+22505060708,Français`;
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           action: "preview",
-          match_mode: matchMode,
+          match_mode: mm,
           filenames: files.map((f) => f.name),
         }),
       });
@@ -318,6 +316,22 @@ Mme KONE,kone@ecole.ci,+22505060708,Français`;
       setPhotoLoading(false);
     }
   }
+
+  async function onPhotosChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(e.target.files || []);
+    setPhotoFiles(files);
+    setPhotoPreview(null);
+    setPhotoMsg(null);
+    await runPhotoPreview(files, matchMode);
+  }
+
+  // ✅ amélioration: si on change le matchMode, on relance la preview automatiquement
+  useEffect(() => {
+    if (mode !== "student_photos") return;
+    if (!photoFiles.length) return;
+    void runPhotoPreview(photoFiles, matchMode);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [matchMode, mode]);
 
   async function uploadPhotos() {
     if (!photoFiles.length || photoLoading) return;
@@ -352,7 +366,6 @@ Mme KONE,kone@ecole.ci,+22505060708,Français`;
       const failed = j?.failed ?? 0;
       setPhotoMsg(`Upload terminé : ${updated} photo(s) associée(s) ✅ | ${failed} échec(s)`);
 
-      // refresh preview to show results (on garde j.results si tu veux)
       setPhotoPreview(j?.results || null);
     } catch (e: any) {
       setPhotoMsg(e?.message || "Erreur réseau");
