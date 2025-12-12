@@ -118,6 +118,7 @@ export async function GET() {
   return NextResponse.json({
     // ✅ Nom de l'établissement exposé pour le dashboard & autres écrans
     institution_name: row.name ?? "",
+
     tz: row.tz ?? "Africa/Abidjan",
     auto_lateness: Boolean(row.auto_lateness ?? true),
     default_session_minutes: Number(row.default_session_minutes ?? 60),
@@ -149,14 +150,22 @@ export async function PUT(req: NextRequest) {
 
   const body = await req.json().catch(() => ({}));
 
+  // ✅ Nom établissement (IMPORTANT)
+  const rawInstitutionName =
+    typeof body?.institution_name === "string"
+      ? body.institution_name
+      : typeof body?.name === "string"
+      ? body.name
+      : "";
+
+  const institution_name = rawInstitutionName.trim();
+
   const tz = String(body?.tz || "Africa/Abidjan").trim();
   const auto = !!body?.auto_lateness;
 
   const defMinRaw = Number(body?.default_session_minutes);
   const defMin =
-    Number.isFinite(defMinRaw) && defMinRaw > 0
-      ? Math.floor(defMinRaw)
-      : 60;
+    Number.isFinite(defMinRaw) && defMinRaw > 0 ? Math.floor(defMinRaw) : 60;
 
   // ✅ Récupération des infos d'établissement envoyées par la page Paramètres
   const rawLogo =
@@ -200,9 +209,7 @@ export async function PUT(req: NextRequest) {
   const rawMinistryName =
     typeof body?.ministry_name === "string" ? body.ministry_name : "";
   const rawInstitutionCode =
-    typeof body?.institution_code === "string"
-      ? body.institution_code
-      : "";
+    typeof body?.institution_code === "string" ? body.institution_code : "";
 
   // On trim, et on convertit les vides en null pour la BDD
   const logo_url = rawLogo.trim() || null;
@@ -219,27 +226,30 @@ export async function PUT(req: NextRequest) {
   const ministry_name = rawMinistryName.trim() || null;
   const code = rawInstitutionCode.trim() || null;
 
+  // ⚠️ Si on envoie institution_name vide, on n’écrase pas en BDD.
+  // (Sinon tu risques de te retrouver avec un établissement sans nom.)
+  const updatePayload: any = {
+    tz,
+    auto_lateness: auto,
+    default_session_minutes: defMin,
+    logo_url,
+    phone,
+    email,
+    regional_direction,
+    postal_address,
+    status,
+    head_name,
+    head_title,
+    country_name,
+    country_motto,
+    ministry_name,
+    code,
+  };
+  if (institution_name) updatePayload.name = institution_name;
+
   const { error } = await srv
     .from("institutions")
-    .update({
-      tz,
-      auto_lateness: auto,
-      default_session_minutes: defMin,
-      logo_url,
-      phone,
-      email,
-      regional_direction,
-      postal_address,
-      status,
-      head_name,
-      head_title,
-
-      // 🆕 champs pour le bulletin
-      country_name,
-      country_motto,
-      ministry_name,
-      code,
-    })
+    .update(updatePayload)
     .eq("id", g.instId);
 
   if (error)
