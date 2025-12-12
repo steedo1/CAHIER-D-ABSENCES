@@ -1024,28 +1024,29 @@ export async function GET(req: NextRequest) {
         subjectGroups = activeGroups.map((g: any) => {
           const rows = itemsByGroup.get(String(g.id)) || [];
 
-          const items: BulletinSubjectGroupItem[] = rows
-            .map((row: any, idx: number) => {
-              const sid = row.subject_id ? String(row.subject_id) : null;
-              if (!sid || !isUuid(sid)) return null;
+         const items: BulletinSubjectGroupItem[] = rows.flatMap((row: any, idx: number) => {
+  const sid = row.subject_id ? String(row.subject_id) : "";
+  if (!sid || !isUuid(sid)) return [];
 
-              const subjectName = nameBySubjectId.get(sid) || "Matière";
+  const subjectName = nameBySubjectId.get(sid) || "Matière";
 
-              if (subjectIdSet.has(sid)) {
-                groupedSubjectIds.add(sid);
-              }
+  if (subjectIdSet.has(sid)) {
+    groupedSubjectIds.add(sid);
+  }
 
-              return {
-                id: String(row.id),
-                group_id: String(row.group_id),
-                subject_id: sid,
-                subject_name: String(subjectName),
-                order_index: idx + 1, // ✅ fabriqué
-                subject_coeff_override: null,
-                is_optional: false,
-              };
-            })
-            .filter((it: BulletinSubjectGroupItem | null): it is BulletinSubjectGroupItem => !!it);
+  const it: BulletinSubjectGroupItem = {
+    id: String(row.id),
+    group_id: String(row.group_id),
+    subject_id: sid,
+    subject_name: String(subjectName),
+    order_index: idx + 1,
+    subject_coeff_override: null,
+    is_optional: false,
+  };
+
+  return [it];
+});
+
 
           const annualCoeffRaw =
             (g as any).annual_coeff !== null && (g as any).annual_coeff !== undefined
