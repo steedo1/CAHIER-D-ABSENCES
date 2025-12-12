@@ -87,11 +87,17 @@ type SubjectCoeffRow = {
 type BulletinSubjectGroupItem = {
   id: string;
   group_id: string;
-  institution_subject_id: string;
+
+  // ✅ ton schéma: bulletin_subject_group_items.subject_id (uuid)
   subject_id: string;
+
+  // ✅ on fabrique le nom depuis subjects
   subject_name: string;
-  level: string | null;
+
+  // ✅ pas dans ta table → on fabrique
   order_index: number;
+
+  // ✅ pas dans ta table → on met null/false
   subject_coeff_override: number | null;
   is_optional: boolean;
 };
@@ -194,15 +200,10 @@ async function getAdminAndInstitution(
 }
 
 /* ───────── helper : rang par matière (subject_rank) ───────── */
-/**
- * Ajoute ps.subject_rank dans items[*].per_subject[*]
- * Rang 1 = meilleure moyenne, ex-aequo gérés (même moyenne → même rang).
- */
 function applySubjectRanks(items: any[]) {
   if (!items || !items.length) return;
 
   type Entry = { index: number; avg: number; subject_id: string };
-
   const bySubject = new Map<string, Entry[]>();
 
   items.forEach((item, idx) => {
@@ -224,7 +225,6 @@ function applySubjectRanks(items: any[]) {
   });
 
   bySubject.forEach((entries, subjectId) => {
-    // tri décroissant : meilleure moyenne → rang 1
     entries.sort((a, b) => b.avg - a.avg);
 
     let lastAvg: number | null = null;
@@ -250,15 +250,10 @@ function applySubjectRanks(items: any[]) {
 }
 
 /* ───────── helper : rang par sous-matière (component_rank) ───────── */
-/**
- * Ajoute psc.component_rank dans items[*].per_subject_components[*]
- * Rang 1 = meilleure moyenne sur cette sous-matière, ex-aequo gérés.
- */
 function applySubjectComponentRanks(items: any[]) {
   if (!items || !items.length) return;
 
   type Entry = { index: number; avg: number; component_id: string };
-
   const byComponent = new Map<string, Entry[]>();
 
   items.forEach((item, idx) => {
@@ -280,7 +275,6 @@ function applySubjectComponentRanks(items: any[]) {
   });
 
   byComponent.forEach((entries, componentId) => {
-    // tri décroissant : meilleure moyenne → rang 1
     entries.sort((a, b) => b.avg - a.avg);
 
     let lastAvg: number | null = null;
@@ -306,15 +300,6 @@ function applySubjectComponentRanks(items: any[]) {
 }
 
 /* ───────── helper : nom du professeur par matière (teacher_name) ───────── */
-/**
- * Stratégie :
- *  1) On part d'abord de grade_evaluations.subject_id + teacher_id
- *     → prof de l'évaluation la plus récente par matière (dans la période).
- *  2) Pour les matières qui n'ont toujours pas de prof, fallback via :
- *     - institution_subjects (subjects.id → institution_subjects.id)
- *     - class_teachers (classe + matière établissement → teacher_id)
- *  3) On injecte per_subject[*].teacher_name dans tous les items.
- */
 async function attachTeachersToSubjects(
   supabase: Awaited<ReturnType<typeof getSupabaseServerClient>>,
   srv: Awaited<ReturnType<typeof getSupabaseServiceClient>>,
@@ -334,7 +319,6 @@ async function attachTeachersToSubjects(
 
   if (evals.length) {
     type ST = { teacher_id: string; lastEvalDate: string };
-
     const bySubjectEval = new Map<string, ST>();
 
     for (const ev of evals) {
@@ -421,7 +405,6 @@ async function attachTeachersToSubjects(
 
         const pivot = dateTo || dateFrom || null;
         if (pivot) {
-          // end_date >= pivot OU end_date IS NULL
           ctQuery = ctQuery.or(`end_date.is.null,end_date.gte.${pivot}`);
         } else {
           ctQuery = ctQuery.is("end_date", null);
@@ -467,7 +450,7 @@ async function attachTeachersToSubjects(
             const sid = subjectIdByInstId.get(instSubId);
             const teacherId = row.teacher_id as string | null;
             if (!sid || !teacherId) return;
-            if (teacherBySubject.has(sid)) return; // déjà trouvé via evals
+            if (teacherBySubject.has(sid)) return;
             const name = nameByIdCt.get(teacherId);
             if (!name) return;
             teacherBySubject.set(sid, name);
@@ -490,8 +473,6 @@ async function attachTeachersToSubjects(
     return;
   }
 
-  /* ── C. Injection dans items[*].per_subject[*].teacher_name ──────────── */
-
   for (const item of items) {
     const perSubject = item.per_subject as any[] | undefined;
     if (!Array.isArray(perSubject)) continue;
@@ -511,12 +492,7 @@ async function attachTeachersToSubjects(
   }
 }
 
-/* ───────── GET /api/admin/grades/bulletin ─────────
-   Params:
-   - class_id (obligatoire)
-   - from (YYYY-MM-DD, optionnel)
-   - to   (YYYY-MM-DD, optionnel)
-─────────────────────────────────────────────────── */
+/* ───────── GET /api/admin/grades/bulletin ───────── */
 export async function GET(req: NextRequest) {
   const supabase = await getSupabaseServerClient();
   const srv = getSupabaseServiceClient(); // service-role pour certaines tables
@@ -661,11 +637,8 @@ export async function GET(req: NextRequest) {
     .eq("class_id", classId);
 
   if (!hasDateFilter) {
-    // 🔁 Comportement historique : uniquement les élèves encore inscrits
     enrollQuery = enrollQuery.is("end_date", null);
   } else if (dateFrom) {
-    // 🕒 Photo historique : élèves dont la fin d'inscription
-    // est postérieure au début de la période OU encore inscrits
     enrollQuery = enrollQuery.or(`end_date.gte.${dateFrom},end_date.is.null`);
   }
 
@@ -970,7 +943,7 @@ export async function GET(req: NextRequest) {
     rows.forEach((c) => subjectComponentById.set(c.id, c));
   }
 
-  /* 6ter) Groupes de disciplines pour ce niveau (si configurés) */
+  /* 6ter) Groupes de disciplines pour ce niveau (✅ FIX selon ton schéma) */
   let subjectGroups: BulletinSubjectGroup[] = [];
   const groupedSubjectIds = new Set<string>();
 
@@ -990,112 +963,120 @@ export async function GET(req: NextRequest) {
       if (activeGroups.length) {
         const groupIds = activeGroups.map((g) => String(g.id));
 
-        const { data: itemsData, error: itemsErr } = await supabase
+        // ✅ ta table a juste: id, group_id, subject_id, created_at, updated_at
+        const { data: itemsData, error: itemsErr } = await srv
           .from("bulletin_subject_group_items")
-          .select(
-            `
-            id,
-            group_id,
-            institution_subject_id,
-            order_index,
-            subject_coeff_override,
-            is_optional,
-            institution_subjects (
-              id,
-              level,
-              subject_id,
-              label,
-              short_label,
-              subjects (
-                id,
-                name,
-                code
-              )
-            )
-          `
-          )
+          .select("id, group_id, subject_id, created_at")
           .in("group_id", groupIds);
 
         if (itemsErr) {
           console.error("[bulletin] group_items error", itemsErr);
-        } else {
-          const itemsByGroup = new Map<string, any[]>();
-          for (const row of (itemsData || []) as any[]) {
-            const gId = String(row.group_id);
-            const arr = itemsByGroup.get(gId) || [];
-            arr.push(row);
-            itemsByGroup.set(gId, arr);
-          }
-
-          subjectGroups = activeGroups.map((g: any) => {
-            const rows = itemsByGroup.get(String(g.id)) || [];
-
-            const items: BulletinSubjectGroupItem[] = rows
-              .map((row: any) => {
-                const instSub = row.institution_subjects || {};
-                const subj = instSub.subjects || {};
-                const subjectId: string | null = (subj && subj.id) || instSub.subject_id || null;
-
-                if (!subjectId) return null;
-
-                const subjectName =
-                  instSub.label || instSub.short_label || subj.name || subj.code || "Matière";
-
-                const item: BulletinSubjectGroupItem = {
-                  id: String(row.id),
-                  group_id: String(row.group_id),
-                  institution_subject_id: String(row.institution_subject_id),
-                  subject_id: String(subjectId),
-                  subject_name: String(subjectName),
-                  level: instSub.level ?? null,
-                  order_index: Number(row.order_index ?? 1),
-                  subject_coeff_override:
-                    row.subject_coeff_override !== null && row.subject_coeff_override !== undefined
-                      ? Number(row.subject_coeff_override)
-                      : null,
-                  is_optional: row.is_optional === true,
-                };
-
-                if (subjectIdSet.has(item.subject_id)) {
-                  groupedSubjectIds.add(item.subject_id);
-                }
-
-                return item;
-              })
-              .filter((it: BulletinSubjectGroupItem | null): it is BulletinSubjectGroupItem => !!it)
-              .sort((a, b) => a.order_index - b.order_index);
-
-            const annualCoeffRaw =
-              (g as any).annual_coeff !== null && (g as any).annual_coeff !== undefined
-                ? Number((g as any).annual_coeff)
-                : 1;
-
-            const groupCode =
-              (g as any).code !== null &&
-              (g as any).code !== undefined &&
-              String((g as any).code).trim() !== ""
-                ? String((g as any).code)
-                : String(g.label);
-
-            const shortLabel =
-              (g as any).short_label !== null &&
-              (g as any).short_label !== undefined &&
-              String((g as any).short_label).trim() !== ""
-                ? String((g as any).short_label)
-                : null;
-
-            return {
-              id: String(g.id),
-              code: groupCode,
-              label: String(g.label),
-              short_label: shortLabel,
-              order_index: Number(g.order_index ?? 1),
-              is_active: g.is_active !== false,
-              annual_coeff: cleanCoeff(annualCoeffRaw),
-              items,
-            };
-          });
         }
+
+        const rawItems = (itemsData || []) as any[];
+
+        // ordonner proprement (created_at) puis fabriquer order_index
+        rawItems.sort((a, b) => {
+          const ag = String(a.group_id || "");
+          const bg = String(b.group_id || "");
+          if (ag !== bg) return ag.localeCompare(bg);
+          const ac = String(a.created_at || "");
+          const bc = String(b.created_at || "");
+          return ac.localeCompare(bc);
+        });
+
+        // récupérer les noms de matières depuis subjects
+        const groupSubjectIds = Array.from(
+          new Set(
+            rawItems
+              .map((r) => (r.subject_id ? String(r.subject_id) : ""))
+              .filter((v) => v && isUuid(v))
+          )
+        );
+
+        const nameBySubjectId = new Map<string, string>();
+        if (groupSubjectIds.length) {
+          const { data: sRows, error: sErr } = await srv
+            .from("subjects")
+            .select("id, name, code")
+            .in("id", groupSubjectIds);
+
+          if (sErr) {
+            console.error("[bulletin] subjects lookup for group items error", sErr);
+          } else {
+            (sRows || []).forEach((s: any) => {
+              const sid = String(s.id);
+              const name = s.name || s.code || "Matière";
+              nameBySubjectId.set(sid, String(name));
+            });
+          }
+        }
+
+        // indexer par groupe
+        const itemsByGroup = new Map<string, any[]>();
+        rawItems.forEach((row) => {
+          const gId = String(row.group_id);
+          const arr = itemsByGroup.get(gId) || [];
+          arr.push(row);
+          itemsByGroup.set(gId, arr);
+        });
+
+        subjectGroups = activeGroups.map((g: any) => {
+          const rows = itemsByGroup.get(String(g.id)) || [];
+
+          const items: BulletinSubjectGroupItem[] = rows
+            .map((row: any, idx: number) => {
+              const sid = row.subject_id ? String(row.subject_id) : null;
+              if (!sid || !isUuid(sid)) return null;
+
+              const subjectName = nameBySubjectId.get(sid) || "Matière";
+
+              if (subjectIdSet.has(sid)) {
+                groupedSubjectIds.add(sid);
+              }
+
+              return {
+                id: String(row.id),
+                group_id: String(row.group_id),
+                subject_id: sid,
+                subject_name: String(subjectName),
+                order_index: idx + 1, // ✅ fabriqué
+                subject_coeff_override: null,
+                is_optional: false,
+              };
+            })
+            .filter((it: BulletinSubjectGroupItem | null): it is BulletinSubjectGroupItem => !!it);
+
+          const annualCoeffRaw =
+            (g as any).annual_coeff !== null && (g as any).annual_coeff !== undefined
+              ? Number((g as any).annual_coeff)
+              : 1;
+
+          const groupCode =
+            (g as any).code !== null &&
+            (g as any).code !== undefined &&
+            String((g as any).code).trim() !== ""
+              ? String((g as any).code)
+              : String(g.label);
+
+          const shortLabel =
+            (g as any).short_label !== null &&
+            (g as any).short_label !== undefined &&
+            String((g as any).short_label).trim() !== ""
+              ? String((g as any).short_label)
+              : null;
+
+          return {
+            id: String(g.id),
+            code: groupCode,
+            label: String(g.label),
+            short_label: shortLabel,
+            order_index: Number(g.order_index ?? 1),
+            is_active: g.is_active !== false,
+            annual_coeff: cleanCoeff(annualCoeffRaw),
+            items,
+          };
+        });
       }
     }
   }
@@ -1111,7 +1092,6 @@ export async function GET(req: NextRequest) {
 
   const perStudentSubject = new Map<string, Map<string, { sumWeighted: number; sumCoeff: number }>>();
 
-  // agrégats par sous-matière
   const perStudentSubjectComponent = new Map<
     string,
     Map<
@@ -1137,7 +1117,6 @@ export async function GET(req: NextRequest) {
     const norm20 = (score / ev.scale) * 20;
     const weight = ev.coeff ?? 1;
 
-    // 7a) par matière
     let stuMap = perStudentSubject.get(sc.student_id);
     if (!stuMap) {
       stuMap = new Map();
@@ -1149,7 +1128,6 @@ export async function GET(req: NextRequest) {
     cell.sumCoeff += weight;
     stuMap.set(key, cell);
 
-    // 7b) par sous-matière
     if (ev.subject_component_id) {
       const comp = subjectComponentById.get(ev.subject_component_id);
       if (comp) {
@@ -1188,7 +1166,6 @@ export async function GET(req: NextRequest) {
         }
       >();
 
-    // Moyenne par matière
     const per_subject = subjectsForReport.map((s) => {
       const cell = stuMap.get(s.subject_id);
       let avg20: number | null = null;
@@ -1201,7 +1178,6 @@ export async function GET(req: NextRequest) {
       };
     });
 
-    // Moyenne par sous-matière
     const per_subject_components =
       subjectComponentsForReport.length === 0
         ? []
@@ -1218,7 +1194,6 @@ export async function GET(req: NextRequest) {
             };
           });
 
-    // Moyenne par groupe
     let per_group:
       | {
           group_id: string;
@@ -1258,14 +1233,12 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    // Moyenne générale
     let general_avg: number | null = null;
 
     if (useGroupsForAverage) {
       let sumGen = 0;
       let sumCoeffGen = 0;
 
-      // 1) Groupes
       for (const g of subjectGroups) {
         const coeffGroup = g.annual_coeff ?? 0;
         if (!coeffGroup || coeffGroup <= 0) continue;
@@ -1278,7 +1251,6 @@ export async function GET(req: NextRequest) {
         sumCoeffGen += coeffGroup;
       }
 
-      // 2) Matières non groupées
       for (const s of subjectsForReport) {
         if (groupedSubjectIds.has(s.subject_id)) continue;
         if (s.include_in_average === false) continue;
@@ -1347,7 +1319,7 @@ export async function GET(req: NextRequest) {
   // 9bis) Rang par sous-matière
   applySubjectComponentRanks(items);
 
-  // 10) Nom du professeur par matière pour CETTE classe + période
+  // 10) Nom du professeur par matière
   await attachTeachersToSubjects(
     supabase,
     srv,
