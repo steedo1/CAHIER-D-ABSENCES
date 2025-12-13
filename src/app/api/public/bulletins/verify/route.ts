@@ -38,10 +38,8 @@ function normalizeBulletinLevel(level?: string | null): string | null {
   }
   if (x === "premiere") return "première";
 
-  if (x.startsWith("2de") || x.startsWith("2nde") || x.startsWith("2"))
-    return "seconde";
-  if (x.startsWith("1re") || x.startsWith("1ere") || x.startsWith("1"))
-    return "première";
+  if (x.startsWith("2de") || x.startsWith("2nde") || x.startsWith("2")) return "seconde";
+  if (x.startsWith("1re") || x.startsWith("1ere") || x.startsWith("1")) return "première";
   if (x.startsWith("t")) return "terminale";
 
   return null;
@@ -155,6 +153,7 @@ async function computeBulletinSummary(params: {
     periodAcademicYear,
   } = params;
 
+  // ⚠️ Sans classe OU sans élève → pas de bulletin exploitable
   if (!classRow || !studentId) return null;
 
   const bulletinLevel = normalizeBulletinLevel(classRow.level);
@@ -182,6 +181,7 @@ async function computeBulletinSummary(params: {
   const { data: coeffAllData, error: coeffAllErr } = await coeffAllQuery;
 
   if (coeffAllErr) {
+    // On renvoie quand même quelque chose (bulletin minimal)
     return {
       period,
       general_avg: null,
@@ -204,7 +204,7 @@ async function computeBulletinSummary(params: {
     });
   }
 
-  /* 2) Evaluations publiées */
+  /* 2) Evaluations publiées (filtrées éventuellement par période) */
 
   let evals: EvalRow[] = [];
   {
@@ -243,9 +243,11 @@ async function computeBulletinSummary(params: {
     };
   }
 
+  // Matières vues dans les évaluations
   const subjectIdSet = new Set<string>();
   for (const e of evals) if (e.subject_id) subjectIdSet.add(String(e.subject_id));
 
+  // Union: coeffs + sujets des évaluations
   const subjectIdsUnionRaw = Array.from(
     new Set([...Array.from(subjectIdsFromConfig), ...Array.from(subjectIdSet)])
   );
@@ -300,7 +302,7 @@ async function computeBulletinSummary(params: {
     };
   });
 
-  /* 4) Sous-matières */
+  /* 4) Sous-matières éventuelles */
 
   let subjectComponentsForReport: SubjectComponentRow[] = [];
   const subjectComponentById = new Map<string, SubjectComponentRow>();
@@ -407,12 +409,14 @@ async function computeBulletinSummary(params: {
     const norm20 = (score / ev.scale) * 20;
     const weight = ev.coeff ?? 1;
 
+    // Agrégat par matière
     const key = ev.subject_id;
     const cell = perSubject.get(key) || { sumWeighted: 0, sumCoeff: 0 };
     cell.sumWeighted += norm20 * weight;
     cell.sumCoeff += weight;
     perSubject.set(key, cell);
 
+    // Agrégat par sous-matière
     if (ev.subject_component_id) {
       const comp = subjectComponentById.get(ev.subject_component_id);
       if (comp) {
@@ -428,6 +432,8 @@ async function computeBulletinSummary(params: {
       }
     }
   }
+
+  /* 6) Construire les moyennes par sous-matière et par matière */
 
   const per_subject_components: BulletinSubjectComponentAvg[] =
     subjectComponentsForReport.length === 0
@@ -450,6 +456,7 @@ async function computeBulletinSummary(params: {
 
     let avg20: number | null = null;
 
+    // Priorité: recalc depuis sous-matières si au moins une est notée
     if (comps.length) {
       let sum = 0;
       let sumW = 0;
@@ -473,6 +480,7 @@ async function computeBulletinSummary(params: {
       }
     }
 
+    // Fallback: calcul direct via évaluations de la matière
     if (avg20 === null) {
       const cell = perSubject.get(s.subject_id);
       if (cell && cell.sumCoeff > 0) {
@@ -486,7 +494,7 @@ async function computeBulletinSummary(params: {
     };
   });
 
-  /* 7) Moyenne générale */
+  /* 7) Moyenne générale (mêmes règles que l’API admin) */
 
   let general_avg: number | null = null;
   {
@@ -527,6 +535,7 @@ export async function GET(req: NextRequest) {
   const srv = getSupabaseServiceClient() as unknown as SupabaseClient;
 
   // --- 1) Nouveau chemin: code court ?c=...
+
   if (code) {
     const resolved = await resolveBulletinByCode(srv, code);
 
@@ -537,50 +546,38 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    const raw = resolved.payload as any;
+    const payload = resolved.payload as {
+      instId: string;
+      classId?: string | null;
+      studentId?: string | null;
+      periodFrom?: string | null;
+      periodTo?: string | null;
+      periodLabel?: string | null;
+      periodShortLabel?: string | null;
+      academicYear?: string | null;
+    };
 
-    const instId: string | null = raw?.instId ?? null;
-    if (!instId) {
-      return NextResponse.json(
-        { ok: false, error: "missing_inst_id" },
-        { status: 400 }
-      );
-    }
+    const instId = payload.instId;
+    let classId = payload.classId ?? null;
+    const studentId = payload.studentId ?? null;
 
-    // ⚠️ anciens QR : parfois classId n'était pas stocké → on prévoit un fallback
-    let classId: string | null =
-      raw?.classId ?? raw?.class_id ?? null;
-    const studentId: string | null =
-      raw?.studentId ?? raw?.student_id ?? null;
+    // Institution + élève en parallèle (indépendants de la classe)
+    const [{ data: inst }, { data: stu }] = await Promise.all([
+      srv
+        .from("institutions")
+        .select("id, name, code")
+        .eq("id", instId)
+        .maybeSingle(),
+      studentId
+        ? srv
+            .from("students")
+            .select("id, full_name, matricule, gender, birthdate, birth_place")
+            .eq("id", studentId)
+            .maybeSingle()
+        : Promise.resolve({ data: null } as any),
+    ]);
 
-    const periodFrom: string | null =
-      raw?.periodFrom ?? raw?.from ?? null;
-    const periodTo: string | null = raw?.periodTo ?? raw?.to ?? null;
-    const periodLabel: string | null =
-      raw?.periodLabel ?? raw?.label ?? null;
-    const periodShortLabel: string | null =
-      raw?.periodShortLabel ?? raw?.short_label ?? null;
-    const academicYear: string | null =
-      raw?.academicYear ?? raw?.academic_year ?? null;
-
-    // On va chercher l’établissement + l’élève en parallèle
-    const instPromise = srv
-      .from("institutions")
-      .select("id, name, code")
-      .eq("id", instId)
-      .maybeSingle();
-
-    const stuPromise = studentId
-      ? srv
-          .from("students")
-          .select(
-            "id, full_name, matricule, gender, birthdate, birth_place"
-          )
-          .eq("id", studentId)
-          .maybeSingle()
-      : Promise.resolve({ data: null } as any);
-
-    // Classe (avec fallback via class_enrollments si classId manquant)
+    // Classe : direct via payload.classId, sinon fallback via class_enrollments
     let cls: ClassRow | null = null;
 
     if (classId) {
@@ -592,42 +589,40 @@ export async function GET(req: NextRequest) {
 
       cls = (clsData as ClassRow) ?? null;
     } else if (studentId) {
-      // Ancien QR sans classId → on retrouve la classe par les inscriptions
-      const { data: enr } = await srv
+      // ⚠️ Ancien QR sans classId → on tente de retrouver la classe courante
+      const { data: enrollment } = await srv
         .from("class_enrollments")
         .select("class_id")
         .eq("student_id", studentId)
+        .is("end_date", null)
         .limit(1)
         .maybeSingle();
 
-      if (enr?.class_id) {
-        classId = enr.class_id as string;
+      const fallbackClassId = (enrollment as any)?.class_id as string | undefined;
 
+      if (fallbackClassId) {
+        classId = fallbackClassId;
         const { data: clsData } = await srv
           .from("classes")
           .select("id, label, name, level, academic_year")
-          .eq("id", classId)
+          .eq("id", fallbackClassId)
           .maybeSingle();
 
         cls = (clsData as ClassRow) ?? null;
       }
     }
 
-    const [{ data: inst }, { data: stu }] = await Promise.all([
-      instPromise,
-      stuPromise,
-    ]);
-
+    // Bulletin calculé en base si on a au moins la classe ET l’élève
     const bulletin = await computeBulletinSummary({
       srv,
       instId,
       classRow: cls,
       studentId,
-      periodFrom,
-      periodTo,
-      periodLabel,
-      periodShortLabel,
-      periodAcademicYear: academicYear,
+      periodFrom: payload.periodFrom ?? null,
+      periodTo: payload.periodTo ?? null,
+      periodLabel: payload.periodLabel ?? null,
+      periodShortLabel: payload.periodShortLabel ?? null,
+      periodAcademicYear: payload.academicYear ?? null,
     });
 
     return NextResponse.json({
@@ -664,10 +659,7 @@ export async function GET(req: NextRequest) {
     | null;
 
   if (!payload) {
-    return NextResponse.json(
-      { ok: false, error: "invalid_qr" },
-      { status: 400 }
-    );
+    return NextResponse.json({ ok: false, error: "invalid_qr" }, { status: 400 });
   }
 
   const instId = payload.instId;
@@ -687,9 +679,7 @@ export async function GET(req: NextRequest) {
       .maybeSingle(),
     srv
       .from("students")
-      .select(
-        "id, full_name, matricule, gender, birthdate, birth_place"
-      )
+      .select("id, full_name, matricule, gender, birthdate, birth_place")
       .eq("id", studentId)
       .maybeSingle(),
   ]);
