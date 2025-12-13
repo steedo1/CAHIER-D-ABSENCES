@@ -2,8 +2,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import crypto from "crypto";
 import QRCode from "qrcode";
+
+// ✅ QR court stocké en DB (table bulletin_qr_codes)
+import { getOrCreateBulletinShortCode } from "@/lib/bulletin-qr-store";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -228,9 +232,10 @@ function findGroupByMeaning(
   return null;
 }
 
-/* ───────── QR code (token signé) ───────── */
+/* ───────── QR code (court /v/[code]) + fallback token ───────── */
 
-const BULLETIN_VERIFY_PATH = "/verify/bulletin";
+const BULLETIN_VERIFY_SHORT_PREFIX = "/v"; // ✅ nouvelle page publique: /v/[code]
+const BULLETIN_VERIFY_LEGACY_PATH = "/verify/bulletin"; // fallback historique
 
 type BulletinQRPayload = {
   v: 1;
@@ -275,10 +280,11 @@ function pickPublicOrigin(fallbackOrigin: string) {
 
 /** ✅ QR PNG server-side (qualité print + quiet zone) */
 async function attachQrPng<T extends { qr_url: string | null }>(items: T[]) {
-  const size = Number(process.env.BULLETIN_QR_PNG_SIZE || "256");
+  // ✅ défaut plus robuste à l'impression
+  const size = Number(process.env.BULLETIN_QR_PNG_SIZE || "600");
   const margin = Number(process.env.BULLETIN_QR_PNG_MARGIN || "2");
   const ecl =
-    (process.env.BULLETIN_QR_PNG_ECL || "Q") as "L" | "M" | "Q" | "H";
+    (process.env.BULLETIN_QR_PNG_ECL || "M") as "L" | "M" | "Q" | "H";
 
   return await Promise.all(
     items.map(async (it) => {
@@ -292,14 +298,40 @@ async function attachQrPng<T extends { qr_url: string | null }>(items: T[]) {
         });
         return { ...it, qr_png: png || null };
       } catch (e) {
-        console.error("[bulletin] QRCode.toDataURL failed", e);
         return { ...it, qr_png: null as string | null };
       }
     })
   );
 }
 
-function addQrToItems<T extends { student_id: string }>(
+function computeBulletinKey(p: {
+  instId: string;
+  classId: string;
+  studentId: string;
+  academicYear: string | null;
+  periodFrom: string | null;
+  periodTo: string | null;
+  periodLabel: string | null;
+}) {
+  const raw = [
+    p.instId,
+    p.classId,
+    p.studentId,
+    p.academicYear ?? "",
+    p.periodFrom ?? "",
+    p.periodTo ?? "",
+    p.periodLabel ?? "",
+  ].join("|");
+
+  return crypto.createHash("sha256").update(raw).digest("hex");
+}
+
+/**
+ * ✅ Génère un QR URL COURT (/v/[code]) en stockant un mapping en DB.
+ * ✅ Fallback automatique vers l'ancien token si la table n'est pas prête.
+ */
+async function addQrToItems<T extends { student_id: string }>(
+  srv: SupabaseClient,
   items: T[],
   opts: {
     origin: string;
@@ -315,12 +347,126 @@ function addQrToItems<T extends { student_id: string }>(
       academic_year?: string | null;
     };
   }
-): (T & { qr_token: string | null; qr_url: string | null })[] {
+): Promise<
+  (T & {
+    qr_mode: "short" | "token" | null;
+    qr_code: string | null;
+    qr_token: string | null;
+    qr_url: string | null;
+  })[]
+> {
   const academicYear = opts.periodMeta.academic_year ?? opts.classAcademicYear ?? null;
 
   const periodLabel =
     opts.periodMeta.short_label ?? opts.periodMeta.label ?? opts.periodMeta.code ?? null;
 
+  // On essaie le mode "short" par défaut (idéal pour le scan)
+  const envMode = String(process.env.BULLETIN_QR_MODE || "short").toLowerCase();
+  const preferShort = envMode !== "token";
+
+  // 1) Test "short" une fois (évite de spammer les erreurs si table absente)
+  let shortSupported = false;
+  let firstShort: { student_id: string; code: string } | null = null;
+
+  if (preferShort && items.length) {
+    try {
+      const it0 = items[0];
+      const bulletinKey = computeBulletinKey({
+        instId: opts.institutionId,
+        classId: opts.classId,
+        studentId: it0.student_id,
+        academicYear,
+        periodFrom: opts.periodMeta.from ?? null,
+        periodTo: opts.periodMeta.to ?? null,
+        periodLabel,
+      });
+
+      const code = await getOrCreateBulletinShortCode(srv, {
+        bulletinKey,
+        payload: {
+          instId: opts.institutionId,
+          classId: opts.classId,
+          studentId: it0.student_id,
+        },
+        expiresAt: null,
+      });
+
+      shortSupported = !!code;
+      if (shortSupported) firstShort = { student_id: it0.student_id, code };
+    } catch {
+      shortSupported = false;
+    }
+  }
+
+  // 2) Mode short si supporté
+  if (shortSupported) {
+    return await Promise.all(
+      items.map(async (it) => {
+        try {
+          let code: string;
+
+          if (firstShort && firstShort.student_id === it.student_id) {
+            code = firstShort.code;
+          } else {
+            const bulletinKey = computeBulletinKey({
+              instId: opts.institutionId,
+              classId: opts.classId,
+              studentId: it.student_id,
+              academicYear,
+              periodFrom: opts.periodMeta.from ?? null,
+              periodTo: opts.periodMeta.to ?? null,
+              periodLabel,
+            });
+
+            code = await getOrCreateBulletinShortCode(srv, {
+              bulletinKey,
+              payload: {
+                instId: opts.institutionId,
+                classId: opts.classId,
+                studentId: it.student_id,
+              },
+              expiresAt: null,
+            });
+          }
+
+          const url = code ? `${opts.origin}${BULLETIN_VERIFY_SHORT_PREFIX}/${code}` : null;
+
+          return {
+            ...it,
+            qr_mode: code ? ("short" as const) : null,
+            qr_code: code || null,
+            qr_token: null,
+            qr_url: url,
+          };
+        } catch {
+          // fallback token (si possible)
+          const token = signBulletinQRToken({
+            instId: opts.institutionId,
+            classId: opts.classId,
+            studentId: it.student_id,
+            academicYear,
+            periodFrom: opts.periodMeta.from ?? null,
+            periodTo: opts.periodMeta.to ?? null,
+            periodLabel,
+          });
+
+          const url = token
+            ? `${opts.origin}${BULLETIN_VERIFY_LEGACY_PATH}?t=${encodeURIComponent(token)}`
+            : null;
+
+          return {
+            ...it,
+            qr_mode: token ? ("token" as const) : null,
+            qr_code: null,
+            qr_token: token,
+            qr_url: url,
+          };
+        }
+      })
+    );
+  }
+
+  // 3) Fallback token pour tous
   return items.map((it) => {
     const token = signBulletinQRToken({
       instId: opts.institutionId,
@@ -333,10 +479,16 @@ function addQrToItems<T extends { student_id: string }>(
     });
 
     const url = token
-      ? `${opts.origin}${BULLETIN_VERIFY_PATH}?t=${encodeURIComponent(token)}`
+      ? `${opts.origin}${BULLETIN_VERIFY_LEGACY_PATH}?t=${encodeURIComponent(token)}`
       : null;
 
-    return { ...it, qr_token: token, qr_url: url };
+    return {
+      ...it,
+      qr_mode: token ? ("token" as const) : null,
+      qr_code: null,
+      qr_token: token,
+      qr_url: url,
+    };
   });
 }
 
@@ -518,7 +670,6 @@ async function attachTeachersToSubjects(
         .in("id", teacherIdsEval);
 
       if (profErr) {
-        console.error("[bulletin] teacher profiles (evals) error", profErr);
       } else {
         const nameByIdEval = new Map<string, string>();
         (profsEval || []).forEach((p: any) => {
@@ -544,7 +695,6 @@ async function attachTeachersToSubjects(
       .in("subject_id", missingSubjectIds);
 
     if (instErr) {
-      console.error("[bulletin] institution_subjects error", instErr);
     } else {
       const instIds: string[] = [];
       const subjectIdByInstId = new Map<string, string>();
@@ -577,7 +727,6 @@ async function attachTeachersToSubjects(
         const { data: ctData, error: ctErr } = await ctQuery;
 
         if (ctErr) {
-          console.error("[bulletin] class_teachers error", ctErr);
         } else if (ctData && ctData.length) {
           const teacherIdsCt = Array.from(
             new Set(
@@ -596,7 +745,6 @@ async function attachTeachersToSubjects(
               .in("id", teacherIdsCt);
 
             if (profErrCt) {
-              console.error("[bulletin] teacher profiles (class_teachers) error", profErrCt);
             } else {
               (profsCt || []).forEach((p: any) => {
                 if (p.id && p.display_name) nameByIdCt.set(String(p.id), String(p.display_name));
@@ -730,6 +878,8 @@ function buildFallbackGroups(opts: {
 export async function GET(req: NextRequest) {
   const supabase = await getSupabaseServerClient();
   const srv = getSupabaseServiceClient();
+  const srvClient = srv as unknown as SupabaseClient;
+
   const ctx = await getAdminAndInstitution(supabase);
 
   if ("error" in ctx) {
@@ -756,7 +906,9 @@ export async function GET(req: NextRequest) {
   // ✅ origin PUBLIC (anti localhost)
   const origin = pickPublicOrigin(req.nextUrl.origin);
 
-  const qrEnabled = !!process.env.BULLETIN_QR_SECRET;
+  // ✅ QR considéré "activable" si on peut faire short (service role) ou token (secret)
+  const qrEnabled = !!(process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.BULLETIN_QR_SECRET);
+  const qrMode = String(process.env.BULLETIN_QR_MODE || "short").toLowerCase();
 
   /* 1) Vérifier que la classe appartient à l'établissement + récupérer prof principal */
   const { data: cls, error: clsErr } = await supabase
@@ -766,7 +918,6 @@ export async function GET(req: NextRequest) {
     .maybeSingle();
 
   if (clsErr) {
-    console.error("[bulletin] classes error", clsErr);
     return NextResponse.json({ ok: false, error: "CLASS_ERROR" }, { status: 500 });
   }
   if (!cls) {
@@ -793,8 +944,8 @@ export async function GET(req: NextRequest) {
       .eq("id", classRow.head_teacher_id)
       .maybeSingle();
 
-    if (htErr) console.error("[bulletin] head_teacher lookup error", htErr);
-    else if (ht) headTeacher = ht as HeadTeacherRow;
+    if (htErr) {
+    } else if (ht) headTeacher = ht as HeadTeacherRow;
   }
 
   /* 1bis) Retrouver éventuellement la période de bulletin (grade_periods) + son coeff */
@@ -817,8 +968,8 @@ export async function GET(req: NextRequest) {
       .eq("end_date", dateTo)
       .maybeSingle();
 
-    if (gpErr) console.error("[bulletin] grade_periods lookup error", gpErr);
-    else if (gp) {
+    if (gpErr) {
+    } else if (gp) {
       periodMeta = {
         from: dateFrom,
         to: dateTo,
@@ -866,7 +1017,6 @@ export async function GET(req: NextRequest) {
   const { data: csData, error: csErr } = await enrollQuery;
 
   if (csErr) {
-    console.error("[bulletin] class_enrollments error", csErr);
     return NextResponse.json({ ok: false, error: "CLASS_STUDENTS_ERROR" }, { status: 500 });
   }
 
@@ -882,7 +1032,8 @@ export async function GET(req: NextRequest) {
 
   const { data: coeffAllData, error: coeffAllErr } = await coeffAllQuery;
 
-  if (coeffAllErr) console.error("[bulletin] coeffs (all) error", coeffAllErr);
+  if (coeffAllErr) {
+  }
 
   const coeffBySubject = new Map<string, { coeff: number; include: boolean }>();
   const subjectIdsFromConfig = new Set<string>();
@@ -914,7 +1065,6 @@ export async function GET(req: NextRequest) {
     const { data: evalData, error: evalErr } = await evalQuery;
 
     if (evalErr) {
-      console.error("[bulletin] evaluations error", evalErr);
       return NextResponse.json({ ok: false, error: "EVALUATIONS_ERROR" }, { status: 500 });
     }
 
@@ -935,7 +1085,12 @@ export async function GET(req: NextRequest) {
   if (!classStudents.length) {
     return NextResponse.json({
       ok: true,
-      qr: { enabled: qrEnabled, verify_path: BULLETIN_VERIFY_PATH },
+      qr: {
+        enabled: qrEnabled,
+        mode: qrMode,
+        verify_path: BULLETIN_VERIFY_SHORT_PREFIX,
+        legacy_verify_path: BULLETIN_VERIFY_LEGACY_PATH,
+      },
       class: {
         id: classRow.id,
         label: classRow.label || classRow.code || "Classe",
@@ -990,7 +1145,7 @@ export async function GET(req: NextRequest) {
       };
     });
 
-    const itemsWithQr = addQrToItems(baseItems, {
+    const itemsWithQr = await addQrToItems(srvClient, baseItems, {
       origin,
       institutionId,
       classId: classRow.id,
@@ -1009,7 +1164,12 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({
       ok: true,
-      qr: { enabled: qrEnabled, verify_path: BULLETIN_VERIFY_PATH },
+      qr: {
+        enabled: qrEnabled,
+        mode: qrMode,
+        verify_path: BULLETIN_VERIFY_SHORT_PREFIX,
+        legacy_verify_path: BULLETIN_VERIFY_LEGACY_PATH,
+      },
       class: {
         id: classRow.id,
         label: classRow.label || classRow.code || "Classe",
@@ -1042,7 +1202,6 @@ export async function GET(req: NextRequest) {
     .order("name", { ascending: true });
 
   if (subjErr) {
-    console.error("[bulletin] subjects error", subjErr);
     return NextResponse.json({ ok: false, error: "SUBJECTS_ERROR" }, { status: 500 });
   }
 
@@ -1081,7 +1240,6 @@ export async function GET(req: NextRequest) {
     .in("subject_id", orderedSubjectIds);
 
   if (compErr) {
-    console.error("[bulletin] subject_components error", compErr);
   } else {
     const rows = (compData || [])
       .filter((r: any) => r.is_active !== false)
@@ -1137,7 +1295,6 @@ export async function GET(req: NextRequest) {
       .order("order_index", { ascending: true });
 
     if (groupsErr) {
-      console.error("[bulletin] groups error", groupsErr);
     } else if (groupsData && groupsData.length) {
       const activeGroups = (groupsData as any[]).filter((g) => g.is_active !== false);
 
@@ -1149,7 +1306,8 @@ export async function GET(req: NextRequest) {
           .select("id, group_id, subject_id, created_at")
           .in("group_id", groupIds);
 
-        if (itemsErr) console.error("[bulletin] group_items error", itemsErr);
+        if (itemsErr) {
+        }
 
         const rawItems = (itemsData || []) as any[];
 
@@ -1331,7 +1489,6 @@ export async function GET(req: NextRequest) {
       .in("student_id", studentIds);
 
     if (scoreErr) {
-      console.error("[bulletin] scores error", scoreErr);
       return NextResponse.json({ ok: false, error: "SCORES_ERROR" }, { status: 500 });
     }
 
@@ -1570,8 +1727,8 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  // ✅ QR : ajout non cassant (champs supplémentaires)
-  const itemsWithQr = addQrToItems(items, {
+  // ✅ QR : URL courte /v/[code] (fallback token si besoin)
+  const itemsWithQr = await addQrToItems(srvClient, items, {
     origin,
     institutionId,
     classId: classRow.id,
@@ -1591,7 +1748,12 @@ export async function GET(req: NextRequest) {
 
   return NextResponse.json({
     ok: true,
-    qr: { enabled: qrEnabled, verify_path: BULLETIN_VERIFY_PATH },
+    qr: {
+      enabled: qrEnabled,
+      mode: qrMode,
+      verify_path: BULLETIN_VERIFY_SHORT_PREFIX,
+      legacy_verify_path: BULLETIN_VERIFY_LEGACY_PATH,
+    },
     class: {
       id: classRow.id,
       label: classRow.label || classRow.code || "Classe",

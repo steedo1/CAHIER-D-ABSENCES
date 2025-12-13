@@ -110,11 +110,11 @@ type BulletinItemBase = {
   // 🆕 PHOTO (optionnel : si tu ajoutes une url plus tard côté API)
   photo_url?: string | null;
 
-  // ✅ QR renvoyé par l’API (non cassant)
+  // ✅ QR renvoyé par l’API
   qr_url?: string | null;
   qr_token?: string | null;
 
-  // ✅ QR PNG généré côté serveur (prioritaire pour print/PDF)
+  // ✅ QR PNG généré côté serveur (PRIORITAIRE pour l’affichage)
   qr_png?: string | null;
 
   per_subject: PerSubjectAvg[];
@@ -348,10 +348,9 @@ function computeSubjectAppreciation(avg: number | null | undefined): string {
   return "Blâme";
 }
 
-/* ───────── QR Code (fallback client) ───────── */
+/* ───────── QR Code (généré côté client) ───────── */
 
-// 👉 on augmente la taille de rendu
-const QR_SIZE = 120;
+const QR_SIZE = 140; // ✅ QR plus large pour un meilleur scan sur smartphone
 const __QR_CACHE = new Map<string, string>();
 
 let __qrLibPromise: Promise<any> | null = null;
@@ -383,7 +382,7 @@ async function generateQrDataUrl(
 
     if (typeof toDataURL !== "function") return null;
 
-    // ✅ IMPORTANT: marge + ECL robuste pour le print
+    // ✅ margin + ECL robuste pour le print / scan
     const url: string = await toDataURL(text, {
       width: size,
       margin: 2,
@@ -492,7 +491,9 @@ function applyGroupRanksFront(items: (BulletinItemBase | BulletinItemWithRank)[]
 
 /* ───────── Ranks + stats helper ───────── */
 
-function computeRanksAndStats(res: BulletinResponse | null): EnrichedBulletin | null {
+function computeRanksAndStats(
+  res: BulletinResponse | null
+): EnrichedBulletin | null {
   if (!res) return null;
   const items = res.items ?? [];
 
@@ -724,30 +725,23 @@ function StudentBulletinCard({
     item.matricule,
   ]);
 
-  // ✅ priorité: QR généré côté client à partir de qrText (URL de vérif)
+  // ✅ On génère un QR côté client en SECOURS,
+  // mais on utilise PRIORITAIREMENT le PNG serveur (item.qr_png)
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-
     (async () => {
       const url = await generateQrDataUrl(qrText, QR_SIZE);
-      if (!cancelled) {
-        if (url) {
-          setQrDataUrl(url);
-        } else if (item.qr_png) {
-          // secours : on retombe sur le PNG serveur
-          setQrDataUrl(item.qr_png);
-        }
-      }
+      if (!cancelled) setQrDataUrl(url);
     })();
-
     return () => {
       cancelled = true;
     };
-  }, [qrText, item.qr_png]);
+  }, [qrText]);
 
-  const qrImgSrc = qrDataUrl || item.qr_png || null;
+  // 🔴 CHANGEMENT IMPORTANT : priorité à item.qr_png
+  const qrImgSrc = item.qr_png || qrDataUrl;
 
   const renderSignatureLine = () => (
     <div className="flex h-[14px] items-end">
@@ -887,11 +881,15 @@ function StudentBulletinCard({
               )}
             </div>
 
-            {/* ✅ QR: généré côté client, plus grand */}
-            <div className="bdr flex h-[80px] w-[80px] items-center justify-center overflow-hidden bg-white">
+            {/* ✅ QR agrandi, utilise qr_png si présent */}
+            <div className="bdr flex h-[110px] w-[110px] items-center justify-center overflow-hidden bg-white">
               {qrImgSrc ? (
                 // eslint-disable-next-line @next/next/no-img-element
-                <img src={qrImgSrc} alt="QR" className="h-[74px] w-[74px]" />
+                <img
+                  src={qrImgSrc}
+                  alt="QR"
+                  className="h-[104px] w-[104px] object-contain"
+                />
               ) : (
                 <div className="text-[8px] text-slate-500">QR</div>
               )}
@@ -1124,7 +1122,9 @@ function StudentBulletinCard({
             <div className="mt-[2px] space-y-[2px]">
               <div>
                 Absences :{" "}
-                <span className="font-semibold">{conduct.absence_count ?? 0}</span>
+                <span className="font-semibold">
+                  {conduct.absence_count ?? 0}
+                </span>
                 {absenceHours !== null && (
                   <span className="text-[8px] text-slate-600">
                     {" "}
@@ -1206,20 +1206,30 @@ function StudentBulletinCard({
               Félicitations
             </div>
             <div>
-              {tick(mentions.distinction === "excellence")} Tableau d&apos;
-              excellence
+              {tick(mentions.distinction === "excellence")} Tableau
+              d&apos;excellence
             </div>
             <div>
-              {tick(mentions.distinction === "encouragement")} Tableau d&apos;
-              encouragement
+              {tick(mentions.distinction === "encouragement")} Tableau
+              d&apos;encouragement
             </div>
           </div>
           <div className="mt-2 text-[8px] font-semibold">SANCTIONS</div>
           <div className="mt-[2px] space-y-[2px] text-[8px]">
-            <div>{tick(mentions.sanction === "warningWork")}</div>
-            <div>{tick(mentions.sanction === "warningConduct")}</div>
-            <div>{tick(mentions.sanction === "blameWork")}</div>
-            <div>{tick(mentions.sanction === "blameConduct")}</div>
+            <div>
+              {tick(mentions.sanction === "warningWork")}
+              {" Avertissement travail"}
+            </div>
+            <div>
+              {tick(mentions.sanction === "warningConduct")}
+              {" Avertissement conduite"}
+            </div>
+            <div>
+              {tick(mentions.sanction === "blameWork")} Blâme travail
+            </div>
+            <div>
+              {tick(mentions.sanction === "blameConduct")} Blâme conduite
+            </div>
           </div>
         </div>
 
@@ -1231,7 +1241,7 @@ function StudentBulletinCard({
         </div>
       </div>
 
-      {/* ✅ VISAS : Prof Principal + Chef */}
+      {/* ✅ VISAS : Prof Principal + Chef d’établissement */}
       <div className="mt-1 grid grid-cols-2 gap-2 text-[9px] leading-tight">
         <div className="bdr flex flex-col justify-between p-1">
           <div className="font-semibold text-[8px]">
@@ -1286,16 +1296,14 @@ export default function BulletinsPage() {
 
   const [periods, setPeriods] = useState<GradePeriod[]>([]);
   const [periodsLoading, setPeriodsLoading] = useState(false);
-  const [selectedAcademicYear, setSelectedAcademicYear] =
-    useState<string>("");
+  const [selectedAcademicYear, setSelectedAcademicYear] = useState<string>("");
   const [selectedPeriodId, setSelectedPeriodId] = useState<string>("");
 
   const [dateFrom, setDateFrom] = useState<string>("");
+
   const [dateTo, setDateTo] = useState<string>("");
 
-  const [bulletinRaw, setBulletinRaw] = useState<BulletinResponse | null>(
-    null
-  );
+  const [bulletinRaw, setBulletinRaw] = useState<BulletinResponse | null>(null);
   const [bulletinLoading, setBulletinLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
@@ -1344,8 +1352,7 @@ export default function BulletinsPage() {
           ? json.items
           : [];
         setClasses(items);
-        if (items.length > 0 && !selectedClassId)
-          setSelectedClassId(items[0].id);
+        if (items.length > 0 && !selectedClassId) setSelectedClassId(items[0].id);
       } catch (e: any) {
         console.error(e);
         setErrorMsg(e.message || "Erreur lors du chargement des classes.");
@@ -1392,20 +1399,15 @@ export default function BulletinsPage() {
         setPeriodsLoading(true);
 
         const params = new URLSearchParams();
-        if (selectedAcademicYear)
-          params.set("academic_year", selectedAcademicYear);
+        if (selectedAcademicYear) params.set("academic_year", selectedAcademicYear);
 
         const qs = params.toString();
         const url =
-          "/api/admin/institution/grading-periods" +
-          (qs ? `?${qs}` : "");
+          "/api/admin/institution/grading-periods" + (qs ? `?${qs}` : "");
 
         const res = await fetch(url);
         if (!res.ok) {
-          console.warn(
-            "[Bulletins] grading-periods non disponible",
-            res.status
-          );
+          console.warn("[Bulletins] grading-periods non disponible", res.status);
           setPeriods([]);
           return;
         }
@@ -1517,8 +1519,7 @@ export default function BulletinsPage() {
     } catch (e: any) {
       console.error(e);
       setErrorMsg(
-        e?.message ||
-          "Une erreur est survenue lors du chargement du bulletin."
+        e?.message || "Une erreur est survenue lors du chargement du bulletin."
       );
     } finally {
       setBulletinLoading(false);
