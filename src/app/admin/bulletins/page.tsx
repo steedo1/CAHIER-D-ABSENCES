@@ -350,7 +350,7 @@ function computeSubjectAppreciation(avg: number | null | undefined): string {
 
 /* ───────── QR Code (fallback client) ───────── */
 
-// ⬇️ SEULE MODIF : taille plus grande
+// 👉 on augmente la taille de rendu
 const QR_SIZE = 120;
 const __QR_CACHE = new Map<string, string>();
 
@@ -383,7 +383,7 @@ async function generateQrDataUrl(
 
     if (typeof toDataURL !== "function") return null;
 
-    // ✅ IMPORTANT: margin > 0 (= quiet zone) + ECL plus robuste pour le print
+    // ✅ IMPORTANT: marge + ECL robuste pour le print
     const url: string = await toDataURL(text, {
       width: size,
       margin: 2,
@@ -447,9 +447,7 @@ function applyComponentRanksFront(
 
 /* ───────── Rangs groupes de matières ───────── */
 
-function applyGroupRanksFront(
-  items: (BulletinItemBase | BulletinItemWithRank)[]
-) {
+function applyGroupRanksFront(items: (BulletinItemBase | BulletinItemWithRank)[]) {
   type Entry = {
     itemIndex: number;
     groupIndex: number;
@@ -494,9 +492,7 @@ function applyGroupRanksFront(
 
 /* ───────── Ranks + stats helper ───────── */
 
-function computeRanksAndStats(
-  res: BulletinResponse | null
-): EnrichedBulletin | null {
+function computeRanksAndStats(res: BulletinResponse | null): EnrichedBulletin | null {
   if (!res) return null;
   const items = res.items ?? [];
 
@@ -728,27 +724,30 @@ function StudentBulletinCard({
     item.matricule,
   ]);
 
-  // ✅ priorité print: qr_png (serveur). fallback: génération client
+  // ✅ priorité: QR généré côté client à partir de qrText (URL de vérif)
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
 
   useEffect(() => {
-    // Si l’API fournit déjà un PNG (idéal pour print/PDF), on ne génère rien côté client
-    if (item.qr_png) {
-      setQrDataUrl(null);
-      return;
-    }
-
     let cancelled = false;
+
     (async () => {
       const url = await generateQrDataUrl(qrText, QR_SIZE);
-      if (!cancelled) setQrDataUrl(url);
+      if (!cancelled) {
+        if (url) {
+          setQrDataUrl(url);
+        } else if (item.qr_png) {
+          // secours : on retombe sur le PNG serveur
+          setQrDataUrl(item.qr_png);
+        }
+      }
     })();
+
     return () => {
       cancelled = true;
     };
   }, [qrText, item.qr_png]);
 
-  const qrImgSrc = item.qr_png || qrDataUrl;
+  const qrImgSrc = qrDataUrl || item.qr_png || null;
 
   const renderSignatureLine = () => (
     <div className="flex h-[14px] items-end">
@@ -774,18 +773,14 @@ function StudentBulletinCard({
       <React.Fragment key={s.subject_id}>
         <tr>
           <td className="bdr px-1 py-[1px]">{s.subject_name}</td>
-          <td className="bdr px-1 py-[1px] text-center">
-            {formatNumber(avg)}
-          </td>
+          <td className="bdr px-1 py-[1px] text-center">{formatNumber(avg)}</td>
           <td className="bdr px-1 py-[1px] text-center">
             {formatNumber(s.coeff_bulletin, 0)}
           </td>
           <td className="bdr px-1 py-[1px] text-center">
             {formatNumber(moyCoeff)}
           </td>
-          <td className="bdr px-1 py-[1px] text-center">
-            {subjectRankLabel}
-          </td>
+          <td className="bdr px-1 py-[1px] text-center">{subjectRankLabel}</td>
           <td className="bdr px-1 py-[1px]">{appreciationLabel}</td>
           <td className="bdr px-1 py-[1px]">{subjectTeacher}</td>
           <td className="bdr px-1 py-[1px]">{renderSignatureLine()}</td>
@@ -833,18 +828,14 @@ function StudentBulletinCard({
   const hasGroups = subjectGroups && subjectGroups.length > 0;
 
   const countryName = safeUpper(
-    String(
-      (institution?.country_name || "RÉPUBLIQUE DE CÔTE D'IVOIRE").trim()
-    )
+    String((institution?.country_name || "RÉPUBLIQUE DE CÔTE D'IVOIRE").trim())
   );
   const countryMotto = String(
     (institution?.country_motto || "Union - Discipline - Travail").trim()
   );
   const ministryName = safeUpper(
     String(
-      (
-        institution?.ministry_name || "MINISTÈRE DE L'ÉDUCATION NATIONALE"
-      ).trim()
+      (institution?.ministry_name || "MINISTÈRE DE L'ÉDUCATION NATIONALE").trim()
     )
   );
 
@@ -896,12 +887,11 @@ function StudentBulletinCard({
               )}
             </div>
 
-            {/* ✅ QR: priorité au PNG serveur (qr_png), fallback client (qrDataUrl) */}
-            {/* ⬇️ SEULES MODIFS : taille du conteneur + de l'image */}
-            <div className="bdr flex h-[96px] w-[96px] items-center justify-center overflow-hidden bg-white">
+            {/* ✅ QR: généré côté client, plus grand */}
+            <div className="bdr flex h-[80px] w-[80px] items-center justify-center overflow-hidden bg-white">
               {qrImgSrc ? (
                 // eslint-disable-next-line @next/next/no-img-element
-                <img src={qrImgSrc} alt="QR" className="h-[90px] w-[90px]" />
+                <img src={qrImgSrc} alt="QR" className="h-[74px] w-[74px]" />
               ) : (
                 <div className="text-[8px] text-slate-500">QR</div>
               )}
@@ -927,9 +917,7 @@ function StudentBulletinCard({
           <div className="text-center">
             <div className="text-[11px] font-bold uppercase">
               {safeUpper(
-                String(
-                  (institution?.institution_name || "ÉTABLISSEMENT").trim()
-                )
+                String((institution?.institution_name || "ÉTABLISSEMENT").trim())
               )}
             </div>
             <div className="text-[9px]">
@@ -1013,9 +1001,7 @@ function StudentBulletinCard({
 
             {institution?.institution_head_name && (
               <div className="pt-[2px]">
-                <span className="font-semibold">
-                  Chef d&apos;établissement :{" "}
-                </span>
+                <span className="font-semibold">Chef d&apos;établissement : </span>
                 <span>{institution.institution_head_name}</span>
               </div>
             )}
@@ -1031,9 +1017,7 @@ function StudentBulletinCard({
                 className="h-full w-full object-cover"
               />
             ) : (
-              <div className="text-center text-[8px] text-slate-500">
-                Photo
-              </div>
+              <div className="text-center text-[8px] text-slate-500">Photo</div>
             )}
           </div>
         </div>
@@ -1140,9 +1124,7 @@ function StudentBulletinCard({
             <div className="mt-[2px] space-y-[2px]">
               <div>
                 Absences :{" "}
-                <span className="font-semibold">
-                  {conduct.absence_count ?? 0}
-                </span>
+                <span className="font-semibold">{conduct.absence_count ?? 0}</span>
                 {absenceHours !== null && (
                   <span className="text-[8px] text-slate-600">
                     {" "}
@@ -1152,9 +1134,7 @@ function StudentBulletinCard({
               </div>
               <div>
                 Retards :{" "}
-                <span className="font-semibold">
-                  {conduct.tardy_count ?? 0}
-                </span>
+                <span className="font-semibold">{conduct.tardy_count ?? 0}</span>
               </div>
               <div className="pt-[2px]">
                 Note de conduite :{" "}
@@ -1170,8 +1150,7 @@ function StudentBulletinCard({
                     {conductRubricMax.assiduite}
                   </div>
                   <div>
-                    Tenue : {conduct.breakdown.tenue} /{" "}
-                    {conductRubricMax.tenue}
+                    Tenue : {conduct.breakdown.tenue} / {conductRubricMax.tenue}
                   </div>
                   <div>
                     Moralité : {conduct.breakdown.moralite} /{" "}
@@ -1227,28 +1206,20 @@ function StudentBulletinCard({
               Félicitations
             </div>
             <div>
-              {tick(mentions.distinction === "excellence")} Tableau
-              d&apos;excellence
+              {tick(mentions.distinction === "excellence")} Tableau d&apos;
+              excellence
             </div>
             <div>
-              {tick(mentions.distinction === "encouragement")} Tableau
-              d&apos;encouragement
+              {tick(mentions.distinction === "encouragement")} Tableau d&apos;
+              encouragement
             </div>
           </div>
           <div className="mt-2 text-[8px] font-semibold">SANCTIONS</div>
           <div className="mt-[2px] space-y-[2px] text-[8px]">
-            <div>
-              {tick(mentions.sanction === "warningWork")} Avertissement travail
-            </div>
-            <div>
-              {tick(mentions.sanction === "warningConduct")}
-              {"  "}
-              Avertissement conduite
-            </div>
-            <div>{tick(mentions.sanction === "blameWork")} Blâme travail</div>
-            <div>
-              {tick(mentions.sanction === "blameConduct")} Blâme conduite
-            </div>
+            <div>{tick(mentions.sanction === "warningWork")}</div>
+            <div>{tick(mentions.sanction === "warningConduct")}</div>
+            <div>{tick(mentions.sanction === "blameWork")}</div>
+            <div>{tick(mentions.sanction === "blameConduct")}</div>
           </div>
         </div>
 
@@ -1260,7 +1231,7 @@ function StudentBulletinCard({
         </div>
       </div>
 
-      {/* ✅ VISAS : on garde Prof Principal + Chef, et on retire VISA PARENT */}
+      {/* ✅ VISAS : Prof Principal + Chef */}
       <div className="mt-1 grid grid-cols-2 gap-2 text-[9px] leading-tight">
         <div className="bdr flex flex-col justify-between p-1">
           <div className="font-semibold text-[8px]">
@@ -1306,15 +1277,17 @@ export default function BulletinsPage() {
   const [classes, setClasses] = useState<ClassRow[]>([]);
   const [classesLoading, setClassesLoading] = useState(false);
 
-  const [institution, setInstitution] =
-    useState<InstitutionSettings | null>(null);
+  const [institution, setInstitution] = useState<InstitutionSettings | null>(
+    null
+  );
   const [institutionLoading, setInstitutionLoading] = useState(false);
 
   const [selectedClassId, setSelectedClassId] = useState<string>("");
 
   const [periods, setPeriods] = useState<GradePeriod[]>([]);
   const [periodsLoading, setPeriodsLoading] = useState(false);
-  const [selectedAcademicYear, setSelectedAcademicYear] = useState<string>("");
+  const [selectedAcademicYear, setSelectedAcademicYear] =
+    useState<string>("");
   const [selectedPeriodId, setSelectedPeriodId] = useState<string>("");
 
   const [dateFrom, setDateFrom] = useState<string>("");
@@ -1424,7 +1397,8 @@ export default function BulletinsPage() {
 
         const qs = params.toString();
         const url =
-          "/api/admin/institution/grading-periods" + (qs ? `?${qs}` : "");
+          "/api/admin/institution/grading-periods" +
+          (qs ? `?${qs}` : "");
 
         const res = await fetch(url);
         if (!res.ok) {
@@ -1543,7 +1517,8 @@ export default function BulletinsPage() {
     } catch (e: any) {
       console.error(e);
       setErrorMsg(
-        e?.message || "Une erreur est survenue lors du chargement du bulletin."
+        e?.message ||
+          "Une erreur est survenue lors du chargement du bulletin."
       );
     } finally {
       setBulletinLoading(false);
@@ -1867,8 +1842,8 @@ export default function BulletinsPage() {
 
           {!items.length && !bulletinLoading && (
             <div className="rounded-xl border border-slate-200 bg-white px-3 py-4 text-sm text-slate-600 print:hidden">
-              Aucun bulletin à afficher. Choisissez une classe, une période
-              puis cliquez sur{" "}
+              Aucun bulletin à afficher. Choisissez une classe, une période puis
+              cliquez sur{" "}
               <span className="font-semibold">Recharger</span>.
             </div>
           )}
