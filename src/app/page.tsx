@@ -227,7 +227,7 @@ function MarqueeBanner({ text }: { text: string }) {
   return (
     <div className="relative z-10 w-full overflow-hidden bg-slate-900 text-slate-100">
       <div
-        className="flex w-max items-center gap-8 py-2 pl-4 pr-8 text-xs [animation:marquee_28s_linear_infinite] hover:[animation-play-state:paused]"
+        className="flex w-max items-center gap-10 py-3 pl-6 pr-10 text-sm [animation:marquee_28s_linear_infinite] hover:[animation-play-state:paused]"
         role="status"
         aria-live="polite"
         aria-label={text}
@@ -308,8 +308,7 @@ export default function HomePage() {
             <b>Tableaux de bord</b> clairs ; exports CSV (absences & notes).
           </li>
           <li>
-            Import facile (CSV) des <b>classes</b>, <b>enseignants</b> et
-            élèves.
+            Import facile (CSV) des <b>classes</b>, <b>enseignants</b> et élèves.
           </li>
           <li>
             Affectations <b>en masse</b> : créer et associer des{" "}
@@ -320,8 +319,8 @@ export default function HomePage() {
             parent — <b>une seule vue par rôle</b>.
           </li>
           <li>
-            <b>Modèle de prédiction</b> du taux de réussite par classe, basé
-            sur absences, notes et matières clés.
+            <b>Modèle de prédiction</b> du taux de réussite par classe, basé sur
+            absences, notes et matières clés.
           </li>
         </ul>
       ),
@@ -679,8 +678,8 @@ export default function HomePage() {
               <Quote className="h-4 w-4" />
             </div>
             <p className="text-sm text-slate-700">
-              « Ce qui est intéressant, c’est qu’on sait si un enseignant est
-              en classe ou pas. »
+              « Ce qui est intéressant, c’est qu’on sait si un enseignant est en
+              classe ou pas. »
             </p>
             <p className="mt-4 text-xs font-semibold text-violet-800">
               Responsable pédagogique, Établissement partenaire

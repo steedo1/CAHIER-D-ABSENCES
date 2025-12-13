@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 
 /* ───────── routes dédiées parents + fallbacks ───────── */
 const LOGOUT_PARENTS = "/parents/logout";
@@ -15,6 +15,7 @@ function urlBase64ToUint8Array(base64: string) {
   for (let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
   return out;
 }
+
 const fmt = (iso: string) =>
   new Date(iso).toLocaleString([], {
     hour: "2-digit",
@@ -23,6 +24,7 @@ const fmt = (iso: string) =>
     month: "2-digit",
     year: "numeric",
   });
+
 function slotLabel(iso: string, expectedMinutes?: number | null): string {
   const start = new Date(iso);
   const minutes = Number.isFinite(Number(expectedMinutes))
@@ -39,6 +41,7 @@ function slotLabel(iso: string, expectedMinutes?: number | null): string {
   const right = em === "00" ? `${eh}h` : `${eh}h${em}`;
   return `${left}-${right}`;
 }
+
 function dayKey(iso: string) {
   const d = new Date(iso);
   const y = d.getFullYear();
@@ -46,6 +49,7 @@ function dayKey(iso: string) {
   const dd = String(d.getDate()).padStart(2, "0");
   return `${y}-${m}-${dd}`;
 }
+
 function dayLabel(iso: string) {
   const d = new Date(iso);
   const today = new Date();
@@ -62,36 +66,42 @@ function dayLabel(iso: string) {
     year: "numeric",
   });
 }
+
 function rubricLabel(r: "discipline" | "tenue" | "moralite") {
   if (r === "tenue") return "Tenue";
   if (r === "moralite") return "Moralité";
   return "Discipline";
 }
+
 function gradeKindLabel(kind: "devoir" | "interro_ecrite" | "interro_orale") {
   if (kind === "devoir") return "Devoir";
   if (kind === "interro_ecrite") return "Interrogation écrite";
   return "Interrogation orale";
 }
+
 function yyyyMMdd(d: Date) {
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, "0");
   const dd = String(d.getDate()).padStart(2, "0");
   return `${y}-${m}-${dd}`;
 }
+
 function getInitials(name: string) {
   const parts = (name || "").trim().split(/\s+/);
   const pick = (s: string) => (s ? s[0].toUpperCase() : "");
   if (parts.length === 1) return pick(parts[0]);
   return pick(parts[0]) + pick(parts[parts.length - 1]);
 }
+
 function startOfWeek(date: Date) {
   const d = new Date(date);
   const day = d.getDay(); // 0 (dimanche) -> 6 (samedi)
-  const diff = day === 0 ? -6 : 1 - day; // Lundi comme début
+  const diff = day === 0 ? -6 : 1 - day; // Lundi
   d.setDate(d.getDate() + diff);
   d.setHours(0, 0, 0, 0);
   return d;
 }
+
 function isInDateRange(iso: string, from?: string | null, to?: string | null) {
   const d = new Date(iso);
   if (from) {
@@ -172,6 +182,7 @@ const THEMES = [
     chipText: "text-cyan-800",
   },
 ] as const;
+
 function themeFor(i: number) {
   return THEMES[i % THEMES.length];
 }
@@ -204,6 +215,7 @@ type RubricKey = keyof typeof RUBRIC_THEMES;
 
 /* ───────── types ───────── */
 type Kid = { id: string; full_name: string; class_label: string | null };
+
 type Ev = {
   id: string;
   when: string; // session.started_at
@@ -213,6 +225,7 @@ type Ev = {
   class_label?: string | null;
   subject_name?: string | null;
 };
+
 type KidPenalty = {
   id: string;
   when: string;
@@ -226,6 +239,7 @@ type KidPenalty = {
   author_role?: string | null;
   author_role_label?: string | null;
 };
+
 type Conduct = {
   breakdown: {
     assiduite: number;
@@ -242,6 +256,7 @@ type Conduct = {
     discipline: number;
   };
 };
+
 type KidGradeRow = {
   id: string;
   eval_date: string;
@@ -280,7 +295,8 @@ function Button(
     <button
       {...rest}
       className={[
-        "inline-flex items-center justify-center gap-2 rounded-2xl px-4 py-2.5 text-sm font-medium shadow-sm transition-all",
+        // + gros et + "touch friendly"
+        "inline-flex items-center justify-center gap-2 rounded-2xl px-4 py-3 text-[15px] font-semibold shadow-sm transition-all",
         "focus:outline-none focus:ring-2 focus:ring-offset-1",
         "disabled:opacity-60 disabled:cursor-not-allowed",
         map[tone],
@@ -292,12 +308,13 @@ function Button(
     </button>
   );
 }
+
 function Input(p: React.InputHTMLAttributes<HTMLInputElement>) {
   return (
     <input
       {...p}
       className={[
-        "w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm shadow-sm outline-none transition",
+        "w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-[15px] shadow-sm outline-none transition",
         "placeholder:text-slate-400",
         "focus:ring-2 focus:ring-emerald-500 focus:ring-offset-1 focus:border-emerald-500",
         "disabled:cursor-not-allowed disabled:bg-slate-50",
@@ -306,6 +323,7 @@ function Input(p: React.InputHTMLAttributes<HTMLInputElement>) {
     />
   );
 }
+
 function Badge({
   children,
   tone = "slate",
@@ -322,7 +340,7 @@ function Badge({
   return (
     <span
       className={[
-        "inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium ring-1",
+        "inline-flex items-center rounded-full px-2.5 py-1 text-[12px] font-semibold ring-1",
         toneMap[tone],
       ].join(" ")}
     >
@@ -330,63 +348,17 @@ function Badge({
     </span>
   );
 }
+
 function Skeleton({ className = "" }: { className?: string }) {
   return (
-    <div className={`animate-pulse rounded-xl bg-slate-200/70 ${className}`} />
+    <div className={`animate-pulse rounded-2xl bg-slate-200/70 ${className}`} />
   );
 }
 
-/* Jauge verticale par rubrique (mobile) — alignée sur rubric_max */
-function VerticalGauge({
-  label,
-  value,
-  max,
-  rubric,
-}: {
-  label: string;
-  value: number;
-  max: number;
-  rubric: RubricKey;
-}) {
-  const theme = RUBRIC_THEMES[rubric];
-
-  const safeMax = max > 0 ? max : 1;
-  const pct = Math.max(0, Math.min(100, (value / safeMax) * 100));
-
-  const fmtNumber = (n: number) => {
-    if (Number.isInteger(n)) return String(n);
-    return n.toFixed(1).replace(".", ",");
-  };
-
-  const vLabel = `${fmtNumber(value)} / ${fmtNumber(max)} pt${
-    Math.abs(max - 1) < 0.001 ? "" : "s"
-  }`;
-
-  return (
-    <div className="flex min-w-[64px] flex-1 flex-col items-center">
-      <div
-        className={`relative flex h-24 w-7 overflow-hidden rounded-full ${theme.bg}`}
-      >
-        <div
-          className={`absolute bottom-0 left-0 right-0 ${theme.fill}`}
-          style={{ height: `${pct}%` }}
-        />
-      </div>
-      <div
-        className={`mt-1 text-[11px] font-semibold leading-tight ${theme.text}`}
-      >
-        {label}
-      </div>
-      <div className="text-[11px] text-slate-600">{vLabel}</div>
-    </div>
-  );
-}
-
-/* Petites icônes inline (pas de dépendances) */
 const IconBell = () => (
   <svg
-    width="16"
-    height="16"
+    width="18"
+    height="18"
     viewBox="0 0 24 24"
     className="shrink-0"
     fill="none"
@@ -399,8 +371,8 @@ const IconBell = () => (
 );
 const IconPower = () => (
   <svg
-    width="16"
-    height="16"
+    width="18"
+    height="18"
     viewBox="0 0 24 24"
     className="shrink-0"
     fill="none"
@@ -413,8 +385,8 @@ const IconPower = () => (
 );
 const IconHome = () => (
   <svg
-    width="16"
-    height="16"
+    width="18"
+    height="18"
     viewBox="0 0 24 24"
     className="shrink-0"
     fill="none"
@@ -427,8 +399,8 @@ const IconHome = () => (
 );
 const IconClipboard = () => (
   <svg
-    width="16"
-    height="16"
+    width="18"
+    height="18"
     viewBox="0 0 24 24"
     className="shrink-0"
     fill="none"
@@ -441,8 +413,8 @@ const IconClipboard = () => (
 );
 const IconBook = () => (
   <svg
-    width="16"
-    height="16"
+    width="18"
+    height="18"
     viewBox="0 0 24 24"
     className="shrink-0"
     fill="none"
@@ -455,8 +427,8 @@ const IconBook = () => (
 );
 const IconMenu = () => (
   <svg
-    width="18"
-    height="18"
+    width="20"
+    height="20"
     viewBox="0 0 24 24"
     className="shrink-0"
     fill="none"
@@ -470,8 +442,8 @@ const IconMenu = () => (
 );
 const IconX = () => (
   <svg
-    width="16"
-    height="16"
+    width="18"
+    height="18"
     viewBox="0 0 24 24"
     className="shrink-0"
     fill="none"
@@ -480,6 +452,21 @@ const IconX = () => (
   >
     <path d="M6 6l12 12" />
     <path d="M18 6l-12 12" />
+  </svg>
+);
+
+const IconLock = () => (
+  <svg
+    width="16"
+    height="16"
+    viewBox="0 0 24 24"
+    className="shrink-0"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+  >
+    <path d="M7 11V8a5 5 0 0110 0v3" />
+    <rect x="5" y="11" width="14" height="10" rx="2" />
   </svg>
 );
 
@@ -528,6 +515,7 @@ function TiltCard({
       background: `radial-gradient(280px circle at ${x}px ${y}px, rgba(255,255,255,0.16), transparent 45%)`,
     });
   }
+
   function onLeave() {
     setStyle({
       transform: "rotateX(0deg) rotateY(0deg) translateZ(0)",
@@ -545,11 +533,11 @@ function TiltCard({
       onMouseLeave={onLeave}
     >
       <div
-        className={`relative rounded-xl bg-white transition-shadow will-change-transform ${className}`}
+        className={`relative rounded-2xl bg-white transition-shadow will-change-transform ${className}`}
         style={style}
       >
         <div
-          className="pointer-events-none absolute inset-0 rounded-xl"
+          className="pointer-events-none absolute inset-0 rounded-2xl"
           style={shineStyle}
         />
         {children}
@@ -634,6 +622,7 @@ type DayGroup = {
   lateCount: number;
   items: Ev[];
 };
+
 function groupByDay(events: Ev[]): DayGroup[] {
   const buckets = new Map<string, Ev[]>();
   for (const ev of events) {
@@ -658,75 +647,183 @@ function groupByDay(events: Ev[]): DayGroup[] {
   return groups;
 }
 
+/* ───────── fetch helpers (notes robustes) ───────── */
+async function fetchJsonSafe(
+  url: string,
+  init?: RequestInit,
+): Promise<{ ok: boolean; status: number; json: any; errorText?: string }> {
+  try {
+    const res = await fetch(url, init);
+    const status = res.status;
+    let json: any = null;
+    try {
+      json = await res.json();
+    } catch {
+      // Si HTML/texte
+      try {
+        const t = await res.text();
+        return {
+          ok: res.ok,
+          status,
+          json: null,
+          errorText: t?.slice(0, 200) || "non-json",
+        };
+      } catch {
+        return { ok: res.ok, status, json: null, errorText: "non-json" };
+      }
+    }
+    return { ok: res.ok, status, json };
+  } catch (e: any) {
+    return { ok: false, status: 0, json: null, errorText: e?.message || "fetch_failed" };
+  }
+}
+
+async function firstOkItems(
+  urls: string[],
+  init?: RequestInit,
+): Promise<{ ok: true; items: any[]; usedUrl: string } | { ok: false; err: string }> {
+  for (const u of urls) {
+    const r = await fetchJsonSafe(u, init);
+    if (!r.ok) continue;
+    const j = r.json;
+    const items =
+      (Array.isArray(j?.items) ? j.items : null) ??
+      (Array.isArray(j?.data) ? j.data : null) ??
+      (Array.isArray(j) ? j : null) ??
+      [];
+    if (Array.isArray(items)) return { ok: true, items, usedUrl: u };
+  }
+  const last = await fetchJsonSafe(urls[0], init);
+  const err = `API grades: ${last.status || "?"} ${
+    (last.json?.error && String(last.json.error)) ||
+    (last.errorText ? String(last.errorText) : "no_items")
+  }`;
+  return { ok: false, err };
+}
+
+/* ───────── Jauge verticale par rubrique (mobile) ───────── */
+function VerticalGauge({
+  label,
+  value,
+  max,
+  rubric,
+}: {
+  label: string;
+  value: number;
+  max: number;
+  rubric: RubricKey;
+}) {
+  const disabled = !(Number.isFinite(max) && max > 0);
+  const theme = disabled
+    ? { bg: "bg-slate-100", fill: "bg-slate-300", text: "text-slate-500" }
+    : RUBRIC_THEMES[rubric];
+
+  const safeMax = max > 0 ? max : 1;
+  const pct = disabled ? 0 : Math.max(0, Math.min(100, (value / safeMax) * 100));
+
+  const fmtNumber = (n: number) => {
+    if (Number.isInteger(n)) return String(n);
+    return n.toFixed(1).replace(".", ",");
+  };
+
+  const vLabel = disabled ? "Désactivée" : `${fmtNumber(value)} / ${fmtNumber(max)} pt${Math.abs(max - 1) < 0.001 ? "" : "s"}`;
+
+  return (
+    <div className="flex min-w-0 flex-1 flex-col items-center">
+      <div className="relative flex h-28 w-10 overflow-hidden rounded-full">
+        <div className={`absolute inset-0 ${theme.bg}`} />
+        <div
+          className={`absolute bottom-0 left-0 right-0 ${theme.fill}`}
+          style={{ height: `${pct}%` }}
+        />
+        {disabled && (
+          <div className="absolute inset-0 grid place-items-center text-slate-500">
+            <IconLock />
+          </div>
+        )}
+      </div>
+      <div className={`mt-2 text-[13px] font-bold leading-tight ${theme.text}`}>
+        {label}
+      </div>
+      <div className="text-[12px] text-slate-600">{vLabel}</div>
+    </div>
+  );
+}
+
 /* ───────── component ───────── */
 export default function ParentPage() {
   const [kids, setKids] = useState<Kid[]>([]);
   const [feed, setFeed] = useState<Record<string, Ev[]>>({});
-  const [kidPenalties, setKidPenalties] = useState<
-    Record<string, KidPenalty[]>
-  >({});
+  const [kidPenalties, setKidPenalties] = useState<Record<string, KidPenalty[]>>({});
   const [conduct, setConduct] = useState<Record<string, Conduct>>({});
   const [kidGrades, setKidGrades] = useState<Record<string, KidGradeRow[]>>({});
+  const [kidGradesErr, setKidGradesErr] = useState<Record<string, string>>({});
+
   const [loadingKids, setLoadingKids] = useState(true);
   const [loadingConduct, setLoadingConduct] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
 
-  // Filtre période pour la conduite (par défaut : 90 jours glissants)
+  // Filtre période conduite (90 jours)
   const [conductFrom, setConductFrom] = useState<string>("");
   const [conductTo, setConductTo] = useState<string>("");
 
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
-  const [showAllDaysForKid, setShowAllDaysForKid] = useState<
-    Record<string, boolean>
-  >({});
-  const [showAllPenForKid, setShowAllPenForKid] = useState<
-    Record<string, boolean>
-  >({});
+  const [showAllDaysForKid, setShowAllDaysForKid] = useState<Record<string, boolean>>({});
+  const [showAllPenForKid, setShowAllPenForKid] = useState<Record<string, boolean>>({});
 
-  // Filtre période pour les notes
+  // Filtre période notes
   const [gradeFilterMode, setGradeFilterMode] = useState<
     "week" | "month" | "all" | "custom"
   >("week");
   const [gradeFrom, setGradeFrom] = useState<string>("");
   const [gradeTo, setGradeTo] = useState<string>("");
 
-  // Matière sélectionnée par enfant (onglet Cahier de notes)
-  const [activeSubjectPerKid, setActiveSubjectPerKid] = useState<
-    Record<string, string | "all" | null>
-  >({});
+  // Matière sélectionnée par enfant
+  const [activeSubjectPerKid, setActiveSubjectPerKid] = useState<Record<string, string | "all" | null>>({});
 
-  // 🔔 Permission de notification déjà accordée ?
+  // 🔔 notifications
   const [granted, setGranted] = useState(false);
 
-  // 📱 iOS + mode standalone (PWA installée)
+  // 📱 iOS / standalone
   const [isiOS, setIsiOS] = useState(false);
   const [isStandalone, setIsStandalone] = useState(false);
 
-  // ⛔ État de déconnexion
+  // logout
   const [loggingOut, setLoggingOut] = useState(false);
 
-  // Menu mobile (drawer)
+  // Drawer mobile
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
-  // Sélection enfant + section (sidebar / mobile nav)
+  // Sélection enfant + section
   const [activeChildId, setActiveChildId] = useState<string | "all">("all");
   const [activeSection, setActiveSection] = useState<NavSection>("dashboard");
 
   const hasKids = kids.length > 0;
-  const filteredKids =
-    activeChildId === "all"
-      ? kids
-      : kids.filter((k) => k.id === activeChildId);
+
+  const filteredKids = useMemo(() => {
+    return activeChildId === "all" ? kids : kids.filter((k) => k.id === activeChildId);
+  }, [kids, activeChildId]);
 
   const isDashboard = activeSection === "dashboard";
   const isConduct = activeSection === "conduct";
   const isAbsences = activeSection === "absences";
   const isNotes = activeSection === "notes";
+
   const showConductSection = isDashboard || isConduct;
   const showEventsSection = isDashboard || isAbsences;
   const showNotesSection = isNotes;
 
-  // — init des dates par défaut + états push
+  // lock body scroll when drawer open
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    const prev = document.body.style.overflow;
+    if (mobileNavOpen) document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, [mobileNavOpen]);
+
+  // init dates + push states
   useEffect(() => {
     const today = new Date();
     const start = new Date();
@@ -738,8 +835,7 @@ export default function ParentPage() {
 
     const refresh = () =>
       setGranted(
-        typeof Notification !== "undefined" &&
-          Notification.permission === "granted",
+        typeof Notification !== "undefined" && Notification.permission === "granted",
       );
     refresh();
 
@@ -751,7 +847,7 @@ export default function ParentPage() {
     return () => document.removeEventListener("visibilitychange", refresh);
   }, []);
 
-  // Init période notes selon le mode (semaine / mois / all)
+  // init période notes (week/month/all)
   useEffect(() => {
     const today = new Date();
     if (gradeFilterMode === "week") {
@@ -768,11 +864,7 @@ export default function ParentPage() {
     }
   }, [gradeFilterMode]);
 
-  async function loadConductForAll(
-    kidsList: Kid[] = kids,
-    from?: string,
-    to?: string,
-  ) {
+  async function loadConductForAll(kidsList: Kid[] = kids, from?: string, to?: string) {
     setLoadingConduct(true);
     try {
       const condEntries: Array<[string, Conduct]> = [];
@@ -780,17 +872,13 @@ export default function ParentPage() {
         const qs = new URLSearchParams({ student_id: k.id });
         if (from) qs.set("from", from);
         if (to) qs.set("to", to);
-        const c = await fetch(
-          `/api/parent/children/conduct?${qs.toString()}`,
-          {
-            cache: "no-store",
-            credentials: "include",
-          },
-        )
+        const c = await fetch(`/api/parent/children/conduct?${qs.toString()}`, {
+          cache: "no-store",
+          credentials: "include",
+        })
           .then((r) => r.json())
           .catch(() => ({}));
-        if (c && (c as any).total != null)
-          condEntries.push([k.id, c as Conduct]);
+        if (c && (c as any).total != null) condEntries.push([k.id, c as Conduct]);
       }
       setConduct(Object.fromEntries(condEntries));
     } finally {
@@ -800,6 +888,7 @@ export default function ParentPage() {
 
   async function loadKids(from?: string, to?: string) {
     setLoadingKids(true);
+    setMsg(null);
     try {
       // 1) enfants
       const j = await fetch("/api/parent/children", {
@@ -808,6 +897,7 @@ export default function ParentPage() {
       }).then((r) => r.json());
       const ks = (j.items || []) as Kid[];
       setKids(ks);
+
       setActiveChildId((prev) => {
         if (prev !== "all" && ks.some((k) => k.id === prev)) return prev;
         if (ks.length === 1) return ks[0].id;
@@ -815,58 +905,62 @@ export default function ParentPage() {
         return "all";
       });
 
-      // 2) événements + sanctions + notes publiées
+      // 2) événements + sanctions + notes
       const feedEntries: Array<[string, Ev[]]> = [];
       const penEntries: Array<[string, KidPenalty[]]> = [];
       const gradeEntries: Array<[string, KidGradeRow[]]> = [];
+      const gradeErrs: Record<string, string> = {};
 
       for (const k of ks) {
         const f = await fetch(
-          `/api/parent/children/events?student_id=${encodeURIComponent(
-            k.id,
-          )}&limit=50`,
+          `/api/parent/children/events?student_id=${encodeURIComponent(k.id)}&limit=50`,
           { cache: "no-store", credentials: "include" },
         ).then((r) => r.json());
         feedEntries.push([k.id, (f.items || []) as Ev[]]);
 
         const p = await fetch(
-          `/api/parent/children/penalties?student_id=${encodeURIComponent(
-            k.id,
-          )}&limit=20`,
+          `/api/parent/children/penalties?student_id=${encodeURIComponent(k.id)}&limit=20`,
           { cache: "no-store", credentials: "include" },
         )
           .then((r) => r.json())
           .catch(() => ({ items: [] }));
         penEntries.push([k.id, (p.items || []) as KidPenalty[]]);
 
-        const g = await fetch(
-          `/api/parent/children/grades?student_id=${encodeURIComponent(
-            k.id,
-          )}&limit=200`,
-          {
-            cache: "no-store",
-            credentials: "include",
-          },
-        )
-          .then((r) => r.json())
-          .catch(() => ({ items: [] }));
-        gradeEntries.push([k.id, (g.items || []) as KidGradeRow[]]);
+        // ✅ notes : fetch robuste + fallbacks (si route diffère)
+        const sid = encodeURIComponent(k.id);
+        const gradeUrls = [
+          `/api/parent/children/grades?student_id=${sid}&limit=200`,
+          `/api/parents/children/grades?student_id=${sid}&limit=200`,
+          `/api/parent/children/grades/published?student_id=${sid}&limit=200`,
+        ];
+
+        const gRes = await firstOkItems(gradeUrls, {
+          cache: "no-store",
+          credentials: "include",
+        });
+
+        if (gRes.ok) {
+          gradeEntries.push([k.id, (gRes.items || []) as KidGradeRow[]]);
+        } else {
+          gradeEntries.push([k.id, []]);
+          gradeErrs[k.id] = gRes.err;
+        }
       }
 
       setFeed(Object.fromEntries(feedEntries));
       setKidPenalties(Object.fromEntries(penEntries));
       setKidGrades(Object.fromEntries(gradeEntries));
+      setKidGradesErr(gradeErrs);
 
       // 3) expand auto si une seule ligne dans une journée
       const initialExpanded: Record<string, boolean> = {};
       for (const [kidId, list] of feedEntries) {
         const groups = groupByDay(list);
-        for (const g of groups)
-          if (g.items.length === 1) initialExpanded[`${kidId}|${g.day}`] = true;
+        for (const g of groups) if (g.items.length === 1) initialExpanded[`${kidId}|${g.day}`] = true;
       }
       setExpanded(initialExpanded);
 
-      // 4) conduite avec intervalle (par défaut 90j)
+      // 4) conduite
       const useFrom = from || conductFrom;
       const useTo = to || conductTo;
       await loadConductForAll(ks, useFrom, useTo);
@@ -938,10 +1032,7 @@ export default function ParentPage() {
       }
 
       try {
-        await fetch("/api/auth/sync", {
-          method: "DELETE",
-          credentials: "include",
-        });
+        await fetch("/api/auth/sync", { method: "DELETE", credentials: "include" });
       } catch {}
     } finally {
       window.location.assign(LOGOUT_PARENTS);
@@ -956,9 +1047,7 @@ export default function ParentPage() {
   function selectSection(section: NavSection) {
     setActiveSection(section);
     setMobileNavOpen(false);
-    if (typeof window !== "undefined") {
-      window.scrollTo({ top: 0, behavior: "smooth" });
-    }
+    if (typeof window !== "undefined") window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
   function SidebarNavItem({
@@ -975,9 +1064,9 @@ export default function ParentPage() {
       <button
         onClick={() => selectSection(section)}
         className={[
-          "flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm transition",
+          "flex w-full items-center gap-2 rounded-xl px-3 py-3 text-[15px] transition",
           active
-            ? "bg-white text-[#003766] font-semibold shadow-sm"
+            ? "bg-white text-[#003766] font-extrabold shadow-sm"
             : "text-white/90 hover:bg-[#02427e]",
         ].join(" ")}
       >
@@ -994,63 +1083,70 @@ export default function ParentPage() {
     return "Période libre";
   }
 
+  // Badge / libellé rubriques
+  function rubricCellValue(val: number, max: number) {
+    if (!(Number.isFinite(max) && max > 0)) return "Désactivée";
+    return val.toFixed(2).replace(".", ",");
+  }
+
   /* ───────── RENDER ───────── */
   return (
-    <div className="min-h-screen bg-slate-100 text-slate-900">
-      {/* ───── Drawer mobile style EcoleMedia ───── */}
+    <div className="min-h-screen overflow-x-hidden bg-slate-100 text-slate-900 text-[15px]">
+      {/* ───── Drawer mobile ───── */}
       {mobileNavOpen && (
         <div className="fixed inset-0 z-40 flex lg:hidden">
-          <div className="relative flex h-full w-72 max-w-[80%] flex-col bg-[#003766] text-white shadow-2xl">
-            {/* header avatar + titre + close */}
-            <div className="flex items-center justify-between border-b border-white/15 px-4 py-3">
-              <div className="flex items-center gap-2">
-                <div className="grid h-10 w-10 place-items-center rounded-full bg-white/20 text-sm font-semibold">
+          <div className="relative flex h-full w-80 max-w-[86%] flex-col bg-[#003766] text-white shadow-2xl">
+            <div className="flex items-center justify-between border-b border-white/15 px-4 py-4">
+              <div className="flex items-center gap-3">
+                <div className="grid h-11 w-11 place-items-center rounded-2xl bg-white/20 text-sm font-extrabold">
                   MC
                 </div>
                 <div className="min-w-0 leading-tight">
-                  <div className="text-xs">Bienvenue</div>
-                  <div className="text-sm font-semibold">
+                  <div className="text-[12px] opacity-90">Bienvenue</div>
+                  <div className="text-[15px] font-extrabold truncate">
                     Espace parent Mon Cahier
                   </div>
-                  <div className="mt-0.5 flex items-center gap-1 text-[11px] text-emerald-200">
-                    <span className="h-2 w-2 rounded-full bg-emerald-400" />
+                  <div className="mt-1 flex items-center gap-2 text-[12px] text-emerald-200">
+                    <span className="h-2.5 w-2.5 rounded-full bg-emerald-400" />
                     <span>En ligne</span>
                   </div>
                 </div>
               </div>
+
               <button
                 type="button"
                 aria-label="Fermer le menu"
                 onClick={() => setMobileNavOpen(false)}
-                className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-white/10"
+                className="inline-flex h-10 w-10 items-center justify-center rounded-2xl bg-white/10"
               >
                 <IconX />
               </button>
             </div>
 
             {/* Enfants */}
-            <div className="border-b border-white/10 px-4 py-3">
-              <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-amber-200">
+            <div className="border-b border-white/10 px-4 py-4">
+              <div className="mb-3 text-[12px] font-extrabold uppercase tracking-wide text-amber-200">
                 Enfants
               </div>
-              <div className="space-y-1">
+              <div className="space-y-2">
                 <button
                   onClick={() => {
                     setActiveChildId("all");
                     setMobileNavOpen(false);
                   }}
                   className={[
-                    "flex w-full items-center justify-between rounded-md px-2 py-1.5 text-xs",
+                    "flex w-full items-center justify-between rounded-2xl px-3 py-3 text-[14px] font-semibold",
                     activeChildId === "all"
                       ? "bg-white text-[#003766]"
                       : "text-white hover:bg-white/10",
                   ].join(" ")}
                 >
                   <span>Vue globale</span>
-                  <span className="rounded-full bg-black/20 px-1.5 py-0.5 text-[10px]">
+                  <span className="rounded-full bg-black/20 px-2 py-1 text-[12px]">
                     {kids.length || 0}
                   </span>
                 </button>
+
                 {kids.map((k) => {
                   const active = activeChildId === k.id;
                   return (
@@ -1061,18 +1157,16 @@ export default function ParentPage() {
                         setMobileNavOpen(false);
                       }}
                       className={[
-                        "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-xs",
-                        active
-                          ? "bg-white/90 text-[#003766]"
-                          : "text-white hover:bg-white/10",
+                        "flex w-full items-center gap-3 rounded-2xl px-3 py-3 text-[14px] font-semibold",
+                        active ? "bg-white/90 text-[#003766]" : "text-white hover:bg-white/10",
                       ].join(" ")}
                     >
-                      <div className="grid h-6 w-6 place-items-center rounded-md bg-white/20 text-[10px] font-semibold">
+                      <div className="grid h-9 w-9 place-items-center rounded-xl bg-white/20 text-[12px] font-extrabold">
                         {getInitials(k.full_name)}
                       </div>
                       <div className="min-w-0 text-left">
                         <div className="truncate">{k.full_name}</div>
-                        <div className="truncate text-[10px] text-emerald-100">
+                        <div className="truncate text-[12px] text-emerald-100">
                           {k.class_label || "—"}
                         </div>
                       </div>
@@ -1083,43 +1177,27 @@ export default function ParentPage() {
             </div>
 
             {/* Navigation */}
-            <nav className="flex-1 space-y-1 px-3 py-3 text-sm">
-              <SidebarNavItem
-                label="Tableau de bord"
-                icon={<IconHome />}
-                section="dashboard"
-              />
-              <SidebarNavItem
-                label="Conduite & points"
-                icon={<IconClipboard />}
-                section="conduct"
-              />
-              <SidebarNavItem
-                label="Cahier d’absences"
-                icon={<IconClipboard />}
-                section="absences"
-              />
-              <SidebarNavItem
-                label="Cahier de notes"
-                icon={<IconBook />}
-                section="notes"
-              />
+            <nav className="flex-1 space-y-2 px-4 py-4">
+              <SidebarNavItem label="Tableau de bord" icon={<IconHome />} section="dashboard" />
+              <SidebarNavItem label="Conduite & points" icon={<IconClipboard />} section="conduct" />
+              <SidebarNavItem label="Cahier d’absences" icon={<IconClipboard />} section="absences" />
+              <SidebarNavItem label="Cahier de notes" icon={<IconBook />} section="notes" />
             </nav>
 
             {/* Footer */}
-            <div className="border-t border-white/15 px-4 py-3 text-[11px]">
+            <div className="border-t border-white/15 px-4 py-4">
               <Button
                 tone="white"
                 onClick={safeLogout}
                 disabled={loggingOut}
                 iconLeft={<IconPower />}
-                className="w-full justify-start rounded-xl px-3 py-2 text-xs"
+                className="w-full justify-start rounded-2xl"
               >
                 {loggingOut ? "Déconnexion…" : "Se déconnecter"}
               </Button>
-              <div className="mt-3 leading-tight text-white/80">
-                <div className="text-[10px] opacity-80">Développé par</div>
-                <div className="font-semibold text-amber-300">
+              <div className="mt-4 leading-tight text-white/80">
+                <div className="text-[12px] opacity-80">Développé par</div>
+                <div className="text-[15px] font-extrabold text-amber-300">
                   Nexa Digitale
                 </div>
               </div>
@@ -1135,87 +1213,114 @@ export default function ParentPage() {
         </div>
       )}
 
-      {/* ───── HEADER PRINCIPAL type EcoleMedia ───── */}
-      <header className="bg-[#003766] text-white shadow">
-        <div className="mx-auto flex max-w-6xl items-center justify-between px-3 py-2 lg:px-4">
-          <div className="flex items-center gap-3">
-            {/* burger mobile */}
+      {/* ───── HEADER PRINCIPAL sticky ───── */}
+      <header className="sticky top-0 z-30 bg-[#003766] text-white shadow">
+        <div className="mx-auto flex max-w-6xl items-center justify-between px-3 py-3 lg:px-4">
+          <div className="flex min-w-0 items-center gap-3">
             <button
               type="button"
               onClick={() => setMobileNavOpen(true)}
-              className="inline-flex h-9 w-9 items-center justify-center rounded-md bg-[#006633] text-white lg:hidden"
+              className="inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-[#006633] text-white lg:hidden"
               aria-label="Ouvrir le menu"
             >
               <IconMenu />
             </button>
 
-            {/* logo + nom appli */}
-            <div className="flex items-center gap-2">
-              <div className="grid h-9 w-9 place-items-center rounded-full bg-white/10 text-xs font-semibold">
+            <div className="flex min-w-0 items-center gap-3">
+              <div className="grid h-11 w-11 place-items-center rounded-2xl bg-white/10 text-sm font-extrabold">
                 MC
               </div>
-              <div className="leading-tight">
-                <div className="text-xs font-semibold uppercase tracking-wide">
+              <div className="min-w-0 leading-tight">
+                <div className="text-[13px] font-extrabold uppercase tracking-wide">
                   Mon Cahier
                 </div>
-                <div className="text-[11px] opacity-80">Espace parent</div>
+                <div className="text-[12px] opacity-80 truncate">Espace parent</div>
               </div>
             </div>
           </div>
 
-          {/* rôle + année à droite */}
-          <div className="text-right text-[11px] leading-tight">
-            <div className="font-semibold uppercase tracking-[0.2em] text-amber-300">
+          <div className="text-right leading-tight">
+            <div className="font-extrabold uppercase tracking-[0.25em] text-amber-300 text-[12px]">
               PARENT
             </div>
-            <div className="text-xs font-semibold">2025-2026</div>
+            <div className="text-[13px] font-bold">2025-2026</div>
           </div>
         </div>
       </header>
 
-      {/* ───── CORPS AVEC SIDEBAR + CONTENU ───── */}
+      {/* ───── Bottom tab bar mobile (app natif) ───── */}
+      <div className="fixed bottom-0 left-0 right-0 z-30 border-t bg-white/95 backdrop-blur lg:hidden">
+        <div className="mx-auto flex max-w-6xl items-center justify-around px-2 py-2">
+          {(
+            [
+              { s: "dashboard", label: "Accueil", icon: <IconHome /> },
+              { s: "conduct", label: "Conduite", icon: <IconClipboard /> },
+              { s: "absences", label: "Absences", icon: <IconClipboard /> },
+              { s: "notes", label: "Notes", icon: <IconBook /> },
+            ] as const
+          ).map((it) => {
+            const active = activeSection === it.s;
+            return (
+              <button
+                key={it.s}
+                onClick={() => selectSection(it.s)}
+                className={[
+                  "flex flex-1 flex-col items-center justify-center gap-1 rounded-2xl py-2",
+                  active ? "text-[#003766]" : "text-slate-500",
+                ].join(" ")}
+              >
+                <div className={active ? "font-extrabold" : ""}>{it.icon}</div>
+                <div className={["text-[12px]", active ? "font-extrabold" : "font-semibold"].join(" ")}>
+                  {it.label}
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* ───── CORPS ───── */}
       <div className="mx-auto flex w-full max-w-6xl">
         {/* Sidebar desktop */}
-        <aside className="hidden w-64 flex-col bg-[#003766] text-white lg:flex">
-          {/* bloc utilisateur */}
-          <div className="border-b border-white/15 px-4 py-4">
+        <aside className="hidden w-72 flex-col bg-[#003766] text-white lg:flex">
+          <div className="border-b border-white/15 px-4 py-5">
             <div className="flex items-center gap-3">
-              <div className="grid h-10 w-10 place-items-center rounded-full bg:white/20 bg-white/20 text-sm font-semibold">
+              <div className="grid h-11 w-11 place-items-center rounded-2xl bg-white/20 text-sm font-extrabold">
                 MC
               </div>
               <div className="min-w-0 leading-tight">
-                <div className="text-xs">Bienvenue</div>
-                <div className="text-sm font-semibold">
+                <div className="text-[12px]">Bienvenue</div>
+                <div className="text-[15px] font-extrabold truncate">
                   Espace parent Mon Cahier
                 </div>
-                <div className="mt-0.5 flex items-center gap-1 text-[11px] text-emerald-200">
-                  <span className="h-2 w-2 rounded-full bg-emerald-400" />
+                <div className="mt-1 flex items-center gap-2 text-[12px] text-emerald-200">
+                  <span className="h-2.5 w-2.5 rounded-full bg-emerald-400" />
                   <span>En ligne</span>
                 </div>
               </div>
             </div>
           </div>
 
-          {/* enfants */}
-          <div className="border-b border-white/15 px-4 py-3">
-            <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-amber-200">
+          <div className="border-b border-white/15 px-4 py-4">
+            <div className="mb-3 text-[12px] font-extrabold uppercase tracking-wide text-amber-200">
               Enfants
             </div>
-            <div className="space-y-1">
+            <div className="space-y-2">
               <button
                 onClick={() => setActiveChildId("all")}
                 className={[
-                  "flex w-full items-center justify-between rounded-md px-2 py-1.5 text-xs",
+                  "flex w-full items-center justify-between rounded-2xl px-3 py-3 text-[14px] font-semibold",
                   activeChildId === "all"
                     ? "bg-white text-[#003766]"
                     : "text-white hover:bg-white/10",
                 ].join(" ")}
               >
                 <span>Vue globale</span>
-                <span className="rounded-full bg-black/20 px-1.5 py-0.5 text-[10px]">
+                <span className="rounded-full bg-black/20 px-2 py-1 text-[12px]">
                   {kids.length || 0}
                 </span>
               </button>
+
               {kids.map((k) => {
                 const active = activeChildId === k.id;
                 return (
@@ -1223,18 +1328,16 @@ export default function ParentPage() {
                     key={k.id}
                     onClick={() => setActiveChildId(k.id)}
                     className={[
-                      "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-xs",
-                      active
-                        ? "bg-white/90 text-[#003766]"
-                        : "text-white hover:bg-white/10",
+                      "flex w-full items-center gap-3 rounded-2xl px-3 py-3 text-[14px] font-semibold",
+                      active ? "bg-white/90 text-[#003766]" : "text-white hover:bg-white/10",
                     ].join(" ")}
                   >
-                    <div className="grid h-6 w-6 place-items-center rounded-md bg-white/20 text-[10px] font-semibold">
+                    <div className="grid h-9 w-9 place-items-center rounded-xl bg-white/20 text-[12px] font-extrabold">
                       {getInitials(k.full_name)}
                     </div>
                     <div className="min-w-0 text-left">
                       <div className="truncate">{k.full_name}</div>
-                      <div className="truncate text-[10px] text-emerald-100">
+                      <div className="truncate text-[12px] text-emerald-100">
                         {k.class_label || "—"}
                       </div>
                     </div>
@@ -1244,101 +1347,80 @@ export default function ParentPage() {
             </div>
           </div>
 
-          {/* navigation */}
-          <nav className="flex-1 space-y-1 px-3 py-3 text-sm">
-            <SidebarNavItem
-              label="Tableau de bord"
-              icon={<IconHome />}
-              section="dashboard"
-            />
-            <SidebarNavItem
-              label="Conduite & points"
-              icon={<IconClipboard />}
-              section="conduct"
-            />
-            <SidebarNavItem
-              label="Cahier d’absences"
-              icon={<IconClipboard />}
-              section="absences"
-            />
-            <SidebarNavItem
-              label="Cahier de notes"
-              icon={<IconBook />}
-              section="notes"
-            />
+          <nav className="flex-1 space-y-2 px-4 py-4">
+            <SidebarNavItem label="Tableau de bord" icon={<IconHome />} section="dashboard" />
+            <SidebarNavItem label="Conduite & points" icon={<IconClipboard />} section="conduct" />
+            <SidebarNavItem label="Cahier d’absences" icon={<IconClipboard />} section="absences" />
+            <SidebarNavItem label="Cahier de notes" icon={<IconBook />} section="notes" />
           </nav>
 
-          {/* footer */}
-          <div className="border-t border-white/15 px-4 py-3 text-[11px]">
+          <div className="border-t border-white/15 px-4 py-4">
             <Button
               tone="white"
               onClick={safeLogout}
               disabled={loggingOut}
               iconLeft={<IconPower />}
-              className="w-full justify-start rounded-xl px-3 py-2 text-xs"
+              className="w-full justify-start rounded-2xl"
             >
               {loggingOut ? "Déconnexion…" : "Se déconnecter"}
             </Button>
-            <div className="mt-3 leading-tight text-white/80">
-              <div className="text-[10px] opacity-80">Développé par</div>
-              <div className="font-semibold text-amber-300">Nexa Digitale</div>
+            <div className="mt-4 leading-tight text-white/80">
+              <div className="text-[12px] opacity-80">Développé par</div>
+              <div className="text-[15px] font-extrabold text-amber-300">Nexa Digitale</div>
             </div>
           </div>
         </aside>
 
         {/* Contenu principal */}
-        <main className="flex-1 px-3 py-4 lg:px-6 lg:py-6">
-          {/* breadcrumb + titre */}
-          <div className="mb-1 text-[11px] text-slate-500">
+        <main className="flex-1 px-3 py-5 lg:px-6 lg:py-6 pb-[calc(96px+env(safe-area-inset-bottom))]">
+          <div className="mb-2 text-[12px] text-slate-500">
             Vous êtes ici : <span className="mx-1">›</span> Accueil
           </div>
-          <h1 className="mb-3 text-xl font-semibold text-slate-800">
+          <h1 className="mb-4 text-2xl font-extrabold text-slate-900">
             Bienvenue sur Mon Cahier
           </h1>
 
-          {/* message global */}
           {msg && (
-            <div className="mb-4 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
+            <div className="mb-4 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-[14px] text-emerald-800">
               {msg}
             </div>
           )}
 
-          {/* onglet ACCUEIL */}
+          {/* Onglet */}
           <div className="mb-4 border-b border-slate-200">
-            <button className="rounded-t-md border border-b-0 border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-[#003766]">
+            <button className="rounded-t-2xl border border-b-0 border-slate-200 bg-white px-5 py-3 text-[15px] font-extrabold text-[#003766]">
               Accueil
             </button>
           </div>
 
-          {/* Carte “Bienvenue” type EcoleMedia */}
-          <section className="mb-5 rounded-md border border-slate-200 bg-white shadow-sm">
-            <div className="border-b border-slate-200 bg-slate-50 px-4 py-3">
-              <div className="inline-flex items-center gap-2 text-sm font-semibold text-[#003766]">
-                <span className="flex h-6 w-6 items-center justify-center rounded-full border border-[#003766] text-xs">
+          {/* Carte Bienvenue */}
+          <section className="mb-6 rounded-2xl border border-slate-200 bg-white shadow-sm">
+            <div className="border-b border-slate-200 bg-slate-50 px-5 py-4">
+              <div className="inline-flex items-center gap-3 text-[15px] font-extrabold text-[#003766]">
+                <span className="flex h-8 w-8 items-center justify-center rounded-full border border-[#003766] text-sm">
                   →
                 </span>
                 <span>Bienvenue</span>
               </div>
             </div>
-            <div className="space-y-3 px-4 py-4 text-sm text-slate-700">
+
+            <div className="space-y-4 px-5 py-5 text-[15px] text-slate-700">
               <p>
-                Bienvenue sur Mon Cahier – espace parents. Consultez les
-                absences, la conduite et les notes de vos enfants pour l’année
-                2025-2026.
+                Bienvenue sur Mon Cahier – espace parents. Consultez les absences,
+                la conduite et les notes de vos enfants pour l’année 2025-2026.
               </p>
 
-              <div className="rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">
-                <div className="text-base font-bold uppercase">
+              <div className="rounded-2xl border border-red-300 bg-red-50 px-4 py-3 text-[15px] text-red-700">
+                <div className="text-[16px] font-extrabold uppercase">
                   Information !
                 </div>
-                <p className="mt-1">
-                  Pour recevoir une alerte dès qu&apos;une absence, un retard
-                  ou une note est enregistrée, activez les notifications push
-                  sur votre téléphone.
+                <p className="mt-2">
+                  Pour recevoir une alerte dès qu&apos;une absence, un retard ou une note
+                  est enregistrée, activez les notifications push sur votre téléphone.
                 </p>
               </div>
 
-              <div className="flex flex-wrap items-center gap-2 pt-1">
+              <div className="flex flex-wrap items-center gap-3 pt-1">
                 {!granted ? (
                   <Button
                     tone="emerald"
@@ -1349,10 +1431,11 @@ export default function ParentPage() {
                     Activer les notifications
                   </Button>
                 ) : (
-                  <span className="text-xs font-medium text-emerald-700">
+                  <span className="text-[14px] font-bold text-emerald-700">
                     Notifications push activées ✅
                   </span>
                 )}
+
                 <Button
                   tone="slate"
                   onClick={safeLogout}
@@ -1367,38 +1450,30 @@ export default function ParentPage() {
 
           {/* Hint iOS */}
           {isiOS && !isStandalone && !granted && (
-            <div className="mb-4 rounded-md border border-amber-200/60 bg-amber-50/90 p-3 text-xs text-amber-900 shadow-sm">
-              <b>iPhone/iPad :</b> pour recevoir les notifications, ajoutez
-              d’abord l’application à l’écran d’accueil : ouvrez cette page dans{" "}
-              <b>Safari</b> → <b>Partager</b> →{" "}
-              <b>Ajouter à l’écran d’accueil</b>, puis rouvrez l’app et
-              appuyez sur « Activer les notifications ».
+            <div className="mb-5 rounded-2xl border border-amber-200/60 bg-amber-50/90 p-4 text-[14px] text-amber-900 shadow-sm">
+              <b>iPhone/iPad :</b> pour recevoir les notifications, ajoutez d’abord
+              l’application à l’écran d’accueil : ouvrez cette page dans{" "}
+              <b>Safari</b> → <b>Partager</b> → <b>Ajouter à l’écran d’accueil</b>,
+              puis rouvrez l’app et appuyez sur « Activer les notifications ».
             </div>
           )}
 
           {/* ───── CONDUITE ───── */}
           {showConductSection && (
-            <section className="mb-5 rounded-md border border-slate-200 bg-white p-5 shadow-sm">
-              <div className="mb-3 flex items-center justify-between gap-3">
-                <div className="text-sm font-semibold uppercase tracking-wide text-slate-700">
+            <section className="mb-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+              <div className="mb-4 flex items-center justify-between gap-3">
+                <div className="text-[13px] font-extrabold uppercase tracking-wide text-slate-700">
                   Conduite — points par rubrique
                 </div>
+
                 <div className="hidden items-center gap-2 md:flex">
-                  <Input
-                    type="date"
-                    value={conductFrom}
-                    onChange={(e) => setConductFrom(e.target.value)}
-                  />
-                  <span className="text-xs text-slate-600">au</span>
-                  <Input
-                    type="date"
-                    value={conductTo}
-                    onChange={(e) => setConductTo(e.target.value)}
-                  />
+                  <Input type="date" value={conductFrom} onChange={(e) => setConductFrom(e.target.value)} />
+                  <span className="text-[13px] text-slate-600">au</span>
+                  <Input type="date" value={conductTo} onChange={(e) => setConductTo(e.target.value)} />
                   <Button
                     onClick={applyConductFilter}
                     disabled={loadingConduct}
-                    className="px-3 py-1.5 text-xs"
+                    className="px-4 py-3 text-[14px]"
                   >
                     {loadingConduct ? "…" : "Valider"}
                   </Button>
@@ -1407,19 +1482,11 @@ export default function ParentPage() {
 
               {/* filtres mobile */}
               <div className="mb-4 grid grid-cols-2 gap-2 md:hidden">
-                <Input
-                  type="date"
-                  value={conductFrom}
-                  onChange={(e) => setConductFrom(e.target.value)}
-                />
-                <Input
-                  type="date"
-                  value={conductTo}
-                  onChange={(e) => setConductTo(e.target.value)}
-                />
+                <Input type="date" value={conductFrom} onChange={(e) => setConductFrom(e.target.value)} />
+                <Input type="date" value={conductTo} onChange={(e) => setConductTo(e.target.value)} />
                 <div className="col-span-2 flex justify-center">
                   <Button
-                    className="mx-auto w-full max-w-[160px] px-4 py-1.5 text-xs"
+                    className="mx-auto w-full max-w-[220px]"
                     onClick={applyConductFilter}
                     disabled={loadingConduct}
                   >
@@ -1430,19 +1497,15 @@ export default function ParentPage() {
 
               {loadingKids ? (
                 <div className="space-y-3">
-                  <Skeleton className="h-16 w-full" />
-                  <Skeleton className="h-16 w-full" />
-                  <Skeleton className="h-16 w-full" />
+                  <Skeleton className="h-20 w-full" />
+                  <Skeleton className="h-20 w-full" />
+                  <Skeleton className="h-20 w-full" />
                 </div>
               ) : !hasKids ? (
-                <div className="flex items-center justify-between rounded-md border bg-slate-50 p-4 text-sm text-slate-700">
+                <div className="flex items-center justify-between rounded-2xl border bg-slate-50 p-4 text-[15px] text-slate-700">
                   <div>Aucun enfant lié à votre compte pour l’instant.</div>
                   {!granted && (
-                    <Button
-                      tone="outline"
-                      onClick={enablePush}
-                      iconLeft={<IconBell />}
-                    >
+                    <Button tone="outline" onClick={enablePush} iconLeft={<IconBell />}>
                       Activer les push
                     </Button>
                   )}
@@ -1450,34 +1513,27 @@ export default function ParentPage() {
               ) : (
                 <>
                   {/* mobile : cartes */}
-                  <div className="space-y-3 md:hidden">
+                  <div className="space-y-4 md:hidden">
                     {filteredKids.map((k) => {
                       const c = conduct[k.id];
                       return (
-                        <div
-                          key={k.id}
-                          className="rounded-md border border-slate-200 p-4"
-                        >
+                        <div key={k.id} className="rounded-2xl border border-slate-200 p-4">
                           <div className="flex items-start justify-between gap-3">
                             <div className="min-w-0">
-                              <div className="font-medium text-slate-900">
+                              <div className="font-extrabold text-slate-900 text-[16px]">
                                 {k.full_name}
                               </div>
-                              <div className="text-xs text-slate-600">
+                              <div className="text-[13px] text-slate-600">
                                 {k.class_label || "—"}
                               </div>
                             </div>
-                            {c ? (
-                              <Badge tone="emerald">
-                                Points de conduite
-                              </Badge>
-                            ) : (
-                              <Badge>—</Badge>
-                            )}
+                            {c ? <Badge tone="emerald">Points de conduite</Badge> : <Badge>—</Badge>}
                           </div>
+
                           {c ? (
-                            <div className="mt-3 space-y-3">
-                              <div className="flex items-end justify-between gap-4">
+                            <div className="mt-4 space-y-4">
+                              {/* ✅ 2 en haut / 2 en bas */}
+                              <div className="grid grid-cols-2 gap-4">
                                 <VerticalGauge
                                   label="Assiduité"
                                   value={c.breakdown.assiduite}
@@ -1503,17 +1559,14 @@ export default function ParentPage() {
                                   rubric="discipline"
                                 />
                               </div>
-                              <div className="rounded-md bg-slate-50 px-3 py-2 text-xs text-slate-700">
-                                <span className="font-medium">
-                                  Appréciation :{" "}
-                                </span>
+
+                              <div className="rounded-2xl bg-slate-50 px-4 py-3 text-[14px] text-slate-700">
+                                <span className="font-extrabold">Appréciation : </span>
                                 {c.appreciation}
                               </div>
                             </div>
                           ) : (
-                            <div className="mt-3 text-sm text-slate-600">
-                              —
-                            </div>
+                            <div className="mt-3 text-[15px] text-slate-600">—</div>
                           )}
                         </div>
                       );
@@ -1521,11 +1574,9 @@ export default function ParentPage() {
                   </div>
 
                   {/* desktop : tableau */}
-                  <div className="mt-2 hidden overflow-x-auto rounded-md border md:block">
+                  <div className="mt-3 hidden overflow-x-auto rounded-2xl border md:block">
                     {(() => {
-                      const anyConduct = filteredKids
-                        .map((k) => conduct[k.id])
-                        .find(Boolean);
+                      const anyConduct = filteredKids.map((k) => conduct[k.id]).find(Boolean);
                       const rubricMax =
                         anyConduct?.rubric_max ?? {
                           assiduite: 6,
@@ -1533,72 +1584,45 @@ export default function ParentPage() {
                           moralite: 4,
                           discipline: 7,
                         };
+
                       return (
-                        <table className="min-w-full text-sm">
+                        <table className="min-w-full text-[14px]">
                           <thead className="bg-slate-50">
                             <tr>
-                              <th className="px-3 py-2 text-left">Enfant</th>
-                              <th className="px-3 py-2 text-left">Classe</th>
-                              <th className="px-3 py-2 text-left">
-                                Assiduité (/{rubricMax.assiduite})
-                              </th>
-                              <th className="px-3 py-2 text-left">
-                                Tenue (/{rubricMax.tenue})
-                              </th>
-                              <th className="px-3 py-2 text-left">
-                                Moralité (/{rubricMax.moralite})
-                              </th>
-                              <th className="px-3 py-2 text-left">
-                                Discipline (/{rubricMax.discipline})
-                              </th>
-                              <th className="px-3 py-2 text-left">
-                                Appréciation
-                              </th>
+                              <th className="px-4 py-3 text-left">Enfant</th>
+                              <th className="px-4 py-3 text-left">Classe</th>
+                              <th className="px-4 py-3 text-left">Assiduité (/{rubricMax.assiduite})</th>
+                              <th className="px-4 py-3 text-left">Tenue (/{rubricMax.tenue})</th>
+                              <th className="px-4 py-3 text-left">Moralité (/{rubricMax.moralite})</th>
+                              <th className="px-4 py-3 text-left">Discipline (/{rubricMax.discipline})</th>
+                              <th className="px-4 py-3 text-left">Appréciation</th>
                             </tr>
                           </thead>
                           <tbody className="bg-white">
                             {filteredKids.map((k) => {
                               const c = conduct[k.id];
                               return (
-                                <tr
-                                  key={k.id}
-                                  className="border-t last:border-b-0"
-                                >
-                                  <td className="px-3 py-2">{k.full_name}</td>
-                                  <td className="px-3 py-2">
-                                    {k.class_label || "—"}
-                                  </td>
+                                <tr key={k.id} className="border-t last:border-b-0">
+                                  <td className="px-4 py-3 font-semibold">{k.full_name}</td>
+                                  <td className="px-4 py-3">{k.class_label || "—"}</td>
                                   {c ? (
                                     <>
-                                      <td className="px-3 py-2">
-                                        {c.breakdown.assiduite
-                                          .toFixed(2)
-                                          .replace(".", ",")}
+                                      <td className="px-4 py-3">
+                                        {rubricCellValue(c.breakdown.assiduite, c.rubric_max.assiduite)}
                                       </td>
-                                      <td className="px-3 py-2">
-                                        {c.breakdown.tenue
-                                          .toFixed(2)
-                                          .replace(".", ",")}
+                                      <td className="px-4 py-3">
+                                        {rubricCellValue(c.breakdown.tenue, c.rubric_max.tenue)}
                                       </td>
-                                      <td className="px-3 py-2">
-                                        {c.breakdown.moralite
-                                          .toFixed(2)
-                                          .replace(".", ",")}
+                                      <td className="px-4 py-3">
+                                        {rubricCellValue(c.breakdown.moralite, c.rubric_max.moralite)}
                                       </td>
-                                      <td className="px-3 py-2">
-                                        {c.breakdown.discipline
-                                          .toFixed(2)
-                                          .replace(".", ",")}
+                                      <td className="px-4 py-3">
+                                        {rubricCellValue(c.breakdown.discipline, c.rubric_max.discipline)}
                                       </td>
-                                      <td className="px-3 py-2">
-                                        {c.appreciation}
-                                      </td>
+                                      <td className="px-4 py-3">{c.appreciation}</td>
                                     </>
                                   ) : (
-                                    <td
-                                      className="px-3 py-2 text-slate-600"
-                                      colSpan={5}
-                                    >
+                                    <td className="px-4 py-3 text-slate-600" colSpan={5}>
                                       —
                                     </td>
                                   )}
@@ -1617,19 +1641,20 @@ export default function ParentPage() {
 
           {/* ───── ABSENCES / SANCTIONS ───── */}
           {showEventsSection && (
-            <section className="mb-5 rounded-md border border-slate-200 bg-white p-5 shadow-sm">
+            <section className="mb-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
               {(() => {
                 const title = isAbsences
                   ? "Cahier d’absences — absences/retards récents et sanctions"
                   : "Mes enfants — absences/retards récents, sanctions et notes publiées";
+
                 return (
-                  <div className="mb-3 flex items-center justify-between">
-                    <div className="text-sm font-semibold uppercase tracking-wide text-slate-700">
+                  <div className="mb-4 flex items-center justify-between gap-3">
+                    <div className="text-[13px] font-extrabold uppercase tracking-wide text-slate-700">
                       {title}
                     </div>
                     <div className="flex items-center gap-2">
                       {granted ? (
-                        <span className="text-xs text-emerald-700">
+                        <span className="text-[13px] font-bold text-emerald-700">
                           Notifications déjà activées ✅
                         </span>
                       ) : (
@@ -1649,12 +1674,12 @@ export default function ParentPage() {
 
               {loadingKids ? (
                 <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-                  <Skeleton className="h-40 w-full" />
-                  <Skeleton className="h-40 w-full" />
-                  <Skeleton className="h-40 w-full" />
+                  <Skeleton className="h-44 w-full" />
+                  <Skeleton className="h-44 w-full" />
+                  <Skeleton className="h-44 w-full" />
                 </div>
               ) : !hasKids ? (
-                <div className="rounded-md border bg-slate-50 p-4 text-sm text-slate-700">
+                <div className="rounded-2xl border bg-slate-50 p-4 text-[15px] text-slate-700">
                   Aucun enfant lié à votre compte pour l’instant.
                 </div>
               ) : (
@@ -1672,24 +1697,18 @@ export default function ParentPage() {
 
                     return (
                       <TiltCard key={k.id} className={t.ring}>
-                        <div
-                          className={`relative rounded-xl border ${t.border} bg-white p-4 shadow-sm`}
-                        >
-                          {/* liseré */}
-                          <div
-                            className={`absolute inset-x-0 top-0 h-1 rounded-t-xl bg-gradient-to-r ${t.bar}`}
-                          />
-                          <div className="mt-1 flex items-center justify-between">
+                        <div className={`relative rounded-2xl border ${t.border} bg-white p-4 shadow-sm`}>
+                          <div className={`absolute inset-x-0 top-0 h-1.5 rounded-t-2xl bg-gradient-to-r ${t.bar}`} />
+
+                          <div className="mt-2 flex items-center justify-between gap-3">
                             <div className="flex min-w-0 items-center gap-3">
-                              <div
-                                className={`grid h-9 w-9 place-items-center rounded-xl text-xs font-semibold ${t.chipBg} ${t.chipText}`}
-                              >
+                              <div className={`grid h-10 w-10 place-items-center rounded-2xl text-[13px] font-extrabold ${t.chipBg} ${t.chipText}`}>
                                 {getInitials(k.full_name)}
                               </div>
                               <div className="min-w-0">
-                                <div className="truncate font-medium text-slate-900">
+                                <div className="truncate font-extrabold text-slate-900 text-[15px]">
                                   {k.full_name}{" "}
-                                  <span className="text-xs text-slate-600">
+                                  <span className="text-[13px] font-semibold text-slate-600">
                                     ({k.class_label || "—"})
                                   </span>
                                 </div>
@@ -1704,7 +1723,7 @@ export default function ParentPage() {
                                     [k.id]: !m[k.id],
                                   }))
                                 }
-                                className="shrink-0 text-xs text-slate-700 underline-offset-2 hover:underline"
+                                className="shrink-0 text-[13px] font-semibold text-slate-700 underline-offset-2 hover:underline"
                               >
                                 {showAll ? "Réduire" : "Voir plus"}
                               </button>
@@ -1713,7 +1732,7 @@ export default function ParentPage() {
 
                           {/* évènements */}
                           {showEventsBlock && (
-                            <ul className="mt-3 space-y-2">
+                            <ul className="mt-4 space-y-3">
                               {visibleGroups.map((g) => {
                                 const key = `${k.id}|${g.day}`;
                                 const isOpen = !!expanded[key];
@@ -1721,30 +1740,17 @@ export default function ParentPage() {
 
                                 const parts: string[] = [];
                                 if (g.absentCount)
-                                  parts.push(
-                                    `${g.absentCount} absence${
-                                      g.absentCount > 1 ? "s" : ""
-                                    }`,
-                                  );
+                                  parts.push(`${g.absentCount} absence${g.absentCount > 1 ? "s" : ""}`);
                                 if (g.lateCount)
-                                  parts.push(
-                                    `${g.lateCount} retard${
-                                      g.lateCount > 1 ? "s" : ""
-                                    }`,
-                                  );
-                                const summary = parts.length
-                                  ? parts.join(" • ")
-                                  : "Aucun évènement";
+                                  parts.push(`${g.lateCount} retard${g.lateCount > 1 ? "s" : ""}`);
+                                const summary = parts.length ? parts.join(" • ") : "Aucun évènement";
 
                                 return (
-                                  <li
-                                    key={g.day}
-                                    className="rounded-lg border p-3 transition hover:bg-slate-50/70"
-                                  >
+                                  <li key={g.day} className="rounded-2xl border p-3 transition hover:bg-slate-50/70">
                                     <div className="flex items-center justify-between gap-3">
-                                      <div className="text-sm font-medium text-slate-800">
+                                      <div className="min-w-0 text-[15px] font-bold text-slate-800">
                                         {g.label} :{" "}
-                                        <span className="font-normal text-slate-700">
+                                        <span className="font-semibold text-slate-700">
                                           {summary}
                                         </span>
                                       </div>
@@ -1756,60 +1762,48 @@ export default function ParentPage() {
                                               [key]: !m[key],
                                             }))
                                           }
-                                          className="shrink-0 text-xs text-emerald-700 underline-offset-2 hover:underline"
+                                          className="shrink-0 text-[13px] font-bold text-emerald-700 underline-offset-2 hover:underline"
                                         >
-                                          {isOpen || hasSingle
-                                            ? "Masquer"
-                                            : "Voir détails"}
+                                          {isOpen || hasSingle ? "Masquer" : "Voir détails"}
                                         </button>
                                       )}
                                     </div>
-                                    {(isOpen || hasSingle) &&
-                                      g.items.length > 0 && (
-                                        <ul className="mt-2 divide-y">
-                                          {g.items.map((ev) => (
-                                            <li
-                                              key={ev.id}
-                                              className="flex items-center justify-between py-2 text-sm"
-                                            >
-                                              <div className="min-w-0">
-                                                <div className="truncate text-slate-800">
-                                                  {ev.type === "absent" ? (
-                                                    <Badge tone="rose">
-                                                      Absence
-                                                    </Badge>
-                                                  ) : (
-                                                    <Badge tone="amber">
-                                                      Retard
-                                                    </Badge>
-                                                  )}
-                                                  <span className="ml-2">
-                                                    {ev.subject_name || "—"}
-                                                  </span>
-                                                </div>
-                                                <div className="mt-0.5 text-xs text-slate-600">
-                                                  {slotLabel(
-                                                    ev.when,
-                                                    ev.expected_minutes,
-                                                  )}{" "}
-                                                  {ev.type === "late" &&
-                                                  ev.minutes_late
-                                                    ? `• ${ev.minutes_late} min`
-                                                    : ""}
-                                                </div>
+
+                                    {(isOpen || hasSingle) && g.items.length > 0 && (
+                                      <ul className="mt-3 divide-y">
+                                        {g.items.map((ev) => (
+                                          <li key={ev.id} className="flex items-start justify-between gap-3 py-3">
+                                            <div className="min-w-0">
+                                              <div className="truncate text-[15px] text-slate-800">
+                                                {ev.type === "absent" ? (
+                                                  <Badge tone="rose">Absence</Badge>
+                                                ) : (
+                                                  <Badge tone="amber">Retard</Badge>
+                                                )}
+                                                <span className="ml-2 font-semibold">
+                                                  {ev.subject_name || "—"}
+                                                </span>
                                               </div>
-                                              <div className="shrink-0 pl-2 text-xs text-slate-500">
-                                                {ev.class_label || ""}
+                                              <div className="mt-1 text-[13px] text-slate-600">
+                                                {slotLabel(ev.when, ev.expected_minutes)}{" "}
+                                                {ev.type === "late" && ev.minutes_late
+                                                  ? `• ${ev.minutes_late} min`
+                                                  : ""}
                                               </div>
-                                            </li>
-                                          ))}
-                                        </ul>
-                                      )}
+                                            </div>
+                                            <div className="shrink-0 text-[13px] text-slate-500">
+                                              {ev.class_label || ""}
+                                            </div>
+                                          </li>
+                                        ))}
+                                      </ul>
+                                    )}
                                   </li>
                                 );
                               })}
+
                               {visibleGroups.length === 0 && (
-                                <li className="py-2 text-sm text-slate-600">
+                                <li className="py-2 text-[15px] text-slate-600">
                                   Aucun évènement récent.
                                 </li>
                               )}
@@ -1818,9 +1812,9 @@ export default function ParentPage() {
 
                           {/* sanctions */}
                           {showSanctionsBlock && (
-                            <div className="mt-3 rounded-lg border bg-amber-50/40 p-3">
-                              <div className="flex items-center justify-between">
-                                <div className="text-sm font-medium text-slate-800">
+                            <div className="mt-4 rounded-2xl border bg-amber-50/40 p-4">
+                              <div className="flex items-center justify-between gap-3">
+                                <div className="text-[15px] font-extrabold text-slate-800">
                                   Sanctions récentes
                                 </div>
                                 {(kidPenalties[k.id]?.length || 0) > 5 && (
@@ -1831,96 +1825,41 @@ export default function ParentPage() {
                                         [k.id]: !m[k.id],
                                       }))
                                     }
-                                    className="text-xs text-slate-700 underline-offset-2 hover:underline"
+                                    className="text-[13px] font-semibold text-slate-700 underline-offset-2 hover:underline"
                                   >
-                                    {showAllPenForKid[k.id]
-                                      ? "Réduire"
-                                      : "Voir plus"}
+                                    {showAllPenForKid[k.id] ? "Réduire" : "Voir plus"}
                                   </button>
                                 )}
                               </div>
+
                               {(kidPenalties[k.id]?.length || 0) === 0 ? (
-                                <div className="mt-2 text-sm text-slate-600">
+                                <div className="mt-3 text-[15px] text-slate-600">
                                   Aucune sanction récente.
                                 </div>
                               ) : (
-                                <ul className="mt-2 divide-y">
+                                <ul className="mt-3 divide-y">
                                   {(showAllPenForKid[k.id]
                                     ? kidPenalties[k.id] || []
                                     : (kidPenalties[k.id] || []).slice(0, 5)
                                   ).map((p) => (
-                                    <li
-                                      key={p.id}
-                                      className="flex items-center justify-between py-2 text-sm"
-                                    >
-                                      <div className="min-w-0">
-                                        <div className="text-slate-800">
-                                          <span className="mr-2">
-                                            <Badge tone="amber">
-                                              {rubricLabel(p.rubric)}
-                                            </Badge>
+                                    <li key={p.id} className="py-3">
+                                      <div className="text-[15px] text-slate-800">
+                                        <span className="mr-2">
+                                          <Badge tone="amber">{rubricLabel(p.rubric)}</Badge>
+                                        </span>
+                                        <span className="font-extrabold">
+                                          −{Number(p.points || 0).toFixed(2).replace(".", ",")} pt
+                                        </span>
+                                        {p.reason?.trim() ? (
+                                          <span className="ml-2 text-[13px] text-slate-600">
+                                            — {p.reason.trim()}
                                           </span>
-                                          −
-                                          {Number(p.points || 0)
-                                            .toFixed(2)
-                                            .replace(".", ",")}{" "}
-                                          pt
-                                          {(() => {
-                                            const pts = Math.abs(
-                                              Number(p.points || 0),
-                                            );
-                                            const suffix =
-                                              pts > 1 ? "s" : "";
-                                            const reason = (p.reason || "")
-                                              .trim();
-                                            const subject = (
-                                              p.author_subject_name ||
-                                              p.subject_name ||
-                                              ""
-                                            ).trim();
-                                            const who = (
-                                              p.author_name || ""
-                                            ).trim();
-                                            const role = (
-                                              p.author_role_label ||
-                                              p.author_role ||
-                                              ""
-                                            ).trim();
+                                        ) : null}
+                                      </div>
 
-                                            return (
-                                              <>
-                                                {suffix}
-                                                {reason && (
-                                                  <span className="ml-1 text-xs text-slate-600">
-                                                    — {reason}
-                                                  </span>
-                                                )}
-                                                {(subject || who || role) && (
-                                                  <span className="ml-1 text-[11px] text-slate-500">
-                                                    {" — "}
-                                                    {subject}
-                                                    {subject &&
-                                                    (who || role)
-                                                      ? " • "
-                                                      : ""}
-                                                    {who}
-                                                    {who && role
-                                                      ? ` (${role})`
-                                                      : !who && role
-                                                      ? role
-                                                      : ""}
-                                                  </span>
-                                                )}
-                                              </>
-                                            );
-                                          })()}
-                                        </div>
-                                        <div className="mt-0.5 text-[11px] text-slate-500">
-                                          {fmt(p.when)}
-                                          {p.class_label
-                                            ? ` • ${p.class_label}`
-                                            : ""}
-                                        </div>
+                                      <div className="mt-1 text-[13px] text-slate-500">
+                                        {fmt(p.when)}
+                                        {p.class_label ? ` • ${p.class_label}` : ""}
                                       </div>
                                     </li>
                                   ))}
@@ -1931,47 +1870,38 @@ export default function ParentPage() {
 
                           {/* petit bloc notes (résumé) sur dashboard */}
                           {showNotesBlock && (
-                            <div className="mt-3 rounded-lg border bg-slate-50 p-3">
-                              <div className="mb-1 text-sm font-medium text-slate-800">
+                            <div className="mt-4 rounded-2xl border bg-slate-50 p-4">
+                              <div className="mb-2 text-[15px] font-extrabold text-slate-800">
                                 Notes publiées (aperçu)
                               </div>
-                              <ul className="space-y-1 text-xs text-slate-700">
+                              <ul className="space-y-2 text-[14px] text-slate-700">
                                 {gradesForKid.slice(0, 3).map((g) => (
-                                  <li
-                                    key={g.id}
-                                    className="flex items-center justify-between"
-                                  >
+                                  <li key={g.id} className="flex items-start justify-between gap-3">
                                     <div className="min-w-0">
-                                      <div className="truncate">
-                                        {g.subject_name || "—"} ·{" "}
-                                        {gradeKindLabel(g.eval_kind)}
+                                      <div className="truncate font-semibold">
+                                        {g.subject_name || "—"} · {gradeKindLabel(g.eval_kind)}
                                       </div>
-                                      <div className="text-[11px] text-slate-500">
-                                        {fmt(g.eval_date)}
-                                      </div>
+                                      <div className="text-[13px] text-slate-500">{fmt(g.eval_date)}</div>
                                     </div>
-                                    <div className="shrink-0 pl-2 text-right">
+                                    <div className="shrink-0 text-right">
                                       {g.score == null ? (
-                                        <span className="text-[11px] text-slate-500">
-                                          —
-                                        </span>
+                                        <span className="text-[13px] text-slate-500">—</span>
                                       ) : (
-                                        <span className="text-xs font-semibold text-slate-900">
-                                          {g.score
-                                            .toFixed(2)
-                                            .replace(".", ",")}
-                                          /{g.scale}
+                                        <span className="text-[15px] font-extrabold text-slate-900">
+                                          {g.score.toFixed(2).replace(".", ",")}/{g.scale}
                                         </span>
                                       )}
                                     </div>
                                   </li>
                                 ))}
-                                {gradesForKid.length === 0 && (
-                                  <li className="text-xs text-slate-500">
-                                    Aucune note publiée pour l’instant.
-                                  </li>
-                                )}
                               </ul>
+                            </div>
+                          )}
+
+                          {/* si les grades échouent : montre l'erreur (important) */}
+                          {kidGradesErr[k.id] && (
+                            <div className="mt-4 rounded-2xl border border-rose-200 bg-rose-50 p-3 text-[13px] text-rose-800">
+                              <b>Notes indisponibles :</b> {kidGradesErr[k.id]}
                             </div>
                           )}
                         </div>
@@ -1985,17 +1915,18 @@ export default function ParentPage() {
 
           {/* ───── CAHIER DE NOTES — onglet dédié ───── */}
           {showNotesSection && (
-            <section className="mb-6 rounded-md border border-slate-200 bg-white p-5 shadow-sm">
-              <div className="mb-3 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <section className="mb-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+              <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                 <div>
-                  <div className="text-sm font-semibold uppercase tracking-wide text-slate-700">
+                  <div className="text-[13px] font-extrabold uppercase tracking-wide text-slate-700">
                     Cahier de notes
                   </div>
-                  <div className="text-xs text-slate-500">
+                  <div className="text-[13px] text-slate-500">
                     Notes publiées par les enseignants, filtrées par période.
                   </div>
                 </div>
-                <div className="flex flex-wrap items-center gap-2 text-[11px]">
+
+                <div className="flex flex-wrap items-center gap-2 text-[13px]">
                   {(["week", "month", "all", "custom"] as const).map((m) => {
                     const active = gradeFilterMode === m;
                     return (
@@ -2004,7 +1935,7 @@ export default function ParentPage() {
                         type="button"
                         onClick={() => setGradeFilterMode(m)}
                         className={[
-                          "rounded-full px-3 py-1",
+                          "rounded-full px-4 py-2 font-bold",
                           active
                             ? "bg-[#003766] text-white"
                             : "bg-slate-100 text-slate-700 hover:bg-slate-200",
@@ -2014,21 +1945,22 @@ export default function ParentPage() {
                       </button>
                     );
                   })}
-                  <div className="flex items-center gap-1">
+
+                  <div className="flex items-center gap-2">
                     <Input
                       type="date"
                       value={gradeFrom}
                       disabled={gradeFilterMode !== "custom"}
                       onChange={(e) => setGradeFrom(e.target.value)}
-                      className="h-8 w-32 px-2 py-1 text-[11px]"
+                      className="h-11 w-[150px] px-3 py-2 text-[14px]"
                     />
-                    <span className="text-[11px] text-slate-500">au</span>
+                    <span className="text-[13px] text-slate-500">au</span>
                     <Input
                       type="date"
                       value={gradeTo}
                       disabled={gradeFilterMode !== "custom"}
                       onChange={(e) => setGradeTo(e.target.value)}
-                      className="h-8 w-32 px-2 py-1 text-[11px]"
+                      className="h-11 w-[150px] px-3 py-2 text-[14px]"
                     />
                   </div>
                 </div>
@@ -2040,7 +1972,7 @@ export default function ParentPage() {
                   <Skeleton className="h-24 w-full" />
                 </div>
               ) : !hasKids ? (
-                <div className="rounded-md border bg-slate-50 p-4 text-sm text-slate-700">
+                <div className="rounded-2xl border bg-slate-50 p-4 text-[15px] text-slate-700">
                   Aucun enfant lié à votre compte pour l’instant.
                 </div>
               ) : (
@@ -2048,164 +1980,166 @@ export default function ParentPage() {
                   {filteredKids.map((k, idx) => {
                     const allGrades = kidGrades[k.id] || [];
                     const byDate = allGrades.filter((g) =>
-                      isInDateRange(
-                        g.eval_date,
-                        gradeFrom || undefined,
-                        gradeTo || undefined,
-                      ),
+                      isInDateRange(g.eval_date, gradeFrom || undefined, gradeTo || undefined),
                     );
-                    const subjectKey = (g: KidGradeRow) =>
-                      g.subject_id || g.subject_name || "";
+
+                    const subjectKey = (g: KidGradeRow) => g.subject_id || g.subject_name || "";
                     const subjectMap = new Map<string, string>();
                     for (const g of byDate) {
                       const key = subjectKey(g);
                       if (!key) continue;
-                      if (!subjectMap.has(key)) {
-                        subjectMap.set(key, g.subject_name || "—");
-                      }
+                      if (!subjectMap.has(key)) subjectMap.set(key, g.subject_name || "—");
                     }
                     const subjectList = Array.from(subjectMap.entries());
+
                     const activeSubject =
                       activeSubjectPerKid[k.id] && activeSubjectPerKid[k.id] !== "all"
                         ? activeSubjectPerKid[k.id]
                         : "all";
 
                     const filtered =
-                      activeSubject === "all"
-                        ? byDate
-                        : byDate.filter(
-                            (g) => subjectKey(g) === activeSubject,
-                          );
+                      activeSubject === "all" ? byDate : byDate.filter((g) => subjectKey(g) === activeSubject);
 
                     const t = themeFor(idx);
 
                     return (
-                      <div
-                        key={k.id}
-                        className="rounded-md border border-slate-200 bg-slate-50/60 p-4"
-                      >
-                        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-                          <div className="flex min-w-0 items-center gap-2">
-                            <div
-                              className={`grid h-8 w-8 place-items-center rounded-lg text-[11px] font-semibold ${t.chipBg} ${t.chipText}`}
-                            >
+                      <div key={k.id} className="rounded-2xl border border-slate-200 bg-slate-50/60 p-4">
+                        <div className="mb-3 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                          <div className="flex min-w-0 items-center gap-3">
+                            <div className={`grid h-10 w-10 place-items-center rounded-2xl text-[13px] font-extrabold ${t.chipBg} ${t.chipText}`}>
                               {getInitials(k.full_name)}
                             </div>
                             <div className="min-w-0">
-                              <div className="truncate text-sm font-semibold text-slate-900">
+                              <div className="truncate text-[16px] font-extrabold text-slate-900">
                                 {k.full_name}
                               </div>
-                              <div className="text-[11px] text-slate-600">
-                                {k.class_label || "—"}
-                              </div>
+                              <div className="text-[13px] text-slate-600">{k.class_label || "—"}</div>
                             </div>
                           </div>
-                          <div className="flex flex-wrap items-center gap-1 text-[11px]">
-                            <span className="text-slate-500">Matières :</span>
-                            <button
-                              type="button"
-                              onClick={() =>
-                                setActiveSubjectPerKid((m) => ({
-                                  ...m,
-                                  [k.id]: "all",
-                                }))
-                              }
-                              className={[
-                                "rounded-full px-2 py-0.5",
-                                activeSubject === "all"
-                                  ? "bg-slate-900 text-white"
-                                  : "bg-white text-slate-700 hover:bg-slate-200",
-                              ].join(" ")}
-                            >
-                              Toutes
-                            </button>
-                            {subjectList.map(([id, label]) => (
+
+                          {/* matières : scroll horizontal (évite débordement) */}
+                          <div className="flex items-center gap-2">
+                            <span className="text-[13px] font-semibold text-slate-500">Matières :</span>
+                            <div className="flex max-w-full gap-2 overflow-x-auto whitespace-nowrap pb-1">
                               <button
-                                key={id}
                                 type="button"
                                 onClick={() =>
                                   setActiveSubjectPerKid((m) => ({
                                     ...m,
-                                    [k.id]: id,
+                                    [k.id]: "all",
                                   }))
                                 }
                                 className={[
-                                  "max-w-[120px] truncate rounded-full px-2 py-0.5",
-                                  activeSubject === id
-                                    ? "bg-[#003766] text-white"
+                                  "rounded-full px-3 py-2 text-[13px] font-bold",
+                                  activeSubject === "all"
+                                    ? "bg-slate-900 text-white"
                                     : "bg-white text-slate-700 hover:bg-slate-200",
                                 ].join(" ")}
-                                title={label}
                               >
-                                {label}
+                                Toutes
                               </button>
-                            ))}
+
+                              {subjectList.map(([id, label]) => (
+                                <button
+                                  key={id}
+                                  type="button"
+                                  onClick={() =>
+                                    setActiveSubjectPerKid((m) => ({
+                                      ...m,
+                                      [k.id]: id,
+                                    }))
+                                  }
+                                  className={[
+                                    "max-w-[220px] truncate rounded-full px-3 py-2 text-[13px] font-bold",
+                                    activeSubject === id
+                                      ? "bg-[#003766] text-white"
+                                      : "bg-white text-slate-700 hover:bg-slate-200",
+                                  ].join(" ")}
+                                  title={label}
+                                >
+                                  {label}
+                                </button>
+                              ))}
+                            </div>
                           </div>
                         </div>
 
+                        {kidGradesErr[k.id] && (
+                          <div className="mb-3 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-[13px] text-rose-800">
+                            <b>Notes indisponibles :</b> {kidGradesErr[k.id]}
+                          </div>
+                        )}
+
                         {filtered.length === 0 ? (
-                          <div className="rounded-md bg-white px-3 py-2 text-xs text-slate-600">
+                          <div className="rounded-2xl bg-white px-4 py-3 text-[14px] text-slate-600">
                             Aucune note publiée pour cette période.
                           </div>
                         ) : (
-                          <div className="overflow-x-auto rounded-md border bg-white">
-                            <table className="min-w-full text-xs">
-                              <thead className="bg-slate-50">
-                                <tr>
-                                  <th className="px-2 py-1.5 text-left">
-                                    Date
-                                  </th>
-                                  <th className="px-2 py-1.5 text-left">
-                                    Matière
-                                  </th>
-                                  <th className="px-2 py-1.5 text-left">
-                                    Type
-                                  </th>
-                                  <th className="px-2 py-1.5 text-left">
-                                    Titre
-                                  </th>
-                                  <th className="px-2 py-1.5 text-right">
-                                    Note
-                                  </th>
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {filtered.map((g) => (
-                                  <tr
-                                    key={g.id}
-                                    className="border-t last:border-b-0"
-                                  >
-                                    <td className="px-2 py-1.5">
-                                      {fmt(g.eval_date)}
-                                    </td>
-                                    <td className="px-2 py-1.5">
-                                      {g.subject_name || "—"}
-                                    </td>
-                                    <td className="px-2 py-1.5">
-                                      {gradeKindLabel(g.eval_kind)}
-                                    </td>
-                                    <td className="px-2 py-1.5">
-                                      {g.title || "—"}
-                                    </td>
-                                    <td className="px-2 py-1.5 text-right">
+                          <>
+                            {/* ✅ mobile : liste cards (évite overflow) */}
+                            <div className="space-y-3 md:hidden">
+                              {filtered.map((g) => (
+                                <div key={g.id} className="rounded-2xl border bg-white p-4">
+                                  <div className="flex items-start justify-between gap-3">
+                                    <div className="min-w-0">
+                                      <div className="text-[15px] font-extrabold text-slate-900 truncate">
+                                        {g.subject_name || "—"}
+                                      </div>
+                                      <div className="text-[13px] text-slate-600">
+                                        {gradeKindLabel(g.eval_kind)} {g.title ? `• ${g.title}` : ""}
+                                      </div>
+                                      <div className="mt-1 text-[13px] text-slate-500">
+                                        {fmt(g.eval_date)}
+                                      </div>
+                                    </div>
+                                    <div className="shrink-0 text-right">
                                       {g.score == null ? (
-                                        <span className="text-slate-500">
-                                          —
-                                        </span>
+                                        <span className="text-[13px] text-slate-500">—</span>
                                       ) : (
-                                        <span className="font-semibold text-slate-900">
-                                          {g.score
-                                            .toFixed(2)
-                                            .replace(".", ",")}
-                                          /{g.scale}
+                                        <span className="text-[16px] font-extrabold text-slate-900">
+                                          {g.score.toFixed(2).replace(".", ",")}/{g.scale}
                                         </span>
                                       )}
-                                    </td>
+                                    </div>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+
+                            {/* desktop : tableau */}
+                            <div className="hidden overflow-x-auto rounded-2xl border bg-white md:block">
+                              <table className="min-w-full text-[14px]">
+                                <thead className="bg-slate-50">
+                                  <tr>
+                                    <th className="px-4 py-3 text-left">Date</th>
+                                    <th className="px-4 py-3 text-left">Matière</th>
+                                    <th className="px-4 py-3 text-left">Type</th>
+                                    <th className="px-4 py-3 text-left">Titre</th>
+                                    <th className="px-4 py-3 text-right">Note</th>
                                   </tr>
-                                ))}
-                              </tbody>
-                            </table>
-                          </div>
+                                </thead>
+                                <tbody>
+                                  {filtered.map((g) => (
+                                    <tr key={g.id} className="border-t last:border-b-0">
+                                      <td className="px-4 py-3">{fmt(g.eval_date)}</td>
+                                      <td className="px-4 py-3">{g.subject_name || "—"}</td>
+                                      <td className="px-4 py-3">{gradeKindLabel(g.eval_kind)}</td>
+                                      <td className="px-4 py-3">{g.title || "—"}</td>
+                                      <td className="px-4 py-3 text-right">
+                                        {g.score == null ? (
+                                          <span className="text-slate-500">—</span>
+                                        ) : (
+                                          <span className="font-extrabold text-slate-900">
+                                            {g.score.toFixed(2).replace(".", ",")}/{g.scale}
+                                          </span>
+                                        )}
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          </>
                         )}
                       </div>
                     );

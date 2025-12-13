@@ -1,9 +1,8 @@
-
+//src/app/admin/notes/bulletins/page.tsx
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
-import { Printer, RefreshCw } from "lucide-react";
-import QRCode from "react-qr-code";
+import { Printer, RefreshCw, X } from "lucide-react";
 
 /* ───────── Types ───────── */
 
@@ -300,7 +299,7 @@ function Button({ variant = "primary", ...props }: ButtonProps) {
     primary:
       "bg-emerald-500 text-white hover:bg-emerald-600 focus:ring-emerald-500/30 disabled:bg-emerald-300",
     ghost:
-      "bg-transparent border border-slate-300 text-slate-700 hover:bg-slate-100 focus:ring-slate-400/30 disabled:opacity-60",
+      "bg-white/80 backdrop-blur border border-slate-300 text-slate-700 hover:bg-slate-100 focus:ring-slate-400/30 disabled:opacity-60",
   };
   return (
     <button
@@ -346,12 +345,65 @@ function computeSubjectAppreciation(avg: number | null | undefined): string {
   return "Blâme";
 }
 
+/* ───────── QR Code (PNG via lib qrcode) ───────── */
+
+const QR_SIZE = 58;
+const __QR_CACHE = new Map<string, string>();
+
+let __qrLibPromise: Promise<any> | null = null;
+
+async function getQrLib() {
+  if (!__qrLibPromise) {
+    // @ts-ignore
+    __qrLibPromise = import("qrcode");
+  }
+  return __qrLibPromise;
+}
+
+async function generateQrDataUrl(
+  text: string,
+  size: number = QR_SIZE
+): Promise<string | null> {
+  const cacheKey = `${size}|${text}`;
+  const cached = __QR_CACHE.get(cacheKey);
+  if (cached) return cached;
+
+  try {
+    const mod: any = await getQrLib();
+
+    const toDataURL =
+      (mod && typeof mod.toDataURL === "function" && mod.toDataURL) ||
+      (mod?.default &&
+        typeof mod.default.toDataURL === "function" &&
+        mod.default.toDataURL);
+
+    if (typeof toDataURL !== "function") return null;
+
+    const url: string = await toDataURL(text, {
+      width: size,
+      margin: 0,
+      errorCorrectionLevel: "M",
+    });
+
+    if (url) __QR_CACHE.set(cacheKey, url);
+    return url || null;
+  } catch (e) {
+    console.warn("[Bulletins] QR indisponible (import qrcode a échoué)", e);
+    return null;
+  }
+}
+
 /* ───────── Rangs sous-matières (côté front) ───────── */
 
 function applyComponentRanksFront(
   items: (BulletinItemBase | BulletinItemWithRank)[]
 ) {
-  type Entry = { itemIndex: number; compIndex: number; avg: number; key: string };
+  type Entry = {
+    itemIndex: number;
+    compIndex: number;
+    avg: number;
+    key: string;
+  };
   const byKey = new Map<string, Entry[]>();
 
   items.forEach((it, itemIndex) => {
@@ -435,7 +487,9 @@ function applyGroupRanksFront(items: (BulletinItemBase | BulletinItemWithRank)[]
 
 /* ───────── Ranks + stats helper ───────── */
 
-function computeRanksAndStats(res: BulletinResponse | null): EnrichedBulletin | null {
+function computeRanksAndStats(
+  res: BulletinResponse | null
+): EnrichedBulletin | null {
   if (!res) return null;
   const items = res.items ?? [];
 
@@ -446,13 +500,18 @@ function computeRanksAndStats(res: BulletinResponse | null): EnrichedBulletin | 
   const stats: ClassStats = { highest: null, lowest: null, classAvg: null };
 
   if (!withAvg.length) {
-    const itemsWithRank: BulletinItemWithRank[] = items.map((it) => ({ ...it, rank: null }));
+    const itemsWithRank: BulletinItemWithRank[] = items.map((it) => ({
+      ...it,
+      rank: null,
+    }));
     applyComponentRanksFront(itemsWithRank);
     applyGroupRanksFront(itemsWithRank);
     return { response: res, items: itemsWithRank, stats };
   }
 
-  const sorted = [...withAvg].sort((a, b) => (b.general_avg ?? 0) - (a.general_avg ?? 0));
+  const sorted = [...withAvg].sort(
+    (a, b) => (b.general_avg ?? 0) - (a.general_avg ?? 0)
+  );
 
   let lastScore: number | null = null;
   let lastRank = 0;
@@ -539,7 +598,8 @@ function StudentBulletinCard({
   const coeffTotal = useMemo(
     () =>
       subjects.reduce(
-        (acc, s) => acc + (Number.isFinite(s.coeff_bulletin) ? s.coeff_bulletin : 0),
+        (acc, s) =>
+          acc + (Number.isFinite(s.coeff_bulletin) ? s.coeff_bulletin : 0),
         0
       ),
     [subjects]
@@ -562,7 +622,8 @@ function StudentBulletinCard({
       : item.is_scholarship === false
       ? "Non boursier"
       : "—");
-  const boarderLabel = item.is_boarder == null ? "—" : item.is_boarder ? "Interne" : "Externe";
+  const boarderLabel =
+    item.is_boarder == null ? "—" : item.is_boarder ? "Interne" : "Externe";
   const repeaterLabel = formatYesNo(item.is_repeater);
   const assignedLabel = formatYesNo(item.is_assigned ?? item.is_affecte ?? null);
 
@@ -576,25 +637,34 @@ function StudentBulletinCard({
       arr.push(c);
       map.set(c.subject_id, arr);
     });
-    map.forEach((arr) => arr.sort((a, b) => (a.order_index || 0) - (b.order_index || 0)));
+    map.forEach((arr) =>
+      arr.sort((a, b) => (a.order_index || 0) - (b.order_index || 0))
+    );
     return map;
   }, [subjectComponents]);
 
   const perSubjectComponentMap = useMemo(() => {
-    const m = new Map<string, { avg20: number | null; component_rank?: number | null }>();
+    const m = new Map<
+      string,
+      { avg20: number | null; component_rank?: number | null }
+    >();
     const per = item.per_subject_components ?? [];
     per.forEach((psc) => {
       const key = `${psc.subject_id}__${psc.component_id}`;
       m.set(key, {
         avg20: psc.avg20 ?? null,
-        component_rank: psc.component_rank !== undefined ? psc.component_rank : null,
+        component_rank:
+          psc.component_rank !== undefined ? psc.component_rank : null,
       });
     });
     return m;
   }, [item.per_subject_components]);
 
   const perGroupMap = useMemo(() => {
-    const m = new Map<string, { group_avg: number | null; group_rank?: number | null }>();
+    const m = new Map<
+      string,
+      { group_avg: number | null; group_rank?: number | null }
+    >();
     const per = item.per_group ?? [];
     per.forEach((g) => {
       m.set(g.group_id, {
@@ -612,7 +682,9 @@ function StudentBulletinCard({
   }, [subjects]);
 
   const absenceHours =
-    conduct && typeof conduct.absence_minutes === "number" ? conduct.absence_minutes / 60 : null;
+    conduct && typeof conduct.absence_minutes === "number"
+      ? conduct.absence_minutes / 60
+      : null;
 
   const mentions = computeCouncilMentions(
     item.general_avg,
@@ -625,9 +697,8 @@ function StudentBulletinCard({
   // ✅ QR payload : PRIORITÉ au lien vérifiable de l’API (qr_url)
   const qrText = useMemo(() => {
     const apiUrl = (item.qr_url || "").trim();
-    if (apiUrl) return apiUrl; // ✅ scan => /verify/bulletin?t=...
+    if (apiUrl) return apiUrl;
 
-    // fallback (si qr_url absent)
     const payload = {
       v: 1,
       inst: (institution?.institution_code || "").trim() || undefined,
@@ -650,6 +721,19 @@ function StudentBulletinCard({
     item.matricule,
   ]);
 
+  const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const url = await generateQrDataUrl(qrText, QR_SIZE);
+      if (!cancelled) setQrDataUrl(url);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [qrText]);
+
   const renderSignatureLine = () => (
     <div className="flex h-[14px] items-end">
       <div className="w-full border-t border-black" />
@@ -661,7 +745,8 @@ function StudentBulletinCard({
     const avg = cell?.avg20 ?? null;
     const moyCoeff = avg !== null ? round2(avg * (s.coeff_bulletin || 0)) : null;
 
-    const subjectRankLabel = cell && cell.subject_rank != null ? `${cell.subject_rank}e` : "—";
+    const subjectRankLabel =
+      cell && cell.subject_rank != null ? `${cell.subject_rank}e` : "—";
     const subjectTeacher = cell?.teacher_name || "";
     const appreciationLabel = computeSubjectAppreciation(avg);
 
@@ -672,8 +757,12 @@ function StudentBulletinCard({
         <tr>
           <td className="bdr px-1 py-[1px]">{s.subject_name}</td>
           <td className="bdr px-1 py-[1px] text-center">{formatNumber(avg)}</td>
-          <td className="bdr px-1 py-[1px] text-center">{formatNumber(s.coeff_bulletin, 0)}</td>
-          <td className="bdr px-1 py-[1px] text-center">{formatNumber(moyCoeff)}</td>
+          <td className="bdr px-1 py-[1px] text-center">
+            {formatNumber(s.coeff_bulletin, 0)}
+          </td>
+          <td className="bdr px-1 py-[1px] text-center">
+            {formatNumber(moyCoeff)}
+          </td>
           <td className="bdr px-1 py-[1px] text-center">{subjectRankLabel}</td>
           <td className="bdr px-1 py-[1px]">{appreciationLabel}</td>
           <td className="bdr px-1 py-[1px]">{subjectTeacher}</td>
@@ -685,17 +774,29 @@ function StudentBulletinCard({
           const compCell = perSubjectComponentMap.get(key);
           const cAvg = compCell?.avg20 ?? null;
           const cRank = compCell?.component_rank ?? null;
-          const cMoyCoeff = cAvg !== null ? round2(cAvg * (comp.coeff_in_subject || 0)) : null;
+          const cMoyCoeff =
+            cAvg !== null ? round2(cAvg * (comp.coeff_in_subject || 0)) : null;
 
           return (
-            <tr key={`${s.subject_id}-${comp.id}`} className="text-[9px] text-slate-700">
-              <td className="bdr px-1 py-[1px] pl-4">{comp.short_label || comp.label}</td>
-              <td className="bdr px-1 py-[1px] text-center">{formatNumber(cAvg)}</td>
+            <tr
+              key={`${s.subject_id}-${comp.id}`}
+              className="text-[9px] text-slate-700"
+            >
+              <td className="bdr px-1 py-[1px] pl-4">
+                {comp.short_label || comp.label}
+              </td>
+              <td className="bdr px-1 py-[1px] text-center">
+                {formatNumber(cAvg)}
+              </td>
               <td className="bdr px-1 py-[1px] text-center">
                 {formatNumber(comp.coeff_in_subject, 0)}
               </td>
-              <td className="bdr px-1 py-[1px] text-center">{formatNumber(cMoyCoeff)}</td>
-              <td className="bdr px-1 py-[1px] text-center">{cRank != null ? `${cRank}e` : "—"}</td>
+              <td className="bdr px-1 py-[1px] text-center">
+                {formatNumber(cMoyCoeff)}
+              </td>
+              <td className="bdr px-1 py-[1px] text-center">
+                {cRank != null ? `${cRank}e` : "—"}
+              </td>
               <td className="bdr px-1 py-[1px]" />
               <td className="bdr px-1 py-[1px]" />
               <td className="bdr px-1 py-[1px]" />
@@ -712,9 +813,13 @@ function StudentBulletinCard({
   const countryName = safeUpper(
     String((institution?.country_name || "RÉPUBLIQUE DE CÔTE D'IVOIRE").trim())
   );
-  const countryMotto = String((institution?.country_motto || "Union - Discipline - Travail").trim());
+  const countryMotto = String(
+    (institution?.country_motto || "Union - Discipline - Travail").trim()
+  );
   const ministryName = safeUpper(
-    String((institution?.ministry_name || "MINISTÈRE DE L'ÉDUCATION NATIONALE").trim())
+    String(
+      (institution?.ministry_name || "MINISTÈRE DE L'ÉDUCATION NATIONALE").trim()
+    )
   );
 
   return (
@@ -726,7 +831,9 @@ function StudentBulletinCard({
           <div className="text-center text-[9px] leading-tight">
             <div className="font-semibold uppercase">{countryName}</div>
             <div className="text-[8px]">{countryMotto}</div>
-            <div className="mt-1 text-[8px] font-semibold uppercase">{ministryName}</div>
+            <div className="mt-1 text-[8px] font-semibold uppercase">
+              {ministryName}
+            </div>
             <div className="mt-1 text-[8px] uppercase">
               {String((institution?.institution_region || "").trim())}
             </div>
@@ -737,7 +844,9 @@ function StudentBulletinCard({
             <div className="text-[12px] font-bold uppercase leading-tight">
               BULLETIN TRIMESTRIEL DE NOTES
             </div>
-            <div className="text-[10px] font-semibold">{periodTitle(period)}</div>
+            <div className="text-[10px] font-semibold">
+              {periodTitle(period)}
+            </div>
           </div>
 
           {/* Droite : Année scolaire + QR */}
@@ -748,7 +857,9 @@ function StudentBulletinCard({
               {institution?.institution_code && (
                 <div className="mt-1 text-[8px]">
                   Code :{" "}
-                  <span className="font-semibold">{String(institution.institution_code)}</span>
+                  <span className="font-semibold">
+                    {String(institution.institution_code)}
+                  </span>
                 </div>
               )}
               {(period.from || period.to) && (
@@ -759,11 +870,14 @@ function StudentBulletinCard({
               )}
             </div>
 
-            {/* ✅ QR SVG (react-qr-code) */}
+            {/* ✅ QR en PNG (fiable print/PDF) */}
             <div className="bdr flex h-[58px] w-[58px] items-center justify-center overflow-hidden bg-white">
-              <div className="h-[54px] w-[54px] bg-white p-[2px]">
-                <QRCode value={qrText} size={50} />
-              </div>
+              {qrDataUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={qrDataUrl} alt="QR" className="h-[54px] w-[54px]" />
+              ) : (
+                <div className="text-[8px] text-slate-500">QR</div>
+              )}
             </div>
           </div>
         </div>
@@ -785,12 +899,20 @@ function StudentBulletinCard({
 
           <div className="text-center">
             <div className="text-[11px] font-bold uppercase">
-              {safeUpper(String((institution?.institution_name || "ÉTABLISSEMENT").trim()))}
+              {safeUpper(
+                String(
+                  (institution?.institution_name || "ÉTABLISSEMENT").trim()
+                )
+              )}
             </div>
             <div className="text-[9px]">
               {String(institution?.institution_postal_address || "")}
-              {institution?.institution_phone ? ` • Tél : ${institution.institution_phone}` : ""}
-              {institution?.institution_status ? ` • ${institution.institution_status}` : ""}
+              {institution?.institution_phone
+                ? ` • Tél : ${institution.institution_phone}`
+                : ""}
+              {institution?.institution_status
+                ? ` • ${institution.institution_status}`
+                : ""}
             </div>
           </div>
         </div>
@@ -874,7 +996,11 @@ function StudentBulletinCard({
           <div className="bdr flex h-[96px] w-[86px] items-center justify-center overflow-hidden">
             {photoUrl ? (
               // eslint-disable-next-line @next/next/no-img-element
-              <img src={photoUrl} alt="Photo élève" className="h-full w-full object-cover" />
+              <img
+                src={photoUrl}
+                alt="Photo élève"
+                className="h-full w-full object-cover"
+              />
             ) : (
               <div className="text-center text-[8px] text-slate-500">Photo</div>
             )}
@@ -916,10 +1042,14 @@ function StudentBulletinCard({
                 const groupInfo = perGroupMap.get(g.id);
                 const groupAvg = groupInfo?.group_avg ?? null;
                 const groupRankLabel =
-                  groupInfo?.group_rank != null ? `${groupInfo.group_rank}e` : "—";
+                  groupInfo?.group_rank != null
+                    ? `${groupInfo.group_rank}e`
+                    : "—";
                 const groupCoeff = g.annual_coeff ?? 0;
                 const groupTotal =
-                  groupAvg !== null && groupCoeff ? round2(groupAvg * groupCoeff) : null;
+                  groupAvg !== null && groupCoeff
+                    ? round2(groupAvg * groupCoeff)
+                    : null;
 
                 const bilanLabel = (g.label || g.code || "BILAN").toUpperCase();
 
@@ -927,17 +1057,23 @@ function StudentBulletinCard({
                   ...groupSubjects.map((s) => renderSubjectBlock(s)),
                   <tr key={`group-${g.id}`} className="bg-slate-50 font-bold">
                     <td className="bdr px-1 py-[1px]">{bilanLabel}</td>
-                    <td className="bdr px-1 py-[1px] text-center">{formatNumber(groupAvg)}</td>
+                    <td className="bdr px-1 py-[1px] text-center">
+                      {formatNumber(groupAvg)}
+                    </td>
                     <td className="bdr px-1 py-[1px] text-center">
                       {groupCoeff ? formatNumber(groupCoeff, 0) : ""}
                     </td>
                     <td className="bdr px-1 py-[1px] text-center">
                       {groupCoeff ? formatNumber(groupTotal) : ""}
                     </td>
-                    <td className="bdr px-1 py-[1px] text-center">{groupRankLabel}</td>
+                    <td className="bdr px-1 py-[1px] text-center">
+                      {groupRankLabel}
+                    </td>
                     <td className="bdr px-1 py-[1px]" />
                     <td className="bdr px-1 py-[1px]" />
-                    <td className="bdr px-1 py-[1px]">{renderSignatureLine()}</td>
+                    <td className="bdr px-1 py-[1px]">
+                      {renderSignatureLine()}
+                    </td>
                   </tr>,
                 ];
               })}
@@ -953,7 +1089,9 @@ function StudentBulletinCard({
           <tr className="bg-slate-50 font-bold">
             <td className="bdr px-1 py-[1px] text-right">TOTAUX :</td>
             <td className="bdr px-1 py-[1px]" />
-            <td className="bdr px-1 py-[1px] text-center">{formatNumber(coeffTotal, 0)}</td>
+            <td className="bdr px-1 py-[1px] text-center">
+              {formatNumber(coeffTotal, 0)}
+            </td>
             <td className="bdr px-1 py-[1px]" />
             <td className="bdr px-1 py-[1px]" />
             <td className="bdr px-1 py-[1px]" />
@@ -970,7 +1108,8 @@ function StudentBulletinCard({
           {conduct ? (
             <div className="mt-[2px] space-y-[2px]">
               <div>
-                Absences : <span className="font-semibold">{conduct.absence_count ?? 0}</span>
+                Absences :{" "}
+                <span className="font-semibold">{conduct.absence_count ?? 0}</span>
                 {absenceHours !== null && (
                   <span className="text-[8px] text-slate-600">
                     {" "}
@@ -979,7 +1118,8 @@ function StudentBulletinCard({
                 )}
               </div>
               <div>
-                Retards : <span className="font-semibold">{conduct.tardy_count ?? 0}</span>
+                Retards :{" "}
+                <span className="font-semibold">{conduct.tardy_count ?? 0}</span>
               </div>
               <div className="pt-[2px]">
                 Note de conduite :{" "}
@@ -991,16 +1131,19 @@ function StudentBulletinCard({
               {conductRubricMax && conduct?.breakdown && (
                 <div className="mt-1 grid grid-cols-2 gap-x-2 gap-y-[2px] text-[8px] text-slate-700">
                   <div>
-                    Assiduité : {conduct.breakdown.assiduite} / {conductRubricMax.assiduite}
+                    Assiduité : {conduct.breakdown.assiduite} /{" "}
+                    {conductRubricMax.assiduite}
                   </div>
                   <div>
                     Tenue : {conduct.breakdown.tenue} / {conductRubricMax.tenue}
                   </div>
                   <div>
-                    Moralité : {conduct.breakdown.moralite} / {conductRubricMax.moralite}
+                    Moralité : {conduct.breakdown.moralite} /{" "}
+                    {conductRubricMax.moralite}
                   </div>
                   <div>
-                    Discipline : {conduct.breakdown.discipline} / {conductRubricMax.discipline}
+                    Discipline : {conduct.breakdown.discipline} /{" "}
+                    {conductRubricMax.discipline}
                   </div>
                 </div>
               )}
@@ -1018,8 +1161,11 @@ function StudentBulletinCard({
             {formatNumber(item.general_avg)} / 20
           </div>
           <div className="mt-[2px]">
-            Rang : <span className="font-semibold">{item.rank ? `${item.rank}e` : "—"}</span> /{" "}
-            {total}
+            Rang :{" "}
+            <span className="font-semibold">
+              {item.rank ? `${item.rank}e` : "—"}
+            </span>{" "}
+            / {total}
           </div>
         </div>
 
@@ -1035,61 +1181,78 @@ function StudentBulletinCard({
 
       <div className="mt-1 grid grid-cols-2 gap-2 text-[9px] leading-tight">
         <div className="bdr p-1">
-          <div className="font-semibold uppercase">Mentions du conseil de classe</div>
+          <div className="font-semibold uppercase">
+            Mentions du conseil de classe
+          </div>
           <div className="mt-[2px] text-[8px] font-semibold">DISTINCTIONS</div>
           <div className="mt-[2px] space-y-[2px] text-[8px]">
-            <div>{tick(mentions.distinction === "honour")} Tableau d&apos;honneur / Félicitations</div>
-            <div>{tick(mentions.distinction === "excellence")} Tableau d&apos;excellence</div>
-            <div>{tick(mentions.distinction === "encouragement")} Tableau d&apos;encouragement</div>
+            <div>
+              {tick(mentions.distinction === "honour")} Tableau d&apos;honneur /
+              Félicitations
+            </div>
+            <div>
+              {tick(mentions.distinction === "excellence")} Tableau d&apos;excellence
+            </div>
+            <div>
+              {tick(mentions.distinction === "encouragement")} Tableau d&apos;encouragement
+            </div>
           </div>
           <div className="mt-2 text-[8px] font-semibold">SANCTIONS</div>
           <div className="mt-[2px] space-y-[2px] text-[8px]">
-            <div>{tick(mentions.sanction === "warningWork")} Avertissement travail</div>
-            <div>{tick(mentions.sanction === "warningConduct")} Avertissement conduite</div>
+            <div>
+              {tick(mentions.sanction === "warningWork")} Avertissement travail
+            </div>
+            <div>
+              {tick(mentions.sanction === "warningConduct")} Avertissement conduite
+            </div>
             <div>{tick(mentions.sanction === "blameWork")} Blâme travail</div>
             <div>{tick(mentions.sanction === "blameConduct")} Blâme conduite</div>
           </div>
         </div>
 
         <div className="bdr p-1">
-          <div className="font-semibold uppercase">Appréciations du conseil de classe</div>
+          <div className="font-semibold uppercase">
+            Appréciations du conseil de classe
+          </div>
           <div className="mt-2 h-[62px] bdr bg-white" />
         </div>
       </div>
 
-      <div className="mt-1 grid grid-cols-3 gap-2 text-[9px] leading-tight">
+      {/* ✅ VISAS : on garde Prof Principal + Chef, et on retire VISA PARENT */}
+      <div className="mt-1 grid grid-cols-2 gap-2 text-[9px] leading-tight">
         <div className="bdr flex flex-col justify-between p-1">
-          <div className="font-semibold text-[8px]">Visa du professeur principal</div>
-          <div className="h-[36px]" />
+          <div className="font-semibold text-[8px]">
+            Visa du professeur principal
+          </div>
+          <div className="h-[44px]" />
           {classInfo.head_teacher?.display_name && (
-            <div className="text-center text-[8px]">{classInfo.head_teacher.display_name}</div>
-          )}
-        </div>
-
-        <div className="bdr flex flex-col justify-between p-1">
-          <div className="font-semibold text-[8px]">Visa du chef d&apos;établissement</div>
-          <div className="h-[36px]" />
-          {institution?.institution_head_name && (
             <div className="text-center text-[8px]">
-              {institution.institution_head_name}
-              {institution?.institution_head_title ? (
-                <div className="text-[7px] text-slate-600">{institution.institution_head_title}</div>
-              ) : null}
+              {classInfo.head_teacher.display_name}
             </div>
           )}
         </div>
 
         <div className="bdr flex flex-col justify-between p-1">
-          <div className="font-semibold text-[8px]">Signature des parents / tuteur</div>
+          <div className="font-semibold text-[8px]">
+            Visa du chef d&apos;établissement
+          </div>
           <div className="h-[44px]" />
+          {institution?.institution_head_name && (
+            <div className="text-center text-[8px]">
+              {institution.institution_head_name}
+              {institution?.institution_head_title ? (
+                <div className="text-[7px] text-slate-600">
+                  {institution.institution_head_title}
+                </div>
+              ) : null}
+            </div>
+          )}
         </div>
       </div>
 
-      <div className="mt-1 flex items-center justify-between text-[8px] text-black">
-        <div>Fait à ......................................, le ...........................................</div>
-        <div className="print:hidden text-[8px] text-slate-500">
-          Élève {index + 1} / {total}
-        </div>
+      <div className="mt-1 text-[8px] text-black">
+        Fait à ......................................, le
+        ...........................................
       </div>
     </div>
   );
@@ -1101,7 +1264,9 @@ export default function BulletinsPage() {
   const [classes, setClasses] = useState<ClassRow[]>([]);
   const [classesLoading, setClassesLoading] = useState(false);
 
-  const [institution, setInstitution] = useState<InstitutionSettings | null>(null);
+  const [institution, setInstitution] = useState<InstitutionSettings | null>(
+    null
+  );
   const [institutionLoading, setInstitutionLoading] = useState(false);
 
   const [selectedClassId, setSelectedClassId] = useState<string>("");
@@ -1118,7 +1283,11 @@ export default function BulletinsPage() {
   const [bulletinLoading, setBulletinLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  const [conductSummary, setConductSummary] = useState<ConductSummaryResponse | null>(null);
+  const [conductSummary, setConductSummary] =
+    useState<ConductSummaryResponse | null>(null);
+
+  // ✅ Aperçu “clean” : plein écran A4 (uniquement le bulletin)
+  const [previewOpen, setPreviewOpen] = useState(false);
 
   /* Chargement des classes */
   useEffect(() => {
@@ -1184,7 +1353,8 @@ export default function BulletinsPage() {
         if (selectedAcademicYear) params.set("academic_year", selectedAcademicYear);
 
         const qs = params.toString();
-        const url = "/api/admin/institution/grading-periods" + (qs ? `?${qs}` : "");
+        const url =
+          "/api/admin/institution/grading-periods" + (qs ? `?${qs}` : "");
 
         const res = await fetch(url);
         if (!res.ok) {
@@ -1259,27 +1429,44 @@ export default function BulletinsPage() {
       if (!resBulletin.ok) {
         const txt = await resBulletin.text();
         throw new Error(
-          `Erreur bulletin (${resBulletin.status}) : ${txt || "Impossible de générer le bulletin."}`
+          `Erreur bulletin (${resBulletin.status}) : ${
+            txt || "Impossible de générer le bulletin."
+          }`
         );
       }
 
       const json = (await resBulletin.json()) as BulletinResponse;
       if (!json.ok) throw new Error("Réponse bulletin invalide (ok = false).");
+
+      // ✅ AJOUT DEBUG demandé
+      const data = json as any;
+      console.log("[BULLETIN] sample qr_url:", data?.items?.[0]?.qr_url);
+      console.log("[BULLETIN] sample qr_token:", data?.items?.[0]?.qr_token);
+
       setBulletinRaw(json);
 
       if (resConduct.ok) {
         try {
           const conductJson = (await resConduct.json()) as ConductSummaryResponse;
-          if (conductJson && Array.isArray(conductJson.items)) setConductSummary(conductJson);
+          if (conductJson && Array.isArray(conductJson.items))
+            setConductSummary(conductJson);
         } catch (err) {
           console.warn("[Bulletins] Impossible de lire le résumé de conduite", err);
         }
       } else {
-        console.warn("[Bulletins] /api/admin/conduite/averages a renvoyé", resConduct.status);
+        console.warn(
+          "[Bulletins] /api/admin/conduite/averages a renvoyé",
+          resConduct.status
+        );
       }
+
+      // ✅ ouvre automatiquement l’aperçu “clean” (uniquement bulletin)
+      setPreviewOpen(true);
     } catch (e: any) {
       console.error(e);
-      setErrorMsg(e?.message || "Une erreur est survenue lors du chargement du bulletin.");
+      setErrorMsg(
+        e?.message || "Une erreur est survenue lors du chargement du bulletin."
+      );
     } finally {
       setBulletinLoading(false);
     }
@@ -1311,12 +1498,21 @@ export default function BulletinsPage() {
   };
 
   return (
-    <div className="mx-auto flex max-w-6xl flex-col gap-4 p-4 md:p-6">
-      {/* Styles print : A4 + 1 page par élève */}
+    <>
+      {/* Styles A4 : aperçu écran + impression */}
       <style jsx global>{`
-        /* bordure noire type bulletin officiel */
         .bdr {
           border: 1px solid #000;
+        }
+
+        /* ✅ Aperçu écran : feuille A4 */
+        .print-page {
+          width: 210mm;
+          min-height: 297mm;
+          margin: 0 auto;
+          padding: 8mm; /* simule la marge du papier */
+          font-family: Arial, Helvetica, sans-serif;
+          background: #fff;
         }
 
         @media print {
@@ -1331,13 +1527,12 @@ export default function BulletinsPage() {
             print-color-adjust: exact;
           }
 
-          /* 210mm - 16mm = 194mm ; 297mm - 16mm = 281mm */
+          /* contenu imprimé = zone utile (A4 - marges) */
           .print-page {
             width: 194mm;
             min-height: 281mm;
             margin: 0 auto;
             padding: 0;
-            font-family: Arial, Helvetica, sans-serif;
           }
 
           .print-break {
@@ -1348,166 +1543,213 @@ export default function BulletinsPage() {
           .print\\:hidden {
             display: none !important;
           }
+
+          /* overlay preview devient "normal" à l’impression */
+          .preview-overlay {
+            position: static !important;
+            inset: auto !important;
+            overflow: visible !important;
+            background: transparent !important;
+            padding: 0 !important;
+          }
+          .preview-actions {
+            display: none !important;
+          }
         }
       `}</style>
 
-      {/* Header + actions (non imprimé) */}
-      <div className="flex items-center justify-between gap-4 print:hidden">
-        <div>
-          <h1 className="text-lg font-semibold text-slate-900">Bulletins de notes</h1>
-          <p className="text-sm text-slate-500">
-            Générer un bulletin officiel (A4, 1 page) par élève.
-          </p>
-        </div>
-        <div className="flex gap-2">
-          <Button
-            type="button"
-            variant="ghost"
-            onClick={handleLoadBulletin}
-            disabled={bulletinLoading || !selectedClassId}
-          >
-            <RefreshCw className="h-4 w-4" />
-            Recharger
-          </Button>
-          <Button type="button" onClick={handlePrint} disabled={!items.length}>
-            <Printer className="h-4 w-4" />
-            Imprimer
-          </Button>
-        </div>
-      </div>
+      {/* ✅ MODE CLEAN : uniquement le bulletin */}
+      {previewOpen && items.length > 0 && enriched && classInfo ? (
+        <div className="preview-overlay fixed inset-0 z-[60] overflow-auto bg-slate-200 p-2 md:p-6">
+          {/* Actions minimales (écran seulement) */}
+          <div className="preview-actions sticky top-2 z-10 mb-3 flex justify-end gap-2">
+            <Button variant="ghost" type="button" onClick={() => setPreviewOpen(false)}>
+              <X className="h-4 w-4" />
+              Fermer
+            </Button>
+            <Button
+              variant="ghost"
+              type="button"
+              onClick={handleLoadBulletin}
+              disabled={bulletinLoading || !selectedClassId}
+            >
+              <RefreshCw className="h-4 w-4" />
+              Recharger
+            </Button>
+            <Button type="button" onClick={handlePrint}>
+              <Printer className="h-4 w-4" />
+              Imprimer
+            </Button>
+          </div>
 
-      {/* Filtres */}
-      <div className="grid gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm print:hidden md:grid-cols-6">
-        <div className="md:col-span-2">
-          <label className="mb-1 block text-xs font-semibold uppercase text-slate-500">
-            Année scolaire
-          </label>
-          <Select
-            value={selectedAcademicYear}
-            onChange={(e) => {
-              const year = e.target.value;
-              setSelectedAcademicYear(year);
-              setSelectedPeriodId("");
-              setDateFrom("");
-              setDateTo("");
-            }}
-            disabled={periodsLoading || academicYears.length === 0}
-          >
-            <option value="">
-              {academicYears.length === 0 ? "Non configuré" : "Toutes années…"}
-            </option>
-            {academicYears.map((year) => (
-              <option key={year} value={year}>
-                {year}
-              </option>
+          {/* Bulletins */}
+          <div className="flex flex-col gap-6 pb-6">
+            {items.map((it, idx) => (
+              <StudentBulletinCard
+                key={it.student_id}
+                index={idx}
+                total={items.length}
+                item={it}
+                subjects={subjects}
+                subjectComponents={subjectComponents}
+                subjectGroups={subjectGroups}
+                classInfo={classInfo}
+                period={period}
+                institution={institution}
+                stats={stats}
+                conduct={conductByStudentId.get(it.student_id) || null}
+                conductRubricMax={conductRubricMax}
+                conductTotalMax={conductTotalMax}
+              />
             ))}
-          </Select>
-          <p className="mt-1 text-[0.7rem] text-slate-500">
-            Filtre les périodes. Si vous choisissez une période, les dates sont remplies automatiquement.
-          </p>
+          </div>
         </div>
+      ) : (
+        /* Mode normal : filtres + génération */
+        <div className="mx-auto flex max-w-6xl flex-col gap-4 p-4 md:p-6">
+          {/* Header + actions */}
+          <div className="flex items-center justify-between gap-4 print:hidden">
+            <div>
+              <h1 className="text-lg font-semibold text-slate-900">Bulletins de notes</h1>
+              <p className="text-sm text-slate-500">
+                Charger une classe + période, puis ouvrir l’aperçu A4.
+              </p>
+            </div>
+            <div className="flex gap-2">
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={handleLoadBulletin}
+                disabled={bulletinLoading || !selectedClassId}
+              >
+                <RefreshCw className="h-4 w-4" />
+                Recharger
+              </Button>
+              <Button
+                type="button"
+                onClick={() => setPreviewOpen(true)}
+                disabled={!items.length}
+              >
+                <Printer className="h-4 w-4" />
+                Aperçu / Imprimer
+              </Button>
+            </div>
+          </div>
 
-        <div className="md:col-span-2">
-          <label className="mb-1 block text-xs font-semibold uppercase text-slate-500">
-            Période (trimestre / séquence)
-          </label>
-          <Select
-            value={selectedPeriodId}
-            onChange={(e) => setSelectedPeriodId(e.target.value)}
-            disabled={periodsLoading || filteredPeriods.length === 0}
-          >
-            <option value="">
-              {filteredPeriods.length === 0 ? "Aucune période" : "Sélectionner une période…"}
-            </option>
-            {filteredPeriods.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.label || p.short_label || p.code || `${p.start_date} → ${p.end_date}`}
-              </option>
-            ))}
-          </Select>
-          <p className="mt-1 text-[0.7rem] text-slate-500">
-            La période positionne automatiquement les dates.
-          </p>
-        </div>
-
-        <div className="md:col-span-2">
-          <label className="mb-1 block text-xs font-semibold uppercase text-slate-500">Classe</label>
-          <Select
-            value={selectedClassId}
-            onChange={(e) => setSelectedClassId(e.target.value)}
-            disabled={classesLoading}
-          >
-            <option value="">Sélectionner une classe…</option>
-            {classes.map((c) => {
-              const label = (c.name || c.label || "").trim();
-              return (
-                <option key={c.id} value={c.id}>
-                  {label || "Classe"}
-                  {c.level ? ` (${c.level})` : ""}
+          {/* Filtres */}
+          <div className="grid gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm print:hidden md:grid-cols-6">
+            <div className="md:col-span-2">
+              <label className="mb-1 block text-xs font-semibold uppercase text-slate-500">
+                Année scolaire
+              </label>
+              <Select
+                value={selectedAcademicYear}
+                onChange={(e) => {
+                  const year = e.target.value;
+                  setSelectedAcademicYear(year);
+                  setSelectedPeriodId("");
+                  setDateFrom("");
+                  setDateTo("");
+                }}
+                disabled={periodsLoading || academicYears.length === 0}
+              >
+                <option value="">
+                  {academicYears.length === 0 ? "Non configuré" : "Toutes années…"}
                 </option>
-              );
-            })}
-          </Select>
-        </div>
+                {academicYears.map((year) => (
+                  <option key={year} value={year}>
+                    {year}
+                  </option>
+                ))}
+              </Select>
+              <p className="mt-1 text-[0.7rem] text-slate-500">
+                Filtre les périodes. Si vous choisissez une période, les dates sont remplies automatiquement.
+              </p>
+            </div>
 
-        <div className="md:col-span-3">
-          <label className="mb-1 block text-xs font-semibold uppercase text-slate-500">
-            Date de début
-          </label>
-          <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
-        </div>
-        <div className="md:col-span-3">
-          <label className="mb-1 block text-xs font-semibold uppercase text-slate-500">Date de fin</label>
-          <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
-        </div>
-      </div>
+            <div className="md:col-span-2">
+              <label className="mb-1 block text-xs font-semibold uppercase text-slate-500">
+                Période (trimestre / séquence)
+              </label>
+              <Select
+                value={selectedPeriodId}
+                onChange={(e) => setSelectedPeriodId(e.target.value)}
+                disabled={periodsLoading || filteredPeriods.length === 0}
+              >
+                <option value="">
+                  {filteredPeriods.length === 0 ? "Aucune période" : "Sélectionner une période…"}
+                </option>
+                {filteredPeriods.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.label || p.short_label || p.code || `${p.start_date} → ${p.end_date}`}
+                  </option>
+                ))}
+              </Select>
+              <p className="mt-1 text-[0.7rem] text-slate-500">
+                La période positionne automatiquement les dates.
+              </p>
+            </div>
 
-      {errorMsg && (
-        <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 print:hidden">
-          {errorMsg}
+            <div className="md:col-span-2">
+              <label className="mb-1 block text-xs font-semibold uppercase text-slate-500">
+                Classe
+              </label>
+              <Select
+                value={selectedClassId}
+                onChange={(e) => setSelectedClassId(e.target.value)}
+                disabled={classesLoading}
+              >
+                <option value="">Sélectionner une classe…</option>
+                {classes.map((c) => {
+                  const label = (c.name || c.label || "").trim();
+                  return (
+                    <option key={c.id} value={c.id}>
+                      {label || "Classe"}
+                      {c.level ? ` (${c.level})` : ""}
+                    </option>
+                  );
+                })}
+              </Select>
+            </div>
+
+            <div className="md:col-span-3">
+              <label className="mb-1 block text-xs font-semibold uppercase text-slate-500">
+                Date de début
+              </label>
+              <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
+            </div>
+            <div className="md:col-span-3">
+              <label className="mb-1 block text-xs font-semibold uppercase text-slate-500">
+                Date de fin
+              </label>
+              <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
+            </div>
+          </div>
+
+          {errorMsg && (
+            <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 print:hidden">
+              {errorMsg}
+            </div>
+          )}
+
+          {bulletinLoading && (
+            <div className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-600 print:hidden">
+              Chargement du bulletin…
+            </div>
+          )}
+
+          {!items.length && !bulletinLoading && (
+            <div className="rounded-xl border border-slate-200 bg-white px-3 py-4 text-sm text-slate-600 print:hidden">
+              Aucun bulletin à afficher. Choisissez une classe, une période puis cliquez sur{" "}
+              <span className="font-semibold">Recharger</span>.
+            </div>
+          )}
+
+          <div className="mt-2 text-center text-[0.7rem] text-slate-400 print:hidden">
+            {institutionLoading ? "Chargement établissement…" : ""}
+          </div>
         </div>
       )}
-
-      {bulletinLoading && (
-        <div className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-600 print:hidden">
-          Chargement du bulletin…
-        </div>
-      )}
-
-      {/* Bulletins par élève */}
-      {items.length === 0 && !bulletinLoading && (
-        <div className="rounded-xl border border-slate-200 bg-white px-3 py-4 text-sm text-slate-600 print:hidden">
-          Aucun bulletin à afficher. Choisissez une classe, une période puis cliquez sur{" "}
-          <span className="font-semibold">Recharger</span>.
-        </div>
-      )}
-
-      {items.length > 0 &&
-        enriched &&
-        classInfo &&
-        items.map((it, idx) => (
-          <StudentBulletinCard
-            key={it.student_id}
-            index={idx}
-            total={items.length}
-            item={it}
-            subjects={subjects}
-            subjectComponents={subjectComponents}
-            subjectGroups={subjectGroups}
-            classInfo={classInfo}
-            period={period}
-            institution={institution}
-            stats={stats}
-            conduct={conductByStudentId.get(it.student_id) || null}
-            conductRubricMax={conductRubricMax}
-            conductTotalMax={conductTotalMax}
-          />
-        ))}
-
-      {/* Note (non imprimée) */}
-      <div className="mt-2 text-center text-[0.7rem] text-slate-400 print:hidden">
-        {institutionLoading ? "Chargement établissement…" : ""}
-      </div>
-    </div>
+    </>
   );
 }
