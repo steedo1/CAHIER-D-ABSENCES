@@ -18,7 +18,6 @@ type GradeRow = {
   title: string | null;
   score: number | null;
 
-  // utiles pour ton front (filtres par matière)
   subject_id: string | null;
   subject_name: string | null;
 };
@@ -26,65 +25,52 @@ type GradeRow = {
 function parseCookieHeader(cookieHeader: string | null): Record<string, string> {
   const out: Record<string, string> = {};
   if (!cookieHeader) return out;
-
-  const parts = cookieHeader.split(";");
-  for (const p of parts) {
-    const idx = p.indexOf("=");
-    if (idx < 0) continue;
-    const k = p.slice(0, idx).trim();
-    const v = p.slice(idx + 1).trim();
-    if (!k) continue;
-    out[k] = v;
+  for (const part of cookieHeader.split(";")) {
+    const i = part.indexOf("=");
+    if (i < 0) continue;
+    const k = part.slice(0, i).trim();
+    const v = part.slice(i + 1).trim();
+    if (k) out[k] = v;
   }
   return out;
 }
 
-/**
- * Supabase auth helpers stockent souvent un cookie "sb-<ref>-auth-token"
- * (parfois chunké en ".0", ".1", ...), et parfois encodé (base64-...).
- * On essaye d’en extraire access_token.
- */
-function extractSupabaseAccessToken(req: NextRequest): string {
-  const cookies = parseCookieHeader(req.headers.get("cookie"));
-
-  // 1) Trouver la base du cookie auth-token
-  const authBases = Object.keys(cookies)
-    .filter((k) => k.includes("-auth-token"))
-    .map((k) => k.replace(/\.\d+$/, "")); // retire .0 .1 etc
-  const base = authBases[0];
-  if (!base) return "";
-
-  // 2) Reconstituer si chunké
-  let raw = "";
-  const chunks = Object.keys(cookies)
+/** Reconstitue sb-xxx-auth-token même s’il est chunké (.0 .1 ...) */
+function getCookieValueJoined(cookies: Record<string, string>, base: string) {
+  const keys = Object.keys(cookies)
     .filter((k) => k === base || k.startsWith(base + "."))
     .sort((a, b) => {
       const ai = a.includes(".") ? Number(a.split(".").pop()) : -1;
       const bi = b.includes(".") ? Number(b.split(".").pop()) : -1;
       return ai - bi;
     });
+  return keys.map((k) => cookies[k] ?? "").join("");
+}
 
-  for (const k of chunks) raw += cookies[k] ?? "";
+function extractSupabaseAccessTokenFromRequest(req: NextRequest): string {
+  const cookies = parseCookieHeader(req.headers.get("cookie"));
 
-  // 3) decode url
+  // sb-<ref>-auth-token (parfois chunké)
+  const authKey =
+    Object.keys(cookies).find((k) => k.includes("-auth-token"))?.replace(/\.\d+$/, "") ||
+    "";
+
+  if (!authKey) return "";
+
+  let raw = getCookieValueJoined(cookies, authKey);
+
   try {
     raw = decodeURIComponent(raw);
-  } catch {
-    // ignore
-  }
+  } catch {}
 
-  // 4) decode base64- si présent
+  // Supabase met souvent "base64-..."
   if (raw.startsWith("base64-")) {
-    const b64 = raw.slice("base64-".length);
     try {
-      raw = Buffer.from(b64, "base64").toString("utf8");
-    } catch {
-      // ignore
-    }
+      raw = Buffer.from(raw.slice("base64-".length), "base64").toString("utf8");
+    } catch {}
   }
 
-  // 5) parse JSON
-  // parfois c’est une string JSON, parfois une string entourée de guillemets
+  // parfois c’est une string JSON entourée de quotes
   let obj: any = null;
   try {
     obj = JSON.parse(raw);
@@ -96,31 +82,25 @@ function extractSupabaseAccessToken(req: NextRequest): string {
     }
   }
 
-  const token = String(obj?.access_token || "");
-  return token || "";
+  return String(obj?.access_token || "");
 }
 
 async function getAuthedUser(req: NextRequest): Promise<User | null> {
-  // A) tentative “classique”
+  // 1) auth “normale”
   try {
-    const supa = await (getSupabaseServerClient as any)(req);
+    const supa = await getSupabaseServerClient();
     const { data, error } = await supa.auth.getUser();
     if (!error && data?.user) return data.user as User;
-  } catch {
-    // ignore
-  }
+  } catch {}
 
-  // B) fallback sans casser : on lit le cookie Supabase et on valide via service client
+  // 2) fallback : cookie -> srv.auth.getUser(token)
   try {
-    const token = extractSupabaseAccessToken(req);
+    const token = extractSupabaseAccessTokenFromRequest(req);
     if (!token) return null;
-
     const srv = getSupabaseServiceClient() as unknown as SupabaseClient;
     const { data, error } = await srv.auth.getUser(token);
     if (!error && data?.user) return data.user as User;
-  } catch {
-    // ignore
-  }
+  } catch {}
 
   return null;
 }
@@ -128,12 +108,12 @@ async function getAuthedUser(req: NextRequest): Promise<User | null> {
 export async function GET(req: NextRequest) {
   const url = new URL(req.url);
   const studentId = url.searchParams.get("student_id");
-  const limitParam = url.searchParams.get("limit") || "20";
+  const limitParam = url.searchParams.get("limit") || "200";
 
   const limitRaw = Number(limitParam);
   const limit = Number.isFinite(limitRaw)
     ? Math.min(Math.max(1, limitRaw), 200)
-    : 20;
+    : 200;
 
   if (!studentId) {
     return NextResponse.json(
@@ -153,7 +133,7 @@ export async function GET(req: NextRequest) {
   const srv = getSupabaseServiceClient();
 
   try {
-    // 1) Guard : parent lié à l’élève
+    // ✅ sécurité : le parent doit être lié à l’élève
     const { data: link, error: linkErr } = await srv
       .from("student_guardians")
       .select("student_id")
@@ -162,13 +142,12 @@ export async function GET(req: NextRequest) {
       .maybeSingle();
 
     if (linkErr) {
-      console.error("[parent.grades] student_guardians error", linkErr);
+      console.error("[parent.grades] guardians error", linkErr);
       return NextResponse.json(
         { ok: false, error: "Erreur de vérification d’accès." },
         { status: 500 },
       );
     }
-
     if (!link) {
       return NextResponse.json(
         { ok: false, error: "Accès interdit." },
@@ -176,7 +155,6 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    // 2) Récup notes + évaluations publiées
     const { data, error } = await srv
       .from("student_grades")
       .select(
@@ -205,83 +183,49 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    // 3) Normalisation (grade_evaluations peut être object OU array selon relations)
-    const rawRows = (data || []) as Array<{
+    // normalise (relation inner peut renvoyer object ou array selon config)
+    const rows = (data || []) as Array<{
       score: number | null;
-      grade_evaluations:
-        | {
-            id: string;
-            eval_date: string;
-            eval_kind: EvalKind;
-            scale: number;
-            coeff: number;
-            is_published: boolean;
-            title: string | null;
-            subject_id: string | null;
-          }
-        | {
-            id: string;
-            eval_date: string;
-            eval_kind: EvalKind;
-            scale: number;
-            coeff: number;
-            is_published: boolean;
-            title: string | null;
-            subject_id: string | null;
-          }[]
-        | null;
+      grade_evaluations: any;
     }>;
 
-    const evals = rawRows
+    const flat = rows
       .map((r) => {
-        const ge: any = r.grade_evaluations;
+        const ge = r.grade_evaluations;
         const ev = Array.isArray(ge) ? ge[0] : ge;
         if (!ev?.id) return null;
         return { ev, score: r.score };
       })
-      .filter(Boolean) as Array<{
-      ev: {
-        id: string;
-        eval_date: string;
-        eval_kind: EvalKind;
-        scale: number;
-        coeff: number;
-        title: string | null;
-        subject_id: string | null;
-      };
-      score: number | null;
-    }>;
+      .filter(Boolean) as Array<{ ev: any; score: number | null }>;
 
-    // 4) Récup subject_name si possible
     const subjectIds = Array.from(
-      new Set(evals.map((x) => x.ev.subject_id).filter(Boolean) as string[]),
-    );
+      new Set(flat.map((x) => x.ev.subject_id).filter(Boolean)),
+    ) as string[];
 
     const subjectNameById = new Map<string, string>();
     if (subjectIds.length) {
-      const { data: subs, error: subsErr } = await srv
+      const { data: subs } = await srv
         .from("subjects")
         .select("id, name")
         .in("id", subjectIds);
-
-      if (!subsErr && subs) {
-        for (const s of subs as any[]) {
-          if (s?.id) subjectNameById.set(String(s.id), String(s.name || ""));
-        }
+      for (const s of (subs || []) as any[]) {
+        if (s?.id) subjectNameById.set(String(s.id), String(s.name || ""));
       }
     }
 
-    const items: GradeRow[] = evals
+    const items: GradeRow[] = flat
       .map(({ ev, score }) => ({
-        id: ev.id,
-        eval_date: ev.eval_date,
-        eval_kind: ev.eval_kind,
+        id: String(ev.id),
+        eval_date: String(ev.eval_date),
+        eval_kind: ev.eval_kind as EvalKind,
         scale: Number(ev.scale ?? 20),
         coeff: Number(ev.coeff ?? 1),
         title: ev.title ?? null,
         score,
         subject_id: ev.subject_id ?? null,
-        subject_name: ev.subject_id ? subjectNameById.get(ev.subject_id) ?? null : null,
+        subject_name: ev.subject_id
+          ? subjectNameById.get(String(ev.subject_id)) ?? null
+          : null,
       }))
       .sort((a, b) => b.eval_date.localeCompare(a.eval_date))
       .slice(0, limit);

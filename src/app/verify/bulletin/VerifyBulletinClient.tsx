@@ -1,3 +1,4 @@
+//src/app/verify/bulletin/VerifyBulletinClient.tsx
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
@@ -20,7 +21,10 @@ export default function VerifyBulletinClient() {
 
     async function run() {
       if (!token) {
-        setState({ status: "error", error: "Paramètre 't' manquant dans l'URL." });
+        setState({
+          status: "error",
+          error: "Paramètre 't' manquant dans l'URL.",
+        });
         return;
       }
 
@@ -43,7 +47,10 @@ export default function VerifyBulletinClient() {
         setState({ status: "ok", data: json });
       } catch (e: any) {
         if (cancelled) return;
-        setState({ status: "error", error: e?.message ?? "Erreur inconnue." });
+        setState({
+          status: "error",
+          error: e?.message ?? "Erreur inconnue.",
+        });
       }
     }
 
@@ -61,16 +68,15 @@ export default function VerifyBulletinClient() {
     return (
       <div className="p-6">
         <div className="text-lg font-semibold">QR invalide</div>
-        <div className="text-sm opacity-80 mt-2">{state.error}</div>
+        <div className="mt-2 text-sm opacity-80">{state.error}</div>
       </div>
     );
   }
 
-  // Ici TS sait que state.status === "ok"
   return (
     <div className="p-6">
       <div className="text-lg font-semibold">Bulletin vérifié ✅</div>
-      <pre className="mt-4 text-xs overflow-auto rounded border p-3">
+      <pre className="mt-4 overflow-auto rounded border p-3 text-xs">
         {JSON.stringify(state.data, null, 2)}
       </pre>
     </div>

@@ -295,7 +295,6 @@ function Button(
     <button
       {...rest}
       className={[
-        // + gros et + "touch friendly"
         "inline-flex items-center justify-center gap-2 rounded-2xl px-4 py-3 text-[15px] font-semibold shadow-sm transition-all",
         "focus:outline-none focus:ring-2 focus:ring-offset-1",
         "disabled:opacity-60 disabled:cursor-not-allowed",
@@ -659,7 +658,6 @@ async function fetchJsonSafe(
     try {
       json = await res.json();
     } catch {
-      // Si HTML/texte
       try {
         const t = await res.text();
         return {
@@ -674,14 +672,22 @@ async function fetchJsonSafe(
     }
     return { ok: res.ok, status, json };
   } catch (e: any) {
-    return { ok: false, status: 0, json: null, errorText: e?.message || "fetch_failed" };
+    return {
+      ok: false,
+      status: 0,
+      json: null,
+      errorText: e?.message || "fetch_failed",
+    };
   }
 }
 
 async function firstOkItems(
   urls: string[],
   init?: RequestInit,
-): Promise<{ ok: true; items: any[]; usedUrl: string } | { ok: false; err: string }> {
+): Promise<
+  | { ok: true; items: any[]; usedUrl: string }
+  | { ok: false; err: string }
+> {
   for (const u of urls) {
     const r = await fetchJsonSafe(u, init);
     if (!r.ok) continue;
@@ -719,14 +725,20 @@ function VerticalGauge({
     : RUBRIC_THEMES[rubric];
 
   const safeMax = max > 0 ? max : 1;
-  const pct = disabled ? 0 : Math.max(0, Math.min(100, (value / safeMax) * 100));
+  const pct = disabled
+    ? 0
+    : Math.max(0, Math.min(100, (value / safeMax) * 100));
 
   const fmtNumber = (n: number) => {
     if (Number.isInteger(n)) return String(n);
     return n.toFixed(1).replace(".", ",");
   };
 
-  const vLabel = disabled ? "Désactivée" : `${fmtNumber(value)} / ${fmtNumber(max)} pt${Math.abs(max - 1) < 0.001 ? "" : "s"}`;
+  const vLabel = disabled
+    ? "Désactivée"
+    : `${fmtNumber(value)} / ${fmtNumber(max)} pt${
+        Math.abs(max - 1) < 0.001 ? "" : "s"
+      }`;
 
   return (
     <div className="flex min-w-0 flex-1 flex-col items-center">
@@ -754,9 +766,13 @@ function VerticalGauge({
 export default function ParentPage() {
   const [kids, setKids] = useState<Kid[]>([]);
   const [feed, setFeed] = useState<Record<string, Ev[]>>({});
-  const [kidPenalties, setKidPenalties] = useState<Record<string, KidPenalty[]>>({});
+  const [kidPenalties, setKidPenalties] = useState<
+    Record<string, KidPenalty[]>
+  >({});
   const [conduct, setConduct] = useState<Record<string, Conduct>>({});
-  const [kidGrades, setKidGrades] = useState<Record<string, KidGradeRow[]>>({});
+  const [kidGrades, setKidGrades] = useState<Record<string, KidGradeRow[]>>(
+    {},
+  );
   const [kidGradesErr, setKidGradesErr] = useState<Record<string, string>>({});
 
   const [loadingKids, setLoadingKids] = useState(true);
@@ -768,8 +784,12 @@ export default function ParentPage() {
   const [conductTo, setConductTo] = useState<string>("");
 
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
-  const [showAllDaysForKid, setShowAllDaysForKid] = useState<Record<string, boolean>>({});
-  const [showAllPenForKid, setShowAllPenForKid] = useState<Record<string, boolean>>({});
+  const [showAllDaysForKid, setShowAllDaysForKid] = useState<
+    Record<string, boolean>
+  >({});
+  const [showAllPenForKid, setShowAllPenForKid] = useState<
+    Record<string, boolean>
+  >({});
 
   // Filtre période notes
   const [gradeFilterMode, setGradeFilterMode] = useState<
@@ -779,7 +799,9 @@ export default function ParentPage() {
   const [gradeTo, setGradeTo] = useState<string>("");
 
   // Matière sélectionnée par enfant
-  const [activeSubjectPerKid, setActiveSubjectPerKid] = useState<Record<string, string | "all" | null>>({});
+  const [activeSubjectPerKid, setActiveSubjectPerKid] = useState<
+    Record<string, string | "all" | null>
+  >({});
 
   // 🔔 notifications
   const [granted, setGranted] = useState(false);
@@ -801,7 +823,9 @@ export default function ParentPage() {
   const hasKids = kids.length > 0;
 
   const filteredKids = useMemo(() => {
-    return activeChildId === "all" ? kids : kids.filter((k) => k.id === activeChildId);
+    return activeChildId === "all"
+      ? kids
+      : kids.filter((k) => k.id === activeChildId);
   }, [kids, activeChildId]);
 
   const isDashboard = activeSection === "dashboard";
@@ -835,7 +859,8 @@ export default function ParentPage() {
 
     const refresh = () =>
       setGranted(
-        typeof Notification !== "undefined" && Notification.permission === "granted",
+        typeof Notification !== "undefined" &&
+          Notification.permission === "granted",
       );
     refresh();
 
@@ -864,7 +889,11 @@ export default function ParentPage() {
     }
   }, [gradeFilterMode]);
 
-  async function loadConductForAll(kidsList: Kid[] = kids, from?: string, to?: string) {
+  async function loadConductForAll(
+    kidsList: Kid[] = kids,
+    from?: string,
+    to?: string,
+  ) {
     setLoadingConduct(true);
     try {
       const condEntries: Array<[string, Conduct]> = [];
@@ -872,10 +901,13 @@ export default function ParentPage() {
         const qs = new URLSearchParams({ student_id: k.id });
         if (from) qs.set("from", from);
         if (to) qs.set("to", to);
-        const c = await fetch(`/api/parent/children/conduct?${qs.toString()}`, {
-          cache: "no-store",
-          credentials: "include",
-        })
+        const c = await fetch(
+          `/api/parent/children/conduct?${qs.toString()}`,
+          {
+            cache: "no-store",
+            credentials: "include",
+          },
+        )
           .then((r) => r.json())
           .catch(() => ({}));
         if (c && (c as any).total != null) condEntries.push([k.id, c as Conduct]);
@@ -913,13 +945,17 @@ export default function ParentPage() {
 
       for (const k of ks) {
         const f = await fetch(
-          `/api/parent/children/events?student_id=${encodeURIComponent(k.id)}&limit=50`,
+          `/api/parent/children/events?student_id=${encodeURIComponent(
+            k.id,
+          )}&limit=50`,
           { cache: "no-store", credentials: "include" },
         ).then((r) => r.json());
         feedEntries.push([k.id, (f.items || []) as Ev[]]);
 
         const p = await fetch(
-          `/api/parent/children/penalties?student_id=${encodeURIComponent(k.id)}&limit=20`,
+          `/api/parent/children/penalties?student_id=${encodeURIComponent(
+            k.id,
+          )}&limit=20`,
           { cache: "no-store", credentials: "include" },
         )
           .then((r) => r.json())
@@ -956,7 +992,8 @@ export default function ParentPage() {
       const initialExpanded: Record<string, boolean> = {};
       for (const [kidId, list] of feedEntries) {
         const groups = groupByDay(list);
-        for (const g of groups) if (g.items.length === 1) initialExpanded[`${kidId}|${g.day}`] = true;
+        for (const g of groups)
+          if (g.items.length === 1) initialExpanded[`${kidId}|${g.day}`] = true;
       }
       setExpanded(initialExpanded);
 
@@ -1032,7 +1069,10 @@ export default function ParentPage() {
       }
 
       try {
-        await fetch("/api/auth/sync", { method: "DELETE", credentials: "include" });
+        await fetch("/api/auth/sync", {
+          method: "DELETE",
+          credentials: "include",
+        });
       } catch {}
     } finally {
       window.location.assign(LOGOUT_PARENTS);
@@ -1047,7 +1087,8 @@ export default function ParentPage() {
   function selectSection(section: NavSection) {
     setActiveSection(section);
     setMobileNavOpen(false);
-    if (typeof window !== "undefined") window.scrollTo({ top: 0, behavior: "smooth" });
+    if (typeof window !== "undefined")
+      window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
   function SidebarNavItem({
@@ -1158,7 +1199,9 @@ export default function ParentPage() {
                       }}
                       className={[
                         "flex w-full items-center gap-3 rounded-2xl px-3 py-3 text-[14px] font-semibold",
-                        active ? "bg-white/90 text-[#003766]" : "text-white hover:bg-white/10",
+                        active
+                          ? "bg-white/90 text-[#003766]"
+                          : "text-white hover:bg-white/10",
                       ].join(" ")}
                     >
                       <div className="grid h-9 w-9 place-items-center rounded-xl bg-white/20 text-[12px] font-extrabold">
@@ -1178,10 +1221,26 @@ export default function ParentPage() {
 
             {/* Navigation */}
             <nav className="flex-1 space-y-2 px-4 py-4">
-              <SidebarNavItem label="Tableau de bord" icon={<IconHome />} section="dashboard" />
-              <SidebarNavItem label="Conduite & points" icon={<IconClipboard />} section="conduct" />
-              <SidebarNavItem label="Cahier d’absences" icon={<IconClipboard />} section="absences" />
-              <SidebarNavItem label="Cahier de notes" icon={<IconBook />} section="notes" />
+              <SidebarNavItem
+                label="Tableau de bord"
+                icon={<IconHome />}
+                section="dashboard"
+              />
+              <SidebarNavItem
+                label="Conduite & points"
+                icon={<IconClipboard />}
+                section="conduct"
+              />
+              <SidebarNavItem
+                label="Cahier d’absences"
+                icon={<IconClipboard />}
+                section="absences"
+              />
+              <SidebarNavItem
+                label="Cahier de notes"
+                icon={<IconBook />}
+                section="notes"
+              />
             </nav>
 
             {/* Footer */}
@@ -1234,7 +1293,9 @@ export default function ParentPage() {
                 <div className="text-[13px] font-extrabold uppercase tracking-wide">
                   Mon Cahier
                 </div>
-                <div className="text-[12px] opacity-80 truncate">Espace parent</div>
+                <div className="text-[12px] opacity-80 truncate">
+                  Espace parent
+                </div>
               </div>
             </div>
           </div>
@@ -1270,7 +1331,12 @@ export default function ParentPage() {
                 ].join(" ")}
               >
                 <div className={active ? "font-extrabold" : ""}>{it.icon}</div>
-                <div className={["text-[12px]", active ? "font-extrabold" : "font-semibold"].join(" ")}>
+                <div
+                  className={[
+                    "text-[12px]",
+                    active ? "font-extrabold" : "font-semibold",
+                  ].join(" ")}
+                >
                   {it.label}
                 </div>
               </button>
@@ -1280,7 +1346,7 @@ export default function ParentPage() {
       </div>
 
       {/* ───── CORPS ───── */}
-      <div className="mx-auto flex w-full max-w-6xl">
+      <div className="mx-auto flex w-full max-w-6xl min-w-0">
         {/* Sidebar desktop */}
         <aside className="hidden w-72 flex-col bg-[#003766] text-white lg:flex">
           <div className="border-b border-white/15 px-4 py-5">
@@ -1329,7 +1395,9 @@ export default function ParentPage() {
                     onClick={() => setActiveChildId(k.id)}
                     className={[
                       "flex w-full items-center gap-3 rounded-2xl px-3 py-3 text-[14px] font-semibold",
-                      active ? "bg-white/90 text-[#003766]" : "text-white hover:bg-white/10",
+                      active
+                        ? "bg-white/90 text-[#003766]"
+                        : "text-white hover:bg-white/10",
                     ].join(" ")}
                   >
                     <div className="grid h-9 w-9 place-items-center rounded-xl bg-white/20 text-[12px] font-extrabold">
@@ -1348,10 +1416,26 @@ export default function ParentPage() {
           </div>
 
           <nav className="flex-1 space-y-2 px-4 py-4">
-            <SidebarNavItem label="Tableau de bord" icon={<IconHome />} section="dashboard" />
-            <SidebarNavItem label="Conduite & points" icon={<IconClipboard />} section="conduct" />
-            <SidebarNavItem label="Cahier d’absences" icon={<IconClipboard />} section="absences" />
-            <SidebarNavItem label="Cahier de notes" icon={<IconBook />} section="notes" />
+            <SidebarNavItem
+              label="Tableau de bord"
+              icon={<IconHome />}
+              section="dashboard"
+            />
+            <SidebarNavItem
+              label="Conduite & points"
+              icon={<IconClipboard />}
+              section="conduct"
+            />
+            <SidebarNavItem
+              label="Cahier d’absences"
+              icon={<IconClipboard />}
+              section="absences"
+            />
+            <SidebarNavItem
+              label="Cahier de notes"
+              icon={<IconBook />}
+              section="notes"
+            />
           </nav>
 
           <div className="border-t border-white/15 px-4 py-4">
@@ -1366,13 +1450,15 @@ export default function ParentPage() {
             </Button>
             <div className="mt-4 leading-tight text-white/80">
               <div className="text-[12px] opacity-80">Développé par</div>
-              <div className="text-[15px] font-extrabold text-amber-300">Nexa Digitale</div>
+              <div className="text-[15px] font-extrabold text-amber-300">
+                Nexa Digitale
+              </div>
             </div>
           </div>
         </aside>
 
         {/* Contenu principal */}
-        <main className="flex-1 px-3 py-5 lg:px-6 lg:py-6 pb-[calc(96px+env(safe-area-inset-bottom))]">
+        <main className="flex-1 min-w-0 px-3 py-5 lg:px-6 lg:py-6 pb-[calc(96px+env(safe-area-inset-bottom))]">
           <div className="mb-2 text-[12px] text-slate-500">
             Vous êtes ici : <span className="mx-1">›</span> Accueil
           </div>
@@ -1415,25 +1501,28 @@ export default function ParentPage() {
                   Information !
                 </div>
                 <p className="mt-2">
-                  Pour recevoir une alerte dès qu&apos;une absence, un retard ou une note
-                  est enregistrée, activez les notifications push sur votre téléphone.
+                  Pour recevoir une alerte dès qu&apos;une absence, un retard ou
+                  une note est enregistrée, activez les notifications push sur
+                  votre téléphone.
                 </p>
               </div>
 
-              <div className="flex flex-wrap items-center gap-3 pt-1">
+              {/* ✅ FIX mobile : évite débordement, empile proprement */}
+              <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
                 {!granted ? (
                   <Button
                     tone="emerald"
                     onClick={enablePush}
                     title="Activer les notifications push"
                     iconLeft={<IconBell />}
+                    className="w-full"
                   >
                     Activer les notifications
                   </Button>
                 ) : (
-                  <span className="text-[14px] font-bold text-emerald-700">
+                  <div className="w-full rounded-2xl bg-emerald-50 px-4 py-3 text-[14px] font-bold text-emerald-700 ring-1 ring-emerald-200">
                     Notifications push activées ✅
-                  </span>
+                  </div>
                 )}
 
                 <Button
@@ -1441,6 +1530,7 @@ export default function ParentPage() {
                   onClick={safeLogout}
                   disabled={loggingOut}
                   iconLeft={<IconPower />}
+                  className="w-full"
                 >
                   {loggingOut ? "Déconnexion…" : "Se déconnecter"}
                 </Button>
@@ -1467,9 +1557,17 @@ export default function ParentPage() {
                 </div>
 
                 <div className="hidden items-center gap-2 md:flex">
-                  <Input type="date" value={conductFrom} onChange={(e) => setConductFrom(e.target.value)} />
+                  <Input
+                    type="date"
+                    value={conductFrom}
+                    onChange={(e) => setConductFrom(e.target.value)}
+                  />
                   <span className="text-[13px] text-slate-600">au</span>
-                  <Input type="date" value={conductTo} onChange={(e) => setConductTo(e.target.value)} />
+                  <Input
+                    type="date"
+                    value={conductTo}
+                    onChange={(e) => setConductTo(e.target.value)}
+                  />
                   <Button
                     onClick={applyConductFilter}
                     disabled={loadingConduct}
@@ -1482,8 +1580,16 @@ export default function ParentPage() {
 
               {/* filtres mobile */}
               <div className="mb-4 grid grid-cols-2 gap-2 md:hidden">
-                <Input type="date" value={conductFrom} onChange={(e) => setConductFrom(e.target.value)} />
-                <Input type="date" value={conductTo} onChange={(e) => setConductTo(e.target.value)} />
+                <Input
+                  type="date"
+                  value={conductFrom}
+                  onChange={(e) => setConductFrom(e.target.value)}
+                />
+                <Input
+                  type="date"
+                  value={conductTo}
+                  onChange={(e) => setConductTo(e.target.value)}
+                />
                 <div className="col-span-2 flex justify-center">
                   <Button
                     className="mx-auto w-full max-w-[220px]"
@@ -1505,7 +1611,11 @@ export default function ParentPage() {
                 <div className="flex items-center justify-between rounded-2xl border bg-slate-50 p-4 text-[15px] text-slate-700">
                   <div>Aucun enfant lié à votre compte pour l’instant.</div>
                   {!granted && (
-                    <Button tone="outline" onClick={enablePush} iconLeft={<IconBell />}>
+                    <Button
+                      tone="outline"
+                      onClick={enablePush}
+                      iconLeft={<IconBell />}
+                    >
                       Activer les push
                     </Button>
                   )}
@@ -1517,7 +1627,10 @@ export default function ParentPage() {
                     {filteredKids.map((k) => {
                       const c = conduct[k.id];
                       return (
-                        <div key={k.id} className="rounded-2xl border border-slate-200 p-4">
+                        <div
+                          key={k.id}
+                          className="rounded-2xl border border-slate-200 p-4"
+                        >
                           <div className="flex items-start justify-between gap-3">
                             <div className="min-w-0">
                               <div className="font-extrabold text-slate-900 text-[16px]">
@@ -1527,12 +1640,15 @@ export default function ParentPage() {
                                 {k.class_label || "—"}
                               </div>
                             </div>
-                            {c ? <Badge tone="emerald">Points de conduite</Badge> : <Badge>—</Badge>}
+                            {c ? (
+                              <Badge tone="emerald">Points de conduite</Badge>
+                            ) : (
+                              <Badge>—</Badge>
+                            )}
                           </div>
 
                           {c ? (
                             <div className="mt-4 space-y-4">
-                              {/* ✅ 2 en haut / 2 en bas */}
                               <div className="grid grid-cols-2 gap-4">
                                 <VerticalGauge
                                   label="Assiduité"
@@ -1561,12 +1677,16 @@ export default function ParentPage() {
                               </div>
 
                               <div className="rounded-2xl bg-slate-50 px-4 py-3 text-[14px] text-slate-700">
-                                <span className="font-extrabold">Appréciation : </span>
+                                <span className="font-extrabold">
+                                  Appréciation :{" "}
+                                </span>
                                 {c.appreciation}
                               </div>
                             </div>
                           ) : (
-                            <div className="mt-3 text-[15px] text-slate-600">—</div>
+                            <div className="mt-3 text-[15px] text-slate-600">
+                              —
+                            </div>
                           )}
                         </div>
                       );
@@ -1576,7 +1696,9 @@ export default function ParentPage() {
                   {/* desktop : tableau */}
                   <div className="mt-3 hidden overflow-x-auto rounded-2xl border md:block">
                     {(() => {
-                      const anyConduct = filteredKids.map((k) => conduct[k.id]).find(Boolean);
+                      const anyConduct = filteredKids
+                        .map((k) => conduct[k.id])
+                        .find(Boolean);
                       const rubricMax =
                         anyConduct?.rubric_max ?? {
                           assiduite: 6,
@@ -1591,38 +1713,72 @@ export default function ParentPage() {
                             <tr>
                               <th className="px-4 py-3 text-left">Enfant</th>
                               <th className="px-4 py-3 text-left">Classe</th>
-                              <th className="px-4 py-3 text-left">Assiduité (/{rubricMax.assiduite})</th>
-                              <th className="px-4 py-3 text-left">Tenue (/{rubricMax.tenue})</th>
-                              <th className="px-4 py-3 text-left">Moralité (/{rubricMax.moralite})</th>
-                              <th className="px-4 py-3 text-left">Discipline (/{rubricMax.discipline})</th>
-                              <th className="px-4 py-3 text-left">Appréciation</th>
+                              <th className="px-4 py-3 text-left">
+                                Assiduité (/{rubricMax.assiduite})
+                              </th>
+                              <th className="px-4 py-3 text-left">
+                                Tenue (/{rubricMax.tenue})
+                              </th>
+                              <th className="px-4 py-3 text-left">
+                                Moralité (/{rubricMax.moralite})
+                              </th>
+                              <th className="px-4 py-3 text-left">
+                                Discipline (/{rubricMax.discipline})
+                              </th>
+                              <th className="px-4 py-3 text-left">
+                                Appréciation
+                              </th>
                             </tr>
                           </thead>
                           <tbody className="bg-white">
                             {filteredKids.map((k) => {
                               const c = conduct[k.id];
                               return (
-                                <tr key={k.id} className="border-t last:border-b-0">
-                                  <td className="px-4 py-3 font-semibold">{k.full_name}</td>
-                                  <td className="px-4 py-3">{k.class_label || "—"}</td>
+                                <tr
+                                  key={k.id}
+                                  className="border-t last:border-b-0"
+                                >
+                                  <td className="px-4 py-3 font-semibold">
+                                    {k.full_name}
+                                  </td>
+                                  <td className="px-4 py-3">
+                                    {k.class_label || "—"}
+                                  </td>
                                   {c ? (
                                     <>
                                       <td className="px-4 py-3">
-                                        {rubricCellValue(c.breakdown.assiduite, c.rubric_max.assiduite)}
+                                        {rubricCellValue(
+                                          c.breakdown.assiduite,
+                                          c.rubric_max.assiduite,
+                                        )}
                                       </td>
                                       <td className="px-4 py-3">
-                                        {rubricCellValue(c.breakdown.tenue, c.rubric_max.tenue)}
+                                        {rubricCellValue(
+                                          c.breakdown.tenue,
+                                          c.rubric_max.tenue,
+                                        )}
                                       </td>
                                       <td className="px-4 py-3">
-                                        {rubricCellValue(c.breakdown.moralite, c.rubric_max.moralite)}
+                                        {rubricCellValue(
+                                          c.breakdown.moralite,
+                                          c.rubric_max.moralite,
+                                        )}
                                       </td>
                                       <td className="px-4 py-3">
-                                        {rubricCellValue(c.breakdown.discipline, c.rubric_max.discipline)}
+                                        {rubricCellValue(
+                                          c.breakdown.discipline,
+                                          c.rubric_max.discipline,
+                                        )}
                                       </td>
-                                      <td className="px-4 py-3">{c.appreciation}</td>
+                                      <td className="px-4 py-3">
+                                        {c.appreciation}
+                                      </td>
                                     </>
                                   ) : (
-                                    <td className="px-4 py-3 text-slate-600" colSpan={5}>
+                                    <td
+                                      className="px-4 py-3 text-slate-600"
+                                      colSpan={5}
+                                    >
                                       —
                                     </td>
                                   )}
@@ -1697,12 +1853,18 @@ export default function ParentPage() {
 
                     return (
                       <TiltCard key={k.id} className={t.ring}>
-                        <div className={`relative rounded-2xl border ${t.border} bg-white p-4 shadow-sm`}>
-                          <div className={`absolute inset-x-0 top-0 h-1.5 rounded-t-2xl bg-gradient-to-r ${t.bar}`} />
+                        <div
+                          className={`relative rounded-2xl border ${t.border} bg-white p-4 shadow-sm`}
+                        >
+                          <div
+                            className={`absolute inset-x-0 top-0 h-1.5 rounded-t-2xl bg-gradient-to-r ${t.bar}`}
+                          />
 
                           <div className="mt-2 flex items-center justify-between gap-3">
                             <div className="flex min-w-0 items-center gap-3">
-                              <div className={`grid h-10 w-10 place-items-center rounded-2xl text-[13px] font-extrabold ${t.chipBg} ${t.chipText}`}>
+                              <div
+                                className={`grid h-10 w-10 place-items-center rounded-2xl text-[13px] font-extrabold ${t.chipBg} ${t.chipText}`}
+                              >
                                 {getInitials(k.full_name)}
                               </div>
                               <div className="min-w-0">
@@ -1740,13 +1902,26 @@ export default function ParentPage() {
 
                                 const parts: string[] = [];
                                 if (g.absentCount)
-                                  parts.push(`${g.absentCount} absence${g.absentCount > 1 ? "s" : ""}`);
+                                  parts.push(
+                                    `${g.absentCount} absence${
+                                      g.absentCount > 1 ? "s" : ""
+                                    }`,
+                                  );
                                 if (g.lateCount)
-                                  parts.push(`${g.lateCount} retard${g.lateCount > 1 ? "s" : ""}`);
-                                const summary = parts.length ? parts.join(" • ") : "Aucun évènement";
+                                  parts.push(
+                                    `${g.lateCount} retard${
+                                      g.lateCount > 1 ? "s" : ""
+                                    }`,
+                                  );
+                                const summary = parts.length
+                                  ? parts.join(" • ")
+                                  : "Aucun évènement";
 
                                 return (
-                                  <li key={g.day} className="rounded-2xl border p-3 transition hover:bg-slate-50/70">
+                                  <li
+                                    key={g.day}
+                                    className="rounded-2xl border p-3 transition hover:bg-slate-50/70"
+                                  >
                                     <div className="flex items-center justify-between gap-3">
                                       <div className="min-w-0 text-[15px] font-bold text-slate-800">
                                         {g.label} :{" "}
@@ -1764,40 +1939,54 @@ export default function ParentPage() {
                                           }
                                           className="shrink-0 text-[13px] font-bold text-emerald-700 underline-offset-2 hover:underline"
                                         >
-                                          {isOpen || hasSingle ? "Masquer" : "Voir détails"}
+                                          {isOpen || hasSingle
+                                            ? "Masquer"
+                                            : "Voir détails"}
                                         </button>
                                       )}
                                     </div>
 
-                                    {(isOpen || hasSingle) && g.items.length > 0 && (
-                                      <ul className="mt-3 divide-y">
-                                        {g.items.map((ev) => (
-                                          <li key={ev.id} className="flex items-start justify-between gap-3 py-3">
-                                            <div className="min-w-0">
-                                              <div className="truncate text-[15px] text-slate-800">
-                                                {ev.type === "absent" ? (
-                                                  <Badge tone="rose">Absence</Badge>
-                                                ) : (
-                                                  <Badge tone="amber">Retard</Badge>
-                                                )}
-                                                <span className="ml-2 font-semibold">
-                                                  {ev.subject_name || "—"}
-                                                </span>
+                                    {(isOpen || hasSingle) &&
+                                      g.items.length > 0 && (
+                                        <ul className="mt-3 divide-y">
+                                          {g.items.map((ev) => (
+                                            <li
+                                              key={ev.id}
+                                              className="flex items-start justify-between gap-3 py-3"
+                                            >
+                                              <div className="min-w-0">
+                                                <div className="truncate text-[15px] text-slate-800">
+                                                  {ev.type === "absent" ? (
+                                                    <Badge tone="rose">
+                                                      Absence
+                                                    </Badge>
+                                                  ) : (
+                                                    <Badge tone="amber">
+                                                      Retard
+                                                    </Badge>
+                                                  )}
+                                                  <span className="ml-2 font-semibold">
+                                                    {ev.subject_name || "—"}
+                                                  </span>
+                                                </div>
+                                                <div className="mt-1 text-[13px] text-slate-600">
+                                                  {slotLabel(
+                                                    ev.when,
+                                                    ev.expected_minutes,
+                                                  )}{" "}
+                                                  {ev.type === "late" &&
+                                                  ev.minutes_late
+                                                    ? `• ${ev.minutes_late} min`
+                                                    : ""}
+                                                </div>
                                               </div>
-                                              <div className="mt-1 text-[13px] text-slate-600">
-                                                {slotLabel(ev.when, ev.expected_minutes)}{" "}
-                                                {ev.type === "late" && ev.minutes_late
-                                                  ? `• ${ev.minutes_late} min`
-                                                  : ""}
+                                              <div className="shrink-0 text-[13px] text-slate-500">
+                                                {ev.class_label || ""}
                                               </div>
-                                            </div>
-                                            <div className="shrink-0 text-[13px] text-slate-500">
-                                              {ev.class_label || ""}
-                                            </div>
-                                          </li>
-                                        ))}
-                                      </ul>
-                                    )}
+                                            </li>
+                                          ))}
+                                        </ul>
+                                      )}
                                   </li>
                                 );
                               })}
@@ -1827,7 +2016,9 @@ export default function ParentPage() {
                                     }
                                     className="text-[13px] font-semibold text-slate-700 underline-offset-2 hover:underline"
                                   >
-                                    {showAllPenForKid[k.id] ? "Réduire" : "Voir plus"}
+                                    {showAllPenForKid[k.id]
+                                      ? "Réduire"
+                                      : "Voir plus"}
                                   </button>
                                 )}
                               </div>
@@ -1845,10 +2036,16 @@ export default function ParentPage() {
                                     <li key={p.id} className="py-3">
                                       <div className="text-[15px] text-slate-800">
                                         <span className="mr-2">
-                                          <Badge tone="amber">{rubricLabel(p.rubric)}</Badge>
+                                          <Badge tone="amber">
+                                            {rubricLabel(p.rubric)}
+                                          </Badge>
                                         </span>
                                         <span className="font-extrabold">
-                                          −{Number(p.points || 0).toFixed(2).replace(".", ",")} pt
+                                          −
+                                          {Number(p.points || 0)
+                                            .toFixed(2)
+                                            .replace(".", ",")}{" "}
+                                          pt
                                         </span>
                                         {p.reason?.trim() ? (
                                           <span className="ml-2 text-[13px] text-slate-600">
@@ -1876,19 +2073,28 @@ export default function ParentPage() {
                               </div>
                               <ul className="space-y-2 text-[14px] text-slate-700">
                                 {gradesForKid.slice(0, 3).map((g) => (
-                                  <li key={g.id} className="flex items-start justify-between gap-3">
+                                  <li
+                                    key={g.id}
+                                    className="flex items-start justify-between gap-3"
+                                  >
                                     <div className="min-w-0">
                                       <div className="truncate font-semibold">
-                                        {g.subject_name || "—"} · {gradeKindLabel(g.eval_kind)}
+                                        {g.subject_name || "—"} ·{" "}
+                                        {gradeKindLabel(g.eval_kind)}
                                       </div>
-                                      <div className="text-[13px] text-slate-500">{fmt(g.eval_date)}</div>
+                                      <div className="text-[13px] text-slate-500">
+                                        {fmt(g.eval_date)}
+                                      </div>
                                     </div>
                                     <div className="shrink-0 text-right">
                                       {g.score == null ? (
-                                        <span className="text-[13px] text-slate-500">—</span>
+                                        <span className="text-[13px] text-slate-500">
+                                          —
+                                        </span>
                                       ) : (
                                         <span className="text-[15px] font-extrabold text-slate-900">
-                                          {g.score.toFixed(2).replace(".", ",")}/{g.scale}
+                                          {g.score.toFixed(2).replace(".", ",")}/
+                                          {g.scale}
                                         </span>
                                       )}
                                     </div>
@@ -1980,46 +2186,64 @@ export default function ParentPage() {
                   {filteredKids.map((k, idx) => {
                     const allGrades = kidGrades[k.id] || [];
                     const byDate = allGrades.filter((g) =>
-                      isInDateRange(g.eval_date, gradeFrom || undefined, gradeTo || undefined),
+                      isInDateRange(
+                        g.eval_date,
+                        gradeFrom || undefined,
+                        gradeTo || undefined,
+                      ),
                     );
 
-                    const subjectKey = (g: KidGradeRow) => g.subject_id || g.subject_name || "";
+                    const subjectKey = (g: KidGradeRow) =>
+                      g.subject_id || g.subject_name || "";
                     const subjectMap = new Map<string, string>();
                     for (const g of byDate) {
                       const key = subjectKey(g);
                       if (!key) continue;
-                      if (!subjectMap.has(key)) subjectMap.set(key, g.subject_name || "—");
+                      if (!subjectMap.has(key))
+                        subjectMap.set(key, g.subject_name || "—");
                     }
                     const subjectList = Array.from(subjectMap.entries());
 
                     const activeSubject =
-                      activeSubjectPerKid[k.id] && activeSubjectPerKid[k.id] !== "all"
+                      activeSubjectPerKid[k.id] &&
+                      activeSubjectPerKid[k.id] !== "all"
                         ? activeSubjectPerKid[k.id]
                         : "all";
 
                     const filtered =
-                      activeSubject === "all" ? byDate : byDate.filter((g) => subjectKey(g) === activeSubject);
+                      activeSubject === "all"
+                        ? byDate
+                        : byDate.filter((g) => subjectKey(g) === activeSubject);
 
                     const t = themeFor(idx);
 
                     return (
-                      <div key={k.id} className="rounded-2xl border border-slate-200 bg-slate-50/60 p-4">
+                      <div
+                        key={k.id}
+                        className="rounded-2xl border border-slate-200 bg-slate-50/60 p-4"
+                      >
                         <div className="mb-3 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                           <div className="flex min-w-0 items-center gap-3">
-                            <div className={`grid h-10 w-10 place-items-center rounded-2xl text-[13px] font-extrabold ${t.chipBg} ${t.chipText}`}>
+                            <div
+                              className={`grid h-10 w-10 place-items-center rounded-2xl text-[13px] font-extrabold ${t.chipBg} ${t.chipText}`}
+                            >
                               {getInitials(k.full_name)}
                             </div>
                             <div className="min-w-0">
                               <div className="truncate text-[16px] font-extrabold text-slate-900">
                                 {k.full_name}
                               </div>
-                              <div className="text-[13px] text-slate-600">{k.class_label || "—"}</div>
+                              <div className="text-[13px] text-slate-600">
+                                {k.class_label || "—"}
+                              </div>
                             </div>
                           </div>
 
                           {/* matières : scroll horizontal (évite débordement) */}
                           <div className="flex items-center gap-2">
-                            <span className="text-[13px] font-semibold text-slate-500">Matières :</span>
+                            <span className="text-[13px] font-semibold text-slate-500">
+                              Matières :
+                            </span>
                             <div className="flex max-w-full gap-2 overflow-x-auto whitespace-nowrap pb-1">
                               <button
                                 type="button"
@@ -2076,17 +2300,21 @@ export default function ParentPage() {
                           </div>
                         ) : (
                           <>
-                            {/* ✅ mobile : liste cards (évite overflow) */}
+                            {/* ✅ mobile : liste cards */}
                             <div className="space-y-3 md:hidden">
                               {filtered.map((g) => (
-                                <div key={g.id} className="rounded-2xl border bg-white p-4">
+                                <div
+                                  key={g.id}
+                                  className="rounded-2xl border bg-white p-4"
+                                >
                                   <div className="flex items-start justify-between gap-3">
                                     <div className="min-w-0">
                                       <div className="text-[15px] font-extrabold text-slate-900 truncate">
                                         {g.subject_name || "—"}
                                       </div>
                                       <div className="text-[13px] text-slate-600">
-                                        {gradeKindLabel(g.eval_kind)} {g.title ? `• ${g.title}` : ""}
+                                        {gradeKindLabel(g.eval_kind)}{" "}
+                                        {g.title ? `• ${g.title}` : ""}
                                       </div>
                                       <div className="mt-1 text-[13px] text-slate-500">
                                         {fmt(g.eval_date)}
@@ -2094,10 +2322,13 @@ export default function ParentPage() {
                                     </div>
                                     <div className="shrink-0 text-right">
                                       {g.score == null ? (
-                                        <span className="text-[13px] text-slate-500">—</span>
+                                        <span className="text-[13px] text-slate-500">
+                                          —
+                                        </span>
                                       ) : (
                                         <span className="text-[16px] font-extrabold text-slate-900">
-                                          {g.score.toFixed(2).replace(".", ",")}/{g.scale}
+                                          {g.score.toFixed(2).replace(".", ",")}/
+                                          {g.scale}
                                         </span>
                                       )}
                                     </div>
@@ -2112,25 +2343,43 @@ export default function ParentPage() {
                                 <thead className="bg-slate-50">
                                   <tr>
                                     <th className="px-4 py-3 text-left">Date</th>
-                                    <th className="px-4 py-3 text-left">Matière</th>
+                                    <th className="px-4 py-3 text-left">
+                                      Matière
+                                    </th>
                                     <th className="px-4 py-3 text-left">Type</th>
-                                    <th className="px-4 py-3 text-left">Titre</th>
+                                    <th className="px-4 py-3 text-left">
+                                      Titre
+                                    </th>
                                     <th className="px-4 py-3 text-right">Note</th>
                                   </tr>
                                 </thead>
                                 <tbody>
                                   {filtered.map((g) => (
-                                    <tr key={g.id} className="border-t last:border-b-0">
-                                      <td className="px-4 py-3">{fmt(g.eval_date)}</td>
-                                      <td className="px-4 py-3">{g.subject_name || "—"}</td>
-                                      <td className="px-4 py-3">{gradeKindLabel(g.eval_kind)}</td>
-                                      <td className="px-4 py-3">{g.title || "—"}</td>
+                                    <tr
+                                      key={g.id}
+                                      className="border-t last:border-b-0"
+                                    >
+                                      <td className="px-4 py-3">
+                                        {fmt(g.eval_date)}
+                                      </td>
+                                      <td className="px-4 py-3">
+                                        {g.subject_name || "—"}
+                                      </td>
+                                      <td className="px-4 py-3">
+                                        {gradeKindLabel(g.eval_kind)}
+                                      </td>
+                                      <td className="px-4 py-3">
+                                        {g.title || "—"}
+                                      </td>
                                       <td className="px-4 py-3 text-right">
                                         {g.score == null ? (
-                                          <span className="text-slate-500">—</span>
+                                          <span className="text-slate-500">
+                                            —
+                                          </span>
                                         ) : (
                                           <span className="font-extrabold text-slate-900">
-                                            {g.score.toFixed(2).replace(".", ",")}/{g.scale}
+                                            {g.score.toFixed(2).replace(".", ",")}/
+                                            {g.scale}
                                           </span>
                                         )}
                                       </td>

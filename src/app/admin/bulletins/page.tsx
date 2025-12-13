@@ -1,4 +1,4 @@
-//src/app/admin/notes/bulletins/page.tsx
+// src/app/admin/notes/bulletins/page.tsx
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
@@ -113,6 +113,9 @@ type BulletinItemBase = {
   // ✅ QR renvoyé par l’API (non cassant)
   qr_url?: string | null;
   qr_token?: string | null;
+
+  // ✅ QR PNG généré côté serveur (prioritaire pour print/PDF)
+  qr_png?: string | null;
 
   per_subject: PerSubjectAvg[];
   per_group: PerGroupAvg[];
@@ -345,7 +348,7 @@ function computeSubjectAppreciation(avg: number | null | undefined): string {
   return "Blâme";
 }
 
-/* ───────── QR Code (PNG via lib qrcode) ───────── */
+/* ───────── QR Code (fallback client) ───────── */
 
 const QR_SIZE = 58;
 const __QR_CACHE = new Map<string, string>();
@@ -379,10 +382,11 @@ async function generateQrDataUrl(
 
     if (typeof toDataURL !== "function") return null;
 
+    // ✅ IMPORTANT: margin > 0 (= quiet zone) + ECL plus robuste pour le print
     const url: string = await toDataURL(text, {
       width: size,
-      margin: 0,
-      errorCorrectionLevel: "M",
+      margin: 2,
+      errorCorrectionLevel: "Q",
     });
 
     if (url) __QR_CACHE.set(cacheKey, url);
@@ -487,9 +491,7 @@ function applyGroupRanksFront(items: (BulletinItemBase | BulletinItemWithRank)[]
 
 /* ───────── Ranks + stats helper ───────── */
 
-function computeRanksAndStats(
-  res: BulletinResponse | null
-): EnrichedBulletin | null {
+function computeRanksAndStats(res: BulletinResponse | null): EnrichedBulletin | null {
   if (!res) return null;
   const items = res.items ?? [];
 
@@ -721,9 +723,16 @@ function StudentBulletinCard({
     item.matricule,
   ]);
 
+  // ✅ priorité print: qr_png (serveur). fallback: génération client
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
 
   useEffect(() => {
+    // Si l’API fournit déjà un PNG (idéal pour print/PDF), on ne génère rien côté client
+    if (item.qr_png) {
+      setQrDataUrl(null);
+      return;
+    }
+
     let cancelled = false;
     (async () => {
       const url = await generateQrDataUrl(qrText, QR_SIZE);
@@ -732,7 +741,9 @@ function StudentBulletinCard({
     return () => {
       cancelled = true;
     };
-  }, [qrText]);
+  }, [qrText, item.qr_png]);
+
+  const qrImgSrc = item.qr_png || qrDataUrl;
 
   const renderSignatureLine = () => (
     <div className="flex h-[14px] items-end">
@@ -740,8 +751,10 @@ function StudentBulletinCard({
     </div>
   );
 
+  const perSubject = item.per_subject ?? [];
+
   const renderSubjectBlock = (s: BulletinSubject) => {
-    const cell = item.per_subject.find((ps) => ps.subject_id === s.subject_id);
+    const cell = perSubject.find((ps) => ps.subject_id === s.subject_id);
     const avg = cell?.avg20 ?? null;
     const moyCoeff = avg !== null ? round2(avg * (s.coeff_bulletin || 0)) : null;
 
@@ -870,11 +883,11 @@ function StudentBulletinCard({
               )}
             </div>
 
-            {/* ✅ QR en PNG (fiable print/PDF) */}
+            {/* ✅ QR: priorité au PNG serveur (qr_png), fallback client (qrDataUrl) */}
             <div className="bdr flex h-[58px] w-[58px] items-center justify-center overflow-hidden bg-white">
-              {qrDataUrl ? (
+              {qrImgSrc ? (
                 // eslint-disable-next-line @next/next/no-img-element
-                <img src={qrDataUrl} alt="QR" className="h-[54px] w-[54px]" />
+                <img src={qrImgSrc} alt="QR" className="h-[54px] w-[54px]" />
               ) : (
                 <div className="text-[8px] text-slate-500">QR</div>
               )}
@@ -900,9 +913,7 @@ function StudentBulletinCard({
           <div className="text-center">
             <div className="text-[11px] font-bold uppercase">
               {safeUpper(
-                String(
-                  (institution?.institution_name || "ÉTABLISSEMENT").trim()
-                )
+                String((institution?.institution_name || "ÉTABLISSEMENT").trim())
               )}
             </div>
             <div className="text-[9px]">
@@ -1047,9 +1058,7 @@ function StudentBulletinCard({
                     : "—";
                 const groupCoeff = g.annual_coeff ?? 0;
                 const groupTotal =
-                  groupAvg !== null && groupCoeff
-                    ? round2(groupAvg * groupCoeff)
-                    : null;
+                  groupAvg !== null && groupCoeff ? round2(groupAvg * groupCoeff) : null;
 
                 const bilanLabel = (g.label || g.code || "BILAN").toUpperCase();
 
@@ -1071,9 +1080,7 @@ function StudentBulletinCard({
                     </td>
                     <td className="bdr px-1 py-[1px]" />
                     <td className="bdr px-1 py-[1px]" />
-                    <td className="bdr px-1 py-[1px]">
-                      {renderSignatureLine()}
-                    </td>
+                    <td className="bdr px-1 py-[1px]">{renderSignatureLine()}</td>
                   </tr>,
                 ];
               })}
@@ -1131,19 +1138,16 @@ function StudentBulletinCard({
               {conductRubricMax && conduct?.breakdown && (
                 <div className="mt-1 grid grid-cols-2 gap-x-2 gap-y-[2px] text-[8px] text-slate-700">
                   <div>
-                    Assiduité : {conduct.breakdown.assiduite} /{" "}
-                    {conductRubricMax.assiduite}
+                    Assiduité : {conduct.breakdown.assiduite} / {conductRubricMax.assiduite}
                   </div>
                   <div>
                     Tenue : {conduct.breakdown.tenue} / {conductRubricMax.tenue}
                   </div>
                   <div>
-                    Moralité : {conduct.breakdown.moralite} /{" "}
-                    {conductRubricMax.moralite}
+                    Moralité : {conduct.breakdown.moralite} / {conductRubricMax.moralite}
                   </div>
                   <div>
-                    Discipline : {conduct.breakdown.discipline} /{" "}
-                    {conductRubricMax.discipline}
+                    Discipline : {conduct.breakdown.discipline} / {conductRubricMax.discipline}
                   </div>
                 </div>
               )}
@@ -1162,9 +1166,7 @@ function StudentBulletinCard({
           </div>
           <div className="mt-[2px]">
             Rang :{" "}
-            <span className="font-semibold">
-              {item.rank ? `${item.rank}e` : "—"}
-            </span>{" "}
+            <span className="font-semibold">{item.rank ? `${item.rank}e` : "—"}</span>{" "}
             / {total}
           </div>
         </div>
@@ -1181,39 +1183,28 @@ function StudentBulletinCard({
 
       <div className="mt-1 grid grid-cols-2 gap-2 text-[9px] leading-tight">
         <div className="bdr p-1">
-          <div className="font-semibold uppercase">
-            Mentions du conseil de classe
-          </div>
+          <div className="font-semibold uppercase">Mentions du conseil de classe</div>
           <div className="mt-[2px] text-[8px] font-semibold">DISTINCTIONS</div>
           <div className="mt-[2px] space-y-[2px] text-[8px]">
             <div>
-              {tick(mentions.distinction === "honour")} Tableau d&apos;honneur /
-              Félicitations
+              {tick(mentions.distinction === "honour")} Tableau d&apos;honneur / Félicitations
             </div>
-            <div>
-              {tick(mentions.distinction === "excellence")} Tableau d&apos;excellence
-            </div>
+            <div>{tick(mentions.distinction === "excellence")} Tableau d&apos;excellence</div>
             <div>
               {tick(mentions.distinction === "encouragement")} Tableau d&apos;encouragement
             </div>
           </div>
           <div className="mt-2 text-[8px] font-semibold">SANCTIONS</div>
           <div className="mt-[2px] space-y-[2px] text-[8px]">
-            <div>
-              {tick(mentions.sanction === "warningWork")} Avertissement travail
-            </div>
-            <div>
-              {tick(mentions.sanction === "warningConduct")} Avertissement conduite
-            </div>
+            <div>{tick(mentions.sanction === "warningWork")} Avertissement travail</div>
+            <div>{tick(mentions.sanction === "warningConduct")} Avertissement conduite</div>
             <div>{tick(mentions.sanction === "blameWork")} Blâme travail</div>
             <div>{tick(mentions.sanction === "blameConduct")} Blâme conduite</div>
           </div>
         </div>
 
         <div className="bdr p-1">
-          <div className="font-semibold uppercase">
-            Appréciations du conseil de classe
-          </div>
+          <div className="font-semibold uppercase">Appréciations du conseil de classe</div>
           <div className="mt-2 h-[62px] bdr bg-white" />
         </div>
       </div>
@@ -1221,29 +1212,21 @@ function StudentBulletinCard({
       {/* ✅ VISAS : on garde Prof Principal + Chef, et on retire VISA PARENT */}
       <div className="mt-1 grid grid-cols-2 gap-2 text-[9px] leading-tight">
         <div className="bdr flex flex-col justify-between p-1">
-          <div className="font-semibold text-[8px]">
-            Visa du professeur principal
-          </div>
+          <div className="font-semibold text-[8px]">Visa du professeur principal</div>
           <div className="h-[44px]" />
           {classInfo.head_teacher?.display_name && (
-            <div className="text-center text-[8px]">
-              {classInfo.head_teacher.display_name}
-            </div>
+            <div className="text-center text-[8px]">{classInfo.head_teacher.display_name}</div>
           )}
         </div>
 
         <div className="bdr flex flex-col justify-between p-1">
-          <div className="font-semibold text-[8px]">
-            Visa du chef d&apos;établissement
-          </div>
+          <div className="font-semibold text-[8px]">Visa du chef d&apos;établissement</div>
           <div className="h-[44px]" />
           {institution?.institution_head_name && (
             <div className="text-center text-[8px]">
               {institution.institution_head_name}
               {institution?.institution_head_title ? (
-                <div className="text-[7px] text-slate-600">
-                  {institution.institution_head_title}
-                </div>
+                <div className="text-[7px] text-slate-600">{institution.institution_head_title}</div>
               ) : null}
             </div>
           )}
@@ -1251,8 +1234,7 @@ function StudentBulletinCard({
       </div>
 
       <div className="mt-1 text-[8px] text-black">
-        Fait à ......................................, le
-        ...........................................
+        Fait à ......................................, le ...........................................
       </div>
     </div>
   );
@@ -1264,9 +1246,7 @@ export default function BulletinsPage() {
   const [classes, setClasses] = useState<ClassRow[]>([]);
   const [classesLoading, setClassesLoading] = useState(false);
 
-  const [institution, setInstitution] = useState<InstitutionSettings | null>(
-    null
-  );
+  const [institution, setInstitution] = useState<InstitutionSettings | null>(null);
   const [institutionLoading, setInstitutionLoading] = useState(false);
 
   const [selectedClassId, setSelectedClassId] = useState<string>("");
@@ -1283,11 +1263,35 @@ export default function BulletinsPage() {
   const [bulletinLoading, setBulletinLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  const [conductSummary, setConductSummary] =
-    useState<ConductSummaryResponse | null>(null);
+  const [conductSummary, setConductSummary] = useState<ConductSummaryResponse | null>(null);
 
   // ✅ Aperçu “clean” : plein écran A4 (uniquement le bulletin)
   const [previewOpen, setPreviewOpen] = useState(false);
+
+  // ✅ FIX responsive preview (mobile) : on “scale” la feuille A4 à l’écran
+  const [previewZoom, setPreviewZoom] = useState<number>(1);
+
+  const computePreviewZoom = () => {
+    if (typeof window === "undefined") return 1;
+
+    // largeur A4 (210mm) ≈ 793.7px en CSS (96dpi)
+    const A4_PX = (210 / 25.4) * 96;
+
+    const vw = window.innerWidth || 0;
+    const padding = vw < 768 ? 16 : 64; // marge “overlay”
+    const avail = Math.max(240, vw - padding);
+
+    const z = Math.min(1, avail / A4_PX);
+    return Math.max(0.25, Number.isFinite(z) ? z : 1);
+  };
+
+  useEffect(() => {
+    if (!previewOpen) return;
+    const update = () => setPreviewZoom(computePreviewZoom());
+    update();
+    window.addEventListener("resize", update);
+    return () => window.removeEventListener("resize", update);
+  }, [previewOpen]);
 
   /* Chargement des classes */
   useEffect(() => {
@@ -1429,9 +1433,7 @@ export default function BulletinsPage() {
       if (!resBulletin.ok) {
         const txt = await resBulletin.text();
         throw new Error(
-          `Erreur bulletin (${resBulletin.status}) : ${
-            txt || "Impossible de générer le bulletin."
-          }`
+          `Erreur bulletin (${resBulletin.status}) : ${txt || "Impossible de générer le bulletin."}`
         );
       }
 
@@ -1442,6 +1444,7 @@ export default function BulletinsPage() {
       const data = json as any;
       console.log("[BULLETIN] sample qr_url:", data?.items?.[0]?.qr_url);
       console.log("[BULLETIN] sample qr_token:", data?.items?.[0]?.qr_token);
+      console.log("[BULLETIN] sample qr_png:", data?.items?.[0]?.qr_png);
 
       setBulletinRaw(json);
 
@@ -1505,7 +1508,7 @@ export default function BulletinsPage() {
           border: 1px solid #000;
         }
 
-        /* ✅ Aperçu écran : feuille A4 */
+        /* ✅ Aperçu écran : feuille A4 (taille réelle) */
         .print-page {
           width: 210mm;
           min-height: 297mm;
@@ -1513,6 +1516,24 @@ export default function BulletinsPage() {
           padding: 8mm; /* simule la marge du papier */
           font-family: Arial, Helvetica, sans-serif;
           background: #fff;
+        }
+
+        /* ✅ Responsive preview: sur écran (overlay), on scale la feuille */
+        .preview-overlay {
+          overflow-x: hidden; /* éviter l’impression “coupé” sur mobile */
+        }
+
+        @supports (zoom: 1) {
+          .preview-overlay .print-page {
+            zoom: var(--preview-zoom, 1);
+          }
+        }
+
+        @supports not (zoom: 1) {
+          .preview-overlay .print-page {
+            transform: scale(var(--preview-zoom, 1));
+            transform-origin: top center;
+          }
         }
 
         @media print {
@@ -1533,6 +1554,8 @@ export default function BulletinsPage() {
             min-height: 281mm;
             margin: 0 auto;
             padding: 0;
+            zoom: 1 !important;
+            transform: none !important;
           }
 
           .print-break {
@@ -1560,10 +1583,17 @@ export default function BulletinsPage() {
 
       {/* ✅ MODE CLEAN : uniquement le bulletin */}
       {previewOpen && items.length > 0 && enriched && classInfo ? (
-        <div className="preview-overlay fixed inset-0 z-[60] overflow-auto bg-slate-200 p-2 md:p-6">
+        <div
+          className="preview-overlay fixed inset-0 z-[60] overflow-y-auto bg-slate-200 p-2 md:p-6"
+          style={{ ["--preview-zoom" as any]: previewZoom }}
+        >
           {/* Actions minimales (écran seulement) */}
           <div className="preview-actions sticky top-2 z-10 mb-3 flex justify-end gap-2">
-            <Button variant="ghost" type="button" onClick={() => setPreviewOpen(false)}>
+            <Button
+              variant="ghost"
+              type="button"
+              onClick={() => setPreviewOpen(false)}
+            >
               <X className="h-4 w-4" />
               Fermer
             </Button>
@@ -1610,7 +1640,9 @@ export default function BulletinsPage() {
           {/* Header + actions */}
           <div className="flex items-center justify-between gap-4 print:hidden">
             <div>
-              <h1 className="text-lg font-semibold text-slate-900">Bulletins de notes</h1>
+              <h1 className="text-lg font-semibold text-slate-900">
+                Bulletins de notes
+              </h1>
               <p className="text-sm text-slate-500">
                 Charger une classe + période, puis ouvrir l’aperçu A4.
               </p>
@@ -1663,7 +1695,8 @@ export default function BulletinsPage() {
                 ))}
               </Select>
               <p className="mt-1 text-[0.7rem] text-slate-500">
-                Filtre les périodes. Si vous choisissez une période, les dates sont remplies automatiquement.
+                Filtre les périodes. Si vous choisissez une période, les dates sont
+                remplies automatiquement.
               </p>
             </div>
 
@@ -1677,11 +1710,16 @@ export default function BulletinsPage() {
                 disabled={periodsLoading || filteredPeriods.length === 0}
               >
                 <option value="">
-                  {filteredPeriods.length === 0 ? "Aucune période" : "Sélectionner une période…"}
+                  {filteredPeriods.length === 0
+                    ? "Aucune période"
+                    : "Sélectionner une période…"}
                 </option>
                 {filteredPeriods.map((p) => (
                   <option key={p.id} value={p.id}>
-                    {p.label || p.short_label || p.code || `${p.start_date} → ${p.end_date}`}
+                    {p.label ||
+                      p.short_label ||
+                      p.code ||
+                      `${p.start_date} → ${p.end_date}`}
                   </option>
                 ))}
               </Select>
@@ -1716,13 +1754,21 @@ export default function BulletinsPage() {
               <label className="mb-1 block text-xs font-semibold uppercase text-slate-500">
                 Date de début
               </label>
-              <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
+              <Input
+                type="date"
+                value={dateFrom}
+                onChange={(e) => setDateFrom(e.target.value)}
+              />
             </div>
             <div className="md:col-span-3">
               <label className="mb-1 block text-xs font-semibold uppercase text-slate-500">
                 Date de fin
               </label>
-              <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
+              <Input
+                type="date"
+                value={dateTo}
+                onChange={(e) => setDateTo(e.target.value)}
+              />
             </div>
           </div>
 

@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import crypto from "crypto";
+import QRCode from "qrcode";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -259,6 +260,43 @@ function signBulletinQRToken(payload: Omit<BulletinQRPayload, "v" | "iat">): str
   const payloadB64 = b64urlEncode(Buffer.from(JSON.stringify(full), "utf8"));
   const sig = b64urlEncode(crypto.createHmac("sha256", secret).update(payloadB64).digest());
   return `${payloadB64}.${sig}`;
+}
+
+/** ✅ Origin PUBLIC (anti localhost) */
+function pickPublicOrigin(fallbackOrigin: string) {
+  const raw =
+    process.env.NEXT_PUBLIC_APP_URL ||
+    process.env.PUBLIC_APP_URL ||
+    process.env.APP_URL ||
+    fallbackOrigin;
+
+  return String(raw || "").replace(/\/+$/, "");
+}
+
+/** ✅ QR PNG server-side (qualité print + quiet zone) */
+async function attachQrPng<T extends { qr_url: string | null }>(items: T[]) {
+  const size = Number(process.env.BULLETIN_QR_PNG_SIZE || "256");
+  const margin = Number(process.env.BULLETIN_QR_PNG_MARGIN || "2");
+  const ecl =
+    (process.env.BULLETIN_QR_PNG_ECL || "Q") as "L" | "M" | "Q" | "H";
+
+  return await Promise.all(
+    items.map(async (it) => {
+      if (!it.qr_url) return { ...it, qr_png: null as string | null };
+
+      try {
+        const png = await QRCode.toDataURL(it.qr_url, {
+          width: size,
+          margin, // ✅ quiet zone (CRITIQUE)
+          errorCorrectionLevel: ecl,
+        });
+        return { ...it, qr_png: png || null };
+      } catch (e) {
+        console.error("[bulletin] QRCode.toDataURL failed", e);
+        return { ...it, qr_png: null as string | null };
+      }
+    })
+  );
 }
 
 function addQrToItems<T extends { student_id: string }>(
@@ -715,7 +753,9 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ ok: false, error: "MISSING_CLASS_ID" }, { status: 400 });
   }
 
-  const origin = req.nextUrl.origin;
+  // ✅ origin PUBLIC (anti localhost)
+  const origin = pickPublicOrigin(req.nextUrl.origin);
+
   const qrEnabled = !!process.env.BULLETIN_QR_SECRET;
 
   /* 1) Vérifier que la classe appartient à l'établissement + récupérer prof principal */
@@ -886,7 +926,9 @@ export async function GET(req: NextRequest) {
   for (const e of evals) if (e.subject_id) subjectIdSet.add(String(e.subject_id));
 
   // ✅ union: config coeffs + sujets des évaluations (pour ne pas “oublier” une matière)
-  const subjectIdsUnionRaw = Array.from(new Set([...Array.from(subjectIdsFromConfig), ...Array.from(subjectIdSet)]));
+  const subjectIdsUnionRaw = Array.from(
+    new Set([...Array.from(subjectIdsFromConfig), ...Array.from(subjectIdSet)])
+  );
   const subjectIds = subjectIdsUnionRaw.filter((sid) => isUuid(sid));
 
   // Si aucun élève : on renvoie structure minimale (non cassant)
@@ -963,6 +1005,8 @@ export async function GET(req: NextRequest) {
       },
     });
 
+    const itemsWithQrPng = await attachQrPng(itemsWithQr);
+
     return NextResponse.json({
       ok: true,
       qr: { enabled: qrEnabled, verify_path: BULLETIN_VERIFY_PATH },
@@ -986,7 +1030,7 @@ export async function GET(req: NextRequest) {
       subjects: [],
       subject_groups: [],
       subject_components: [],
-      items: itemsWithQr,
+      items: itemsWithQrPng,
     });
   }
 
@@ -1542,6 +1586,9 @@ export async function GET(req: NextRequest) {
     },
   });
 
+  // ✅ QR PNG server-side
+  const itemsWithQrPng = await attachQrPng(itemsWithQr);
+
   return NextResponse.json({
     ok: true,
     qr: { enabled: qrEnabled, verify_path: BULLETIN_VERIFY_PATH },
@@ -1565,6 +1612,6 @@ export async function GET(req: NextRequest) {
     subjects: subjectsForReport,
     subject_groups: subjectGroups,
     subject_components: subjectComponentsForReport,
-    items: itemsWithQr,
+    items: itemsWithQrPng,
   });
 }
