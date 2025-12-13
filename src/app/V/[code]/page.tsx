@@ -1,4 +1,4 @@
-// src/app/V/[code]/page.tsx
+// src/app/v/[code]/page.tsx
 import { headers } from "next/headers";
 
 export const runtime = "nodejs";

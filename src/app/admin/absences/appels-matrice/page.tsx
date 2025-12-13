@@ -32,7 +32,7 @@ type FetchState<T> = { loading: boolean; error: string | null; data: T | null };
 type Slot = {
   key: string;
   start: string; // HH:MM
-  end: string;   // HH:MM
+  end: string; // HH:MM
   label: string;
 };
 
@@ -97,6 +97,50 @@ function cellColorClasses(s: MonitorStatus): string {
   return "bg-emerald-600 text-white border-emerald-400 shadow-lg shadow-emerald-300/40";
 }
 
+/* ========= Helpers niveau (6e, 5e, 4e, 3e, seconde, première, terminale) ========= */
+
+const LEVEL_ORDER: string[] = [
+  "6e",
+  "5e",
+  "4e",
+  "3e",
+  "seconde",
+  "première",
+  "terminale",
+];
+
+function inferLevelFromClassLabel(label?: string | null): string | null {
+  if (!label) return null;
+  const s = label.toLowerCase().trim();
+
+  if (s.startsWith("6e") || s.startsWith("6ème") || s.startsWith("6 eme"))
+    return "6e";
+  if (s.startsWith("5e") || s.startsWith("5ème") || s.startsWith("5 eme"))
+    return "5e";
+  if (s.startsWith("4e") || s.startsWith("4ème") || s.startsWith("4 eme"))
+    return "4e";
+  if (s.startsWith("3e") || s.startsWith("3ème") || s.startsWith("3 eme"))
+    return "3e";
+
+  if (s.startsWith("2nde") || s.startsWith("2de") || s.startsWith("2nd"))
+    return "seconde";
+  if (s.startsWith("1re") || s.startsWith("1ère") || s.startsWith("1er"))
+    return "première";
+
+  if (s.startsWith("t") || s.startsWith("term")) return "terminale";
+
+  return null;
+}
+
+function compareLevels(a: string, b: string): number {
+  const ia = LEVEL_ORDER.indexOf(a);
+  const ib = LEVEL_ORDER.indexOf(b);
+  if (ia === -1 && ib === -1) return a.localeCompare(b, "fr");
+  if (ia === -1) return 1;
+  if (ib === -1) return -1;
+  return ia - ib;
+}
+
 export default function AppelsMatricePage() {
   const [rowsState, setRowsState] = useState<FetchState<MonitorRow[]>>({
     loading: false,
@@ -107,14 +151,20 @@ export default function AppelsMatricePage() {
   const [now, setNow] = useState<Date>(() => new Date());
   const today = useMemo(() => toLocalDateInputValue(now), [now]);
 
+  // Filtre niveau (tous par défaut)
+  const [levelFilter, setLevelFilter] = useState<string>("all");
+
   // Chargement des données pour la journée courante
   async function loadRows() {
     setRowsState((prev) => ({ ...prev, loading: !prev.data, error: null }));
     try {
       const qs = new URLSearchParams({ from: today, to: today });
-      const res = await fetch(`/api/admin/attendance/monitor?${qs.toString()}`, {
-        cache: "no-store",
-      });
+      const res = await fetch(
+        `/api/admin/attendance/monitor?${qs.toString()}`,
+        {
+          cache: "no-store",
+        }
+      );
 
       if (!res.ok) {
         throw new Error(
@@ -153,6 +203,16 @@ export default function AppelsMatricePage() {
 
   const rows = rowsState.data ?? [];
   const currentTime = nowHHMM(now);
+
+  // Niveaux disponibles (d'après les libellés de classes du jour)
+  const levelOptions = useMemo(() => {
+    const s = new Set<string>();
+    for (const r of rows) {
+      const lvl = inferLevelFromClassLabel(r.class_label);
+      if (lvl) s.add(lvl);
+    }
+    return Array.from(s.values()).sort(compareLevels);
+  }, [rows]);
 
   // Construction de la liste de créneaux du jour
   const slots: Slot[] = useMemo(() => {
@@ -194,7 +254,7 @@ export default function AppelsMatricePage() {
     return slots[0];
   }, [slots, currentTime]);
 
-  // Agrégation par classe sur le créneau actif
+  // Agrégation par classe sur le créneau actif (puis filtre niveau)
   const classCells: ClassCell[] = useMemo(() => {
     if (!activeSlot) return [];
 
@@ -236,10 +296,18 @@ export default function AppelsMatricePage() {
       byClass.set(label, existing);
     }
 
-    return Array.from(byClass.values()).sort((a, b) =>
+    let arr = Array.from(byClass.values()).sort((a, b) =>
       a.class_label.localeCompare(b.class_label, "fr")
     );
-  }, [rows, activeSlot]);
+
+    if (levelFilter !== "all") {
+      arr = arr.filter(
+        (cell) => inferLevelFromClassLabel(cell.class_label) === levelFilter
+      );
+    }
+
+    return arr;
+  }, [rows, activeSlot, levelFilter]);
 
   const totalPresent = classCells.filter((c) => c.status === "ok").length;
   const totalLate = classCells.filter((c) => c.status === "late").length;
@@ -364,8 +432,9 @@ export default function AppelsMatricePage() {
               {totalPresent}
             </div>
             <p className="text-[11px] text-emerald-900/80">
-              Classes où un enseignant est <strong>effectivement présent</strong>{" "}
-              sur ce créneau (appel à l’heure).
+              Classes où un enseignant est{" "}
+              <strong>effectivement présent</strong> sur ce créneau (appel à
+              l’heure).
             </p>
           </div>
         </section>
@@ -377,19 +446,43 @@ export default function AppelsMatricePage() {
               <Users className="h-4 w-4 text-slate-500" />
               <span>Grille des classes sur le créneau suivi</span>
             </div>
-            <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
-              <span className="inline-flex items-center gap-1">
-                <span className="inline-block h-3 w-3 rounded-sm bg-emerald-500 mc-blink" />
-                Appel conforme (présence)
-              </span>
-              <span className="inline-flex items-center gap-1">
-                <span className="inline-block h-3 w-3 rounded-sm bg-amber-500 mc-blink" />
-                Appel en retard
-              </span>
-              <span className="inline-flex items-center gap-1">
-                <span className="inline-block h-3 w-3 rounded-sm bg-red-600 mc-blink" />
-                Classe sans appel
-              </span>
+            <div className="flex flex-wrap items-center gap-3 text-[11px] text-slate-500">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="inline-flex items-center gap-1">
+                  <span className="inline-block h-3 w-3 rounded-sm bg-emerald-500 mc-blink" />
+                  Appel conforme (présence)
+                </span>
+                <span className="inline-flex items-center gap-1">
+                  <span className="inline-block h-3 w-3 rounded-sm bg-amber-500 mc-blink" />
+                  Appel en retard
+                </span>
+                <span className="inline-flex items-center gap-1">
+                  <span className="inline-block h-3 w-3 rounded-sm bg-red-600 mc-blink" />
+                  Classe sans appel
+                </span>
+              </div>
+              <div className="flex items-center gap-1">
+                <span className="text-slate-600">Niveau :</span>
+                <select
+                  value={levelFilter}
+                  onChange={(e) => setLevelFilter(e.target.value)}
+                  disabled={!levelOptions.length}
+                  className="rounded-full border border-slate-200 bg-white/90 px-2 py-1 text-[11px] text-slate-700 shadow-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/40 disabled:opacity-60"
+                >
+                  <option value="all">Tous les niveaux</option>
+                  {levelOptions.map((lvl) => (
+                    <option key={lvl} value={lvl}>
+                      {lvl === "seconde"
+                        ? "Seconde"
+                        : lvl === "première"
+                        ? "Première"
+                        : lvl === "terminale"
+                        ? "Terminale"
+                        : lvl.toUpperCase()}
+                    </option>
+                  ))}
+                </select>
+              </div>
             </div>
           </div>
 
@@ -421,8 +514,9 @@ export default function AppelsMatricePage() {
             </div>
           ) : classCells.length === 0 ? (
             <div className="p-4 border border-slate-200 rounded-2xl bg-slate-50 text-slate-600 text-sm">
-              Aucun cours planifié sur ce créneau ou aucune donnée de
-              surveillance n&apos;a été générée pour l&apos;instant.
+              {levelFilter === "all"
+                ? "Aucun cours planifié sur ce créneau ou aucune donnée de surveillance n'a été générée pour l'instant."
+                : "Aucun cours planifié sur ce créneau pour ce niveau, ou aucune donnée de surveillance n'a été générée pour l'instant."}
             </div>
           ) : (
             <div className="grid gap-3 grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
