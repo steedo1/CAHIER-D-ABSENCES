@@ -60,6 +60,12 @@ const ABS_ITEMS: NavItem[] = [
   { href: "/admin/assiduite", label: "Assiduité & justifications", Icon: UserRoundCheck },
   { href: "/admin/statistiques", label: "Contrôle Enseignants", Icon: BarChart3 },
   { href: "/admin/absences/appels", label: "Surveillance des appels", Icon: BarChart3 },
+  // 🆕 Nouvelle vue panoramique par créneau
+  {
+    href: "/admin/absences/appels-matrice",
+    label: "Vue par créneau",
+    Icon: BarChart3,
+  },
   { href: "/admin/conduite", label: "Moyenne de Conduite", Icon: ShieldCheck },
 ];
 

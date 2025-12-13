@@ -4,27 +4,39 @@ import { headers } from "next/headers";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export default async function VerifyByCodePage({
-  params,
-}: {
-  params: { code: string };
-}) {
-  const code = (params.code || "").trim();
-
-  // ✅ Récupération de l'origine depuis les headers (host + proto)
-  const h = await headers();
+/**
+ * Next 15 : headers() est async → il faut await.
+ */
+async function getOriginFromHeaders() {
+  const h = await headers(); // Promise<ReadonlyHeaders>
   const proto = h.get("x-forwarded-proto") ?? "https";
   const host = h.get("x-forwarded-host") ?? h.get("host");
-  const fallbackOrigin = process.env.NEXT_PUBLIC_APP_URL || "";
+  if (!host) return "";
+  return `${proto}://${host}`;
+}
 
-  const origin = host ? `${proto}://${host}` : fallbackOrigin;
+/**
+ * Next 15 : PageProps attend params: Promise<...>
+ */
+type PageProps = {
+  params: Promise<{ code: string }>;
+};
 
-  const res = await fetch(
-    `${origin}/api/public/bulletins/verify?c=${encodeURIComponent(code)}`,
-    { cache: "no-store" }
-  );
+export default async function VerifyByCodePage(props: PageProps) {
+  // On récupère le vrai params en await
+  const { code } = await props.params;
+  const trimmedCode = (code || "").trim();
 
-  const data = await res.json().catch(() => null);
+  const origin = await getOriginFromHeaders();
+
+  // Si jamais origin est vide (cas très exotique), on prend NEXT_PUBLIC_APP_URL
+  const base = origin || process.env.NEXT_PUBLIC_APP_URL || "";
+  const search = new URLSearchParams({ c: trimmedCode });
+  const url = `${base}/api/public/bulletins/verify?${search.toString()}`;
+
+  const res = await fetch(url, { cache: "no-store" });
+  const data = await res.json().catch(() => null as any);
+
   const ok = res.ok && data?.ok;
 
   return (
@@ -37,9 +49,7 @@ export default async function VerifyByCodePage({
           <span
             className={
               "rounded-full px-3 py-1 text-sm font-semibold " +
-              (ok
-                ? "bg-emerald-100 text-emerald-800"
-                : "bg-rose-100 text-rose-800")
+              (ok ? "bg-emerald-100 text-emerald-800" : "bg-rose-100 text-rose-800")
             }
           >
             {ok ? "VALIDE" : "INVALIDE"}
@@ -52,6 +62,7 @@ export default async function VerifyByCodePage({
           </p>
         ) : (
           <div className="mt-4 space-y-3 text-slate-800">
+            {/* Établissement */}
             <div className="rounded-lg bg-slate-50 p-3">
               <div className="text-sm text-slate-500">Établissement</div>
               <div className="font-semibold">
@@ -59,11 +70,12 @@ export default async function VerifyByCodePage({
               </div>
               {data?.institution?.code ? (
                 <div className="text-sm text-slate-600">
-                  Code: {data.institution.code}
+                  Code&nbsp;: {data.institution.code}
                 </div>
               ) : null}
             </div>
 
+            {/* Élève */}
             <div className="rounded-lg bg-slate-50 p-3">
               <div className="text-sm text-slate-500">Élève</div>
               <div className="font-semibold">
@@ -71,11 +83,12 @@ export default async function VerifyByCodePage({
               </div>
               {data?.student?.matricule ? (
                 <div className="text-sm text-slate-600">
-                  Matricule: {data.student.matricule}
+                  Matricule&nbsp;: {data.student.matricule}
                 </div>
               ) : null}
             </div>
 
+            {/* Classe */}
             <div className="rounded-lg bg-slate-50 p-3">
               <div className="text-sm text-slate-500">Classe</div>
               <div className="font-semibold">
@@ -83,14 +96,13 @@ export default async function VerifyByCodePage({
               </div>
               {data?.class?.academic_year ? (
                 <div className="text-sm text-slate-600">
-                  Année: {data.class.academic_year}
+                  Année&nbsp;: {data.class.academic_year}
                 </div>
               ) : null}
             </div>
 
             <p className="text-xs text-slate-500">
-              Cette page confirme uniquement l’authenticité du bulletin
-              (anti-fraude).
+              Cette page confirme uniquement l’authenticité du bulletin (anti-fraude).
             </p>
           </div>
         )}
@@ -98,3 +110,4 @@ export default async function VerifyByCodePage({
     </main>
   );
 }
+

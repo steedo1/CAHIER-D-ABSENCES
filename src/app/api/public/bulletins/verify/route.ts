@@ -71,9 +71,19 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  const payload = verifyBulletinQR(token);
+  const payload = verifyBulletinQR(token) as
+    | {
+        instId: string;
+        classId: string;
+        studentId: string;
+      }
+    | null;
+
   if (!payload) {
-    return NextResponse.json({ ok: false, error: "invalid_qr" }, { status: 400 });
+    return NextResponse.json(
+      { ok: false, error: "invalid_qr" },
+      { status: 400 }
+    );
   }
 
   const [{ data: inst }, { data: cls }, { data: stu }] = await Promise.all([
