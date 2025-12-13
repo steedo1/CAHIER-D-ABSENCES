@@ -350,7 +350,8 @@ function computeSubjectAppreciation(avg: number | null | undefined): string {
 
 /* ───────── QR Code (fallback client) ───────── */
 
-const QR_SIZE = 58;
+// ⬇️ SEULE MODIF : taille plus grande
+const QR_SIZE = 120;
 const __QR_CACHE = new Map<string, string>();
 
 let __qrLibPromise: Promise<any> | null = null;
@@ -446,7 +447,9 @@ function applyComponentRanksFront(
 
 /* ───────── Rangs groupes de matières ───────── */
 
-function applyGroupRanksFront(items: (BulletinItemBase | BulletinItemWithRank)[]) {
+function applyGroupRanksFront(
+  items: (BulletinItemBase | BulletinItemWithRank)[]
+) {
   type Entry = {
     itemIndex: number;
     groupIndex: number;
@@ -491,7 +494,9 @@ function applyGroupRanksFront(items: (BulletinItemBase | BulletinItemWithRank)[]
 
 /* ───────── Ranks + stats helper ───────── */
 
-function computeRanksAndStats(res: BulletinResponse | null): EnrichedBulletin | null {
+function computeRanksAndStats(
+  res: BulletinResponse | null
+): EnrichedBulletin | null {
   if (!res) return null;
   const items = res.items ?? [];
 
@@ -769,14 +774,18 @@ function StudentBulletinCard({
       <React.Fragment key={s.subject_id}>
         <tr>
           <td className="bdr px-1 py-[1px]">{s.subject_name}</td>
-          <td className="bdr px-1 py-[1px] text-center">{formatNumber(avg)}</td>
+          <td className="bdr px-1 py-[1px] text-center">
+            {formatNumber(avg)}
+          </td>
           <td className="bdr px-1 py-[1px] text-center">
             {formatNumber(s.coeff_bulletin, 0)}
           </td>
           <td className="bdr px-1 py-[1px] text-center">
             {formatNumber(moyCoeff)}
           </td>
-          <td className="bdr px-1 py-[1px] text-center">{subjectRankLabel}</td>
+          <td className="bdr px-1 py-[1px] text-center">
+            {subjectRankLabel}
+          </td>
           <td className="bdr px-1 py-[1px]">{appreciationLabel}</td>
           <td className="bdr px-1 py-[1px]">{subjectTeacher}</td>
           <td className="bdr px-1 py-[1px]">{renderSignatureLine()}</td>
@@ -824,14 +833,18 @@ function StudentBulletinCard({
   const hasGroups = subjectGroups && subjectGroups.length > 0;
 
   const countryName = safeUpper(
-    String((institution?.country_name || "RÉPUBLIQUE DE CÔTE D'IVOIRE").trim())
+    String(
+      (institution?.country_name || "RÉPUBLIQUE DE CÔTE D'IVOIRE").trim()
+    )
   );
   const countryMotto = String(
     (institution?.country_motto || "Union - Discipline - Travail").trim()
   );
   const ministryName = safeUpper(
     String(
-      (institution?.ministry_name || "MINISTÈRE DE L'ÉDUCATION NATIONALE").trim()
+      (
+        institution?.ministry_name || "MINISTÈRE DE L'ÉDUCATION NATIONALE"
+      ).trim()
     )
   );
 
@@ -884,10 +897,11 @@ function StudentBulletinCard({
             </div>
 
             {/* ✅ QR: priorité au PNG serveur (qr_png), fallback client (qrDataUrl) */}
-            <div className="bdr flex h-[58px] w-[58px] items-center justify-center overflow-hidden bg-white">
+            {/* ⬇️ SEULES MODIFS : taille du conteneur + de l'image */}
+            <div className="bdr flex h-[96px] w-[96px] items-center justify-center overflow-hidden bg-white">
               {qrImgSrc ? (
                 // eslint-disable-next-line @next/next/no-img-element
-                <img src={qrImgSrc} alt="QR" className="h-[54px] w-[54px]" />
+                <img src={qrImgSrc} alt="QR" className="h-[90px] w-[90px]" />
               ) : (
                 <div className="text-[8px] text-slate-500">QR</div>
               )}
@@ -913,7 +927,9 @@ function StudentBulletinCard({
           <div className="text-center">
             <div className="text-[11px] font-bold uppercase">
               {safeUpper(
-                String((institution?.institution_name || "ÉTABLISSEMENT").trim())
+                String(
+                  (institution?.institution_name || "ÉTABLISSEMENT").trim()
+                )
               )}
             </div>
             <div className="text-[9px]">
@@ -997,7 +1013,9 @@ function StudentBulletinCard({
 
             {institution?.institution_head_name && (
               <div className="pt-[2px]">
-                <span className="font-semibold">Chef d&apos;établissement : </span>
+                <span className="font-semibold">
+                  Chef d&apos;établissement :{" "}
+                </span>
                 <span>{institution.institution_head_name}</span>
               </div>
             )}
@@ -1013,7 +1031,9 @@ function StudentBulletinCard({
                 className="h-full w-full object-cover"
               />
             ) : (
-              <div className="text-center text-[8px] text-slate-500">Photo</div>
+              <div className="text-center text-[8px] text-slate-500">
+                Photo
+              </div>
             )}
           </div>
         </div>
@@ -1058,7 +1078,9 @@ function StudentBulletinCard({
                     : "—";
                 const groupCoeff = g.annual_coeff ?? 0;
                 const groupTotal =
-                  groupAvg !== null && groupCoeff ? round2(groupAvg * groupCoeff) : null;
+                  groupAvg !== null && groupCoeff
+                    ? round2(groupAvg * groupCoeff)
+                    : null;
 
                 const bilanLabel = (g.label || g.code || "BILAN").toUpperCase();
 
@@ -1080,7 +1102,9 @@ function StudentBulletinCard({
                     </td>
                     <td className="bdr px-1 py-[1px]" />
                     <td className="bdr px-1 py-[1px]" />
-                    <td className="bdr px-1 py-[1px]">{renderSignatureLine()}</td>
+                    <td className="bdr px-1 py-[1px]">
+                      {renderSignatureLine()}
+                    </td>
                   </tr>,
                 ];
               })}
@@ -1116,7 +1140,9 @@ function StudentBulletinCard({
             <div className="mt-[2px] space-y-[2px]">
               <div>
                 Absences :{" "}
-                <span className="font-semibold">{conduct.absence_count ?? 0}</span>
+                <span className="font-semibold">
+                  {conduct.absence_count ?? 0}
+                </span>
                 {absenceHours !== null && (
                   <span className="text-[8px] text-slate-600">
                     {" "}
@@ -1126,7 +1152,9 @@ function StudentBulletinCard({
               </div>
               <div>
                 Retards :{" "}
-                <span className="font-semibold">{conduct.tardy_count ?? 0}</span>
+                <span className="font-semibold">
+                  {conduct.tardy_count ?? 0}
+                </span>
               </div>
               <div className="pt-[2px]">
                 Note de conduite :{" "}
@@ -1138,16 +1166,20 @@ function StudentBulletinCard({
               {conductRubricMax && conduct?.breakdown && (
                 <div className="mt-1 grid grid-cols-2 gap-x-2 gap-y-[2px] text-[8px] text-slate-700">
                   <div>
-                    Assiduité : {conduct.breakdown.assiduite} / {conductRubricMax.assiduite}
+                    Assiduité : {conduct.breakdown.assiduite} /{" "}
+                    {conductRubricMax.assiduite}
                   </div>
                   <div>
-                    Tenue : {conduct.breakdown.tenue} / {conductRubricMax.tenue}
+                    Tenue : {conduct.breakdown.tenue} /{" "}
+                    {conductRubricMax.tenue}
                   </div>
                   <div>
-                    Moralité : {conduct.breakdown.moralite} / {conductRubricMax.moralite}
+                    Moralité : {conduct.breakdown.moralite} /{" "}
+                    {conductRubricMax.moralite}
                   </div>
                   <div>
-                    Discipline : {conduct.breakdown.discipline} / {conductRubricMax.discipline}
+                    Discipline : {conduct.breakdown.discipline} /{" "}
+                    {conductRubricMax.discipline}
                   </div>
                 </div>
               )}
@@ -1166,7 +1198,9 @@ function StudentBulletinCard({
           </div>
           <div className="mt-[2px]">
             Rang :{" "}
-            <span className="font-semibold">{item.rank ? `${item.rank}e` : "—"}</span>{" "}
+            <span className="font-semibold">
+              {item.rank ? `${item.rank}e` : "—"}
+            </span>{" "}
             / {total}
           </div>
         </div>
@@ -1183,28 +1217,45 @@ function StudentBulletinCard({
 
       <div className="mt-1 grid grid-cols-2 gap-2 text-[9px] leading-tight">
         <div className="bdr p-1">
-          <div className="font-semibold uppercase">Mentions du conseil de classe</div>
+          <div className="font-semibold uppercase">
+            Mentions du conseil de classe
+          </div>
           <div className="mt-[2px] text-[8px] font-semibold">DISTINCTIONS</div>
           <div className="mt-[2px] space-y-[2px] text-[8px]">
             <div>
-              {tick(mentions.distinction === "honour")} Tableau d&apos;honneur / Félicitations
+              {tick(mentions.distinction === "honour")} Tableau d&apos;honneur /
+              Félicitations
             </div>
-            <div>{tick(mentions.distinction === "excellence")} Tableau d&apos;excellence</div>
             <div>
-              {tick(mentions.distinction === "encouragement")} Tableau d&apos;encouragement
+              {tick(mentions.distinction === "excellence")} Tableau
+              d&apos;excellence
+            </div>
+            <div>
+              {tick(mentions.distinction === "encouragement")} Tableau
+              d&apos;encouragement
             </div>
           </div>
           <div className="mt-2 text-[8px] font-semibold">SANCTIONS</div>
           <div className="mt-[2px] space-y-[2px] text-[8px]">
-            <div>{tick(mentions.sanction === "warningWork")} Avertissement travail</div>
-            <div>{tick(mentions.sanction === "warningConduct")} Avertissement conduite</div>
+            <div>
+              {tick(mentions.sanction === "warningWork")} Avertissement travail
+            </div>
+            <div>
+              {tick(mentions.sanction === "warningConduct")}
+              {"  "}
+              Avertissement conduite
+            </div>
             <div>{tick(mentions.sanction === "blameWork")} Blâme travail</div>
-            <div>{tick(mentions.sanction === "blameConduct")} Blâme conduite</div>
+            <div>
+              {tick(mentions.sanction === "blameConduct")} Blâme conduite
+            </div>
           </div>
         </div>
 
         <div className="bdr p-1">
-          <div className="font-semibold uppercase">Appréciations du conseil de classe</div>
+          <div className="font-semibold uppercase">
+            Appréciations du conseil de classe
+          </div>
           <div className="mt-2 h-[62px] bdr bg-white" />
         </div>
       </div>
@@ -1212,21 +1263,29 @@ function StudentBulletinCard({
       {/* ✅ VISAS : on garde Prof Principal + Chef, et on retire VISA PARENT */}
       <div className="mt-1 grid grid-cols-2 gap-2 text-[9px] leading-tight">
         <div className="bdr flex flex-col justify-between p-1">
-          <div className="font-semibold text-[8px]">Visa du professeur principal</div>
+          <div className="font-semibold text-[8px]">
+            Visa du professeur principal
+          </div>
           <div className="h-[44px]" />
           {classInfo.head_teacher?.display_name && (
-            <div className="text-center text-[8px]">{classInfo.head_teacher.display_name}</div>
+            <div className="text-center text-[8px]">
+              {classInfo.head_teacher.display_name}
+            </div>
           )}
         </div>
 
         <div className="bdr flex flex-col justify-between p-1">
-          <div className="font-semibold text-[8px]">Visa du chef d&apos;établissement</div>
+          <div className="font-semibold text-[8px]">
+            Visa du chef d&apos;établissement
+          </div>
           <div className="h-[44px]" />
           {institution?.institution_head_name && (
             <div className="text-center text-[8px]">
               {institution.institution_head_name}
               {institution?.institution_head_title ? (
-                <div className="text-[7px] text-slate-600">{institution.institution_head_title}</div>
+                <div className="text-[7px] text-slate-600">
+                  {institution.institution_head_title}
+                </div>
               ) : null}
             </div>
           )}
@@ -1234,7 +1293,8 @@ function StudentBulletinCard({
       </div>
 
       <div className="mt-1 text-[8px] text-black">
-        Fait à ......................................, le ...........................................
+        Fait à ......................................, le
+        ...........................................
       </div>
     </div>
   );
@@ -1246,7 +1306,8 @@ export default function BulletinsPage() {
   const [classes, setClasses] = useState<ClassRow[]>([]);
   const [classesLoading, setClassesLoading] = useState(false);
 
-  const [institution, setInstitution] = useState<InstitutionSettings | null>(null);
+  const [institution, setInstitution] =
+    useState<InstitutionSettings | null>(null);
   const [institutionLoading, setInstitutionLoading] = useState(false);
 
   const [selectedClassId, setSelectedClassId] = useState<string>("");
@@ -1259,11 +1320,14 @@ export default function BulletinsPage() {
   const [dateFrom, setDateFrom] = useState<string>("");
   const [dateTo, setDateTo] = useState<string>("");
 
-  const [bulletinRaw, setBulletinRaw] = useState<BulletinResponse | null>(null);
+  const [bulletinRaw, setBulletinRaw] = useState<BulletinResponse | null>(
+    null
+  );
   const [bulletinLoading, setBulletinLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  const [conductSummary, setConductSummary] = useState<ConductSummaryResponse | null>(null);
+  const [conductSummary, setConductSummary] =
+    useState<ConductSummaryResponse | null>(null);
 
   // ✅ Aperçu “clean” : plein écran A4 (uniquement le bulletin)
   const [previewOpen, setPreviewOpen] = useState(false);
@@ -1307,7 +1371,8 @@ export default function BulletinsPage() {
           ? json.items
           : [];
         setClasses(items);
-        if (items.length > 0 && !selectedClassId) setSelectedClassId(items[0].id);
+        if (items.length > 0 && !selectedClassId)
+          setSelectedClassId(items[0].id);
       } catch (e: any) {
         console.error(e);
         setErrorMsg(e.message || "Erreur lors du chargement des classes.");
@@ -1354,7 +1419,8 @@ export default function BulletinsPage() {
         setPeriodsLoading(true);
 
         const params = new URLSearchParams();
-        if (selectedAcademicYear) params.set("academic_year", selectedAcademicYear);
+        if (selectedAcademicYear)
+          params.set("academic_year", selectedAcademicYear);
 
         const qs = params.toString();
         const url =
@@ -1362,7 +1428,10 @@ export default function BulletinsPage() {
 
         const res = await fetch(url);
         if (!res.ok) {
-          console.warn("[Bulletins] grading-periods non disponible", res.status);
+          console.warn(
+            "[Bulletins] grading-periods non disponible",
+            res.status
+          );
           setPeriods([]);
           return;
         }
@@ -1433,7 +1502,9 @@ export default function BulletinsPage() {
       if (!resBulletin.ok) {
         const txt = await resBulletin.text();
         throw new Error(
-          `Erreur bulletin (${resBulletin.status}) : ${txt || "Impossible de générer le bulletin."}`
+          `Erreur bulletin (${resBulletin.status}) : ${
+            txt || "Impossible de générer le bulletin."
+          }`
         );
       }
 
@@ -1450,11 +1521,15 @@ export default function BulletinsPage() {
 
       if (resConduct.ok) {
         try {
-          const conductJson = (await resConduct.json()) as ConductSummaryResponse;
+          const conductJson =
+            (await resConduct.json()) as ConductSummaryResponse;
           if (conductJson && Array.isArray(conductJson.items))
             setConductSummary(conductJson);
         } catch (err) {
-          console.warn("[Bulletins] Impossible de lire le résumé de conduite", err);
+          console.warn(
+            "[Bulletins] Impossible de lire le résumé de conduite",
+            err
+          );
         }
       } else {
         console.warn(
@@ -1475,7 +1550,10 @@ export default function BulletinsPage() {
     }
   };
 
-  const enriched = useMemo(() => computeRanksAndStats(bulletinRaw), [bulletinRaw]);
+  const enriched = useMemo(
+    () => computeRanksAndStats(bulletinRaw),
+    [bulletinRaw]
+  );
 
   const conductByStudentId = useMemo(() => {
     const map = new Map<string, ConductItem>();
@@ -1488,7 +1566,8 @@ export default function BulletinsPage() {
   const conductTotalMax = conductSummary?.total_max;
 
   const items = enriched?.items ?? [];
-  const stats = enriched?.stats ?? { highest: null, lowest: null, classAvg: null };
+  const stats =
+    enriched?.stats ?? { highest: null, lowest: null, classAvg: null };
   const classInfo = enriched?.response.class;
   const period = enriched?.response.period ?? { from: null, to: null };
   const subjects = enriched?.response.subjects ?? [];
@@ -1686,7 +1765,9 @@ export default function BulletinsPage() {
                 disabled={periodsLoading || academicYears.length === 0}
               >
                 <option value="">
-                  {academicYears.length === 0 ? "Non configuré" : "Toutes années…"}
+                  {academicYears.length === 0
+                    ? "Non configuré"
+                    : "Toutes années…"}
                 </option>
                 {academicYears.map((year) => (
                   <option key={year} value={year}>
@@ -1695,8 +1776,8 @@ export default function BulletinsPage() {
                 ))}
               </Select>
               <p className="mt-1 text-[0.7rem] text-slate-500">
-                Filtre les périodes. Si vous choisissez une période, les dates sont
-                remplies automatiquement.
+                Filtre les périodes. Si vous choisissez une période, les dates
+                sont remplies automatiquement.
               </p>
             </div>
 
@@ -1786,7 +1867,8 @@ export default function BulletinsPage() {
 
           {!items.length && !bulletinLoading && (
             <div className="rounded-xl border border-slate-200 bg-white px-3 py-4 text-sm text-slate-600 print:hidden">
-              Aucun bulletin à afficher. Choisissez une classe, une période puis cliquez sur{" "}
+              Aucun bulletin à afficher. Choisissez une classe, une période
+              puis cliquez sur{" "}
               <span className="font-semibold">Recharger</span>.
             </div>
           )}
