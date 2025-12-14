@@ -1,4 +1,3 @@
-// src/app/admin/notes/bulletins/page.tsx
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
@@ -242,8 +241,7 @@ type CouncilMentions = {
 
 function computeCouncilMentions(
   generalAvg: number | null | undefined,
-  conductTotal: number | null | undefined,
-  conductTotalMax: number | null | undefined
+  conductOn20: number | null | undefined
 ): CouncilMentions {
   let distinction: CouncilMentions["distinction"] = null;
   let sanction: CouncilMentions["sanction"] = null;
@@ -253,7 +251,7 @@ function computeCouncilMentions(
     generalAvg !== undefined &&
     Number.isFinite(generalAvg)
   ) {
-    const g = generalAvg;
+    const g = Number(generalAvg);
     if (g >= 16) distinction = "excellence";
     else if (g >= 14) distinction = "honour";
     else if (g >= 12) distinction = "encouragement";
@@ -262,18 +260,95 @@ function computeCouncilMentions(
   }
 
   if (
-    conductTotal !== null &&
-    conductTotal !== undefined &&
-    conductTotalMax !== null &&
-    conductTotalMax !== undefined &&
-    conductTotalMax > 0
+    conductOn20 !== null &&
+    conductOn20 !== undefined &&
+    Number.isFinite(conductOn20)
   ) {
-    const ratio = conductTotal / conductTotalMax;
-    if (ratio <= 0.4) sanction = "blameConduct";
-    else if (ratio <= 0.6 && !sanction) sanction = "warningConduct";
+    const c = Number(conductOn20);
+    const ratio = c / 20; // ✅ toujours sur 20, même si le barème interne est sur 16
+    if (ratio <= 0.4) {
+      sanction = "blameConduct";
+    } else if (ratio <= 0.6 && !sanction) {
+      sanction = "warningConduct";
+    }
   }
 
   return { distinction, sanction };
+}
+
+/* ───────── Helpers supplémentaires (conduite & appréciation) ───────── */
+
+function clampTo20(value: number | null | undefined): number | null {
+  if (value === null || value === undefined) return null;
+  const n = Number(value);
+  if (!Number.isFinite(n)) return null;
+  if (n < 0) return 0;
+  if (n > 20) return 20;
+  return n;
+}
+
+/**
+ * Génère une appréciation courte pour le conseil de classe
+ * en fonction de la moyenne générale + de la conduite.
+ */
+function computeCouncilAppreciationText(
+  mentions: CouncilMentions,
+  generalAvg: number | null | undefined,
+  conductOn20: number | null | undefined
+): string {
+  const g =
+    generalAvg !== null && generalAvg !== undefined
+      ? Number(generalAvg)
+      : null;
+  const c =
+    conductOn20 !== null && conductOn20 !== undefined
+      ? Number(conductOn20)
+      : null;
+
+  // Priorité aux sanctions
+  if (mentions.sanction === "blameConduct") return "Conduite très insuffisante.";
+  if (mentions.sanction === "warningConduct") return "Conduite à améliorer.";
+  if (mentions.sanction === "blameWork") return "Résultats très insuffisants.";
+  if (mentions.sanction === "warningWork") return "Résultats insuffisants.";
+
+  // Puis aux distinctions
+  if (mentions.distinction === "excellence") return "Excellent trimestre.";
+  if (mentions.distinction === "honour") return "Très bon trimestre.";
+  if (mentions.distinction === "encouragement") return "Trimestre satisfaisant.";
+
+  // Sinon on se base sur la moyenne
+  if (g !== null && Number.isFinite(g)) {
+    if (g >= 10) return "Trimestre correct.";
+    return "Trimestre moyen.";
+  }
+
+  // À défaut, on regarde la conduite seule
+  if (c !== null && Number.isFinite(c)) {
+    if (c >= 14) return "Conduite satisfaisante.";
+    if (c >= 10) return "Conduite correcte.";
+    return "Conduite à suivre.";
+  }
+
+  return "";
+}
+
+function isAutresGroupLabel(label?: string | null): boolean {
+  if (!label) return false;
+  const key = label
+    .toString()
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, "");
+  return (
+    key.includes("AUTRES") ||
+    key.includes("DIVERS") ||
+    key.includes("VIESCOLAIRE") ||
+    key.includes("CONDUITE")
+  );
+}
+
+function isAutresGroup(g: BulletinGroup): boolean {
+  return isAutresGroupLabel(g.label) || isAutresGroupLabel(g.code);
 }
 
 /* ───────── UI helpers ───────── */
@@ -462,7 +537,9 @@ function applyComponentRanksFront(
 
 /* ───────── Rangs groupes de matières ───────── */
 
-function applyGroupRanksFront(items: (BulletinItemBase | BulletinItemWithRank)[]) {
+function applyGroupRanksFront(
+  items: (BulletinItemBase | BulletinItemWithRank)[]
+) {
   type Entry = {
     itemIndex: number;
     groupIndex: number;
@@ -505,28 +582,84 @@ function applyGroupRanksFront(items: (BulletinItemBase | BulletinItemWithRank)[]
   });
 }
 
-/* ───────── Ranks + stats helper ───────── */
+/* ───────── Ranks + stats helper (intègre CONDUITE coef 1) ───────── */
 
 function computeRanksAndStats(
-  res: BulletinResponse | null
+  res: BulletinResponse | null,
+  conductSummary: ConductSummaryResponse | null
 ): EnrichedBulletin | null {
   if (!res) return null;
-  const items = res.items ?? [];
+  const baseItems = res.items ?? [];
 
-  const withAvg = items.filter(
-    (it) => typeof it.general_avg === "number" && it.general_avg !== null
+  const conductMap = new Map<string, number>();
+  if (conductSummary && Array.isArray(conductSummary.items)) {
+    conductSummary.items.forEach((it) => {
+      if (!it.student_id) return;
+      const note = clampTo20(it.total);
+      if (note !== null) conductMap.set(it.student_id, note);
+    });
+  }
+
+  const itemsWithAvg: BulletinItemWithRank[] = baseItems.map((it) => {
+    const perSubject = it.per_subject ?? [];
+    let sum = 0;
+    let sumCoeff = 0;
+
+    // Recalcule la moyenne générale à partir des matières (sans conduite)
+    res.subjects.forEach((s) => {
+      const cell = perSubject.find((ps) => ps.subject_id === s.subject_id);
+      const val = cell?.avg20;
+      if (val === null || val === undefined) return;
+      const avg = Number(val);
+      if (!Number.isFinite(avg)) return;
+
+      if (s.include_in_average === false) return;
+
+      const coeff = Number(s.coeff_bulletin ?? 0);
+      if (!Number.isFinite(coeff) || coeff <= 0) return;
+
+      sum += avg * coeff;
+      sumCoeff += coeff;
+    });
+
+    let baseAvg: number | null = null;
+    if (sumCoeff > 0) baseAvg = sum / sumCoeff;
+
+    const conductNote = conductMap.get(it.student_id) ?? null;
+
+    let finalAvg: number | null;
+    if (conductNote !== null) {
+      const totalSum = sum + conductNote * 1; // ✅ coef 1 pour la conduite
+      const totalCoeff = sumCoeff + 1;
+      finalAvg =
+        totalCoeff > 0 ? totalSum / totalCoeff : it.general_avg ?? baseAvg;
+    } else {
+      finalAvg = baseAvg ?? it.general_avg ?? null;
+    }
+
+    const rounded =
+      finalAvg !== null && Number.isFinite(finalAvg)
+        ? round2(finalAvg)
+        : null;
+
+    return {
+      ...it,
+      general_avg: rounded,
+      rank: null,
+    };
+  });
+
+  const withAvg = itemsWithAvg.filter(
+    (it) =>
+      it.general_avg !== null && Number.isFinite(it.general_avg as number)
   );
 
   const stats: ClassStats = { highest: null, lowest: null, classAvg: null };
 
   if (!withAvg.length) {
-    const itemsWithRank: BulletinItemWithRank[] = items.map((it) => ({
-      ...it,
-      rank: null,
-    }));
-    applyComponentRanksFront(itemsWithRank);
-    applyGroupRanksFront(itemsWithRank);
-    return { response: res, items: itemsWithRank, stats };
+    applyComponentRanksFront(itemsWithAvg);
+    applyGroupRanksFront(itemsWithAvg);
+    return { response: res, items: itemsWithAvg, stats };
   }
 
   const sorted = [...withAvg].sort(
@@ -546,16 +679,19 @@ function computeRanksAndStats(
     rankByStudent.set(it.student_id, lastRank);
   });
 
-  const sum = withAvg.reduce((acc, it) => acc + (it.general_avg ?? 0), 0);
+  const sumAll = withAvg.reduce(
+    (acc, it) => acc + (it.general_avg ?? 0),
+    0
+  );
   const highest = sorted[0].general_avg ?? null;
   const lowest = sorted[sorted.length - 1].general_avg ?? null;
-  const classAvg = sum / withAvg.length;
+  const classAvg = sumAll / withAvg.length;
 
   stats.highest = highest !== null ? round2(highest) : null;
   stats.lowest = lowest !== null ? round2(lowest) : null;
   stats.classAvg = round2(classAvg);
 
-  const itemsWithRank: BulletinItemWithRank[] = items.map((it) => ({
+  const itemsWithRank: BulletinItemWithRank[] = itemsWithAvg.map((it) => ({
     ...it,
     rank: rankByStudent.get(it.student_id) ?? null,
   }));
@@ -616,20 +752,10 @@ function StudentBulletinCard({
   stats,
   conduct,
   conductRubricMax,
-  conductTotalMax,
+  conductTotalMax, // gardé pour compat éventuelle, même si non utilisé pour la note finale
   signaturesEnabled,
 }: StudentBulletinCardProps) {
   const signaturesActive = !!signaturesEnabled;
-
-  const coeffTotal = useMemo(
-    () =>
-      subjects.reduce(
-        (acc, s) =>
-          acc + (Number.isFinite(s.coeff_bulletin) ? s.coeff_bulletin : 0),
-        0
-      ),
-    [subjects]
-  );
 
   const academicYear = classInfo.academic_year || period.academic_year || "";
 
@@ -655,6 +781,47 @@ function StudentBulletinCard({
 
   // Photo (optionnel)
   const photoUrl = item.photo_url || (item as any).student_photo_url || null;
+
+  // ── Conduite normalisée sur 20 ──
+  const rawConductTotal =
+    conduct && typeof conduct.total === "number" ? conduct.total : null;
+  const conductNoteOn20 = clampTo20(
+    rawConductTotal !== null ? Number(rawConductTotal) : null
+  );
+
+  // Matière virtuelle "Conduite" (coef 1, incluse dans la moyenne générale côté computeRanksAndStats)
+  const conductSubject: BulletinSubject | null =
+    conductNoteOn20 !== null
+      ? {
+          subject_id: "__CONDUCT__",
+          subject_name: "Conduite",
+          coeff_bulletin: 1,
+          include_in_average: true,
+        }
+      : null;
+
+  const perSubjectBase = item.per_subject ?? [];
+
+  const perSubject: PerSubjectAvg[] = useMemo(() => {
+    const base: PerSubjectAvg[] = [...perSubjectBase];
+    if (conductSubject && conductNoteOn20 !== null) {
+      const existing = base.find(
+        (ps) => ps.subject_id === conductSubject.subject_id
+      );
+      if (existing) {
+        existing.avg20 = conductNoteOn20;
+      } else {
+        base.push({
+          subject_id: conductSubject.subject_id,
+          avg20: conductNoteOn20,
+          subject_rank: null,
+          teacher_name: "",
+          teacher_signature_png: null,
+        });
+      }
+    }
+    return base;
+  }, [perSubjectBase, conductSubject, conductNoteOn20]);
 
   const subjectCompsBySubject = useMemo(() => {
     const map = new Map<string, BulletinSubjectComponent[]>();
@@ -701,21 +868,61 @@ function StudentBulletinCard({
     return m;
   }, [item.per_group]);
 
+  // Liste des matières affichables (uniquement celles qui ont une note)
+  const allSubjects = useMemo(() => {
+    if (conductSubject) {
+      const exists = subjects.some((s) =>
+        (s.subject_name || "")
+          .toLowerCase()
+          .normalize("NFD")
+          .replace(/[\u0300-\u036f]/g, "")
+          .includes("conduite")
+      );
+      if (!exists) {
+        return [...subjects, conductSubject];
+      }
+    }
+    return [...subjects];
+  }, [subjects, conductSubject]);
+
+  const subjectsWithGrades = useMemo(() => {
+    return allSubjects.filter((s) => {
+      const cell = perSubject.find((ps) => ps.subject_id === s.subject_id);
+      const val = cell?.avg20;
+      return (
+        val !== null &&
+        val !== undefined &&
+        Number.isFinite(Number(val))
+      );
+    });
+  }, [allSubjects, perSubject]);
+
+  // TOTAUX : somme des coefficients des matières affichées (y compris conduite coef 1)
+  const coeffTotal = useMemo(
+    () =>
+      subjectsWithGrades.reduce((acc, s) => {
+        const c = Number(s.coeff_bulletin ?? 0);
+        return acc + (Number.isFinite(c) ? c : 0);
+      }, 0),
+    [subjectsWithGrades]
+  );
+
   const subjectsById = useMemo(() => {
     const m = new Map<string, BulletinSubject>();
-    subjects.forEach((s) => m.set(s.subject_id, s));
+    subjectsWithGrades.forEach((s) => m.set(s.subject_id, s));
     return m;
-  }, [subjects]);
+  }, [subjectsWithGrades]);
 
   const absenceHours =
     conduct && typeof conduct.absence_minutes === "number"
       ? conduct.absence_minutes / 60
       : null;
 
-  const mentions = computeCouncilMentions(
+  const mentions = computeCouncilMentions(item.general_avg, conductNoteOn20);
+  const councilText = computeCouncilAppreciationText(
+    mentions,
     item.general_avg,
-    conduct?.total ?? null,
-    conductTotalMax ?? null
+    conductNoteOn20
   );
 
   const tick = (checked: boolean) => (checked ? "☑" : "□");
@@ -787,12 +994,23 @@ function StudentBulletinCard({
     );
   };
 
-  const perSubject = item.per_subject ?? [];
+  const perSubjectLocal = perSubject;
 
   const renderSubjectBlock = (s: BulletinSubject) => {
-    const cell = perSubject.find((ps) => ps.subject_id === s.subject_id);
+    const cell = perSubjectLocal.find(
+      (ps) => ps.subject_id === s.subject_id
+    );
     const avg = cell?.avg20 ?? null;
-    const moyCoeff = avg !== null ? round2(avg * (s.coeff_bulletin || 0)) : null;
+
+    // Matière sans note => on ne l'affiche pas
+    if (avg === null || avg === undefined || !Number.isFinite(Number(avg))) {
+      return null;
+    }
+
+    const moyCoeff =
+      avg !== null && Number.isFinite(Number(avg))
+        ? round2(Number(avg) * (s.coeff_bulletin || 0))
+        : null;
 
     const subjectRankLabel =
       cell && cell.subject_rank != null ? `${cell.subject_rank}e` : "—";
@@ -811,14 +1029,18 @@ function StudentBulletinCard({
       <React.Fragment key={s.subject_id}>
         <tr>
           <td className="bdr px-1 py-[1px]">{s.subject_name}</td>
-          <td className="bdr px-1 py-[1px] text-center">{formatNumber(avg)}</td>
+          <td className="bdr px-1 py-[1px] text-center">
+            {formatNumber(avg)}
+          </td>
           <td className="bdr px-1 py-[1px] text-center">
             {formatNumber(s.coeff_bulletin, 0)}
           </td>
           <td className="bdr px-1 py-[1px] text-center">
             {formatNumber(moyCoeff)}
           </td>
-          <td className="bdr px-1 py-[1px] text-center">{subjectRankLabel}</td>
+          <td className="bdr px-1 py-[1px] text-center">
+            {subjectRankLabel}
+          </td>
           <td className="bdr px-1 py-[1px]">{appreciationLabel}</td>
           <td className="bdr px-1 py-[1px]">{subjectTeacher}</td>
           <td className="bdr px-1 py-[1px]">
@@ -832,7 +1054,9 @@ function StudentBulletinCard({
           const cAvg = compCell?.avg20 ?? null;
           const cRank = compCell?.component_rank ?? null;
           const cMoyCoeff =
-            cAvg !== null ? round2(cAvg * (comp.coeff_in_subject || 0)) : null;
+            cAvg !== null && Number.isFinite(Number(cAvg))
+              ? round2(Number(cAvg) * (comp.coeff_in_subject || 0))
+              : null;
 
           return (
             <tr
@@ -875,7 +1099,8 @@ function StudentBulletinCard({
   );
   const ministryName = safeUpper(
     String(
-      (institution?.ministry_name || "MINISTÈRE DE L'ÉDUCATION NATIONALE").trim()
+      (institution?.ministry_name ||
+        "MINISTÈRE DE L'ÉDUCATION NATIONALE").trim()
     )
   );
 
@@ -961,7 +1186,9 @@ function StudentBulletinCard({
           <div className="text-center">
             <div className="text-[11px] font-bold uppercase">
               {safeUpper(
-                String((institution?.institution_name || "ÉTABLISSEMENT").trim())
+                String(
+                  (institution?.institution_name || "ÉTABLISSEMENT").trim()
+                )
               )}
             </div>
             <div className="text-[9px]">
@@ -1045,7 +1272,9 @@ function StudentBulletinCard({
 
             {institution?.institution_head_name && (
               <div className="pt-[2px]">
-                <span className="font-semibold">Chef d&apos;établissement : </span>
+                <span className="font-semibold">
+                  Chef d&apos;établissement :{" "}
+                </span>
                 <span>{institution.institution_head_name}</span>
               </div>
             )}
@@ -1061,7 +1290,9 @@ function StudentBulletinCard({
                 className="h-full w-full object-cover"
               />
             ) : (
-              <div className="text-center text-[8px] text-slate-500">Photo</div>
+              <div className="text-center text-[8px] text-slate-500">
+                Photo
+              </div>
             )}
           </div>
         </div>
@@ -1096,19 +1327,68 @@ function StudentBulletinCard({
                   }
                 });
 
+                const groupIsAutres = isAutresGroup(g);
+
+                // On ajoute la matière CONDUITE visuellement dans le bilan AUTRES
+                if (
+                  groupIsAutres &&
+                  conductSubject &&
+                  conductNoteOn20 !== null &&
+                  !groupSubjects.some(
+                    (s) => s.subject_id === conductSubject.subject_id
+                  )
+                ) {
+                  groupSubjects.push(conductSubject);
+                  groupedSubjectIds.add(conductSubject.subject_id);
+                }
+
                 if (!groupSubjects.length) return null;
 
-                const groupInfo = perGroupMap.get(g.id);
-                const groupAvg = groupInfo?.group_avg ?? null;
-                const groupRankLabel =
-                  groupInfo?.group_rank != null
-                    ? `${groupInfo.group_rank}e`
-                    : "—";
-                const groupCoeff = g.annual_coeff ?? 0;
-                const groupTotal =
+                const baseGroupInfo = perGroupMap.get(g.id);
+                let groupAvg = baseGroupInfo?.group_avg ?? null;
+                let groupCoeff = g.annual_coeff ?? 0;
+                let groupTotal: number | null =
                   groupAvg !== null && groupCoeff
                     ? round2(groupAvg * groupCoeff)
                     : null;
+
+                // Pour le BILAN AUTRES, on recalcule la moyenne de groupe
+                // en intégrant CONDUITE coef 1, si présente.
+                if (groupIsAutres) {
+                  let sum = 0;
+                  let sumCoeff = 0;
+                  groupSubjects.forEach((s) => {
+                    const cell = perSubjectLocal.find(
+                      (ps) => ps.subject_id === s.subject_id
+                    );
+                    const val = cell?.avg20;
+                    if (
+                      val === null ||
+                      val === undefined ||
+                      !Number.isFinite(Number(val))
+                    )
+                      return;
+                    const avg = Number(val);
+                    const coeff =
+                      s.subject_id === conductSubject?.subject_id
+                        ? 1
+                        : Number(s.coeff_bulletin ?? 0);
+                    if (!Number.isFinite(coeff) || coeff <= 0) return;
+                    sum += avg * coeff;
+                    sumCoeff += coeff;
+                  });
+
+                  if (sumCoeff > 0) {
+                    groupAvg = sum / sumCoeff;
+                    groupCoeff = sumCoeff;
+                    groupTotal = round2(groupAvg * groupCoeff);
+                  }
+                }
+
+                const groupRankLabel =
+                  baseGroupInfo?.group_rank != null
+                    ? `${baseGroupInfo.group_rank}e`
+                    : "—";
 
                 const bilanLabel = (g.label || g.code || "BILAN").toUpperCase();
 
@@ -1137,12 +1417,13 @@ function StudentBulletinCard({
                 ];
               })}
 
-              {subjects
+              {/* Matières non groupées mais notées (y compris éventuellement Conduite si pas captée plus haut) */}
+              {subjectsWithGrades
                 .filter((s) => !groupedSubjectIds.has(s.subject_id))
                 .map((s) => renderSubjectBlock(s))}
             </>
           ) : (
-            subjects.map((s) => renderSubjectBlock(s))
+            subjectsWithGrades.map((s) => renderSubjectBlock(s))
           )}
 
           <tr className="bg-slate-50 font-bold">
@@ -1185,7 +1466,9 @@ function StudentBulletinCard({
               <div className="pt-[2px]">
                 Note de conduite :{" "}
                 <span className="font-semibold">
-                  {formatNumber(conduct.total)} / {conductTotalMax ?? 20}
+                  {conductNoteOn20 !== null
+                    ? `${formatNumber(conductNoteOn20)} / 20`
+                    : "—"}
                 </span>
               </div>
 
@@ -1283,7 +1566,11 @@ function StudentBulletinCard({
           <div className="font-semibold uppercase">
             Appréciations du conseil de classe
           </div>
-          <div className="mt-2 h-[62px] bdr bg-white" />
+          <div className="mt-2 h-[62px] bdr bg-white flex items-center justify-center px-1">
+            <div className="text-[10px] font-bold text-center leading-snug">
+              {councilText || "\u00A0"}
+            </div>
+          </div>
         </div>
       </div>
 
@@ -1348,13 +1635,16 @@ export default function BulletinsPage() {
 
   const [periods, setPeriods] = useState<GradePeriod[]>([]);
   const [periodsLoading, setPeriodsLoading] = useState(false);
-  const [selectedAcademicYear, setSelectedAcademicYear] = useState<string>("");
+  const [selectedAcademicYear, setSelectedAcademicYear] =
+    useState<string>("");
   const [selectedPeriodId, setSelectedPeriodId] = useState<string>("");
 
   const [dateFrom, setDateFrom] = useState<string>("");
   const [dateTo, setDateTo] = useState<string>("");
 
-  const [bulletinRaw, setBulletinRaw] = useState<BulletinResponse | null>(null);
+  const [bulletinRaw, setBulletinRaw] = useState<BulletinResponse | null>(
+    null
+  );
   const [bulletinLoading, setBulletinLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
@@ -1400,7 +1690,8 @@ export default function BulletinsPage() {
           ? json.items
           : [];
         setClasses(items);
-        if (items.length > 0 && !selectedClassId) setSelectedClassId(items[0].id);
+        if (items.length > 0 && !selectedClassId)
+          setSelectedClassId(items[0].id);
       } catch (e: any) {
         console.error(e);
         setErrorMsg(e.message || "Erreur lors du chargement des classes.");
@@ -1456,7 +1747,8 @@ export default function BulletinsPage() {
         setPeriodsLoading(true);
 
         const params = new URLSearchParams();
-        if (selectedAcademicYear) params.set("academic_year", selectedAcademicYear);
+        if (selectedAcademicYear)
+          params.set("academic_year", selectedAcademicYear);
 
         const qs = params.toString();
         const url =
@@ -1464,7 +1756,10 @@ export default function BulletinsPage() {
 
         const res = await fetch(url);
         if (!res.ok) {
-          console.warn("[Bulletins] grading-periods non disponible", res.status);
+          console.warn(
+            "[Bulletins] grading-periods non disponible",
+            res.status
+          );
           setPeriods([]);
           return;
         }
@@ -1546,7 +1841,8 @@ export default function BulletinsPage() {
 
       // 🆕 on récupère l’état des signatures depuis la réponse API
       const sigFromApi =
-        (json as any)?.signatures && typeof (json as any).signatures.enabled === "boolean"
+        (json as any)?.signatures &&
+        typeof (json as any).signatures.enabled === "boolean"
           ? (json as any).signatures.enabled
           : null;
       if (sigFromApi !== null) {
@@ -1621,9 +1917,7 @@ export default function BulletinsPage() {
 
       setSignaturesEnabled(effective);
       setInstitution((prev) =>
-        prev
-          ? { ...prev, bulletin_signatures_enabled: effective }
-          : prev
+        prev ? { ...prev, bulletin_signatures_enabled: effective } : prev
       );
 
       // On recharge les bulletins si déjà chargés pour prendre en compte les signatures
@@ -1642,8 +1936,8 @@ export default function BulletinsPage() {
   };
 
   const enriched = useMemo(
-    () => computeRanksAndStats(bulletinRaw),
-    [bulletinRaw]
+    () => computeRanksAndStats(bulletinRaw, conductSummary),
+    [bulletinRaw, conductSummary]
   );
 
   const conductByStudentId = useMemo(() => {
