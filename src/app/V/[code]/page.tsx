@@ -30,12 +30,9 @@ export default async function VerifyByCodePage(props: any) {
   const stu = data?.student ?? null;
   const bulletin = data?.bulletin ?? null;
 
-  const classLabel =
-    cls?.label ??
-    cls?.name ??
-    bulletin?.period?.academic_year
-      ? cls?.label ?? cls?.name ?? null
-      : null;
+  // 🆕 champs calculés au niveau racine par l’API
+  const period = data?.period ?? null;
+  const subjects: any[] = Array.isArray(data?.subjects) ? data.subjects : [];
 
   return (
     <main className="min-h-screen bg-slate-50 p-6">
@@ -97,10 +94,10 @@ export default async function VerifyByCodePage(props: any) {
                 <div className="font-semibold">
                   {cls?.label ?? cls?.name ?? "—"}
                 </div>
-                {(cls?.academic_year || bulletin?.period?.academic_year) && (
+                {(cls?.academic_year || period?.academic_year) && (
                   <div className="text-sm text-slate-600">
                     Année :{" "}
-                    {cls?.academic_year ?? bulletin?.period?.academic_year}
+                    {cls?.academic_year ?? period?.academic_year}
                   </div>
                 )}
               </div>
@@ -126,14 +123,12 @@ export default async function VerifyByCodePage(props: any) {
                       ? `${bulletin.general_avg.toFixed(2)} / 20`
                       : "—"}
                   </div>
-                  {bulletin.period && (
+                  {period && (
                     <div className="mt-2 text-xs text-emerald-900">
                       Période{" "}
-                      {bulletin.period.short_label ??
-                        bulletin.period.label ??
-                        ""}
-                      {bulletin.period.from && bulletin.period.to
-                        ? ` (${bulletin.period.from} → ${bulletin.period.to})`
+                      {period.short_label ?? period.label ?? ""}
+                      {period.from && period.to
+                        ? ` (${period.from} → ${period.to})`
                         : ""}
                     </div>
                   )}
@@ -148,7 +143,7 @@ export default async function VerifyByCodePage(props: any) {
                       </div>
                       <div className="divide-y divide-slate-100 rounded-lg border border-slate-100">
                         {bulletin.per_subject.map((ps: any) => {
-                          const subj = bulletin.subjects?.find(
+                          const subj = subjects.find(
                             (s: any) => s.subject_id === ps.subject_id
                           );
                           if (!subj) return null;

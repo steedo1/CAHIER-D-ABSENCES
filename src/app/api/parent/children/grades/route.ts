@@ -1,5 +1,6 @@
 // src/app/api/parent/children/grades/route.ts
 import { NextRequest, NextResponse } from "next/server";
+import { cookies } from "next/headers";
 import type { SupabaseClient, User } from "@supabase/supabase-js";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
@@ -17,10 +18,21 @@ type GradeRow = {
   coeff: number;
   title: string | null;
   score: number | null;
-
   subject_id: string | null;
   subject_name: string | null;
 };
+
+function toArray<T = any>(res: any): T[] {
+  return Array.isArray(res?.data) ? (res.data as T[]) : [];
+}
+
+/** Accepte "YYYY-MM-DD" ou ISO, et renvoie "YYYY-MM-DD" */
+function toDateOnly(input: string): string {
+  if (!input) return "";
+  // ISO -> YYYY-MM-DD
+  if (input.length >= 10) return input.slice(0, 10);
+  return input;
+}
 
 function parseCookieHeader(cookieHeader: string | null): Record<string, string> {
   const out: Record<string, string> = {};
@@ -50,10 +62,10 @@ function getCookieValueJoined(cookies: Record<string, string>, base: string) {
 function extractSupabaseAccessTokenFromRequest(req: NextRequest): string {
   const cookies = parseCookieHeader(req.headers.get("cookie"));
 
-  // sb-<ref>-auth-token (parfois chunké)
   const authKey =
-    Object.keys(cookies).find((k) => k.includes("-auth-token"))?.replace(/\.\d+$/, "") ||
-    "";
+    Object.keys(cookies)
+      .find((k) => k.includes("-auth-token"))
+      ?.replace(/\.\d+$/, "") || "";
 
   if (!authKey) return "";
 
@@ -63,14 +75,12 @@ function extractSupabaseAccessTokenFromRequest(req: NextRequest): string {
     raw = decodeURIComponent(raw);
   } catch {}
 
-  // Supabase met souvent "base64-..."
   if (raw.startsWith("base64-")) {
     try {
       raw = Buffer.from(raw.slice("base64-".length), "base64").toString("utf8");
     } catch {}
   }
 
-  // parfois c’est une string JSON entourée de quotes
   let obj: any = null;
   try {
     obj = JSON.parse(raw);
@@ -105,57 +115,201 @@ async function getAuthedUser(req: NextRequest): Promise<User | null> {
   return null;
 }
 
-export async function GET(req: NextRequest) {
-  const url = new URL(req.url);
-  const studentId = url.searchParams.get("student_id");
-  const limitParam = url.searchParams.get("limit") || "200";
+async function resolveInstitutionIdForStudent(
+  srv: ReturnType<typeof getSupabaseServiceClient>,
+  student_id: string
+): Promise<string | null> {
+  // inscription active sinon la plus récente
+  const enrActiveRes = await srv
+    .from("class_enrollments")
+    .select("institution_id")
+    .eq("student_id", student_id)
+    .is("end_date", null)
+    .limit(1);
 
-  const limitRaw = Number(limitParam);
-  const limit = Number.isFinite(limitRaw)
-    ? Math.min(Math.max(1, limitRaw), 200)
-    : 200;
+  const enrActive = toArray(enrActiveRes);
+  let institution_id = (enrActive[0]?.institution_id as string | undefined) ?? null;
 
-  if (!studentId) {
-    return NextResponse.json(
-      { ok: false, error: "Paramètre student_id manquant." },
-      { status: 400 },
-    );
+  if (!institution_id) {
+    const anyEnrRes = await srv
+      .from("class_enrollments")
+      .select("institution_id, start_date")
+      .eq("student_id", student_id)
+      .order("start_date", { ascending: false })
+      .limit(1);
+
+    const anyEnr = toArray(anyEnrRes);
+    institution_id = (anyEnr[0]?.institution_id as string | undefined) ?? null;
   }
 
-  const user = await getAuthedUser(req);
-  if (!user) {
-    return NextResponse.json(
-      { ok: false, error: "Non authentifié." },
-      { status: 401 },
-    );
+  return institution_id;
+}
+
+async function resolveSubjectNames(
+  srv: ReturnType<typeof getSupabaseServiceClient>,
+  ids: string[]
+) {
+  const uniq = Array.from(new Set(ids.filter(Boolean)));
+  const map = new Map<string, string>();
+  if (!uniq.length) return map;
+
+  // essaie institution_subjects (custom_name) puis fallback subjects
+  const instRes = await srv
+    .from("institution_subjects")
+    .select("id, subject_id, custom_name, subjects:subject_id(name)")
+    .in("id", uniq);
+
+  const inst = toArray(instRes);
+  for (const r of inst) {
+    const id = String((r as any).id);
+    const nm = (r as any).custom_name || (r as any).subjects?.name || null;
+    if (nm) map.set(id, nm);
+
+    const baseId = (r as any).subject_id as string | null;
+    if (baseId && nm && !map.has(baseId)) map.set(baseId, nm);
+  }
+
+  const missing = uniq.filter((x) => !map.has(x));
+  if (missing.length) {
+    const subsRes = await srv.from("subjects").select("id,name").in("id", missing);
+    const subs = toArray(subsRes);
+    for (const s of subs) map.set(String((s as any).id), String((s as any).name ?? "(inconnu)"));
+  }
+
+  return map;
+}
+
+export async function GET(req: NextRequest) {
+  const url = new URL(req.url);
+
+  const studentId = url.searchParams.get("student_id") || "";
+  const limitParam = url.searchParams.get("limit") || "200";
+
+  const fromParam = toDateOnly(url.searchParams.get("from") || "");
+  const toParam = toDateOnly(url.searchParams.get("to") || "");
+
+  const periodId = url.searchParams.get("period_id") || "";
+  const academicYearId = url.searchParams.get("academic_year_id") || "";
+  const academicYearCode = url.searchParams.get("academic_year") || ""; // ex: "2025-2026"
+
+  const limitRaw = Number(limitParam);
+  const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(1, limitRaw), 200) : 200;
+
+  if (!studentId) {
+    return NextResponse.json({ ok: false, error: "Paramètre student_id manquant." }, { status: 400 });
   }
 
   const srv = getSupabaseServiceClient();
 
-  try {
-    // ✅ sécurité : le parent doit être lié à l’élève
-    const { data: link, error: linkErr } = await srv
-      .from("student_guardians")
+  // ────────── AUTH : MODE 1 (parent_device) ──────────
+  const jar = await cookies();
+  const deviceId = jar.get("parent_device")?.value || "";
+
+  let allow = false;
+  let institution_id: string | null = null;
+  let user: User | null = null;
+
+  if (deviceId) {
+    const { data: link } = await srv
+      .from("parent_device_children")
       .select("student_id")
+      .eq("device_id", deviceId)
       .eq("student_id", studentId)
-      .eq("parent_id", user.id)
+      .limit(1);
+
+    allow = !!(link && link.length);
+
+    if (allow) {
+      institution_id = await resolveInstitutionIdForStudent(srv, studentId);
+      if (!institution_id) {
+        return NextResponse.json({ ok: true, items: [] });
+      }
+    }
+  }
+
+  // ────────── AUTH : MODE 2 (guardian supabase) ──────────
+  if (!allow && !deviceId) {
+    user = await getAuthedUser(req);
+    if (!user) {
+      return NextResponse.json({ ok: false, error: "Non authentifié." }, { status: 401 });
+    }
+
+    // ✅ sécurité : parent lié à l’élève (guardian_profile_id OU parent_id)
+    const okRes = await srv
+      .from("student_guardians")
+      .select("institution_id")
+      .eq("student_id", studentId)
+      .or(`guardian_profile_id.eq.${user.id},parent_id.eq.${user.id}`)
+      .limit(1)
       .maybeSingle();
 
-    if (linkErr) {
-      console.error("[parent.grades] guardians error", linkErr);
-      return NextResponse.json(
-        { ok: false, error: "Erreur de vérification d’accès." },
-        { status: 500 },
-      );
-    }
-    if (!link) {
-      return NextResponse.json(
-        { ok: false, error: "Accès interdit." },
-        { status: 403 },
-      );
+    const ok = (okRes as any)?.data;
+    if (!ok) {
+      return NextResponse.json({ ok: false, error: "Accès interdit." }, { status: 403 });
     }
 
-    const { data, error } = await srv
+    institution_id = (ok as any).institution_id ?? null;
+    if (!institution_id) {
+      institution_id = await resolveInstitutionIdForStudent(srv, studentId);
+    }
+  }
+
+  if (!institution_id) {
+    return NextResponse.json({ ok: false, error: "Institution introuvable." }, { status: 404 });
+  }
+
+  // ────────── Détermination de la fenêtre (filtre) ──────────
+  let from = fromParam;
+  let to = toParam;
+
+  // 1) period_id -> start/end depuis grade_periods
+  if ((!from || !to) && periodId) {
+    const perRes = await srv
+      .from("grade_periods")
+      .select("start_date,end_date")
+      .eq("institution_id", institution_id)
+      .eq("id", periodId)
+      .eq("is_active", true)
+      .maybeSingle();
+
+    const per = (perRes as any)?.data;
+    if (per?.start_date) from = toDateOnly(String(per.start_date));
+    if (per?.end_date) to = toDateOnly(String(per.end_date));
+  }
+
+  // 2) academic_year_id / academic_year(code) -> start/end depuis academic_years
+  if ((!from || !to) && (academicYearId || academicYearCode)) {
+    let q = srv
+      .from("academic_years")
+      .select("start_date,end_date")
+      .eq("institution_id", institution_id);
+
+    if (academicYearId) q = q.eq("id", academicYearId);
+    else q = q.eq("code", academicYearCode);
+
+    const ayRes = await q.maybeSingle();
+    const ay = (ayRes as any)?.data;
+    if (ay?.start_date) from = toDateOnly(String(ay.start_date));
+    if (ay?.end_date) to = toDateOnly(String(ay.end_date));
+  }
+
+  // 3) défaut : année scolaire courante
+  if (!from || !to) {
+    const ayRes = await srv
+      .from("academic_years")
+      .select("start_date,end_date")
+      .eq("institution_id", institution_id)
+      .eq("is_current", true)
+      .maybeSingle();
+
+    const ay = (ayRes as any)?.data;
+    if (!from && ay?.start_date) from = toDateOnly(String(ay.start_date));
+    if (!to && ay?.end_date) to = toDateOnly(String(ay.end_date));
+  }
+
+  try {
+    // ────────── Notes publiées + filtre dates ──────────
+    let q = srv
       .from("student_grades")
       .select(
         `
@@ -170,24 +324,21 @@ export async function GET(req: NextRequest) {
           title,
           subject_id
         )
-      `,
+      `
       )
       .eq("student_id", studentId)
       .eq("grade_evaluations.is_published", true);
 
+    if (from) q = q.gte("grade_evaluations.eval_date", from);
+    if (to) q = q.lte("grade_evaluations.eval_date", to);
+
+    const { data, error } = await q;
     if (error) {
       console.error("[parent.grades] query error", error);
-      return NextResponse.json(
-        { ok: false, error: "Erreur de récupération des notes." },
-        { status: 500 },
-      );
+      return NextResponse.json({ ok: false, error: "Erreur de récupération des notes." }, { status: 500 });
     }
 
-    // normalise (relation inner peut renvoyer object ou array selon config)
-    const rows = (data || []) as Array<{
-      score: number | null;
-      grade_evaluations: any;
-    }>;
+    const rows = (data || []) as Array<{ score: number | null; grade_evaluations: any }>;
 
     const flat = rows
       .map((r) => {
@@ -198,20 +349,8 @@ export async function GET(req: NextRequest) {
       })
       .filter(Boolean) as Array<{ ev: any; score: number | null }>;
 
-    const subjectIds = Array.from(
-      new Set(flat.map((x) => x.ev.subject_id).filter(Boolean)),
-    ) as string[];
-
-    const subjectNameById = new Map<string, string>();
-    if (subjectIds.length) {
-      const { data: subs } = await srv
-        .from("subjects")
-        .select("id, name")
-        .in("id", subjectIds);
-      for (const s of (subs || []) as any[]) {
-        if (s?.id) subjectNameById.set(String(s.id), String(s.name || ""));
-      }
-    }
+    const subjectIds = Array.from(new Set(flat.map((x) => x.ev.subject_id).filter(Boolean))) as string[];
+    const subjectNameById = await resolveSubjectNames(srv, subjectIds);
 
     const items: GradeRow[] = flat
       .map(({ ev, score }) => ({
@@ -223,9 +362,7 @@ export async function GET(req: NextRequest) {
         title: ev.title ?? null,
         score,
         subject_id: ev.subject_id ?? null,
-        subject_name: ev.subject_id
-          ? subjectNameById.get(String(ev.subject_id)) ?? null
-          : null,
+        subject_name: ev.subject_id ? subjectNameById.get(String(ev.subject_id)) ?? null : null,
       }))
       .sort((a, b) => b.eval_date.localeCompare(a.eval_date))
       .slice(0, limit);
@@ -235,7 +372,7 @@ export async function GET(req: NextRequest) {
     console.error("[parent.grades] unexpected", e);
     return NextResponse.json(
       { ok: false, error: e?.message || "Erreur serveur inattendue." },
-      { status: 500 },
+      { status: 500 }
     );
   }
 }
