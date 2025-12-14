@@ -28,6 +28,17 @@ function isUuid(v: string): boolean {
   );
 }
 
+/**
+ * Helper pour lire une chaîne depuis plusieurs clés possibles (camelCase / snake_case / alias)
+ */
+function pickStr(obj: any, keys: string[]): string | null {
+  for (const k of keys) {
+    const v = obj?.[k];
+    if (typeof v === "string" && v.trim()) return v.trim();
+  }
+  return null;
+}
+
 // Même logique que dans l’API admin bulletin
 function normalizeBulletinLevel(level?: string | null): string | null {
   if (!level) return null;
@@ -546,20 +557,31 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    const payload = resolved.payload as {
-      instId: string;
-      classId?: string | null;
-      studentId?: string | null;
-      periodFrom?: string | null;
-      periodTo?: string | null;
-      periodLabel?: string | null;
-      periodShortLabel?: string | null;
-      academicYear?: string | null;
-    };
+    const raw = (resolved.payload ?? {}) as any;
 
-    const instId = payload.instId;
-    let classId = payload.classId ?? null;
-    const studentId = payload.studentId ?? null;
+    const instId = pickStr(raw, ["instId", "inst_id"]) || "";
+    let classId = pickStr(raw, ["classId", "class_id"]);
+    const studentIdRaw = pickStr(raw, ["studentId", "student_id"]);
+    const academicYear = pickStr(raw, ["academicYear", "academic_year"]);
+
+    const periodFrom = pickStr(raw, ["periodFrom", "period_from", "from"]);
+    const periodTo = pickStr(raw, ["periodTo", "period_to", "to"]);
+    const periodLabel = pickStr(raw, ["periodLabel", "period_label", "label"]);
+    const periodShortLabel = pickStr(raw, [
+      "periodShortLabel",
+      "period_short_label",
+      "short_label",
+    ]);
+
+    if (!instId || !isUuid(instId)) {
+      return NextResponse.json(
+        { ok: false, error: "invalid_payload_inst" },
+        { status: 400 }
+      );
+    }
+
+    const studentId =
+      studentIdRaw && isUuid(studentIdRaw) ? studentIdRaw : null;
 
     // Institution + élève en parallèle (indépendants de la classe)
     const [{ data: inst }, { data: stu }] = await Promise.all([
@@ -577,52 +599,82 @@ export async function GET(req: NextRequest) {
         : Promise.resolve({ data: null } as any),
     ]);
 
-    // Classe : direct via payload.classId, sinon fallback via class_enrollments
-    let cls: ClassRow | null = null;
-
-    if (classId) {
-      const { data: clsData } = await srv
+    // Helper : fetch classe + vérifie qu'elle appartient à l'institution (sécurité + cohérence)
+    async function fetchClass(cid: string): Promise<ClassRow | null> {
+      if (!cid || !isUuid(cid)) return null;
+      const { data } = await srv
         .from("classes")
-        .select("id, label, name, level, academic_year")
-        .eq("id", classId)
+        .select("id, label, name, level, academic_year, institution_id")
+        .eq("id", cid)
         .maybeSingle();
 
-      cls = (clsData as ClassRow) ?? null;
-    } else if (studentId) {
-      // ⚠️ Ancien QR sans classId → on tente de retrouver la classe courante
-      const { data: enrollment } = await srv
+      const c = (data as any) ?? null;
+      if (!c) return null;
+
+      if (c.institution_id && String(c.institution_id) !== instId) return null;
+
+      return {
+        id: String(c.id),
+        label: c.label ?? null,
+        name: c.name ?? null,
+        level: c.level ?? null,
+        academic_year: c.academic_year ?? null,
+      };
+    }
+
+    // 1) Classe direct depuis payload
+    let cls: ClassRow | null = null;
+    if (classId) {
+      cls = await fetchClass(classId);
+    }
+
+    // 2) Fallback robuste via class_enrollments (⚠️ ne PAS filtrer end_date=null uniquement)
+    if (!cls && studentId) {
+      const { data: enrolls } = await srv
         .from("class_enrollments")
-        .select("class_id")
+        .select("class_id, start_date, end_date, created_at")
         .eq("student_id", studentId)
-        .is("end_date", null)
-        .limit(1)
-        .maybeSingle();
+        .order("end_date", { ascending: false, nullsFirst: true })
+        .order("start_date", { ascending: false, nullsFirst: true })
+        .order("created_at", { ascending: false })
+        .limit(10);
 
-      const fallbackClassId = (enrollment as any)?.class_id as string | undefined;
+      const orderedClassIds = Array.from(
+        new Set(
+          (enrolls || [])
+            .map((e: any) => String(e.class_id || ""))
+            .filter((cid: string) => isUuid(cid))
+        )
+      );
 
-      if (fallbackClassId) {
-        classId = fallbackClassId;
-        const { data: clsData } = await srv
-          .from("classes")
-          .select("id, label, name, level, academic_year")
-          .eq("id", fallbackClassId)
-          .maybeSingle();
+      for (const cid of orderedClassIds) {
+        const c = await fetchClass(cid);
+        if (!c) continue;
 
-        cls = (clsData as ClassRow) ?? null;
+        if (academicYear && c.academic_year && String(c.academic_year) === academicYear) {
+          cls = c;
+          classId = cid;
+          break;
+        }
+        if (!academicYear) {
+          cls = c;
+          classId = cid;
+          break;
+        }
       }
     }
 
-    // Bulletin calculé en base si on a au moins la classe ET l’élève
+    // ✅ Bulletin calculé si on a classe + élève
     const bulletin = await computeBulletinSummary({
       srv,
       instId,
       classRow: cls,
       studentId,
-      periodFrom: payload.periodFrom ?? null,
-      periodTo: payload.periodTo ?? null,
-      periodLabel: payload.periodLabel ?? null,
-      periodShortLabel: payload.periodShortLabel ?? null,
-      periodAcademicYear: payload.academicYear ?? null,
+      periodFrom: periodFrom ?? null,
+      periodTo: periodTo ?? null,
+      periodLabel: periodLabel ?? null,
+      periodShortLabel: periodShortLabel ?? null,
+      periodAcademicYear: academicYear ?? null,
     });
 
     return NextResponse.json({
@@ -662,33 +714,33 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ ok: false, error: "invalid_qr" }, { status: 400 });
   }
 
-  const instId = payload.instId;
-  const classId = payload.classId;
-  const studentId = payload.studentId;
+  const instIdToken = payload.instId;
+  const classIdToken = payload.classId;
+  const studentIdToken = payload.studentId;
 
   const [{ data: inst }, { data: cls }, { data: stu }] = await Promise.all([
     srv
       .from("institutions")
       .select("id, name, code")
-      .eq("id", instId)
+      .eq("id", instIdToken)
       .maybeSingle(),
     srv
       .from("classes")
       .select("id, label, name, level, academic_year")
-      .eq("id", classId)
+      .eq("id", classIdToken)
       .maybeSingle(),
     srv
       .from("students")
       .select("id, full_name, matricule, gender, birthdate, birth_place")
-      .eq("id", studentId)
+      .eq("id", studentIdToken)
       .maybeSingle(),
   ]);
 
   const bulletin = await computeBulletinSummary({
     srv,
-    instId,
+    instId: instIdToken,
     classRow: (cls as ClassRow) ?? null,
-    studentId,
+    studentId: studentIdToken,
     periodFrom: payload.periodFrom,
     periodTo: payload.periodTo,
     periodLabel: payload.periodLabel,

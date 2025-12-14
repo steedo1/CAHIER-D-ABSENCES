@@ -215,6 +215,7 @@ function groupKey(s?: string | null) {
 
 function findGroupByMeaning(
   groups: BulletinSubjectGroup[],
+// shortened signature
   meaning: "LETTRES" | "SCIENCES" | "AUTRES"
 ): BulletinSubjectGroup | null {
   const keys =
@@ -387,6 +388,11 @@ async function addQrToItems<T extends { student_id: string }>(
           instId: opts.institutionId,
           classId: opts.classId,
           studentId: it0.student_id,
+          academicYear,
+          periodFrom: opts.periodMeta.from ?? null,
+          periodTo: opts.periodMeta.to ?? null,
+          periodLabel,
+          periodShortLabel: opts.periodMeta.short_label ?? null,
         },
         expiresAt: null,
       });
@@ -424,6 +430,11 @@ async function addQrToItems<T extends { student_id: string }>(
                 instId: opts.institutionId,
                 classId: opts.classId,
                 studentId: it.student_id,
+                academicYear,
+                periodFrom: opts.periodMeta.from ?? null,
+                periodTo: opts.periodMeta.to ?? null,
+                periodLabel,
+                periodShortLabel: opts.periodMeta.short_label ?? null,
               },
               expiresAt: null,
             });
