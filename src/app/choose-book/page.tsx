@@ -1,10 +1,94 @@
-//src/app/choose-book/page.tsx
 "use client";
 
+import React, { useEffect, useState } from "react";
 import Link from "next/link";
-import { Notebook, NotebookPen, ChevronRight } from "lucide-react";
+import { Notebook, NotebookPen, ChevronRight, PenTool } from "lucide-react";
+
+type SigEligibility = "checking" | "eligible" | "ineligible";
 
 export default function ChooseBookPage() {
+  const [sigEligibility, setSigEligibility] = useState<SigEligibility>("checking");
+
+  useEffect(() => {
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const res = await fetch("/api/teacher/signature", { cache: "no-store" });
+
+        // 200 => teacher (ok:true) ; 403/401 => pas teacher ou pas connecté
+        if (!cancelled) {
+          if (res.ok) {
+            const json = await res.json().catch(() => null);
+            setSigEligibility(json?.ok ? "eligible" : "ineligible");
+          } else {
+            setSigEligibility("ineligible");
+          }
+        }
+      } catch {
+        if (!cancelled) setSigEligibility("ineligible");
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const SignatureCardEligible = (
+    <Link
+      href="/enseignant/signature"
+      className="group block rounded-3xl border border-emerald-200 bg-white p-6 shadow-sm ring-1 ring-emerald-100 transition hover:shadow-md md:col-span-2"
+    >
+      <div className="flex items-start gap-4">
+        <div className="grid h-12 w-12 flex-none place-items-center rounded-xl bg-emerald-600 text-white shadow-sm">
+          <PenTool className="h-6 w-6" />
+        </div>
+        <div className="flex-1">
+          <div className="text-xl font-semibold text-slate-900">Ma signature (bulletins)</div>
+          <p className="mt-1 text-sm text-slate-700">
+            Enregistrez votre signature une seule fois. Elle sera utilisée si l’établissement active la signature
+            électronique.
+          </p>
+          <div className="mt-4 inline-flex items-center gap-2 text-sm font-semibold text-emerald-700">
+            Ouvrir <ChevronRight className="h-4 w-4 transition group-hover:translate-x-0.5" />
+          </div>
+        </div>
+      </div>
+    </Link>
+  );
+
+  const SignatureCardDisabled = (
+    <div
+      className="block cursor-not-allowed rounded-3xl border border-slate-200 bg-slate-50 p-6 shadow-sm ring-1 ring-slate-100 md:col-span-2"
+      aria-disabled
+      title="Réservé au compte individuel enseignant"
+    >
+      <div className="flex items-start gap-4 opacity-90">
+        <div className="grid h-12 w-12 flex-none place-items-center rounded-xl bg-slate-300 text-white shadow-sm">
+          <PenTool className="h-6 w-6" />
+        </div>
+        <div className="flex-1">
+          <div className="text-xl font-semibold text-slate-800">Ma signature (bulletins)</div>
+          <p className="mt-1 text-sm text-slate-700">
+            {sigEligibility === "checking" ? (
+              <>Vérification du type de compte…</>
+            ) : (
+              <>
+                Réservé au <b>compte individuel enseignant</b>. Connectez-vous avec votre compte individuel pour
+                enregistrer votre signature.
+              </>
+            )}
+          </p>
+
+          <div className="mt-4 inline-flex items-center gap-2 text-sm font-semibold text-slate-500">
+            Indisponible <ChevronRight className="h-4 w-4" />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+
   return (
     <main className="relative min-h-screen bg-white">
       {/* décor léger */}
@@ -27,6 +111,7 @@ export default function ChooseBookPage() {
               <div className="text-lg font-extrabold">Choisir votre cahier</div>
             </div>
           </div>
+
           <Link
             href="/redirect"
             className="rounded-full bg-white/15 px-3.5 py-1.5 text-sm font-semibold text-white ring-1 ring-white/20 hover:bg-white/25"
@@ -84,12 +169,11 @@ export default function ChooseBookPage() {
               </div>
             </div>
           </Link>
+
+          {/* Signature (active si teacher, sinon disabled) */}
+          {sigEligibility === "eligible" ? SignatureCardEligible : SignatureCardDisabled}
         </div>
       </section>
     </main>
   );
 }
-
-
-
-

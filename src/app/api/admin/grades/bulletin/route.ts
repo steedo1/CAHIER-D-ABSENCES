@@ -215,7 +215,6 @@ function groupKey(s?: string | null) {
 
 function findGroupByMeaning(
   groups: BulletinSubjectGroup[],
-// shortened signature
   meaning: "LETTRES" | "SCIENCES" | "AUTRES"
 ): BulletinSubjectGroup | null {
   const keys =
@@ -633,7 +632,74 @@ function applySubjectComponentRanks(items: any[]) {
   });
 }
 
-/* ───────── helper : nom du professeur par matière (teacher_name) ───────── */
+/* ───────── helper : base64 data url (node) ───────── */
+async function blobToPngDataUrl(blob: any): Promise<string | null> {
+  try {
+    if (!blob || typeof blob.arrayBuffer !== "function") return null;
+    const ab = await blob.arrayBuffer();
+    const b64 = Buffer.from(ab).toString("base64");
+    if (!b64) return null;
+    return `data:image/png;base64,${b64}`;
+  } catch {
+    return null;
+  }
+}
+
+function chunk<T>(arr: T[], size: number) {
+  const out: T[][] = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
+}
+
+/* ───────── helper : signatures profs (data url) ───────── */
+async function getTeacherSignaturesAsDataUrl(
+  srv: SupabaseClient,
+  institutionId: string,
+  teacherIds: string[]
+): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  const unique = Array.from(new Set(teacherIds.filter((x) => !!x && isUuid(x))));
+
+  if (!unique.length) return out;
+
+  const { data: sigRows, error: sigErr } = await srv
+    .from("teacher_signatures")
+    .select("teacher_id, storage_path")
+    .eq("institution_id", institutionId)
+    .in("teacher_id", unique);
+
+  if (sigErr || !sigRows?.length) return out;
+
+  const rows = (sigRows as any[])
+    .map((r) => ({
+      teacher_id: String(r.teacher_id || ""),
+      storage_path: String(r.storage_path || ""),
+    }))
+    .filter((r) => isUuid(r.teacher_id) && r.storage_path);
+
+  if (!rows.length) return out;
+
+  // ⚠️ éviter trop de downloads en parallèle
+  for (const pack of chunk(rows, 8)) {
+    await Promise.all(
+      pack.map(async (r) => {
+        try {
+          const { data, error } = await srv.storage.from("signatures").download(r.storage_path);
+          if (error || !data) return;
+          const url = await blobToPngDataUrl(data);
+          if (!url) return;
+          out.set(r.teacher_id, url);
+        } catch {
+          // ignore
+        }
+      })
+    );
+  }
+
+  return out;
+}
+
+/* ───────── helper : prof par matière + teacher_id + teacher_name ───────── */
 async function attachTeachersToSubjects(
   supabase: Awaited<ReturnType<typeof getSupabaseServerClient>>,
   srv: Awaited<ReturnType<typeof getSupabaseServiceClient>>,
@@ -647,56 +713,28 @@ async function attachTeachersToSubjects(
 ) {
   if (!items.length || !subjectIds.length) return;
 
-  const teacherBySubject = new Map<string, string>();
+  // ✅ subject -> teacher_id
+  const teacherIdBySubject = new Map<string, string>();
+  const lastEvalDateBySubject = new Map<string, string>();
 
-  /* ── A. À partir de grade_evaluations.teacher_id ─────────────────────── */
+  /* ── A. Priorité : grade_evaluations.teacher_id (dernière date) ── */
   if (evals.length) {
-    type ST = { teacher_id: string; lastEvalDate: string };
-    const bySubjectEval = new Map<string, ST>();
-
     for (const ev of evals) {
       if (!ev.subject_id || !ev.teacher_id) continue;
       const sid = String(ev.subject_id);
       const tid = String(ev.teacher_id);
-      const date = ev.eval_date ?? "";
+      const date = String(ev.eval_date || "");
 
-      const existing = bySubjectEval.get(sid);
-      if (existing) {
-        if (date && date > existing.lastEvalDate) {
-          bySubjectEval.set(sid, { teacher_id: tid, lastEvalDate: date });
-        }
-      } else {
-        bySubjectEval.set(sid, { teacher_id: tid, lastEvalDate: date });
-      }
-    }
-
-    const teacherIdsEval = Array.from(
-      new Set(Array.from(bySubjectEval.values()).map((v) => v.teacher_id))
-    );
-
-    if (teacherIdsEval.length) {
-      const { data: profsEval, error: profErr } = await supabase
-        .from("profiles")
-        .select("id, display_name")
-        .in("id", teacherIdsEval);
-
-      if (profErr) {
-      } else {
-        const nameByIdEval = new Map<string, string>();
-        (profsEval || []).forEach((p: any) => {
-          if (p.id && p.display_name) nameByIdEval.set(String(p.id), String(p.display_name));
-        });
-
-        bySubjectEval.forEach((info, sid) => {
-          const name = nameByIdEval.get(info.teacher_id);
-          if (name) teacherBySubject.set(sid, name);
-        });
+      const prev = lastEvalDateBySubject.get(sid) || "";
+      if (!prev || (date && date > prev)) {
+        lastEvalDateBySubject.set(sid, date);
+        teacherIdBySubject.set(sid, tid);
       }
     }
   }
 
-  /* ── B. Fallback via institution_subjects + class_teachers ───────────── */
-  const missingSubjectIds = subjectIds.filter((sid) => !teacherBySubject.has(sid));
+  /* ── B. Fallback : institution_subjects + class_teachers ── */
+  const missingSubjectIds = subjectIds.filter((sid) => !teacherIdBySubject.has(sid));
 
   if (missingSubjectIds.length) {
     const { data: instSubs, error: instErr } = await srv
@@ -705,14 +743,13 @@ async function attachTeachersToSubjects(
       .eq("institution_id", institutionId)
       .in("subject_id", missingSubjectIds);
 
-    if (instErr) {
-    } else {
+    if (!instErr && instSubs?.length) {
       const instIds: string[] = [];
       const subjectIdByInstId = new Map<string, string>();
 
-      (instSubs || []).forEach((row: any) => {
-        const sid = String(row.subject_id);
-        const instId = String(row.id);
+      (instSubs as any[]).forEach((row) => {
+        const sid = String(row.subject_id || "");
+        const instId = String(row.id || "");
         if (!sid || !instId) return;
         instIds.push(instId);
         subjectIdByInstId.set(instId, sid);
@@ -737,48 +774,46 @@ async function attachTeachersToSubjects(
 
         const { data: ctData, error: ctErr } = await ctQuery;
 
-        if (ctErr) {
-        } else if (ctData && ctData.length) {
-          const teacherIdsCt = Array.from(
-            new Set(
-              (ctData as any[])
-                .map((row) => row.teacher_id as string | null)
-                .filter((v): v is string => !!v)
-            )
-          );
-
-          const nameByIdCt = new Map<string, string>();
-
-          if (teacherIdsCt.length) {
-            const { data: profsCt, error: profErrCt } = await supabase
-              .from("profiles")
-              .select("id, display_name")
-              .in("id", teacherIdsCt);
-
-            if (profErrCt) {
-            } else {
-              (profsCt || []).forEach((p: any) => {
-                if (p.id && p.display_name) nameByIdCt.set(String(p.id), String(p.display_name));
-              });
-            }
-          }
-
-          (ctData as any[]).forEach((row) => {
-            const instSubId = String(row.subject_id);
-            const sid = subjectIdByInstId.get(instSubId);
-            const teacherId = row.teacher_id as string | null;
-            if (!sid || !teacherId) return;
-            if (teacherBySubject.has(sid)) return;
-            const name = nameByIdCt.get(teacherId);
-            if (!name) return;
-            teacherBySubject.set(sid, name);
+        if (!ctErr && ctData?.length) {
+          // on trie pour privilégier l'affectation la plus récente
+          const rows = (ctData as any[]).slice().sort((a, b) => {
+            const asd = String(a.start_date || "");
+            const bsd = String(b.start_date || "");
+            return bsd.localeCompare(asd);
           });
+
+          for (const row of rows) {
+            const instSubId = String(row.subject_id || "");
+            const sid = subjectIdByInstId.get(instSubId);
+            const tid = row.teacher_id ? String(row.teacher_id) : "";
+            if (!sid || !tid) continue;
+            if (teacherIdBySubject.has(sid)) continue;
+            teacherIdBySubject.set(sid, tid);
+          }
         }
       }
     }
   }
 
-  if (!teacherBySubject.size) return;
+  if (!teacherIdBySubject.size) return;
+
+  const teacherIds = Array.from(new Set(Array.from(teacherIdBySubject.values()).filter((x) => !!x)));
+  const nameById = new Map<string, string>();
+
+  if (teacherIds.length) {
+    const { data: profs, error: profErr } = await supabase
+      .from("profiles")
+      .select("id, display_name")
+      .in("id", teacherIds);
+
+    if (!profErr && profs?.length) {
+      (profs as any[]).forEach((p) => {
+        const id = String(p.id || "");
+        const dn = String(p.display_name || "").trim();
+        if (id && dn) nameById.set(id, dn);
+      });
+    }
+  }
 
   for (const item of items) {
     const perSubject = item.per_subject as any[] | undefined;
@@ -786,8 +821,13 @@ async function attachTeachersToSubjects(
 
     perSubject.forEach((ps) => {
       const sid = ps.subject_id as string | undefined;
-      const name = sid ? teacherBySubject.get(sid) ?? null : null;
-      (ps as any).teacher_name = name;
+      if (!sid) return;
+
+      const tid = teacherIdBySubject.get(sid) ?? null;
+      const tname = tid ? nameById.get(tid) ?? null : null;
+
+      (ps as any).teacher_id = tid;
+      (ps as any).teacher_name = tname;
     });
   }
 }
@@ -946,6 +986,20 @@ export async function GET(req: NextRequest) {
 
   const bulletinLevel = normalizeBulletinLevel(classRow.level);
 
+  /* ✅ lire l'option établissement : bulletin_signatures_enabled (institutions) */
+  let bulletinSignaturesEnabled = false;
+  {
+    const { data: instRow } = await srvClient
+      .from("institutions")
+      .select("bulletin_signatures_enabled, settings_json")
+      .eq("id", institutionId)
+      .maybeSingle();
+
+    const col = (instRow as any)?.bulletin_signatures_enabled;
+    if (typeof col === "boolean") bulletinSignaturesEnabled = col;
+    else bulletinSignaturesEnabled = Boolean((instRow as any)?.settings_json?.bulletin_signatures_enabled ?? false);
+  }
+
   // 1a) Lookup du professeur principal (facultatif)
   let headTeacher: HeadTeacherRow | null = null;
   if (classRow.head_teacher_id) {
@@ -1102,6 +1156,7 @@ export async function GET(req: NextRequest) {
         verify_path: BULLETIN_VERIFY_SHORT_PREFIX,
         legacy_verify_path: BULLETIN_VERIFY_LEGACY_PATH,
       },
+      signatures: { enabled: bulletinSignaturesEnabled },
       class: {
         id: classRow.id,
         label: classRow.label || classRow.code || "Classe",
@@ -1181,6 +1236,7 @@ export async function GET(req: NextRequest) {
         verify_path: BULLETIN_VERIFY_SHORT_PREFIX,
         legacy_verify_path: BULLETIN_VERIFY_LEGACY_PATH,
       },
+      signatures: { enabled: bulletinSignaturesEnabled },
       class: {
         id: classRow.id,
         label: classRow.label || classRow.code || "Classe",
@@ -1627,6 +1683,11 @@ export async function GET(req: NextRequest) {
       return {
         subject_id: s.subject_id,
         avg20,
+
+        // ✅ champs ajoutés (remplis plus bas par attachTeachersToSubjects + signatures)
+        teacher_id: null as string | null,
+        teacher_name: null as string | null,
+        teacher_signature_png: null as string | null,
       };
     });
 
@@ -1723,19 +1784,42 @@ export async function GET(req: NextRequest) {
   applySubjectRanks(items);
   applySubjectComponentRanks(items);
 
-  // Professeurs par matière (uniquement si évals)
-  if (evals.length) {
-    await attachTeachersToSubjects(
-      supabase,
-      srv,
-      items,
-      evals,
-      orderedSubjectIds,
-      institutionId,
-      classRow.id,
-      dateFrom,
-      dateTo
-    );
+  // ✅ Professeurs par matière (même si evals vides : fallback class_teachers)
+  await attachTeachersToSubjects(
+    supabase,
+    srv,
+    items,
+    evals,
+    orderedSubjectIds,
+    institutionId,
+    classRow.id,
+    dateFrom,
+    dateTo
+  );
+
+  // ✅ Signatures (uniquement si option établissement activée)
+  if (bulletinSignaturesEnabled) {
+    const teacherIds: string[] = [];
+    for (const it of items) {
+      const ps = it.per_subject as any[] | undefined;
+      if (!Array.isArray(ps)) continue;
+      for (const cell of ps) {
+        const tid = cell?.teacher_id ? String(cell.teacher_id) : "";
+        if (tid && isUuid(tid)) teacherIds.push(tid);
+      }
+    }
+
+    const sigMap = await getTeacherSignaturesAsDataUrl(srvClient, institutionId, teacherIds);
+
+    for (const it of items) {
+      const ps = it.per_subject as any[] | undefined;
+      if (!Array.isArray(ps)) continue;
+
+      for (const cell of ps) {
+        const tid = cell?.teacher_id ? String(cell.teacher_id) : "";
+        (cell as any).teacher_signature_png = tid ? sigMap.get(tid) ?? null : null;
+      }
+    }
   }
 
   // ✅ QR : URL courte /v/[code] (fallback token si besoin)
@@ -1765,6 +1849,7 @@ export async function GET(req: NextRequest) {
       verify_path: BULLETIN_VERIFY_SHORT_PREFIX,
       legacy_verify_path: BULLETIN_VERIFY_LEGACY_PATH,
     },
+    signatures: { enabled: bulletinSignaturesEnabled },
     class: {
       id: classRow.id,
       label: classRow.label || classRow.code || "Classe",

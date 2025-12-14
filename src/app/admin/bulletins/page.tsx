@@ -30,6 +30,9 @@ type InstitutionSettings = {
   country_motto?: string | null;
   ministry_name?: string | null;
   institution_code?: string | null;
+
+  // 🆕 option signatures électroniques
+  bulletin_signatures_enabled?: boolean | null;
 };
 
 type BulletinSubject = {
@@ -73,6 +76,9 @@ type PerSubjectAvg = {
   avg20: number | null;
   subject_rank?: number | null;
   teacher_name?: string | null;
+
+  // 🆕 signature (data URL) renvoyée par l’API quand activé
+  teacher_signature_png?: string | null;
 };
 
 type PerGroupAvg = {
@@ -107,7 +113,7 @@ type BulletinItemBase = {
   is_assigned?: boolean | null;
   is_affecte?: boolean | null;
 
-  // 🆕 PHOTO (optionnel : si tu ajoutes une url plus tard côté API)
+  // PHOTO (optionnel)
   photo_url?: string | null;
 
   // ✅ QR renvoyé par l’API
@@ -154,6 +160,17 @@ type BulletinResponse = {
   subject_groups: BulletinGroup[];
   subject_components?: BulletinSubjectComponent[];
   items: BulletinItemBase[];
+
+  // 🆕 infos QR + signatures (renvoyées par l’API)
+  qr?: {
+    enabled?: boolean;
+    mode?: string;
+    verify_path?: string;
+    legacy_verify_path?: string;
+  } | null;
+  signatures?: {
+    enabled?: boolean;
+  } | null;
 };
 
 type ClassStats = {
@@ -350,7 +367,7 @@ function computeSubjectAppreciation(avg: number | null | undefined): string {
 
 /* ───────── QR Code (généré côté client) ───────── */
 
-const QR_SIZE = 140; // ✅ QR plus large pour un meilleur scan sur smartphone
+const QR_SIZE = 140; // QR plus large pour un meilleur scan sur smartphone
 const __QR_CACHE = new Map<string, string>();
 
 let __qrLibPromise: Promise<any> | null = null;
@@ -382,7 +399,6 @@ async function generateQrDataUrl(
 
     if (typeof toDataURL !== "function") return null;
 
-    // ✅ margin + ECL robuste pour le print / scan
     const url: string = await toDataURL(text, {
       width: size,
       margin: 2,
@@ -582,6 +598,9 @@ type StudentBulletinCardProps = {
   conduct?: ConductItem | null;
   conductRubricMax?: ConductRubricMax;
   conductTotalMax?: number;
+
+  // 🆕 état global des signatures électroniques
+  signaturesEnabled?: boolean | null;
 };
 
 function StudentBulletinCard({
@@ -598,7 +617,10 @@ function StudentBulletinCard({
   conduct,
   conductRubricMax,
   conductTotalMax,
+  signaturesEnabled,
 }: StudentBulletinCardProps) {
+  const signaturesActive = !!signaturesEnabled;
+
   const coeffTotal = useMemo(
     () =>
       subjects.reduce(
@@ -698,7 +720,7 @@ function StudentBulletinCard({
 
   const tick = (checked: boolean) => (checked ? "☑" : "□");
 
-  // ✅ QR payload : PRIORITÉ au lien vérifiable de l’API (qr_url)
+  // ✅ QR payload : priorité au lien vérifiable de l’API (qr_url)
   const qrText = useMemo(() => {
     const apiUrl = (item.qr_url || "").trim();
     if (apiUrl) return apiUrl;
@@ -725,8 +747,7 @@ function StudentBulletinCard({
     item.matricule,
   ]);
 
-  // ✅ On génère un QR côté client en SECOURS,
-  // mais on utilise PRIORITAIREMENT le PNG serveur (item.qr_png)
+  // QR client en secours (si pas de qr_png)
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
 
   useEffect(() => {
@@ -740,14 +761,31 @@ function StudentBulletinCard({
     };
   }, [qrText]);
 
-  // 🔴 CHANGEMENT IMPORTANT : priorité à item.qr_png
+  // 🔴 priorité à item.qr_png
   const qrImgSrc = item.qr_png || qrDataUrl;
 
-  const renderSignatureLine = () => (
-    <div className="flex h-[14px] items-end">
-      <div className="w-full border-t border-black" />
-    </div>
-  );
+  const renderSignatureLine = (signaturePng?: string | null) => {
+    if (signaturePng) {
+      return (
+        <div className="flex h-[28px] flex-col items-center justify-end">
+          <div className="flex flex-1 items-center justify-center">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={signaturePng}
+              alt="Signature"
+              className="max-h-[24px] max-w-full object-contain"
+            />
+          </div>
+          <div className="w-full border-t border-black" />
+        </div>
+      );
+    }
+    return (
+      <div className="flex h-[14px] items-end">
+        <div className="w-full border-t border-black" />
+      </div>
+    );
+  };
 
   const perSubject = item.per_subject ?? [];
 
@@ -760,6 +798,12 @@ function StudentBulletinCard({
       cell && cell.subject_rank != null ? `${cell.subject_rank}e` : "—";
     const subjectTeacher = cell?.teacher_name || "";
     const appreciationLabel = computeSubjectAppreciation(avg);
+
+    // 🆕 signature électronique éventuelle pour cette matière
+    const signaturePng =
+      signaturesActive && cell && (cell as any).teacher_signature_png
+        ? String((cell as any).teacher_signature_png)
+        : null;
 
     const subComps = subjectCompsBySubject.get(s.subject_id) ?? [];
 
@@ -777,7 +821,9 @@ function StudentBulletinCard({
           <td className="bdr px-1 py-[1px] text-center">{subjectRankLabel}</td>
           <td className="bdr px-1 py-[1px]">{appreciationLabel}</td>
           <td className="bdr px-1 py-[1px]">{subjectTeacher}</td>
-          <td className="bdr px-1 py-[1px]">{renderSignatureLine()}</td>
+          <td className="bdr px-1 py-[1px]">
+            {renderSignatureLine(signaturePng)}
+          </td>
         </tr>
 
         {subComps.map((comp) => {
@@ -835,10 +881,10 @@ function StudentBulletinCard({
 
   return (
     <div className="print-page print-break mx-auto bg-white text-black">
-      {/* ───────── ENTÊTE OFFICIEL (centre Bulletin) ───────── */}
+      {/* ENTÊTE OFFICIEL */}
       <div className="bdr mb-1 p-1">
         <div className="grid grid-cols-3 items-start gap-2">
-          {/* Gauche : République / devise / ministère */}
+          {/* Gauche */}
           <div className="text-center text-[9px] leading-tight">
             <div className="font-semibold uppercase">{countryName}</div>
             <div className="text-[8px]">{countryMotto}</div>
@@ -850,7 +896,7 @@ function StudentBulletinCard({
             </div>
           </div>
 
-          {/* Centre : Titre */}
+          {/* Centre */}
           <div className="text-center">
             <div className="text-[12px] font-bold uppercase leading-tight">
               BULLETIN TRIMESTRIEL DE NOTES
@@ -860,7 +906,7 @@ function StudentBulletinCard({
             </div>
           </div>
 
-          {/* Droite : Année scolaire + QR */}
+          {/* Droite */}
           <div className="flex justify-end gap-2">
             <div className="text-right text-[9px] leading-tight">
               <div>Année scolaire</div>
@@ -881,7 +927,7 @@ function StudentBulletinCard({
               )}
             </div>
 
-            {/* ✅ QR agrandi, utilise qr_png si présent */}
+            {/* QR */}
             <div className="bdr flex h-[110px] w-[110px] items-center justify-center overflow-hidden bg-white">
               {qrImgSrc ? (
                 // eslint-disable-next-line @next/next/no-img-element
@@ -897,7 +943,7 @@ function StudentBulletinCard({
           </div>
         </div>
 
-        {/* Ligne établissement (logo + nom) */}
+        {/* Ligne établissement */}
         <div className="mt-1 grid grid-cols-[72px_1fr] items-center gap-2">
           <div className="bdr flex h-[52px] w-[72px] items-center justify-center overflow-hidden bg-white">
             {institution?.institution_logo_url ? (
@@ -931,7 +977,7 @@ function StudentBulletinCard({
         </div>
       </div>
 
-      {/* ───────── BLOC IDENTITÉ ÉLÈVE + PHOTO ───────── */}
+      {/* IDENTITÉ ÉLÈVE */}
       <div className="bdr mb-1 p-1">
         <div className="grid grid-cols-[1fr_1fr_1fr_86px] gap-2 text-[9px] leading-tight">
           <div className="space-y-[2px]">
@@ -1021,7 +1067,7 @@ function StudentBulletinCard({
         </div>
       </div>
 
-      {/* ───────── TABLEAU DISCIPLINES ───────── */}
+      {/* TABLEAU DISCIPLINES */}
       <table className="bdr w-full text-[9px] leading-tight">
         <thead>
           <tr className="bg-slate-100">
@@ -1114,7 +1160,7 @@ function StudentBulletinCard({
         </tbody>
       </table>
 
-      {/* ───────── BLOCS BAS (comme modèle) ───────── */}
+      {/* BLOCS BAS */}
       <div className="mt-1 grid grid-cols-3 gap-2 text-[9px] leading-tight">
         <div className="bdr p-1">
           <div className="font-semibold">Assiduité</div>
@@ -1241,7 +1287,7 @@ function StudentBulletinCard({
         </div>
       </div>
 
-      {/* ✅ VISAS : Prof Principal + Chef d’établissement */}
+      {/* VISAS */}
       <div className="mt-1 grid grid-cols-2 gap-2 text-[9px] leading-tight">
         <div className="bdr flex flex-col justify-between p-1">
           <div className="font-semibold text-[8px]">
@@ -1292,6 +1338,12 @@ export default function BulletinsPage() {
   );
   const [institutionLoading, setInstitutionLoading] = useState(false);
 
+  // 🆕 état signatures électroniques
+  const [signaturesEnabled, setSignaturesEnabled] = useState<boolean | null>(
+    null
+  );
+  const [signaturesToggling, setSignaturesToggling] = useState(false);
+
   const [selectedClassId, setSelectedClassId] = useState<string>("");
 
   const [periods, setPeriods] = useState<GradePeriod[]>([]);
@@ -1300,7 +1352,6 @@ export default function BulletinsPage() {
   const [selectedPeriodId, setSelectedPeriodId] = useState<string>("");
 
   const [dateFrom, setDateFrom] = useState<string>("");
-
   const [dateTo, setDateTo] = useState<string>("");
 
   const [bulletinRaw, setBulletinRaw] = useState<BulletinResponse | null>(null);
@@ -1310,20 +1361,17 @@ export default function BulletinsPage() {
   const [conductSummary, setConductSummary] =
     useState<ConductSummaryResponse | null>(null);
 
-  // ✅ Aperçu “clean” : plein écran A4 (uniquement le bulletin)
+  // Aperçu clean A4
   const [previewOpen, setPreviewOpen] = useState(false);
-
-  // ✅ FIX responsive preview (mobile) : on “scale” la feuille A4 à l’écran
   const [previewZoom, setPreviewZoom] = useState<number>(1);
 
   const computePreviewZoom = () => {
     if (typeof window === "undefined") return 1;
 
-    // largeur A4 (210mm) ≈ 793.7px en CSS (96dpi)
     const A4_PX = (210 / 25.4) * 96;
 
     const vw = window.innerWidth || 0;
-    const padding = vw < 768 ? 16 : 64; // marge “overlay”
+    const padding = vw < 768 ? 16 : 64;
     const avail = Math.max(240, vw - padding);
 
     const z = Math.min(1, avail / A4_PX);
@@ -1382,7 +1430,16 @@ export default function BulletinsPage() {
         const res = await fetch("/api/admin/institution/settings");
         if (!res.ok) return;
         const json = await res.json();
-        setInstitution(json as InstitutionSettings);
+        const inst = json as InstitutionSettings;
+        setInstitution(inst);
+
+        // 🆕 on récupère l’état des signatures si disponible
+        const sig =
+          (inst as any)?.bulletin_signatures_enabled ??
+          (inst as any)?.settings_json?.bulletin_signatures_enabled;
+        if (typeof sig === "boolean") {
+          setSignaturesEnabled(sig);
+        }
       } catch (e) {
         console.error(e);
       } finally {
@@ -1487,7 +1544,16 @@ export default function BulletinsPage() {
       const json = (await resBulletin.json()) as BulletinResponse;
       if (!json.ok) throw new Error("Réponse bulletin invalide (ok = false).");
 
-      // ✅ AJOUT DEBUG demandé
+      // 🆕 on récupère l’état des signatures depuis la réponse API
+      const sigFromApi =
+        (json as any)?.signatures && typeof (json as any).signatures.enabled === "boolean"
+          ? (json as any).signatures.enabled
+          : null;
+      if (sigFromApi !== null) {
+        setSignaturesEnabled(sigFromApi);
+      }
+
+      // Debug QR
       const data = json as any;
       console.log("[BULLETIN] sample qr_url:", data?.items?.[0]?.qr_url);
       console.log("[BULLETIN] sample qr_token:", data?.items?.[0]?.qr_token);
@@ -1514,7 +1580,6 @@ export default function BulletinsPage() {
         );
       }
 
-      // ✅ ouvre automatiquement l’aperçu “clean” (uniquement bulletin)
       setPreviewOpen(true);
     } catch (e: any) {
       console.error(e);
@@ -1523,6 +1588,56 @@ export default function BulletinsPage() {
       );
     } finally {
       setBulletinLoading(false);
+    }
+  };
+
+  // 🆕 toggle signatures électroniques
+  const handleToggleSignatures = async () => {
+    try {
+      setErrorMsg(null);
+      setSignaturesToggling(true);
+
+      const current = !!signaturesEnabled;
+      const next = !current;
+
+      const res = await fetch("/api/admin/institution/bulletin-signatures", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: next }),
+      });
+
+      if (!res.ok) {
+        const txt = await res.text();
+        throw new Error(
+          `Impossible de mettre à jour les signatures électroniques (${res.status}). ${
+            txt || ""
+          }`
+        );
+      }
+
+      const json = await res.json().catch(() => null);
+      const effective =
+        json && typeof json.enabled === "boolean" ? json.enabled : next;
+
+      setSignaturesEnabled(effective);
+      setInstitution((prev) =>
+        prev
+          ? { ...prev, bulletin_signatures_enabled: effective }
+          : prev
+      );
+
+      // On recharge les bulletins si déjà chargés pour prendre en compte les signatures
+      if (bulletinRaw && selectedClassId && dateFrom && dateTo) {
+        await handleLoadBulletin();
+      }
+    } catch (e: any) {
+      console.error(e);
+      setErrorMsg(
+        e?.message ||
+          "Une erreur est survenue lors de la mise à jour des signatures électroniques."
+      );
+    } finally {
+      setSignaturesToggling(false);
     }
   };
 
@@ -1557,25 +1672,23 @@ export default function BulletinsPage() {
 
   return (
     <>
-      {/* Styles A4 : aperçu écran + impression */}
+      {/* Styles A4 */}
       <style jsx global>{`
         .bdr {
           border: 1px solid #000;
         }
 
-        /* ✅ Aperçu écran : feuille A4 (taille réelle) */
         .print-page {
           width: 210mm;
           min-height: 297mm;
           margin: 0 auto;
-          padding: 8mm; /* simule la marge du papier */
+          padding: 8mm;
           font-family: Arial, Helvetica, sans-serif;
           background: #fff;
         }
 
-        /* ✅ Responsive preview: sur écran (overlay), on scale la feuille */
         .preview-overlay {
-          overflow-x: hidden; /* éviter l’impression “coupé” sur mobile */
+          overflow-x: hidden;
         }
 
         @supports (zoom: 1) {
@@ -1603,7 +1716,6 @@ export default function BulletinsPage() {
             print-color-adjust: exact;
           }
 
-          /* contenu imprimé = zone utile (A4 - marges) */
           .print-page {
             width: 194mm;
             min-height: 281mm;
@@ -1622,7 +1734,6 @@ export default function BulletinsPage() {
             display: none !important;
           }
 
-          /* overlay preview devient "normal" à l’impression */
           .preview-overlay {
             position: static !important;
             inset: auto !important;
@@ -1636,13 +1747,12 @@ export default function BulletinsPage() {
         }
       `}</style>
 
-      {/* ✅ MODE CLEAN : uniquement le bulletin */}
+      {/* Aperçu clean */}
       {previewOpen && items.length > 0 && enriched && classInfo ? (
         <div
           className="preview-overlay fixed inset-0 z-[60] overflow-y-auto bg-slate-200 p-2 md:p-6"
           style={{ ["--preview-zoom" as any]: previewZoom }}
         >
-          {/* Actions minimales (écran seulement) */}
           <div className="preview-actions sticky top-2 z-10 mb-3 flex justify-end gap-2">
             <Button
               variant="ghost"
@@ -1667,7 +1777,6 @@ export default function BulletinsPage() {
             </Button>
           </div>
 
-          {/* Bulletins */}
           <div className="flex flex-col gap-6 pb-6">
             {items.map((it, idx) => (
               <StudentBulletinCard
@@ -1685,15 +1794,16 @@ export default function BulletinsPage() {
                 conduct={conductByStudentId.get(it.student_id) || null}
                 conductRubricMax={conductRubricMax}
                 conductTotalMax={conductTotalMax}
+                signaturesEnabled={signaturesEnabled}
               />
             ))}
           </div>
         </div>
       ) : (
-        /* Mode normal : filtres + génération */
+        /* Mode normal */
         <div className="mx-auto flex max-w-6xl flex-col gap-4 p-4 md:p-6">
-          {/* Header + actions */}
-          <div className="flex items-center justify-between gap-4 print:hidden">
+          {/* Header + actions + toggle signatures */}
+          <div className="flex flex-col gap-3 print:hidden sm:flex-row sm:items-center sm:justify-between">
             <div>
               <h1 className="text-lg font-semibold text-slate-900">
                 Bulletins de notes
@@ -1702,24 +1812,61 @@ export default function BulletinsPage() {
                 Charger une classe + période, puis ouvrir l’aperçu A4.
               </p>
             </div>
-            <div className="flex gap-2">
-              <Button
-                type="button"
-                variant="ghost"
-                onClick={handleLoadBulletin}
-                disabled={bulletinLoading || !selectedClassId}
-              >
-                <RefreshCw className="h-4 w-4" />
-                Recharger
-              </Button>
-              <Button
-                type="button"
-                onClick={() => setPreviewOpen(true)}
-                disabled={!items.length}
-              >
-                <Printer className="h-4 w-4" />
-                Aperçu / Imprimer
-              </Button>
+            <div className="flex flex-col items-stretch gap-2 sm:items-end">
+              <div className="flex items-center justify-end gap-2">
+                <div className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs text-slate-700">
+                  <span className="font-semibold">
+                    Signatures électroniques :{" "}
+                  </span>
+                  <span
+                    className={
+                      signaturesEnabled
+                        ? "text-emerald-600"
+                        : signaturesEnabled === null
+                        ? "text-slate-500"
+                        : "text-slate-500"
+                    }
+                  >
+                    {signaturesEnabled === null
+                      ? "Non configurées"
+                      : signaturesEnabled
+                      ? "Activées"
+                      : "Désactivées"}
+                  </span>
+                </div>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  onClick={handleToggleSignatures}
+                  disabled={signaturesToggling}
+                >
+                  {signaturesToggling
+                    ? "Mise à jour…"
+                    : signaturesEnabled
+                    ? "Désactiver"
+                    : "Activer"}
+                </Button>
+              </div>
+
+              <div className="flex justify-end gap-2">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  onClick={handleLoadBulletin}
+                  disabled={bulletinLoading || !selectedClassId}
+                >
+                  <RefreshCw className="h-4 w-4" />
+                  Recharger
+                </Button>
+                <Button
+                  type="button"
+                  onClick={() => setPreviewOpen(true)}
+                  disabled={!items.length}
+                >
+                  <Printer className="h-4 w-4" />
+                  Aperçu / Imprimer
+                </Button>
+              </div>
             </div>
           </div>
 
