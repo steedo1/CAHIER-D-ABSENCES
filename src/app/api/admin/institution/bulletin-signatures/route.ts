@@ -52,16 +52,18 @@ async function getAdminAndInstitution(
   return { user, institutionId, role };
 }
 
-function statusFromError(error: string): number {
+/* ───────── status HTTP en fonction du code erreur ───────── */
+function statusFromError(error?: string): number {
   if (error === "UNAUTHENTICATED") return 401;
   if (error === "FORBIDDEN") return 403;
+  if (error === "PROFILE_NOT_FOUND" || error === "NO_INSTITUTION") return 403;
   return 400;
 }
 
 /* ───────── GET: lire l’état des signatures électroniques ───────── */
-export async function GET(req: NextRequest) {
+export async function GET(_req: NextRequest) {
   const supabase = await getSupabaseServerClient();
-  const srv = getSupabaseServiceClient();
+  const srv = await getSupabaseServiceClient();
 
   const ctx = await getAdminAndInstitution(supabase);
   if ("error" in ctx) {
@@ -89,7 +91,9 @@ export async function GET(req: NextRequest) {
   const enabled =
     typeof (data as any).bulletin_signatures_enabled === "boolean"
       ? (data as any).bulletin_signatures_enabled
-      : Boolean((data as any).settings_json?.bulletin_signatures_enabled ?? false);
+      : Boolean(
+          (data as any).settings_json?.bulletin_signatures_enabled ?? false
+        );
 
   return NextResponse.json({ ok: true, enabled });
 }
@@ -97,7 +101,7 @@ export async function GET(req: NextRequest) {
 /* ───────── POST: activer / désactiver ───────── */
 export async function POST(req: NextRequest) {
   const supabase = await getSupabaseServerClient();
-  const srv = getSupabaseServiceClient();
+  const srv = await getSupabaseServiceClient();
 
   const ctx = await getAdminAndInstitution(supabase);
   if ("error" in ctx) {
