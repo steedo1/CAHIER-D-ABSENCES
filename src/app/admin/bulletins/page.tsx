@@ -297,8 +297,10 @@ function computeCouncilAppreciationText(
   generalAvg: number | null | undefined,
   conductOn20: number | null | undefined
 ): string {
-  const g = generalAvg !== null && generalAvg !== undefined ? Number(generalAvg) : null;
-  const c = conductOn20 !== null && conductOn20 !== undefined ? Number(conductOn20) : null;
+  const g =
+    generalAvg !== null && generalAvg !== undefined ? Number(generalAvg) : null;
+  const c =
+    conductOn20 !== null && conductOn20 !== undefined ? Number(conductOn20) : null;
 
   if (mentions.sanction === "blameConduct") return "Conduite très insuffisante.";
   if (mentions.sanction === "warningConduct") return "Conduite à améliorer.";
@@ -719,9 +721,7 @@ function SignatureInk({ src, className }: { src: string; className?: string }) {
 
     (async () => {
       const inked = await inkifySignaturePng(src);
-      const tinted = inked
-        ? await tintSignaturePng(inked, SIGNATURE_BLUE)
-        : null;
+      const tinted = inked ? await tintSignaturePng(inked, SIGNATURE_BLUE) : null;
       const out = tinted || inked || src;
       if (!cancelled && out) setDisplaySrc(out);
     })();
@@ -743,7 +743,9 @@ function SignatureInk({ src, className }: { src: string; className?: string }) {
 
 /* ───────── Rangs sous-matières (front) ───────── */
 
-function applyComponentRanksFront(items: (BulletinItemBase | BulletinItemWithRank)[]) {
+function applyComponentRanksFront(
+  items: (BulletinItemBase | BulletinItemWithRank)[]
+) {
   type Entry = { itemIndex: number; compIndex: number; avg: number; key: string };
   const byKey = new Map<string, Entry[]>();
 
@@ -894,7 +896,9 @@ function computeRanksAndStats(
     return { response: res, items: itemsWithAvg, stats };
   }
 
-  const sorted = [...withAvg].sort((a, b) => (b.general_avg ?? 0) - (a.general_avg ?? 0));
+  const sorted = [...withAvg].sort(
+    (a, b) => (b.general_avg ?? 0) - (a.general_avg ?? 0)
+  );
 
   let lastScore: number | null = null;
   let lastRank = 0;
@@ -989,35 +993,54 @@ function StudentBulletinCard({
   const pageRef = useRef<HTMLDivElement | null>(null);
   const [printFitScale, setPrintFitScale] = useState(1);
 
+  const setScale = (s: number) => {
+    const v = Number.isFinite(s) ? s : 1;
+    setPrintFitScale(v);
+    if (pageRef.current) {
+      pageRef.current.style.setProperty("--print-fit-scale", String(v));
+    }
+  };
+
   const computePrintFit = () => {
     const el = pageRef.current;
     if (!el || typeof window === "undefined") return;
 
+    const zoom = Math.max(0.1, Number(previewZoomForMeasure || 1));
+
     // hauteur réelle du bloc (corrigée du zoom d’aperçu)
     const rect = el.getBoundingClientRect();
-    const zoom = Math.max(0.1, Number(previewZoomForMeasure || 1));
     const naturalH = rect.height / zoom;
 
-    // hauteur A4 imprimable = min-height du bloc (289mm) convertie par le navigateur -> px
     const cs = window.getComputedStyle(el);
     const minHPx = parseFloat(cs.minHeight || "0");
 
     if (!Number.isFinite(naturalH) || naturalH <= 0) return;
     if (!Number.isFinite(minHPx) || minHPx <= 0) {
-      setPrintFitScale(1);
+      setScale(1);
       return;
     }
 
-    // si dépasse => scale < 1
-    const raw = Math.min(1, minHPx / naturalH);
+    // ✅ Si le bloc ne dépasse PAS la zone A4 utile → pas de scale
+    if (naturalH <= minHPx + 0.5) {
+      setScale(1);
+      return;
+    }
 
-    // petite marge anti-arrondi (sinon ça peut encore pousser 1px sur une 2e page)
+    // ✅ marge de sécurité anti-arrondis / imprimantes (sinon 1px peut créer une 2e page)
+    const cushion = Math.max(10, Math.round(minHPx * 0.012)); // ~1.2% (≈ 13px sur A4 utile)
+    const usable = Math.max(1, minHPx - cushion);
+
+    // scale < 1 si dépasse
+    const raw = Math.min(1, usable / naturalH);
+
+    // ✅ garde une micro marge en plus
     const safe = Math.min(1, raw * 0.99);
 
-    // garde-fou
-    const clamped = Math.max(0.82, safe);
+    // ✅ plus de blocage à 0.82 (c’était la cause du débordement)
+    // on autorise à descendre plus bas pour GARANTIR 1 page
+    const clamped = Math.max(0.45, safe);
 
-    setPrintFitScale(clamped);
+    setScale(clamped);
   };
 
   useLayoutEffect(() => {
@@ -1026,9 +1049,15 @@ function StudentBulletinCard({
     // recalcul après images / signatures
     const t1 = window.setTimeout(computePrintFit, 150);
     const t2 = window.setTimeout(computePrintFit, 650);
+    const t3 = window.setTimeout(computePrintFit, 1400);
 
     const onResize = () => computePrintFit();
     window.addEventListener("resize", onResize);
+
+    // ✅ recalcul juste avant impression + sur demande explicite
+    const onBeforePrint = () => computePrintFit();
+    window.addEventListener("beforeprint", onBeforePrint);
+    window.addEventListener("bulletins:recalc-fit" as any, onBeforePrint as any);
 
     let ro: ResizeObserver | null = null;
     if (typeof ResizeObserver !== "undefined" && pageRef.current) {
@@ -1039,7 +1068,10 @@ function StudentBulletinCard({
     return () => {
       window.clearTimeout(t1);
       window.clearTimeout(t2);
+      window.clearTimeout(t3);
       window.removeEventListener("resize", onResize);
+      window.removeEventListener("beforeprint", onBeforePrint);
+      window.removeEventListener("bulletins:recalc-fit" as any, onBeforePrint as any);
       if (ro) ro.disconnect();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1069,14 +1101,18 @@ function StudentBulletinCard({
       ? "Non boursier"
       : "—");
 
-  const boarderLabel = item.is_boarder == null ? "—" : item.is_boarder ? "Interne" : "Externe";
+  const boarderLabel =
+    item.is_boarder == null ? "—" : item.is_boarder ? "Interne" : "Externe";
   const repeaterLabel = formatYesNo(item.is_repeater);
   const assignedLabel = formatYesNo(item.is_assigned ?? item.is_affecte ?? null);
 
   const photoUrl = item.photo_url || (item as any).student_photo_url || null;
 
-  const rawConductTotal = conduct && typeof conduct.total === "number" ? conduct.total : null;
-  const conductNoteOn20 = clampTo20(rawConductTotal !== null ? Number(rawConductTotal) : null);
+  const rawConductTotal =
+    conduct && typeof conduct.total === "number" ? conduct.total : null;
+  const conductNoteOn20 = clampTo20(
+    rawConductTotal !== null ? Number(rawConductTotal) : null
+  );
 
   const conductSubject: BulletinSubject | null =
     conductNoteOn20 !== null
@@ -1093,7 +1129,9 @@ function StudentBulletinCard({
   const perSubject: PerSubjectAvg[] = useMemo(() => {
     const base: PerSubjectAvg[] = [...perSubjectBase];
     if (conductSubject && conductNoteOn20 !== null) {
-      const existing = base.find((ps) => ps.subject_id === conductSubject.subject_id);
+      const existing = base.find(
+        (ps) => ps.subject_id === conductSubject.subject_id
+      );
       if (existing) {
         existing.avg20 = conductNoteOn20;
       } else {
@@ -1116,7 +1154,9 @@ function StudentBulletinCard({
       arr.push(c);
       map.set(c.subject_id, arr);
     });
-    map.forEach((arr) => arr.sort((a, b) => (a.order_index || 0) - (b.order_index || 0)));
+    map.forEach((arr) =>
+      arr.sort((a, b) => (a.order_index || 0) - (b.order_index || 0))
+    );
     return map;
   }, [subjectComponents]);
 
@@ -1127,7 +1167,8 @@ function StudentBulletinCard({
       const key = `${psc.subject_id}__${psc.component_id}`;
       m.set(key, {
         avg20: psc.avg20 ?? null,
-        component_rank: psc.component_rank !== undefined ? psc.component_rank : null,
+        component_rank:
+          psc.component_rank !== undefined ? psc.component_rank : null,
       });
     });
     return m;
@@ -1174,7 +1215,11 @@ function StudentBulletinCard({
   }, [subjectsWithGrades]);
 
   const mentions = computeCouncilMentions(item.general_avg, conductNoteOn20);
-  const councilText = computeCouncilAppreciationText(mentions, item.general_avg, conductNoteOn20);
+  const councilText = computeCouncilAppreciationText(
+    mentions,
+    item.general_avg,
+    conductNoteOn20
+  );
 
   const tick = (checked: boolean) => (
     <span
@@ -1306,8 +1351,7 @@ function StudentBulletinCard({
         ? round2(Number(avg) * (s.coeff_bulletin || 0))
         : null;
 
-    const subjectRankLabel =
-      cell && cell.subject_rank != null ? `${cell.subject_rank}e` : "—";
+    const subjectRankLabel = cell && cell.subject_rank != null ? `${cell.subject_rank}e` : "—";
     const subjectTeacher = cell?.teacher_name || "";
     const appreciationLabel = computeSubjectAppreciation(avg);
 
@@ -1346,7 +1390,10 @@ function StudentBulletinCard({
               : null;
 
           return (
-            <tr key={`${s.subject_id}-${comp.id}`} className="text-[9px] text-slate-700">
+            <tr
+              key={`${s.subject_id}-${comp.id}`}
+              className="text-[9px] text-slate-700"
+            >
               <td className="bdr px-1 py-[1px] pl-4">
                 {comp.short_label || comp.label}
               </td>
@@ -1378,7 +1425,9 @@ function StudentBulletinCard({
     (institution?.country_motto || "Union - Discipline - Travail").trim()
   );
   const ministryName = safeUpper(
-    String((institution?.ministry_name || "MINISTÈRE DE L'ÉDUCATION NATIONALE").trim())
+    String(
+      (institution?.ministry_name || "MINISTÈRE DE L'ÉDUCATION NATIONALE").trim()
+    )
   );
 
   return (
@@ -1416,7 +1465,9 @@ function StudentBulletinCard({
               {institution?.institution_code && (
                 <div className="mt-1 text-[8px]">
                   Code :{" "}
-                  <span className="font-semibold">{String(institution.institution_code)}</span>
+                  <span className="font-semibold">
+                    {String(institution.institution_code)}
+                  </span>
                 </div>
               )}
               {(period.from || period.to) && (
@@ -1430,7 +1481,11 @@ function StudentBulletinCard({
             <div className="bdr flex h-[110px] w-[110px] items-center justify-center overflow-hidden bg-white">
               {qrImgSrc ? (
                 // eslint-disable-next-line @next/next/no-img-element
-                <img src={qrImgSrc} alt="QR" className="h-[104px] w-[104px] object-contain" />
+                <img
+                  src={qrImgSrc}
+                  alt="QR"
+                  className="h-[104px] w-[104px] object-contain"
+                />
               ) : (
                 <div className="text-[8px] text-slate-500">QR</div>
               )}
@@ -1454,11 +1509,15 @@ function StudentBulletinCard({
 
           <div className="text-center">
             <div className="text-[11px] font-bold uppercase">
-              {safeUpper(String((institution?.institution_name || "ÉTABLISSEMENT").trim()))}
+              {safeUpper(
+                String((institution?.institution_name || "ÉTABLISSEMENT").trim())
+              )}
             </div>
             <div className="text-[9px]">
               {String(institution?.institution_postal_address || "")}
-              {institution?.institution_phone ? ` • Tél : ${institution.institution_phone}` : ""}
+              {institution?.institution_phone
+                ? ` • Tél : ${institution.institution_phone}`
+                : ""}
               {institution?.institution_status ? ` • ${institution.institution_status}` : ""}
             </div>
           </div>
@@ -1994,9 +2053,7 @@ export default function BulletinsPage() {
       if (!resBulletin.ok) {
         const txt = await resBulletin.text();
         throw new Error(
-          `Erreur bulletin (${resBulletin.status}) : ${
-            txt || "Impossible de générer le bulletin."
-          }`
+          `Erreur bulletin (${resBulletin.status}) : ${txt || "Impossible de générer le bulletin."}`
         );
       }
 
@@ -2025,9 +2082,7 @@ export default function BulletinsPage() {
       setPreviewOpen(true);
     } catch (e: any) {
       console.error(e);
-      setErrorMsg(
-        e?.message || "Une erreur est survenue lors du chargement du bulletin."
-      );
+      setErrorMsg(e?.message || "Une erreur est survenue lors du chargement du bulletin.");
     } finally {
       setBulletinLoading(false);
     }
@@ -2058,9 +2113,7 @@ export default function BulletinsPage() {
       const effective = json && typeof json.enabled === "boolean" ? json.enabled : next;
 
       setSignaturesEnabled(effective);
-      setInstitution((prev) =>
-        prev ? { ...prev, bulletin_signatures_enabled: effective } : prev
-      );
+      setInstitution((prev) => (prev ? { ...prev, bulletin_signatures_enabled: effective } : prev));
 
       if (bulletinRaw && selectedClassId && dateFrom && dateTo) {
         await handleLoadBulletin();
@@ -2103,7 +2156,9 @@ export default function BulletinsPage() {
     if (!items.length) return;
     if (typeof window === "undefined") return;
 
-    // ✅ laisse le temps aux fitScale de se calculer avant print
+    // ✅ force recalcul fit-to-page AVANT print (tous les bulletins)
+    window.dispatchEvent(new Event("bulletins:recalc-fit"));
+
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
         window.print();
@@ -2222,13 +2277,19 @@ export default function BulletinsPage() {
             display: none !important;
           }
 
-          /* ✅ PRINT FIT : plus jamais de débordement */
+          /* ✅ PRINT FIT : 1 SEULE PAGE GARANTIE */
           .print-page {
             width: 202mm;
-            min-height: 289mm;
+            height: 289mm;     /* ✅ fixe la page utile */
+            max-height: 289mm; /* ✅ sécurité */
+            overflow: hidden;  /* ✅ jamais de 2e page */
+
             margin: 0 auto;
             padding: 0;
             box-sizing: border-box;
+
+            page-break-inside: avoid;
+            break-inside: avoid-page;
 
             zoom: var(--print-fit-scale, 1) !important;
             transform: none !important;
