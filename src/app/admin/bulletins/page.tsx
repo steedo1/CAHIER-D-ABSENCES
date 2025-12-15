@@ -1,6 +1,13 @@
+// src/app/admin/notes/bulletins/page.tsx
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, {
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { Printer, RefreshCw, X } from "lucide-react";
 
 /* ───────── Types ───────── */
@@ -32,6 +39,9 @@ type InstitutionSettings = {
 
   // 🆕 option signatures électroniques
   bulletin_signatures_enabled?: boolean | null;
+
+  // (compat éventuelle)
+  settings_json?: any;
 };
 
 type BulletinSubject = {
@@ -98,7 +108,7 @@ type BulletinItemBase = {
   full_name: string;
   matricule: string | null;
 
-  // Infos élève pour coller au bulletin officiel
+  // Infos élève
   sex?: string | null;
   gender?: string | null;
   birthdate?: string | null;
@@ -114,6 +124,7 @@ type BulletinItemBase = {
 
   // PHOTO (optionnel)
   photo_url?: string | null;
+  student_photo_url?: string | null;
 
   // ✅ QR renvoyé par l’API
   qr_url?: string | null;
@@ -160,7 +171,6 @@ type BulletinResponse = {
   subject_components?: BulletinSubjectComponent[];
   items: BulletinItemBase[];
 
-  // 🆕 infos QR + signatures (renvoyées par l’API)
   qr?: {
     enabled?: boolean;
     mode?: string;
@@ -184,7 +194,7 @@ type EnrichedBulletin = {
   stats: ClassStats;
 };
 
-/** Périodes de notes (trimestres / séquences) */
+/** Périodes de notes */
 type GradePeriod = {
   id: string;
   academic_year: string | null;
@@ -265,18 +275,13 @@ function computeCouncilMentions(
     Number.isFinite(conductOn20)
   ) {
     const c = Number(conductOn20);
-    const ratio = c / 20; // ✅ toujours sur 20, même si le barème interne est sur 16
-    if (ratio <= 0.4) {
-      sanction = "blameConduct";
-    } else if (ratio <= 0.6 && !sanction) {
-      sanction = "warningConduct";
-    }
+    const ratio = c / 20;
+    if (ratio <= 0.4) sanction = "blameConduct";
+    else if (ratio <= 0.6 && !sanction) sanction = "warningConduct";
   }
 
   return { distinction, sanction };
 }
-
-/* ───────── Helpers supplémentaires (conduite & appréciation) ───────── */
 
 function clampTo20(value: number | null | undefined): number | null {
   if (value === null || value === undefined) return null;
@@ -287,42 +292,28 @@ function clampTo20(value: number | null | undefined): number | null {
   return n;
 }
 
-/**
- * Génère une appréciation courte pour le conseil de classe
- * en fonction de la moyenne générale + de la conduite.
- */
 function computeCouncilAppreciationText(
   mentions: CouncilMentions,
   generalAvg: number | null | undefined,
   conductOn20: number | null | undefined
 ): string {
-  const g =
-    generalAvg !== null && generalAvg !== undefined
-      ? Number(generalAvg)
-      : null;
-  const c =
-    conductOn20 !== null && conductOn20 !== undefined
-      ? Number(conductOn20)
-      : null;
+  const g = generalAvg !== null && generalAvg !== undefined ? Number(generalAvg) : null;
+  const c = conductOn20 !== null && conductOn20 !== undefined ? Number(conductOn20) : null;
 
-  // Priorité aux sanctions
   if (mentions.sanction === "blameConduct") return "Conduite très insuffisante.";
   if (mentions.sanction === "warningConduct") return "Conduite à améliorer.";
   if (mentions.sanction === "blameWork") return "Résultats très insuffisants.";
   if (mentions.sanction === "warningWork") return "Résultats insuffisants.";
 
-  // Puis aux distinctions
-  if (mentions.distinction === "excellence") return "Excellent trimestre.";
-  if (mentions.distinction === "honour") return "Très bon trimestre.";
-  if (mentions.distinction === "encouragement") return "Trimestre satisfaisant.";
+  if (mentions.distinction === "excellence") return "Excellent travail.";
+  if (mentions.distinction === "honour") return "Très bon travail.";
+  if (mentions.distinction === "encouragement") return "Assez bon travail.";
 
-  // Sinon on se base sur la moyenne
   if (g !== null && Number.isFinite(g)) {
-    if (g >= 10) return "Trimestre correct.";
-    return "Trimestre moyen.";
+    if (g >= 10) return "Travail passable.";
+    return "Travail moyen.";
   }
 
-  // À défaut, on regarde la conduite seule
   if (c !== null && Number.isFinite(c)) {
     if (c >= 14) return "Conduite satisfaisante.";
     if (c >= 10) return "Conduite correcte.";
@@ -389,7 +380,7 @@ type ButtonProps = React.ButtonHTMLAttributes<HTMLButtonElement> & {
 
 function Button({ variant = "primary", ...props }: ButtonProps) {
   const base =
-    "inline-flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-medium transition focus:outline-none focus:ring-4";
+    "inline-flex items-center justify-center gap-2 rounded-xl px-3 py-2 text-sm font-medium transition focus:outline-none focus:ring-4";
   const variants: Record<string, string> = {
     primary:
       "bg-emerald-500 text-white hover:bg-emerald-600 focus:ring-emerald-500/30 disabled:bg-emerald-300",
@@ -406,7 +397,7 @@ function Button({ variant = "primary", ...props }: ButtonProps) {
 
 function formatNumber(n: number | null | undefined, digits = 2): string {
   if (n === null || n === undefined || !Number.isFinite(n)) return "–";
-  return n.toFixed(digits);
+  return Number(n).toFixed(digits);
 }
 
 function round2(n: number): number {
@@ -431,7 +422,7 @@ function computeSubjectAppreciation(avg: number | null | undefined): string {
   if (!Number.isFinite(avg)) return "";
   const a = Number(avg);
   if (a >= 18) return "Excellent";
-  if (a >= 16) return "TRES bien";
+  if (a >= 16) return "TRÈS bien";
   if (a >= 14) return "Bien";
   if (a >= 12) return "Assez bien";
   if (a >= 10) return "Passable";
@@ -442,9 +433,8 @@ function computeSubjectAppreciation(avg: number | null | undefined): string {
 
 /* ───────── QR Code (généré côté client) ───────── */
 
-const QR_SIZE = 140; // QR plus large pour un meilleur scan sur smartphone
+const QR_SIZE = 140;
 const __QR_CACHE = new Map<string, string>();
-
 let __qrLibPromise: Promise<any> | null = null;
 
 async function getQrLib() {
@@ -465,7 +455,6 @@ async function generateQrDataUrl(
 
   try {
     const mod: any = await getQrLib();
-
     const toDataURL =
       (mod && typeof mod.toDataURL === "function" && mod.toDataURL) ||
       (mod?.default &&
@@ -488,17 +477,274 @@ async function generateQrDataUrl(
   }
 }
 
-/* ───────── Rangs sous-matières (côté front) ───────── */
+/* ───────── SIGNATURES : encre + teinte bleue (IMG robuste) ───────── */
 
-function applyComponentRanksFront(
-  items: (BulletinItemBase | BulletinItemWithRank)[]
-) {
-  type Entry = {
-    itemIndex: number;
-    compIndex: number;
-    avg: number;
-    key: string;
-  };
+const SIGNATURE_BLUE = "#1d4ed8";
+
+const __SIG_INK_CACHE = new Map<string, string>();
+const __SIG_INK_PROMISES = new Map<string, Promise<string | null>>();
+
+const __SIG_TINT_CACHE = new Map<string, string>();
+const __SIG_TINT_PROMISES = new Map<string, Promise<string | null>>();
+
+function loadHtmlImage(src: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error("IMG_LOAD_FAILED"));
+    img.src = src;
+  });
+}
+
+async function tryFetchAsDataUrl(src: string): Promise<string> {
+  if (!src) return src;
+  if (src.startsWith("data:") || src.startsWith("blob:")) return src;
+
+  try {
+    const res = await fetch(src, { mode: "cors", cache: "force-cache" });
+    if (!res.ok) return src;
+    const blob = await res.blob();
+
+    const dataUrl: string = await new Promise((resolve, reject) => {
+      const fr = new FileReader();
+      fr.onload = () => resolve(String(fr.result || ""));
+      fr.onerror = () => reject(new Error("FILE_READER_FAILED"));
+      fr.readAsDataURL(blob);
+    });
+
+    return dataUrl || src;
+  } catch {
+    return src;
+  }
+}
+
+function hexToRgb(hex: string): { r: number; g: number; b: number } | null {
+  const h = (hex || "").trim().replace("#", "");
+  if (h.length === 3) {
+    const r = parseInt(h[0] + h[0], 16);
+    const g = parseInt(h[1] + h[1], 16);
+    const b = parseInt(h[2] + h[2], 16);
+    if ([r, g, b].some((n) => Number.isNaN(n))) return null;
+    return { r, g, b };
+  }
+  if (h.length === 6) {
+    const r = parseInt(h.slice(0, 2), 16);
+    const g = parseInt(h.slice(2, 4), 16);
+    const b = parseInt(h.slice(4, 6), 16);
+    if ([r, g, b].some((n) => Number.isNaN(n))) return null;
+    return { r, g, b };
+  }
+  return null;
+}
+
+async function inkifySignaturePng(src: string): Promise<string | null> {
+  if (!src) return null;
+
+  const cached = __SIG_INK_CACHE.get(src);
+  if (cached) return cached;
+
+  const pending = __SIG_INK_PROMISES.get(src);
+  if (pending) return pending;
+
+  const job = (async () => {
+    try {
+      if (typeof window === "undefined") return src;
+
+      const safeSrc = await tryFetchAsDataUrl(src);
+      const img = await loadHtmlImage(safeSrc);
+
+      const w = img.naturalWidth || (img as any).width || 0;
+      const h = img.naturalHeight || (img as any).height || 0;
+      if (!w || !h) return src;
+
+      const canvas = document.createElement("canvas");
+      canvas.width = w;
+      canvas.height = h;
+
+      const ctx = canvas.getContext("2d", { willReadFrequently: true });
+      if (!ctx) return src;
+
+      ctx.clearRect(0, 0, w, h);
+      ctx.drawImage(img, 0, 0);
+
+      const imgData = ctx.getImageData(0, 0, w, h);
+      const d = imgData.data;
+
+      for (let i = 0; i < d.length; i += 4) {
+        const r = d[i];
+        const g = d[i + 1];
+        const b = d[i + 2];
+        const a = d[i + 3];
+
+        if (a < 8) {
+          d[i + 3] = 0;
+          continue;
+        }
+
+        if (r > 240 && g > 240 && b > 240) {
+          d[i + 3] = 0;
+          continue;
+        }
+
+        const lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+        let boostedA = (255 - lum) * 3.4;
+        if (!Number.isFinite(boostedA)) boostedA = a;
+
+        const newA = Math.min(
+          255,
+          Math.max(170, Math.max(a, Math.round(boostedA)))
+        );
+
+        d[i] = 0;
+        d[i + 1] = 0;
+        d[i + 2] = 0;
+        d[i + 3] = newA;
+      }
+
+      const orig = new Uint8ClampedArray(d);
+      const W = w;
+
+      for (let y = 2; y < h - 2; y++) {
+        for (let x = 2; x < w - 2; x++) {
+          const idx = (y * W + x) * 4;
+          const a = orig[idx + 3];
+          if (a === 0) continue;
+
+          const spread = Math.min(255, Math.round(a * 0.7));
+
+          for (let dy = -2; dy <= 2; dy++) {
+            for (let dx = -2; dx <= 2; dx++) {
+              if (dx === 0 && dy === 0) continue;
+              const j = ((y + dy) * W + (x + dx)) * 4;
+              if (d[j + 3] < spread) {
+                d[j] = 0;
+                d[j + 1] = 0;
+                d[j + 2] = 0;
+                d[j + 3] = spread;
+              }
+            }
+          }
+        }
+      }
+
+      ctx.putImageData(imgData, 0, 0);
+
+      const out = canvas.toDataURL("image/png");
+      if (out) __SIG_INK_CACHE.set(src, out);
+      return out || src;
+    } catch (e) {
+      console.warn("[Bulletins] inkifySignaturePng failed, fallback original", e);
+      return src;
+    } finally {
+      __SIG_INK_PROMISES.delete(src);
+    }
+  })();
+
+  __SIG_INK_PROMISES.set(src, job);
+  return job;
+}
+
+async function tintSignaturePng(
+  src: string,
+  hexColor: string
+): Promise<string | null> {
+  if (!src) return null;
+
+  const rgb = hexToRgb(hexColor) || hexToRgb(SIGNATURE_BLUE);
+  if (!rgb) return src;
+
+  const cacheKey = `${hexColor}|${src}`;
+  const cached = __SIG_TINT_CACHE.get(cacheKey);
+  if (cached) return cached;
+
+  const pending = __SIG_TINT_PROMISES.get(cacheKey);
+  if (pending) return pending;
+
+  const job = (async () => {
+    try {
+      if (typeof window === "undefined") return src;
+
+      const safeSrc = await tryFetchAsDataUrl(src);
+      const img = await loadHtmlImage(safeSrc);
+
+      const w = img.naturalWidth || (img as any).width || 0;
+      const h = img.naturalHeight || (img as any).height || 0;
+      if (!w || !h) return src;
+
+      const canvas = document.createElement("canvas");
+      canvas.width = w;
+      canvas.height = h;
+
+      const ctx = canvas.getContext("2d", { willReadFrequently: true });
+      if (!ctx) return src;
+
+      ctx.clearRect(0, 0, w, h);
+      ctx.drawImage(img, 0, 0);
+
+      const imgData = ctx.getImageData(0, 0, w, h);
+      const d = imgData.data;
+
+      for (let i = 0; i < d.length; i += 4) {
+        const a = d[i + 3];
+        if (a === 0) continue;
+        d[i] = rgb.r;
+        d[i + 1] = rgb.g;
+        d[i + 2] = rgb.b;
+      }
+
+      ctx.putImageData(imgData, 0, 0);
+
+      const out = canvas.toDataURL("image/png");
+      if (out) __SIG_TINT_CACHE.set(cacheKey, out);
+      return out || src;
+    } catch (e) {
+      console.warn("[Bulletins] tintSignaturePng failed, fallback", e);
+      return src;
+    } finally {
+      __SIG_TINT_PROMISES.delete(cacheKey);
+    }
+  })();
+
+  __SIG_TINT_PROMISES.set(cacheKey, job);
+  return job;
+}
+
+function SignatureInk({ src, className }: { src: string; className?: string }) {
+  const [displaySrc, setDisplaySrc] = useState<string>(src);
+
+  useEffect(() => {
+    let cancelled = false;
+    setDisplaySrc(src);
+
+    (async () => {
+      const inked = await inkifySignaturePng(src);
+      const tinted = inked
+        ? await tintSignaturePng(inked, SIGNATURE_BLUE)
+        : null;
+      const out = tinted || inked || src;
+      if (!cancelled && out) setDisplaySrc(out);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [src]);
+
+  // eslint-disable-next-line @next/next/no-img-element
+  return (
+    <img
+      src={displaySrc || src}
+      alt="Signature"
+      className={["sig-img", className ?? ""].join(" ")}
+    />
+  );
+}
+
+/* ───────── Rangs sous-matières (front) ───────── */
+
+function applyComponentRanksFront(items: (BulletinItemBase | BulletinItemWithRank)[]) {
+  type Entry = { itemIndex: number; compIndex: number; avg: number; key: string };
   const byKey = new Map<string, Entry[]>();
 
   items.forEach((it, itemIndex) => {
@@ -535,17 +781,10 @@ function applyComponentRanksFront(
   });
 }
 
-/* ───────── Rangs groupes de matières ───────── */
+/* ───────── Rangs groupes (front) ───────── */
 
-function applyGroupRanksFront(
-  items: (BulletinItemBase | BulletinItemWithRank)[]
-) {
-  type Entry = {
-    itemIndex: number;
-    groupIndex: number;
-    avg: number;
-    groupId: string;
-  };
+function applyGroupRanksFront(items: (BulletinItemBase | BulletinItemWithRank)[]) {
+  type Entry = { itemIndex: number; groupIndex: number; avg: number; groupId: string };
   const byGroup = new Map<string, Entry[]>();
 
   items.forEach((it, itemIndex) => {
@@ -582,13 +821,14 @@ function applyGroupRanksFront(
   });
 }
 
-/* ───────── Ranks + stats helper (intègre CONDUITE coef 1) ───────── */
+/* ───────── Ranks + stats (intègre CONDUITE coef 1) ───────── */
 
 function computeRanksAndStats(
   res: BulletinResponse | null,
   conductSummary: ConductSummaryResponse | null
 ): EnrichedBulletin | null {
   if (!res) return null;
+
   const baseItems = res.items ?? [];
 
   const conductMap = new Map<string, number>();
@@ -602,10 +842,10 @@ function computeRanksAndStats(
 
   const itemsWithAvg: BulletinItemWithRank[] = baseItems.map((it) => {
     const perSubject = it.per_subject ?? [];
+
     let sum = 0;
     let sumCoeff = 0;
 
-    // Recalcule la moyenne générale à partir des matières (sans conduite)
     res.subjects.forEach((s) => {
       const cell = perSubject.find((ps) => ps.subject_id === s.subject_id);
       const val = cell?.avg20;
@@ -629,29 +869,21 @@ function computeRanksAndStats(
 
     let finalAvg: number | null;
     if (conductNote !== null) {
-      const totalSum = sum + conductNote * 1; // ✅ coef 1 pour la conduite
+      const totalSum = sum + conductNote * 1;
       const totalCoeff = sumCoeff + 1;
-      finalAvg =
-        totalCoeff > 0 ? totalSum / totalCoeff : it.general_avg ?? baseAvg;
+      finalAvg = totalCoeff > 0 ? totalSum / totalCoeff : it.general_avg ?? baseAvg;
     } else {
       finalAvg = baseAvg ?? it.general_avg ?? null;
     }
 
     const rounded =
-      finalAvg !== null && Number.isFinite(finalAvg)
-        ? round2(finalAvg)
-        : null;
+      finalAvg !== null && Number.isFinite(finalAvg) ? round2(finalAvg) : null;
 
-    return {
-      ...it,
-      general_avg: rounded,
-      rank: null,
-    };
+    return { ...it, general_avg: rounded, rank: null };
   });
 
   const withAvg = itemsWithAvg.filter(
-    (it) =>
-      it.general_avg !== null && Number.isFinite(it.general_avg as number)
+    (it) => it.general_avg !== null && Number.isFinite(it.general_avg as number)
   );
 
   const stats: ClassStats = { highest: null, lowest: null, classAvg: null };
@@ -662,9 +894,7 @@ function computeRanksAndStats(
     return { response: res, items: itemsWithAvg, stats };
   }
 
-  const sorted = [...withAvg].sort(
-    (a, b) => (b.general_avg ?? 0) - (a.general_avg ?? 0)
-  );
+  const sorted = [...withAvg].sort((a, b) => (b.general_avg ?? 0) - (a.general_avg ?? 0));
 
   let lastScore: number | null = null;
   let lastRank = 0;
@@ -679,10 +909,7 @@ function computeRanksAndStats(
     rankByStudent.set(it.student_id, lastRank);
   });
 
-  const sumAll = withAvg.reduce(
-    (acc, it) => acc + (it.general_avg ?? 0),
-    0
-  );
+  const sumAll = withAvg.reduce((acc, it) => acc + (it.general_avg ?? 0), 0);
   const highest = sorted[0].general_avg ?? null;
   const lowest = sorted[sorted.length - 1].general_avg ?? null;
   const classAvg = sumAll / withAvg.length;
@@ -706,8 +933,7 @@ function computeRanksAndStats(
 
 function periodTitle(period: BulletinResponse["period"]) {
   const t = (period.label || period.short_label || period.code || "").trim();
-  if (t) return t;
-  return "Trimestre";
+  return t || "Trimestre";
 }
 
 function safeUpper(s: string) {
@@ -734,9 +960,10 @@ type StudentBulletinCardProps = {
   conduct?: ConductItem | null;
   conductRubricMax?: ConductRubricMax;
   conductTotalMax?: number;
-
-  // 🆕 état global des signatures électroniques
   signaturesEnabled?: boolean | null;
+
+  // ✅ pour calculer le "fit-to-page" malgré le zoom d’aperçu
+  previewZoomForMeasure: number;
 };
 
 function StudentBulletinCard({
@@ -752,13 +979,80 @@ function StudentBulletinCard({
   stats,
   conduct,
   conductRubricMax,
-  conductTotalMax, // gardé pour compat éventuelle, même si non utilisé pour la note finale
+  conductTotalMax,
   signaturesEnabled,
+  previewZoomForMeasure,
 }: StudentBulletinCardProps) {
   const signaturesActive = !!signaturesEnabled;
 
-  const academicYear = classInfo.academic_year || period.academic_year || "";
+  /* ✅ FIT-TO-PAGE : si ça dépasse, on scale automatiquement à l’impression */
+  const pageRef = useRef<HTMLDivElement | null>(null);
+  const [printFitScale, setPrintFitScale] = useState(1);
 
+  const computePrintFit = () => {
+    const el = pageRef.current;
+    if (!el || typeof window === "undefined") return;
+
+    // hauteur réelle du bloc (corrigée du zoom d’aperçu)
+    const rect = el.getBoundingClientRect();
+    const zoom = Math.max(0.1, Number(previewZoomForMeasure || 1));
+    const naturalH = rect.height / zoom;
+
+    // hauteur A4 imprimable = min-height du bloc (289mm) convertie par le navigateur -> px
+    const cs = window.getComputedStyle(el);
+    const minHPx = parseFloat(cs.minHeight || "0");
+
+    if (!Number.isFinite(naturalH) || naturalH <= 0) return;
+    if (!Number.isFinite(minHPx) || minHPx <= 0) {
+      setPrintFitScale(1);
+      return;
+    }
+
+    // si dépasse => scale < 1
+    const raw = Math.min(1, minHPx / naturalH);
+
+    // petite marge anti-arrondi (sinon ça peut encore pousser 1px sur une 2e page)
+    const safe = Math.min(1, raw * 0.99);
+
+    // garde-fou
+    const clamped = Math.max(0.82, safe);
+
+    setPrintFitScale(clamped);
+  };
+
+  useLayoutEffect(() => {
+    computePrintFit();
+
+    // recalcul après images / signatures
+    const t1 = window.setTimeout(computePrintFit, 150);
+    const t2 = window.setTimeout(computePrintFit, 650);
+
+    const onResize = () => computePrintFit();
+    window.addEventListener("resize", onResize);
+
+    let ro: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== "undefined" && pageRef.current) {
+      ro = new ResizeObserver(() => computePrintFit());
+      ro.observe(pageRef.current);
+    }
+
+    return () => {
+      window.clearTimeout(t1);
+      window.clearTimeout(t2);
+      window.removeEventListener("resize", onResize);
+      if (ro) ro.disconnect();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    previewZoomForMeasure,
+    signaturesActive,
+    subjects.length,
+    subjectComponents.length,
+    subjectGroups.length,
+    item.student_id,
+  ]);
+
+  const academicYear = classInfo.academic_year || period.academic_year || "";
   const rawSex = item.sex ?? item.gender ?? null;
   const sexLabel = rawSex ? String(rawSex).toUpperCase() : "—";
 
@@ -774,22 +1068,16 @@ function StudentBulletinCard({
       : item.is_scholarship === false
       ? "Non boursier"
       : "—");
-  const boarderLabel =
-    item.is_boarder == null ? "—" : item.is_boarder ? "Interne" : "Externe";
+
+  const boarderLabel = item.is_boarder == null ? "—" : item.is_boarder ? "Interne" : "Externe";
   const repeaterLabel = formatYesNo(item.is_repeater);
   const assignedLabel = formatYesNo(item.is_assigned ?? item.is_affecte ?? null);
 
-  // Photo (optionnel)
   const photoUrl = item.photo_url || (item as any).student_photo_url || null;
 
-  // ── Conduite normalisée sur 20 ──
-  const rawConductTotal =
-    conduct && typeof conduct.total === "number" ? conduct.total : null;
-  const conductNoteOn20 = clampTo20(
-    rawConductTotal !== null ? Number(rawConductTotal) : null
-  );
+  const rawConductTotal = conduct && typeof conduct.total === "number" ? conduct.total : null;
+  const conductNoteOn20 = clampTo20(rawConductTotal !== null ? Number(rawConductTotal) : null);
 
-  // Matière virtuelle "Conduite" (coef 1, incluse dans la moyenne générale côté computeRanksAndStats)
   const conductSubject: BulletinSubject | null =
     conductNoteOn20 !== null
       ? {
@@ -805,9 +1093,7 @@ function StudentBulletinCard({
   const perSubject: PerSubjectAvg[] = useMemo(() => {
     const base: PerSubjectAvg[] = [...perSubjectBase];
     if (conductSubject && conductNoteOn20 !== null) {
-      const existing = base.find(
-        (ps) => ps.subject_id === conductSubject.subject_id
-      );
+      const existing = base.find((ps) => ps.subject_id === conductSubject.subject_id);
       if (existing) {
         existing.avg20 = conductNoteOn20;
       } else {
@@ -830,34 +1116,25 @@ function StudentBulletinCard({
       arr.push(c);
       map.set(c.subject_id, arr);
     });
-    map.forEach((arr) =>
-      arr.sort((a, b) => (a.order_index || 0) - (b.order_index || 0))
-    );
+    map.forEach((arr) => arr.sort((a, b) => (a.order_index || 0) - (b.order_index || 0)));
     return map;
   }, [subjectComponents]);
 
   const perSubjectComponentMap = useMemo(() => {
-    const m = new Map<
-      string,
-      { avg20: number | null; component_rank?: number | null }
-    >();
+    const m = new Map<string, { avg20: number | null; component_rank?: number | null }>();
     const per = item.per_subject_components ?? [];
     per.forEach((psc) => {
       const key = `${psc.subject_id}__${psc.component_id}`;
       m.set(key, {
         avg20: psc.avg20 ?? null,
-        component_rank:
-          psc.component_rank !== undefined ? psc.component_rank : null,
+        component_rank: psc.component_rank !== undefined ? psc.component_rank : null,
       });
     });
     return m;
   }, [item.per_subject_components]);
 
   const perGroupMap = useMemo(() => {
-    const m = new Map<
-      string,
-      { group_avg: number | null; group_rank?: number | null }
-    >();
+    const m = new Map<string, { group_avg: number | null; group_rank?: number | null }>();
     const per = item.per_group ?? [];
     per.forEach((g) => {
       m.set(g.group_id, {
@@ -868,20 +1145,8 @@ function StudentBulletinCard({
     return m;
   }, [item.per_group]);
 
-  // Liste des matières affichables (uniquement celles qui ont une note)
   const allSubjects = useMemo(() => {
-    if (conductSubject) {
-      const exists = subjects.some((s) =>
-        (s.subject_name || "")
-          .toLowerCase()
-          .normalize("NFD")
-          .replace(/[\u0300-\u036f]/g, "")
-          .includes("conduite")
-      );
-      if (!exists) {
-        return [...subjects, conductSubject];
-      }
-    }
+    if (conductSubject) return [...subjects, conductSubject];
     return [...subjects];
   }, [subjects, conductSubject]);
 
@@ -889,15 +1154,10 @@ function StudentBulletinCard({
     return allSubjects.filter((s) => {
       const cell = perSubject.find((ps) => ps.subject_id === s.subject_id);
       const val = cell?.avg20;
-      return (
-        val !== null &&
-        val !== undefined &&
-        Number.isFinite(Number(val))
-      );
+      return val !== null && val !== undefined && Number.isFinite(Number(val));
     });
   }, [allSubjects, perSubject]);
 
-  // TOTAUX : somme des coefficients des matières affichées (y compris conduite coef 1)
   const coeffTotal = useMemo(
     () =>
       subjectsWithGrades.reduce((acc, s) => {
@@ -913,21 +1173,22 @@ function StudentBulletinCard({
     return m;
   }, [subjectsWithGrades]);
 
-  const absenceHours =
-    conduct && typeof conduct.absence_minutes === "number"
-      ? conduct.absence_minutes / 60
-      : null;
-
   const mentions = computeCouncilMentions(item.general_avg, conductNoteOn20);
-  const councilText = computeCouncilAppreciationText(
-    mentions,
-    item.general_avg,
-    conductNoteOn20
+  const councilText = computeCouncilAppreciationText(mentions, item.general_avg, conductNoteOn20);
+
+  const tick = (checked: boolean) => (
+    <span
+      className={[
+        "mr-1 inline-flex h-[14px] w-[14px] items-center justify-center",
+        "border-2 border-black text-[12px] font-black leading-none",
+        checked ? "bg-white" : "bg-white",
+      ].join(" ")}
+      aria-label={checked ? "Coché" : "Non coché"}
+    >
+      {checked ? "✓" : ""}
+    </span>
   );
 
-  const tick = (checked: boolean) => (checked ? "☑" : "□");
-
-  // ✅ QR payload : priorité au lien vérifiable de l’API (qr_url)
   const qrText = useMemo(() => {
     const apiUrl = (item.qr_url || "").trim();
     if (apiUrl) return apiUrl;
@@ -954,7 +1215,6 @@ function StudentBulletinCard({
     item.matricule,
   ]);
 
-  // QR client en secours (si pas de qr_png)
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
 
   useEffect(() => {
@@ -968,44 +1228,78 @@ function StudentBulletinCard({
     };
   }, [qrText]);
 
-  // 🔴 priorité à item.qr_png
   const qrImgSrc = item.qr_png || qrDataUrl;
 
-  const renderSignatureLine = (signaturePng?: string | null) => {
-    if (signaturePng) {
-      return (
-        <div className="flex h-[28px] flex-col items-center justify-end">
-          <div className="flex flex-1 items-center justify-center">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={signaturePng}
-              alt="Signature"
-              className="max-h-[24px] max-w-full object-contain"
-            />
-          </div>
-          <div className="w-full border-t border-black" />
-        </div>
-      );
+  const totalTableRows = useMemo(() => {
+    const subjectRows = subjectsWithGrades.reduce((acc, s) => {
+      const comps = subjectCompsBySubject.get(s.subject_id) ?? [];
+      return acc + 1 + comps.length;
+    }, 0);
+
+    let groupTotalRows = 0;
+    const hasGroups = subjectGroups && subjectGroups.length > 0;
+    if (hasGroups) {
+      subjectGroups.forEach((g) => {
+        if (!g.is_active) return;
+        const groupSubjects: BulletinSubject[] = [];
+        g.items.forEach((it) => {
+          const subj = subjectsById.get(it.subject_id);
+          if (subj) groupSubjects.push(subj);
+        });
+
+        const groupIsAutres = isAutresGroup(g);
+        if (
+          groupIsAutres &&
+          conductSubject &&
+          conductNoteOn20 !== null &&
+          !groupSubjects.some((s) => s.subject_id === conductSubject.subject_id)
+        ) {
+          groupSubjects.push(conductSubject);
+        }
+
+        if (groupSubjects.length > 0) groupTotalRows += 1;
+      });
     }
+
+    const totalsRow = 1;
+    return subjectRows + groupTotalRows + totalsRow;
+  }, [
+    subjectsWithGrades,
+    subjectCompsBySubject,
+    subjectGroups,
+    subjectsById,
+    conductSubject,
+    conductNoteOn20,
+  ]);
+
+  const sigBoxHeightPx = useMemo(() => {
+    if (totalTableRows <= 14) return 26;
+    if (totalTableRows <= 18) return 24;
+    if (totalTableRows <= 22) return 22;
+    if (totalTableRows <= 26) return 20;
+    if (totalTableRows <= 30) return 18;
+    return 16;
+  }, [totalTableRows]);
+
+  const renderSignatureLine = (signaturePng?: string | null) => {
     return (
-      <div className="flex h-[14px] items-end">
-        <div className="w-full border-t border-black" />
+      <div className="sig-box">
+        <div className="sig-ink">
+          {signaturePng ? (
+            <SignatureInk src={signaturePng} className="sig-ink-img" />
+          ) : null}
+        </div>
+        <div className="sig-line" />
       </div>
     );
   };
 
-  const perSubjectLocal = perSubject;
-
   const renderSubjectBlock = (s: BulletinSubject) => {
-    const cell = perSubjectLocal.find(
-      (ps) => ps.subject_id === s.subject_id
-    );
+    const cell = perSubject.find((ps) => ps.subject_id === s.subject_id);
     const avg = cell?.avg20 ?? null;
 
-    // Matière sans note => on ne l'affiche pas
-    if (avg === null || avg === undefined || !Number.isFinite(Number(avg))) {
+    if (avg === null || avg === undefined || !Number.isFinite(Number(avg)))
       return null;
-    }
 
     const moyCoeff =
       avg !== null && Number.isFinite(Number(avg))
@@ -1017,7 +1311,6 @@ function StudentBulletinCard({
     const subjectTeacher = cell?.teacher_name || "";
     const appreciationLabel = computeSubjectAppreciation(avg);
 
-    // 🆕 signature électronique éventuelle pour cette matière
     const signaturePng =
       signaturesActive && cell && (cell as any).teacher_signature_png
         ? String((cell as any).teacher_signature_png)
@@ -1029,21 +1322,15 @@ function StudentBulletinCard({
       <React.Fragment key={s.subject_id}>
         <tr>
           <td className="bdr px-1 py-[1px]">{s.subject_name}</td>
-          <td className="bdr px-1 py-[1px] text-center">
-            {formatNumber(avg)}
-          </td>
+          <td className="bdr px-1 py-[1px] text-center">{formatNumber(avg)}</td>
           <td className="bdr px-1 py-[1px] text-center">
             {formatNumber(s.coeff_bulletin, 0)}
           </td>
-          <td className="bdr px-1 py-[1px] text-center">
-            {formatNumber(moyCoeff)}
-          </td>
-          <td className="bdr px-1 py-[1px] text-center">
-            {subjectRankLabel}
-          </td>
+          <td className="bdr px-1 py-[1px] text-center">{formatNumber(moyCoeff)}</td>
+          <td className="bdr px-1 py-[1px] text-center">{subjectRankLabel}</td>
           <td className="bdr px-1 py-[1px]">{appreciationLabel}</td>
           <td className="bdr px-1 py-[1px]">{subjectTeacher}</td>
-          <td className="bdr px-1 py-[1px]">
+          <td className="bdr p-0 align-middle sig-cell">
             {renderSignatureLine(signaturePng)}
           </td>
         </tr>
@@ -1059,28 +1346,21 @@ function StudentBulletinCard({
               : null;
 
           return (
-            <tr
-              key={`${s.subject_id}-${comp.id}`}
-              className="text-[9px] text-slate-700"
-            >
+            <tr key={`${s.subject_id}-${comp.id}`} className="text-[9px] text-slate-700">
               <td className="bdr px-1 py-[1px] pl-4">
                 {comp.short_label || comp.label}
               </td>
-              <td className="bdr px-1 py-[1px] text-center">
-                {formatNumber(cAvg)}
-              </td>
+              <td className="bdr px-1 py-[1px] text-center">{formatNumber(cAvg)}</td>
               <td className="bdr px-1 py-[1px] text-center">
                 {formatNumber(comp.coeff_in_subject, 0)}
               </td>
-              <td className="bdr px-1 py-[1px] text-center">
-                {formatNumber(cMoyCoeff)}
-              </td>
+              <td className="bdr px-1 py-[1px] text-center">{formatNumber(cMoyCoeff)}</td>
               <td className="bdr px-1 py-[1px] text-center">
                 {cRank != null ? `${cRank}e` : "—"}
               </td>
               <td className="bdr px-1 py-[1px]" />
               <td className="bdr px-1 py-[1px]" />
-              <td className="bdr px-1 py-[1px]" />
+              <td className="bdr px-1 py-[1px] sig-cell" />
             </tr>
           );
         })}
@@ -1098,40 +1378,37 @@ function StudentBulletinCard({
     (institution?.country_motto || "Union - Discipline - Travail").trim()
   );
   const ministryName = safeUpper(
-    String(
-      (institution?.ministry_name ||
-        "MINISTÈRE DE L'ÉDUCATION NATIONALE").trim()
-    )
+    String((institution?.ministry_name || "MINISTÈRE DE L'ÉDUCATION NATIONALE").trim())
   );
 
   return (
-    <div className="print-page print-break mx-auto bg-white text-black">
+    <div
+      ref={pageRef}
+      className="print-page print-break mx-auto flex flex-col bg-white text-black"
+      style={{
+        ["--sig-box-h" as any]: `${sigBoxHeightPx}px`,
+        ["--print-fit-scale" as any]: String(printFitScale),
+      }}
+    >
       {/* ENTÊTE OFFICIEL */}
       <div className="bdr mb-1 p-1">
         <div className="grid grid-cols-3 items-start gap-2">
-          {/* Gauche */}
           <div className="text-center text-[9px] leading-tight">
             <div className="font-semibold uppercase">{countryName}</div>
             <div className="text-[8px]">{countryMotto}</div>
-            <div className="mt-1 text-[8px] font-semibold uppercase">
-              {ministryName}
-            </div>
+            <div className="mt-1 text-[8px] font-semibold uppercase">{ministryName}</div>
             <div className="mt-1 text-[8px] uppercase">
               {String((institution?.institution_region || "").trim())}
             </div>
           </div>
 
-          {/* Centre */}
           <div className="text-center">
             <div className="text-[12px] font-bold uppercase leading-tight">
               BULLETIN TRIMESTRIEL DE NOTES
             </div>
-            <div className="text-[10px] font-semibold">
-              {periodTitle(period)}
-            </div>
+            <div className="text-[10px] font-semibold">{periodTitle(period)}</div>
           </div>
 
-          {/* Droite */}
           <div className="flex justify-end gap-2">
             <div className="text-right text-[9px] leading-tight">
               <div>Année scolaire</div>
@@ -1139,9 +1416,7 @@ function StudentBulletinCard({
               {institution?.institution_code && (
                 <div className="mt-1 text-[8px]">
                   Code :{" "}
-                  <span className="font-semibold">
-                    {String(institution.institution_code)}
-                  </span>
+                  <span className="font-semibold">{String(institution.institution_code)}</span>
                 </div>
               )}
               {(period.from || period.to) && (
@@ -1152,15 +1427,10 @@ function StudentBulletinCard({
               )}
             </div>
 
-            {/* QR */}
             <div className="bdr flex h-[110px] w-[110px] items-center justify-center overflow-hidden bg-white">
               {qrImgSrc ? (
                 // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  src={qrImgSrc}
-                  alt="QR"
-                  className="h-[104px] w-[104px] object-contain"
-                />
+                <img src={qrImgSrc} alt="QR" className="h-[104px] w-[104px] object-contain" />
               ) : (
                 <div className="text-[8px] text-slate-500">QR</div>
               )}
@@ -1168,9 +1438,8 @@ function StudentBulletinCard({
           </div>
         </div>
 
-        {/* Ligne établissement */}
-        <div className="mt-1 grid grid-cols-[72px_1fr] items-center gap-2">
-          <div className="bdr flex h-[52px] w-[72px] items-center justify-center overflow-hidden bg-white">
+        <div className="mt-1 grid grid-cols-[110px_1fr_110px] items-center gap-2">
+          <div className="bdr flex h-[110px] w-[110px] items-center justify-center overflow-hidden bg-white">
             {institution?.institution_logo_url ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img
@@ -1185,22 +1454,16 @@ function StudentBulletinCard({
 
           <div className="text-center">
             <div className="text-[11px] font-bold uppercase">
-              {safeUpper(
-                String(
-                  (institution?.institution_name || "ÉTABLISSEMENT").trim()
-                )
-              )}
+              {safeUpper(String((institution?.institution_name || "ÉTABLISSEMENT").trim()))}
             </div>
             <div className="text-[9px]">
               {String(institution?.institution_postal_address || "")}
-              {institution?.institution_phone
-                ? ` • Tél : ${institution.institution_phone}`
-                : ""}
-              {institution?.institution_status
-                ? ` • ${institution.institution_status}`
-                : ""}
+              {institution?.institution_phone ? ` • Tél : ${institution.institution_phone}` : ""}
+              {institution?.institution_status ? ` • ${institution.institution_status}` : ""}
             </div>
           </div>
+
+          <div className="h-[110px] w-[110px]" />
         </div>
       </div>
 
@@ -1262,37 +1525,14 @@ function StudentBulletinCard({
               <span className="font-semibold">Affecté(e) : </span>
               <span>{assignedLabel}</span>
             </div>
-
-            {classInfo.head_teacher?.display_name && (
-              <div className="pt-[2px]">
-                <span className="font-semibold">Prof. principal : </span>
-                <span>{classInfo.head_teacher.display_name}</span>
-              </div>
-            )}
-
-            {institution?.institution_head_name && (
-              <div className="pt-[2px]">
-                <span className="font-semibold">
-                  Chef d&apos;établissement :{" "}
-                </span>
-                <span>{institution.institution_head_name}</span>
-              </div>
-            )}
           </div>
 
-          {/* PHOTO */}
           <div className="bdr flex h-[96px] w-[86px] items-center justify-center overflow-hidden">
             {photoUrl ? (
               // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={photoUrl}
-                alt="Photo élève"
-                className="h-full w-full object-cover"
-              />
+              <img src={photoUrl} alt="Photo élève" className="h-full w-full object-cover" />
             ) : (
-              <div className="text-center text-[8px] text-slate-500">
-                Photo
-              </div>
+              <div className="text-center text-[8px] text-slate-500">Photo</div>
             )}
           </div>
         </div>
@@ -1309,9 +1549,10 @@ function StudentBulletinCard({
             <th className="bdr px-1 py-[2px] text-center">Rang</th>
             <th className="bdr px-1 py-[2px] text-left">Appréciations</th>
             <th className="bdr px-1 py-[2px] text-left">Professeurs</th>
-            <th className="bdr px-1 py-[2px] text-center">Signature</th>
+            <th className="bdr px-1 py-[2px] text-center sig-head">Signature</th>
           </tr>
         </thead>
+
         <tbody>
           {hasGroups ? (
             <>
@@ -1329,14 +1570,11 @@ function StudentBulletinCard({
 
                 const groupIsAutres = isAutresGroup(g);
 
-                // On ajoute la matière CONDUITE visuellement dans le bilan AUTRES
                 if (
                   groupIsAutres &&
                   conductSubject &&
                   conductNoteOn20 !== null &&
-                  !groupSubjects.some(
-                    (s) => s.subject_id === conductSubject.subject_id
-                  )
+                  !groupSubjects.some((s) => s.subject_id === conductSubject.subject_id)
                 ) {
                   groupSubjects.push(conductSubject);
                   groupedSubjectIds.add(conductSubject.subject_id);
@@ -1348,32 +1586,23 @@ function StudentBulletinCard({
                 let groupAvg = baseGroupInfo?.group_avg ?? null;
                 let groupCoeff = g.annual_coeff ?? 0;
                 let groupTotal: number | null =
-                  groupAvg !== null && groupCoeff
-                    ? round2(groupAvg * groupCoeff)
-                    : null;
+                  groupAvg !== null && groupCoeff ? round2(groupAvg * groupCoeff) : null;
 
-                // Pour le BILAN AUTRES, on recalcule la moyenne de groupe
-                // en intégrant CONDUITE coef 1, si présente.
                 if (groupIsAutres) {
                   let sum = 0;
                   let sumCoeff = 0;
+
                   groupSubjects.forEach((s) => {
-                    const cell = perSubjectLocal.find(
-                      (ps) => ps.subject_id === s.subject_id
-                    );
+                    const cell = perSubject.find((ps) => ps.subject_id === s.subject_id);
                     const val = cell?.avg20;
-                    if (
-                      val === null ||
-                      val === undefined ||
-                      !Number.isFinite(Number(val))
-                    )
-                      return;
+                    if (val === null || val === undefined || !Number.isFinite(Number(val))) return;
+
                     const avg = Number(val);
                     const coeff =
-                      s.subject_id === conductSubject?.subject_id
-                        ? 1
-                        : Number(s.coeff_bulletin ?? 0);
+                      s.subject_id === conductSubject?.subject_id ? 1 : Number(s.coeff_bulletin ?? 0);
+
                     if (!Number.isFinite(coeff) || coeff <= 0) return;
+
                     sum += avg * coeff;
                     sumCoeff += coeff;
                   });
@@ -1386,9 +1615,7 @@ function StudentBulletinCard({
                 }
 
                 const groupRankLabel =
-                  baseGroupInfo?.group_rank != null
-                    ? `${baseGroupInfo.group_rank}e`
-                    : "—";
+                  baseGroupInfo?.group_rank != null ? `${baseGroupInfo.group_rank}e` : "—";
 
                 const bilanLabel = (g.label || g.code || "BILAN").toUpperCase();
 
@@ -1396,28 +1623,21 @@ function StudentBulletinCard({
                   ...groupSubjects.map((s) => renderSubjectBlock(s)),
                   <tr key={`group-${g.id}`} className="bg-slate-50 font-bold">
                     <td className="bdr px-1 py-[1px]">{bilanLabel}</td>
-                    <td className="bdr px-1 py-[1px] text-center">
-                      {formatNumber(groupAvg)}
-                    </td>
+                    <td className="bdr px-1 py-[1px] text-center">{formatNumber(groupAvg)}</td>
                     <td className="bdr px-1 py-[1px] text-center">
                       {groupCoeff ? formatNumber(groupCoeff, 0) : ""}
                     </td>
                     <td className="bdr px-1 py-[1px] text-center">
                       {groupCoeff ? formatNumber(groupTotal) : ""}
                     </td>
-                    <td className="bdr px-1 py-[1px] text-center">
-                      {groupRankLabel}
-                    </td>
+                    <td className="bdr px-1 py-[1px] text-center">{groupRankLabel}</td>
                     <td className="bdr px-1 py-[1px]" />
                     <td className="bdr px-1 py-[1px]" />
-                    <td className="bdr px-1 py-[1px]">
-                      {renderSignatureLine()}
-                    </td>
+                    <td className="bdr p-0 align-middle sig-cell">{renderSignatureLine()}</td>
                   </tr>,
                 ];
               })}
 
-              {/* Matières non groupées mais notées (y compris éventuellement Conduite si pas captée plus haut) */}
               {subjectsWithGrades
                 .filter((s) => !groupedSubjectIds.has(s.subject_id))
                 .map((s) => renderSubjectBlock(s))}
@@ -1429,9 +1649,7 @@ function StudentBulletinCard({
           <tr className="bg-slate-50 font-bold">
             <td className="bdr px-1 py-[1px] text-right">TOTAUX :</td>
             <td className="bdr px-1 py-[1px]" />
-            <td className="bdr px-1 py-[1px] text-center">
-              {formatNumber(coeffTotal, 0)}
-            </td>
+            <td className="bdr px-1 py-[1px] text-center">{formatNumber(coeffTotal, 0)}</td>
             <td className="bdr px-1 py-[1px]" />
             <td className="bdr px-1 py-[1px]" />
             <td className="bdr px-1 py-[1px]" />
@@ -1444,50 +1662,35 @@ function StudentBulletinCard({
       {/* BLOCS BAS */}
       <div className="mt-1 grid grid-cols-3 gap-2 text-[9px] leading-tight">
         <div className="bdr p-1">
-          <div className="font-semibold">Assiduité</div>
+          <div className="font-semibold text-center">Assiduité</div>
           {conduct ? (
             <div className="mt-[2px] space-y-[2px]">
               <div>
-                Absences :{" "}
-                <span className="font-semibold">
-                  {conduct.absence_count ?? 0}
-                </span>
-                {absenceHours !== null && (
-                  <span className="text-[8px] text-slate-600">
-                    {" "}
-                    ({formatNumber(absenceHours, 1)} h)
-                  </span>
-                )}
+                Absences : <span className="font-semibold">{conduct.absence_count ?? 0}</span>
               </div>
               <div>
-                Retards :{" "}
-                <span className="font-semibold">{conduct.tardy_count ?? 0}</span>
+                Retards : <span className="font-semibold">{conduct.tardy_count ?? 0}</span>
               </div>
               <div className="pt-[2px]">
                 Note de conduite :{" "}
                 <span className="font-semibold">
-                  {conductNoteOn20 !== null
-                    ? `${formatNumber(conductNoteOn20)} / 20`
-                    : "—"}
+                  {conductNoteOn20 !== null ? `${formatNumber(conductNoteOn20)} / 20` : "—"}
                 </span>
               </div>
 
               {conductRubricMax && conduct?.breakdown && (
                 <div className="mt-1 grid grid-cols-2 gap-x-2 gap-y-[2px] text-[8px] text-slate-700">
                   <div>
-                    Assiduité : {conduct.breakdown.assiduite} /{" "}
-                    {conductRubricMax.assiduite}
+                    Assiduité : {conduct.breakdown.assiduite} / {conductRubricMax.assiduite}
                   </div>
                   <div>
                     Tenue : {conduct.breakdown.tenue} / {conductRubricMax.tenue}
                   </div>
                   <div>
-                    Moralité : {conduct.breakdown.moralite} /{" "}
-                    {conductRubricMax.moralite}
+                    Moralité : {conduct.breakdown.moralite} / {conductRubricMax.moralite}
                   </div>
                   <div>
-                    Discipline : {conduct.breakdown.discipline} /{" "}
-                    {conductRubricMax.discipline}
+                    Discipline : {conduct.breakdown.discipline} / {conductRubricMax.discipline}
                   </div>
                 </div>
               )}
@@ -1501,19 +1704,13 @@ function StudentBulletinCard({
 
         <div className="bdr p-1 text-center">
           <div className="font-semibold">Moyenne trimestrielle</div>
-          <div className="mt-[3px] text-[10px] font-bold">
-            {formatNumber(item.general_avg)} / 20
-          </div>
+          <div className="mt-[3px] text-[10px] font-bold">{formatNumber(item.general_avg)} / 20</div>
           <div className="mt-[2px]">
-            Rang :{" "}
-            <span className="font-semibold">
-              {item.rank ? `${item.rank}e` : "—"}
-            </span>{" "}
-            / {total}
+            Rang : <span className="font-semibold">{item.rank ? `${item.rank}e` : "—"}</span> / {total}
           </div>
         </div>
 
-        <div className="bdr p-1">
+        <div className="bdr p-1 text-center">
           <div className="font-semibold">Résultats de la classe</div>
           <div className="mt-[2px] space-y-[2px]">
             <div>Moyenne générale : {formatNumber(stats.classAvg)}</div>
@@ -1525,90 +1722,80 @@ function StudentBulletinCard({
 
       <div className="mt-1 grid grid-cols-2 gap-2 text-[9px] leading-tight">
         <div className="bdr p-1">
-          <div className="font-semibold uppercase">
-            Mentions du conseil de classe
-          </div>
+          <div className="font-semibold uppercase text-center">Mentions du conseil de classe</div>
           <div className="mt-[2px] text-[8px] font-semibold">DISTINCTIONS</div>
           <div className="mt-[2px] space-y-[2px] text-[8px]">
-            <div>
-              {tick(mentions.distinction === "honour")} Tableau d&apos;honneur /
-              Félicitations
+            <div className="flex items-center">
+              {tick(mentions.distinction === "honour")}
+              <span>Tableau d&apos;honneur / Félicitations</span>
             </div>
-            <div>
-              {tick(mentions.distinction === "excellence")} Tableau
-              d&apos;excellence
+            <div className="flex items-center">
+              {tick(mentions.distinction === "excellence")}
+              <span>Tableau d&apos;excellence</span>
             </div>
-            <div>
-              {tick(mentions.distinction === "encouragement")} Tableau
-              d&apos;encouragement
+            <div className="flex items-center">
+              {tick(mentions.distinction === "encouragement")}
+              <span>Tableau d&apos;encouragement</span>
             </div>
           </div>
+
           <div className="mt-2 text-[8px] font-semibold">SANCTIONS</div>
           <div className="mt-[2px] space-y-[2px] text-[8px]">
-            <div>
+            <div className="flex items-center">
               {tick(mentions.sanction === "warningWork")}
-              {" Avertissement travail"}
+              <span>Avertissement travail</span>
             </div>
-            <div>
+            <div className="flex items-center">
               {tick(mentions.sanction === "warningConduct")}
-              {" Avertissement conduite"}
+              <span>Avertissement conduite</span>
             </div>
-            <div>
-              {tick(mentions.sanction === "blameWork")} Blâme travail
+            <div className="flex items-center">
+              {tick(mentions.sanction === "blameWork")}
+              <span>Blâme travail</span>
             </div>
-            <div>
-              {tick(mentions.sanction === "blameConduct")} Blâme conduite
+            <div className="flex items-center">
+              {tick(mentions.sanction === "blameConduct")}
+              <span>Blâme conduite</span>
             </div>
           </div>
         </div>
 
         <div className="bdr p-1">
-          <div className="font-semibold uppercase">
-            Appréciations du conseil de classe
-          </div>
-          <div className="mt-2 h-[62px] bdr bg-white flex items-center justify-center px-1">
-            <div className="text-[10px] font-bold text-center leading-snug">
+          <div className="font-semibold uppercase text-center">Appréciations du conseil de classe</div>
+          <div className="mt-2 flex h-[62px] items-center justify-center bg-white px-1 bdr">
+            <div className="text-center text-[10px] font-bold leading-snug">
               {councilText || "\u00A0"}
             </div>
           </div>
         </div>
       </div>
 
-      {/* VISAS */}
+      {/* VISAS (un peu plus compact pour gagner de la place) */}
       <div className="mt-1 grid grid-cols-2 gap-2 text-[9px] leading-tight">
         <div className="bdr flex flex-col justify-between p-1">
-          <div className="font-semibold text-[8px]">
-            Visa du professeur principal
-          </div>
-          <div className="h-[44px]" />
+          <div className="font-semibold text-[8px]">Visa du professeur principal</div>
+          <div className="h-[34px]" />
           {classInfo.head_teacher?.display_name && (
-            <div className="text-center text-[8px]">
-              {classInfo.head_teacher.display_name}
-            </div>
+            <div className="text-center text-[8px]">{classInfo.head_teacher.display_name}</div>
           )}
         </div>
 
         <div className="bdr flex flex-col justify-between p-1">
-          <div className="font-semibold text-[8px]">
-            Visa du chef d&apos;établissement
-          </div>
-          <div className="h-[44px]" />
+          <div className="font-semibold text-[8px]">Visa du chef d&apos;établissement</div>
+          <div className="h-[34px]" />
           {institution?.institution_head_name && (
             <div className="text-center text-[8px]">
               {institution.institution_head_name}
               {institution?.institution_head_title ? (
-                <div className="text-[7px] text-slate-600">
-                  {institution.institution_head_title}
-                </div>
+                <div className="text-[7px] text-slate-600">{institution.institution_head_title}</div>
               ) : null}
             </div>
           )}
         </div>
       </div>
 
-      <div className="mt-1 text-[8px] text-black">
-        Fait à ......................................, le
-        ...........................................
+      <div className="mt-1 text-center text-[8px] text-black">
+        Conçu et développé par <span className="font-semibold">Nexa Digital SARL</span>
       </div>
     </div>
   );
@@ -1620,50 +1807,37 @@ export default function BulletinsPage() {
   const [classes, setClasses] = useState<ClassRow[]>([]);
   const [classesLoading, setClassesLoading] = useState(false);
 
-  const [institution, setInstitution] = useState<InstitutionSettings | null>(
-    null
-  );
+  const [institution, setInstitution] = useState<InstitutionSettings | null>(null);
   const [institutionLoading, setInstitutionLoading] = useState(false);
 
-  // 🆕 état signatures électroniques
-  const [signaturesEnabled, setSignaturesEnabled] = useState<boolean | null>(
-    null
-  );
+  const [signaturesEnabled, setSignaturesEnabled] = useState<boolean | null>(null);
   const [signaturesToggling, setSignaturesToggling] = useState(false);
 
   const [selectedClassId, setSelectedClassId] = useState<string>("");
 
   const [periods, setPeriods] = useState<GradePeriod[]>([]);
   const [periodsLoading, setPeriodsLoading] = useState(false);
-  const [selectedAcademicYear, setSelectedAcademicYear] =
-    useState<string>("");
+  const [selectedAcademicYear, setSelectedAcademicYear] = useState<string>("");
   const [selectedPeriodId, setSelectedPeriodId] = useState<string>("");
 
   const [dateFrom, setDateFrom] = useState<string>("");
   const [dateTo, setDateTo] = useState<string>("");
 
-  const [bulletinRaw, setBulletinRaw] = useState<BulletinResponse | null>(
-    null
-  );
+  const [bulletinRaw, setBulletinRaw] = useState<BulletinResponse | null>(null);
   const [bulletinLoading, setBulletinLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  const [conductSummary, setConductSummary] =
-    useState<ConductSummaryResponse | null>(null);
+  const [conductSummary, setConductSummary] = useState<ConductSummaryResponse | null>(null);
 
-  // Aperçu clean A4
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewZoom, setPreviewZoom] = useState<number>(1);
 
   const computePreviewZoom = () => {
     if (typeof window === "undefined") return 1;
-
     const A4_PX = (210 / 25.4) * 96;
-
     const vw = window.innerWidth || 0;
     const padding = vw < 768 ? 16 : 64;
     const avail = Math.max(240, vw - padding);
-
     const z = Math.min(1, avail / A4_PX);
     return Math.max(0.25, Number.isFinite(z) ? z : 1);
   };
@@ -1676,7 +1850,6 @@ export default function BulletinsPage() {
     return () => window.removeEventListener("resize", update);
   }, [previewOpen]);
 
-  /* Chargement des classes */
   useEffect(() => {
     const run = async () => {
       try {
@@ -1690,8 +1863,7 @@ export default function BulletinsPage() {
           ? json.items
           : [];
         setClasses(items);
-        if (items.length > 0 && !selectedClassId)
-          setSelectedClassId(items[0].id);
+        if (items.length > 0 && !selectedClassId) setSelectedClassId(items[0].id);
       } catch (e: any) {
         console.error(e);
         setErrorMsg(e.message || "Erreur lors du chargement des classes.");
@@ -1713,7 +1885,6 @@ export default function BulletinsPage() {
     }
   }, [selectedClassId, classes]);
 
-  /* Chargement infos établissement */
   useEffect(() => {
     const run = async () => {
       try {
@@ -1724,13 +1895,11 @@ export default function BulletinsPage() {
         const inst = json as InstitutionSettings;
         setInstitution(inst);
 
-        // 🆕 on récupère l’état des signatures si disponible
         const sig =
           (inst as any)?.bulletin_signatures_enabled ??
           (inst as any)?.settings_json?.bulletin_signatures_enabled;
-        if (typeof sig === "boolean") {
-          setSignaturesEnabled(sig);
-        }
+
+        if (typeof sig === "boolean") setSignaturesEnabled(sig);
       } catch (e) {
         console.error(e);
       } finally {
@@ -1740,26 +1909,20 @@ export default function BulletinsPage() {
     run();
   }, []);
 
-  /* Chargement périodes */
   useEffect(() => {
     const run = async () => {
       try {
         setPeriodsLoading(true);
 
         const params = new URLSearchParams();
-        if (selectedAcademicYear)
-          params.set("academic_year", selectedAcademicYear);
+        if (selectedAcademicYear) params.set("academic_year", selectedAcademicYear);
 
         const qs = params.toString();
-        const url =
-          "/api/admin/institution/grading-periods" + (qs ? `?${qs}` : "");
+        const url = "/api/admin/institution/grading-periods" + (qs ? `?${qs}` : "");
 
         const res = await fetch(url);
         if (!res.ok) {
-          console.warn(
-            "[Bulletins] grading-periods non disponible",
-            res.status
-          );
+          console.warn("[Bulletins] grading-periods non disponible", res.status);
           setPeriods([]);
           return;
         }
@@ -1804,6 +1967,7 @@ export default function BulletinsPage() {
 
   const handleLoadBulletin = async () => {
     setErrorMsg(null);
+
     if (!selectedClassId) {
       setErrorMsg("Veuillez sélectionner une classe.");
       return;
@@ -1839,41 +2003,23 @@ export default function BulletinsPage() {
       const json = (await resBulletin.json()) as BulletinResponse;
       if (!json.ok) throw new Error("Réponse bulletin invalide (ok = false).");
 
-      // 🆕 on récupère l’état des signatures depuis la réponse API
       const sigFromApi =
-        (json as any)?.signatures &&
-        typeof (json as any).signatures.enabled === "boolean"
+        (json as any)?.signatures && typeof (json as any).signatures.enabled === "boolean"
           ? (json as any).signatures.enabled
           : null;
-      if (sigFromApi !== null) {
-        setSignaturesEnabled(sigFromApi);
-      }
-
-      // Debug QR
-      const data = json as any;
-      console.log("[BULLETIN] sample qr_url:", data?.items?.[0]?.qr_url);
-      console.log("[BULLETIN] sample qr_token:", data?.items?.[0]?.qr_token);
-      console.log("[BULLETIN] sample qr_png:", data?.items?.[0]?.qr_png);
+      if (sigFromApi !== null) setSignaturesEnabled(sigFromApi);
 
       setBulletinRaw(json);
 
       if (resConduct.ok) {
         try {
-          const conductJson =
-            (await resConduct.json()) as ConductSummaryResponse;
-          if (conductJson && Array.isArray(conductJson.items))
-            setConductSummary(conductJson);
+          const conductJson = (await resConduct.json()) as ConductSummaryResponse;
+          if (conductJson && Array.isArray(conductJson.items)) setConductSummary(conductJson);
         } catch (err) {
-          console.warn(
-            "[Bulletins] Impossible de lire le résumé de conduite",
-            err
-          );
+          console.warn("[Bulletins] Impossible de lire le résumé de conduite", err);
         }
       } else {
-        console.warn(
-          "[Bulletins] /api/admin/conduite/averages a renvoyé",
-          resConduct.status
-        );
+        console.warn("[Bulletins] /api/admin/conduite/averages a renvoyé", resConduct.status);
       }
 
       setPreviewOpen(true);
@@ -1887,7 +2033,6 @@ export default function BulletinsPage() {
     }
   };
 
-  // 🆕 toggle signatures électroniques
   const handleToggleSignatures = async () => {
     try {
       setErrorMsg(null);
@@ -1905,22 +2050,18 @@ export default function BulletinsPage() {
       if (!res.ok) {
         const txt = await res.text();
         throw new Error(
-          `Impossible de mettre à jour les signatures électroniques (${res.status}). ${
-            txt || ""
-          }`
+          `Impossible de mettre à jour les signatures électroniques (${res.status}). ${txt || ""}`
         );
       }
 
       const json = await res.json().catch(() => null);
-      const effective =
-        json && typeof json.enabled === "boolean" ? json.enabled : next;
+      const effective = json && typeof json.enabled === "boolean" ? json.enabled : next;
 
       setSignaturesEnabled(effective);
       setInstitution((prev) =>
         prev ? { ...prev, bulletin_signatures_enabled: effective } : prev
       );
 
-      // On recharge les bulletins si déjà chargés pour prendre en compte les signatures
       if (bulletinRaw && selectedClassId && dateFrom && dateTo) {
         await handleLoadBulletin();
       }
@@ -1951,8 +2092,7 @@ export default function BulletinsPage() {
   const conductTotalMax = conductSummary?.total_max;
 
   const items = enriched?.items ?? [];
-  const stats =
-    enriched?.stats ?? { highest: null, lowest: null, classAvg: null };
+  const stats = enriched?.stats ?? { highest: null, lowest: null, classAvg: null };
   const classInfo = enriched?.response.class;
   const period = enriched?.response.period ?? { from: null, to: null };
   const subjects = enriched?.response.subjects ?? [];
@@ -1961,7 +2101,14 @@ export default function BulletinsPage() {
 
   const handlePrint = () => {
     if (!items.length) return;
-    if (typeof window !== "undefined") window.print();
+    if (typeof window === "undefined") return;
+
+    // ✅ laisse le temps aux fitScale de se calculer avant print
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        window.print();
+      });
+    });
   };
 
   return (
@@ -1972,17 +2119,61 @@ export default function BulletinsPage() {
           border: 1px solid #000;
         }
 
+        .sig-img {
+          display: block;
+          background: transparent !important;
+          opacity: 1 !important;
+        }
+
+        .sig-head,
+        .sig-cell {
+          width: 72px;
+          min-width: 72px;
+          max-width: 72px;
+        }
+
+        .sig-box {
+          height: var(--sig-box-h, 22px);
+          display: flex;
+          flex-direction: column;
+          justify-content: flex-end;
+          overflow: hidden;
+        }
+        .sig-ink {
+          height: calc(var(--sig-box-h, 22px) - 2px);
+          display: flex;
+          align-items: flex-end;
+          justify-content: center;
+          overflow: hidden;
+          line-height: 0;
+        }
+        .sig-box .sig-img {
+          height: calc(var(--sig-box-h, 22px) - 2px) !important;
+          max-height: calc(var(--sig-box-h, 22px) - 2px) !important;
+          width: 100% !important;
+          object-fit: contain !important;
+        }
+        .sig-line {
+          width: 100%;
+          border-top: 1px solid #000;
+        }
+
+        /* ✅ Base (hors aperçu) */
         .print-page {
           width: 210mm;
           min-height: 297mm;
           margin: 0 auto;
           padding: 8mm;
+          box-sizing: border-box;
           font-family: Arial, Helvetica, sans-serif;
           background: #fff;
         }
 
-        .preview-overlay {
-          overflow-x: hidden;
+        /* ✅ Aperçu : on simule EXACTEMENT la zone imprimable (A4 - marges 4mm) */
+        .preview-overlay .print-page {
+          width: 202mm;
+          min-height: 289mm;
+          padding: 0;
         }
 
         @supports (zoom: 1) {
@@ -2001,8 +2192,9 @@ export default function BulletinsPage() {
         @media print {
           @page {
             size: A4 portrait;
-            margin: 8mm;
+            margin: 4mm; /* ✅ plus de place utile */
           }
+
           html,
           body {
             background: #fff !important;
@@ -2010,22 +2202,12 @@ export default function BulletinsPage() {
             print-color-adjust: exact;
           }
 
-          .print-page {
-            width: 194mm;
-            min-height: 281mm;
-            margin: 0 auto;
-            padding: 0;
-            zoom: 1 !important;
-            transform: none !important;
+          body * {
+            visibility: hidden !important;
           }
-
-          .print-break {
-            page-break-after: always;
-            break-after: page;
-          }
-
-          .print\\:hidden {
-            display: none !important;
+          .preview-overlay,
+          .preview-overlay * {
+            visibility: visible !important;
           }
 
           .preview-overlay {
@@ -2035,27 +2217,57 @@ export default function BulletinsPage() {
             background: transparent !important;
             padding: 0 !important;
           }
+
           .preview-actions {
+            display: none !important;
+          }
+
+          /* ✅ PRINT FIT : plus jamais de débordement */
+          .print-page {
+            width: 202mm;
+            min-height: 289mm;
+            margin: 0 auto;
+            padding: 0;
+            box-sizing: border-box;
+
+            zoom: var(--print-fit-scale, 1) !important;
+            transform: none !important;
+          }
+
+          @supports not (zoom: 1) {
+            .print-page {
+              transform: scale(var(--print-fit-scale, 1)) !important;
+              transform-origin: top left !important;
+            }
+          }
+
+          .print-break {
+            page-break-after: always;
+            break-after: page;
+          }
+
+          .print-break:last-of-type {
+            page-break-after: auto;
+            break-after: auto;
+          }
+
+          .print\\:hidden {
             display: none !important;
           }
         }
       `}</style>
 
-      {/* Aperçu clean */}
       {previewOpen && items.length > 0 && enriched && classInfo ? (
         <div
           className="preview-overlay fixed inset-0 z-[60] overflow-y-auto bg-slate-200 p-2 md:p-6"
           style={{ ["--preview-zoom" as any]: previewZoom }}
         >
           <div className="preview-actions sticky top-2 z-10 mb-3 flex justify-end gap-2">
-            <Button
-              variant="ghost"
-              type="button"
-              onClick={() => setPreviewOpen(false)}
-            >
+            <Button variant="ghost" type="button" onClick={() => setPreviewOpen(false)}>
               <X className="h-4 w-4" />
               Fermer
             </Button>
+
             <Button
               variant="ghost"
               type="button"
@@ -2065,6 +2277,7 @@ export default function BulletinsPage() {
               <RefreshCw className="h-4 w-4" />
               Recharger
             </Button>
+
             <Button type="button" onClick={handlePrint}>
               <Printer className="h-4 w-4" />
               Imprimer
@@ -2089,38 +2302,26 @@ export default function BulletinsPage() {
                 conductRubricMax={conductRubricMax}
                 conductTotalMax={conductTotalMax}
                 signaturesEnabled={signaturesEnabled}
+                previewZoomForMeasure={previewZoom}
               />
             ))}
           </div>
         </div>
       ) : (
-        /* Mode normal */
         <div className="mx-auto flex max-w-6xl flex-col gap-4 p-4 md:p-6">
-          {/* Header + actions + toggle signatures */}
           <div className="flex flex-col gap-3 print:hidden sm:flex-row sm:items-center sm:justify-between">
             <div>
-              <h1 className="text-lg font-semibold text-slate-900">
-                Bulletins de notes
-              </h1>
+              <h1 className="text-lg font-semibold text-slate-900">Bulletins de notes</h1>
               <p className="text-sm text-slate-500">
                 Charger une classe + période, puis ouvrir l’aperçu A4.
               </p>
             </div>
+
             <div className="flex flex-col items-stretch gap-2 sm:items-end">
               <div className="flex items-center justify-end gap-2">
                 <div className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs text-slate-700">
-                  <span className="font-semibold">
-                    Signatures électroniques :{" "}
-                  </span>
-                  <span
-                    className={
-                      signaturesEnabled
-                        ? "text-emerald-600"
-                        : signaturesEnabled === null
-                        ? "text-slate-500"
-                        : "text-slate-500"
-                    }
-                  >
+                  <span className="font-semibold">Signatures électroniques : </span>
+                  <span className={signaturesEnabled ? "text-emerald-600" : "text-slate-500"}>
                     {signaturesEnabled === null
                       ? "Non configurées"
                       : signaturesEnabled
@@ -2128,17 +2329,14 @@ export default function BulletinsPage() {
                       : "Désactivées"}
                   </span>
                 </div>
+
                 <Button
                   type="button"
                   variant="ghost"
                   onClick={handleToggleSignatures}
                   disabled={signaturesToggling}
                 >
-                  {signaturesToggling
-                    ? "Mise à jour…"
-                    : signaturesEnabled
-                    ? "Désactiver"
-                    : "Activer"}
+                  {signaturesToggling ? "Mise à jour…" : signaturesEnabled ? "Désactiver" : "Activer"}
                 </Button>
               </div>
 
@@ -2152,11 +2350,8 @@ export default function BulletinsPage() {
                   <RefreshCw className="h-4 w-4" />
                   Recharger
                 </Button>
-                <Button
-                  type="button"
-                  onClick={() => setPreviewOpen(true)}
-                  disabled={!items.length}
-                >
+
+                <Button type="button" onClick={() => setPreviewOpen(true)} disabled={!items.length}>
                   <Printer className="h-4 w-4" />
                   Aperçu / Imprimer
                 </Button>
@@ -2164,7 +2359,6 @@ export default function BulletinsPage() {
             </div>
           </div>
 
-          {/* Filtres */}
           <div className="grid gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm print:hidden md:grid-cols-6">
             <div className="md:col-span-2">
               <label className="mb-1 block text-xs font-semibold uppercase text-slate-500">
@@ -2182,9 +2376,7 @@ export default function BulletinsPage() {
                 disabled={periodsLoading || academicYears.length === 0}
               >
                 <option value="">
-                  {academicYears.length === 0
-                    ? "Non configuré"
-                    : "Toutes années…"}
+                  {academicYears.length === 0 ? "Non configuré" : "Toutes années…"}
                 </option>
                 {academicYears.map((year) => (
                   <option key={year} value={year}>
@@ -2193,8 +2385,7 @@ export default function BulletinsPage() {
                 ))}
               </Select>
               <p className="mt-1 text-[0.7rem] text-slate-500">
-                Filtre les périodes. Si vous choisissez une période, les dates
-                sont remplies automatiquement.
+                Filtre les périodes. Si vous choisissez une période, les dates sont remplies automatiquement.
               </p>
             </div>
 
@@ -2208,16 +2399,11 @@ export default function BulletinsPage() {
                 disabled={periodsLoading || filteredPeriods.length === 0}
               >
                 <option value="">
-                  {filteredPeriods.length === 0
-                    ? "Aucune période"
-                    : "Sélectionner une période…"}
+                  {filteredPeriods.length === 0 ? "Aucune période" : "Sélectionner une période…"}
                 </option>
                 {filteredPeriods.map((p) => (
                   <option key={p.id} value={p.id}>
-                    {p.label ||
-                      p.short_label ||
-                      p.code ||
-                      `${p.start_date} → ${p.end_date}`}
+                    {p.label || p.short_label || p.code || `${p.start_date} → ${p.end_date}`}
                   </option>
                 ))}
               </Select>
@@ -2252,21 +2438,14 @@ export default function BulletinsPage() {
               <label className="mb-1 block text-xs font-semibold uppercase text-slate-500">
                 Date de début
               </label>
-              <Input
-                type="date"
-                value={dateFrom}
-                onChange={(e) => setDateFrom(e.target.value)}
-              />
+              <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
             </div>
+
             <div className="md:col-span-3">
               <label className="mb-1 block text-xs font-semibold uppercase text-slate-500">
                 Date de fin
               </label>
-              <Input
-                type="date"
-                value={dateTo}
-                onChange={(e) => setDateTo(e.target.value)}
-              />
+              <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
             </div>
           </div>
 
@@ -2284,8 +2463,7 @@ export default function BulletinsPage() {
 
           {!items.length && !bulletinLoading && (
             <div className="rounded-xl border border-slate-200 bg-white px-3 py-4 text-sm text-slate-600 print:hidden">
-              Aucun bulletin à afficher. Choisissez une classe, une période puis
-              cliquez sur{" "}
+              Aucun bulletin à afficher. Choisissez une classe, une période puis cliquez sur{" "}
               <span className="font-semibold">Recharger</span>.
             </div>
           )}
