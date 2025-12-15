@@ -300,7 +300,9 @@ function computeCouncilAppreciationText(
   const g =
     generalAvg !== null && generalAvg !== undefined ? Number(generalAvg) : null;
   const c =
-    conductOn20 !== null && conductOn20 !== undefined ? Number(conductOn20) : null;
+    conductOn20 !== null && conductOn20 !== undefined
+      ? Number(conductOn20)
+      : null;
 
   if (mentions.sanction === "blameConduct") return "Conduite très insuffisante.";
   if (mentions.sanction === "warningConduct") return "Conduite à améliorer.";
@@ -1071,7 +1073,10 @@ function StudentBulletinCard({
       window.clearTimeout(t3);
       window.removeEventListener("resize", onResize);
       window.removeEventListener("beforeprint", onBeforePrint);
-      window.removeEventListener("bulletins:recalc-fit" as any, onBeforePrint as any);
+      window.removeEventListener(
+        "bulletins:recalc-fit" as any,
+        onBeforePrint as any
+      );
       if (ro) ro.disconnect();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1161,7 +1166,10 @@ function StudentBulletinCard({
   }, [subjectComponents]);
 
   const perSubjectComponentMap = useMemo(() => {
-    const m = new Map<string, { avg20: number | null; component_rank?: number | null }>();
+    const m = new Map<
+      string,
+      { avg20: number | null; component_rank?: number | null }
+    >();
     const per = item.per_subject_components ?? [];
     per.forEach((psc) => {
       const key = `${psc.subject_id}__${psc.component_id}`;
@@ -1175,7 +1183,10 @@ function StudentBulletinCard({
   }, [item.per_subject_components]);
 
   const perGroupMap = useMemo(() => {
-    const m = new Map<string, { group_avg: number | null; group_rank?: number | null }>();
+    const m = new Map<
+      string,
+      { group_avg: number | null; group_rank?: number | null }
+    >();
     const per = item.per_group ?? [];
     per.forEach((g) => {
       m.set(g.group_id, {
@@ -1351,7 +1362,8 @@ function StudentBulletinCard({
         ? round2(Number(avg) * (s.coeff_bulletin || 0))
         : null;
 
-    const subjectRankLabel = cell && cell.subject_rank != null ? `${cell.subject_rank}e` : "—";
+    const subjectRankLabel =
+      cell && cell.subject_rank != null ? `${cell.subject_rank}e` : "—";
     const subjectTeacher = cell?.teacher_name || "";
     const appreciationLabel = computeSubjectAppreciation(avg);
 
@@ -1397,11 +1409,15 @@ function StudentBulletinCard({
               <td className="bdr px-1 py-[1px] pl-4">
                 {comp.short_label || comp.label}
               </td>
-              <td className="bdr px-1 py-[1px] text-center">{formatNumber(cAvg)}</td>
+              <td className="bdr px-1 py-[1px] text-center">
+                {formatNumber(cAvg)}
+              </td>
               <td className="bdr px-1 py-[1px] text-center">
                 {formatNumber(comp.coeff_in_subject, 0)}
               </td>
-              <td className="bdr px-1 py-[1px] text-center">{formatNumber(cMoyCoeff)}</td>
+              <td className="bdr px-1 py-[1px] text-center">
+                {formatNumber(cMoyCoeff)}
+              </td>
               <td className="bdr px-1 py-[1px] text-center">
                 {cRank != null ? `${cRank}e` : "—"}
               </td>
@@ -1445,7 +1461,9 @@ function StudentBulletinCard({
           <div className="text-center text-[9px] leading-tight">
             <div className="font-semibold uppercase">{countryName}</div>
             <div className="text-[8px]">{countryMotto}</div>
-            <div className="mt-1 text-[8px] font-semibold uppercase">{ministryName}</div>
+            <div className="mt-1 text-[8px] font-semibold uppercase">
+              {ministryName}
+            </div>
             <div className="mt-1 text-[8px] uppercase">
               {String((institution?.institution_region || "").trim())}
             </div>
@@ -1518,7 +1536,9 @@ function StudentBulletinCard({
               {institution?.institution_phone
                 ? ` • Tél : ${institution.institution_phone}`
                 : ""}
-              {institution?.institution_status ? ` • ${institution.institution_status}` : ""}
+              {institution?.institution_status
+                ? ` • ${institution.institution_status}`
+                : ""}
             </div>
           </div>
 
@@ -1589,7 +1609,11 @@ function StudentBulletinCard({
           <div className="bdr flex h-[96px] w-[86px] items-center justify-center overflow-hidden">
             {photoUrl ? (
               // eslint-disable-next-line @next/next/no-img-element
-              <img src={photoUrl} alt="Photo élève" className="h-full w-full object-cover" />
+              <img
+                src={photoUrl}
+                alt="Photo élève"
+                className="h-full w-full object-cover"
+              />
             ) : (
               <div className="text-center text-[8px] text-slate-500">Photo</div>
             )}
@@ -1633,7 +1657,9 @@ function StudentBulletinCard({
                   groupIsAutres &&
                   conductSubject &&
                   conductNoteOn20 !== null &&
-                  !groupSubjects.some((s) => s.subject_id === conductSubject.subject_id)
+                  !groupSubjects.some(
+                    (s) => s.subject_id === conductSubject.subject_id
+                  )
                 ) {
                   groupSubjects.push(conductSubject);
                   groupedSubjectIds.add(conductSubject.subject_id);
@@ -1645,20 +1671,31 @@ function StudentBulletinCard({
                 let groupAvg = baseGroupInfo?.group_avg ?? null;
                 let groupCoeff = g.annual_coeff ?? 0;
                 let groupTotal: number | null =
-                  groupAvg !== null && groupCoeff ? round2(groupAvg * groupCoeff) : null;
+                  groupAvg !== null && groupCoeff
+                    ? round2(groupAvg * groupCoeff)
+                    : null;
 
                 if (groupIsAutres) {
                   let sum = 0;
                   let sumCoeff = 0;
 
                   groupSubjects.forEach((s) => {
-                    const cell = perSubject.find((ps) => ps.subject_id === s.subject_id);
+                    const cell = perSubject.find(
+                      (ps) => ps.subject_id === s.subject_id
+                    );
                     const val = cell?.avg20;
-                    if (val === null || val === undefined || !Number.isFinite(Number(val))) return;
+                    if (
+                      val === null ||
+                      val === undefined ||
+                      !Number.isFinite(Number(val))
+                    )
+                      return;
 
                     const avg = Number(val);
                     const coeff =
-                      s.subject_id === conductSubject?.subject_id ? 1 : Number(s.coeff_bulletin ?? 0);
+                      s.subject_id === conductSubject?.subject_id
+                        ? 1
+                        : Number(s.coeff_bulletin ?? 0);
 
                     if (!Number.isFinite(coeff) || coeff <= 0) return;
 
@@ -1674,7 +1711,9 @@ function StudentBulletinCard({
                 }
 
                 const groupRankLabel =
-                  baseGroupInfo?.group_rank != null ? `${baseGroupInfo.group_rank}e` : "—";
+                  baseGroupInfo?.group_rank != null
+                    ? `${baseGroupInfo.group_rank}e`
+                    : "—";
 
                 const bilanLabel = (g.label || g.code || "BILAN").toUpperCase();
 
@@ -1682,17 +1721,23 @@ function StudentBulletinCard({
                   ...groupSubjects.map((s) => renderSubjectBlock(s)),
                   <tr key={`group-${g.id}`} className="bg-slate-50 font-bold">
                     <td className="bdr px-1 py-[1px]">{bilanLabel}</td>
-                    <td className="bdr px-1 py-[1px] text-center">{formatNumber(groupAvg)}</td>
+                    <td className="bdr px-1 py-[1px] text-center">
+                      {formatNumber(groupAvg)}
+                    </td>
                     <td className="bdr px-1 py-[1px] text-center">
                       {groupCoeff ? formatNumber(groupCoeff, 0) : ""}
                     </td>
                     <td className="bdr px-1 py-[1px] text-center">
                       {groupCoeff ? formatNumber(groupTotal) : ""}
                     </td>
-                    <td className="bdr px-1 py-[1px] text-center">{groupRankLabel}</td>
+                    <td className="bdr px-1 py-[1px] text-center">
+                      {groupRankLabel}
+                    </td>
                     <td className="bdr px-1 py-[1px]" />
                     <td className="bdr px-1 py-[1px]" />
-                    <td className="bdr p-0 align-middle sig-cell">{renderSignatureLine()}</td>
+                    <td className="bdr p-0 align-middle sig-cell">
+                      {renderSignatureLine()}
+                    </td>
                   </tr>,
                 ];
               })}
@@ -1708,7 +1753,9 @@ function StudentBulletinCard({
           <tr className="bg-slate-50 font-bold">
             <td className="bdr px-1 py-[1px] text-right">TOTAUX :</td>
             <td className="bdr px-1 py-[1px]" />
-            <td className="bdr px-1 py-[1px] text-center">{formatNumber(coeffTotal, 0)}</td>
+            <td className="bdr px-1 py-[1px] text-center">
+              {formatNumber(coeffTotal, 0)}
+            </td>
             <td className="bdr px-1 py-[1px]" />
             <td className="bdr px-1 py-[1px]" />
             <td className="bdr px-1 py-[1px]" />
@@ -1725,31 +1772,38 @@ function StudentBulletinCard({
           {conduct ? (
             <div className="mt-[2px] space-y-[2px]">
               <div>
-                Absences : <span className="font-semibold">{conduct.absence_count ?? 0}</span>
+                Absences :{" "}
+                <span className="font-semibold">{conduct.absence_count ?? 0}</span>
               </div>
               <div>
-                Retards : <span className="font-semibold">{conduct.tardy_count ?? 0}</span>
+                Retards :{" "}
+                <span className="font-semibold">{conduct.tardy_count ?? 0}</span>
               </div>
               <div className="pt-[2px]">
                 Note de conduite :{" "}
                 <span className="font-semibold">
-                  {conductNoteOn20 !== null ? `${formatNumber(conductNoteOn20)} / 20` : "—"}
+                  {conductNoteOn20 !== null
+                    ? `${formatNumber(conductNoteOn20)} / 20`
+                    : "—"}
                 </span>
               </div>
 
               {conductRubricMax && conduct?.breakdown && (
                 <div className="mt-1 grid grid-cols-2 gap-x-2 gap-y-[2px] text-[8px] text-slate-700">
                   <div>
-                    Assiduité : {conduct.breakdown.assiduite} / {conductRubricMax.assiduite}
+                    Assiduité : {conduct.breakdown.assiduite} /{" "}
+                    {conductRubricMax.assiduite}
                   </div>
                   <div>
                     Tenue : {conduct.breakdown.tenue} / {conductRubricMax.tenue}
                   </div>
                   <div>
-                    Moralité : {conduct.breakdown.moralite} / {conductRubricMax.moralite}
+                    Moralité : {conduct.breakdown.moralite} /{" "}
+                    {conductRubricMax.moralite}
                   </div>
                   <div>
-                    Discipline : {conduct.breakdown.discipline} / {conductRubricMax.discipline}
+                    Discipline : {conduct.breakdown.discipline} /{" "}
+                    {conductRubricMax.discipline}
                   </div>
                 </div>
               )}
@@ -1763,9 +1817,15 @@ function StudentBulletinCard({
 
         <div className="bdr p-1 text-center">
           <div className="font-semibold">Moyenne trimestrielle</div>
-          <div className="mt-[3px] text-[10px] font-bold">{formatNumber(item.general_avg)} / 20</div>
+          <div className="mt-[3px] text-[10px] font-bold">
+            {formatNumber(item.general_avg)} / 20
+          </div>
           <div className="mt-[2px]">
-            Rang : <span className="font-semibold">{item.rank ? `${item.rank}e` : "—"}</span> / {total}
+            Rang :{" "}
+            <span className="font-semibold">
+              {item.rank ? `${item.rank}e` : "—"}
+            </span>{" "}
+            / {total}
           </div>
         </div>
 
@@ -1781,7 +1841,9 @@ function StudentBulletinCard({
 
       <div className="mt-1 grid grid-cols-2 gap-2 text-[9px] leading-tight">
         <div className="bdr p-1">
-          <div className="font-semibold uppercase text-center">Mentions du conseil de classe</div>
+          <div className="font-semibold uppercase text-center">
+            Mentions du conseil de classe
+          </div>
           <div className="mt-[2px] text-[8px] font-semibold">DISTINCTIONS</div>
           <div className="mt-[2px] space-y-[2px] text-[8px]">
             <div className="flex items-center">
@@ -1820,7 +1882,9 @@ function StudentBulletinCard({
         </div>
 
         <div className="bdr p-1">
-          <div className="font-semibold uppercase text-center">Appréciations du conseil de classe</div>
+          <div className="font-semibold uppercase text-center">
+            Appréciations du conseil de classe
+          </div>
           <div className="mt-2 flex h-[62px] items-center justify-center bg-white px-1 bdr">
             <div className="text-center text-[10px] font-bold leading-snug">
               {councilText || "\u00A0"}
@@ -1835,18 +1899,24 @@ function StudentBulletinCard({
           <div className="font-semibold text-[8px]">Visa du professeur principal</div>
           <div className="h-[34px]" />
           {classInfo.head_teacher?.display_name && (
-            <div className="text-center text-[8px]">{classInfo.head_teacher.display_name}</div>
+            <div className="text-center text-[8px]">
+              {classInfo.head_teacher.display_name}
+            </div>
           )}
         </div>
 
         <div className="bdr flex flex-col justify-between p-1">
-          <div className="font-semibold text-[8px]">Visa du chef d&apos;établissement</div>
+          <div className="font-semibold text-[8px]">
+            Visa du chef d&apos;établissement
+          </div>
           <div className="h-[34px]" />
           {institution?.institution_head_name && (
             <div className="text-center text-[8px]">
               {institution.institution_head_name}
               {institution?.institution_head_title ? (
-                <div className="text-[7px] text-slate-600">{institution.institution_head_title}</div>
+                <div className="text-[7px] text-slate-600">
+                  {institution.institution_head_title}
+                </div>
               ) : null}
             </div>
           )}
@@ -1886,14 +1956,18 @@ export default function BulletinsPage() {
   const [bulletinLoading, setBulletinLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  const [conductSummary, setConductSummary] = useState<ConductSummaryResponse | null>(null);
+  const [conductSummary, setConductSummary] =
+    useState<ConductSummaryResponse | null>(null);
 
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewZoom, setPreviewZoom] = useState<number>(1);
 
   const computePreviewZoom = () => {
     if (typeof window === "undefined") return 1;
-    const A4_PX = (210 / 25.4) * 96;
+
+    // ✅ on se cale sur la largeur "utile" (A4 - marges @page 4mm => 202mm)
+    const A4_PX = (202 / 25.4) * 96;
+
     const vw = window.innerWidth || 0;
     const padding = vw < 768 ? 16 : 64;
     const avail = Math.max(240, vw - padding);
@@ -2053,7 +2127,9 @@ export default function BulletinsPage() {
       if (!resBulletin.ok) {
         const txt = await resBulletin.text();
         throw new Error(
-          `Erreur bulletin (${resBulletin.status}) : ${txt || "Impossible de générer le bulletin."}`
+          `Erreur bulletin (${resBulletin.status}) : ${
+            txt || "Impossible de générer le bulletin."
+          }`
         );
       }
 
@@ -2061,7 +2137,8 @@ export default function BulletinsPage() {
       if (!json.ok) throw new Error("Réponse bulletin invalide (ok = false).");
 
       const sigFromApi =
-        (json as any)?.signatures && typeof (json as any).signatures.enabled === "boolean"
+        (json as any)?.signatures &&
+        typeof (json as any).signatures.enabled === "boolean"
           ? (json as any).signatures.enabled
           : null;
       if (sigFromApi !== null) setSignaturesEnabled(sigFromApi);
@@ -2071,18 +2148,24 @@ export default function BulletinsPage() {
       if (resConduct.ok) {
         try {
           const conductJson = (await resConduct.json()) as ConductSummaryResponse;
-          if (conductJson && Array.isArray(conductJson.items)) setConductSummary(conductJson);
+          if (conductJson && Array.isArray(conductJson.items))
+            setConductSummary(conductJson);
         } catch (err) {
           console.warn("[Bulletins] Impossible de lire le résumé de conduite", err);
         }
       } else {
-        console.warn("[Bulletins] /api/admin/conduite/averages a renvoyé", resConduct.status);
+        console.warn(
+          "[Bulletins] /api/admin/conduite/averages a renvoyé",
+          resConduct.status
+        );
       }
 
       setPreviewOpen(true);
     } catch (e: any) {
       console.error(e);
-      setErrorMsg(e?.message || "Une erreur est survenue lors du chargement du bulletin.");
+      setErrorMsg(
+        e?.message || "Une erreur est survenue lors du chargement du bulletin."
+      );
     } finally {
       setBulletinLoading(false);
     }
@@ -2105,15 +2188,20 @@ export default function BulletinsPage() {
       if (!res.ok) {
         const txt = await res.text();
         throw new Error(
-          `Impossible de mettre à jour les signatures électroniques (${res.status}). ${txt || ""}`
+          `Impossible de mettre à jour les signatures électroniques (${res.status}). ${
+            txt || ""
+          }`
         );
       }
 
       const json = await res.json().catch(() => null);
-      const effective = json && typeof json.enabled === "boolean" ? json.enabled : next;
+      const effective =
+        json && typeof json.enabled === "boolean" ? json.enabled : next;
 
       setSignaturesEnabled(effective);
-      setInstitution((prev) => (prev ? { ...prev, bulletin_signatures_enabled: effective } : prev));
+      setInstitution((prev) =>
+        prev ? { ...prev, bulletin_signatures_enabled: effective } : prev
+      );
 
       if (bulletinRaw && selectedClassId && dateFrom && dateTo) {
         await handleLoadBulletin();
@@ -2218,17 +2306,22 @@ export default function BulletinsPage() {
           width: 210mm;
           min-height: 297mm;
           margin: 0 auto;
+
+          /* marge intérieure par défaut écran */
           padding: 8mm;
+
           box-sizing: border-box;
           font-family: Arial, Helvetica, sans-serif;
           background: #fff;
         }
 
-        /* ✅ Aperçu : on simule EXACTEMENT la zone imprimable (A4 - marges 4mm) */
+        /* ✅ Aperçu : zone imprimable (A4 - marges @page 4mm => 202mm / 289mm) + MARGES GAUCHE/DROITE */
         .preview-overlay .print-page {
           width: 202mm;
           min-height: 289mm;
-          padding: 0;
+
+          /* ✅ marge intérieure visible (gauche/droite) sans casser la hauteur */
+          padding: 2mm 6mm;
         }
 
         @supports (zoom: 1) {
@@ -2247,7 +2340,7 @@ export default function BulletinsPage() {
         @media print {
           @page {
             size: A4 portrait;
-            margin: 4mm; /* ✅ plus de place utile */
+            margin: 4mm; /* ✅ conserve la place utile */
           }
 
           html,
@@ -2277,15 +2370,18 @@ export default function BulletinsPage() {
             display: none !important;
           }
 
-          /* ✅ PRINT FIT : 1 SEULE PAGE GARANTIE */
+          /* ✅ PRINT FIT : 1 SEULE PAGE GARANTIE + marges intérieures gauche/droite */
           .print-page {
             width: 202mm;
-            height: 289mm;     /* ✅ fixe la page utile */
+            height: 289mm; /* ✅ fixe la page utile */
             max-height: 289mm; /* ✅ sécurité */
-            overflow: hidden;  /* ✅ jamais de 2e page */
+            overflow: hidden; /* ✅ jamais de 2e page */
 
             margin: 0 auto;
-            padding: 0;
+
+            /* ✅ marge intérieure (gauche/droite) tout en gardant la couleur */
+            padding: 2mm 6mm;
+
             box-sizing: border-box;
 
             page-break-inside: avoid;
@@ -2324,7 +2420,11 @@ export default function BulletinsPage() {
           style={{ ["--preview-zoom" as any]: previewZoom }}
         >
           <div className="preview-actions sticky top-2 z-10 mb-3 flex justify-end gap-2">
-            <Button variant="ghost" type="button" onClick={() => setPreviewOpen(false)}>
+            <Button
+              variant="ghost"
+              type="button"
+              onClick={() => setPreviewOpen(false)}
+            >
               <X className="h-4 w-4" />
               Fermer
             </Button>
@@ -2372,7 +2472,9 @@ export default function BulletinsPage() {
         <div className="mx-auto flex max-w-6xl flex-col gap-4 p-4 md:p-6">
           <div className="flex flex-col gap-3 print:hidden sm:flex-row sm:items-center sm:justify-between">
             <div>
-              <h1 className="text-lg font-semibold text-slate-900">Bulletins de notes</h1>
+              <h1 className="text-lg font-semibold text-slate-900">
+                Bulletins de notes
+              </h1>
               <p className="text-sm text-slate-500">
                 Charger une classe + période, puis ouvrir l’aperçu A4.
               </p>
@@ -2381,8 +2483,12 @@ export default function BulletinsPage() {
             <div className="flex flex-col items-stretch gap-2 sm:items-end">
               <div className="flex items-center justify-end gap-2">
                 <div className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs text-slate-700">
-                  <span className="font-semibold">Signatures électroniques : </span>
-                  <span className={signaturesEnabled ? "text-emerald-600" : "text-slate-500"}>
+                  <span className="font-semibold">
+                    Signatures électroniques :{" "}
+                  </span>
+                  <span
+                    className={signaturesEnabled ? "text-emerald-600" : "text-slate-500"}
+                  >
                     {signaturesEnabled === null
                       ? "Non configurées"
                       : signaturesEnabled
@@ -2397,7 +2503,11 @@ export default function BulletinsPage() {
                   onClick={handleToggleSignatures}
                   disabled={signaturesToggling}
                 >
-                  {signaturesToggling ? "Mise à jour…" : signaturesEnabled ? "Désactiver" : "Activer"}
+                  {signaturesToggling
+                    ? "Mise à jour…"
+                    : signaturesEnabled
+                    ? "Désactiver"
+                    : "Activer"}
                 </Button>
               </div>
 
@@ -2412,7 +2522,11 @@ export default function BulletinsPage() {
                   Recharger
                 </Button>
 
-                <Button type="button" onClick={() => setPreviewOpen(true)} disabled={!items.length}>
+                <Button
+                  type="button"
+                  onClick={() => setPreviewOpen(true)}
+                  disabled={!items.length}
+                >
                   <Printer className="h-4 w-4" />
                   Aperçu / Imprimer
                 </Button>
@@ -2446,7 +2560,8 @@ export default function BulletinsPage() {
                 ))}
               </Select>
               <p className="mt-1 text-[0.7rem] text-slate-500">
-                Filtre les périodes. Si vous choisissez une période, les dates sont remplies automatiquement.
+                Filtre les périodes. Si vous choisissez une période, les dates sont
+                remplies automatiquement.
               </p>
             </div>
 
@@ -2460,11 +2575,16 @@ export default function BulletinsPage() {
                 disabled={periodsLoading || filteredPeriods.length === 0}
               >
                 <option value="">
-                  {filteredPeriods.length === 0 ? "Aucune période" : "Sélectionner une période…"}
+                  {filteredPeriods.length === 0
+                    ? "Aucune période"
+                    : "Sélectionner une période…"}
                 </option>
                 {filteredPeriods.map((p) => (
                   <option key={p.id} value={p.id}>
-                    {p.label || p.short_label || p.code || `${p.start_date} → ${p.end_date}`}
+                    {p.label ||
+                      p.short_label ||
+                      p.code ||
+                      `${p.start_date} → ${p.end_date}`}
                   </option>
                 ))}
               </Select>
@@ -2499,14 +2619,22 @@ export default function BulletinsPage() {
               <label className="mb-1 block text-xs font-semibold uppercase text-slate-500">
                 Date de début
               </label>
-              <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
+              <Input
+                type="date"
+                value={dateFrom}
+                onChange={(e) => setDateFrom(e.target.value)}
+              />
             </div>
 
             <div className="md:col-span-3">
               <label className="mb-1 block text-xs font-semibold uppercase text-slate-500">
                 Date de fin
               </label>
-              <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
+              <Input
+                type="date"
+                value={dateTo}
+                onChange={(e) => setDateTo(e.target.value)}
+              />
             </div>
           </div>
 
@@ -2524,8 +2652,8 @@ export default function BulletinsPage() {
 
           {!items.length && !bulletinLoading && (
             <div className="rounded-xl border border-slate-200 bg-white px-3 py-4 text-sm text-slate-600 print:hidden">
-              Aucun bulletin à afficher. Choisissez une classe, une période puis cliquez sur{" "}
-              <span className="font-semibold">Recharger</span>.
+              Aucun bulletin à afficher. Choisissez une classe, une période puis
+              cliquez sur <span className="font-semibold">Recharger</span>.
             </div>
           )}
 
