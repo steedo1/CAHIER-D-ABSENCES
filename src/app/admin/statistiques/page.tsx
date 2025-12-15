@@ -1234,11 +1234,10 @@ export default function AdminStatistiquesPage() {
                 </table>
                 <p className="mt-3 text-xs text-slate-500 px-1 pb-1">
                   Chaque ligne représente une <strong>semaine</strong> pour une{" "}
-                  <strong>classe</strong> et une
-                  <strong> discipline</strong>. Le nombre de séances correspond aux
-                  appels effectués, et la durée totale est calculée à partir du{" "}
-                  <strong>temps réellement effectué</strong> (durée prévue du créneau −
-                  retard au premier appel).
+                  <strong>classe</strong> et une<strong> discipline</strong>. Le nombre
+                  de séances correspond aux appels effectués, et la durée totale est
+                  calculée à partir du <strong>temps réellement effectué</strong> (durée
+                  prévue du créneau − retard au premier appel).
                 </p>
               </div>
             )}
