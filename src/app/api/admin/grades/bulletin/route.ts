@@ -123,6 +123,17 @@ type BulletinSubjectComponent = {
   order_index: number;
 };
 
+type GradePeriodRow = {
+  id: string;
+  academic_year: string | null;
+  code: string | null;
+  label: string | null;
+  short_label: string | null;
+  start_date: string;
+  end_date: string;
+  coeff: number | null;
+};
+
 /* ───────── helpers nombres ───────── */
 
 // ✅ IMPORTANT: on garde plus de précision (4 décimales) pour éviter
@@ -925,6 +936,31 @@ function buildFallbackGroups(opts: {
   return groups.filter((g) => g.items.length > 0);
 }
 
+/* ───────── helper annuel : rang avec ex aequo ───────── */
+function buildRankMapFromAverageMap(avgByStudent: Map<string, number | null>) {
+  const rows: { student_id: string; avg: number }[] = [];
+  for (const [sid, avg] of avgByStudent.entries()) {
+    if (typeof avg === "number" && Number.isFinite(avg)) rows.push({ student_id: sid, avg });
+  }
+  rows.sort((a, b) => b.avg - a.avg);
+
+  const rankByStudent = new Map<string, number>();
+  let lastAvg: number | null = null;
+  let currentRank = 0;
+  let position = 0;
+
+  for (const r of rows) {
+    position += 1;
+    if (lastAvg === null || r.avg !== lastAvg) {
+      currentRank = position;
+      lastAvg = r.avg;
+    }
+    rankByStudent.set(r.student_id, currentRank);
+  }
+
+  return rankByStudent;
+}
+
 /* ───────── GET /api/admin/grades/bulletin ───────── */
 export async function GET(req: NextRequest) {
   const supabase = await getSupabaseServerClient();
@@ -997,7 +1033,10 @@ export async function GET(req: NextRequest) {
 
     const col = (instRow as any)?.bulletin_signatures_enabled;
     if (typeof col === "boolean") bulletinSignaturesEnabled = col;
-    else bulletinSignaturesEnabled = Boolean((instRow as any)?.settings_json?.bulletin_signatures_enabled ?? false);
+    else
+      bulletinSignaturesEnabled = Boolean(
+        (instRow as any)?.settings_json?.bulletin_signatures_enabled ?? false
+      );
   }
 
   // 1a) Lookup du professeur principal (facultatif)
@@ -1010,6 +1049,7 @@ export async function GET(req: NextRequest) {
       .maybeSingle();
 
     if (htErr) {
+      // ignore
     } else if (ht) headTeacher = ht as HeadTeacherRow;
   }
 
@@ -1034,6 +1074,7 @@ export async function GET(req: NextRequest) {
       .maybeSingle();
 
     if (gpErr) {
+      // ignore
     } else if (gp) {
       periodMeta = {
         from: dateFrom,
@@ -1046,6 +1087,69 @@ export async function GET(req: NextRequest) {
       };
     }
   }
+
+  /* ✅ 1ter) Déterminer dernière période + flags (annual only on last) */
+  const academicYearForPeriods = periodMeta.academic_year ?? classRow.academic_year ?? null;
+
+  let periodsForYear: GradePeriodRow[] = [];
+  let periodsDefined = false;
+  let lastPeriod: GradePeriodRow | null = null;
+  let isLastPeriod = false;
+
+  {
+    let q = supabase
+      .from("grade_periods")
+      .select("id, academic_year, code, label, short_label, start_date, end_date, coeff")
+      .eq("institution_id", institutionId);
+
+    if (academicYearForPeriods) q = q.eq("academic_year", academicYearForPeriods);
+
+    const { data: pData, error: pErr } = await q.order("start_date", { ascending: true });
+
+    if (!pErr && pData?.length) {
+      periodsForYear = (pData as any[]) as GradePeriodRow[];
+      periodsDefined = periodsForYear.length > 0;
+
+      // dernier = max end_date (fallback start_date)
+      const sorted = periodsForYear.slice().sort((a, b) => {
+        const ae = String(a.end_date || "");
+        const be = String(b.end_date || "");
+        if (ae !== be) return ae.localeCompare(be);
+        const asd = String(a.start_date || "");
+        const bsd = String(b.start_date || "");
+        return asd.localeCompare(bsd);
+      });
+
+      lastPeriod = sorted.length ? sorted[sorted.length - 1] : null;
+
+      isLastPeriod =
+        !!lastPeriod &&
+        !!dateFrom &&
+        !!dateTo &&
+        String(lastPeriod.start_date) === String(dateFrom) &&
+        String(lastPeriod.end_date) === String(dateTo);
+    }
+  }
+
+  const periodResponse = {
+    ...periodMeta,
+    periods_defined: periodsDefined,
+    is_last: isLastPeriod,
+    last_period: lastPeriod
+      ? {
+          from: lastPeriod.start_date,
+          to: lastPeriod.end_date,
+          code: lastPeriod.code ?? null,
+          label: lastPeriod.label ?? null,
+          short_label: lastPeriod.short_label ?? null,
+          academic_year: lastPeriod.academic_year ?? academicYearForPeriods ?? null,
+          coeff:
+            lastPeriod.coeff === null || lastPeriod.coeff === undefined
+              ? null
+              : cleanCoeff(lastPeriod.coeff),
+        }
+      : null,
+  };
 
   /* 2) Récupérer les élèves */
   const hasDateFilter = !!dateFrom || !!dateTo;
@@ -1086,6 +1190,42 @@ export async function GET(req: NextRequest) {
   }
 
   const classStudents = (csData || []) as ClassStudentRow[];
+  const studentIds = classStudents.map((cs) => cs.student_id);
+
+  // Si aucun élève : on renvoie structure minimale (non cassant)
+  if (!classStudents.length) {
+    return NextResponse.json({
+      ok: true,
+      qr: {
+        enabled: qrEnabled,
+        mode: qrMode,
+        verify_path: BULLETIN_VERIFY_SHORT_PREFIX,
+        legacy_verify_path: BULLETIN_VERIFY_LEGACY_PATH,
+      },
+      signatures: { enabled: bulletinSignaturesEnabled },
+      class: {
+        id: classRow.id,
+        label: classRow.label || classRow.code || "Classe",
+        code: classRow.code || null,
+        academic_year: classRow.academic_year || null,
+        level: classRow.level || null,
+        bulletin_level: bulletinLevel,
+        head_teacher: headTeacher
+          ? {
+              id: headTeacher.id,
+              display_name: headTeacher.display_name || null,
+              phone: headTeacher.phone || null,
+              email: headTeacher.email || null,
+            }
+          : null,
+      },
+      period: periodResponse,
+      subjects: [],
+      subject_groups: [],
+      subject_components: [],
+      items: [],
+    });
+  }
 
   /* 3) Coefficients bulletin par matière (on les charge même s'il n'y a pas d'évals) */
   let coeffAllQuery = supabase
@@ -1096,8 +1236,8 @@ export async function GET(req: NextRequest) {
   if (bulletinLevel) coeffAllQuery = coeffAllQuery.eq("level", bulletinLevel);
 
   const { data: coeffAllData, error: coeffAllErr } = await coeffAllQuery;
-
   if (coeffAllErr) {
+    // ignore
   }
 
   const coeffBySubject = new Map<string, { coeff: number; include: boolean }>();
@@ -1146,41 +1286,6 @@ export async function GET(req: NextRequest) {
   );
   const subjectIds = subjectIdsUnionRaw.filter((sid) => isUuid(sid));
 
-  // Si aucun élève : on renvoie structure minimale (non cassant)
-  if (!classStudents.length) {
-    return NextResponse.json({
-      ok: true,
-      qr: {
-        enabled: qrEnabled,
-        mode: qrMode,
-        verify_path: BULLETIN_VERIFY_SHORT_PREFIX,
-        legacy_verify_path: BULLETIN_VERIFY_LEGACY_PATH,
-      },
-      signatures: { enabled: bulletinSignaturesEnabled },
-      class: {
-        id: classRow.id,
-        label: classRow.label || classRow.code || "Classe",
-        code: classRow.code || null,
-        academic_year: classRow.academic_year || null,
-        level: classRow.level || null,
-        bulletin_level: bulletinLevel,
-        head_teacher: headTeacher
-          ? {
-              id: headTeacher.id,
-              display_name: headTeacher.display_name || null,
-              phone: headTeacher.phone || null,
-              email: headTeacher.email || null,
-            }
-          : null,
-      },
-      period: periodMeta,
-      subjects: [],
-      subject_groups: [],
-      subject_components: [],
-      items: [],
-    });
-  }
-
   // Si aucune matière trouvée (ni coeffs ni évals)
   if (!subjectIds.length) {
     const baseItems = classStudents.map((cs) => {
@@ -1191,10 +1296,7 @@ export async function GET(req: NextRequest) {
         student_id: cs.student_id,
         full_name: fullName,
         matricule: stu.matricule || null,
-
-        // ✅ photo
         photo_url: stu.photo_url || null,
-
         gender: stu.gender || null,
         birth_date: stu.birthdate || null,
         birth_place: stu.birth_place || null,
@@ -1203,11 +1305,12 @@ export async function GET(req: NextRequest) {
         is_repeater: stu.is_repeater ?? null,
         is_boarder: stu.is_boarder ?? null,
         is_affecte: stu.is_affecte ?? null,
-
         per_subject: [],
         per_group: [],
         general_avg: null,
         per_subject_components: [],
+        annual_avg: null as number | null,
+        annual_rank: null as number | null,
       };
     });
 
@@ -1253,7 +1356,7 @@ export async function GET(req: NextRequest) {
             }
           : null,
       },
-      period: periodMeta,
+      period: periodResponse,
       subjects: [],
       subject_groups: [],
       subject_components: [],
@@ -1307,6 +1410,7 @@ export async function GET(req: NextRequest) {
     .in("subject_id", orderedSubjectIds);
 
   if (compErr) {
+    // ignore
   } else {
     const rows = (compData || [])
       .filter((r: any) => r.is_active !== false)
@@ -1362,6 +1466,7 @@ export async function GET(req: NextRequest) {
       .order("order_index", { ascending: true });
 
     if (groupsErr) {
+      // ignore
     } else if (groupsData && groupsData.length) {
       const activeGroups = (groupsData as any[]).filter((g) => g.is_active !== false);
 
@@ -1374,6 +1479,7 @@ export async function GET(req: NextRequest) {
           .in("group_id", groupIds);
 
         if (itemsErr) {
+          // ignore
         }
 
         const rawItems = (itemsData || []) as any[];
@@ -1542,8 +1648,6 @@ export async function GET(req: NextRequest) {
   /* 7) Notes (si evals présentes) */
   const evalById = new Map<string, EvalRow>();
   for (const e of evals) evalById.set(e.id, e);
-
-  const studentIds = classStudents.map((cs) => cs.student_id);
 
   let scores: ScoreRow[] = [];
   if (evals.length) {
@@ -1777,6 +1881,10 @@ export async function GET(req: NextRequest) {
       per_group,
       general_avg,
       per_subject_components,
+
+      // ✅ annuel (rempli seulement si is_last)
+      annual_avg: null as number | null,
+      annual_rank: null as number | null,
     };
   });
 
@@ -1819,6 +1927,192 @@ export async function GET(req: NextRequest) {
         const tid = cell?.teacher_id ? String(cell.teacher_id) : "";
         (cell as any).teacher_signature_png = tid ? sigMap.get(tid) ?? null : null;
       }
+    }
+  }
+
+  /* ✅ 10) ANNUEL : calculer uniquement si périodes définies ET bulletin = dernière période */
+  if (periodsDefined && isLastPeriod && periodsForYear.length) {
+    // calc moyenne générale d'un élève sur une période
+    const computeGeneralAvgMapForRange = async (
+      from: string,
+      to: string
+    ): Promise<Map<string, number | null>> => {
+      const out = new Map<string, number | null>();
+      studentIds.forEach((sid) => out.set(sid, null));
+
+      // evals publiées sur la période
+      const { data: eData, error: eErr } = await supabase
+        .from("grade_evaluations")
+        .select("id, class_id, subject_id, teacher_id, eval_date, scale, coeff, is_published, subject_component_id")
+        .eq("class_id", classId)
+        .eq("is_published", true)
+        .gte("eval_date", from)
+        .lte("eval_date", to);
+
+      if (eErr || !eData?.length) return out;
+
+      const pevals = (eData as any[]) as EvalRow[];
+      const evalMap = new Map<string, EvalRow>();
+      pevals.forEach((ev) => evalMap.set(ev.id, ev));
+
+      const evalIds = pevals.map((ev) => ev.id);
+
+      const { data: sData, error: sErr } = await supabase
+        .from("student_grades")
+        .select("evaluation_id, student_id, score")
+        .in("evaluation_id", evalIds)
+        .in("student_id", studentIds);
+
+      if (sErr || !sData?.length) return out;
+
+      const pscores = (sData as any[]) as ScoreRow[];
+
+      const perStuSub = new Map<string, Map<string, { sumWeighted: number; sumCoeff: number }>>();
+      const perStuComp = new Map<
+        string,
+        Map<string, { subject_id: string; sumWeighted: number; sumCoeff: number }>
+      >();
+
+      for (const sc of pscores) {
+        const ev = evalMap.get(sc.evaluation_id);
+        if (!ev) continue;
+        if (!ev.subject_id) continue;
+        if (!ev.scale || ev.scale <= 0) continue;
+        if (sc.score === null || sc.score === undefined) continue;
+
+        const score = Number(sc.score);
+        if (!Number.isFinite(score)) continue;
+
+        const norm20 = (score / ev.scale) * 20;
+        const weight = ev.coeff ?? 1;
+
+        let sm = perStuSub.get(sc.student_id);
+        if (!sm) {
+          sm = new Map();
+          perStuSub.set(sc.student_id, sm);
+        }
+        const cell = sm.get(ev.subject_id) || { sumWeighted: 0, sumCoeff: 0 };
+        cell.sumWeighted += norm20 * weight;
+        cell.sumCoeff += weight;
+        sm.set(ev.subject_id, cell);
+
+        if (ev.subject_component_id) {
+          const comp = subjectComponentById.get(ev.subject_component_id);
+          if (comp) {
+            let cm = perStuComp.get(sc.student_id);
+            if (!cm) {
+              cm = new Map();
+              perStuComp.set(sc.student_id, cm);
+            }
+            const ccell =
+              cm.get(comp.id) || { subject_id: comp.subject_id, sumWeighted: 0, sumCoeff: 0 };
+            ccell.sumWeighted += norm20 * weight;
+            ccell.sumCoeff += weight;
+            cm.set(comp.id, ccell);
+          }
+        }
+      }
+
+      // calc general avg pour chaque élève
+      for (const sid of studentIds) {
+        const sm = perStuSub.get(sid) || new Map();
+        const cm = perStuComp.get(sid) || new Map();
+
+        let sumGen = 0;
+        let sumCoeffGen = 0;
+
+        for (const s of subjectsForReport) {
+          if (s.include_in_average === false) continue;
+          const coeffSub = Number(s.coeff_bulletin ?? 0);
+          if (!coeffSub || coeffSub <= 0) continue;
+
+          const comps = compsBySubject.get(s.subject_id) || [];
+
+          let subAvg: number | null = null;
+
+          // priorité sous-matières si existantes et notées
+          if (comps.length) {
+            let sum = 0;
+            let sumW = 0;
+
+            for (const comp of comps) {
+              const ccell = cm.get(comp.id);
+              if (!ccell || ccell.sumCoeff <= 0) continue;
+
+              const raw = ccell.sumWeighted / ccell.sumCoeff;
+              if (!Number.isFinite(raw)) continue;
+
+              const w = comp.coeff_in_subject ?? 1;
+              if (!w || w <= 0) continue;
+
+              sum += raw * w;
+              sumW += w;
+            }
+
+            if (sumW > 0) subAvg = sum / sumW;
+          }
+
+          // fallback eval direct matière
+          if (subAvg === null) {
+            const cell = sm.get(s.subject_id);
+            if (cell && cell.sumCoeff > 0) {
+              subAvg = cell.sumWeighted / cell.sumCoeff;
+            }
+          }
+
+          if (subAvg === null || subAvg === undefined) continue;
+          if (!Number.isFinite(subAvg)) continue;
+
+          sumGen += Number(subAvg) * coeffSub;
+          sumCoeffGen += coeffSub;
+        }
+
+        const g = sumCoeffGen > 0 ? cleanNumber(sumGen / sumCoeffGen, 4) : null;
+        out.set(sid, g);
+      }
+
+      return out;
+    };
+
+    const annualAvgByStudent = new Map<string, number | null>();
+    studentIds.forEach((sid) => annualAvgByStudent.set(sid, null));
+
+    for (const sid of studentIds) {
+      let sum = 0;
+      let sumW = 0;
+
+      for (const p of periodsForYear) {
+        const from = String(p.start_date);
+        const to = String(p.end_date);
+        const w =
+          p.coeff === null || p.coeff === undefined ? 1 : Math.max(0, Number(p.coeff) || 0) || 1;
+
+        const map = await computeGeneralAvgMapForRange(from, to);
+        const avg = map.get(sid) ?? null;
+
+        if (typeof avg === "number" && Number.isFinite(avg)) {
+          sum += avg * w;
+          sumW += w;
+        }
+      }
+
+      const a = sumW > 0 ? cleanNumber(sum / sumW, 4) : null;
+      annualAvgByStudent.set(sid, a);
+    }
+
+    const annualRankByStudent = buildRankMapFromAverageMap(annualAvgByStudent);
+
+    for (const it of items) {
+      const a = annualAvgByStudent.get(it.student_id) ?? null;
+      const r = annualRankByStudent.get(it.student_id) ?? null;
+      (it as any).annual_avg = a;
+      (it as any).annual_rank = r;
+    }
+  } else {
+    // cohérence: si pas dernier trimestre -> valeurs null
+    for (const it of items) {
+      (it as any).annual_avg = null;
+      (it as any).annual_rank = null;
     }
   }
 
@@ -1866,7 +2160,7 @@ export async function GET(req: NextRequest) {
           }
         : null,
     },
-    period: periodMeta,
+    period: periodResponse,
     subjects: subjectsForReport,
     subject_groups: subjectGroups,
     subject_components: subjectComponentsForReport,

@@ -137,6 +137,10 @@ type BulletinItemBase = {
   per_group: PerGroupAvg[];
   general_avg: number | null;
   per_subject_components?: PerSubjectComponentAvg[];
+
+  // ✅ ANNUEL (rempli par l’API seulement sur la dernière période)
+  annual_avg?: number | null;
+  annual_rank?: number | null;
 };
 
 type BulletinItemWithRank = BulletinItemBase & {
@@ -300,7 +304,9 @@ function computeCouncilAppreciationText(
   const g =
     generalAvg !== null && generalAvg !== undefined ? Number(generalAvg) : null;
   const c =
-    conductOn20 !== null && conductOn20 !== undefined
+    conductOn20 !== null &&
+    conductOn20 !== undefined &&
+    Number.isFinite(conductOn20)
       ? Number(conductOn20)
       : null;
 
@@ -1119,6 +1125,15 @@ function StudentBulletinCard({
     rawConductTotal !== null ? Number(rawConductTotal) : null
   );
 
+  // ✅ ANNUEL (affiché seulement si l’API le remplit = dernière période)
+  const annualAvgOn20 = clampTo20(
+    item.annual_avg !== undefined && item.annual_avg !== null
+      ? Number(item.annual_avg)
+      : null
+  );
+  const annualRank = item.annual_rank ?? null;
+  const showAnnual = annualAvgOn20 !== null;
+
   const conductSubject: BulletinSubject | null =
     conductNoteOn20 !== null
       ? {
@@ -1815,19 +1830,55 @@ function StudentBulletinCard({
           )}
         </div>
 
-        <div className="bdr p-1 text-center">
-          <div className="font-semibold">Moyenne trimestrielle</div>
-          <div className="mt-[3px] text-[10px] font-bold">
-            {formatNumber(item.general_avg)} / 20
+        {/* ✅ Bloc moyennes : ajoute l’annuel quand disponible (dernière période) */}
+        {showAnnual ? (
+          <div className="bdr p-1 text-center">
+            <div className="font-semibold">Moyennes</div>
+            <div className="mt-[3px] grid grid-cols-2 gap-2">
+              <div>
+                <div className="text-[8px] font-semibold uppercase">Trimestre</div>
+                <div className="mt-[2px] text-[10px] font-bold">
+                  {formatNumber(item.general_avg)} / 20
+                </div>
+                <div className="mt-[1px] text-[8px]">
+                  Rang :{" "}
+                  <span className="font-semibold">
+                    {item.rank ? `${item.rank}e` : "—"}
+                  </span>{" "}
+                  / {total}
+                </div>
+              </div>
+
+              <div>
+                <div className="text-[8px] font-semibold uppercase">Annuel</div>
+                <div className="mt-[2px] text-[10px] font-bold">
+                  {formatNumber(annualAvgOn20)} / 20
+                </div>
+                <div className="mt-[1px] text-[8px]">
+                  Rang :{" "}
+                  <span className="font-semibold">
+                    {annualRank != null ? `${annualRank}e` : "—"}
+                  </span>{" "}
+                  / {total}
+                </div>
+              </div>
+            </div>
           </div>
-          <div className="mt-[2px]">
-            Rang :{" "}
-            <span className="font-semibold">
-              {item.rank ? `${item.rank}e` : "—"}
-            </span>{" "}
-            / {total}
+        ) : (
+          <div className="bdr p-1 text-center">
+            <div className="font-semibold">Moyenne trimestrielle</div>
+            <div className="mt-[3px] text-[10px] font-bold">
+              {formatNumber(item.general_avg)} / 20
+            </div>
+            <div className="mt-[2px]">
+              Rang :{" "}
+              <span className="font-semibold">
+                {item.rank ? `${item.rank}e` : "—"}
+              </span>{" "}
+              / {total}
+            </div>
           </div>
-        </div>
+        )}
 
         <div className="bdr p-1 text-center">
           <div className="font-semibold">Résultats de la classe</div>
