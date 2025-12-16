@@ -312,8 +312,11 @@ export async function POST(req: NextRequest) {
     }
 
     /**
-     * ✅ UPSERT anti-doublon : 1 séance max par (institution_id, teacher_id, started_at)
-     * Nécessite l’index unique : teacher_sessions_one_per_slot(institution_id, teacher_id, started_at)
+     * ✅ Gestion anti-doublon : on tente un INSERT simple.
+     *    - Si un index unique teacher_sessions_one_per_slot(institution_id, teacher_id, started_at)
+     *      existe, il garantira "1 seule séance par créneau".
+     *    - Sinon, on acceptera plusieurs lignes mais on utilisera toujours la même séance
+     *      canonique lors de la récupération ci-dessous.
      */
     let session:
       | {
@@ -339,23 +342,28 @@ export async function POST(req: NextRequest) {
       created_by: user.id, // compte-classe
     };
 
-    // 1) Tenter un UPSERT "insert or ignore"
-    const { data: up, error: upErr } = await srv
+    // 1) Tenter un INSERT simple ; si l'unicité déclenche un doublon,
+    //    on rattrape plus bas en lisant la séance existante.
+    const { data: inserted, error: insertErr } = await srv
       .from("teacher_sessions")
-      .upsert(upPayload as any, {
-        onConflict: "institution_id,teacher_id,started_at",
-        ignoreDuplicates: true, // 🔥 on ne remplace pas la 1ère séance du créneau
-      })
+      .insert(upPayload as any)
       .select("id,started_at,expected_minutes,actual_call_at,class_id,subject_id")
       .maybeSingle();
 
-    if (upErr && !String(upErr.message || "").toLowerCase().includes("duplicate")) {
-      // si c’est autre chose qu’un conflit, on remonte
-      return NextResponse.json({ error: upErr.message }, { status: 400 });
+    if (!insertErr && inserted) {
+      session = inserted as any;
+    } else if (
+      insertErr &&
+      String(insertErr.message || "").toLowerCase().includes("duplicate")
+    ) {
+      // doublon sur l'index unique -> on récupérera la séance existante juste après
+    } else if (insertErr) {
+      // autre type d'erreur : on remonte immédiatement
+      return NextResponse.json({ error: insertErr.message }, { status: 400 });
     }
-    if (up) session = up as any;
 
-    // 2) Si conflit (ou ignoreDuplicates), on récupère la séance existante (et on choisit la meilleure si doublons historiques)
+    // 2) Si doublon ou si aucune session insérée, on récupère la séance existante
+    //    (et on choisit la meilleure si doublons historiques)
     if (!session) {
       const { data: rows, error: selErr } = await srv
         .from("teacher_sessions")
@@ -371,7 +379,7 @@ export async function POST(req: NextRequest) {
       session = (rows as any[])?.[0] ?? null;
     }
 
-    // 3) Sécurité : si la séance existante n’avait pas actual_call_at / expected_minutes, on complète (sans casser le “1 seul créneau”)
+    // 3) Sécurité : si la séance existante n’avait pas actual_call_at / expected_minutes, on complète
     if (session && (!session.actual_call_at || session.expected_minutes == null)) {
       const patch: any = {};
       if (!session.actual_call_at) patch.actual_call_at = clickISO;
