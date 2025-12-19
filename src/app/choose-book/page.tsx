@@ -2,31 +2,65 @@
 
 import React, { useEffect, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { Notebook, NotebookPen, ChevronRight, PenTool } from "lucide-react";
 
 type SigEligibility = "checking" | "eligible" | "ineligible";
 
-export default function ChooseBookPage() {
-  const [sigEligibility, setSigEligibility] = useState<SigEligibility>("checking");
+function getCookie(name: string) {
+  if (typeof document === "undefined") return null;
+  const m = document.cookie.match(new RegExp("(^| )" + name + "=([^;]+)"));
+  return m ? decodeURIComponent(m[2]) : null;
+}
 
+export default function ChooseBookPage() {
+  const router = useRouter();
+
+  const [isOnline, setIsOnline] = useState(true);
+  const [sigEligibility, setSigEligibility] = useState<SigEligibility>("checking");
+  const [sigHint, setSigHint] = useState<string | null>(null);
+
+  // Online/offline status (UI + logique)
+  useEffect(() => {
+    const update = () => setIsOnline(typeof navigator !== "undefined" ? navigator.onLine : true);
+    update();
+    window.addEventListener("online", update);
+    window.addEventListener("offline", update);
+    return () => {
+      window.removeEventListener("online", update);
+      window.removeEventListener("offline", update);
+    };
+  }, []);
+
+  // Signature eligibility (ne doit JAMAIS bloquer la page)
   useEffect(() => {
     let cancelled = false;
 
     (async () => {
       try {
-        const res = await fetch("/api/teacher/signature", { cache: "no-store" });
+        const res = await fetch("/api/teacher/signature", {
+          cache: "no-store",
+          credentials: "include",
+        });
 
-        // 200 => teacher (ok:true) ; 403/401 => pas teacher ou pas connecté
-        if (!cancelled) {
-          if (res.ok) {
-            const json = await res.json().catch(() => null);
-            setSigEligibility(json?.ok ? "eligible" : "ineligible");
-          } else {
-            setSigEligibility("ineligible");
-          }
+        if (cancelled) return;
+
+        if (res.ok) {
+          const json = await res.json().catch(() => null);
+          setSigEligibility(json?.ok ? "eligible" : "ineligible");
+          setSigHint(null);
+        } else {
+          setSigEligibility("ineligible");
+          setSigHint(null);
         }
       } catch {
-        if (!cancelled) setSigEligibility("ineligible");
+        if (cancelled) return;
+        setSigEligibility("ineligible");
+        if (typeof navigator !== "undefined" && !navigator.onLine) {
+          setSigHint("Hors ligne : vérification indisponible (reconnectez-vous une fois pour activer la vérification).");
+        } else {
+          setSigHint(null);
+        }
       }
     })();
 
@@ -34,6 +68,39 @@ export default function ChooseBookPage() {
       cancelled = true;
     };
   }, []);
+
+  function resolveOfflineDest(book: "attendance" | "grades") {
+    // 1) cookies posés par /redirect (si tu as ajouté mc_last_dest*)
+    const byBook = getCookie(`mc_last_dest_${book}`);
+    const generic = getCookie("mc_last_dest");
+    const cookieDest = byBook || generic;
+
+    // 2) fallback safe si aucun “dernier dest” connu
+    const fallback = book === "grades" ? "/grades/class-device" : "/class";
+
+    // Nettoyage simple
+    if (!cookieDest) return fallback;
+    if (cookieDest.startsWith("http")) return fallback; // sécurité
+    return cookieDest.startsWith("/") ? cookieDest : fallback;
+  }
+
+  function handleBookClick(book: "attendance" | "grades") {
+    return (e: React.MouseEvent) => {
+      // En ligne -> comportement inchangé (Link vers /redirect)
+      if (typeof navigator !== "undefined" && navigator.onLine) return;
+
+      // Hors ligne -> on évite /redirect (serveur) et on route direct
+      e.preventDefault();
+      router.push(resolveOfflineDest(book));
+    };
+  }
+
+  function handleReturnClick(e: React.MouseEvent) {
+    if (typeof navigator !== "undefined" && !navigator.onLine) {
+      e.preventDefault();
+      router.back(); // évite /redirect hors-ligne
+    }
+  }
 
   const SignatureCardEligible = (
     <Link
@@ -73,6 +140,8 @@ export default function ChooseBookPage() {
           <p className="mt-1 text-sm text-slate-700">
             {sigEligibility === "checking" ? (
               <>Vérification du type de compte…</>
+            ) : sigHint ? (
+              <>{sigHint}</>
             ) : (
               <>
                 Réservé au <b>compte individuel enseignant</b>. Connectez-vous avec votre compte individuel pour
@@ -112,13 +181,23 @@ export default function ChooseBookPage() {
             </div>
           </div>
 
-          <Link
-            href="/redirect"
-            className="rounded-full bg-white/15 px-3.5 py-1.5 text-sm font-semibold text-white ring-1 ring-white/20 hover:bg-white/25"
-            title="Retourner à l’application"
-          >
-            Retour
-          </Link>
+          <div className="flex items-center gap-2">
+            <span
+              className="rounded-full bg-white/15 px-3.5 py-1.5 text-xs font-bold ring-1 ring-white/20"
+              title={isOnline ? "Connexion détectée" : "Hors connexion"}
+            >
+              {isOnline ? "En ligne" : "Hors ligne"}
+            </span>
+
+            <Link
+              href="/redirect"
+              onClick={handleReturnClick}
+              className="rounded-full bg-white/15 px-3.5 py-1.5 text-sm font-semibold text-white ring-1 ring-white/20 hover:bg-white/25"
+              title="Retourner à l’application"
+            >
+              Retour
+            </Link>
+          </div>
         </div>
       </header>
 
@@ -127,10 +206,18 @@ export default function ChooseBookPage() {
           Sélectionnez le cahier pour démarrer. Vous pourrez changer à tout moment en revenant ici.
         </p>
 
+        {!isOnline && (
+          <p className="mx-auto mt-4 max-w-2xl rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-center text-sm text-amber-900">
+            Hors connexion : on évite la redirection serveur. Certaines pages fonctionneront si elles ont déjà été
+            ouvertes une fois en ligne (cache).
+          </p>
+        )}
+
         <div className="mt-8 grid grid-cols-1 gap-5 md:grid-cols-2">
           {/* Absences */}
           <Link
             href="/redirect?book=attendance"
+            onClick={handleBookClick("attendance")}
             className="group block rounded-3xl border border-indigo-200 bg-white p-6 shadow-sm ring-1 ring-indigo-100 transition hover:shadow-md"
           >
             <div className="flex items-start gap-4">
@@ -152,6 +239,7 @@ export default function ChooseBookPage() {
           {/* Notes */}
           <Link
             href="/redirect?book=grades"
+            onClick={handleBookClick("grades")}
             className="group block rounded-3xl border border-violet-200 bg-white p-6 shadow-sm ring-1 ring-violet-100 transition hover:shadow-md"
           >
             <div className="flex items-start gap-4">

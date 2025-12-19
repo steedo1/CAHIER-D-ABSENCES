@@ -12,6 +12,22 @@ const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_ANON = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
 
+function attachLastDest(res: NextResponse, dest: string, book?: Book) {
+  // Cookie lisible côté client (pas httpOnly) pour fallback offline
+  const encoded = encodeURIComponent(dest);
+  const base = {
+    path: "/",
+    sameSite: "lax" as const,
+    httpOnly: false,
+    maxAge: 60 * 60 * 24 * 30, // 30 jours
+  };
+
+  res.cookies.set("mc_last_dest", encoded, base);
+  if (book) res.cookies.set(`mc_last_dest_${book}`, encoded, base);
+
+  return res;
+}
+
 export async function GET(req: Request) {
   const url = new URL(req.url);
   const jar = await cookies();
@@ -21,11 +37,7 @@ export async function GET(req: Request) {
 
   const rawBook = url.searchParams.get("book");
   const book: Book | undefined =
-    rawBook === "grades"
-      ? "grades"
-      : rawBook === "attendance"
-      ? "attendance"
-      : undefined;
+    rawBook === "grades" ? "grades" : rawBook === "attendance" ? "attendance" : undefined;
 
   if (!access || !refresh) {
     const loginUrl = new URL("/login", url);
@@ -57,7 +69,7 @@ export async function GET(req: Request) {
     return NextResponse.redirect(loginUrl);
   }
 
-  // 1) Cas spécial : compte-classe (téléphone de classe dans auth.users + classes.class_phone_e164)
+  // 1) Cas spécial : compte-classe
   if (SERVICE_KEY) {
     try {
       const svc = createClient(SUPABASE_URL, SERVICE_KEY, {
@@ -80,12 +92,11 @@ export async function GET(req: Request) {
           .maybeSingle();
 
         if (cls?.id) {
-          // 👉 Si le compte-classe se connecte en mode NOTES
-          if (book === "grades") {
-            return NextResponse.redirect(new URL("/grades/class-device", url));
-          }
-          // 👉 Sinon : comportement historique, cahier d'absences
-          return NextResponse.redirect(new URL(`/class/${cls.id}`, url));
+          const dest =
+            book === "grades" ? "/grades/class-device" : `/class/${cls.id}`;
+
+          const res = NextResponse.redirect(new URL(dest, url));
+          return attachLastDest(res, dest, book);
         }
       }
     } catch {
@@ -94,6 +105,7 @@ export async function GET(req: Request) {
   }
 
   // 2) Routage standard par rôle, sensible à "book"
-  const dest = await routeForUser(user.id, supabase, book);
-  return NextResponse.redirect(new URL(dest || "/profile", url));
+  const dest = (await routeForUser(user.id, supabase, book)) || "/profile";
+  const res = NextResponse.redirect(new URL(dest, url));
+  return attachLastDest(res, dest, book);
 }
