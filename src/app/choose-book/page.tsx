@@ -208,8 +208,8 @@ export default function ChooseBookPage() {
 
         {!isOnline && (
           <p className="mx-auto mt-4 max-w-2xl rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-center text-sm text-amber-900">
-            Hors connexion : on évite la redirection serveur. Certaines pages fonctionneront si elles ont déjà été
-            ouvertes une fois en ligne (cache).
+            Hors connexion : Certaines pages fonctionneront si elles ont déjà été
+            ouvertes une fois en ligne.
           </p>
         )}
 
