@@ -1,8 +1,15 @@
 ﻿/* ─────────────────────────────────────────
-   Service Worker - Push (amélioré, rétro-compatible)
+   Service Worker - Push + Offline Cache
+   (amélioré, rétro-compatible)
+
+   ✅ Conserve 100% du push existant
+   ✅ Ajoute cache "app shell" + pages + assets + quelques GET API utiles
+   ✅ Fallback offline sur /offline.html (si présent)
+   ✅ Nettoyage des anciens caches à l’activate
+
    Bumper la version pour forcer l'update
 ────────────────────────────────────────── */
-const SW_VERSION = "2025-12-01T09:30:00Z"; // ← change à chaque déploiement
+const SW_VERSION = "2025-12-19T23:59:00Z"; // ← change à chaque déploiement
 const VERBOSE = true;
 
 function log(stage, meta = {}) {
@@ -16,9 +23,10 @@ function shortId(s, n = 16) {
   return s.length <= n
     ? s
     : `${s.slice(0, Math.max(4, Math.floor(n / 2)))}…${s.slice(
-        -Math.max(4, Math.floor(n / 2)),
+        -Math.max(4, Math.floor(n / 2))
       )}`;
 }
+
 const TZ = "Africa/Abidjan";
 function isUuidLike(s) {
   return /^[0-9a-f-]{32,36}$/i.test(String(s || "").trim());
@@ -70,22 +78,258 @@ function pickStudentName(core) {
   pieces.push(s.lastName);
   pieces.push(s.matricule);
 
-  let cand = (pieces.find((x) => String(x || "").trim()) || "")
-    .toString()
-    .trim();
+  let cand = (pieces.find((x) => String(x || "").trim()) || "").toString().trim();
   if (!cand || isUuidLike(cand)) cand = (s.matricule || "").toString().trim();
   if (!cand) cand = "Élève";
   return cand;
 }
 
+/* ─────────────────────────────────────────
+   OFFLINE CACHE (ajout)
+────────────────────────────────────────── */
+const CACHE_PREFIX = "moncahier";
+const PAGE_CACHE = `${CACHE_PREFIX}:pages:${SW_VERSION}`;
+const ASSET_CACHE = `${CACHE_PREFIX}:assets:${SW_VERSION}`;
+const API_CACHE = `${CACHE_PREFIX}:api:${SW_VERSION}`;
+const MISC_CACHE = `${CACHE_PREFIX}:misc:${SW_VERSION}`;
+
+const OFFLINE_FALLBACK_URL = "/offline.html";
+
+/**
+ * On reste prudent : on cache seulement des GET API "utiles" à l’appel
+ * (sinon on risque de stocker trop de choses).
+ */
+const API_ALLOWLIST = new Set([
+  // Téléphone de classe / Appel
+  "/api/class/my-classes",
+  "/api/teacher/sessions/open",
+  "/api/class/subjects",
+  "/api/class/roster",
+
+  // Paramètres / périodes / settings (utiles pour afficher hors ligne)
+  "/api/teacher/institution/basics",
+  "/api/institution/basics",
+  "/api/admin/institution/settings",
+  "/api/teacher/conduct/settings",
+  "/api/institution/conduct/settings",
+  "/api/admin/conduct/settings",
+]);
+
+function isSameOrigin(url) {
+  try {
+    return url.origin === self.location.origin;
+  } catch {
+    return false;
+  }
+}
+
+function isExcludedApiPath(pathname) {
+  // ⚠️ push/auth : toujours réseau (évite cache de vapid/session/logout)
+  return pathname.startsWith("/api/push/") || pathname.startsWith("/api/auth/");
+}
+
+function shouldCacheApi(pathname) {
+  if (!pathname.startsWith("/api/")) return false;
+  if (isExcludedApiPath(pathname)) return false;
+  return API_ALLOWLIST.has(pathname);
+}
+
+async function cachePut(cacheName, req, res) {
+  try {
+    if (!res || !res.ok) return;
+    // Ne stocker que du basic/cors OK
+    const cache = await caches.open(cacheName);
+    await cache.put(req, res.clone());
+  } catch {
+    /* ignore */
+  }
+}
+
+async function cacheMatch(cacheName, req) {
+  try {
+    const cache = await caches.open(cacheName);
+    const hit = await cache.match(req);
+    return hit || null;
+  } catch {
+    return null;
+  }
+}
+
+async function cacheFirst(req, cacheName) {
+  const hit = await cacheMatch(cacheName, req);
+  if (hit) return hit;
+
+  try {
+    const res = await fetch(req);
+    await cachePut(cacheName, req, res);
+    return res;
+  } catch (err) {
+    // Pas de fallback pertinent pour un JS/CSS => renvoie 504
+    return new Response(null, { status: 504, statusText: "offline" });
+  }
+}
+
+async function staleWhileRevalidate(req, cacheName) {
+  const hit = await cacheMatch(cacheName, req);
+
+  const fetchPromise = (async () => {
+    try {
+      const res = await fetch(req);
+      await cachePut(cacheName, req, res);
+      return res;
+    } catch {
+      return null;
+    }
+  })();
+
+  return hit || (await fetchPromise) || new Response(null, { status: 504, statusText: "offline" });
+}
+
+async function networkFirstNavigate(req) {
+  try {
+    const res = await fetch(req);
+    await cachePut(PAGE_CACHE, req, res);
+    return res;
+  } catch {
+    const hit = await cacheMatch(PAGE_CACHE, req);
+    if (hit) return hit;
+
+    const offline = await cacheMatch(PAGE_CACHE, OFFLINE_FALLBACK_URL);
+    return offline || new Response("Offline", { status: 200, headers: { "Content-Type": "text/plain" } });
+  }
+}
+
+async function clearOldCaches() {
+  const keep = new Set([PAGE_CACHE, ASSET_CACHE, API_CACHE, MISC_CACHE]);
+  const keys = await caches.keys();
+  const toDelete = keys.filter((k) => k.startsWith(`${CACHE_PREFIX}:`) && !keep.has(k));
+  await Promise.all(toDelete.map((k) => caches.delete(k)));
+  return toDelete.length;
+}
+
 /* ───────────────── install / activate ───────────────── */
-self.addEventListener("install", () => {
+self.addEventListener("install", (event) => {
   log("install");
+  // ⚠️ Ne pas casser l’install si offline.html n’existe pas encore
+  event.waitUntil(
+    (async () => {
+      try {
+        const cache = await caches.open(PAGE_CACHE);
+       await cache.addAll([
+  OFFLINE_FALLBACK_URL,
+        "/icons/icon-192.png",
+       "/icons/badge-72.png",
+    ]);
+
+        log("precache_ok", { urls: [OFFLINE_FALLBACK_URL] });
+      } catch (err) {
+        log("precache_skip", { err: String(err) });
+      }
+    })()
+  );
   self.skipWaiting();
 });
+
 self.addEventListener("activate", (e) => {
   log("activate");
-  e.waitUntil(self.clients.claim());
+  e.waitUntil(
+    (async () => {
+      const deleted = await clearOldCaches();
+      await self.clients.claim();
+      log("activate_done", { deleted });
+    })()
+  );
+});
+
+/* ───────────────── message (optionnel) ───────────────── */
+self.addEventListener("message", (event) => {
+  const msg = event.data || {};
+  if (msg && msg.type === "SKIP_WAITING") {
+    log("message_skip_waiting");
+    self.skipWaiting();
+    return;
+  }
+  if (msg && msg.type === "CLEAR_CACHES") {
+    log("message_clear_caches");
+    event.waitUntil(
+      (async () => {
+        try {
+          const keys = await caches.keys();
+          const del = keys.filter((k) => k.startsWith(`${CACHE_PREFIX}:`));
+          await Promise.all(del.map((k) => caches.delete(k)));
+          log("clear_caches_ok", { deleted: del.length });
+        } catch (err) {
+          log("clear_caches_err", { err: String(err) });
+        }
+      })()
+    );
+  }
+});
+
+/* ───────────────── fetch (ajout offline) ───────────────── */
+self.addEventListener("fetch", (event) => {
+  const req = event.request;
+
+  // On ne gère que les GET same-origin (ne pas toucher aux POST/PATCH/PUT/DELETE)
+  if (req.method !== "GET") return;
+
+  let url;
+  try {
+    url = new URL(req.url);
+  } catch {
+    return;
+  }
+  if (!isSameOrigin(url)) return;
+
+  const pathname = url.pathname;
+
+  // 1) Navigations HTML
+  if (req.mode === "navigate") {
+    event.respondWith(networkFirstNavigate(req));
+    return;
+  }
+
+  // 2) Next.js static assets
+  if (pathname.startsWith("/_next/static/")) {
+    event.respondWith(cacheFirst(req, ASSET_CACHE));
+    return;
+  }
+
+  // 3) Next.js images (optimisées)
+  if (pathname.startsWith("/_next/image")) {
+    event.respondWith(staleWhileRevalidate(req, MISC_CACHE));
+    return;
+  }
+
+  // 4) API GET (cache seulement une allowlist "utile appel")
+  if (pathname.startsWith("/api/")) {
+    if (isExcludedApiPath(pathname)) {
+      // push/auth: toujours réseau
+      event.respondWith(fetch(req));
+      return;
+    }
+    if (shouldCacheApi(pathname)) {
+      event.respondWith(staleWhileRevalidate(req, API_CACHE));
+      return;
+    }
+    // Autres API: réseau (pas de cache)
+    event.respondWith(fetch(req));
+    return;
+  }
+
+  // 5) Autres ressources : images/fonts => SWR, scripts/styles => cache-first
+  const dest = req.destination;
+  if (dest === "script" || dest === "style" || dest === "worker") {
+    event.respondWith(cacheFirst(req, ASSET_CACHE));
+    return;
+  }
+  if (dest === "image" || dest === "font") {
+    event.respondWith(staleWhileRevalidate(req, MISC_CACHE));
+    return;
+  }
+
+  // 6) Fallback
+  event.respondWith(staleWhileRevalidate(req, MISC_CACHE));
 });
 
 /* ───────────────── push: affiche la notif ───────────────── */
@@ -124,16 +368,13 @@ self.addEventListener("push", (event) => {
   // Élève (évite les UUID en titre)
   const student = pickStudentName(core);
 
-  const subj =
-    (core?.subject && (core.subject.name || core.subject.label)) || "";
+  const subj = (core?.subject && (core.subject.name || core.subject.label)) || "";
   const klass = (core?.class && (core.class.label || core.class.name)) || "";
 
   // Créneau / datation
-  const startedAt =
-    core?.session?.started_at || core?.started_at || core?.occurred_at || "";
+  const startedAt = core?.session?.started_at || core?.started_at || core?.occurred_at || "";
   const expectedMin =
-    Number(core?.session?.expected_minutes || core?.expected_minutes || 60) ||
-    60;
+    Number(core?.session?.expected_minutes || core?.expected_minutes || 60) || 60;
   const slot = startedAt ? fmtSlot(startedAt, expectedMin) : "";
   const whenIso = core?.occurred_at || startedAt || core?.created_at || "";
   const whenText = whenIso ? fmtDateTimeFR(whenIso) : "";
@@ -146,18 +387,12 @@ self.addEventListener("push", (event) => {
   if (kind === "conduct_penalty" || kind === "penalty") {
     const rubric = String(core.rubric || "discipline").toLowerCase();
     const rubricFR =
-      rubric === "tenue"
-        ? "Tenue"
-        : rubric === "moralite"
-        ? "Moralité"
-        : "Discipline";
+      rubric === "tenue" ? "Tenue" : rubric === "moralite" ? "Moralité" : "Discipline";
     const pts = Number(core.points || 0);
     const reason = (core.reason || core.motif || "").toString().trim();
 
     // ✨ auteur & matière → "Par le prof de <matière>" ou "Par l’administration"
-    const role = String(
-      core?.author?.role_label || core?.author_role_label || "",
-    )
+    const role = String(core?.author?.role_label || core?.author_role_label || "")
       .normalize("NFKC")
       .toLowerCase();
     let byline = "";
@@ -168,13 +403,7 @@ self.addEventListener("push", (event) => {
     }
 
     title = `Sanction — ${student} (${rubricFR})`;
-    body = [
-      byline || rubricFR,
-      klass,
-      whenText,
-      `−${pts} pt${pts > 1 ? "s" : ""}`,
-      reason ? `Motif : ${reason}` : "",
-    ]
+    body = [byline || rubricFR, klass, whenText, `−${pts} pt${pts > 1 ? "s" : ""}`, reason ? `Motif : ${reason}` : ""]
       .filter(Boolean)
       .join(" • ");
   }
@@ -182,8 +411,7 @@ self.addEventListener("push", (event) => {
   // ───────── Absences / Retards (avec cas "justifié" + date claire) ─────────
   else if (kind === "attendance" || ev === "absent" || ev === "late") {
     const isJustified =
-      core.justified === true ||
-      String(core.action || "").toLowerCase() === "justified";
+      core.justified === true || String(core.action || "").toLowerCase() === "justified";
 
     const ml = Number(core.minutes_late || core.minutesLate || 0);
     const reason = (core.reason || core.motif || "").toString().trim();
@@ -206,19 +434,16 @@ self.addEventListener("push", (event) => {
 
     // Créneau / fallback heure lecture
     const slotLabel = slot || whenText || "";
-    const dateSlotLabel =
-      dateLabel && slotLabel
-        ? `${dateLabel} • ${slotLabel}` // ex: "lun. 02/02/2025 • 08:00–09:00"
-        : slotLabel || dateLabel;
+    const dateSlotLabel = dateLabel && slotLabel ? `${dateLabel} • ${slotLabel}` : slotLabel || dateLabel;
 
     if (ev === "late") {
       // RETARD
       title = `${isJustified ? "Retard justifié" : "Retard"} — ${student}`;
       body = [
-        subj,                    // matière
-        klass,                   // classe
-        dateSlotLabel,           // date + créneau
-        ml ? `${ml} min` : "",   // durée du retard
+        subj,
+        klass,
+        dateSlotLabel,
+        ml ? `${ml} min` : "",
         isJustified ? "Justifié" : "",
         isJustified && reason ? `Motif : ${reason}` : "",
       ]
@@ -227,13 +452,7 @@ self.addEventListener("push", (event) => {
     } else if (ev === "absent") {
       // ABSENCE
       title = `${isJustified ? "Absence justifiée" : "Absence"} — ${student}`;
-      body = [
-        subj,                    // matière
-        klass,                   // classe
-        dateSlotLabel,           // date + créneau
-        isJustified ? "Justifiée" : "",
-        isJustified && reason ? `Motif : ${reason}` : "",
-      ]
+      body = [subj, klass, dateSlotLabel, isJustified ? "Justifiée" : "", isJustified && reason ? `Motif : ${reason}` : ""]
         .filter(Boolean)
         .join(" • ");
     } else {
@@ -254,20 +473,9 @@ self.addEventListener("push", (event) => {
       const subjectName = (core.subject_name || "").toString().trim();
       const periodLabel = (core.period_label || "").toString().trim();
       const status = (core.status || "").toString().trim();
-      const late =
-        core.late_minutes != null ? String(core.late_minutes) : "";
+      const late = core.late_minutes != null ? String(core.late_minutes) : "";
 
-      tag = [
-        "admin_attendance",
-        date,
-        classLabel,
-        subjectName,
-        periodLabel,
-        status,
-        late,
-      ]
-        .filter(Boolean)
-        .join(":");
+      tag = ["admin_attendance", date, classLabel, subjectName, periodLabel, status, late].filter(Boolean).join(":");
     } else {
       // Comportement historique pour les autres notifs (élèves, sanctions, etc.)
       tag =
@@ -311,7 +519,7 @@ self.addEventListener("push", (event) => {
     self.registration
       .showNotification(title, options)
       .then(() => log("showNotification_ok", { title }))
-      .catch((err) => log("showNotification_err", { err: String(err) })),
+      .catch((err) => log("showNotification_err", { err: String(err) }))
   );
 });
 
@@ -348,7 +556,7 @@ self.addEventListener("notificationclick", (event) => {
       } catch (err) {
         log("openWindow_err", { err: String(err), url });
       }
-    })(),
+    })()
   );
 });
 
@@ -374,9 +582,7 @@ self.addEventListener("pushsubscriptionchange", (event) => {
 
         const toUint8 = (base64) => {
           const padding = "=".repeat((4 - (base64.length % 4)) % 4);
-          const base64Safe = (base64 + padding)
-            .replace(/-/g, "+")
-            .replace(/_/g, "/");
+          const base64Safe = (base64 + padding).replace(/-/g, "+").replace(/_/g, "/");
           const raw = atob(base64Safe);
           const out = new Uint8Array(raw.length);
           for (let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
@@ -410,6 +616,6 @@ self.addEventListener("pushsubscriptionchange", (event) => {
       } catch (err) {
         log("pushsubscriptionchange_err", { err: String(err) });
       }
-    })(),
+    })()
   );
 });

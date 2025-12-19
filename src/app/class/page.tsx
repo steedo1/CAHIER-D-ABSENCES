@@ -1,9 +1,19 @@
-// src/app/grades/class-device/page.tsx
+// src/app/class/page.tsx
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
 import { Users, BookOpen, Clock, Play, Save, Square, LogOut } from "lucide-react";
 import { getSupabaseBrowserClient } from "@/lib/supabase-browser";
+import {
+  registerServiceWorker,
+  offlineGetJson,
+  offlineMutateJson,
+  outboxCount,
+  flushOutbox,
+  cacheGet,
+  cacheSet,
+  clearOfflineAll,
+} from "@/lib/offline";
 
 /* ───────── UI helpers ───────── */
 function Input(p: React.InputHTMLAttributes<HTMLInputElement>) {
@@ -195,6 +205,52 @@ export default function ClassDevicePage() {
     [rows]
   );
 
+  /* ───────── Offline state (sync/outbox) ───────── */
+  const [isOnline, setIsOnline] = useState(
+    typeof navigator !== "undefined" ? navigator.onLine : true
+  );
+  const [pendingSync, setPendingSync] = useState(0);
+  const [syncing, setSyncing] = useState(false);
+
+  async function refreshPending() {
+    try {
+      setPendingSync(await outboxCount());
+    } catch {
+      setPendingSync(0);
+    }
+  }
+
+  async function syncNow() {
+    if (syncing) return;
+    setSyncing(true);
+    try {
+      await flushOutbox();
+    } finally {
+      setSyncing(false);
+      await refreshPending();
+    }
+  }
+
+  useEffect(() => {
+    void registerServiceWorker();
+    void refreshPending();
+
+    const onOn = () => {
+      setIsOnline(true);
+      void syncNow();
+    };
+    const onOff = () => setIsOnline(false);
+
+    window.addEventListener("online", onOn);
+    window.addEventListener("offline", onOff);
+
+    return () => {
+      window.removeEventListener("online", onOn);
+      window.removeEventListener("offline", onOff);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   /* ───────── Sanctions (inline) ───────── */
   const [penaltyOpen, setPenaltyOpen] = useState(false);
   const [penRubric, setPenRubric] = useState<Rubric>("discipline");
@@ -253,10 +309,8 @@ export default function ClassDevicePage() {
     if (!cid || roster.length > 0) return;
     try {
       setLoadingRoster(true);
-      const j = await fetch(`/api/class/roster?class_id=${cid}`, {
-        cache: "no-store",
-      }).then((r) => r.json());
-      setRoster((j.items || []) as RosterItem[]);
+      const j = await offlineGetJson(`/api/class/roster?class_id=${cid}`, `classDevice:roster:${cid}`);
+      setRoster((j?.items || []) as RosterItem[]);
     } finally {
       setLoadingRoster(false);
     }
@@ -285,9 +339,11 @@ export default function ClassDevicePage() {
   function resetPenRows() {
     setPenRows({});
   }
+
   async function submitClassPenalties() {
     const cid = open?.class_id || classId;
     if (!cid) return;
+
     const items = Object.entries(penRows)
       .filter(([, v]) => (v.points || 0) > 0)
       .map(([student_id, v]) => ({
@@ -295,28 +351,37 @@ export default function ClassDevicePage() {
         points: Number(v.points || 0),
         reason: (v.reason || "").trim() || null,
       }));
+
     if (items.length === 0) {
       setPenMsg("Aucune pénalité à enregistrer.");
       return;
     }
+
     setPenBusy(true);
     setPenMsg(null);
+
     try {
-      const res = await fetch("/api/class/penalties/bulk", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          class_id: cid,
-          subject_id: open?.subject_id ?? (subjectId || null),
-          rubric: coerceRubric(penRubric),
-          items,
-        }),
-      });
-      const j = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(j?.error || "Échec enregistrement sanctions");
-      setPenMsg(`Sanctions enregistrées (${items.length}).`);
-      setPenRows({});
-      setTimeout(() => setPenaltyOpen(false), 600);
+      const payload = {
+        class_id: cid,
+        subject_id: open?.subject_id ?? (subjectId || null),
+        rubric: coerceRubric(penRubric),
+        items,
+      };
+
+      const r = await offlineMutateJson(
+        "/api/class/penalties/bulk",
+        { method: "POST", body: payload },
+        { mergeKey: `penalties:${cid}:${coerceRubric(penRubric)}` }
+      );
+
+      if (r.ok) {
+        setPenMsg(`Sanctions enregistrées (${items.length}).`);
+        setPenRows({});
+        setTimeout(() => setPenaltyOpen(false), 600);
+      } else {
+        setPenMsg("Hors connexion : sanctions mises en attente (sync auto).");
+        await refreshPending();
+      }
     } catch (e: any) {
       setPenMsg(e?.message || "Échec enregistrement sanctions");
     } finally {
@@ -330,25 +395,23 @@ export default function ClassDevicePage() {
     (async () => {
       try {
         const [cls, os] = await Promise.all([
-          fetch("/api/class/my-classes", { cache: "no-store" }).then((r) => r.json()),
-          fetch("/api/teacher/sessions/open", { cache: "no-store" }).then((r) => r.json()),
+          offlineGetJson("/api/class/my-classes", "classDevice:my-classes"),
+          offlineGetJson("/api/teacher/sessions/open", "classDevice:open-session"),
         ]);
-        const items = (cls.items || []) as Array<any>;
 
+        const items = (cls?.items || []) as Array<any>;
         let firstInstName: string | null = null;
 
         const mapped: MyClass[] = items.map((c: any) => {
           if (firstInstName == null) {
             const candidate =
-              c.institution_name || // ajouté côté API si dispo
+              c.institution_name ||
               c.institution_label ||
               c.institution?.name ||
               c.institution?.label ||
               c.institution?.short_name ||
               null;
-            if (candidate) {
-              firstInstName = String(candidate);
-            }
+            if (candidate) firstInstName = String(candidate);
           }
 
           return {
@@ -361,9 +424,16 @@ export default function ClassDevicePage() {
 
         setClasses(mapped);
         if (!classId && mapped.length) setClassId(mapped[0].id);
-        setOpen((os.item as OpenSession) || null);
 
-        // On alimente le nom de l’établissement si on n’a encore que le fallback
+        const serverOpen = (os?.item as OpenSession) || null;
+        setOpen(serverOpen);
+
+        // si hors-ligne et on avait une séance locale, on la restaure (sans casser le serveur)
+        if (!serverOpen) {
+          const local = await cacheGet("classDevice:local-open");
+          if (local) setOpen(local);
+        }
+
         if (firstInstName) {
           setInst((prev) => ({
             ...prev,
@@ -374,8 +444,10 @@ export default function ClassDevicePage() {
           }));
         }
       } catch {
+        // si vraiment rien en cache et offline => on laisse vide
         setClasses([]);
-        setOpen(null);
+        const local = await cacheGet("classDevice:local-open");
+        setOpen(local || null);
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -383,11 +455,9 @@ export default function ClassDevicePage() {
 
   /* 1bis) charger paramètres + périodes + réglages de conduite */
   async function loadInstitutionBasics() {
-    async function getJson(url: string) {
+    async function getJson(url: string, key: string) {
       try {
-        const r = await fetch(url, { cache: "no-store" });
-        if (!r.ok) throw new Error("not ok");
-        return await r.json();
+        return await offlineGetJson(url, key);
       } catch {
         return null;
       }
@@ -404,8 +474,8 @@ export default function ClassDevicePage() {
     let grouped: Record<number, Period[]> = {};
 
     const all =
-      (await getJson("/api/teacher/institution/basics")) ||
-      (await getJson("/api/institution/basics"));
+      (await getJson("/api/teacher/institution/basics", "classDevice:inst:basics:teacher")) ||
+      (await getJson("/api/institution/basics", "classDevice:inst:basics:institution"));
 
     if (all?.periods) {
       const nameFromAll =
@@ -447,16 +517,21 @@ export default function ClassDevicePage() {
       });
     } else {
       const settings =
-        (await getJson("/api/teacher/institution/settings")) ||
-        (await getJson("/api/institution/settings")) || {
+        (await getJson(
+          "/api/teacher/institution/settings",
+          "classDevice:inst:settings:teacher"
+        )) ||
+        (await getJson("/api/institution/settings", "classDevice:inst:settings:institution")) || {
           tz: "Africa/Abidjan",
           default_session_minutes: 60,
           auto_lateness: true,
         };
 
       const per =
-        (await getJson("/api/teacher/institution/periods")) ||
-        (await getJson("/api/institution/periods")) || { periods: [] };
+        (await getJson("/api/teacher/institution/periods", "classDevice:inst:periods:teacher")) ||
+        (await getJson("/api/institution/periods", "classDevice:inst:periods:institution")) || {
+          periods: [],
+        };
 
       const nameFromSettings =
         settings?.institution_name ||
@@ -496,7 +571,10 @@ export default function ClassDevicePage() {
     }
 
     // 🔁 Complément : harmoniser le nom avec /api/admin/institution/settings (comme le dashboard)
-    const adminSettings = await getJson("/api/admin/institution/settings");
+    const adminSettings = await getJson(
+      "/api/admin/institution/settings",
+      "classDevice:inst:adminSettings"
+    );
     if (adminSettings) {
       const nameFromAdmin = String(
         adminSettings?.institution_name ||
@@ -511,12 +589,8 @@ export default function ClassDevicePage() {
         adminSettings?.active_academic_year ||
         null;
 
-      if (nameFromAdmin) {
-        instConfig.institution_name = nameFromAdmin;
-      }
-      if (yearFromAdmin && !instConfig.academic_year_label) {
-        instConfig.academic_year_label = yearFromAdmin;
-      }
+      if (nameFromAdmin) instConfig.institution_name = nameFromAdmin;
+      if (yearFromAdmin && !instConfig.academic_year_label) instConfig.academic_year_label = yearFromAdmin;
     }
 
     Object.values(grouped).forEach((arr) =>
@@ -535,8 +609,7 @@ export default function ClassDevicePage() {
           : prev.auto_lateness,
       institution_name:
         instConfig.institution_name || prev.institution_name || DEFAULT_INSTITUTION_NAME,
-      academic_year_label:
-        instConfig.academic_year_label || prev.academic_year_label || null,
+      academic_year_label: instConfig.academic_year_label || prev.academic_year_label || null,
     }));
     setPeriodsByDay(grouped);
 
@@ -545,9 +618,9 @@ export default function ClassDevicePage() {
 
     try {
       const rawConf =
-        ((await getJson("/api/teacher/conduct/settings")) as any) ?? // teacher scope
-        ((await getJson("/api/institution/conduct/settings")) as any) ?? // institution
-        ((await getJson("/api/admin/conduct/settings")) as any); // admin
+        ((await getJson("/api/teacher/conduct/settings", "classDevice:conduct:teacher")) as any) ??
+        ((await getJson("/api/institution/conduct/settings", "classDevice:conduct:institution")) as any) ??
+        ((await getJson("/api/admin/conduct/settings", "classDevice:conduct:admin")) as any);
 
       console.log("[ClassDevice] conduct settings rawConf =", rawConf);
 
@@ -556,30 +629,20 @@ export default function ClassDevicePage() {
         return;
       }
 
-      // On essaie de retrouver l’objet "vraiment utile"
       let src: any = rawConf;
 
-      // cas { item: {...} }
       if (src && typeof src === "object" && src.item) {
         const it = src.item;
         src = it.settings_json || it.settings || it;
-      }
-      // cas { items: [...] }
-      else if (src && typeof src === "object" && Array.isArray(src.items) && src.items.length) {
+      } else if (src && typeof src === "object" && Array.isArray(src.items) && src.items.length) {
         const it = src.items[0];
         src = it.settings_json || it.settings || it;
-      }
-      // cas { data: [...] } (retour supabase brut)
-      else if (src && typeof src === "object" && Array.isArray(src.data) && src.data.length) {
+      } else if (src && typeof src === "object" && Array.isArray(src.data) && src.data.length) {
         const it = src.data[0];
         src = it.settings_json || it.settings || it;
-      }
-      // cas direct settings_json / settings
-      else if (src && typeof src === "object" && (src.settings_json || src.settings)) {
+      } else if (src && typeof src === "object" && (src.settings_json || src.settings)) {
         src = src.settings_json || src.settings;
-      }
-      // cas array direct [ {...} ]
-      else if (Array.isArray(src) && src.length) {
+      } else if (Array.isArray(src) && src.length) {
         const it = src[0];
         src =
           it && typeof it === "object" && (it.settings_json || it.settings)
@@ -619,7 +682,7 @@ export default function ClassDevicePage() {
   }
 
   useEffect(() => {
-    loadInstitutionBasics();
+    void loadInstitutionBasics();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -629,8 +692,7 @@ export default function ClassDevicePage() {
     try {
       const body: any = document.body;
 
-      const fromDataName =
-        body?.dataset?.institutionName || body?.dataset?.institution || null;
+      const fromDataName = body?.dataset?.institutionName || body?.dataset?.institution || null;
       const fromGlobalName = (window as any).__MC_INSTITUTION_NAME__
         ? String((window as any).__MC_INSTITUTION_NAME__)
         : null;
@@ -666,10 +728,9 @@ export default function ClassDevicePage() {
     const tz = inst?.tz || "Africa/Abidjan";
     const now = new Date();
     const nowHM = hmInTZ(now, tz);
-    const wd = weekdayInTZ1to7(now, tz); // 1..6 (lun..sam), 7 = dimanche (hors créneau)
+    const wd = weekdayInTZ1to7(now, tz);
     const slots = periodsByDay[wd] || [];
 
-    // Pas de créneau ce jour / dimanche → fallback heure actuelle
     if (wd === 7 || slots.length === 0) {
       setStartTime(nowHM);
       setDuration(inst.default_session_minutes || 60);
@@ -679,13 +740,8 @@ export default function ClassDevicePage() {
     }
 
     const nowMin = toMinutes(nowHM);
-    // 1) créneau en cours
-    let pick = slots.find(
-      (s) => nowMin >= toMinutes(s.start_time) && nowMin < toMinutes(s.end_time)
-    );
-    // 2) sinon, prochain à venir
+    let pick = slots.find((s) => nowMin >= toMinutes(s.start_time) && nowMin < toMinutes(s.end_time));
     if (!pick) pick = slots.find((s) => nowMin <= toMinutes(s.start_time));
-    // 3) si après le dernier créneau → fallback heure actuelle
     if (!pick) {
       setStartTime(nowHM);
       setDuration(inst.default_session_minutes || 60);
@@ -696,10 +752,7 @@ export default function ClassDevicePage() {
 
     setStartTime(pick.start_time);
     setDuration(
-      Math.max(
-        1,
-        minutesDiff(pick.start_time, pick.end_time) || inst.default_session_minutes || 60
-      )
+      Math.max(1, minutesDiff(pick.start_time, pick.end_time) || inst.default_session_minutes || 60)
     );
     setSlotLabel(`${pick.label} • ${pick.start_time} → ${pick.end_time}`);
     setLocked(true);
@@ -718,10 +771,11 @@ export default function ClassDevicePage() {
       return;
     }
     (async () => {
-      const j = await fetch(`/api/class/subjects?class_id=${classId}`, {
-        cache: "no-store",
-      }).then((r) => r.json());
-      const list = (j.items || []) as Subject[];
+      const j = await offlineGetJson(
+        `/api/class/subjects?class_id=${classId}`,
+        `classDevice:subjects:${classId}`
+      );
+      const list = (j?.items || []) as Subject[];
       setSubjects(list);
       setSubjectId(list[0]?.id || "");
     })();
@@ -736,10 +790,11 @@ export default function ClassDevicePage() {
     }
     (async () => {
       setLoadingRoster(true);
-      const j = await fetch(`/api/class/roster?class_id=${open.class_id}`, {
-        cache: "no-store",
-      }).then((r) => r.json());
-      setRoster((j.items || []) as RosterItem[]);
+      const j = await offlineGetJson(
+        `/api/class/roster?class_id=${open.class_id}`,
+        `classDevice:roster:${open.class_id}`
+      );
+      setRoster((j?.items || []) as RosterItem[]);
       setRows({});
       setLoadingRoster(false);
     })();
@@ -767,33 +822,51 @@ export default function ClassDevicePage() {
     if (!classId) return;
     setBusy(true);
     setMsg(null);
+
     try {
       const today = new Date();
       const [hh, mm] = (startTime || "08:00").split(":").map((x) => +x);
-      const started = new Date(
-        today.getFullYear(),
-        today.getMonth(),
-        today.getDate(),
-        hh,
-        mm,
-        0,
-        0
+      const started = new Date(today.getFullYear(), today.getMonth(), today.getDate(), hh, mm, 0, 0);
+
+      const clientSessionId = `${classId}_${subjectId || "none"}_${started.toISOString()}`;
+
+      const body = {
+        class_id: classId,
+        subject_id: subjectId || null,
+        started_at: started.toISOString(),
+        expected_minutes: duration,
+        client_session_id: clientSessionId,
+      };
+
+      const r = await offlineMutateJson(
+        "/api/class/sessions/start",
+        { method: "POST", body },
+        { mergeKey: `start:${clientSessionId}`, meta: { clientSessionId } }
       );
 
-      const r = await fetch("/api/class/sessions/start", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+      if (r.ok) {
+        setOpen(r.data.item as OpenSession);
+        await cacheSet("classDevice:local-open", null);
+        setMsg("Séance démarrée.");
+      } else {
+        const cls = classes.find((c) => c.id === classId);
+        const subj = subjects.find((s) => s.id === subjectId);
+
+        const localOpen: OpenSession = {
+          id: `client:${clientSessionId}`,
           class_id: classId,
+          class_label: cls?.label || "Classe",
           subject_id: subjectId || null,
+          subject_name: subj?.label || null,
           started_at: started.toISOString(),
-          expected_minutes: duration, // verrouillé par l’établissement
-        }),
-      });
-      const j = await r.json();
-      if (!r.ok) throw new Error(j?.error || "Échec démarrage séance");
-      setOpen(j.item as OpenSession);
-      setMsg("Séance démarrée.");
+          expected_minutes: duration,
+        };
+
+        setOpen(localOpen);
+        await cacheSet("classDevice:local-open", localOpen);
+        setMsg("Hors connexion : séance enregistrée (sync dès que le réseau revient).");
+        await refreshPending();
+      }
     } catch (e: any) {
       setMsg(e?.message || "Échec démarrage séance");
     } finally {
@@ -805,21 +878,27 @@ export default function ClassDevicePage() {
     if (!open) return;
     setBusy(true);
     setMsg(null);
+
     try {
       const marks = Object.entries(rows).map(([student_id, r]) => {
         if (r.absent) return { student_id, status: "absent" as const, reason: r.reason ?? null };
-        if (r.late) return { student_id, status: "late" as const, reason: r.reason ?? null }; // minutes auto
+        if (r.late) return { student_id, status: "late" as const, reason: r.reason ?? null };
         return { student_id, status: "present" as const };
       });
 
-      const r = await fetch("/api/teacher/attendance/bulk", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ session_id: open.id, marks }),
-      });
-      const j = await r.json();
-      if (!r.ok) throw new Error(j?.error || "Échec enregistrement");
-      setMsg(`Enregistré : ${j.upserted} abs./ret. — ${j.deleted} suppressions (présent).`);
+      const r = await offlineMutateJson(
+        "/api/teacher/attendance/bulk",
+        { method: "POST", body: { session_id: open.id, marks } },
+        { mergeKey: `attendance:${open.id}` }
+      );
+
+      if (r.ok) {
+        const j = r.data;
+        setMsg(`Enregistré : ${j.upserted} abs./ret. — ${j.deleted} suppressions (présent).`);
+      } else {
+        setMsg("Hors connexion : enregistrement mis en attente (sync auto).");
+        await refreshPending();
+      }
     } catch (e: any) {
       setMsg(e?.message || "Échec enregistrement");
     } finally {
@@ -831,15 +910,26 @@ export default function ClassDevicePage() {
     if (!open) return;
     setBusy(true);
     setMsg(null);
+
     try {
-      const r = await fetch("/api/class/sessions/end", { method: "PATCH" });
-      const j = await r.json();
-      if (!r.ok) throw new Error(j?.error || "Échec fin de séance");
+      const r = await offlineMutateJson(
+        "/api/class/sessions/end",
+        { method: "PATCH" },
+        { mergeKey: "endSession:last" }
+      );
+
+      // UI: on termine toujours localement (comme tu veux pour le mode téléphone)
       setOpen(null);
       setRoster([]);
       setRows({});
-      setMsg("Séance terminée.");
+      await cacheSet("classDevice:local-open", null);
       computeDefaultsForNow();
+
+      if (r.ok) setMsg("Séance terminée.");
+      else {
+        setMsg("Hors connexion : fin de séance mise en attente (sync auto).");
+        await refreshPending();
+      }
     } catch (e: any) {
       setMsg(e?.message || "Échec fin de séance");
     } finally {
@@ -874,7 +964,11 @@ export default function ClassDevicePage() {
         }
       }
     } finally {
-      // 4) Retour écran de connexion global
+      // 4) Purge offline (important si téléphone partagé)
+      try {
+        await clearOfflineAll();
+      } catch {}
+      // 5) Retour écran de connexion global
       window.location.href = "/login";
     }
   }
@@ -900,15 +994,37 @@ export default function ClassDevicePage() {
               Mode simplifié pour appeler la classe et enregistrer retards et sanctions.
             </p>
           </div>
-          {/* Bouton déconnexion or, très visible */}
-          <GhostButton
-            tone="slate"
-            onClick={logout}
-            className="shrink-0 rounded-full border-amber-400 bg-gradient-to-r from-amber-400 via-yellow-300 to-amber-500 px-4 py-2 text-sm font-semibold text-slate-900 shadow-md hover:shadow-lg hover:from-amber-500 hover:via-yellow-400 hover:to-amber-500 focus:ring-amber-400/40"
-          >
-            <LogOut className="h-4 w-4" />
-            Se déconnecter
-          </GhostButton>
+
+          <div className="flex items-center gap-2 sm:gap-3">
+            {/* Online / Offline + Sync */}
+            <span
+              className={[
+                "rounded-full px-3 py-1 text-xs font-semibold",
+                isOnline ? "bg-emerald-500/20 text-emerald-100" : "bg-amber-500/20 text-amber-100",
+              ].join(" ")}
+            >
+              {isOnline ? "En ligne" : "Hors ligne"}
+            </span>
+
+            <button
+              onClick={() => void syncNow()}
+              disabled={!isOnline || syncing || pendingSync === 0}
+              className="rounded-full border border-white/20 px-3 py-1 text-xs text-white/90 hover:bg-white/10 disabled:opacity-50"
+              title="Synchroniser les actions en attente"
+            >
+              {syncing ? "Sync..." : `Sync (${pendingSync})`}
+            </button>
+
+            {/* Bouton déconnexion or, très visible */}
+            <GhostButton
+              tone="slate"
+              onClick={logout}
+              className="shrink-0 rounded-full border-amber-400 bg-gradient-to-r from-amber-400 via-yellow-300 to-amber-500 px-4 py-2 text-sm font-semibold text-slate-900 shadow-md hover:shadow-lg hover:from-amber-500 hover:via-yellow-400 hover:to-amber-500 focus:ring-amber-400/40"
+            >
+              <LogOut className="h-4 w-4" />
+              Se déconnecter
+            </GhostButton>
+          </div>
         </div>
       </header>
 
@@ -975,9 +1091,7 @@ export default function ClassDevicePage() {
                   </option>
                 ))}
               </Select>
-              <div className="mt-1 text-[11px] text-slate-500">
-                Verrouillée par l’établissement.
-              </div>
+              <div className="mt-1 text-[11px] text-slate-500">Verrouillée par l’établissement.</div>
             </div>
           </div>
         </div>
@@ -1112,15 +1226,9 @@ export default function ClassDevicePage() {
                           <Input
                             type="number"
                             min={0}
-                            max={
-                              currentRubricMax && currentRubricMax > 0
-                                ? currentRubricMax
-                                : undefined
-                            }
+                            max={currentRubricMax && currentRubricMax > 0 ? currentRubricMax : undefined}
                             value={pr.points || 0}
-                            onChange={(e) =>
-                              setPenPoint(st.id, parseInt(e.target.value || "0", 10))
-                            }
+                            onChange={(e) => setPenPoint(st.id, parseInt(e.target.value || "0", 10))}
                             className="w-24"
                             aria-label={`Points à retrancher: ${st.full_name}`}
                             disabled={penBusy || rubricDisabled}
@@ -1155,12 +1263,8 @@ export default function ClassDevicePage() {
       {open && (
         <div className="rounded-2xl border bg-white p-5 shadow-sm">
           <div className="mb-3 text-sm font-semibold text-slate-700">
-            Appel — {open.class_label}{" "}
-            {open.subject_name ? `• ${open.subject_name}` : ""} •{" "}
-            {new Date(open.started_at).toLocaleTimeString([], {
-              hour: "2-digit",
-              minute: "2-digit",
-            })}
+            Appel — {open.class_label} {open.subject_name ? `• ${open.subject_name}` : ""} •{" "}
+            {new Date(open.started_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
           </div>
 
           <div className="overflow-x-auto rounded-xl border">
