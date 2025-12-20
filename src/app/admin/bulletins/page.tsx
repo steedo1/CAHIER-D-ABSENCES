@@ -1491,8 +1491,8 @@ function StudentBulletinCard({
             <div className="text-[10px] font-semibold">{periodTitle(period)}</div>
           </div>
 
-          <div className="flex justify-end gap-2">
-            <div className="text-right text-[9px] leading-tight">
+          <div className="relative flex justify-end gap-2">
+            <div className="text-right text-[9px] leading-tight mr-[118px]">
               <div>Année scolaire</div>
               <div className="font-semibold">{academicYear || "—"}</div>
               {institution?.institution_code && (
@@ -1509,10 +1509,10 @@ function StudentBulletinCard({
                   {period.to ? formatDateFR(period.to) : "—"}
                 </div>
               )}
-            </div>
+                        </div>
 
-            <div className="bdr flex h-[110px] w-[110px] items-center justify-center overflow-hidden bg-white">
-              {qrImgSrc ? (
+            <div className="bdr absolute right-0 top-0 z-10 flex h-[110px] w-[110px] items-center justify-center overflow-hidden bg-white">
+{qrImgSrc ? (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img
                   src={qrImgSrc}
@@ -1522,11 +1522,11 @@ function StudentBulletinCard({
               ) : (
                 <div className="text-[8px] text-slate-500">QR</div>
               )}
-            </div>
+                        </div>
           </div>
         </div>
 
-        <div className="mt-1 grid grid-cols-[110px_1fr_110px] items-center gap-2">
+        <div className="mt-[2px] grid grid-cols-[110px_1fr_110px] items-start gap-2">
           <div className="bdr flex h-[110px] w-[110px] items-center justify-center overflow-hidden bg-white">
             {institution?.institution_logo_url ? (
               // eslint-disable-next-line @next/next/no-img-element
@@ -1541,7 +1541,7 @@ function StudentBulletinCard({
           </div>
 
           <div className="text-center">
-            <div className="text-[11px] font-bold uppercase">
+            <div className="text-[14px] font-bold uppercase leading-tight">
               {safeUpper(
                 String((institution?.institution_name || "ÉTABLISSEMENT").trim())
               )}
