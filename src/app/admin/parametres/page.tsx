@@ -1714,7 +1714,7 @@ export default function AdminSettingsPage() {
         {/* =======================
             1) Mon mot de passe
         ======================== */}
-        <section className="rounded-2xl border border-sky-200 bg-sky-50/40 p-5 shadow-sm">
+        <section className="rounded-2xl border border-sky-200 bg-sky-50/50 p-5 shadow-sm">
           <div className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-700">
             Mon mot de passe
           </div>
@@ -1791,7 +1791,7 @@ export default function AdminSettingsPage() {
         {/* ==========================================
             2) Réinitialiser le mot de passe d'un user
         =========================================== */}
-        <section className="rounded-2xl border border-rose-200 bg-rose-50/40 p-5 shadow-sm">
+        <section className="rounded-2xl border border-rose-200 bg-rose-50/50 p-5 shadow-sm">
           <div className="mb-2 flex items-center justify-between">
             <div className="text-sm font-semibold uppercase tracking-wide text-slate-700">
               Réinitialiser le mot de passe d’un utilisateur
@@ -1890,7 +1890,7 @@ export default function AdminSettingsPage() {
         {/* =======================
             3) Horaires & séances + infos établissement
         ======================== */}
-        <section className="rounded-2xl border border-emerald-200 bg-emerald-50/40 p-5 shadow-sm">
+        <section className="rounded-2xl border border-emerald-200 bg-emerald-50/50 p-5 shadow-sm">
           <div className="mb-3 flex items-center justify-between">
             <div>
               <div className="text-sm font-semibold uppercase tracking-wide text-slate-700">
@@ -1912,381 +1912,354 @@ export default function AdminSettingsPage() {
           </div>
 
           {/* Paramètres d’établissement (horaires) */}
+
           <div className="mb-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
             {/* Réglages de séance */}
             <div className="rounded-xl border border-emerald-100 bg-white p-4">
               <div className="mb-3 text-sm font-medium text-slate-800">
                 Réglages de séance
               </div>
-
               <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-                <div>
-                  <div className="mb-1 text-xs text-slate-500">
-                    Fuseau horaire
-                  </div>
-                  <select
-                    className="w-full rounded-lg border px-3 py-2 text-sm"
-                    value={cfg.tz}
-                    onChange={(e) =>
-                      setCfg((s) => ({ ...s, tz: e.target.value }))
-                    }
-                    disabled={loadingCfg || savingCfg}
-                  >
-                    <option value="Africa/Abidjan">
-                      Africa/Abidjan (UTC+0)
-                    </option>
-                    <option value="Africa/Lagos">
-                      Africa/Lagos (UTC+1)
-                    </option>
-                    <option value="Africa/Dakar">
-                      Africa/Dakar (UTC+0)
-                    </option>
-                    <option value="UTC">UTC</option>
-                  </select>
-                </div>
-
-                <div>
-                  <div className="mb-1 text-xs text-slate-500">
-                    Durée par séance (minutes)
-                  </div>
-                  <input
-                    type="number"
-                    min={1}
-                    className="w-full rounded-lg border px-3 py-2 text-sm"
-                    value={cfg.default_session_minutes}
-                    onChange={(e) =>
-                      setCfg((s) => ({
-                        ...s,
-                        default_session_minutes: Math.max(
-                          1,
-                          parseInt(e.target.value || "60", 10)
-                        ),
-                      }))
-                    }
-                    disabled={loadingCfg || savingCfg}
-                  />
-                  <div className="mt-1 text-[11px] text-slate-500">
-                    Utilisée comme valeur par défaut lors de l’ouverture de
-                    séance (UI), sans forcer vos créneaux ci-dessous.
-                  </div>
-                </div>
-
-                <div className="flex items-end">
-                  <label className="inline-flex items-center gap-2">
-                    <input
-                      type="checkbox"
-                      checked={!!cfg.auto_lateness}
-                      onChange={(e) =>
-                        setCfg((s) => ({
-                          ...s,
-                          auto_lateness: e.target.checked,
-                        }))
-                      }
-                      disabled={loadingCfg || savingCfg}
-                    />
-                    <span className="text-sm text-slate-700">
-                      Calcul automatique des retards (par créneau)
-                    </span>
-                  </label>
-                </div>
+            <div>
+              <div className="mb-1 text-xs text-slate-500">
+                Fuseau horaire
+              </div>
+              <select
+                className="w-full rounded-lg border px-3 py-2 text-sm"
+                value={cfg.tz}
+                onChange={(e) =>
+                  setCfg((s) => ({ ...s, tz: e.target.value }))
+                }
+                disabled={loadingCfg || savingCfg}
+              >
+                <option value="Africa/Abidjan">
+                  Africa/Abidjan (UTC+0)
+                </option>
+                <option value="Africa/Lagos">
+                  Africa/Lagos (UTC+1)
+                </option>
+                <option value="Africa/Dakar">
+                  Africa/Dakar (UTC+0)
+                </option>
+                <option value="UTC">UTC</option>
+              </select>
+            </div>
+            <div>
+              <div className="mb-1 text-xs text-slate-500">
+                Durée par séance (minutes)
+              </div>
+              <input
+                type="number"
+                min={1}
+                className="w-full rounded-lg border px-3 py-2 text-sm"
+                value={cfg.default_session_minutes}
+                onChange={(e) =>
+                  setCfg((s) => ({
+                    ...s,
+                    default_session_minutes: Math.max(
+                      1,
+                      parseInt(e.target.value || "60", 10)
+                    ),
+                  }))
+                }
+                disabled={loadingCfg || savingCfg}
+              />
+              <div className="mt-1 text-[11px] text-slate-500">
+                Utilisée comme valeur par défaut lors de l’ouverture de séance
+                (UI), sans forcer vos créneaux ci-dessous.
+              </div>
+            </div>
+                
               </div>
             </div>
 
-            {/* En-tête des bulletins */}
+            {/* En-tête bulletins */}
             <div className="rounded-xl border border-emerald-100 bg-white p-4">
               <div className="mb-3 text-sm font-medium text-slate-800">
                 En-tête des bulletins
               </div>
-
               <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                <div>
-                  <div className="mb-1 text-xs text-slate-500">
-                    Nom du pays pour l&apos;en-tête (optionnel)
-                  </div>
-                  <input
-                    className="w-full rounded-lg border px-3 py-2 text-sm"
-                    value={cfg.country_name}
-                    onChange={(e) =>
-                      setCfg((s) => ({
-                        ...s,
-                        country_name: e.target.value,
-                      }))
-                    }
-                    disabled={loadingCfg || savingCfg}
-                    placeholder="République de Côte d&apos;Ivoire"
-                  />
-                </div>
-
-                <div>
-                  <div className="mb-1 text-xs text-slate-500">
-                    Devise nationale (optionnel)
-                  </div>
-                  <input
-                    className="w-full rounded-lg border px-3 py-2 text-sm"
-                    value={cfg.country_motto}
-                    onChange={(e) =>
-                      setCfg((s) => ({
-                        ...s,
-                        country_motto: e.target.value,
-                      }))
-                    }
-                    disabled={loadingCfg || savingCfg}
-                    placeholder="Union - Discipline - Travail"
-                  />
-                </div>
-
-                <div>
-                  <div className="mb-1 text-xs text-slate-500">
-                    Nom du ministère (optionnel)
-                  </div>
-                  <input
-                    className="w-full rounded-lg border px-3 py-2 text-sm"
-                    value={cfg.ministry_name}
-                    onChange={(e) =>
-                      setCfg((s) => ({
-                        ...s,
-                        ministry_name: e.target.value,
-                      }))
-                    }
-                    disabled={loadingCfg || savingCfg}
-                    placeholder="MINISTERE DE L&apos;EDUCATION NATIONALE ET DE L&apos;ALPHABETISATION"
-                  />
-                </div>
-
-                <div>
-                  <div className="mb-1 text-xs text-slate-500">
-                    Code établissement / MEN (optionnel)
-                  </div>
-                  <input
-                    className="w-full rounded-lg border px-3 py-2 text-sm"
-                    value={cfg.institution_code}
-                    onChange={(e) =>
-                      setCfg((s) => ({
-                        ...s,
-                        institution_code: e.target.value,
-                      }))
-                    }
-                    disabled={loadingCfg || savingCfg}
-                    placeholder="Code MEN : 123456"
-                  />
-                </div>
+<div>
+              <div className="mb-1 text-xs text-slate-500">
+                Nom du pays pour l&apos;en-tête (optionnel)
+              </div>
+              <input
+                className="w-full rounded-lg border px-3 py-2 text-sm"
+                value={cfg.country_name}
+                onChange={(e) =>
+                  setCfg((s) => ({
+                    ...s,
+                    country_name: e.target.value,
+                  }))
+                }
+                disabled={loadingCfg || savingCfg}
+                placeholder="République de Côte d&apos;Ivoire"
+              />
+            </div>
+<div>
+              <div className="mb-1 text-xs text-slate-500">
+                Devise nationale (optionnel)
+              </div>
+              <input
+                className="w-full rounded-lg border px-3 py-2 text-sm"
+                value={cfg.country_motto}
+                onChange={(e) =>
+                  setCfg((s) => ({
+                    ...s,
+                    country_motto: e.target.value,
+                  }))
+                }
+                disabled={loadingCfg || savingCfg}
+                placeholder="Union - Discipline - Travail"
+              />
+            </div>
+<div>
+              <div className="mb-1 text-xs text-slate-500">
+                Nom du ministère (optionnel)
+              </div>
+              <input
+                className="w-full rounded-lg border px-3 py-2 text-sm"
+                value={cfg.ministry_name}
+                onChange={(e) =>
+                  setCfg((s) => ({
+                    ...s,
+                    ministry_name: e.target.value,
+                  }))
+                }
+                disabled={loadingCfg || savingCfg}
+                placeholder="MINISTERE DE L&apos;EDUCATION NATIONALE ET DE L&apos;ALPHABETISATION"
+              />
+            </div>
+<div>
+              <div className="mb-1 text-xs text-slate-500">
+                Code établissement / MEN (optionnel)
+              </div>
+              <input
+                className="w-full rounded-lg border px-3 py-2 text-sm"
+                value={cfg.institution_code}
+                onChange={(e) =>
+                  setCfg((s) => ({
+                    ...s,
+                    institution_code: e.target.value,
+                  }))
+                }
+                disabled={loadingCfg || savingCfg}
+                placeholder="Code MEN : 123456"
+              />
+            </div>
+              </div>
+              <div className="mt-2 text-[11px] text-slate-500">
+                Ces champs sont optionnels et apparaissent sur les bulletins et documents (si renseignés).
               </div>
             </div>
-          </div>
 
-          {/* Infos d'établissement (optionnelles) */}
-          <div className="mb-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
             {/* Contacts & localisation */}
             <div className="rounded-xl border border-emerald-100 bg-white p-4">
               <div className="mb-3 text-sm font-medium text-slate-800">
                 Contacts & localisation
               </div>
-
               <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                <div>
-                  <div className="mb-1 text-xs text-slate-500">
-                    Téléphone de l&apos;établissement (optionnel)
-                  </div>
-                  <input
-                    type="tel"
-                    className="w-full rounded-lg border px-3 py-2 text-sm"
-                    value={cfg.institution_phone}
-                    onChange={(e) =>
-                      setCfg((s) => ({
-                        ...s,
-                        institution_phone: e.target.value,
-                      }))
-                    }
-                    disabled={loadingCfg || savingCfg}
-                    placeholder="+225 01 02 03 04"
-                  />
-                </div>
-
-                <div>
-                  <div className="mb-1 text-xs text-slate-500">
-                    Email de l&apos;établissement (optionnel)
-                  </div>
-                  <input
-                    type="email"
-                    className="w-full rounded-lg border px-3 py-2 text-sm"
-                    value={cfg.institution_email}
-                    onChange={(e) =>
-                      setCfg((s) => ({
-                        ...s,
-                        institution_email: e.target.value,
-                      }))
-                    }
-                    disabled={loadingCfg || savingCfg}
-                    placeholder="contact@ecole.ci"
-                  />
-                </div>
-
-                <div>
-                  <div className="mb-1 text-xs text-slate-500">
-                    Direction régionale (optionnel)
-                  </div>
-                  <input
-                    className="w-full rounded-lg border px-3 py-2 text-sm"
-                    value={cfg.institution_region}
-                    onChange={(e) =>
-                      setCfg((s) => ({
-                        ...s,
-                        institution_region: e.target.value,
-                      }))
-                    }
-                    disabled={loadingCfg || savingCfg}
-                    placeholder="DRENA Abidjan 1"
-                  />
-                </div>
-
-                <div>
-                  <div className="mb-1 text-xs text-slate-500">
-                    Adresse postale (optionnel)
-                  </div>
-                  <input
-                    className="w-full rounded-lg border px-3 py-2 text-sm"
-                    value={cfg.institution_postal_address}
-                    onChange={(e) =>
-                      setCfg((s) => ({
-                        ...s,
-                        institution_postal_address: e.target.value,
-                      }))
-                    }
-                    disabled={loadingCfg || savingCfg}
-                    placeholder="BP 123 Abidjan"
-                  />
-                </div>
-
-                <div>
-                  <div className="mb-1 text-xs text-slate-500">
-                    Statut de l&apos;établissement (optionnel)
-                  </div>
-                  <input
-                    className="w-full rounded-lg border px-3 py-2 text-sm"
-                    value={cfg.institution_status}
-                    onChange={(e) =>
-                      setCfg((s) => ({
-                        ...s,
-                        institution_status: e.target.value,
-                      }))
-                    }
-                    disabled={loadingCfg || savingCfg}
-                    placeholder="Public / Privé laïc / ..."
-                  />
-                </div>
+<div>
+              <div className="mb-1 text-xs text-slate-500">
+                Téléphone de l&apos;établissement (optionnel)
+              </div>
+              <input
+                type="tel"
+                className="w-full rounded-lg border px-3 py-2 text-sm"
+                value={cfg.institution_phone}
+                onChange={(e) =>
+                  setCfg((s) => ({
+                    ...s,
+                    institution_phone: e.target.value,
+                  }))
+                }
+                disabled={loadingCfg || savingCfg}
+                placeholder="+225 01 02 03 04"
+              />
+            </div>
+<div>
+              <div className="mb-1 text-xs text-slate-500">
+                Email de l&apos;établissement (optionnel)
+              </div>
+              <input
+                type="email"
+                className="w-full rounded-lg border px-3 py-2 text-sm"
+                value={cfg.institution_email}
+                onChange={(e) =>
+                  setCfg((s) => ({
+                    ...s,
+                    institution_email: e.target.value,
+                  }))
+                }
+                disabled={loadingCfg || savingCfg}
+                placeholder="contact@ecole.ci"
+              />
+            </div>
+<div>
+              <div className="mb-1 text-xs text-slate-500">
+                Direction régionale (optionnel)
+              </div>
+              <input
+                className="w-full rounded-lg border px-3 py-2 text-sm"
+                value={cfg.institution_region}
+                onChange={(e) =>
+                  setCfg((s) => ({
+                    ...s,
+                    institution_region: e.target.value,
+                  }))
+                }
+                disabled={loadingCfg || savingCfg}
+                placeholder="DRENA Abidjan 1"
+              />
+            </div>
+<div>
+              <div className="mb-1 text-xs text-slate-500">
+                Adresse postale (optionnel)
+              </div>
+              <input
+                className="w-full rounded-lg border px-3 py-2 text-sm"
+                value={cfg.institution_postal_address}
+                onChange={(e) =>
+                  setCfg((s) => ({
+                    ...s,
+                    institution_postal_address: e.target.value,
+                  }))
+                }
+                disabled={loadingCfg || savingCfg}
+                placeholder="BP 123 Abidjan"
+              />
+            </div>
+<div>
+              <div className="mb-1 text-xs text-slate-500">
+                Statut de l&apos;établissement (optionnel)
+              </div>
+              <input
+                className="w-full rounded-lg border px-3 py-2 text-sm"
+                value={cfg.institution_status}
+                onChange={(e) =>
+                  setCfg((s) => ({
+                    ...s,
+                    institution_status: e.target.value,
+                  }))
+                }
+                disabled={loadingCfg || savingCfg}
+                placeholder="Public / Privé laïc / ..."
+              />
+            </div>
               </div>
             </div>
 
             {/* Direction & logo */}
             <div className="rounded-xl border border-emerald-100 bg-white p-4">
               <div className="mb-3 text-sm font-medium text-slate-800">
-                Direction & identité visuelle
+                Direction & logo
+              </div>
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+<div>
+              <div className="mb-1 text-xs text-slate-500">
+                Nom complet du 1er responsable (optionnel)
+              </div>
+              <input
+                className="w-full rounded-lg border px-3 py-2 text-sm"
+                value={cfg.institution_head_name}
+                onChange={(e) =>
+                  setCfg((s) => ({
+                    ...s,
+                    institution_head_name: e.target.value,
+                  }))
+                }
+                disabled={loadingCfg || savingCfg}
+                placeholder="Nom et prénom(s)"
+              />
+            </div>
+<div>
+              <div className="mb-1 text-xs text-slate-500">
+                Fonction du 1er responsable (optionnel)
+              </div>
+              <input
+                className="w-full rounded-lg border px-3 py-2 text-sm"
+                value={cfg.institution_head_title}
+                onChange={(e) =>
+                  setCfg((s) => ({
+                    ...s,
+                    institution_head_title: e.target.value,
+                  }))
+                }
+                disabled={loadingCfg || savingCfg}
+                placeholder="Proviseur, Directeur, ..."
+              />
+            </div>
               </div>
 
-              <div className="space-y-3">
-                {/* Logo importé par fichier */}
-                <div>
-                  <div className="mb-1 text-xs text-slate-500">
-                    Logo de l&apos;établissement (import d&apos;image)
-                  </div>
-                  <div className="flex flex-col gap-2">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <label className="inline-flex cursor-pointer items-center justify-center rounded-lg border bg-white px-3 py-1.5 text-xs font-medium text-slate-700 shadow-sm hover:bg-slate-50">
-                        <input
-                          type="file"
-                          accept="image/*"
-                          className="hidden"
-                          onChange={handleLogoFileChange}
-                          disabled={loadingCfg || savingCfg}
-                        />
-                        Choisir un fichier…
-                      </label>
-                      {cfg.institution_logo_url && (
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setCfg((s) => ({
-                              ...s,
-                              institution_logo_url: "",
-                            }))
-                          }
-                          className="rounded-lg border border-rose-300 bg-rose-50 px-2 py-1 text-[11px] font-medium text-rose-800 hover:bg-rose-100"
-                          disabled={loadingCfg || savingCfg}
-                        >
-                          Retirer le logo
-                        </button>
-                      )}
+              <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
+{/* Logo importé par fichier */}
+            <div>
+              <div className="mb-1 text-xs text-slate-500">
+                Logo de l&apos;établissement (import d&apos;image)
+              </div>
+              <div className="flex flex-col gap-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <label className="inline-flex cursor-pointer items-center justify-center rounded-lg border bg-white px-3 py-1.5 text-xs font-medium text-slate-700 shadow-sm hover:bg-slate-50">
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={handleLogoFileChange}
+                      disabled={loadingCfg || savingCfg}
+                    />
+                    Choisir un fichier…
+                  </label>
+                  {cfg.institution_logo_url && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setCfg((s) => ({
+                          ...s,
+                          institution_logo_url: "",
+                        }))
+                      }
+                      className="rounded-lg border border-rose-300 bg-rose-50 px-2 py-1 text-[11px] font-medium text-rose-800 hover:bg-rose-100"
+                      disabled={loadingCfg || savingCfg}
+                    >
+                      Retirer le logo
+                    </button>
+                  )}
+                </div>
+
+                {cfg.institution_logo_url && (
+                  <div className="flex items-center gap-2">
+                    <div className="h-12 w-12 overflow-hidden rounded border bg-white">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={cfg.institution_logo_url}
+                        alt="Logo de l'établissement"
+                        className="h-full w-full object-contain"
+                      />
                     </div>
-
-                    {cfg.institution_logo_url && (
-                      <div className="flex items-center gap-2">
-                        <div className="h-12 w-12 overflow-hidden rounded border bg-white">
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img
-                            src={cfg.institution_logo_url}
-                            alt="Logo de l'établissement"
-                            className="h-full w-full object-contain"
-                          />
-                        </div>
-                        <div className="text-[11px] text-slate-500">
-                          Logo actuellement utilisé pour les bulletins et autres
-                          documents officiels.
-                        </div>
-                      </div>
-                    )}
-
                     <div className="text-[11px] text-slate-500">
-                      Formats conseillés : PNG ou JPG, taille ≤ 1&nbsp;Mo.
+                      Logo actuellement utilisé pour les bulletins et autres
+                      documents officiels.
                     </div>
                   </div>
-                </div>
+                )}
 
-                <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                  <div>
-                    <div className="mb-1 text-xs text-slate-500">
-                      Nom complet du 1er responsable (optionnel)
-                    </div>
-                    <input
-                      className="w-full rounded-lg border px-3 py-2 text-sm"
-                      value={cfg.institution_head_name}
-                      onChange={(e) =>
-                        setCfg((s) => ({
-                          ...s,
-                          institution_head_name: e.target.value,
-                        }))
-                      }
-                      disabled={loadingCfg || savingCfg}
-                      placeholder="Nom et prénom(s)"
-                    />
-                  </div>
-
-                  <div>
-                    <div className="mb-1 text-xs text-slate-500">
-                      Fonction du 1er responsable (optionnel)
-                    </div>
-                    <input
-                      className="w-full rounded-lg border px-3 py-2 text-sm"
-                      value={cfg.institution_head_title}
-                      onChange={(e) =>
-                        setCfg((s) => ({
-                          ...s,
-                          institution_head_title: e.target.value,
-                        }))
-                      }
-                      disabled={loadingCfg || savingCfg}
-                      placeholder="Proviseur, Directeur, ..."
-                    />
-                  </div>
+                <div className="text-[11px] text-slate-500">
+                  Formats conseillés : PNG ou JPG, taille ≤ 1&nbsp;Mo.
                 </div>
+              </div>
+            </div>
+
+            <div>
+              <div className="mb-1 text-xs text-slate-500">
               </div>
             </div>
           </div>
 
-          <div className="mb-3 flex items-center gap-2">
+          <div className="mb-4 flex flex-wrap items-center gap-2">
             <button
               onClick={saveConfig}
               disabled={savingCfg || loadingCfg}
-              className="rounded-lg bg-sky-700 px-3 py-1.5 text-sm font-medium text-white hover:bg-sky-800 disabled:opacity-60"
+              className="rounded-lg bg-emerald-700 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-800 disabled:opacity-60"
             >
               {savingCfg ? "Enregistrement…" : "Enregistrer les paramètres"}
             </button>
@@ -2295,291 +2268,284 @@ export default function AdminSettingsPage() {
             )}
           </div>
 
-          {/* Créneaux journaliers */}
-          <div className="rounded-xl border border-emerald-100 bg-white p-4">
-            {/* Générateur de créneaux */}
-            <div className="mb-4 rounded-xl border bg-slate-50 p-3">
-              <div className="mb-2 text-sm font-medium text-slate-800">
-                Générateur de créneaux (auto)
-              </div>
-              <div className="grid grid-cols-1 gap-2 md:grid-cols-5">
-                <div>
-                  <div className="mb-1 text-xs text-slate-500">
-                    Début journée
-                  </div>
-                  <input
-                    type="time"
-                    value={genStart}
-                    onChange={(e) => setGenStart(e.target.value)}
-                    className="w-full rounded-lg border bg-white px-3 py-1.5 text-sm"
-                  />
-                </div>
-                <div>
-                  <div className="mb-1 text-xs text-slate-500">Fin journée</div>
-                  <input
-                    type="time"
-                    value={genEnd}
-                    onChange={(e) => setGenEnd(e.target.value)}
-                    className="w-full rounded-lg border bg-white px-3 py-1.5 text-sm"
-                  />
-                </div>
-                <div>
-                  <div className="mb-1 text-xs text-slate-500">
-                    Durée séance (min)
-                  </div>
-                  <input
-                    type="number"
-                    min={1}
-                    value={genMinutes}
-                    onChange={(e) =>
-                      setGenMinutes(Math.max(1, parseInt(e.target.value || "45", 10)))
-                    }
-                    className="w-full rounded-lg border bg-white px-3 py-1.5 text-sm"
-                  />
-                </div>
-                <div>
-                  <div className="mb-1 text-xs text-slate-500">
-                    Pause après (séances)
-                  </div>
-                  <input
-                    type="number"
-                    min={0}
-                    value={genBreakEvery}
-                    onChange={(e) =>
-                      setGenBreakEvery(Math.max(0, parseInt(e.target.value || "0", 10)))
-                    }
-                    className="w-full rounded-lg border bg-white px-3 py-1.5 text-sm"
-                  />
-                </div>
-                <div>
-                  <div className="mb-1 text-xs text-slate-500">
-                    Pause (minutes)
-                  </div>
-                  <input
-                    type="number"
-                    min={0}
-                    value={genBreakMinutes}
-                    onChange={(e) =>
-                      setGenBreakMinutes(Math.max(0, parseInt(e.target.value || "0", 10)))
-                    }
-                    className="w-full rounded-lg border bg-white px-3 py-1.5 text-sm"
-                  />
-                </div>
-              </div>
+          <div className="my-4 h-px w-full bg-emerald-200/60" />
 
-              <div className="mt-2 grid grid-cols-1 gap-2 md:grid-cols-3">
-                <div>
-                  <div className="mb-1 text-xs text-slate-500">
-                    Libellé séances
-                  </div>
-                  <input
-                    value={genLabelPrefix}
-                    onChange={(e) => setGenLabelPrefix(e.target.value)}
-                    className="w-full rounded-lg border bg-white px-3 py-1.5 text-sm"
-                    placeholder="Séance"
-                  />
+          {/* Générateur de créneaux */}
+          <div className="mb-4 rounded-xl border border-emerald-100 bg-emerald-50/40 p-3">
+            <div className="mb-2 text-sm font-medium text-slate-800">
+              Générateur de créneaux (auto)
+            </div>
+            <div className="grid grid-cols-1 gap-2 md:grid-cols-5">
+              <div>
+                <div className="mb-1 text-xs text-slate-500">
+                  Début journée
                 </div>
+                <input
+                  type="time"
+                  value={genStart}
+                  onChange={(e) => setGenStart(e.target.value)}
+                  className="w-full rounded-lg border bg-white px-3 py-1.5 text-sm"
+                />
               </div>
-
-              <div className="mt-2 flex flex-wrap items-center gap-2">
-                <label className="inline-flex items-center gap-2 text-xs">
-                  <input
-                    type="checkbox"
-                    checked={genReplace}
-                    onChange={(e) => setGenReplace(e.target.checked)}
-                  />
-                  Remplacer les créneaux existants (sinon, ajouter à la suite)
-                </label>
-
-                <button
-                  onClick={() => buildPreview(curDay)}
-                  className="rounded-lg border bg-white px-3 py-1.5 text-sm hover:bg-slate-100"
-                >
-                  Prévisualiser (jour courant)
-                </button>
-                <button
-                  onClick={() => applyGeneratedToDays([curDay])}
-                  className="rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700"
-                >
-                  Appliquer au jour courant
-                </button>
-                <button
-                  onClick={() => applyGeneratedToDays([1, 2, 3, 4, 5])}
-                  className="rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700"
-                >
-                  Appliquer Lun→Ven
-                </button>
-              </div>
-
-              {genPreview.length > 0 && (
-                <div className="mt-3 overflow-x-auto rounded-lg border bg-white">
-                  <table className="min-w-full text-sm">
-                    <thead className="bg-slate-50">
-                      <tr className="text-left text-slate-600">
-                        <th className="w-12 px-3 py-2">#</th>
-                        <th className="w-36 px-3 py-2">Début</th>
-                        <th className="w-36 px-3 py-2">Fin</th>
-                        <th className="px-3 py-2">
-                          Libellé (prévisualisation)
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y">
-                      {genPreview.map((p, i) => (
-                        <tr key={i}>
-                          <td className="px-3 py-2">{i + 1}</td>
-                          <td className="px-3 py-2">{p.start_time}</td>
-                          <td className="px-3 py-2">{p.end_time}</td>
-                          <td className="px-3 py-2">{p.label}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+              <div>
+                <div className="mb-1 text-xs text-slate-500">
+                  Fin journée
                 </div>
-              )}
+                <input
+                  type="time"
+                  value={genEnd}
+                  onChange={(e) => setGenEnd(e.target.value)}
+                  className="w-full rounded-lg border bg-white px-3 py-1.5 text-sm"
+                />
+              </div>
+              <div>
+                <div className="mb-1 text-xs text-slate-500">
+                  Durée séance (min)
+                </div>
+                <input
+                  type="number"
+                  min={1}
+                  value={genDuration}
+                  onChange={(e) =>
+                    setGenDuration(
+                      Math.max(1, parseInt(e.target.value || "0", 10))
+                    )
+                  }
+                  className="w-full rounded-lg border bg-white px-3 py-1.5 text-sm"
+                />
+              </div>
+              <div>
+                <div className="mb-1 text-xs text-slate-500">
+                  Pause entre séances (min)
+                </div>
+                <input
+                  type="number"
+                  min={0}
+                  value={genGap}
+                  onChange={(e) =>
+                    setGenGap(
+                      Math.max(0, parseInt(e.target.value || "0", 10))
+                    )
+                  }
+                  className="w-full rounded-lg border bg-white px-3 py-1.5 text-sm"
+                />
+              </div>
+              <div>
+                <div className="mb-1 text-xs text-slate-500">
+                  Libellé de base
+                </div>
+                <input
+                  value={genLabelBase}
+                  onChange={(e) => setGenLabelBase(e.target.value)}
+                  className="w-full rounded-lg border bg-white px-3 py-1.5 text-sm"
+                  placeholder="Séance"
+                />
+              </div>
             </div>
 
-            {/* Onglets jours */}
-            <div className="mb-2 flex flex-wrap gap-2">
-              {[
-                { d: 1, n: "Lun" },
-                { d: 2, n: "Mar" },
-                { d: 3, n: "Mer" },
-                { d: 4, n: "Jeu" },
-                { d: 5, n: "Ven" },
-                { d: 6, n: "Sam" },
-              ].map((w) => (
-                <button
-                  key={w.d}
-                  onClick={() => setCurDay(w.d)}
-                  className={`rounded-lg border px-3 py-1.5 text-sm ${
-                    curDay === w.d
-                      ? "bg-slate-900 text-white"
-                      : "hover:bg-slate-50"
-                  }`}
-                >
-                  {w.n}
-                </button>
-              ))}
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <label className="inline-flex items-center gap-2 text-xs">
+                <input
+                  type="checkbox"
+                  checked={genReplace}
+                  onChange={(e) => setGenReplace(e.target.checked)}
+                />
+                Remplacer les créneaux existants (sinon, ajouter à la suite)
+              </label>
+
+              <button
+                onClick={() => buildPreview(curDay)}
+                className="rounded-lg border bg-white px-3 py-1.5 text-sm hover:bg-slate-100"
+              >
+                Prévisualiser (jour courant)
+              </button>
+              <button
+                onClick={() => applyGeneratedToDays([curDay])}
+                className="rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700"
+              >
+                Appliquer au jour courant
+              </button>
+              <button
+                onClick={() => applyGeneratedToDays([1, 2, 3, 4, 5])}
+                className="rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700"
+              >
+                Appliquer Lun→Ven
+              </button>
             </div>
 
-            {/* Tableau créneaux pour le jour courant */}
-            <div className="overflow-x-auto rounded-xl border">
-              <table className="min-w-full text-sm">
-                <thead className="bg-slate-50">
-                  <tr className="text-left text-slate-600">
-                    <th className="w-12 px-3 py-2">#</th>
-                    <th className="w-36 px-3 py-2">Début</th>
-                    <th className="w-36 px-3 py-2">Fin</th>
-                    <th className="px-3 py-2">Libellé</th>
-                    <th className="w-24 px-3 py-2 text-right">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y">
-                  {loadingCfg ? (
-                    <tr>
-                      <td
-                        className="px-3 py-3 text-slate-500"
-                        colSpan={5}
-                      >
-                        Chargement…
-                      </td>
+            {genPreview.length > 0 && (
+              <div className="mt-3 overflow-x-auto rounded-lg border bg-white">
+                <table className="min-w-full text-sm">
+                  <thead className="bg-slate-50">
+                    <tr className="text-left text-slate-600">
+                      <th className="w-12 px-3 py-2">#</th>
+                      <th className="w-36 px-3 py-2">Début</th>
+                      <th className="w-36 px-3 py-2">Fin</th>
+                      <th className="px-3 py-2">
+                        Libellé (prévisualisation)
+                      </th>
                     </tr>
-                  ) : (byDay[curDay] || []).length === 0 ? (
-                    <tr>
-                      <td
-                        className="px-3 py-3 text-slate-500"
-                        colSpan={5}
-                      >
-                        Aucun créneau pour ce jour.
-                      </td>
-                    </tr>
-                  ) : (
-                    (byDay[curDay] || []).map((row, i) => (
+                  </thead>
+                  <tbody className="divide-y">
+                    {genPreview.map((p, i) => (
                       <tr key={i}>
                         <td className="px-3 py-2">{i + 1}</td>
-                        <td className="px-3 py-2">
-                          <input
-                            type="time"
-                            value={row.start_time}
-                            onChange={(e) =>
-                              setCell(curDay, i, {
-                                start_time: e.target.value,
-                              })
-                            }
-                            className="w-36 rounded-lg border px-3 py-1.5 text-sm"
-                          />
-                        </td>
-                        <td className="px-3 py-2">
-                          <input
-                            type="time"
-                            value={row.end_time}
-                            onChange={(e) =>
-                              setCell(curDay, i, {
-                                end_time: e.target.value,
-                              })
-                            }
-                            className="w-36 rounded-lg border px-3 py-1.5 text-sm"
-                          />
-                        </td>
-                        <td className="px-3 py-2">
-                          <input
-                            value={row.label}
-                            onChange={(e) =>
-                              setCell(curDay, i, {
-                                label: e.target.value,
-                              })
-                            }
-                            className="w-full rounded-lg border px-3 py-1.5 text-sm"
-                            placeholder="1ère heure / Pause / …"
-                          />
-                        </td>
-                        <td className="px-3 py-2 text-right">
-                          <button
-                            onClick={() => removeRow(curDay, i)}
-                            className="rounded-lg border border-rose-300 bg-rose-50 px-3 py-1.5 text-xs font-medium text-rose-800 hover:bg-rose-100"
-                          >
-                            Supprimer
-                          </button>
-                        </td>
+                        <td className="px-3 py-2">{p.start_time}</td>
+                        <td className="px-3 py-2">{p.end_time}</td>
+                        <td className="px-3 py-2">{p.label}</td>
                       </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
-
-            <div className="mt-3 flex items-center justify-between">
-              <button
-                onClick={() => addRow(curDay)}
-                className="rounded-lg border px-3 py-1.5 text-sm hover:bg-slate-50"
-              >
-                + Ajouter un créneau
-              </button>
-
-              <button
-                onClick={savePeriods}
-                disabled={savingPeriods || loadingCfg}
-                className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white shadow hover:bg-emerald-700 disabled:opacity-60"
-              >
-                {savingPeriods
-                  ? "Enregistrement…"
-                  : "Enregistrer les créneaux"}
-              </button>
-            </div>
-
-            <div className="mt-2 text-[12px] text-slate-500">
-              Astuce : si vous laissez des jours vides, ils ne seront pas pris en
-              compte. Le calcul de retard se base sur le créneau du jour le plus
-              proche de l’heure de début de séance.
-            </div>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
-        </section>
+
+          <div className="rounded-xl border border-emerald-100 bg-white p-3 shadow-sm">
+          {/* Onglets jours */}
+          <div className="mb-2 flex flex-wrap gap-2">
+            {[
+              { d: 1, n: "Lun" },
+              { d: 2, n: "Mar" },
+              { d: 3, n: "Mer" },
+              { d: 4, n: "Jeu" },
+              { d: 5, n: "Ven" },
+              { d: 6, n: "Sam" },
+            ].map((w) => (
+              <button
+                key={w.d}
+                onClick={() => setCurDay(w.d)}
+                className={`rounded-lg border px-3 py-1.5 text-sm ${
+                  curDay === w.d
+                    ? "bg-emerald-700 text-white"
+                    : "hover:bg-slate-50"
+                }`}
+              >
+                {w.n}
+              </button>
+            ))}
+          </div>
+
+          {/* Tableau créneaux pour le jour courant */}
+          <div className="overflow-x-auto rounded-xl border">
+            <table className="min-w-full text-sm">
+              <thead className="bg-slate-50">
+                <tr className="text-left text-slate-600">
+                  <th className="w-12 px-3 py-2">#</th>
+                  <th className="w-36 px-3 py-2">Début</th>
+                  <th className="w-36 px-3 py-2">Fin</th>
+                  <th className="px-3 py-2">Libellé</th>
+                  <th className="w-24 px-3 py-2 text-right">
+                    Actions
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="divide-y">
+                {loadingCfg ? (
+                  <tr>
+                    <td
+                      className="px-3 py-3 text-slate-500"
+                      colSpan={5}
+                    >
+                      Chargement…
+                    </td>
+                  </tr>
+                ) : (byDay[curDay] || []).length === 0 ? (
+                  <tr>
+                    <td
+                      className="px-3 py-3 text-slate-500"
+                      colSpan={5}
+                    >
+                      Aucun créneau pour ce jour.
+                    </td>
+                  </tr>
+                ) : (
+                  (byDay[curDay] || []).map((row, i) => (
+                    <tr key={i}>
+                      <td className="px-3 py-2">{i + 1}</td>
+                      <td className="px-3 py-2">
+                        <input
+                          type="time"
+                          value={row.start_time}
+                          onChange={(e) =>
+                            setCell(curDay, i, {
+                              start_time: e.target.value,
+                            })
+                          }
+                          className="w-36 rounded-lg border px-3 py-1.5 text-sm"
+                        />
+                      </td>
+                      <td className="px-3 py-2">
+                        <input
+                          type="time"
+                          value={row.end_time}
+                          onChange={(e) =>
+                            setCell(curDay, i, {
+                              end_time: e.target.value,
+                            })
+                          }
+                          className="w-36 rounded-lg border px-3 py-1.5 text-sm"
+                        />
+                      </td>
+                      <td className="px-3 py-2">
+                        <input
+                          value={row.label}
+                          onChange={(e) =>
+                            setCell(curDay, i, {
+                              label: e.target.value,
+                            })
+                          }
+                          className="w-full rounded-lg border px-3 py-1.5 text-sm"
+                          placeholder="1ère heure / Pause / …"
+                        />
+                      </td>
+                      <td className="px-3 py-2 text-right">
+                        <button
+                          onClick={() => removeRow(curDay, i)}
+                          className="rounded-lg border border-rose-300 bg-rose-50 px-3 py-1.5 text-xs font-medium text-rose-800 hover:bg-rose-100"
+                        >
+                          Supprimer
+                        </button>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="mt-3 flex items-center justify-between">
+            <button
+              onClick={() => addRow(curDay)}
+              className="rounded-lg border px-3 py-1.5 text-sm hover:bg-slate-50"
+            >
+              + Ajouter un créneau
+            </button>
+
+            <button
+              onClick={savePeriods}
+              disabled={savingPeriods || loadingCfg}
+              className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white shadow hover:bg-emerald-700 disabled:opacity-60"
+            >
+              {savingPeriods
+                ? "Enregistrement…"
+                : "Enregistrer les créneaux"}
+            </button>
+          </div>
+
+          <div className="mt-2 text-[12px] text-slate-500">
+            Astuce : si vous laissez des jours vides, ils ne seront pas pris en
+            compte. Le calcul de retard se base sur le créneau du jour le plus
+            proche de l’heure de début de séance.
+          </div>
+        
+          </div>
+</section>
 
         {/* =======================
             4) Années scolaires
         ======================== */}
-        <section className="rounded-2xl border border-violet-200 bg-violet-50/40 p-5 shadow-sm">
+        <section className="rounded-2xl border border-violet-200 bg-violet-50/50 p-5 shadow-sm">
           <div className="mb-3 flex items-center justify-between">
             <div>
               <div className="text-sm font-semibold uppercase tracking-wide text-slate-700">
@@ -2607,35 +2573,7 @@ export default function AdminSettingsPage() {
             </div>
           )}
 
-          <div className="mb-3 grid grid-cols-1 gap-3 md:grid-cols-3">
-            <div>
-              <div className="mb-1 text-xs text-slate-500">
-                Année scolaire utilisée pour les périodes & bulletins
-              </div>
-              <select
-                className="w-full rounded-lg border px-3 py-2 text-sm"
-                value={selectedAcademicYear}
-                onChange={async (e) => {
-                  const year = e.target.value;
-                  setSelectedAcademicYear(year);
-                  await loadEvalPeriods(year);
-                }}
-              >
-                <option value="">
-                  — Année déduite automatiquement (serveur) —
-                </option>
-                {academicYears.map((y) => (
-                  <option key={y.code || y.id} value={y.code}>
-                    {y.code || "(sans code)"}
-                    {y.is_current ? " — année courante" : ""}
-                  </option>
-                ))}
-              </select>
-              <div className="mt-1 text-[11px] text-slate-500">
-                Utilisée lors de l&apos;enregistrement des périodes d&apos;évaluation.
-              </div>
-            </div>
-          </div>
+          
 
           <div className="overflow-x-auto rounded-xl border">
             <table className="min-w-full text-sm">
@@ -2791,7 +2729,7 @@ export default function AdminSettingsPage() {
         {/* =======================
             5) Périodes d'évaluation (bulletins)
         ======================== */}
-        <section className="rounded-2xl border border-amber-200 bg-amber-50/40 p-5 shadow-sm">
+        <section className="rounded-2xl border border-amber-200 bg-amber-50/50 p-5 shadow-sm">
           <div className="mb-3 flex items-center justify-between">
             <div>
               <div className="text-sm font-semibold uppercase tracking-wide text-slate-700">
@@ -2819,7 +2757,36 @@ export default function AdminSettingsPage() {
             </div>
           )}
 
-          <div className="overflow-x-auto rounded-xl border">
+          <div className="mb-3 grid grid-cols-1 gap-3 md:grid-cols-3">
+            <div>
+              <div className="mb-1 text-xs text-slate-500">
+                Année scolaire utilisée pour les périodes & bulletins
+              </div>
+              <select
+                className="w-full rounded-lg border px-3 py-2 text-sm"
+                value={selectedAcademicYear}
+                onChange={async (e) => {
+                  const year = e.target.value;
+                  setSelectedAcademicYear(year);
+                  await loadEvalPeriods(year);
+                }}
+              >
+                <option value="">
+                  — Année déduite automatiquement (serveur) —
+                </option>
+                {academicYears.map((y) => (
+                  <option key={y.code || y.id} value={y.code}>
+                    {y.code || "(sans code)"}
+                    {y.is_current ? " — année courante" : ""}
+                  </option>
+                ))}
+              </select>
+              <div className="mt-1 text-[11px] text-slate-500">
+                Utilisée lors de l&apos;enregistrement des périodes d&apos;évaluation.
+              </div>
+            </div>
+          </div>
+<div className="overflow-x-auto rounded-xl border">
             <table className="min-w-full text-sm">
               <thead className="bg-slate-50 text-slate-600">
                 <tr>
@@ -3038,7 +3005,7 @@ export default function AdminSettingsPage() {
         {/* =======================
             6) Coefficients des disciplines + sous-matières
         ======================== */}
-        <section className="rounded-2xl border border-indigo-200 bg-indigo-50/40 p-5 shadow-sm">
+        <section className="rounded-2xl border border-indigo-200 bg-indigo-50/50 p-5 shadow-sm">
           <div className="mb-3 flex items-center justify-between">
             <div>
               <div className="text-sm font-semibold uppercase tracking-wide text-slate-700">
