@@ -1384,6 +1384,7 @@ export async function GET(req: NextRequest) {
 
   const bulletinWithAnnual = {
     ...bulletinForStudent,
+    period_general_avg: bulletinForStudent.general_avg,
     annual_general_avg,
   };
 
