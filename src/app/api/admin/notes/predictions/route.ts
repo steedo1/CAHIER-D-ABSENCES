@@ -141,33 +141,33 @@ type PredictionResponse = {
   key_subjects?: KeySubjectScore[];
 };
 
-// Nouveau schéma de la table ml_success_models (v2)
 type SuccessModelRow = {
-  id: string;
-  model_scope: "global" | "level" | string;
-  level: string;
-  feature_version: string;
-  n_samples: number;
-  w0: number | string;
-  w1: number | string;
-  w2: number | string;
-  w3: number | string;
-  w4: number | string;
-  w5: number | string;
-  w6: number | string;
+  model_key: string;
+  feature_names: string[];
+  weights: number[];
 };
+
+const FEATURE_NAMES = [
+  "current_general_avg_20_norm",
+  "hist_general_avg_mean_norm",
+  "current_presence_rate",
+  "hist_presence_mean",
+  "current_conduct_20_norm",
+  "hist_conduct_mean_norm",
+  "current_bonus_norm",
+  "hist_bonus_mean_norm",
+  "current_draft_ratio",
+  "hist_draft_mean",
+] as const;
 
 function clamp(x: number, min = 0, max = 100) {
   if (!Number.isFinite(x)) return min;
   return Math.max(min, Math.min(max, x));
 }
 
-// accepte aussi les numeric renvoyés en string par Supabase
-function safeNum(v: number | string | null): number {
-  if (v === null || v === undefined) return 0;
-  const n = Number(v);
-  if (Number.isNaN(n)) return 0;
-  return n;
+function safeNum(v: number | null): number {
+  if (v === null || Number.isNaN(v)) return 0;
+  return Number(v);
 }
 
 function sigmoid(z: number): number {
@@ -182,46 +182,33 @@ function avg(values: number[]): number {
   return s / values.length;
 }
 
-/**
- * Même logique de normalisation que dans scripts/train_success_model.ts
- * On travaille uniquement sur les "current_*" + class_size -> 6 features.
- */
+// même logique de features que dans le script de training
 function buildFeatureVectorFromAgg(a: AggregatedFeatures): number[] {
-  const general = a.current_general_avg_20;
-  const presence = a.current_presence_rate;
-  const conduct = a.current_conduct_total_20;
-  const bonus = a.current_bonus_points_total;
-  const draft = a.current_draft_ratio;
-  const classSize = a.current_class_size;
+  const curGen = safeNum(a.current_general_avg_20);
+  const histGen = safeNum(a.hist_general_avg_mean);
+  const curPresence = safeNum(a.current_presence_rate);
+  const histPresence = safeNum(a.hist_presence_mean);
+  const curConduct = safeNum(a.current_conduct_total_20);
+  const histConduct = safeNum(a.hist_conduct_mean);
+  const curBonus = safeNum(a.current_bonus_points_total);
+  const histBonus = safeNum(a.hist_bonus_mean);
+  const curDraft = safeNum(a.current_draft_ratio);
+  const histDraft = safeNum(a.hist_draft_mean);
 
-  const x1_general =
-    general != null && Number.isFinite(general)
-      ? Math.max(0, Math.min(1, general / 20))
-      : 0.5;
+  const clamp01 = (x: number) => Math.max(0, Math.min(1, x));
 
-  const x2_presence =
-    presence != null && Number.isFinite(presence)
-      ? Math.max(0, Math.min(1, presence))
-      : 0.9;
-
-  const x3_conduct =
-    conduct != null && Number.isFinite(conduct)
-      ? Math.max(0, Math.min(1, conduct / 20))
-      : 0.75;
-
-  const bonusVal =
-    bonus != null && Number.isFinite(bonus) ? (bonus as number) : 0;
-  const x4_bonus = Math.max(0, Math.min(1, 1 - bonusVal / 5));
-
-  const draftVal =
-    draft != null && Number.isFinite(draft) ? (draft as number) : 0;
-  const x5_draft = Math.max(0, Math.min(1, 1 - draftVal));
-
-  const sizeVal =
-    classSize != null && Number.isFinite(classSize) ? (classSize as number) : 40;
-  const x6_class = Math.max(0, Math.min(1, 1 - (sizeVal - 30) / 50));
-
-  return [x1_general, x2_presence, x3_conduct, x4_bonus, x5_draft, x6_class];
+  return [
+    clamp01(curGen / 20),
+    clamp01(histGen / 20),
+    clamp01(curPresence),
+    clamp01(histPresence),
+    clamp01(curConduct / 20),
+    clamp01(histConduct / 20),
+    Math.min(1.5, Math.max(0, curBonus / 4)),
+    Math.min(1.5, Math.max(0, histBonus / 4)),
+    clamp01(curDraft),
+    clamp01(histDraft),
+  ];
 }
 
 function aggregateHistory(rows: HistRow[]): AggregatedFeatures[] {
@@ -452,64 +439,22 @@ export async function POST(req: NextRequest) {
     }
     const envSizeScoreFallback = 70;
     const expectedCoverageNorm =
-      expectedCoveragePercent != null
-        ? expectedCoveragePercent / 100
-        : coverageScore / 100;
+      expectedCoveragePercent != null ? expectedCoveragePercent / 100 : coverageScore / 100;
 
-    // 7) Modèle ML : on prend d'abord le modèle du niveau, sinon le global ALL
-    const classLevel: string | null = (cls as any).level ?? null;
+    // 7) Modèle ML
+    const { data: modelRow, error: modelErr } = await srv
+      .from("ml_success_models")
+      .select("model_key,feature_names,weights")
+      .eq("model_key", "global_v1")
+      .maybeSingle();
 
-    let model: SuccessModelRow | null = null;
-
-    if (classLevel) {
-      const { data: levelModel, error: levelErr } = await srv
-        .from("ml_success_models")
-        .select(
-          "id,model_scope,level,feature_version,n_samples,w0,w1,w2,w3,w4,w5,w6"
-        )
-        .eq("model_scope", "level")
-        .eq("level", classLevel)
-        .eq("feature_version", "v2")
-        .order("updated_at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-
-      if (levelErr) {
-        return NextResponse.json(
-          { ok: false, error: levelErr.message },
-          { status: 400 }
-        );
-      }
-      if (levelModel) {
-        model = levelModel as SuccessModelRow;
-      }
+    if (modelErr) {
+      return NextResponse.json(
+        { ok: false, error: modelErr.message },
+        { status: 400 }
+      );
     }
-
-    if (!model) {
-      const { data: globalModel, error: globalErr } = await srv
-        .from("ml_success_models")
-        .select(
-          "id,model_scope,level,feature_version,n_samples,w0,w1,w2,w3,w4,w5,w6"
-        )
-        .eq("model_scope", "global")
-        .eq("level", "ALL")
-        .eq("feature_version", "v2")
-        .order("updated_at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-
-      if (globalErr) {
-        return NextResponse.json(
-          { ok: false, error: globalErr.message },
-          { status: 400 }
-        );
-      }
-      if (globalModel) {
-        model = globalModel as SuccessModelRow;
-      }
-    }
-
-    if (!model) {
+    if (!modelRow) {
       return NextResponse.json(
         {
           ok: false,
@@ -521,14 +466,18 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const activeModel = model as SuccessModelRow;
-    const w0 = safeNum(activeModel.w0);
-    const w1 = safeNum(activeModel.w1);
-    const w2 = safeNum(activeModel.w2);
-    const w3 = safeNum(activeModel.w3);
-    const w4 = safeNum(activeModel.w4);
-    const w5 = safeNum(activeModel.w5);
-    const w6 = safeNum(activeModel.w6);
+    const model = modelRow as SuccessModelRow;
+    if (!model.weights || model.weights.length !== FEATURE_NAMES.length + 1) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "invalid_model",
+          message:
+            "Le modèle ML enregistré n'est pas cohérent avec la configuration des features.",
+        },
+        { status: 500 }
+      );
+    }
 
     // 8) Historique des features pour la classe
     const { data: histRowsRaw, error: histErr } = await srv
@@ -581,7 +530,7 @@ export async function POST(req: NextRequest) {
               : undefined,
         },
         recommendations: [
-          "Aucun historique de notes/assiduité trouvé pour cette classe. Enregistrez d'abord des évaluations et des relevés d'absence.",
+          "Aucun historique de notes/assiduité trouvé pour cette classe. Enregistrez d'abord des évaluations et des relevés d'absence."
         ],
         students: [],
         key_subjects: [],
@@ -615,18 +564,14 @@ export async function POST(req: NextRequest) {
     }
 
     // 10) Application du modèle ML à chaque élève
+    const weights = model.weights; // w[0] = biais, w[1..] = poids
+
     const students: StudentResult[] = agg.map((a) => {
-      const fv = buildFeatureVectorFromAgg(a); // 6 features
-
-      const z =
-        w0 +
-        w1 * fv[0] +
-        w2 * fv[1] +
-        w3 * fv[2] +
-        w4 * fv[3] +
-        w5 * fv[4] +
-        w6 * fv[5];
-
+      const fv = buildFeatureVectorFromAgg(a);
+      let z = weights[0];
+      for (let j = 0; j < fv.length; j++) {
+        z += weights[j + 1] * fv[j];
+      }
       const p = sigmoid(z); // 0..1
       const predicted_success = clamp(p * 100);
 
@@ -672,7 +617,7 @@ export async function POST(req: NextRequest) {
 
     // 11) KPIs de synthèse
     const classSize = agg.length
-      ? safeNum(agg[0].current_class_size) || agg.length
+      ? (safeNum(agg[0].current_class_size) || agg.length)
       : 0;
 
     const predictedSuccessRate = students.length
@@ -700,15 +645,13 @@ export async function POST(req: NextRequest) {
       : null;
 
     const env_size_score = agg.length
-      ? clamp(
-          (safeNum(agg[0].current_class_size) || classSize) <= 30
-            ? 100
-            : (safeNum(agg[0].current_class_size) || classSize) <= 40
-            ? 90
-            : (safeNum(agg[0].current_class_size) || classSize) <= 50
-            ? 80
-            : 70
-        )
+      ? clamp((safeNum(agg[0].current_class_size) || classSize) <= 30
+          ? 100
+          : (safeNum(agg[0].current_class_size) || classSize) <= 40
+          ? 90
+          : (safeNum(agg[0].current_class_size) || classSize) <= 50
+          ? 80
+          : 70)
       : envSizeScoreFallback;
 
     const env_score = 0.6 * coverageScore + 0.4 * env_size_score;
