@@ -451,10 +451,16 @@ export default function AdminSettingsPage() {
   const [genEnd, setGenEnd] = useState<string>("17:00");
   const [genDuration, setGenDuration] = useState<number>(55);
   const [genGap, setGenGap] = useState<number>(5); // pause entre séances
+  const [genBreakEvery, setGenBreakEvery] = useState<number>(0); // pause longue après N séances
+  const [genBreakMinutes, setGenBreakMinutes] = useState<number>(0); // durée de la pause longue
   const [genLabelBase, setGenLabelBase] = useState<string>("Séance");
   const [genPreview, setGenPreview] = useState<Period[]>([]);
   const [genReplace, setGenReplace] = useState<boolean>(true); // remplacer ou ajouter
 
+
+  // Alias pour compat UI (genMinutes) : on garde une seule source de vérité
+  const genMinutes = genDuration;
+  const setGenMinutes = setGenDuration;
   /* =======================
      4) Années scolaires
   ======================== */
@@ -733,24 +739,38 @@ export default function AdminSettingsPage() {
       setGenPreview([]);
       return;
     }
-    const step = Math.max(1, genDuration) + Math.max(0, genGap);
+    const dur = Math.max(1, genDuration);
+    const gap = Math.max(0, genGap);
+
+    // Pause longue optionnelle : après chaque N séances, ajouter X minutes
+    const breakEvery = Math.max(0, genBreakEvery);
+    const breakMin = Math.max(0, genBreakMinutes);
+
     let cur = s;
     let i = 1;
     const out: Period[] = [];
-    while (cur + genDuration <= e) {
+    while (cur + dur <= e) {
       const st = cur;
-      const en = cur + genDuration;
+      const en = cur + dur;
       out.push({
         weekday: day,
         label: `${genLabelBase} ${i}`,
         start_time: minToTimeStr(st),
         end_time: minToTimeStr(en),
       });
-      cur += step;
+
+      // Prochain départ
+      cur = en + gap;
+
+      // Pause longue après N séances
+      if (breakEvery > 0 && i % breakEvery === 0) {
+        cur += breakMin;
+      }
+
       i++;
       if (i > 100) break; // garde-fou
     }
-    setGenPreview(out);
+setGenPreview(out);
     pushToast("info", `Prévisualisation: ${out.length} créneau(x).`);
   }
 
