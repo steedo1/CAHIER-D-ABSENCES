@@ -43,26 +43,25 @@ export default async function VerifyByCodePage(props: any) {
         )
       : [];
 
-  // ✅ Sécurisation : on accepte ancien ET nouveau format de l’API
-  // - period_general_avg (nouveau) ou general_avg (ancien) = moyenne du trimestre / période
-  // - annual_general_avg (nouveau) ou annual_avg (ancien) = moyenne annuelle
-  const periodAvg: number | null =
-    typeof bulletin?.period_general_avg === "number" &&
-    Number.isFinite(bulletin.period_general_avg)
-      ? bulletin.period_general_avg
-      : typeof bulletin?.general_avg === "number" &&
-        Number.isFinite(bulletin.general_avg)
-      ? bulletin.general_avg
-      : null;
+  // ✅ Récupérer robustement les deux moyennes
+  //  - moyenne du trimestre / période
+  //  - moyenne annuelle
+  function parseMaybeNumber(v: any): number | null {
+    if (typeof v === "number" && Number.isFinite(v)) return v;
+    if (typeof v === "string") {
+      const n = Number(v.trim());
+      return Number.isFinite(n) ? n : null;
+    }
+    return null;
+  }
 
-  const annualAvg: number | null =
-    typeof bulletin?.annual_general_avg === "number" &&
-    Number.isFinite(bulletin.annual_general_avg)
-      ? bulletin.annual_general_avg
-      : typeof bulletin?.annual_avg === "number" &&
-        Number.isFinite(bulletin.annual_avg)
-      ? bulletin.annual_avg
-      : null;
+  const rawPeriod =
+    bulletin?.period_general_avg ?? bulletin?.general_avg ?? null;
+  const rawAnnual =
+    bulletin?.annual_general_avg ?? bulletin?.annual_avg ?? null;
+
+  const periodAvg = parseMaybeNumber(rawPeriod);
+  const annualAvg = parseMaybeNumber(rawAnnual);
 
   return (
     <main className="min-h-screen bg-slate-50 p-6">
@@ -149,29 +148,29 @@ export default async function VerifyByCodePage(props: any) {
                   </div>
 
                   <div className="mt-2 grid gap-3 md:grid-cols-2">
-                    {/* Moyenne du trimestre / période */}
+                    {/* ✅ Moyenne du trimestre / période (toujours affichée) */}
                     <div>
                       <div className="text-[11px] font-semibold text-emerald-800">
                         Moyenne du trimestre
                       </div>
                       <div className="mt-1 text-2xl font-extrabold text-emerald-900">
-                        {typeof periodAvg === "number"
-                          ? `${Number(periodAvg).toFixed(2)} / 20`
+                        {periodAvg !== null
+                          ? `${periodAvg.toFixed(2)} / 20`
                           : "—"}
                       </div>
                     </div>
 
-                    {/* Moyenne annuelle, si disponible */}
-                    {typeof annualAvg === "number" && (
-                      <div>
-                        <div className="text-[11px] font-semibold text-slate-700">
-                          Moyenne annuelle
-                        </div>
-                        <div className="mt-1 text-2xl font-extrabold text-slate-900">
-                          {`${Number(annualAvg).toFixed(2)} / 20`}
-                        </div>
+                    {/* ✅ Moyenne annuelle (toujours affichée, même si —) */}
+                    <div>
+                      <div className="text-[11px] font-semibold text-slate-700">
+                        Moyenne annuelle
                       </div>
-                    )}
+                      <div className="mt-1 text-2xl font-extrabold text-slate-900">
+                        {annualAvg !== null
+                          ? `${annualAvg.toFixed(2)} / 20`
+                          : "—"}
+                      </div>
+                    </div>
                   </div>
 
                   {period && (

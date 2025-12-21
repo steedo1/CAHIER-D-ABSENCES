@@ -8,7 +8,9 @@ const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 if (!SUPABASE_URL || !SERVICE_ROLE_KEY) {
-  throw new Error("Missing NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY in env");
+  throw new Error(
+    "Missing NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY in env"
+  );
 }
 
 const supa = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
@@ -32,6 +34,38 @@ type LevelGroup = {
   level: string; // ex: '6e' ou 'ALL'
   samples: Sample[];
 };
+
+function isStringOrNull(v: any): v is string | null {
+  return v === null || typeof v === "string";
+}
+function isBooleanOrNull(v: any): v is boolean | null {
+  return v === null || typeof v === "boolean";
+}
+function isNumberOrNull(v: any): v is number | null {
+  return v === null || typeof v === "number";
+}
+
+/**
+ * Garde-fou runtime + fix TS:
+ * Sur certains projets, supabase-js infère `data` comme `GenericStringError[]`
+ * si la table n'est pas présente dans les types générés. On convertit vers
+ * `unknown[]` puis on filtre/valide pour obtenir `Sample[]` proprement.
+ */
+function isSample(x: any): x is Sample {
+  return (
+    x &&
+    typeof x === "object" &&
+    typeof (x as any).label_id === "string" &&
+    isStringOrNull((x as any).target_level) &&
+    isBooleanOrNull((x as any).success_label) &&
+    isNumberOrNull((x as any).current_general_avg_20) &&
+    isNumberOrNull((x as any).current_presence_rate) &&
+    isNumberOrNull((x as any).current_conduct_total_20) &&
+    isNumberOrNull((x as any).current_bonus_points_total) &&
+    isNumberOrNull((x as any).current_draft_ratio) &&
+    isNumberOrNull((x as any).current_class_size)
+  );
+}
 
 function normalizeFeatures(s: Sample) {
   const x1_general = Number.isFinite(s.current_general_avg_20 as number)
@@ -59,10 +93,7 @@ function normalizeFeatures(s: Sample) {
   const size = Number.isFinite(s.current_class_size as number)
     ? (s.current_class_size as number)
     : 40;
-  const x6_class = Math.max(
-    0,
-    Math.min(1, 1 - ((size - 30) / 50))
-  );
+  const x6_class = Math.max(0, Math.min(1, 1 - (size - 30) / 50));
 
   return [x1_general, x2_presence, x3_conduct, x4_bonus, x5_draft, x6_class];
 }
@@ -158,7 +189,16 @@ async function main() {
     process.exit(1);
   }
 
-  const samples = (data || []) as Sample[];
+  // ✅ FIX TS + robustesse runtime
+  const raw: unknown[] = Array.isArray(data) ? (data as unknown[]) : [];
+  const samples: Sample[] = raw.filter(isSample);
+
+  if (raw.length !== samples.length) {
+    console.log(
+      `⚠️ Ignored ${raw.length - samples.length} invalid rows (typing mismatch / unexpected shape).`
+    );
+  }
+
   console.log(`✅ Loaded ${samples.length} samples`);
 
   if (!samples.length) {
@@ -185,61 +225,22 @@ async function main() {
 
   for (const level of levels) {
     const groupSamples = groups.get(level)!;
-    console.log(`\n🚀 Training model for level = ${level} (n=${groupSamples.length})`);
+    console.log(
+      `\n🚀 Training model for level = ${level} (n=${groupSamples.length})`
+    );
 
     try {
       const { w, accuracy, n_samples } = trainLogistic(groupSamples);
-      console.log(`   -> accuracy=${(accuracy * 100).toFixed(1)}%, n=${n_samples}`);
+      console.log(
+        `   -> accuracy=${(accuracy * 100).toFixed(1)}%, n=${n_samples}`
+      );
 
       const [w0, w1, w2, w3, w4, w5, w6] = w;
 
-      const { error: upsertError } = await supa
-        .from("ml_success_models")
-        .upsert(
-          {
-            model_scope: "level",
-            level,
-            feature_version: "v2",
-            n_samples,
-            w0,
-            w1,
-            w2,
-            w3,
-            w4,
-            w5,
-            w6,
-            metrics: {
-              accuracy,
-            },
-          },
-          {
-            onConflict: "model_scope,level,feature_version",
-          }
-        );
-
-      if (upsertError) {
-        console.error(`   ❌ Error saving model for level ${level}:`, upsertError);
-      } else {
-        console.log(`   ✅ Model saved for level ${level}`);
-      }
-    } catch (e: any) {
-      console.error(`   ❌ Training failed for level ${level}:`, e.message || e);
-    }
-  }
-
-  console.log(`\n🚀 Training global model (scope=global, level=ALL)...`);
-  try {
-    const { w, accuracy, n_samples } = trainLogistic(allGroup.samples);
-    console.log(`   -> accuracy=${(accuracy * 100).toFixed(1)}%, n=${n_samples}`);
-
-    const [w0, w1, w2, w3, w4, w5, w6] = w;
-
-    const { error: upsertError } = await supa
-      .from("ml_success_models")
-      .upsert(
+      const { error: upsertError } = await supa.from("ml_success_models").upsert(
         {
-          model_scope: "global",
-          level: "ALL",
+          model_scope: "level",
+          level,
           feature_version: "v2",
           n_samples,
           w0,
@@ -257,6 +258,53 @@ async function main() {
           onConflict: "model_scope,level,feature_version",
         }
       );
+
+      if (upsertError) {
+        console.error(
+          `   ❌ Error saving model for level ${level}:`,
+          upsertError
+        );
+      } else {
+        console.log(`   ✅ Model saved for level ${level}`);
+      }
+    } catch (e: any) {
+      console.error(
+        `   ❌ Training failed for level ${level}:`,
+        e.message || e
+      );
+    }
+  }
+
+  console.log(`\n🚀 Training global model (scope=global, level=ALL)...`);
+  try {
+    const { w, accuracy, n_samples } = trainLogistic(allGroup.samples);
+    console.log(
+      `   -> accuracy=${(accuracy * 100).toFixed(1)}%, n=${n_samples}`
+    );
+
+    const [w0, w1, w2, w3, w4, w5, w6] = w;
+
+    const { error: upsertError } = await supa.from("ml_success_models").upsert(
+      {
+        model_scope: "global",
+        level: "ALL",
+        feature_version: "v2",
+        n_samples,
+        w0,
+        w1,
+        w2,
+        w3,
+        w4,
+        w5,
+        w6,
+        metrics: {
+          accuracy,
+        },
+      },
+      {
+        onConflict: "model_scope,level,feature_version",
+      }
+    );
 
     if (upsertError) {
       console.error("   ❌ Error saving global model:", upsertError);
