@@ -1714,7 +1714,7 @@ export default function AdminSettingsPage() {
         {/* =======================
             1) Mon mot de passe
         ======================== */}
-        <section className="rounded-2xl border border-sky-200 bg-sky-50/50 p-5 shadow-sm">
+        <section className="rounded-2xl border bg-white p-5">
           <div className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-700">
             Mon mot de passe
           </div>
@@ -1791,7 +1791,7 @@ export default function AdminSettingsPage() {
         {/* ==========================================
             2) Réinitialiser le mot de passe d'un user
         =========================================== */}
-        <section className="rounded-2xl border border-rose-200 bg-rose-50/50 p-5 shadow-sm">
+        <section className="rounded-2xl border bg-white p-5">
           <div className="mb-2 flex items-center justify-between">
             <div className="text-sm font-semibold uppercase tracking-wide text-slate-700">
               Réinitialiser le mot de passe d’un utilisateur
@@ -1890,7 +1890,7 @@ export default function AdminSettingsPage() {
         {/* =======================
             3) Horaires & séances + infos établissement
         ======================== */}
-        <section className="rounded-2xl border border-emerald-200 bg-emerald-50/50 p-5 shadow-sm">
+        <section className="rounded-2xl border bg-white p-5">
           <div className="mb-3 flex items-center justify-between">
             <div>
               <div className="text-sm font-semibold uppercase tracking-wide text-slate-700">
@@ -1912,14 +1912,7 @@ export default function AdminSettingsPage() {
           </div>
 
           {/* Paramètres d’établissement (horaires) */}
-
-          <div className="mb-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
-            {/* Réglages de séance */}
-            <div className="rounded-xl border border-emerald-100 bg-white p-4">
-              <div className="mb-3 text-sm font-medium text-slate-800">
-                Réglages de séance
-              </div>
-              <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+          <div className="mb-4 grid grid-cols-1 gap-3 md:grid-cols-3">
             <div>
               <div className="mb-1 text-xs text-slate-500">
                 Fuseau horaire
@@ -1969,17 +1962,29 @@ export default function AdminSettingsPage() {
                 (UI), sans forcer vos créneaux ci-dessous.
               </div>
             </div>
-                
-              </div>
+            <div className="flex items-end">
+              <label className="inline-flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={!!cfg.auto_lateness}
+                  onChange={(e) =>
+                    setCfg((s) => ({
+                      ...s,
+                      auto_lateness: e.target.checked,
+                    }))
+                  }
+                  disabled={loadingCfg || savingCfg}
+                />
+                <span className="text-sm text-slate-700">
+                  Calcul automatique des retards (par créneau)
+                </span>
+              </label>
             </div>
+          </div>
 
-            {/* En-tête bulletins */}
-            <div className="rounded-xl border border-emerald-100 bg-white p-4">
-              <div className="mb-3 text-sm font-medium text-slate-800">
-                En-tête des bulletins
-              </div>
-              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-<div>
+          {/* Infos d'établissement (optionnelles) */}
+          <div className="mb-4 grid grid-cols-1 gap-3 md:grid-cols-3">
+            <div>
               <div className="mb-1 text-xs text-slate-500">
                 Nom du pays pour l&apos;en-tête (optionnel)
               </div>
@@ -1996,7 +2001,7 @@ export default function AdminSettingsPage() {
                 placeholder="République de Côte d&apos;Ivoire"
               />
             </div>
-<div>
+            <div>
               <div className="mb-1 text-xs text-slate-500">
                 Devise nationale (optionnel)
               </div>
@@ -2013,7 +2018,7 @@ export default function AdminSettingsPage() {
                 placeholder="Union - Discipline - Travail"
               />
             </div>
-<div>
+            <div>
               <div className="mb-1 text-xs text-slate-500">
                 Nom du ministère (optionnel)
               </div>
@@ -2030,7 +2035,7 @@ export default function AdminSettingsPage() {
                 placeholder="MINISTERE DE L&apos;EDUCATION NATIONALE ET DE L&apos;ALPHABETISATION"
               />
             </div>
-<div>
+            <div>
               <div className="mb-1 text-xs text-slate-500">
                 Code établissement / MEN (optionnel)
               </div>
@@ -2047,19 +2052,8 @@ export default function AdminSettingsPage() {
                 placeholder="Code MEN : 123456"
               />
             </div>
-              </div>
-              <div className="mt-2 text-[11px] text-slate-500">
-                Ces champs sont optionnels et apparaissent sur les bulletins et documents (si renseignés).
-              </div>
-            </div>
 
-            {/* Contacts & localisation */}
-            <div className="rounded-xl border border-emerald-100 bg-white p-4">
-              <div className="mb-3 text-sm font-medium text-slate-800">
-                Contacts & localisation
-              </div>
-              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-<div>
+            <div>
               <div className="mb-1 text-xs text-slate-500">
                 Téléphone de l&apos;établissement (optionnel)
               </div>
@@ -2077,7 +2071,7 @@ export default function AdminSettingsPage() {
                 placeholder="+225 01 02 03 04"
               />
             </div>
-<div>
+            <div>
               <div className="mb-1 text-xs text-slate-500">
                 Email de l&apos;établissement (optionnel)
               </div>
@@ -2095,104 +2089,8 @@ export default function AdminSettingsPage() {
                 placeholder="contact@ecole.ci"
               />
             </div>
-<div>
-              <div className="mb-1 text-xs text-slate-500">
-                Direction régionale (optionnel)
-              </div>
-              <input
-                className="w-full rounded-lg border px-3 py-2 text-sm"
-                value={cfg.institution_region}
-                onChange={(e) =>
-                  setCfg((s) => ({
-                    ...s,
-                    institution_region: e.target.value,
-                  }))
-                }
-                disabled={loadingCfg || savingCfg}
-                placeholder="DRENA Abidjan 1"
-              />
-            </div>
-<div>
-              <div className="mb-1 text-xs text-slate-500">
-                Adresse postale (optionnel)
-              </div>
-              <input
-                className="w-full rounded-lg border px-3 py-2 text-sm"
-                value={cfg.institution_postal_address}
-                onChange={(e) =>
-                  setCfg((s) => ({
-                    ...s,
-                    institution_postal_address: e.target.value,
-                  }))
-                }
-                disabled={loadingCfg || savingCfg}
-                placeholder="BP 123 Abidjan"
-              />
-            </div>
-<div>
-              <div className="mb-1 text-xs text-slate-500">
-                Statut de l&apos;établissement (optionnel)
-              </div>
-              <input
-                className="w-full rounded-lg border px-3 py-2 text-sm"
-                value={cfg.institution_status}
-                onChange={(e) =>
-                  setCfg((s) => ({
-                    ...s,
-                    institution_status: e.target.value,
-                  }))
-                }
-                disabled={loadingCfg || savingCfg}
-                placeholder="Public / Privé laïc / ..."
-              />
-            </div>
-              </div>
-            </div>
 
-            {/* Direction & logo */}
-            <div className="rounded-xl border border-emerald-100 bg-white p-4">
-              <div className="mb-3 text-sm font-medium text-slate-800">
-                Direction & logo
-              </div>
-              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-<div>
-              <div className="mb-1 text-xs text-slate-500">
-                Nom complet du 1er responsable (optionnel)
-              </div>
-              <input
-                className="w-full rounded-lg border px-3 py-2 text-sm"
-                value={cfg.institution_head_name}
-                onChange={(e) =>
-                  setCfg((s) => ({
-                    ...s,
-                    institution_head_name: e.target.value,
-                  }))
-                }
-                disabled={loadingCfg || savingCfg}
-                placeholder="Nom et prénom(s)"
-              />
-            </div>
-<div>
-              <div className="mb-1 text-xs text-slate-500">
-                Fonction du 1er responsable (optionnel)
-              </div>
-              <input
-                className="w-full rounded-lg border px-3 py-2 text-sm"
-                value={cfg.institution_head_title}
-                onChange={(e) =>
-                  setCfg((s) => ({
-                    ...s,
-                    institution_head_title: e.target.value,
-                  }))
-                }
-                disabled={loadingCfg || savingCfg}
-                placeholder="Proviseur, Directeur, ..."
-              />
-            </div>
-              </div>
-
-              <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
-{/* Logo importé par fichier */}
+            {/* Logo importé par fichier */}
             <div>
               <div className="mb-1 text-xs text-slate-500">
                 Logo de l&apos;établissement (import d&apos;image)
@@ -2251,15 +2149,96 @@ export default function AdminSettingsPage() {
 
             <div>
               <div className="mb-1 text-xs text-slate-500">
+                Direction régionale (optionnel)
               </div>
+              <input
+                className="w-full rounded-lg border px-3 py-2 text-sm"
+                value={cfg.institution_region}
+                onChange={(e) =>
+                  setCfg((s) => ({
+                    ...s,
+                    institution_region: e.target.value,
+                  }))
+                }
+                disabled={loadingCfg || savingCfg}
+                placeholder="DRENA Abidjan 1"
+              />
+            </div>
+            <div>
+              <div className="mb-1 text-xs text-slate-500">
+                Adresse postale (optionnel)
+              </div>
+              <input
+                className="w-full rounded-lg border px-3 py-2 text-sm"
+                value={cfg.institution_postal_address}
+                onChange={(e) =>
+                  setCfg((s) => ({
+                    ...s,
+                    institution_postal_address: e.target.value,
+                  }))
+                }
+                disabled={loadingCfg || savingCfg}
+                placeholder="BP 123 Abidjan"
+              />
+            </div>
+            <div>
+              <div className="mb-1 text-xs text-slate-500">
+                Statut de l&apos;établissement (optionnel)
+              </div>
+              <input
+                className="w-full rounded-lg border px-3 py-2 text-sm"
+                value={cfg.institution_status}
+                onChange={(e) =>
+                  setCfg((s) => ({
+                    ...s,
+                    institution_status: e.target.value,
+                  }))
+                }
+                disabled={loadingCfg || savingCfg}
+                placeholder="Public / Privé laïc / ..."
+              />
+            </div>
+            <div>
+              <div className="mb-1 text-xs text-slate-500">
+                Nom complet du 1er responsable (optionnel)
+              </div>
+              <input
+                className="w-full rounded-lg border px-3 py-2 text-sm"
+                value={cfg.institution_head_name}
+                onChange={(e) =>
+                  setCfg((s) => ({
+                    ...s,
+                    institution_head_name: e.target.value,
+                  }))
+                }
+                disabled={loadingCfg || savingCfg}
+                placeholder="Nom et prénom(s)"
+              />
+            </div>
+            <div>
+              <div className="mb-1 text-xs text-slate-500">
+                Fonction du 1er responsable (optionnel)
+              </div>
+              <input
+                className="w-full rounded-lg border px-3 py-2 text-sm"
+                value={cfg.institution_head_title}
+                onChange={(e) =>
+                  setCfg((s) => ({
+                    ...s,
+                    institution_head_title: e.target.value,
+                  }))
+                }
+                disabled={loadingCfg || savingCfg}
+                placeholder="Proviseur, Directeur, ..."
+              />
             </div>
           </div>
 
-          <div className="mb-4 flex flex-wrap items-center gap-2">
+          <div className="mb-3 flex items-center gap-2">
             <button
               onClick={saveConfig}
               disabled={savingCfg || loadingCfg}
-              className="rounded-lg bg-emerald-700 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-800 disabled:opacity-60"
+              className="rounded-lg bg-sky-700 px-3 py-1.5 text-sm font-medium text-white hover:bg-sky-800 disabled:opacity-60"
             >
               {savingCfg ? "Enregistrement…" : "Enregistrer les paramètres"}
             </button>
@@ -2268,10 +2247,8 @@ export default function AdminSettingsPage() {
             )}
           </div>
 
-          <div className="my-4 h-px w-full bg-emerald-200/60" />
-
           {/* Générateur de créneaux */}
-          <div className="mb-4 rounded-xl border border-emerald-100 bg-emerald-50/40 p-3">
+          <div className="mb-4 rounded-xl border bg-slate-50 p-3">
             <div className="mb-2 text-sm font-medium text-slate-800">
               Générateur de créneaux (auto)
             </div>
@@ -2401,7 +2378,6 @@ export default function AdminSettingsPage() {
             )}
           </div>
 
-          <div className="rounded-xl border border-emerald-100 bg-white p-3 shadow-sm">
           {/* Onglets jours */}
           <div className="mb-2 flex flex-wrap gap-2">
             {[
@@ -2417,7 +2393,7 @@ export default function AdminSettingsPage() {
                 onClick={() => setCurDay(w.d)}
                 className={`rounded-lg border px-3 py-1.5 text-sm ${
                   curDay === w.d
-                    ? "bg-emerald-700 text-white"
+                    ? "bg-slate-900 text-white"
                     : "hover:bg-slate-50"
                 }`}
               >
@@ -2538,14 +2514,12 @@ export default function AdminSettingsPage() {
             compte. Le calcul de retard se base sur le créneau du jour le plus
             proche de l’heure de début de séance.
           </div>
-        
-          </div>
-</section>
+        </section>
 
         {/* =======================
             4) Années scolaires
         ======================== */}
-        <section className="rounded-2xl border border-violet-200 bg-violet-50/50 p-5 shadow-sm">
+        <section className="rounded-2xl border bg-white p-5">
           <div className="mb-3 flex items-center justify-between">
             <div>
               <div className="text-sm font-semibold uppercase tracking-wide text-slate-700">
@@ -2573,7 +2547,35 @@ export default function AdminSettingsPage() {
             </div>
           )}
 
-          
+          <div className="mb-3 grid grid-cols-1 gap-3 md:grid-cols-3">
+            <div>
+              <div className="mb-1 text-xs text-slate-500">
+                Année scolaire utilisée pour les périodes & bulletins
+              </div>
+              <select
+                className="w-full rounded-lg border px-3 py-2 text-sm"
+                value={selectedAcademicYear}
+                onChange={async (e) => {
+                  const year = e.target.value;
+                  setSelectedAcademicYear(year);
+                  await loadEvalPeriods(year);
+                }}
+              >
+                <option value="">
+                  — Année déduite automatiquement (serveur) —
+                </option>
+                {academicYears.map((y) => (
+                  <option key={y.code || y.id} value={y.code}>
+                    {y.code || "(sans code)"}
+                    {y.is_current ? " — année courante" : ""}
+                  </option>
+                ))}
+              </select>
+              <div className="mt-1 text-[11px] text-slate-500">
+                Utilisée lors de l&apos;enregistrement des périodes d&apos;évaluation.
+              </div>
+            </div>
+          </div>
 
           <div className="overflow-x-auto rounded-xl border">
             <table className="min-w-full text-sm">
@@ -2729,7 +2731,7 @@ export default function AdminSettingsPage() {
         {/* =======================
             5) Périodes d'évaluation (bulletins)
         ======================== */}
-        <section className="rounded-2xl border border-amber-200 bg-amber-50/50 p-5 shadow-sm">
+        <section className="rounded-2xl border bg-white p-5">
           <div className="mb-3 flex items-center justify-between">
             <div>
               <div className="text-sm font-semibold uppercase tracking-wide text-slate-700">
@@ -2757,36 +2759,7 @@ export default function AdminSettingsPage() {
             </div>
           )}
 
-          <div className="mb-3 grid grid-cols-1 gap-3 md:grid-cols-3">
-            <div>
-              <div className="mb-1 text-xs text-slate-500">
-                Année scolaire utilisée pour les périodes & bulletins
-              </div>
-              <select
-                className="w-full rounded-lg border px-3 py-2 text-sm"
-                value={selectedAcademicYear}
-                onChange={async (e) => {
-                  const year = e.target.value;
-                  setSelectedAcademicYear(year);
-                  await loadEvalPeriods(year);
-                }}
-              >
-                <option value="">
-                  — Année déduite automatiquement (serveur) —
-                </option>
-                {academicYears.map((y) => (
-                  <option key={y.code || y.id} value={y.code}>
-                    {y.code || "(sans code)"}
-                    {y.is_current ? " — année courante" : ""}
-                  </option>
-                ))}
-              </select>
-              <div className="mt-1 text-[11px] text-slate-500">
-                Utilisée lors de l&apos;enregistrement des périodes d&apos;évaluation.
-              </div>
-            </div>
-          </div>
-<div className="overflow-x-auto rounded-xl border">
+          <div className="overflow-x-auto rounded-xl border">
             <table className="min-w-full text-sm">
               <thead className="bg-slate-50 text-slate-600">
                 <tr>
@@ -3005,7 +2978,7 @@ export default function AdminSettingsPage() {
         {/* =======================
             6) Coefficients des disciplines + sous-matières
         ======================== */}
-        <section className="rounded-2xl border border-indigo-200 bg-indigo-50/50 p-5 shadow-sm">
+        <section className="rounded-2xl border bg-white p-5">
           <div className="mb-3 flex items-center justify-between">
             <div>
               <div className="text-sm font-semibold uppercase tracking-wide text-slate-700">

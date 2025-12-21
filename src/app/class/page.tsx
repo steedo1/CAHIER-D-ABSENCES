@@ -571,71 +571,26 @@ export default function ClassDevicePage() {
     }
 
     // 🔁 Complément : harmoniser le nom avec /api/admin/institution/settings (comme le dashboard)
-    const adminSettingsRaw = await getJson(
+    const adminSettings = await getJson(
       "/api/admin/institution/settings",
       "classDevice:inst:adminSettings"
     );
-    if (adminSettingsRaw) {
-      let adminSettings: any = adminSettingsRaw;
-
-      // 1) Déballer { item }, { items: [] }, { data: [] } ou tableau brut
-      if (adminSettings && typeof adminSettings === "object" && (adminSettings as any).item) {
-        adminSettings = (adminSettings as any).item;
-      } else if (
-        adminSettings &&
-        typeof adminSettings === "object" &&
-        Array.isArray((adminSettings as any).items) &&
-        (adminSettings as any).items.length
-      ) {
-        adminSettings = (adminSettings as any).items[0];
-      } else if (
-        adminSettings &&
-        typeof adminSettings === "object" &&
-        Array.isArray((adminSettings as any).data) &&
-        (adminSettings as any).data.length
-      ) {
-        adminSettings = (adminSettings as any).data[0];
-      } else if (Array.isArray(adminSettings) && adminSettings.length) {
-        adminSettings = adminSettings[0];
-      }
-
-      // 2) Aplatir settings_json / settings si présents
-      if (
-        adminSettings &&
-        typeof adminSettings === "object" &&
-        ((adminSettings as any).settings_json || (adminSettings as any).settings)
-      ) {
-        const conf = (adminSettings as any).settings_json || (adminSettings as any).settings;
-        if (conf && typeof conf === "object") {
-          adminSettings = { ...adminSettings, ...conf };
-        }
-      }
-
-      // 3) Extraire le nom & l'année, en couvrant plusieurs alias
+    if (adminSettings) {
       const nameFromAdmin = String(
-        (adminSettings as any)?.institution_name ||
-          (adminSettings as any)?.institution_label ||
-          (adminSettings as any)?.short_name ||
-          (adminSettings as any)?.name ||
-          (adminSettings as any)?.header_title ||
-          (adminSettings as any)?.school_name ||
+        adminSettings?.institution_name ||
+          adminSettings?.name ||
+          adminSettings?.institution_label ||
           ""
       ).trim();
 
       const yearFromAdmin =
-        (adminSettings as any)?.academic_year_label ||
-        (adminSettings as any)?.current_academic_year_label ||
-        (adminSettings as any)?.active_academic_year ||
-        (adminSettings as any)?.year_label ||
-        (adminSettings as any)?.header_academic_year ||
+        adminSettings?.academic_year_label ||
+        adminSettings?.current_academic_year_label ||
+        adminSettings?.active_academic_year ||
         null;
 
-      if (nameFromAdmin) {
-        instConfig.institution_name = nameFromAdmin;
-      }
-      if (yearFromAdmin && !instConfig.academic_year_label) {
-        instConfig.academic_year_label = yearFromAdmin;
-      }
+      if (nameFromAdmin) instConfig.institution_name = nameFromAdmin;
+      if (yearFromAdmin && !instConfig.academic_year_label) instConfig.academic_year_label = yearFromAdmin;
     }
 
     Object.values(grouped).forEach((arr) =>
