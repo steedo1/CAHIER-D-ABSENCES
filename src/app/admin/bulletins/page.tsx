@@ -2137,27 +2137,6 @@ export default function BulletinsPage() {
     return Array.from(set).sort();
   }, [classes, periods]);
 
-  const selectedClass = useMemo(() => {
-    if (!selectedClassId) return null;
-    return classes.find((c) => c.id === selectedClassId) || null;
-  }, [classes, selectedClassId]);
-
-  const selectedPeriod = useMemo(() => {
-    if (!selectedPeriodId) return null;
-    return periods.find((p) => p.id === selectedPeriodId) || null;
-  }, [periods, selectedPeriodId]);
-
-  const effectiveAcademicYear = useMemo(() => {
-    return (
-      String(
-        selectedAcademicYear ||
-          selectedPeriod?.academic_year ||
-          selectedClass?.academic_year ||
-          ""
-      ).trim()
-    );
-  }, [selectedAcademicYear, selectedPeriod, selectedClass]);
-
   const filteredPeriods = useMemo(() => {
     if (!selectedAcademicYear) return periods;
     return periods.filter((p) => p.academic_year === selectedAcademicYear);
@@ -2584,11 +2563,11 @@ export default function BulletinsPage() {
                 </Button>
               </div>
 
-              {selectedClassId && effectiveAcademicYear && (
+              {selectedClassId && selectedAcademicYear && (
                 <div className="flex justify-end">
                   <ClosePeriodButton
                     classId={selectedClassId}
-                    academicYear={effectiveAcademicYear}
+                    academicYear={selectedAcademicYear}
                   />
                 </div>
               )}
