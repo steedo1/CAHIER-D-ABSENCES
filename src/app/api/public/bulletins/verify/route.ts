@@ -650,7 +650,7 @@ export async function GET(req: NextRequest) {
     });
   }
 
-  // 6) Evaluations publiées (période demandée)
+  // 6) Evaluations publiées
   let evals: EvalRow[] = [];
   {
     let evalQuery = srv
@@ -1007,7 +1007,7 @@ export async function GET(req: NextRequest) {
 
   const hasGroupConfig = subjectGroups.length > 0;
 
-  // 10) Notes (student_grades) pour la période
+  // 10) Notes (student_grades)
   const evalById = new Map<string, EvalRow>();
   for (const e of evals) evalById.set(e.id, e);
 
@@ -1030,10 +1030,7 @@ export async function GET(req: NextRequest) {
     scores = (scoreData || []) as ScoreRow[];
   }
 
-  const perStudentSubject = new Map<
-    string,
-    Map<string, { sumWeighted: number; sumCoeff: number }>
-  >();
+  const perStudentSubject = new Map<string, Map<string, { sumWeighted: number; sumCoeff: number }>>();
   const perStudentSubjectComponent = new Map<
     string,
     Map<string, { subject_id: string; sumWeighted: number; sumCoeff: number }>
@@ -1080,7 +1077,7 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  // 11) Construire items pour tous les élèves de la classe (moyenne du trimestre)
+  // 11) Construire items pour tous les élèves de la classe
   const items = classStudents.map((cs) => {
     const stuLocal = cs.students || {};
     const fullName =
@@ -1251,142 +1248,6 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  // 12) Moyenne générale annuelle (optionnelle) pour cet élève
-  // On recalcule une moyenne sur toutes les évaluations publiées de la classe,
-  // sans filtrer par période, en utilisant les mêmes coefficients matières/sous-matières.
-  let annual_general_avg: number | null = null;
-
-  try {
-    const { data: evalAnnualData, error: evalAnnualErr } = await srv
-      .from("grade_evaluations")
-      .select(
-        "id, class_id, subject_id, teacher_id, eval_date, scale, coeff, is_published, subject_component_id"
-      )
-      .eq("class_id", classId)
-      .eq("is_published", true);
-
-    if (!evalAnnualErr && evalAnnualData && evalAnnualData.length) {
-      const evalsAnnual = (evalAnnualData || []) as EvalRow[];
-      const evalAnnualById = new Map<string, EvalRow>();
-      for (const e of evalsAnnual) evalAnnualById.set(e.id, e);
-
-      const evalAnnualIds = evalsAnnual.map((e) => e.id);
-
-      const { data: scoreAnnualData, error: scoreAnnualErr } = await srv
-        .from("student_grades")
-        .select("evaluation_id, student_id, score")
-        .in("evaluation_id", evalAnnualIds)
-        .eq("student_id", studentId);
-
-      if (!scoreAnnualErr && scoreAnnualData && scoreAnnualData.length) {
-        const perSubjectAnnual = new Map<string, { sumWeighted: number; sumCoeff: number }>();
-        const perSubjectComponentAnnual = new Map<
-          string,
-          { subject_id: string; sumWeighted: number; sumCoeff: number }
-        >();
-
-        for (const sc of scoreAnnualData as ScoreRow[]) {
-          const ev = evalAnnualById.get(sc.evaluation_id);
-          if (!ev) continue;
-          if (!ev.subject_id) continue;
-          if (!ev.scale || ev.scale <= 0) continue;
-          if (sc.score === null || sc.score === undefined) continue;
-
-          const score = Number(sc.score);
-          if (!Number.isFinite(score)) continue;
-
-          const norm20 = (score / ev.scale) * 20;
-          const weight = ev.coeff ?? 1;
-
-          const subjKey = ev.subject_id;
-
-          const subjCell =
-            perSubjectAnnual.get(subjKey) || { sumWeighted: 0, sumCoeff: 0 };
-          subjCell.sumWeighted += norm20 * weight;
-          subjCell.sumCoeff += weight;
-          perSubjectAnnual.set(subjKey, subjCell);
-
-          if (ev.subject_component_id) {
-            const comp = subjectComponentById.get(ev.subject_component_id);
-            if (comp) {
-              const compCell =
-                perSubjectComponentAnnual.get(comp.id) || {
-                  subject_id: comp.subject_id,
-                  sumWeighted: 0,
-                  sumCoeff: 0,
-                };
-              compCell.sumWeighted += norm20 * weight;
-              compCell.sumCoeff += weight;
-              perSubjectComponentAnnual.set(comp.id, compCell);
-            }
-          }
-        }
-
-        // Calcul de la moyenne générale annuelle sur 20
-        let sumGen = 0;
-        let sumCoeffGen = 0;
-
-        for (const s of subjectsForReport) {
-          if (s.include_in_average === false) continue;
-          const coeffSub = Number(s.coeff_bulletin ?? 0);
-          if (!coeffSub || coeffSub <= 0) continue;
-
-          const comps = compsBySubject.get(s.subject_id) || [];
-
-          let avg20: number | null = null;
-
-          // Si la matière a des sous-matières actives, on calcule la moyenne pondérée des sous-matières
-          if (comps.length) {
-            let sum = 0;
-            let sumW = 0;
-
-            for (const comp of comps) {
-              const cell = perSubjectComponentAnnual.get(comp.id);
-              if (!cell || cell.sumCoeff <= 0) continue;
-
-              const compAvgRaw = cell.sumWeighted / cell.sumCoeff;
-              if (!Number.isFinite(compAvgRaw)) continue;
-
-              const w = comp.coeff_in_subject ?? 1;
-              if (!w || w <= 0) continue;
-
-              sum += compAvgRaw * w;
-              sumW += w;
-            }
-
-            if (sumW > 0) {
-              avg20 = cleanNumber(sum / sumW, 4);
-            }
-          }
-
-          // Sinon, on revient au calcul direct par matière
-          if (avg20 === null) {
-            const cell = perSubjectAnnual.get(s.subject_id);
-            if (cell && cell.sumCoeff > 0) {
-              avg20 = cleanNumber(cell.sumWeighted / cell.sumCoeff, 4);
-            }
-          }
-
-          if (avg20 === null || avg20 === undefined) continue;
-
-          sumGen += Number(avg20) * coeffSub;
-          sumCoeffGen += coeffSub;
-        }
-
-        annual_general_avg =
-          sumCoeffGen > 0 ? cleanNumber(sumGen / sumCoeffGen, 4) : null;
-      }
-    }
-  } catch (e) {
-    // En cas d'erreur sur le calcul de la moyenne annuelle, on ignore
-    annual_general_avg = null;
-  }
-
-  const bulletinWithAnnual = {
-    ...bulletinForStudent,
-    annual_general_avg,
-  };
-
   return NextResponse.json({
     ok: true,
     mode,
@@ -1434,6 +1295,6 @@ export async function GET(req: NextRequest) {
     subjects: subjectsForReport,
     subject_groups: subjectGroups,
     subject_components: subjectComponentsForReport,
-    bulletin: bulletinWithAnnual,
+    bulletin: bulletinForStudent,
   });
 }
