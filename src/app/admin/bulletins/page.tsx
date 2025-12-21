@@ -1,4 +1,3 @@
-// src/app/admin/notes/bulletins/page.tsx
 "use client";
 
 import React, {
@@ -9,6 +8,7 @@ import React, {
   useState,
 } from "react";
 import { Printer, RefreshCw, X } from "lucide-react";
+import { ClosePeriodButton } from "@/components/admin/grades/ClosePeriodButton";
 
 /* ───────── Types ───────── */
 
@@ -1319,6 +1319,7 @@ function StudentBulletinCard({
         });
 
         const groupIsAutres = isAutresGroup(g);
+
         if (
           groupIsAutres &&
           conductSubject &&
@@ -1399,7 +1400,7 @@ function StudentBulletinCard({
           </td>
           <td className="bdr px-1 py-[1px] text-center">{formatNumber(moyCoeff)}</td>
           <td className="bdr px-1 py-[1px] text-center">{subjectRankLabel}</td>
-          <td className="bdr px-1 py-[1px]">{appreciationLabel}</td>
+          <td className="bdr px-1 py-[1px] text-center">{appreciationLabel}</td>
           <td className="bdr px-1 py-[1px]">{subjectTeacher}</td>
           <td className="bdr p-0 align-middle sig-cell">
             {renderSignatureLine(signaturePng)}
@@ -1509,10 +1510,10 @@ function StudentBulletinCard({
                   {period.to ? formatDateFR(period.to) : "—"}
                 </div>
               )}
-                        </div>
+            </div>
 
             <div className="bdr absolute right-0 top-0 z-10 flex h-[110px] w-[110px] items-center justify-center overflow-hidden bg-white">
-{qrImgSrc ? (
+              {qrImgSrc ? (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img
                   src={qrImgSrc}
@@ -1522,7 +1523,7 @@ function StudentBulletinCard({
               ) : (
                 <div className="text-[8px] text-slate-500">QR</div>
               )}
-                        </div>
+            </div>
           </div>
         </div>
 
@@ -2561,6 +2562,15 @@ export default function BulletinsPage() {
                     : "Activer"}
                 </Button>
               </div>
+
+              {selectedClassId && selectedAcademicYear && (
+                <div className="flex justify-end">
+                  <ClosePeriodButton
+                    classId={selectedClassId}
+                    academicYear={selectedAcademicYear}
+                  />
+                </div>
+              )}
 
               <div className="flex justify-end gap-2">
                 <Button
