@@ -114,6 +114,82 @@ type ConductMax = {
 /* Nom par défaut (fallback local / dev) */
 const DEFAULT_INSTITUTION_NAME = "COURS SECONDAIRE CATHOLIQUE ABOISSO";
 
+/* ───────── Institution identity helpers (même méthode que le fichier qui marche) ───────── */
+const INSTITUTION_NAME_KEYS = [
+  "institution_name",
+  "institution_label",
+  "short_name",
+  "name",
+  "header_title",
+  "school_name",
+] as const;
+
+const ACADEMIC_YEAR_KEYS = [
+  "current_academic_year_label",
+  "academic_year_label",
+  "academic_year",
+  "year_label",
+  "header_academic_year",
+  "active_academic_year",
+  "school_year",
+  "annee_scolaire",
+] as const;
+
+function safeStr(x: any): string | null {
+  const s = String(x ?? "").trim();
+  return s.length ? s : null;
+}
+
+function isPlainObject(v: any): v is Record<string, any> {
+  return !!v && typeof v === "object" && !Array.isArray(v);
+}
+
+function pickFrom(obj: any, keys: readonly string[]): string | null {
+  if (!isPlainObject(obj)) return null;
+  for (const k of keys) {
+    const v = safeStr((obj as any)[k]);
+    if (v) return v;
+  }
+  return null;
+}
+
+function unwrapPayload(payload: any): { root: any; settings: any } {
+  // root = l'objet "le plus plausible" (item, premier item, etc.)
+  let root = payload;
+
+  if (isPlainObject(root) && isPlainObject(root.item)) root = root.item;
+  else if (isPlainObject(root) && Array.isArray((root as any).items) && (root as any).items[0])
+    root = (root as any).items[0];
+  else if (isPlainObject(root) && Array.isArray((root as any).data) && (root as any).data[0])
+    root = (root as any).data[0];
+
+  const settings =
+    (isPlainObject(root) && isPlainObject((root as any).settings_json) && Object.keys((root as any).settings_json).length
+      ? (root as any).settings_json
+      : null) ||
+    (isPlainObject(payload) &&
+    isPlainObject((payload as any).settings_json) &&
+    Object.keys((payload as any).settings_json).length
+      ? (payload as any).settings_json
+      : null);
+
+  return { root, settings };
+}
+
+function extractInstitutionIdentity(payload: any): { name: string | null; year: string | null } {
+  const { root, settings } = unwrapPayload(payload);
+
+  // même principe : si settings_json est là, on regarde d'abord dedans
+  let name = pickFrom(settings, INSTITUTION_NAME_KEYS) || null;
+  let year = pickFrom(settings, ACADEMIC_YEAR_KEYS) || null;
+
+  // puis fallback racine (défensif)
+  if (!name) name = pickFrom(root, INSTITUTION_NAME_KEYS) || null;
+  if (!year) year = pickFrom(root, ACADEMIC_YEAR_KEYS) || null;
+
+  return { name, year };
+}
+
 /* ───────── Utils (périodes) ───────── */
 const hhmm = (d: Date) => d.toTimeString().slice(0, 5);
 function toMinutes(hm: string) {
@@ -686,41 +762,99 @@ export default function ClassDevicePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /* ✅ Fallback doux : récupérer nom établissement + année via dataset / globals */
+  /* ✅ Même logique que ton fichier qui marche :
+        1) dataset/globals
+        2) fallback settings endpoints (settings_json puis racine) */
   useEffect(() => {
-    if (typeof window === "undefined") return;
-    try {
-      const body: any = document.body;
+    let cancelled = false;
 
-      const fromDataName = body?.dataset?.institutionName || body?.dataset?.institution || null;
-      const fromGlobalName = (window as any).__MC_INSTITUTION_NAME__
-        ? String((window as any).__MC_INSTITUTION_NAME__)
-        : null;
-      const finalName = fromDataName || fromGlobalName;
+    (async () => {
+      if (typeof window === "undefined") return;
 
-      const fromDataYear =
-        body?.dataset?.academicYear ||
-        body?.dataset?.schoolYear ||
-        body?.dataset?.anneeScolaire ||
-        null;
-      const fromGlobalYear = (window as any).__MC_ACADEMIC_YEAR__
-        ? String((window as any).__MC_ACADEMIC_YEAR__)
-        : null;
-      const finalYear = fromDataYear || fromGlobalYear;
+      try {
+        const body: any = document.body;
 
-      if (!finalName && !finalYear) return;
+        // 1) DOM / globals
+        const fromDataName =
+          safeStr(body?.dataset?.institutionName) || safeStr(body?.dataset?.institution);
+        const fromGlobalName = safeStr((window as any).__MC_INSTITUTION_NAME__);
+        const finalName = fromDataName || fromGlobalName;
 
-      setInst((prev) => ({
-        ...prev,
-        institution_name:
-          finalName && finalName.trim().length > 0
-            ? finalName
-            : prev.institution_name || DEFAULT_INSTITUTION_NAME,
-        academic_year_label: finalYear || prev.academic_year_label || null,
-      }));
-    } catch {
-      // on ne casse rien si ça échoue
-    }
+        const fromDataYear =
+          safeStr(body?.dataset?.academicYear) ||
+          safeStr(body?.dataset?.schoolYear) ||
+          safeStr(body?.dataset?.anneeScolaire);
+        const fromGlobalYear = safeStr((window as any).__MC_ACADEMIC_YEAR__);
+        const finalYear = fromDataYear || fromGlobalYear;
+
+        if (finalName || finalYear) {
+          setInst((prev) => ({
+            ...prev,
+            institution_name:
+              finalName && finalName.trim().length > 0
+                ? !prev.institution_name || prev.institution_name === DEFAULT_INSTITUTION_NAME
+                  ? finalName
+                  : prev.institution_name
+                : prev.institution_name || DEFAULT_INSTITUTION_NAME,
+            academic_year_label: finalYear || prev.academic_year_label || null,
+          }));
+        }
+
+        // si les deux sont trouvés en local, on ne fait pas d'appel réseau (comme l'exemple)
+        if (finalName && finalYear) return;
+
+        // 2) fallback API (settings)
+        const endpoints = [
+          {
+            url: "/api/teacher/institution/settings",
+            key: "classDevice:identity:settings:teacher",
+          },
+          {
+            url: "/api/institution/settings",
+            key: "classDevice:identity:settings:institution",
+          },
+          {
+            url: "/api/admin/institution/settings",
+            key: "classDevice:identity:settings:admin",
+          },
+        ] as const;
+
+        for (const ep of endpoints) {
+          let data: any = null;
+          try {
+            data = await offlineGetJson(ep.url, ep.key);
+          } catch {
+            data = null;
+          }
+
+          const { name, year } = extractInstitutionIdentity(data);
+
+          if (name || year) {
+            if (cancelled) return;
+
+            setInst((prev) => ({
+              ...prev,
+              institution_name:
+                name && name.trim().length > 0
+                  ? !prev.institution_name || prev.institution_name === DEFAULT_INSTITUTION_NAME
+                    ? name
+                    : prev.institution_name
+                  : prev.institution_name || DEFAULT_INSTITUTION_NAME,
+              academic_year_label: year || prev.academic_year_label || null,
+            }));
+
+            // dès qu'on a au moins un des deux, on stoppe (comme l'exemple)
+            break;
+          }
+        }
+      } catch {
+        // ne casse rien
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   // Calcul du créneau par défaut « du moment » (timezone-aware)
