@@ -206,9 +206,14 @@ export default function TeacherDashboard() {
     tz: "Africa/Abidjan",
     default_session_minutes: 60,
     auto_lateness: true,
-    institution_name: "COURS SECONDAIRE CATHOLIQUE ABOISSO",
+    institution_name: "NOM DE L'ETABLISSEMENT",
     academic_year_label: null,
   });
+
+  // États header (même logique que l’autre fichier)
+  const [institutionName, setInstitutionName] = useState<string | null>(null);
+  const [academicYearLabel, setAcademicYearLabel] = useState<string | null>(null);
+
   const [periodsByDay, setPeriodsByDay] = useState<Record<number, Period[]>>({});
   const [slotLabel, setSlotLabel] = useState<string>(
     "Aucun créneau configuré (fallback automatique)"
@@ -423,7 +428,7 @@ export default function TeacherDashboard() {
       // cas { data: [...] } (retour supabase brut)
       else if (src && typeof src === "object" && Array.isArray(src.data) && src.data.length) {
         const it = src.data[0];
-        src = it.settings_json || it.settings || it;
+        src = it.settings_json || src.settings || it;
       }
       // cas direct settings_json / settings
       else if (src && typeof src === "object" && (src.settings_json || src.settings)) {
@@ -473,7 +478,8 @@ export default function TeacherDashboard() {
     loadInstitutionBasics();
   }, []);
 
-  /* ✅ Fallback doux : récupérer nom établissement + année via dataset / globals */
+  /* ✅ Fallback doux : récupérer nom établissement + année via dataset / globals
+     (pour inst.*) */
   useEffect(() => {
     if (typeof window === "undefined") return;
     try {
@@ -506,6 +512,134 @@ export default function TeacherDashboard() {
     } catch {
       // on ne casse rien si ça échoue
     }
+  }, []);
+
+  /* 🔁 Logique header identique à l’autre fichier :
+     1) DOM / variables globales
+     2) Fallback via /api/*/institution/settings
+  */
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    async function hydrateInstitutionHeader() {
+      try {
+        const body: any = document.body;
+
+        // 1) DOM + globals
+        const fromDataName =
+          body?.dataset?.institutionName || body?.dataset?.institution || null;
+        const fromGlobalName = (window as any).__MC_INSTITUTION_NAME__
+          ? String((window as any).__MC_INSTITUTION_NAME__)
+          : null;
+        const initialName = fromDataName || fromGlobalName;
+
+        const fromDataYear =
+          body?.dataset?.academicYear ||
+          body?.dataset?.schoolYear ||
+          body?.dataset?.anneeScolaire ||
+          null;
+        const fromGlobalYear = (window as any).__MC_ACADEMIC_YEAR__
+          ? String((window as any).__MC_ACADEMIC_YEAR__)
+          : null;
+        const initialYear = fromDataYear || fromGlobalYear;
+
+        if (initialName) {
+          setInstitutionName((prev) => prev ?? String(initialName));
+        }
+        if (initialYear) {
+          setAcademicYearLabel((prev) => prev ?? String(initialYear));
+        }
+
+        // si on a déjà les deux → pas besoin d’appeler l’API
+        if (initialName && initialYear) {
+          return;
+        }
+
+        // 2) Fallback via /settings
+        const urls = [
+          "/api/teacher/institution/settings",
+          "/api/institution/settings",
+          "/api/admin/institution/settings",
+        ];
+
+        for (const url of urls) {
+          let res: Response;
+          try {
+            res = await fetch(url, { cache: "no-store" });
+          } catch {
+            continue;
+          }
+          if (!res.ok) continue;
+
+          let data: any;
+          try {
+            data = await res.json();
+          } catch {
+            continue;
+          }
+          if (!data) continue;
+
+          let src: any = data;
+
+          if (src && typeof src === "object" && src.item) {
+            const it = src.item;
+            src = it.settings_json || it.settings || it;
+          } else if (
+            src &&
+            typeof src === "object" &&
+            Array.isArray(src.items) &&
+            src.items.length
+          ) {
+            const it = src.items[0];
+            src = it.settings_json || it.settings || it;
+          } else if (
+            src &&
+            typeof src === "object" &&
+            Array.isArray(src.data) &&
+            src.data.length
+          ) {
+            const it = src.data[0];
+            src = it.settings_json || it.settings || it;
+          } else if (src && typeof src === "object" && (src.settings_json || src.settings)) {
+            src = src.settings_json || src.settings;
+          }
+
+          if (!src) continue;
+
+          const candidateName =
+            src.institution_name ||
+            src.institution_label ||
+            src.short_name ||
+            src.name ||
+            src.header_title ||
+            src.school_name ||
+            null;
+
+          const candidateYear =
+            src.current_academic_year_label ||
+            src.academic_year_label ||
+            src.academic_year ||
+            src.year_label ||
+            src.header_academic_year ||
+            null;
+
+          const cleanName = candidateName ? String(candidateName).trim() : null;
+          const cleanYear = candidateYear ? String(candidateYear).trim() : null;
+
+          if (!cleanName && !cleanYear) continue;
+
+          setInstitutionName((prev) => prev ?? cleanName);
+          setAcademicYearLabel((prev) => prev ?? cleanYear);
+
+          // Dès qu’on a trouvé quelque chose, on arrête
+          break;
+        }
+      } catch (e) {
+        console.warn("[TeacherDashboard] institution header load error", e);
+      }
+    }
+
+    void hydrateInstitutionHeader();
   }, []);
 
   // Calcul du créneau « du moment » + verrouillage heure/durée
@@ -775,7 +909,7 @@ export default function TeacherDashboard() {
       return;
     }
     setPenRows({});
-    setPenRubric((prev) => prev); // l'effet corrigera si max=0
+    setPenRubric((prev) => prev); // l’effet corrigera si max=0
     setPenaltyOpen(true);
     void ensureRosterForPenalty();
   }
@@ -936,11 +1070,11 @@ export default function TeacherDashboard() {
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="space-y-1">
             <p className="text-[11px] font-semibold uppercase tracking-[0.25em] text-indigo-200/80">
-              {inst.institution_name || "COURS SECONDAIRE CATHOLIQUE ABOISSO"}
+              {institutionName || inst.institution_name || ""}
             </p>
-            {inst.academic_year_label && (
+            {(academicYearLabel || inst.academic_year_label) && (
               <p className="text-[11px] font-medium text-indigo-100/80">
-                Année scolaire {inst.academic_year_label}
+                Année scolaire {academicYearLabel || inst.academic_year_label}
               </p>
             )}
             <h1 className="text-xl sm:text-2xl font-semibold tracking-tight text-white">

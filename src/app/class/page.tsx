@@ -112,7 +112,7 @@ type ConductMax = {
 };
 
 /* Nom par défaut (fallback local / dev) */
-const DEFAULT_INSTITUTION_NAME = "COURS SECONDAIRE CATHOLIQUE ABOISSO";
+const DEFAULT_INSTITUTION_NAME = "NOM DE L'ETABLISSEMENT";
 
 /* ───────── Institution identity helpers (même méthode que le fichier qui marche) ───────── */
 const INSTITUTION_NAME_KEYS = [
