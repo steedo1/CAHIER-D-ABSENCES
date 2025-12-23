@@ -99,22 +99,56 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  // Résoudre subjectIdRaw (institution_subjects.id ou subjects.id) en subjects.id
+  // ✅ Refuser si la classe n'appartient pas à l'institution
+  const { data: cls, error: clsErr } = await supabase
+    .from("classes")
+    .select("id, institution_id")
+    .eq("id", classId)
+    .maybeSingle();
+
+  if (clsErr) {
+    console.error("[admin.notes.matrix] classes check error", clsErr);
+    return NextResponse.json(
+      { ok: false, error: "CLASSES_ERROR" },
+      { status: 500 }
+    );
+  }
+
+  if (!cls || (cls as any).institution_id !== institutionId) {
+    return NextResponse.json(
+      { ok: false, error: "FORBIDDEN_CLASS" },
+      { status: 403 }
+    );
+  }
+
+  // ✅ Résoudre subjectIdRaw (institution_subjects.id ou subjects.id) en subjects.id
   let canonicalSubjectId: string | null = null;
 
-  try {
-    const { data: isub, error: isubErr } = await supabase
-      .from("institution_subjects")
-      .select("subject_id")
-      .eq("id", subjectIdRaw)
-      .maybeSingle();
+  // si c'est un institution_subjects.id, on vérifie qu'il appartient à la même institution
+  const { data: isub, error: isubErr } = await supabase
+    .from("institution_subjects")
+    .select("id, subject_id, institution_id")
+    .eq("id", subjectIdRaw)
+    .maybeSingle();
 
-    if (!isubErr && isub && isub.subject_id) {
-      canonicalSubjectId = isub.subject_id as string;
-    } else {
-      canonicalSubjectId = subjectIdRaw;
+  if (isubErr) {
+    console.error("[admin.notes.matrix] institution_subjects error", isubErr);
+    return NextResponse.json(
+      { ok: false, error: "SUBJECTS_ERROR" },
+      { status: 500 }
+    );
+  }
+
+  if (isub) {
+    if ((isub as any).institution_id !== institutionId) {
+      return NextResponse.json(
+        { ok: false, error: "FORBIDDEN_SUBJECT" },
+        { status: 403 }
+      );
     }
-  } catch {
+    canonicalSubjectId = (isub as any).subject_id as string;
+  } else {
+    // sinon on considère que c'est déjà un subjects.id
     canonicalSubjectId = subjectIdRaw;
   }
 
@@ -135,13 +169,14 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  // 1) Évaluations de la classe + matière
+  // 1) Évaluations de la classe + matière (SCOPÉES institution)
   let evalQuery = supabase
     .from("grade_evaluations")
     .select(
-      "id, class_id, subject_id, teacher_id, eval_date, eval_kind, scale, coeff, title, is_published",
+      "id, class_id, subject_id, teacher_id, eval_date, eval_kind, scale, coeff, title, is_published, classes!inner(institution_id)",
       { count: "exact" }
     )
+    .eq("classes.institution_id", institutionId)
     .eq("class_id", classId)
     .eq("subject_id", canonicalSubjectId)
     .order("eval_date", { ascending: true });
@@ -161,7 +196,7 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  const evalRows = (evalsData || []) as EvalRow[];
+  const evalRows = (evalsData || []) as any as EvalRow[];
 
   if (!evalRows.length) {
     return NextResponse.json({
@@ -195,12 +230,10 @@ export async function GET(req: NextRequest) {
     .eq("institution_id", institutionId);
 
   if (from || to) {
-    // élève présent au moins un jour entre rosterFrom et rosterTo
     enrollQuery = enrollQuery
       .lte("start_date", rosterTo)
       .or(`end_date.is.null,end_date.gte.${rosterFrom}`);
   } else {
-    // photo de la classe actuelle (élèves encore inscrits)
     enrollQuery = enrollQuery.is("end_date", null);
   }
 
@@ -217,7 +250,7 @@ export async function GET(req: NextRequest) {
     const s = r.students || {};
     const ln = (s.last_name || "").trim();
     const fn = (s.first_name || "").trim();
-    const full = (ln || fn) ? `${ln} ${fn}`.trim() : "Élève";
+    const full = ln || fn ? `${ln} ${fn}`.trim() : "Élève";
     const matricule = (s.matricule ?? null) as string | null;
     return {
       student_id: r.student_id as string,
@@ -226,7 +259,7 @@ export async function GET(req: NextRequest) {
     };
   });
 
-  // 3) Notes depuis grade_flat_marks
+  // 3) Notes depuis grade_flat_marks (evalIds déjà scopés)
   const { data: marksData, error: marksErr } = await supabase
     .from("grade_flat_marks")
     .select(
@@ -260,12 +293,10 @@ export async function GET(req: NextRequest) {
     const sid = row.student_id;
     if (!sid) continue;
 
-    // si l'élève n'est pas dans le roster (sécurité / ancien jeu de données),
-    // on le rajoute avec les infos présentes dans grade_flat_marks
     if (!studentsById.has(sid)) {
       const ln = (row.last_name || "").trim();
       const fn = (row.first_name || "").trim();
-      const full = (ln || fn) ? `${ln} ${fn}`.trim() : "Élève";
+      const full = ln || fn ? `${ln} ${fn}`.trim() : "Élève";
       studentsById.set(sid, {
         student_id: sid,
         full_name: full,
@@ -282,7 +313,6 @@ export async function GET(req: NextRequest) {
     };
   }
 
-  // Trier les élèves par nom pour l'affichage
   const students = Array.from(studentsById.values()).sort((a, b) =>
     a.full_name.localeCompare(b.full_name, undefined, {
       sensitivity: "base",
@@ -292,9 +322,7 @@ export async function GET(req: NextRequest) {
 
   // 5) Noms des enseignants
   const teacherIds = Array.from(
-    new Set(
-      evalRows.map((e) => e.teacher_id).filter((x): x is string => !!x)
-    )
+    new Set(evalRows.map((e) => e.teacher_id).filter((x): x is string => !!x))
   );
 
   const teachersById: Record<string, string> = {};
@@ -343,5 +371,3 @@ export async function GET(req: NextRequest) {
     marks: marksByStudent,
   });
 }
-
-

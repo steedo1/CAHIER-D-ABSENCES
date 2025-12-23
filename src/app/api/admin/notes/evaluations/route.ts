@@ -103,30 +103,60 @@ export async function GET(req: NextRequest) {
   const fromIdx = (page - 1) * limit;
   const toIdx = fromIdx + limit - 1;
 
-  /* ───────── Résolution du subject_id canonique ─────────
-     subjectIdRaw peut être :
-       - un subjects.id (directement)
-       - ou un institution_subjects.id (c’est ce que renvoie ton /api/class/subjects)
-     On traduit tout en subjects.id pour filtrer grade_evaluations.
-  */
+  // Si classId est fourni, on refuse si la classe n'appartient pas à l'institution
+  if (classId) {
+    const { data: cls, error: clsErr } = await supabase
+      .from("classes")
+      .select("id, institution_id")
+      .eq("id", classId)
+      .maybeSingle();
+
+    if (clsErr) {
+      console.error("[admin.notes.evaluations] classes check error", clsErr);
+      return NextResponse.json(
+        { ok: false, error: "CLASSES_ERROR" },
+        { status: 500 }
+      );
+    }
+
+    if (!cls || (cls as any).institution_id !== institutionId) {
+      return NextResponse.json(
+        { ok: false, error: "FORBIDDEN_CLASS" },
+        { status: 403 }
+      );
+    }
+  }
+
+  /* ───────── Résolution du subject_id canonique ───────── */
   let canonicalSubjectId: string | null = null;
 
   if (subjectIdRaw) {
-    try {
-      const { data: isub, error: isubErr } = await supabase
-        .from("institution_subjects")
-        .select("subject_id")
-        .eq("id", subjectIdRaw)
-        .maybeSingle();
+    // Si subjectIdRaw correspond à un institution_subjects.id,
+    // on vérifie qu'il appartient à la même institution.
+    const { data: isub, error: isubErr } = await supabase
+      .from("institution_subjects")
+      .select("id, subject_id, institution_id")
+      .eq("id", subjectIdRaw)
+      .maybeSingle();
 
-      if (!isubErr && isub && isub.subject_id) {
-        canonicalSubjectId = isub.subject_id as string;
-      } else {
-        // on considère que c’est déjà un subjects.id
-        canonicalSubjectId = subjectIdRaw;
+    if (isubErr) {
+      console.error("[admin.notes.evaluations] institution_subjects error", isubErr);
+      return NextResponse.json(
+        { ok: false, error: "SUBJECTS_ERROR" },
+        { status: 500 }
+      );
+    }
+
+    if (isub) {
+      if ((isub as any).institution_id !== institutionId) {
+        return NextResponse.json(
+          { ok: false, error: "FORBIDDEN_SUBJECT" },
+          { status: 403 }
+        );
       }
-    } catch {
-      // fallback safe : on considère que c’est déjà un subjects.id
+      canonicalSubjectId = (isub as any).subject_id as string;
+    } else {
+      // sinon on considère que c’est déjà un subjects.id
       canonicalSubjectId = subjectIdRaw;
     }
   }
@@ -143,13 +173,14 @@ export async function GET(req: NextRequest) {
     institution_id: institutionId,
   });
 
-  /* ───────── Évaluations ───────── */
+  /* ───────── Évaluations (SCOPÉES institution) ───────── */
   let query = supabase
     .from("grade_evaluations")
     .select(
-      "id, class_id, subject_id, teacher_id, eval_date, eval_kind, scale, coeff, is_published",
+      "id, class_id, subject_id, teacher_id, eval_date, eval_kind, scale, coeff, is_published, classes!inner(institution_id)",
       { count: "exact" }
     )
+    .eq("classes.institution_id", institutionId)
     .order("eval_date", { ascending: false });
 
   if (from) query = query.gte("eval_date", from);
@@ -171,12 +202,7 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  const evalRows = (evalsData || []) as EvalRow[];
-
-  console.log("[admin.notes.evaluations] evalRows count", {
-    count: evalRows.length,
-    total: count ?? evalRows.length,
-  });
+  const evalRows = (evalsData || []) as any as EvalRow[];
 
   if (!evalRows.length) {
     return NextResponse.json({
@@ -195,14 +221,10 @@ export async function GET(req: NextRequest) {
   const evalIds = Array.from(new Set(evalRows.map((e) => e.id)));
   const classIds = Array.from(new Set(evalRows.map((e) => e.class_id)));
   const subjectIds = Array.from(
-    new Set(
-      evalRows.map((e) => e.subject_id).filter((x): x is string => !!x)
-    )
+    new Set(evalRows.map((e) => e.subject_id).filter((x): x is string => !!x))
   );
   const teacherIds = Array.from(
-    new Set(
-      evalRows.map((e) => e.teacher_id).filter((x): x is string => !!x)
-    )
+    new Set(evalRows.map((e) => e.teacher_id).filter((x): x is string => !!x))
   );
 
   /* ───────── Notes via grade_flat_marks ───────── */
@@ -229,13 +251,14 @@ export async function GET(req: NextRequest) {
       }));
   }
 
-  /* ───────── Métadonnées classes ───────── */
+  /* ───────── Métadonnées classes (SCOPÉES institution) ───────── */
   const classesById: Record<string, { label: string; level: string | null }> = {};
   if (classIds.length) {
     const { data: classesData, error: classesErr } = await supabase
       .from("classes")
       .select("id, label, level")
-      .in("id", classIds);
+      .in("id", classIds)
+      .eq("institution_id", institutionId);
 
     if (classesErr) {
       console.error("[admin.notes.evaluations] classes error", classesErr);
@@ -256,7 +279,6 @@ export async function GET(req: NextRequest) {
   /* ───────── Métadonnées matières (custom + fallback global) ───────── */
   const subjectsById: Record<string, { name: string }> = {};
   if (subjectIds.length) {
-    // d'abord essayer via institution_subjects (nom custom)
     const { data: instById, error: instByIdErr } = await supabase
       .from("institution_subjects")
       .select("id, subject_id, custom_name, subjects(name)")
@@ -312,7 +334,6 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    // fallback : subjects pour les IDs restants
     const leftoverSubjectIds = subjectIds.filter((id) => !resolvedIds.has(id));
 
     if (leftoverSubjectIds.length) {

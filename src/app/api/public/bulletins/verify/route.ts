@@ -443,16 +443,28 @@ export async function GET(req: NextRequest) {
       ?? payload?.startDate
       ?? null;
 
+  // ✅ FIX IMPORTANT : accepter aussi la clé courte "o" (date de fin) pour le QR short
   let dateTo: string | null =
-    payload?.periodTo
+    payload?.o
+      ?? payload?.periodTo
       ?? payload?.period_to
       ?? payload?.to
       ?? payload?.end_date
       ?? payload?.endDate
       ?? null;
 
-  const academicYearToken: string | null = payload?.academicYear ?? null;
-  const periodLabelToken: string | null = payload?.periodLabel ?? null;
+  const academicYearToken: string | null =
+    payload?.academicYear ??
+    payload?.academic_year ??
+    payload?.year ??
+    null;
+
+  const periodLabelToken: string | null =
+    payload?.periodLabel ??
+    payload?.period_label ??
+    payload?.p ??
+    null;
+
   const periodCodeToken: string | null = payload?.periodCode ?? payload?.period_code ?? null;
 
   // 2) Institution + Classe (avec head teacher) + Student
@@ -612,7 +624,11 @@ export async function GET(req: NextRequest) {
 
   const periodLooksAnnual = (() => {
     const txt =
-      normText(periodMeta.code) + " " + normText(periodMeta.label) + " " + normText(periodMeta.short_label);
+      normText(periodMeta.code) +
+      " " +
+      normText(periodMeta.label) +
+      " " +
+      normText(periodMeta.short_label);
     return /(annuel|annuelle|annual|année|annee)/.test(txt);
   })();
 
@@ -814,27 +830,6 @@ export async function GET(req: NextRequest) {
           stu.full_name ||
           [stu.last_name, stu.first_name].filter(Boolean).join(" ") ||
           null,
-        matricule: stu.matricule || null,
-        gender: stu.gender || null,
-        birth_date: stu.birthdate || null,
-        birth_place: stu.birth_place || null,
-        nationality: stu.nationality || null,
-        regime: stu.regime || null,
-        is_repeater: stu.is_repeater ?? null,
-        is_boarder: stu.is_boarder ?? null,
-        is_affecte: stu.is_affecte ?? null,
-        photo_url: stu.photo_url || null,
-      },
-      period: periodMeta,
-      subjects: [],
-      subject_groups: [],
-      subject_components: [],
-      bulletin: {
-        student_id: stu.id,
-        full_name:
-          stu.full_name ||
-          [stu.last_name, stu.first_name].filter(Boolean).join(" ") ||
-          "Élève",
         matricule: stu.matricule || null,
         photo_url: stu.photo_url || null,
         gender: stu.gender || null,
