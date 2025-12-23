@@ -33,7 +33,6 @@ function parseYMD(ymd: string | null): Date | null {
   const mo = Number(m[2]) - 1;
   const d = Number(m[3]);
   if (!y || mo < 0 || d < 1) return null;
-  // on crée la date en UTC pour coller au TZ Africa/Abidjan
   return new Date(Date.UTC(y, mo, d));
 }
 
@@ -79,34 +78,67 @@ function normalizeTimeFromDb(raw: string | null | undefined): string | null {
   return `${hh}:${mm}`;
 }
 
+function parseWeekday(raw: any): number | null {
+  if (typeof raw === "number" && Number.isFinite(raw)) return raw;
+  const n = parseInt(String(raw ?? ""), 10);
+  return Number.isFinite(n) ? n : null;
+}
+
+/**
+ * Retourne plusieurs représentations possibles d’un même jour :
+ * - JS getDay(): 0..6 (dim..sam)
+ * - ISO: 1..7 (lun..dim)
+ * - Lundi=0: 0..6 (lun..dim)
+ */
+function weekdayVariants(jsDay0to6: number): number[] {
+  const s = new Set<number>();
+  if (Number.isFinite(jsDay0to6)) s.add(jsDay0to6);
+
+  // ISO (lun=1 ... dim=7)
+  const iso = jsDay0to6 === 0 ? 7 : jsDay0to6;
+  s.add(iso);
+
+  // Lundi=0 (lun=0 ... dim=6)
+  const mon0 = (jsDay0to6 + 6) % 7;
+  s.add(mon0);
+
+  return Array.from(s);
+}
+
 /* Seuil en minutes au-delà duquel on considère l’appel « en retard » (pur affichage) */
 const LATE_THRESHOLD_MIN =
   Number.isFinite(Number(process.env.ATTENDANCE_LATE_THRESHOLD_MIN))
     ? Math.max(1, Math.floor(Number(process.env.ATTENDANCE_LATE_THRESHOLD_MIN)))
     : 15;
 
-/* Fenêtre (en minutes) avant de considérer un appel comme « manquant ».
-   Par défaut, on prend la même valeur que pour le retard. */
+/* Fenêtre (en minutes) avant de considérer un appel comme « manquant ». */
 const MISSING_CONTROL_WINDOW_MIN =
   Number.isFinite(Number(process.env.ATTENDANCE_MISSING_CONTROL_WINDOW_MIN))
-    ? Math.max(1, Math.floor(Number(process.env.ATTENDANCE_MISSING_CONTROL_WINDOW_MIN)))
+    ? Math.max(
+        1,
+        Math.floor(Number(process.env.ATTENDANCE_MISSING_CONTROL_WINDOW_MIN)),
+      )
     : LATE_THRESHOLD_MIN;
 
 export async function GET(req: NextRequest) {
-  const supa = await getSupabaseServerClient(); // 🔧 IMPORTANT: await
+  const supa = await getSupabaseServerClient();
   const srv = getSupabaseServiceClient();
 
   const url = new URL(req.url);
   const fromParam = url.searchParams.get("from");
   const toParam = url.searchParams.get("to");
+  const debug = url.searchParams.get("debug") === "1";
 
   // Auth + institution + rôle admin
   const {
     data: { user },
     error: userErr,
   } = await supa.auth.getUser();
+
   if (userErr) {
-    console.warn("[attendance/monitor] auth_getUser_err", { error: userErr.message });
+    console.warn("[attendance/monitor] auth_getUser_err", {
+      error: userErr.message,
+    });
   }
   if (!user) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
@@ -117,6 +149,7 @@ export async function GET(req: NextRequest) {
     .select("id,institution_id")
     .eq("id", user.id)
     .maybeSingle();
+
   if (meErr) {
     console.error("[attendance/monitor] profiles_err", { error: meErr.message });
     return NextResponse.json({ error: meErr.message }, { status: 400 });
@@ -157,7 +190,6 @@ export async function GET(req: NextRequest) {
   const defaultTo = parseYMD(toParam) ?? new Date(now);
   const defaultFrom = parseYMD(fromParam) ?? new Date(now);
   if (!fromParam && !toParam) {
-    // par défaut : les 7 derniers jours
     defaultFrom.setUTCDate(defaultTo.getUTCDate() - 7);
   }
 
@@ -170,12 +202,12 @@ export async function GET(req: NextRequest) {
   }
 
   // liste des dates inclusives
-  const dates: { ymd: string; weekday: number }[] = [];
+  const dates: { ymd: string; weekdayJs: number }[] = [];
   const cursor = new Date(fromDate.getTime());
   while (cursor.getTime() <= toDate.getTime()) {
     dates.push({
       ymd: toYMD(cursor),
-      weekday: cursor.getUTCDay(), // 0=dim, 1=lun...
+      weekdayJs: cursor.getUTCDay(), // 0=dim, 1=lun...
     });
     cursor.setUTCDate(cursor.getUTCDate() + 1);
   }
@@ -191,7 +223,6 @@ export async function GET(req: NextRequest) {
   ] = await Promise.all([
     srv
       .from("institution_periods")
-      // ⚠️ on ne sélectionne que des colonnes sûres
       .select("id,institution_id,weekday,label,start_time,end_time")
       .eq("institution_id", institution_id),
     srv
@@ -201,7 +232,6 @@ export async function GET(req: NextRequest) {
     srv.from("classes").select("id,label").eq("institution_id", institution_id),
     srv
       .from("institution_subjects")
-      // On récupère aussi l'id du subject de base pour croiser avec teacher_subjects
       .select("id,custom_name,subjects:subject_id(id,name)")
       .eq("institution_id", institution_id),
     srv
@@ -235,8 +265,10 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: tErr.message }, { status: 400 });
   }
   if (tsErr) {
-    console.error("[attendance/monitor] teacher_subjects_err", { error: tsErr.message });
-    // On ne bloque pas la route : dans ce cas, aucune filtration par affectations officielles
+    console.error("[attendance/monitor] teacher_subjects_err", {
+      error: tsErr.message,
+    });
+    // On ne bloque pas
   }
 
   const dateMinIso = new Date(fromDate.getTime());
@@ -247,7 +279,6 @@ export async function GET(req: NextRequest) {
 
   const { data: sessions, error: sessErr } = await srv
     .from("teacher_sessions")
-    // ⚠️ origin au lieu de opened_from
     .select(
       "id,institution_id,class_id,subject_id,teacher_id,started_at,actual_call_at,origin",
     )
@@ -280,7 +311,7 @@ export async function GET(req: NextRequest) {
     const endMin = hmsToMin(p.end_time);
     periodById.set(String(p.id), {
       id: String(p.id),
-      weekday: typeof p.weekday === "number" ? p.weekday : 0,
+      weekday: parseWeekday(p.weekday) ?? 0,
       label: (p.label as string | null) ?? null,
       start_time: startNorm,
       end_time: endNorm,
@@ -295,8 +326,8 @@ export async function GET(req: NextRequest) {
     classLabelById.set(String(c.id), String(c.label || ""));
   });
 
-  const subjectNameById = new Map<string, string>();
-  const instSubjectIdsByBaseId = new Map<string, string[]>();
+  const subjectNameById = new Map<string, string>(); // institution_subject_id -> name
+  const instSubjectIdsByBaseId = new Map<string, string[]>(); // base_subject_id -> [instIds]
 
   (subjects || []).forEach((row: any) => {
     const instId = String(row.id);
@@ -335,31 +366,39 @@ export async function GET(req: NextRequest) {
     teacherNameById.set(id, name);
   });
 
-  // Index des affectations officielles : (teacher_id, institution_subject_id) autorisés
+  /**
+   * Affectations officielles :
+   * - teacher_subjects.subject_id peut être :
+   *   A) base_subject_id
+   *   B) institution_subject_id
+   */
   const teacherHasSubjects = new Set<string>();
-  const allowedPairs = new Set<string>(); // `${teacherId}|${institutionSubjectId}`
+  const allowedByTeacher = new Map<string, Set<string>>(); // teacherId -> Set(institution_subject_id)
 
   (teacherSubjects || []).forEach((ts: any) => {
     const teacherId = String(ts.profile_id);
-    const subjId = ts.subject_id ? String(ts.subject_id) : "";
-    if (!subjId) return;
+    const rawSubjId = ts.subject_id ? String(ts.subject_id) : "";
+    if (!rawSubjId) return;
 
     teacherHasSubjects.add(teacherId);
 
-    // ✅ Cas 1 (attendu) : teacher_subjects.subject_id = subjects.id (base)
-    const instIds = instSubjectIdsByBaseId.get(subjId) || [];
-    if (instIds.length) {
-      instIds.forEach((instSubjId) => {
-        allowedPairs.add(`${teacherId}|${instSubjId}`);
-      });
-      return;
+    // cas B : déjà institution_subject_id
+    let instIds: string[] = [];
+    if (subjectNameById.has(rawSubjId)) {
+      instIds = [rawSubjId];
+    } else {
+      // cas A : base_subject_id
+      instIds = instSubjectIdsByBaseId.get(rawSubjId) || [];
     }
 
-    // ✅ Cas 2 (observé chez toi) : teacher_subjects.subject_id = institution_subjects.id
-    // => on accepte directement si on le connait dans institution_subjects
-    if (subjectNameById.has(subjId)) {
-      allowedPairs.add(`${teacherId}|${subjId}`);
+    if (!instIds.length) return;
+
+    let set = allowedByTeacher.get(teacherId);
+    if (!set) {
+      set = new Set<string>();
+      allowedByTeacher.set(teacherId, set);
     }
+    instIds.forEach((id) => set!.add(id));
   });
 
   // Index des séances par (date|class|subject|teacher)
@@ -369,9 +408,9 @@ export async function GET(req: NextRequest) {
   };
 
   const sessionsIndex = new Map<string, SessIndexItem[]>();
-
   (sessions || []).forEach((s: any) => {
-    const callIso = (s.actual_call_at as string | null) || (s.started_at as string | null);
+    const callIso =
+      (s.actual_call_at as string | null) || (s.started_at as string | null);
     if (!callIso) return;
     const ymd = isoToYMD(callIso);
     const hm = isoToHM(callIso);
@@ -382,6 +421,7 @@ export async function GET(req: NextRequest) {
       String(s.subject_id || ""),
       String(s.teacher_id || ""),
     ].join("|");
+
     const arr = sessionsIndex.get(key) || [];
     arr.push({
       callMin,
@@ -389,26 +429,31 @@ export async function GET(req: NextRequest) {
         s.origin === "class_device"
           ? "class_device"
           : s.origin === "teacher"
-          ? "teacher"
-          : null,
+            ? "teacher"
+            : null,
     });
     sessionsIndex.set(key, arr);
   });
 
-  // On prépare une map weekday -> dates
+  /**
+   * Map weekday -> dates (tolérant aux 3 encodages)
+   */
   const datesByWeekday = new Map<number, string[]>();
   for (const d of dates) {
-    const arr = datesByWeekday.get(d.weekday) || [];
-    arr.push(d.ymd);
-    datesByWeekday.set(d.weekday, arr);
+    for (const wd of weekdayVariants(d.weekdayJs)) {
+      const arr = datesByWeekday.get(wd) || [];
+      arr.push(d.ymd);
+      datesByWeekday.set(wd, arr);
+    }
   }
 
   // Calcul final des lignes
   const rows: MonitorRow[] = [];
 
   (tts || []).forEach((tt: any) => {
-    const weekday = typeof tt.weekday === "number" ? tt.weekday : null;
+    const weekday = parseWeekday(tt.weekday);
     if (weekday === null) return;
+
     const datesForDay = datesByWeekday.get(weekday);
     if (!datesForDay || !datesForDay.length) return;
 
@@ -422,20 +467,39 @@ export async function GET(req: NextRequest) {
     const subjectId = String(tt.subject_id || "");
     const teacherId = String(tt.teacher_id);
 
-    // Filtre : ne garder que les créneaux cohérents avec les affectations officielles
-    // - On ne filtre que si le prof a au moins une affectation dans teacher_subjects
-    // - Et seulement pour les créneaux avec subject_id renseigné
+    // Filtre affectations : seulement si le prof a des affectations ET qu'on a quelque chose de fiable
     if (subjectId && teacherHasSubjects.has(teacherId)) {
-      const pairKey = `${teacherId}|${subjectId}`;
-      if (!allowedPairs.has(pairKey)) {
-        // Incohérent : emploi du temps ne correspond pas aux matières attribuées à ce prof.
-        // On ignore ce créneau dans le moniteur.
-        return;
+      const allowed = allowedByTeacher.get(teacherId);
+
+      // si on a un set non vide, on vérifie
+      if (allowed && allowed.size > 0) {
+        let ok = allowed.has(subjectId);
+
+        // si subjectId est potentiellement un base_subject_id, on tente le mapping
+        if (!ok) {
+          const mappedInst = instSubjectIdsByBaseId.get(subjectId) || [];
+          ok = mappedInst.some((instId) => allowed.has(instId));
+        }
+
+        if (!ok) {
+          // incohérent -> on ignore, mais sans casser si la config est incomplète
+          return;
+        }
       }
     }
 
     const classLabel = classLabelById.get(classId) || "";
-    const subjName = subjectNameById.get(subjectId) || "Discipline";
+
+    // subject_name : si subjectId est base id, on map vers 1 inst id
+    let subjName = subjectNameById.get(subjectId) || "";
+    if (!subjName) {
+      const mappedInst = instSubjectIdsByBaseId.get(subjectId) || [];
+      if (mappedInst.length) {
+        subjName = subjectNameById.get(mappedInst[0]) || "";
+      }
+    }
+    subjName = subjName.trim() || "Discipline";
+
     const teacherName = teacherNameById.get(teacherId) || "Enseignant";
 
     for (const ymd of datesForDay) {
@@ -445,10 +509,7 @@ export async function GET(req: NextRequest) {
       // Séance la plus ancienne dans le créneau (si plusieurs)
       let best: SessIndexItem | null = null;
       for (const s of sessList) {
-        if (s.callMin < startMin || s.callMin > endMin + 120) {
-          // en dehors de la plage + 2h de marge : on ignore
-          continue;
-        }
+        if (s.callMin < startMin || s.callMin > endMin + 120) continue;
         if (!best || s.callMin < best.callMin) best = s;
       }
 
@@ -466,24 +527,19 @@ export async function GET(req: NextRequest) {
         }
         opened_from = best.opened_from;
       } else {
-        // Aucun appel détecté pour ce créneau
         const isBeforeToday = ymd < todayYmd;
         const isToday = ymd === todayYmd;
         const controlLimitMin = startMin + MISSING_CONTROL_WINDOW_MIN;
 
         if (isBeforeToday) {
-          // Journées passées : si aucun appel dans la fenêtre, c'est manquant
           status = "missing";
         } else if (isToday) {
-          // Aujourd'hui : on ne considère manquant qu'après la fenêtre de contrôle
           if (nowMinutes >= controlLimitMin) {
             status = "missing";
           } else {
-            // trop tôt : on ne remonte pas encore ce créneau
             continue;
           }
         } else {
-          // Date future : on ne remonte rien (ni ok, ni late, ni missing)
           continue;
         }
       }
@@ -494,7 +550,7 @@ export async function GET(req: NextRequest) {
           .filter(Boolean)
           .join(" – ");
 
-      const row: MonitorRow = {
+      rows.push({
         id: [ymd, tt.period_id, classId, subjectId, teacherId].join("|"),
         date: ymd,
         weekday_label: null,
@@ -507,9 +563,7 @@ export async function GET(req: NextRequest) {
         status,
         late_minutes: lateMinutes,
         opened_from,
-      };
-
-      rows.push(row);
+      });
     }
   });
 
@@ -524,10 +578,41 @@ export async function GET(req: NextRequest) {
     return ca.localeCompare(cb);
   });
 
-  // 👉 Ici : PLUS AUCUN ENQUEUE DE PUSH.
-  // Les notifications admins sont gérées exclusivement par :
-  //   - /api/admin/attendance/alerts  (cron)
-  //   - /api/push/dispatch            (distribution vers les admins)
+  if (debug) {
+    const distinct = (arr: any[], key: string) =>
+      Array.from(
+        new Set(
+          (arr || [])
+            .map((x) => x?.[key])
+            .filter((v) => v !== null && v !== undefined)
+            .map((v) => String(v)),
+        ),
+      );
+
+    return NextResponse.json({
+      rows,
+      debug: {
+        todayYmd,
+        nowUtcHHMM: `${String(now.getUTCHours()).padStart(2, "0")}:${String(now.getUTCMinutes()).padStart(2, "0")}`,
+        nowMinutes,
+        range: { from: toYMD(fromDate), to: toYMD(toDate), days: dates.length },
+        counts: {
+          periods: (periods || []).length,
+          tts: (tts || []).length,
+          sessions: (sessions || []).length,
+          teacherSubjects: (teacherSubjects || []).length,
+          rows: rows.length,
+        },
+        weekdays: {
+          datesKeys: Array.from(datesByWeekday.keys()).sort((a, b) => a - b),
+          ttWeekdays: distinct(tts || [], "weekday"),
+          periodWeekdays: distinct(periods || [], "weekday"),
+        },
+        teachersWithAssignments: teacherHasSubjects.size,
+        allowedByTeacher: allowedByTeacher.size,
+      },
+    });
+  }
 
   return NextResponse.json({ rows });
 }
