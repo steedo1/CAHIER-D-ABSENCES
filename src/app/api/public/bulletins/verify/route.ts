@@ -462,6 +462,9 @@ export async function GET(req: NextRequest) {
   const periodLabelToken: string | null =
     payload?.periodLabel ??
     payload?.period_label ??
+    payload?.periodShortLabel ??
+    payload?.period_short_label ??
+    payload?.short_label ??
     payload?.p ??
     null;
 
@@ -511,7 +514,7 @@ export async function GET(req: NextRequest) {
   // ✅ Si dateFrom/dateTo manquent, on reconstruit à partir de grade_periods (year + label/code)
   if ((!dateFrom || !dateTo) && (academicYearToken || classRow.academic_year)) {
     const yearGuess = academicYearToken ?? classRow.academic_year ?? null;
-    const labelGuess = periodLabelToken ?? periodCodeToken ?? payload?.period ?? null;
+    const labelGuess = periodCodeToken ?? periodLabelToken ?? payload?.period ?? null;
 
     if (yearGuess && labelGuess) {
       const { data: periodsData } = await srv
@@ -596,15 +599,73 @@ export async function GET(req: NextRequest) {
           gp.coeff === null || gp.coeff === undefined ? null : cleanCoeff(gp.coeff),
       };
     } else {
-      periodMeta = {
-        from: dateFrom,
-        to: dateTo,
-        code: periodCodeToken ?? null,
-        label: periodLabelToken ?? null,
-        short_label: null,
-        academic_year: academicYearToken ?? classRow.academic_year ?? null,
-        coeff: null,
-      };
+      // ✅ NEW: si les dates du QR ne matchent pas un grade_period,
+      // on tente de résoudre le VRAI trimestre via (année scolaire + label/code)
+      const yearGuess = academicYearToken ?? classRow.academic_year ?? null;
+      const labelGuess = periodCodeToken ?? periodLabelToken ?? payload?.period ?? null;
+
+      let fuzzy: any | null = null;
+
+      if (yearGuess && labelGuess) {
+        const { data: periodsData } = await srv
+          .from("grade_periods")
+          .select("id, academic_year, code, label, short_label, start_date, end_date, coeff")
+          .eq("institution_id", instId)
+          .eq("academic_year", yearGuess)
+          .order("start_date", { ascending: true });
+
+        const periods = (periodsData || []) as any[];
+        const tok = normText(String(labelGuess));
+
+        fuzzy =
+          periods.find(
+            (p) =>
+              normText(p?.code) === tok ||
+              normText(p?.label) === tok ||
+              normText(p?.short_label) === tok
+          ) ??
+          periods.find((p) => {
+            const c = normText(p?.code);
+            const l = normText(p?.label);
+            const s = normText(p?.short_label);
+            return (
+              (tok && c && (c.includes(tok) || tok.includes(c))) ||
+              (tok && l && (l.includes(tok) || tok.includes(l))) ||
+              (tok && s && (s.includes(tok) || tok.includes(s)))
+            );
+          }) ??
+          null;
+      }
+
+      // ✅ Si on a trouvé le vrai trimestre, on FORCE les dates officielles
+      if (fuzzy?.start_date && fuzzy?.end_date) {
+        dateFrom = String(fuzzy.start_date);
+        dateTo = String(fuzzy.end_date);
+
+        periodMeta = {
+          from: dateFrom,
+          to: dateTo,
+          code: fuzzy.code ?? periodCodeToken ?? null,
+          label: fuzzy.label ?? periodLabelToken ?? null,
+          short_label: fuzzy.short_label ?? null,
+          academic_year: fuzzy.academic_year ?? yearGuess ?? null,
+          coeff:
+            fuzzy.coeff === null || fuzzy.coeff === undefined
+              ? null
+              : cleanCoeff(fuzzy.coeff),
+        };
+      } else {
+        // Fallback inchangé
+        periodMeta = {
+          from: dateFrom,
+          to: dateTo,
+          code: periodCodeToken ?? null,
+          label: periodLabelToken ?? null,
+          short_label: null,
+          academic_year: academicYearToken ?? classRow.academic_year ?? null,
+          coeff: null,
+        };
+      }
     }
   } else {
     periodMeta = {
@@ -632,7 +693,8 @@ export async function GET(req: NextRequest) {
     return /(annuel|annuelle|annual|année|annee)/.test(txt);
   })();
 
-  const yearForAnnual = periodMeta.academic_year ?? academicYearToken ?? classRow.academic_year ?? null;
+  const yearForAnnual =
+    periodMeta.academic_year ?? academicYearToken ?? classRow.academic_year ?? null;
 
   if (!periodLooksAnnual && yearForAnnual) {
     const { data: yearPeriodsData } = await srv
