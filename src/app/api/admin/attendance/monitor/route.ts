@@ -341,15 +341,25 @@ export async function GET(req: NextRequest) {
 
   (teacherSubjects || []).forEach((ts: any) => {
     const teacherId = String(ts.profile_id);
-    const subjBaseId = ts.subject_id ? String(ts.subject_id) : "";
-    if (!subjBaseId) return;
+    const subjId = ts.subject_id ? String(ts.subject_id) : "";
+    if (!subjId) return;
 
     teacherHasSubjects.add(teacherId);
 
-    const instIds = instSubjectIdsByBaseId.get(subjBaseId) || [];
-    instIds.forEach((instSubjId) => {
-      allowedPairs.add(`${teacherId}|${instSubjId}`);
-    });
+    // ✅ Cas 1 (attendu) : teacher_subjects.subject_id = subjects.id (base)
+    const instIds = instSubjectIdsByBaseId.get(subjId) || [];
+    if (instIds.length) {
+      instIds.forEach((instSubjId) => {
+        allowedPairs.add(`${teacherId}|${instSubjId}`);
+      });
+      return;
+    }
+
+    // ✅ Cas 2 (observé chez toi) : teacher_subjects.subject_id = institution_subjects.id
+    // => on accepte directement si on le connait dans institution_subjects
+    if (subjectNameById.has(subjId)) {
+      allowedPairs.add(`${teacherId}|${subjId}`);
+    }
   });
 
   // Index des séances par (date|class|subject|teacher)
@@ -480,10 +490,7 @@ export async function GET(req: NextRequest) {
 
       const periodLabel =
         period.label ||
-        [
-          normalizeTimeFromDb(period.start_time) || "",
-          normalizeTimeFromDb(period.end_time) || "",
-        ]
+        [normalizeTimeFromDb(period.start_time) || "", normalizeTimeFromDb(period.end_time) || ""]
           .filter(Boolean)
           .join(" – ");
 

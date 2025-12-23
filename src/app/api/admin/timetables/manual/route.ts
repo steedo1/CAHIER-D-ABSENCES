@@ -16,6 +16,20 @@ function uniq<T>(arr: T[]): T[] {
   return Array.from(new Set((arr || []).filter(Boolean))) as T[];
 }
 
+function asIntWeekday(v: any): number | null {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return null;
+  const i = Math.trunc(n);
+
+  // accepte 0..6 (JS getDay)
+  if (i >= 0 && i <= 6) return i;
+
+  // accepte 1..7 (ISO) -> 7 = dimanche -> 0
+  if (i >= 1 && i <= 7) return i === 7 ? 0 : i;
+
+  return null;
+}
+
 async function guard(req: NextRequest) {
   const supa = await getSupabaseServerClient();
   const srv = getSupabaseServiceClient();
@@ -215,6 +229,10 @@ export async function GET(req: NextRequest) {
  * Stratégie :
  *   - on efface toutes les lignes teacher_timetables pour (institution, subject, teacher)
  *   - on insère les nouvelles lignes (une par classe / créneau)
+ *
+ * FIX IMPORTANT :
+ *   - on force weekday = institution_periods.weekday (via period_id)
+ *     pour éviter les décalages front (0..5 vs 1..6 etc).
  */
 export async function POST(req: NextRequest) {
   try {
@@ -251,7 +269,51 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // On nettoie d'abord tout l'emploi du temps de ce prof pour cette matière
+    // 1) On prépare la map period_id -> weekday (source de vérité)
+    const periodIds = uniq(
+      items
+        .map((it) => String(it.period_id || ""))
+        .filter((x) => x.length > 0)
+    );
+
+    const periodWeekdayById = new Map<string, number>();
+
+    if (periodIds.length > 0) {
+      const { data: periods, error: perErr } = await srv
+        .from("institution_periods")
+        .select("id,weekday")
+        .eq("institution_id", institution_id)
+        .in("id", periodIds);
+
+      if (perErr) {
+        return NextResponse.json(
+          { error: "periods_fetch_failed", message: perErr.message },
+          { status: 400 }
+        );
+      }
+
+      (periods || []).forEach((p: any) => {
+        const pid = String(p.id);
+        const wd = asIntWeekday(p.weekday);
+        if (wd !== null) periodWeekdayById.set(pid, wd);
+      });
+
+      // si certains period_id n'appartiennent pas à l'institution => on bloque (sinon rien ne remontera dans le monitor)
+      const missing = periodIds.filter((pid) => !periodWeekdayById.has(pid));
+      if (missing.length > 0) {
+        return NextResponse.json(
+          {
+            error: "unknown_periods",
+            message:
+              "Certains period_id ne correspondent à aucun créneau de cet établissement.",
+            period_ids: missing.slice(0, 20),
+          },
+          { status: 400 }
+        );
+      }
+    }
+
+    // 2) On nettoie d'abord tout l'emploi du temps de ce prof pour cette matière
     const { error: delErr } = await srv
       .from("teacher_timetables")
       .delete()
@@ -267,12 +329,17 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // 3) Insertion
     const rowsToInsert: any[] = [];
 
     for (const it of items) {
-      const weekday = Number(it.weekday);
-      if (!Number.isFinite(weekday)) continue;
       if (!it.period_id) continue;
+
+      // ✅ weekday fiable = weekday du period_id (institution_periods)
+      const wdFromPeriod = periodWeekdayById.get(String(it.period_id));
+      const weekday = wdFromPeriod ?? asIntWeekday(it.weekday);
+      if (weekday === null) continue;
+
       const classIds = uniq(it.class_ids || []);
       if (!classIds.length) continue;
 
@@ -290,7 +357,6 @@ export async function POST(req: NextRequest) {
     }
 
     if (!rowsToInsert.length) {
-      // emploi du temps vidé
       return NextResponse.json({
         ok: true,
         inserted: 0,
