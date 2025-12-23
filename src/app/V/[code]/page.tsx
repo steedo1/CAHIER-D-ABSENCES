@@ -4,26 +4,63 @@ import { headers } from "next/headers";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-/** Récupère l’origin public (https://mon-cahier.com) à partir des headers */
+/** Récupère l’origin public à partir des headers (robuste local/prod) */
 async function getOriginFromHeaders() {
   const h = await headers();
-  const proto = h.get("x-forwarded-proto") ?? "https";
-  const host = h.get("x-forwarded-host") ?? h.get("host");
-  if (!host) return "";
-  return `${proto}://${host}`;
+
+  const host =
+    h.get("x-forwarded-host") ??
+    h.get("host") ??
+    (process.env.VERCEL_URL ? process.env.VERCEL_URL : null) ??
+    null;
+
+  if (!host) {
+    const fallback =
+      process.env.NEXT_PUBLIC_APP_URL ||
+      process.env.NEXT_PUBLIC_SITE_URL ||
+      "";
+    return fallback;
+  }
+
+  const protoHeader =
+    h.get("x-forwarded-proto") ??
+    h.get("x-forwarded-protocol") ??
+    null;
+
+  const isLocal =
+    host.includes("localhost") ||
+    host.includes("127.0.0.1") ||
+    host.includes("0.0.0.0");
+
+  const proto = protoHeader ?? (isLocal ? "http" : "https");
+
+  // si host vient de VERCEL_URL il peut être déjà sans proto
+  const normalizedHost = host.startsWith("http://") || host.startsWith("https://")
+    ? host
+    : `${proto}://${host}`;
+
+  return normalizedHost;
 }
 
 export default async function VerifyByCodePage(props: any) {
   const code = String(props?.params?.code ?? "").trim();
   const origin = await getOriginFromHeaders();
 
-  const res = await fetch(
-    `${origin}/api/public/bulletins/verify?c=${encodeURIComponent(code)}`,
-    { cache: "no-store" }
-  );
+  let res: Response | null = null;
+  let data: any = null;
 
-  const data: any = await res.json().catch(() => null);
-  const ok = res.ok && data?.ok;
+  try {
+    const url = new URL("/api/public/bulletins/verify", origin);
+    url.searchParams.set("c", code);
+
+    res = await fetch(url.toString(), { cache: "no-store" });
+    data = await res.json().catch(() => null);
+  } catch {
+    res = null;
+    data = null;
+  }
+
+  const ok = !!(res?.ok && data?.ok);
 
   const inst = data?.institution ?? null;
   const cls = data?.class ?? null;
@@ -38,8 +75,7 @@ export default async function VerifyByCodePage(props: any) {
   const perSubjectWithAvg =
     bulletin && Array.isArray(bulletin.per_subject)
       ? bulletin.per_subject.filter(
-          (ps: any) =>
-            typeof ps.avg20 === "number" && Number.isFinite(ps.avg20)
+          (ps: any) => typeof ps.avg20 === "number" && Number.isFinite(ps.avg20)
         )
       : [];
 
@@ -63,7 +99,11 @@ export default async function VerifyByCodePage(props: any) {
           </span>
         </div>
 
-        {!ok ? (
+        {!res ? (
+          <p className="mt-4 text-slate-700">
+            Impossible de joindre le serveur de vérification pour le moment.
+          </p>
+        ) : !ok ? (
           <p className="mt-4 text-slate-700">
             Ce QR code est invalide, expiré ou a été révoqué.
           </p>
@@ -87,9 +127,7 @@ export default async function VerifyByCodePage(props: any) {
               {/* Élève */}
               <div className="rounded-lg bg-slate-50 p-3">
                 <div className="text-sm text-slate-500">Élève</div>
-                <div className="font-semibold">
-                  {stu?.full_name ?? "—"}
-                </div>
+                <div className="font-semibold">{stu?.full_name ?? "—"}</div>
                 {stu?.matricule ? (
                   <div className="text-sm text-slate-600">
                     Matricule : {stu.matricule}
@@ -156,8 +194,7 @@ export default async function VerifyByCodePage(props: any) {
 
                   {period && (
                     <div className="mt-2 text-xs text-emerald-900">
-                      Période{" "}
-                      {period.short_label ?? period.label ?? ""}
+                      Période {period.short_label ?? period.label ?? ""}
                       {period.from && period.to
                         ? ` (${period.from} → ${period.to})`
                         : ""}

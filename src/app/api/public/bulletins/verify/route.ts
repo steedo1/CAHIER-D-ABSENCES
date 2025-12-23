@@ -235,14 +235,14 @@ function applySubjectRanks(items: any[]) {
     });
   });
 
-  bySubject.forEach((entries, subjectId) => {
+  bySubject.forEach((entries) => {
     entries.sort((a, b) => b.avg - a.avg);
 
     let lastAvg: number | null = null;
     let currentRank = 0;
     let position = 0;
 
-    for (const { index, avg } of entries) {
+    for (const { index, avg, subject_id } of entries) {
       position += 1;
       if (lastAvg === null || avg !== lastAvg) {
         currentRank = position;
@@ -252,7 +252,7 @@ function applySubjectRanks(items: any[]) {
       const perSubject = items[index].per_subject as any[];
       if (!Array.isArray(perSubject)) continue;
 
-      const cell = perSubject.find((ps: any) => ps.subject_id === subjectId);
+      const cell = perSubject.find((ps: any) => ps.subject_id === subject_id);
       if (cell) (cell as any).subject_rank = currentRank;
     }
   });
@@ -433,10 +433,27 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ ok: false, error: "invalid_payload" }, { status: 400 });
   }
 
-  const dateFrom: string | null = payload?.periodFrom ?? null;
-  const dateTo: string | null = payload?.periodTo ?? null;
+  // ✅ Robustesse: accepter plusieurs noms possibles dans le payload
+  let dateFrom: string | null =
+    payload?.i
+      ?? payload?.periodFrom
+      ?? payload?.period_from
+      ?? payload?.from
+      ?? payload?.start_date
+      ?? payload?.startDate
+      ?? null;
+
+  let dateTo: string | null =
+    payload?.periodTo
+      ?? payload?.period_to
+      ?? payload?.to
+      ?? payload?.end_date
+      ?? payload?.endDate
+      ?? null;
+
   const academicYearToken: string | null = payload?.academicYear ?? null;
   const periodLabelToken: string | null = payload?.periodLabel ?? null;
+  const periodCodeToken: string | null = payload?.periodCode ?? payload?.period_code ?? null;
 
   // 2) Institution + Classe (avec head teacher) + Student
   const [
@@ -479,6 +496,51 @@ export async function GET(req: NextRequest) {
 
   const bulletinLevel = normalizeBulletinLevel(classRow.level);
 
+  // ✅ Si dateFrom/dateTo manquent, on reconstruit à partir de grade_periods (year + label/code)
+  if ((!dateFrom || !dateTo) && (academicYearToken || classRow.academic_year)) {
+    const yearGuess = academicYearToken ?? classRow.academic_year ?? null;
+    const labelGuess = periodLabelToken ?? periodCodeToken ?? payload?.period ?? null;
+
+    if (yearGuess && labelGuess) {
+      const { data: periodsData } = await srv
+        .from("grade_periods")
+        .select("id, academic_year, code, label, short_label, start_date, end_date, coeff")
+        .eq("institution_id", instId)
+        .eq("academic_year", yearGuess)
+        .order("start_date", { ascending: true });
+
+      const periods = (periodsData || []) as any[];
+
+      const tok = normText(String(labelGuess));
+      const exact =
+        periods.find(
+          (p) =>
+            normText(p?.code) === tok ||
+            normText(p?.label) === tok ||
+            normText(p?.short_label) === tok
+        ) ?? null;
+
+      const fuzzy =
+        exact ||
+        periods.find((p) => {
+          const c = normText(p?.code);
+          const l = normText(p?.label);
+          const s = normText(p?.short_label);
+          return (
+            (tok && c && (c.includes(tok) || tok.includes(c))) ||
+            (tok && l && (l.includes(tok) || tok.includes(l))) ||
+            (tok && s && (s.includes(tok) || tok.includes(s)))
+          );
+        }) ||
+        null;
+
+      if (fuzzy?.start_date && fuzzy?.end_date) {
+        dateFrom = String(fuzzy.start_date);
+        dateTo = String(fuzzy.end_date);
+      }
+    }
+  }
+
   // head teacher
   let headTeacher: HeadTeacherRow | null = null;
   if (classRow.head_teacher_id) {
@@ -519,20 +581,69 @@ export async function GET(req: NextRequest) {
         short_label: gp.short_label ?? null,
         academic_year: gp.academic_year ?? null,
         coeff:
-          gp.coeff === null || gp.coeff === undefined
-            ? null
-            : cleanCoeff(gp.coeff),
+          gp.coeff === null || gp.coeff === undefined ? null : cleanCoeff(gp.coeff),
       };
     } else {
       periodMeta = {
         from: dateFrom,
         to: dateTo,
-        code: null,
+        code: periodCodeToken ?? null,
         label: periodLabelToken ?? null,
         short_label: null,
         academic_year: academicYearToken ?? classRow.academic_year ?? null,
         coeff: null,
       };
+    }
+  } else {
+    periodMeta = {
+      from: dateFrom,
+      to: dateTo,
+      code: periodCodeToken ?? null,
+      label: periodLabelToken ?? null,
+      short_label: null,
+      academic_year: academicYearToken ?? classRow.academic_year ?? null,
+      coeff: null,
+    };
+  }
+
+  // ✅ Déterminer si on doit calculer une moyenne annuelle (uniquement dernière période)
+  let annualRange: { from: string | null; to: string | null } = { from: null, to: null };
+  let shouldComputeAnnual = false;
+
+  const periodLooksAnnual = (() => {
+    const txt =
+      normText(periodMeta.code) + " " + normText(periodMeta.label) + " " + normText(periodMeta.short_label);
+    return /(annuel|annuelle|annual|année|annee)/.test(txt);
+  })();
+
+  const yearForAnnual = periodMeta.academic_year ?? academicYearToken ?? classRow.academic_year ?? null;
+
+  if (!periodLooksAnnual && yearForAnnual) {
+    const { data: yearPeriodsData } = await srv
+      .from("grade_periods")
+      .select("start_date, end_date")
+      .eq("institution_id", instId)
+      .eq("academic_year", yearForAnnual);
+
+    const yearPeriods = (yearPeriodsData || []) as any[];
+
+    const starts = yearPeriods
+      .map((p) => (p?.start_date ? String(p.start_date) : ""))
+      .filter(Boolean)
+      .sort();
+
+    const ends = yearPeriods
+      .map((p) => (p?.end_date ? String(p.end_date) : ""))
+      .filter(Boolean)
+      .sort();
+
+    const minStart = starts.length ? starts[0] : null;
+    const maxEnd = ends.length ? ends[ends.length - 1] : null;
+
+    annualRange = { from: minStart, to: maxEnd };
+
+    if (dateTo && maxEnd && dateTo === maxEnd && minStart) {
+      shouldComputeAnnual = true;
     }
   }
 
@@ -577,15 +688,10 @@ export async function GET(req: NextRequest) {
   const classStudents = (csData || []) as ClassStudentRow[];
 
   if (!classStudents.length) {
-    // Aucun élève -> on renvoie tout de même les infos de base
     return NextResponse.json({
       ok: true,
       mode,
-      institution: {
-        id: inst.id,
-        name: inst.name,
-        code: inst.code ?? null,
-      },
+      institution: { id: inst.id, name: inst.name, code: inst.code ?? null },
       class: {
         id: classRow.id,
         label: classRow.label || classRow.code || "Classe",
@@ -650,7 +756,7 @@ export async function GET(req: NextRequest) {
     });
   }
 
-  // 6) Evaluations publiées
+  // 6) Evaluations publiées (période)
   let evals: EvalRow[] = [];
   {
     let evalQuery = srv
@@ -682,15 +788,10 @@ export async function GET(req: NextRequest) {
   const subjectIds = subjectIdsUnionRaw.filter((sid) => isUuid(sid));
 
   if (!subjectIds.length) {
-    // Pas de matières -> on renvoie élève sans notes
     return NextResponse.json({
       ok: true,
       mode,
-      institution: {
-        id: inst.id,
-        name: inst.name,
-        code: inst.code ?? null,
-      },
+      institution: { id: inst.id, name: inst.name, code: inst.code ?? null },
       class: {
         id: classRow.id,
         label: classRow.label || classRow.code || "Classe",
@@ -1007,7 +1108,7 @@ export async function GET(req: NextRequest) {
 
   const hasGroupConfig = subjectGroups.length > 0;
 
-  // 10) Notes (student_grades)
+  // 10) Notes (student_grades) (période)
   const evalById = new Map<string, EvalRow>();
   for (const e of evals) evalById.set(e.id, e);
 
@@ -1028,6 +1129,136 @@ export async function GET(req: NextRequest) {
     }
 
     scores = (scoreData || []) as ScoreRow[];
+  }
+
+  // ✅ Calcul annuel (uniquement pour l’élève demandé, et uniquement si dernière période)
+  let annual_avg_for_student: number | null = null;
+
+  if (shouldComputeAnnual && annualRange.from && annualRange.to) {
+    const { data: evalAnnualData, error: evalAnnualErr } = await srv
+      .from("grade_evaluations")
+      .select(
+        "id, class_id, subject_id, teacher_id, eval_date, scale, coeff, is_published, subject_component_id"
+      )
+      .eq("class_id", classId)
+      .eq("is_published", true)
+      .gte("eval_date", annualRange.from)
+      .lte("eval_date", annualRange.to);
+
+    if (!evalAnnualErr && evalAnnualData && evalAnnualData.length) {
+      const evalAnnuals = (evalAnnualData || []) as EvalRow[];
+      const evalAnnualById = new Map<string, EvalRow>();
+      evalAnnuals.forEach((e) => evalAnnualById.set(e.id, e));
+
+      const evalAnnualIds = evalAnnuals.map((e) => e.id);
+
+      const { data: annualScoreData, error: annualScoreErr } = await srv
+        .from("student_grades")
+        .select("evaluation_id, student_id, score")
+        .in("evaluation_id", evalAnnualIds)
+        .eq("student_id", studentId);
+
+      if (!annualScoreErr && annualScoreData && annualScoreData.length) {
+        const annualScores = (annualScoreData || []) as ScoreRow[];
+
+        const perSubjectAnnual = new Map<string, { sumWeighted: number; sumCoeff: number }>();
+        const perCompAnnual = new Map<
+          string,
+          { subject_id: string; sumWeighted: number; sumCoeff: number }
+        >();
+
+        for (const sc of annualScores) {
+          const ev = evalAnnualById.get(sc.evaluation_id);
+          if (!ev) continue;
+          if (!ev.subject_id) continue;
+          if (!ev.scale || ev.scale <= 0) continue;
+          if (sc.score === null || sc.score === undefined) continue;
+
+          const score = Number(sc.score);
+          if (!Number.isFinite(score)) continue;
+
+          const norm20 = (score / ev.scale) * 20;
+          const weight = ev.coeff ?? 1;
+
+          const sid = String(ev.subject_id);
+
+          const cellS = perSubjectAnnual.get(sid) || { sumWeighted: 0, sumCoeff: 0 };
+          cellS.sumWeighted += norm20 * weight;
+          cellS.sumCoeff += weight;
+          perSubjectAnnual.set(sid, cellS);
+
+          if (ev.subject_component_id) {
+            const comp = subjectComponentById.get(String(ev.subject_component_id));
+            if (comp) {
+              const cellC =
+                perCompAnnual.get(comp.id) || {
+                  subject_id: comp.subject_id,
+                  sumWeighted: 0,
+                  sumCoeff: 0,
+                };
+              cellC.sumWeighted += norm20 * weight;
+              cellC.sumCoeff += weight;
+              perCompAnnual.set(comp.id, cellC);
+            }
+          }
+        }
+
+        // Reconstituer avg20 annual par matière (même logique que la période)
+        const annual_per_subject = subjectsForReport.map((s) => {
+          const comps = compsBySubject.get(s.subject_id) || [];
+          let avg20: number | null = null;
+
+          if (comps.length) {
+            let sum = 0;
+            let sumW = 0;
+
+            for (const comp of comps) {
+              const cell = perCompAnnual.get(comp.id);
+              if (!cell || cell.sumCoeff <= 0) continue;
+
+              const compAvgRaw = cell.sumWeighted / cell.sumCoeff;
+              if (!Number.isFinite(compAvgRaw)) continue;
+
+              const w = comp.coeff_in_subject ?? 1;
+              if (!w || w <= 0) continue;
+
+              sum += compAvgRaw * w;
+              sumW += w;
+            }
+
+            if (sumW > 0) avg20 = cleanNumber(sum / sumW, 4);
+          }
+
+          if (avg20 === null) {
+            const cell = perSubjectAnnual.get(s.subject_id);
+            if (cell && cell.sumCoeff > 0) {
+              avg20 = cleanNumber(cell.sumWeighted / cell.sumCoeff, 4);
+            }
+          }
+
+          return { subject_id: s.subject_id, avg20 };
+        });
+
+        // moyenne générale annuelle
+        let sumGen = 0;
+        let sumCoeffGen = 0;
+
+        for (const s of subjectsForReport) {
+          if (s.include_in_average === false) continue;
+          const coeffSub = Number(s.coeff_bulletin ?? 0);
+          if (!coeffSub || coeffSub <= 0) continue;
+
+          const ps = (annual_per_subject as any[]).find((x) => x.subject_id === s.subject_id);
+          const subAvg = ps?.avg20 ?? null;
+          if (subAvg === null || subAvg === undefined) continue;
+
+          sumGen += Number(subAvg) * coeffSub;
+          sumCoeffGen += coeffSub;
+        }
+
+        annual_avg_for_student = sumCoeffGen > 0 ? cleanNumber(sumGen / sumCoeffGen, 4) : null;
+      }
+    }
   }
 
   const perStudentSubject = new Map<string, Map<string, { sumWeighted: number; sumCoeff: number }>>();
@@ -1061,7 +1292,7 @@ export async function GET(req: NextRequest) {
     stuMap.set(key, cell);
 
     if (ev.subject_component_id) {
-      const comp = subjectComponentById.get(ev.subject_component_id);
+      const comp = subjectComponentById.get(String(ev.subject_component_id));
       if (comp) {
         let stuCompMap = perStudentSubjectComponent.get(sc.student_id);
         if (!stuCompMap) {
@@ -1246,6 +1477,11 @@ export async function GET(req: NextRequest) {
       { ok: false, error: "STUDENT_NOT_IN_CLASS_FOR_PERIOD" },
       { status: 404 }
     );
+  }
+
+  // ✅ Injecter annual_avg uniquement si calculé
+  if (annual_avg_for_student !== null) {
+    (bulletinForStudent as any).annual_avg = annual_avg_for_student;
   }
 
   return NextResponse.json({
