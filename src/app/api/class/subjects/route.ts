@@ -1,55 +1,18 @@
-// src/app/api/class/subjects/route.ts
+ // src/app/api/class/subjects/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
-import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 type SubjectItem = {
-  id: string; // id à renvoyer au front (institution_subjects.id si possible, sinon subjects.id)
+  id: string;   // id à renvoyer au front (institution_subjects.id si possible, sinon subjects.id)
   label: string;
 };
 
 export async function GET(req: NextRequest) {
   try {
-    // ✅ 0) Auth obligatoire (server client)
-    const supabase = await getSupabaseServerClient();
-    const {
-      data: { user },
-      error: authError,
-    } = await supabase.auth.getUser();
-
-    if (authError || !user) {
-      return NextResponse.json(
-        { ok: false, error: "UNAUTHENTICATED", items: [] as SubjectItem[] },
-        { status: 401 }
-      );
-    }
-
-    // ✅ 0bis) Institution du user + rôle
-    const { data: roleRow, error: roleErr } = await supabase
-      .from("user_roles")
-      .select("institution_id, role")
-      .eq("profile_id", user.id)
-      .maybeSingle();
-
-    if (
-      roleErr ||
-      !roleRow ||
-      !roleRow.institution_id ||
-      !["super_admin", "admin", "teacher"].includes(roleRow.role)
-    ) {
-      return NextResponse.json(
-        { ok: false, error: "FORBIDDEN", items: [] as SubjectItem[] },
-        { status: 403 }
-      );
-    }
-
-    const userInstitutionId = roleRow.institution_id as string;
-
-    // ✅ 1) Params
-    const srv = getSupabaseServiceClient(); // on le garde (comme avant) mais on verrouille institution + class
+    const srv = getSupabaseServiceClient();
     const url = new URL(req.url);
 
     const class_id = (url.searchParams.get("class_id") ?? "").trim();
@@ -57,7 +20,7 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ items: [] as SubjectItem[] });
     }
 
-    /* ───────── 2) Classe : DOIT appartenir à l’établissement du user ───────── */
+    /* ───────── 1) Classe : établissement + année scolaire ───────── */
     const { data: cls, error: clsErr } = await srv
       .from("classes")
       .select("id, institution_id, academic_year")
@@ -78,18 +41,15 @@ export async function GET(req: NextRequest) {
     const institution_id = cls.institution_id as string | null;
     const academic_year = (cls as any).academic_year as string | null;
 
-    // ✅ verrouillage anti fuite inter-établissements
-    if (!institution_id || institution_id !== userInstitutionId) {
-      return NextResponse.json(
-        { ok: false, error: "FORBIDDEN_CLASS", items: [] as SubjectItem[] },
-        { status: 403 }
-      );
+    if (!institution_id) {
+      return NextResponse.json({ items: [] as SubjectItem[] });
     }
 
-    /* ───────── 3) Récupérer tous les subject_id liés à la classe ───────── */
+    /* ───────── 2) Récupérer tous les subject_id liés à la classe ───────── */
+
     const subjectIdSet = new Set<string>();
 
-    // 3a) Matières affectées à la classe (class_teachers)
+    // 2a) Matières affectées à la classe (class_teachers)
     {
       const { data, error } = await srv
         .from("class_teachers")
@@ -107,7 +67,7 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    // 3b) Matières pour lesquelles il y a déjà des notes (grade_flat_marks)
+    // 2b) Matières pour lesquelles il y a déjà des notes (grade_flat_marks)
     {
       let q = srv
         .from("grade_flat_marks")
@@ -131,19 +91,24 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    // Si aucune matière liée à la classe → vide
+    // Si aucune matière liée à la classe → on renvoie vide (et surtout pas toutes les matières de l’établissement)
     if (subjectIdSet.size === 0) {
       return NextResponse.json({ items: [] as SubjectItem[] });
     }
 
     const subjectIds = Array.from(subjectIdSet);
 
-    /* ───────── 4) Retrouver les lignes institution_subjects ───────── */
+    /* ───────── 3) Retrouver les lignes institution_subjects ─────────
+       On gère les deux cas possibles :
+       - subjectIds = institution_subjects.id
+       - subjectIds = subjects.id (stockés dans class_teachers / grade_flat_marks)
+    */
+
     const instRows: any[] = [];
     const instSeen = new Set<string>();
 
-    // 4a) institution_subjects où id ∈ subjectIds
-    {
+    // 3a) institution_subjects où id ∈ subjectIds
+    if (subjectIds.length > 0) {
       const { data, error } = await srv
         .from("institution_subjects")
         .select("id, subject_id, custom_name, subjects:subject_id(name)")
@@ -151,11 +116,14 @@ export async function GET(req: NextRequest) {
         .in("id", subjectIds);
 
       if (error) {
-        console.error("[class.subjects] institution_subjects by id error", error);
+        console.error(
+          "[class.subjects] institution_subjects by id error",
+          error
+        );
       } else {
         for (const row of data ?? []) {
           const r: any = row;
-          if (r?.id && !instSeen.has(r.id)) {
+          if (!instSeen.has(r.id)) {
             instRows.push(r);
             instSeen.add(r.id);
           }
@@ -163,8 +131,8 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    // 4b) institution_subjects où subject_id ∈ subjectIds
-    {
+    // 3b) institution_subjects où subject_id ∈ subjectIds
+    if (subjectIds.length > 0) {
       const { data, error } = await srv
         .from("institution_subjects")
         .select("id, subject_id, custom_name, subjects:subject_id(name)")
@@ -179,7 +147,7 @@ export async function GET(req: NextRequest) {
       } else {
         for (const row of data ?? []) {
           const r: any = row;
-          if (r?.id && !instSeen.has(r.id)) {
+          if (!instSeen.has(r.id)) {
             instRows.push(r);
             instSeen.add(r.id);
           }
@@ -187,16 +155,16 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    // Ensemble des subjectIds déjà couverts
+    // Ensemble des subjectIds déjà couverts par institution_subjects
     const coveredSubjectIds = new Set<string>();
     for (const r of instRows) {
       const sid1 = r.id as string;
-      const sid2 = (r.subject_id as string | null) ?? null;
+      const sid2 = r.subject_id as string | null;
       if (subjectIdSet.has(sid1)) coveredSubjectIds.add(sid1);
       if (sid2 && subjectIdSet.has(sid2)) coveredSubjectIds.add(sid2);
     }
 
-    /* ───────── 5) Fallback subjects ───────── */
+    /* ───────── 4) Fallback pour les subjectIds non couverts : table subjects ───────── */
     const leftoverIds = subjectIds.filter((sid) => !coveredSubjectIds.has(sid));
 
     const subjectFallbackRows: any[] = [];
@@ -213,10 +181,11 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    /* ───────── 6) Réponse ───────── */
+    /* ───────── 5) Construction de la réponse finale ───────── */
+
     const itemsMap = new Map<string, SubjectItem>();
 
-    // 6a) institution_subjects (prioritaire)
+    // 5a) À partir de institution_subjects (prioritaire)
     for (const r of instRows) {
       const id = r.id as string;
       const label =
@@ -224,16 +193,16 @@ export async function GET(req: NextRequest) {
         (r.subjects?.name as string) ||
         "—";
 
-      if (id && !itemsMap.has(id)) {
+      if (!itemsMap.has(id)) {
         itemsMap.set(id, { id, label });
       }
     }
 
-    // 6b) fallback subjects
+    // 5b) Compléter avec subjects pour les cas où aucun institution_subject n’existe
     for (const r of subjectFallbackRows) {
       const id = r.id as string;
       const label = (r.name as string) || "—";
-      if (id && !itemsMap.has(id)) {
+      if (!itemsMap.has(id)) {
         itemsMap.set(id, { id, label });
       }
     }
