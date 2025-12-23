@@ -2283,7 +2283,35 @@ export default function BulletinsPage() {
   const conductRubricMax = conductSummary?.rubric_max;
   const conductTotalMax = conductSummary?.total_max;
 
-  const items = enriched?.items ?? [];
+  const items = useMemo(() => {
+    const arr = [...(enriched?.items ?? [])];
+
+    // ✅ Tri alphabétique (accents ignorés, espaces normalisés)
+    const norm = (s: string) =>
+      String(s || "")
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/\s+/g, " ")
+        .trim()
+        .toUpperCase();
+
+    arr.sort((a, b) => {
+      const an = norm(a.full_name);
+      const bn = norm(b.full_name);
+      const cmp = an.localeCompare(bn, "fr", { sensitivity: "base" });
+      if (cmp !== 0) return cmp;
+
+      // Tie-breakers (matricule puis id) pour un ordre stable
+      const am = norm(a.matricule || "");
+      const bm = norm(b.matricule || "");
+      const cmp2 = am.localeCompare(bm, "fr", { sensitivity: "base" });
+      if (cmp2 !== 0) return cmp2;
+
+      return String(a.student_id).localeCompare(String(b.student_id));
+    });
+
+    return arr;
+  }, [enriched]);
   const stats = enriched?.stats ?? { highest: null, lowest: null, classAvg: null };
   const classInfo = enriched?.response.class;
   const period = enriched?.response.period ?? { from: null, to: null };

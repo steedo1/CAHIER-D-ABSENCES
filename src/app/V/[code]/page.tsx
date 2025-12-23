@@ -16,16 +16,12 @@ async function getOriginFromHeaders() {
 
   if (!host) {
     const fallback =
-      process.env.NEXT_PUBLIC_APP_URL ||
-      process.env.NEXT_PUBLIC_SITE_URL ||
-      "";
+      process.env.NEXT_PUBLIC_APP_URL || process.env.NEXT_PUBLIC_SITE_URL || "";
     return fallback;
   }
 
   const protoHeader =
-    h.get("x-forwarded-proto") ??
-    h.get("x-forwarded-protocol") ??
-    null;
+    h.get("x-forwarded-proto") ?? h.get("x-forwarded-protocol") ?? null;
 
   const isLocal =
     host.includes("localhost") ||
@@ -35,16 +31,75 @@ async function getOriginFromHeaders() {
   const proto = protoHeader ?? (isLocal ? "http" : "https");
 
   // si host vient de VERCEL_URL il peut être déjà sans proto
-  const normalizedHost = host.startsWith("http://") || host.startsWith("https://")
-    ? host
-    : `${proto}://${host}`;
+  const normalizedHost =
+    host.startsWith("http://") || host.startsWith("https://")
+      ? host
+      : `${proto}://${host}`;
 
   return normalizedHost;
+}
+
+function looksAnnualPeriod(period: any): boolean {
+  if (!period) return false;
+
+  const code = String(period?.code ?? "").trim().toLowerCase();
+  const short = String(period?.short_label ?? "").trim().toLowerCase();
+  const label = String(period?.label ?? "").trim().toLowerCase();
+  const txt = `${code} ${short} ${label}`.toLowerCase();
+
+  // Cas fréquents : "Annuel", "Année", "Annual", code "AN", etc.
+  if (
+    txt.includes("annuel") ||
+    txt.includes("annuelle") ||
+    txt.includes("année") ||
+    txt.includes("annee") ||
+    txt.includes("annual") ||
+    txt.includes("year")
+  ) {
+    return true;
+  }
+
+  // Codes courts possibles
+  if (["a", "an", "ann", "yr", "year"].includes(code)) return true;
+  if (["a", "an", "ann", "yr", "year"].includes(short)) return true;
+
+  // Si c’est clairement T1/T2/T3 ou S1/S2, ce n’est pas annuel
+  const shortUp = String(period?.short_label ?? "").trim().toUpperCase();
+  if (shortUp.startsWith("T") || shortUp.startsWith("S")) return false;
+
+  return false;
+}
+
+function mainAvgLabel(period: any): string {
+  if (!period) return "Moyenne de la période";
+
+  const shortUp = String(period?.short_label ?? "").trim().toUpperCase();
+  const label = String(period?.label ?? "").trim().toLowerCase();
+  const code = String(period?.code ?? "").trim().toUpperCase();
+
+  if (looksAnnualPeriod(period)) return "Moyenne annuelle";
+
+  // Trimestre
+  if (shortUp.startsWith("T") || label.includes("trimestre") || code.startsWith("T")) {
+    return "Moyenne du trimestre";
+  }
+
+  // Semestre
+  if (shortUp.startsWith("S") || label.includes("semestre") || code.startsWith("S")) {
+    return "Moyenne du semestre";
+  }
+
+  return "Moyenne de la période";
 }
 
 export default async function VerifyByCodePage(props: any) {
   const code = String(props?.params?.code ?? "").trim();
   const origin = await getOriginFromHeaders();
+
+  const searchParams = (props as any)?.searchParams ?? {};
+  const debugEnabled = ["1", "true", "yes"].includes(
+    String(searchParams?.debug ?? "").toLowerCase()
+  );
 
   let res: Response | null = null;
   let data: any = null;
@@ -78,6 +133,38 @@ export default async function VerifyByCodePage(props: any) {
           (ps: any) => typeof ps.avg20 === "number" && Number.isFinite(ps.avg20)
         )
       : [];
+
+  const isAnnual = looksAnnualPeriod(period);
+  const labelMain = mainAvgLabel(period);
+  const showAnnualAvg =
+    !isAnnual &&
+    typeof bulletin?.annual_avg === "number" &&
+    Number.isFinite(bulletin.annual_avg);
+
+  const debugPayload = debugEnabled
+    ? {
+        code,
+        origin,
+        api: {
+          ok: !!res?.ok,
+          status: res?.status ?? null,
+        },
+        period,
+        averages: {
+          general_avg: bulletin?.general_avg ?? null,
+          annual_avg: bulletin?.annual_avg ?? null,
+          labelMain,
+          isAnnual,
+        },
+        counts: {
+          subjects: subjects.length,
+          per_subject: Array.isArray(bulletin?.per_subject)
+            ? bulletin.per_subject.length
+            : 0,
+          perSubjectWithAvg: perSubjectWithAvg.length,
+        },
+      }
+    : null;
 
   return (
     <main className="min-h-screen bg-slate-50 p-6">
@@ -138,9 +225,7 @@ export default async function VerifyByCodePage(props: any) {
               {/* Classe */}
               <div className="rounded-lg bg-slate-50 p-3">
                 <div className="text-sm text-slate-500">Classe</div>
-                <div className="font-semibold">
-                  {cls?.label ?? cls?.name ?? "—"}
-                </div>
+                <div className="font-semibold">{cls?.label ?? cls?.name ?? "—"}</div>
                 {(cls?.academic_year || period?.academic_year) && (
                   <div className="text-sm text-slate-600">
                     Année : {cls?.academic_year ?? period?.academic_year}
@@ -166,10 +251,10 @@ export default async function VerifyByCodePage(props: any) {
                   </div>
 
                   <div className="mt-2 grid gap-3 md:grid-cols-2">
-                    {/* Moyenne du trimestre */}
+                    {/* Moyenne principale (trimestre/semestre/période/annuelle) */}
                     <div>
                       <div className="text-[11px] font-semibold text-emerald-800">
-                        Moyenne du trimestre
+                        {labelMain}
                       </div>
                       <div className="mt-1 text-2xl font-extrabold text-emerald-900">
                         {typeof bulletin.general_avg === "number"
@@ -178,26 +263,23 @@ export default async function VerifyByCodePage(props: any) {
                       </div>
                     </div>
 
-                    {/* Moyenne annuelle, si disponible */}
-                    {typeof bulletin.annual_avg === "number" &&
-                      Number.isFinite(bulletin.annual_avg) && (
-                        <div>
-                          <div className="text-[11px] font-semibold text-slate-700">
-                            Moyenne annuelle
-                          </div>
-                          <div className="mt-1 text-2xl font-extrabold text-slate-900">
-                            {`${Number(bulletin.annual_avg).toFixed(2)} / 20`}
-                          </div>
+                    {/* Moyenne annuelle séparée, si dispo ET si la période n’est pas annuelle */}
+                    {showAnnualAvg && (
+                      <div>
+                        <div className="text-[11px] font-semibold text-slate-700">
+                          Moyenne annuelle
                         </div>
-                      )}
+                        <div className="mt-1 text-2xl font-extrabold text-slate-900">
+                          {`${Number(bulletin.annual_avg).toFixed(2)} / 20`}
+                        </div>
+                      </div>
+                    )}
                   </div>
 
                   {period && (
                     <div className="mt-2 text-xs text-emerald-900">
                       Période {period.short_label ?? period.label ?? ""}
-                      {period.from && period.to
-                        ? ` (${period.from} → ${period.to})`
-                        : ""}
+                      {period.from && period.to ? ` (${period.from} → ${period.to})` : ""}
                     </div>
                   )}
                 </div>
@@ -244,17 +326,29 @@ export default async function VerifyByCodePage(props: any) {
                 )}
 
                 <p className="mt-3 text-[11px] leading-snug text-slate-500">
-                  Les informations ci-dessus sont calculées directement depuis la
-                  base Mon Cahier. Si le bulletin papier présente des notes
-                  différentes, c&apos;est ce récapitulatif qui fait foi.
+                  Les informations ci-dessus sont calculées directement depuis la base
+                  Mon Cahier. Si le bulletin papier présente des notes différentes,
+                  c&apos;est ce récapitulatif qui fait foi.
                 </p>
+
+                {/* DEBUG (optionnel) */}
+                {debugEnabled && (
+                  <div className="mt-3 rounded-lg border border-slate-200 bg-white p-3">
+                    <div className="text-xs font-semibold text-slate-700">
+                      DEBUG (ajoute ?debug=1)
+                    </div>
+                    <pre className="mt-2 whitespace-pre-wrap break-words text-[11px] text-slate-700">
+                      {JSON.stringify(debugPayload, null, 2)}
+                    </pre>
+                  </div>
+                )}
               </div>
             )}
 
             {/* Note de bas de page existante */}
             <p className="mt-6 text-xs text-slate-500">
-              Cette page confirme l’authenticité du bulletin et affiche les
-              notes officielles enregistrées dans le système (anti-fraude).
+              Cette page confirme l’authenticité du bulletin et affiche les notes
+              officielles enregistrées dans le système (anti-fraude).
             </p>
           </>
         )}
