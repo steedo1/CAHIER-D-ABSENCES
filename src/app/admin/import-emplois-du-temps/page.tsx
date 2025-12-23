@@ -10,6 +10,8 @@ import {
   CalendarDays,
   Users,
   Trash2,
+  Search,
+  X,
 } from "lucide-react";
 
 type UploadState =
@@ -90,7 +92,7 @@ function Select(p: React.SelectHTMLAttributes<HTMLSelectElement>) {
         "w-full rounded-xl border border-slate-200 bg-white/90 px-3 py-2 text-sm",
         "shadow-sm outline-none transition",
         "focus:border-emerald-400 focus:ring-4 focus:ring-emerald-500/20",
-        "disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400",
+        "disabled:cursor-not-allowed disabled:text-slate-400",
         p.className ?? "",
       ].join(" ")}
     />
@@ -160,6 +162,9 @@ export default function ImportEmploisDuTempsPage() {
     null
   );
   const [saveManualError, setSaveManualError] = useState<string | null>(null);
+
+  // UI: recherche dans la liste des classes (sidebar)
+  const [classQuery, setClassQuery] = useState<string>("");
 
   // ---------- CHARGEMENT MÉTA COMMUNE ----------
   useEffect(() => {
@@ -347,6 +352,7 @@ export default function ImportEmploisDuTempsPage() {
     setSaveManualMessage(null);
     setSaveManualError(null);
     setCellSelection({});
+    setClassQuery("");
     if (value) {
       fetchManualMeta(value);
     } else {
@@ -361,6 +367,7 @@ export default function ImportEmploisDuTempsPage() {
     setSaveManualMessage(null);
     setSaveManualError(null);
     setCellSelection({});
+    setClassQuery("");
     if (selectedSubjectId && value) {
       fetchManualMeta(selectedSubjectId, value);
     }
@@ -380,9 +387,7 @@ export default function ImportEmploisDuTempsPage() {
       }
     }
 
-    return Array.from(byNo.values()).sort(
-      (a, b) => a.period_no - b.period_no
-    );
+    return Array.from(byNo.values()).sort((a, b) => a.period_no - b.period_no);
   }, [meta]);
 
   const availableWeekdays = useMemo(() => {
@@ -394,7 +399,10 @@ export default function ImportEmploisDuTempsPage() {
     return Array.from(s.values()).sort((a, b) => a - b);
   }, [meta]);
 
-  function findPeriod(weekday: number, period_no: number): MetaPeriod | undefined {
+  function findPeriod(
+    weekday: number,
+    period_no: number
+  ): MetaPeriod | undefined {
     return meta?.periods?.find(
       (p) => p.weekday === weekday && p.period_no === period_no
     );
@@ -421,6 +429,18 @@ export default function ImportEmploisDuTempsPage() {
     }
     return out;
   }, [manualMeta, selectedTeacherId]);
+
+  const selectedSubjectLabel = useMemo(() => {
+    return meta?.subjects?.find((s) => s.id === selectedSubjectId)?.label ?? "";
+  }, [meta, selectedSubjectId]);
+
+  const selectedTeacherLabel = useMemo(() => {
+    const list =
+      (manualMeta?.teachers?.length ? manualMeta.teachers : null) ||
+      meta?.teachers ||
+      [];
+    return list.find((t) => t.id === selectedTeacherId)?.display_name ?? "";
+  }, [manualMeta, meta, selectedTeacherId]);
 
   function keyForCell(weekday: number, period_id: string) {
     return `${weekday}_${period_id}`;
@@ -459,6 +479,13 @@ export default function ImportEmploisDuTempsPage() {
       const { [key]: _toRemove, ...rest } = prev;
       return rest;
     });
+  }
+
+  function setAllForActiveCell() {
+    if (!activeCell) return;
+    const key = keyForCell(activeCell.weekday, activeCell.period_id);
+    const allIds = classesForSelectedTeacher.map((c) => c.id);
+    setCellSelection((prev) => ({ ...prev, [key]: allIds }));
   }
 
   async function handleSaveManual() {
@@ -529,6 +556,40 @@ export default function ImportEmploisDuTempsPage() {
     const classes = cellSelection[key] || [];
     return classes.length > 0;
   }
+
+  function isCellSelected(weekday: number, period: MetaPeriod | undefined) {
+    if (!activeCell || !period) return false;
+    return activeCell.weekday === weekday && activeCell.period_id === period.id;
+  }
+
+  const activeKey = useMemo(() => {
+    if (!activeCell) return null;
+    return keyForCell(activeCell.weekday, activeCell.period_id);
+  }, [activeCell]);
+
+  const activeSelectedIds = useMemo(() => {
+    if (!activeKey) return [];
+    return cellSelection[activeKey] || [];
+  }, [activeKey, cellSelection]);
+
+  const activePeriodLabel = useMemo(() => {
+    if (!activeCell) return "";
+    const period = meta?.periods?.find((p) => p.id === activeCell.period_id);
+    if (!period) return "Créneau inconnu";
+    const st = period.start_time?.slice(0, 5) ?? "??:??";
+    const et = period.end_time?.slice(0, 5) ?? "??:??";
+    return `${st}–${et}`;
+  }, [activeCell, meta]);
+
+  const filteredClasses = useMemo(() => {
+    const q = classQuery.trim().toLowerCase();
+    if (!q) return classesForSelectedTeacher;
+    return classesForSelectedTeacher.filter((c) =>
+      c.label.toLowerCase().includes(q)
+    );
+  }, [classesForSelectedTeacher, classQuery]);
+
+  const canEditManual = !!selectedSubjectId && !!selectedTeacherId;
 
   // ---------- RENDU ----------
   return (
@@ -682,8 +743,7 @@ export default function ImportEmploisDuTempsPage() {
                       {meta.periods.map((p) => (
                         <div key={p.id}>
                           {WEEKDAY_LABELS[p.weekday] ?? `Jour ${p.weekday}`} –{" "}
-                          {p.period_no} :{" "}
-                          {p.start_time?.slice(0, 5)}-
+                          {p.period_no} : {p.start_time?.slice(0, 5)}-
                           {p.end_time?.slice(0, 5)}
                         </div>
                       ))}
@@ -769,8 +829,7 @@ export default function ImportEmploisDuTempsPage() {
                 {uploadState.errors && uploadState.errors.length > 0 && (
                   <details className="rounded-xl border border-emerald-200 bg-white/80 px-3 py-2 text-[11px] text-slate-700">
                     <summary className="cursor-pointer font-semibold">
-                      Détails des lignes ignorées (
-                      {uploadState.errors.length})
+                      Détails des lignes ignorées ({uploadState.errors.length})
                     </summary>
                     <ul className="mt-2 list-disc list-inside space-y-1">
                       {uploadState.errors.map((err, idx) => (
@@ -836,7 +895,8 @@ export default function ImportEmploisDuTempsPage() {
       {/* ======================= MODE MANUEL ======================= */}
       {mode === "manual" && (
         <section className="space-y-4">
-          <div className="grid gap-4 lg:grid-cols-[minmax(0,260px)_minmax(0,1fr)]">
+          {/* 3 colonnes sur desktop: filtres / tableau / classes */}
+          <div className="grid gap-4 lg:grid-cols-[minmax(0,260px)_minmax(0,1fr)_minmax(0,320px)]">
             {/* Filtres matière / prof */}
             <div className="rounded-2xl border border-slate-200 bg-white/90 shadow-sm p-4 space-y-4">
               <div className="flex items-center gap-2">
@@ -851,10 +911,7 @@ export default function ImportEmploisDuTempsPage() {
                   <label className="block text-xs font-medium text-slate-600 mb-1">
                     Matière
                   </label>
-                  <Select
-                    value={selectedSubjectId}
-                    onChange={handleChangeSubject}
-                  >
+                  <Select value={selectedSubjectId} onChange={handleChangeSubject}>
                     <option value="">— Sélectionnez une matière —</option>
                     {meta?.subjects.map((s) => (
                       <option key={s.id} value={s.id}>
@@ -890,13 +947,10 @@ export default function ImportEmploisDuTempsPage() {
                 </div>
 
                 <div className="mt-2 rounded-xl border border-slate-100 bg-slate-50/70 px-3 py-2 text-xs text-slate-600 space-y-1">
+                  <p>1. Choisissez une matière, puis un professeur.</p>
                   <p>
-                    1. Choisissez une matière, puis un professeur lié à cette
-                    matière.
-                  </p>
-                  <p>
-                    2. Cliquez sur les cases du tableau pour indiquer les
-                    classes du prof sur chaque créneau.
+                    2. Cliquez une case du tableau, puis cochez les classes à
+                    droite (sans scroller).
                   </p>
                   <p>3. Enregistrez l’emploi du temps pour ce professeur.</p>
                 </div>
@@ -912,12 +966,10 @@ export default function ImportEmploisDuTempsPage() {
                   <div className="mt-2 rounded-xl border border-slate-100 bg-slate-50/80 px-3 py-2 text-xs text-slate-700 space-y-1">
                     <div className="flex items-center gap-1 font-medium text-slate-800">
                       <Users className="h-3 w-3" />
-                      Classes de ce professeur pour cette matière :
+                      Classes disponibles :
                     </div>
                     <p className="text-[11px]">
-                      {classesForSelectedTeacher
-                        .map((c) => c.label)
-                        .join(", ")}
+                      {classesForSelectedTeacher.map((c) => c.label).join(", ")}
                     </p>
                   </div>
                 )}
@@ -940,11 +992,7 @@ export default function ImportEmploisDuTempsPage() {
                   <Button
                     type="button"
                     onClick={handleSaveManual}
-                    disabled={
-                      savingManual ||
-                      !selectedSubjectId ||
-                      !selectedTeacherId
-                    }
+                    disabled={savingManual || !selectedSubjectId || !selectedTeacherId}
                   >
                     {savingManual ? (
                       <>
@@ -964,11 +1012,24 @@ export default function ImportEmploisDuTempsPage() {
 
             {/* Tableau interactif */}
             <div className="rounded-2xl border border-slate-200 bg-white/90 shadow-sm p-4 space-y-3 overflow-x-auto">
-              <div className="flex items-center gap-2">
-                <CalendarDays className="h-5 w-5 text-emerald-600" />
-                <h2 className="text-sm font-semibold text-slate-800">
-                  Tableau d&apos;emploi du temps
-                </h2>
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <CalendarDays className="h-5 w-5 text-emerald-600" />
+                  <h2 className="text-sm font-semibold text-slate-800">
+                    Tableau d&apos;emploi du temps
+                  </h2>
+                </div>
+
+                {canEditManual && (
+                  <div className="hidden md:flex items-center gap-2 text-[11px] text-slate-600">
+                    <span className="rounded-full border border-slate-200 bg-white px-2 py-1">
+                      {selectedSubjectLabel || "—"}
+                    </span>
+                    <span className="rounded-full border border-slate-200 bg-white px-2 py-1">
+                      {selectedTeacherLabel || "—"}
+                    </span>
+                  </div>
+                )}
               </div>
 
               {!meta?.periods?.length ? (
@@ -1007,28 +1068,25 @@ export default function ImportEmploisDuTempsPage() {
                           {availableWeekdays.map((wd) => {
                             const period = findPeriod(wd, slot.period_no);
                             const active = isCellActive(wd, period);
+                            const selected = isCellSelected(wd, period);
                             const disabled = !period;
-                            const label = period
-                              ? `${slot.label}`
-                              : "Aucun créneau";
+                            const label = period ? `${slot.label}` : "Aucun créneau";
 
                             return (
                               <td key={`${wd}_${slot.period_no}`}>
                                 <button
                                   type="button"
-                                  disabled={
-                                    disabled ||
-                                    !selectedSubjectId ||
-                                    !selectedTeacherId
-                                  }
+                                  disabled={disabled || !selectedSubjectId || !selectedTeacherId}
                                   onClick={() => handleCellClick(wd, period)}
                                   title={label}
                                   className={[
                                     "w-full rounded-xl border px-2 py-3 text-[10px] md:text-[11px] leading-tight transition",
                                     disabled
                                       ? "border-slate-100 bg-slate-100 text-slate-300 cursor-not-allowed"
+                                      : selected
+                                      ? "border-emerald-600 bg-emerald-50 text-emerald-900 shadow-sm ring-2 ring-emerald-400/40"
                                       : active
-                                      ? "border-emerald-500 bg-emerald-50 text-emerald-900 shadow-sm"
+                                      ? "border-emerald-400 bg-emerald-50/70 text-emerald-900"
                                       : "border-slate-200 bg-white hover:border-emerald-300 hover:bg-emerald-50/60",
                                   ].join(" ")}
                                 >
@@ -1042,34 +1100,27 @@ export default function ImportEmploisDuTempsPage() {
                                       </div>
                                       <div className="mt-1 text-[10px]">
                                         {(() => {
-                                          const key = keyForCell(
-                                            wd,
-                                            period.id
-                                          );
-                                          const selectedIds =
-                                            cellSelection[key] || [];
-                                          if (!selectedIds.length) {
-                                            return "Aucun cours";
-                                          }
-                                          const labels =
-                                            classesForSelectedTeacher
-                                              .filter((c) =>
-                                                selectedIds.includes(c.id)
-                                              )
-                                              .map((c) => c.label);
+                                          const key = keyForCell(wd, period.id);
+                                          const selectedIds = cellSelection[key] || [];
+                                          if (!selectedIds.length) return "Aucun cours";
+
+                                          const labels = classesForSelectedTeacher
+                                            .filter((c) => selectedIds.includes(c.id))
+                                            .map((c) => c.label);
 
                                           if (labels.length > 0) {
-                                            return labels.join(", ");
+                                            // évite d'afficher une phrase trop longue
+                                            const joined = labels.join(", ");
+                                            return joined.length > 24
+                                              ? `${labels.length} classe(s)`
+                                              : joined;
                                           }
-                                          // fallback si pour une raison X on n'a pas les labels :
                                           return `${selectedIds.length} classe(s)`;
                                         })()}
                                       </div>
                                     </>
                                   ) : (
-                                    <span className="text-slate-400">
-                                      —
-                                    </span>
+                                    <span className="text-slate-400">—</span>
                                   )}
                                 </button>
                               </td>
@@ -1079,6 +1130,7 @@ export default function ImportEmploisDuTempsPage() {
                       ))}
                     </tbody>
                   </table>
+
                   {!selectedSubjectId || !selectedTeacherId ? (
                     <p className="mt-2 text-[11px] text-slate-500">
                       Sélectionnez une matière et un professeur pour activer le
@@ -1086,106 +1138,276 @@ export default function ImportEmploisDuTempsPage() {
                     </p>
                   ) : (
                     <p className="mt-2 text-[11px] text-slate-500">
-                      Cliquez sur une case pour choisir les classes du
-                      professeur sur ce créneau.
+                      Cliquez une case : la liste des classes est à droite (cochage instantané).
                     </p>
                   )}
                 </div>
               )}
             </div>
+
+            {/* Sidebar classes (desktop) */}
+            <div className="hidden lg:block">
+              <div className="rounded-2xl border border-slate-200 bg-white/90 shadow-sm p-4 space-y-3 lg:sticky lg:top-6">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <div className="text-sm font-semibold text-slate-800">
+                      Classes à cocher
+                    </div>
+                    <div className="text-xs text-slate-500">
+                      {activeCell ? (
+                        <>
+                          <span className="font-medium text-slate-700">
+                            {WEEKDAY_LABELS[activeCell.weekday] ??
+                              `Jour ${activeCell.weekday}`}
+                          </span>{" "}
+                          – <span>{activePeriodLabel}</span>
+                        </>
+                      ) : canEditManual ? (
+                        "Cliquez d’abord sur une cellule du tableau."
+                      ) : (
+                        "Choisissez une matière + un professeur."
+                      )}
+                    </div>
+                  </div>
+
+                  {activeCell && (
+                    <button
+                      type="button"
+                      onClick={() => setActiveCell(null)}
+                      className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-2 py-1 text-[11px] text-slate-600 hover:bg-slate-50"
+                      title="Fermer"
+                    >
+                      <X className="h-3 w-3" />
+                      Fermer
+                    </button>
+                  )}
+                </div>
+
+                {canEditManual && (
+                  <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-600">
+                    <span className="rounded-full border border-slate-200 bg-white px-2 py-1">
+                      {selectedSubjectLabel || "—"}
+                    </span>
+                    <span className="rounded-full border border-slate-200 bg-white px-2 py-1">
+                      {selectedTeacherLabel || "—"}
+                    </span>
+                    {activeCell && (
+                      <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-1 text-emerald-800">
+                        {activeSelectedIds.length} sélectionnée(s)
+                      </span>
+                    )}
+                  </div>
+                )}
+
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+                  <Input
+                    value={classQuery}
+                    onChange={(e) => setClassQuery(e.target.value)}
+                    placeholder="Rechercher une classe…"
+                    className="pl-9"
+                    disabled={!canEditManual}
+                  />
+                </div>
+
+                {activeCell && canEditManual && (
+                  <div className="flex items-center justify-between gap-2">
+                    <button
+                      type="button"
+                      onClick={setAllForActiveCell}
+                      disabled={classesForSelectedTeacher.length === 0}
+                      className="inline-flex items-center justify-center rounded-xl border border-slate-200 bg-white px-3 py-2 text-[11px] text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+                    >
+                      Tout cocher
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={clearActiveCell}
+                      className="inline-flex items-center justify-center gap-2 rounded-xl border border-red-100 bg-red-50 px-3 py-2 text-[11px] text-red-700 hover:bg-red-100"
+                    >
+                      <Trash2 className="h-3 w-3" />
+                      Vider
+                    </button>
+                  </div>
+                )}
+
+                {!canEditManual ? (
+                  <div className="rounded-xl border border-slate-100 bg-slate-50/70 px-3 py-3 text-xs text-slate-600">
+                    Sélectionnez une matière puis un professeur pour activer la
+                    sélection des classes.
+                  </div>
+                ) : classesForSelectedTeacher.length === 0 ? (
+                  <div className="rounded-xl border border-slate-100 bg-slate-50/70 px-3 py-3 text-xs text-slate-600">
+                    Ce professeur n&apos;est associé à aucune classe pour cette
+                    matière. Configurez d&apos;abord les affectations dans
+                    &quot;Affectation professeurs / classes&quot;.
+                  </div>
+                ) : !activeCell ? (
+                  <div className="rounded-xl border border-slate-100 bg-slate-50/70 px-3 py-3 text-xs text-slate-600">
+                    Cliquez sur une case du tableau : la sélection se fera ici,
+                    sans descendre en bas.
+                  </div>
+                ) : (
+                  <div className="max-h-[55vh] overflow-auto pr-1">
+                    <div className="grid grid-cols-1 gap-2 text-xs">
+                      {filteredClasses.map((c) => {
+                        const checked = activeSelectedIds.includes(c.id);
+                        return (
+                          <label
+                            key={c.id}
+                            className={[
+                              "flex items-center gap-2 rounded-xl border px-2 py-2 cursor-pointer text-xs",
+                              checked
+                                ? "border-emerald-400 bg-emerald-50"
+                                : "border-slate-200 bg-white hover:border-emerald-300 hover:bg-emerald-50/60",
+                            ].join(" ")}
+                          >
+                            <input
+                              type="checkbox"
+                              className="h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                              checked={checked}
+                              onChange={() => toggleClassForActiveCell(c.id)}
+                            />
+                            <span className="truncate">{c.label}</span>
+                          </label>
+                        );
+                      })}
+                      {filteredClasses.length === 0 && (
+                        <div className="rounded-xl border border-slate-100 bg-slate-50/70 px-3 py-3 text-xs text-slate-600">
+                          Aucune classe ne correspond à votre recherche.
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {activeCell && (
+                  <p className="text-[11px] text-slate-500">
+                    Les coches sont gardées en mémoire. Cliquez{" "}
+                    <span className="font-medium">
+                      « Enregistrer pour ce professeur »
+                    </span>{" "}
+                    pour synchroniser en base.
+                  </p>
+                )}
+              </div>
+            </div>
           </div>
 
-          {/* Panneau de sélection des classes pour la cellule active */}
-          {activeCell && selectedTeacherId && (
-            <div className="rounded-2xl border border-slate-200 bg-white/90 shadow-sm p-4 space-y-3">
-              <div className="flex items-center justify-between gap-2">
-                <div>
-                  <div className="text-sm font-semibold text-slate-800">
-                    Classes sur le créneau sélectionné
+          {/* Panneau flottant mobile: évite de scroller */}
+          {activeCell && (
+            <div className="lg:hidden fixed inset-x-3 bottom-3 z-50">
+              <div className="rounded-2xl border border-slate-200 bg-white shadow-lg p-3 space-y-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <div className="text-sm font-semibold text-slate-800">
+                      Classes —{" "}
+                      {WEEKDAY_LABELS[activeCell.weekday] ??
+                        `Jour ${activeCell.weekday}`}{" "}
+                      · {activePeriodLabel}
+                    </div>
+                    <div className="text-xs text-slate-500">
+                      {selectedSubjectLabel || "—"} · {selectedTeacherLabel || "—"} ·{" "}
+                      <span className="text-emerald-700 font-medium">
+                        {activeSelectedIds.length} sélectionnée(s)
+                      </span>
+                    </div>
                   </div>
-                  <div className="text-xs text-slate-500">
-                    {
-                      WEEKDAY_LABELS[activeCell.weekday] ??
-                      `Jour ${activeCell.weekday}`
-                    }{" "}
-                    –{" "}
-                    {(() => {
-                      const period = meta?.periods.find(
-                        (p) => p.id === activeCell.period_id
-                      );
-                      if (!period) return "Créneau inconnu";
-                      return `${period.start_time?.slice(
-                        0,
-                        5
-                      )}–${period.end_time?.slice(0, 5)}`;
-                    })()}
-                  </div>
-                </div>
-                <div className="flex items-center gap-2">
                   <button
                     type="button"
-                    onClick={clearActiveCell}
-                    className="inline-flex items-center gap-1 rounded-full border border-red-100 bg-red-50 px-2 py-1 text-[11px] text-red-600 hover:bg-red-100"
-                  >
-                    <Trash2 className="h-3 w-3" />
-                    Vider ce créneau
-                  </button>
-                  <button
-                    type="button"
-                    className="text-xs text-slate-500 hover:text-slate-700"
                     onClick={() => setActiveCell(null)}
+                    className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-2 py-1 text-[11px] text-slate-600 hover:bg-slate-50"
                   >
+                    <X className="h-3 w-3" />
                     Fermer
                   </button>
                 </div>
-              </div>
 
-              {classesForSelectedTeacher.length === 0 ? (
-                <p className="text-xs text-slate-500">
-                  Ce professeur n&apos;est associé à aucune classe pour cette
-                  matière. Configurez d&apos;abord les affectations dans
-                  &quot;Affectation professeurs / classes&quot;.
-                </p>
-              ) : (
-                <div className="grid grid-cols-2 md:grid-cols-3 gap-2 text-xs">
-                  {classesForSelectedTeacher.map((c) => {
-                    const key = keyForCell(
-                      activeCell.weekday,
-                      activeCell.period_id
-                    );
-                    const selectedIds = cellSelection[key] || [];
-                    const checked = selectedIds.includes(c.id);
-                    return (
-                      <label
-                        key={c.id}
-                        className={[
-                          "flex items-center gap-2 rounded-xl border px-2 py-2 cursor-pointer text-xs",
-                          checked
-                            ? "border-emerald-400 bg-emerald-50"
-                            : "border-slate-200 bg-white hover:border-emerald-300 hover:bg-emerald-50/60",
-                        ].join(" ")}
-                      >
-                        <input
-                          type="checkbox"
-                          className="h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
-                          checked={checked}
-                          onChange={() => toggleClassForActiveCell(c.id)}
-                        />
-                        <span className="truncate">{c.label}</span>
-                      </label>
-                    );
-                  })}
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+                  <Input
+                    value={classQuery}
+                    onChange={(e) => setClassQuery(e.target.value)}
+                    placeholder="Rechercher une classe…"
+                    className="pl-9"
+                    disabled={!canEditManual}
+                  />
                 </div>
-              )}
 
-              <p className="text-[11px] text-slate-500 mt-1">
-                Les classes cochées (ou décochées) seront synchronisées en BDD
-                pour ce professeur / cette matière sur ce créneau lorsque vous
-                cliquez sur &laquo;&nbsp;Enregistrer pour ce
-                professeur&nbsp;&raquo;. Le bouton &laquo; Vider ce
-                créneau&nbsp;&raquo; supprime toutes les classes sur ce
-                créneau.
-              </p>
+                <div className="flex items-center justify-between gap-2">
+                  <button
+                    type="button"
+                    onClick={setAllForActiveCell}
+                    disabled={!canEditManual || classesForSelectedTeacher.length === 0}
+                    className="inline-flex items-center justify-center rounded-xl border border-slate-200 bg-white px-3 py-2 text-[11px] text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+                  >
+                    Tout cocher
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={clearActiveCell}
+                    disabled={!canEditManual}
+                    className="inline-flex items-center justify-center gap-2 rounded-xl border border-red-100 bg-red-50 px-3 py-2 text-[11px] text-red-700 hover:bg-red-100 disabled:opacity-60"
+                  >
+                    <Trash2 className="h-3 w-3" />
+                    Vider
+                  </button>
+                </div>
+
+                {!canEditManual ? (
+                  <div className="rounded-xl border border-slate-100 bg-slate-50/70 px-3 py-3 text-xs text-slate-600">
+                    Sélectionnez une matière puis un professeur pour activer la
+                    sélection des classes.
+                  </div>
+                ) : classesForSelectedTeacher.length === 0 ? (
+                  <div className="rounded-xl border border-slate-100 bg-slate-50/70 px-3 py-3 text-xs text-slate-600">
+                    Ce professeur n&apos;est associé à aucune classe pour cette
+                    matière.
+                  </div>
+                ) : (
+                  <div className="max-h-[45vh] overflow-auto pr-1">
+                    <div className="grid grid-cols-1 gap-2 text-xs">
+                      {filteredClasses.map((c) => {
+                        const checked = activeSelectedIds.includes(c.id);
+                        return (
+                          <label
+                            key={c.id}
+                            className={[
+                              "flex items-center gap-2 rounded-xl border px-2 py-2 cursor-pointer text-xs",
+                              checked
+                                ? "border-emerald-400 bg-emerald-50"
+                                : "border-slate-200 bg-white hover:border-emerald-300 hover:bg-emerald-50/60",
+                            ].join(" ")}
+                          >
+                            <input
+                              type="checkbox"
+                              className="h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                              checked={checked}
+                              onChange={() => toggleClassForActiveCell(c.id)}
+                            />
+                            <span className="truncate">{c.label}</span>
+                          </label>
+                        );
+                      })}
+                      {filteredClasses.length === 0 && (
+                        <div className="rounded-xl border border-slate-100 bg-slate-50/70 px-3 py-3 text-xs text-slate-600">
+                          Aucune classe ne correspond à votre recherche.
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                <p className="text-[11px] text-slate-500">
+                  Pensez à cliquer{" "}
+                  <span className="font-medium">
+                    « Enregistrer pour ce professeur »
+                  </span>{" "}
+                  pour enregistrer en base.
+                </p>
+              </div>
             </div>
           )}
         </section>
