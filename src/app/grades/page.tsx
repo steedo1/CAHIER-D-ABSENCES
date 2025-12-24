@@ -11,7 +11,48 @@ import {
   FileSpreadsheet,
   Trash2,
   FileText,
+  Lock,
+  Unlock,
 } from "lucide-react";
+
+type PrimaryButtonTone = "emerald" | "amber" | "slate" | "red";
+
+type PrimaryButtonProps = React.ButtonHTMLAttributes<HTMLButtonElement> & {
+  children: React.ReactNode;
+  /** Simple variante de couleur (utile pour Verrouiller/Déverrouiller) */
+  tone?: PrimaryButtonTone;
+};
+
+function PrimaryButton({
+  className = "",
+  children,
+  tone = "emerald",
+  ...props
+}: PrimaryButtonProps) {
+  const toneClass =
+    tone === "emerald"
+      ? "bg-emerald-600 text-white hover:bg-emerald-700"
+      : tone === "amber"
+        ? "bg-amber-500 text-slate-900 hover:bg-amber-600"
+        : tone === "red"
+          ? "bg-red-600 text-white hover:bg-red-700"
+          : "bg-slate-700 text-white hover:bg-slate-800";
+
+  return (
+    <button
+      {...props}
+      className={[
+        "inline-flex items-center justify-center rounded-md",
+        "px-3 py-2 text-sm font-semibold",
+        toneClass,
+        "disabled:opacity-50 disabled:pointer-events-none",
+        className,
+      ].join(" ")}
+    >
+      {children}
+    </button>
+  );
+}
 
 /* =========================
    Helpers divers
@@ -69,6 +110,14 @@ type Evaluation = {
   coeff: number; // 0.25, 0.5, 1, 2, 3...
   is_published: boolean;
   published_at?: string | null;
+};
+
+type EvalLock = {
+  evaluation_id: string;
+  is_locked: boolean;
+  locked_at?: string | null;
+  locked_by?: string | null;
+  teacher_id?: string | null;
 };
 
 type GradesByEval = Record<string, Record<string, number | null>>; // grades[eval_id][student_id] = note
@@ -334,6 +383,19 @@ export default function TeacherNotesPage() {
   const [showPublishPanel, setShowPublishPanel] = useState(false);
   const [publishBusy, setPublishBusy] = useState<Record<string, boolean>>({});
 
+  /* -------- Verrouillage des évaluations (PIN) -------- */
+  const [evalLocks, setEvalLocks] = useState<Record<string, EvalLock>>({});
+  const [lockBusy, setLockBusy] = useState<Record<string, boolean>>({});
+
+  const [lockModalOpen, setLockModalOpen] = useState(false);
+  const [lockTargetEv, setLockTargetEv] = useState<Evaluation | null>(null);
+  const [lockModalMode, setLockModalMode] = useState<"lock" | "unlock">("lock");
+  const [pin, setPin] = useState("");
+  const [pin2, setPin2] = useState("");
+
+  const isEvalLocked = (evaluation_id: string) =>
+    !!evalLocks[evaluation_id]?.is_locked;
+
   /* -------- Champs "nouvelle note" -------- */
   const [newDate, setNewDate] = useState<string>(() =>
     new Date().toISOString().slice(0, 10)
@@ -476,6 +538,187 @@ export default function TeacherNotesPage() {
   }, [selected?.class_id, selected?.subject_id]);
 
   /* ==========================================
+     Verrouillage (lecture statut)
+  ========================================== */
+  function normalizeLockResponse(evId: string, j: any): EvalLock | null {
+    // On accepte plusieurs formes possibles (pour éviter de casser si l’API diffère)
+    const src =
+      j?.lock ??
+      j?.item ??
+      j?.data ??
+      (typeof j?.is_locked === "boolean" ? j : null) ??
+      null;
+
+    if (!src) return null;
+
+    const is_locked =
+      typeof src.is_locked === "boolean"
+        ? src.is_locked
+        : typeof src.locked === "boolean"
+        ? src.locked
+        : false;
+
+    return {
+      evaluation_id: src.evaluation_id ?? evId,
+      is_locked,
+      locked_at: src.locked_at ?? null,
+      locked_by: src.locked_by ?? null,
+      teacher_id: src.teacher_id ?? null,
+    };
+  }
+
+  async function getEvalLockFromAnyEndpoint(evId: string): Promise<EvalLock | null> {
+    const urls = [
+      `/api/teacher/grades/locks?evaluation_id=${encodeURIComponent(evId)}`,
+      `/api/grades/locks?evaluation_id=${encodeURIComponent(evId)}`,
+      `/api/admin/grades/locks?evaluation_id=${encodeURIComponent(evId)}`,
+    ];
+
+    for (const url of urls) {
+      try {
+        const r = await fetch(url, { cache: "no-store" });
+        if (!r.ok) continue;
+        const j = await r.json().catch(() => null);
+        if (!j) continue;
+        if (j?.ok === false) continue;
+        const lock = normalizeLockResponse(evId, j);
+        if (lock) return lock;
+      } catch {
+        // on essaie l’endpoint suivant
+      }
+    }
+    return null;
+  }
+
+  async function refreshLocks(evIds: string[]) {
+    if (!evIds.length) {
+      setEvalLocks({});
+      return;
+    }
+    const unique = Array.from(new Set(evIds));
+    const results = await Promise.all(unique.map((id) => getEvalLockFromAnyEndpoint(id)));
+    const map: Record<string, EvalLock> = {};
+    for (const lock of results) {
+      if (lock) map[lock.evaluation_id] = lock;
+    }
+    setEvalLocks(map);
+  }
+
+  // Dès qu’on charge / change la liste des évaluations, on récupère les verrous (si l’API existe)
+  useEffect(() => {
+    const ids = evaluations.map((e) => e.id);
+    refreshLocks(ids);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [evaluations]);
+
+  /* ==========================================
+     Verrouillage (actions lock/unlock)
+  ========================================== */
+  function openLockModal(ev: Evaluation, mode: "lock" | "unlock") {
+    setLockTargetEv(ev);
+    setLockModalMode(mode);
+    setPin("");
+    setPin2("");
+    setLockModalOpen(true);
+  }
+
+  async function applyLockChange(evId: string, mode: "lock" | "unlock", p: string) {
+    const urls = ["/api/teacher/grades/locks", "/api/grades/locks", "/api/admin/grades/locks"];
+    const body: any = {
+      evaluation_id: evId,
+      action: mode, // "lock" | "unlock"
+      pin: p,
+    };
+
+    for (const url of urls) {
+      // On tente POST puis PATCH (certaines implémentations utilisent PATCH)
+      for (const method of ["POST", "PATCH"] as const) {
+        try {
+          const r = await fetch(url, {
+            method,
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          });
+          if (!r.ok) {
+            // si 404/405, on teste autre endpoint/méthode
+            continue;
+          }
+          const j = await r.json().catch(() => ({}));
+          if (j?.ok === false) continue;
+
+          // Mise à jour locale
+          const lock = normalizeLockResponse(evId, j);
+          if (lock) {
+            setEvalLocks((prev) => ({ ...prev, [evId]: lock }));
+          } else {
+            // sinon, on relit le statut
+            const fresh = await getEvalLockFromAnyEndpoint(evId);
+            if (fresh) setEvalLocks((prev) => ({ ...prev, [evId]: fresh }));
+          }
+          return;
+        } catch {
+          // on teste autre endpoint/méthode
+        }
+      }
+    }
+    throw new Error(
+      mode === "lock"
+        ? "Impossible de verrouiller (API indisponible ou refus)."
+        : "Impossible de déverrouiller (API indisponible ou refus)."
+    );
+  }
+
+  async function submitLockModal() {
+    if (!lockTargetEv) return;
+    const evId = lockTargetEv.id;
+
+    const wanted = lockModalMode;
+    const p = pin.trim();
+    if (!p) {
+      setMsg("Entrez le code PIN.");
+      return;
+    }
+    if (wanted === "lock") {
+      // optionnel : double saisie pour éviter les erreurs
+      if (pin2.trim() && pin2.trim() !== p) {
+        setMsg("Les deux codes PIN ne correspondent pas.");
+        return;
+      }
+    }
+
+    setMsg(null);
+    setLockBusy((prev) => ({ ...prev, [evId]: true }));
+    try {
+      await applyLockChange(evId, wanted, p);
+
+      // Si on verrouille une évaluation, on purge les changements en attente sur cette colonne
+      if (wanted === "lock") {
+        setChanged((prev) => {
+          if (!prev[evId]) return prev;
+          const next = { ...prev };
+          delete next[evId];
+          return next;
+        });
+      }
+
+      setLockModalOpen(false);
+      setLockTargetEv(null);
+      setPin("");
+      setPin2("");
+      setMsg(wanted === "lock" ? "Évaluation verrouillée ✅" : "Évaluation déverrouillée ✅");
+    } catch (e: any) {
+      setMsg(e?.message || "Échec du verrouillage.");
+    } finally {
+      setLockBusy((prev) => {
+        const next = { ...prev };
+        delete next[evId];
+        return next;
+      });
+    }
+  }
+
+
+  /* ==========================================
      Actions
   ========================================== */
   function setGrade(
@@ -484,6 +727,7 @@ export default function TeacherNotesPage() {
     value: number | null,
     scale: number
   ) {
+    if (isEvalLocked(evId)) return;
     const v =
       value == null || Number.isNaN(value)
         ? null
@@ -497,9 +741,14 @@ export default function TeacherNotesPage() {
   async function saveAllChanges() {
     if (!selected) return;
     // Regrouper par évaluation
-    const perEval = Object.entries(changed).filter(
-      ([, per]) => Object.keys(per).length > 0
-    );
+    const perEvalAll = Object.entries(changed).filter(([, per]) => Object.keys(per).length > 0);
+    const perEval = perEvalAll.filter(([evaluation_id]) => !isEvalLocked(evaluation_id));
+    const lockedWithChanges = perEvalAll.filter(([evaluation_id]) => isEvalLocked(evaluation_id));
+    if (lockedWithChanges.length > 0 && perEval.length === 0) {
+      setMsg("Toutes les colonnes modifiées sont verrouillées. Déverrouillez l’évaluation pour enregistrer.");
+      return;
+    }
+
     if (perEval.length === 0) {
       setMsg("Aucun changement à enregistrer.");
       return;
@@ -537,7 +786,11 @@ export default function TeacherNotesPage() {
         return next;
       });
       setChanged({});
-      setMsg("Notes enregistrées ✅");
+      setMsg(
+        lockedWithChanges.length > 0
+          ? "Notes enregistrées ✅ (certaines colonnes verrouillées ont été ignorées)"
+          : "Notes enregistrées ✅"
+      );
     } catch (e: any) {
       setMsg(e?.message || "Échec d’enregistrement des notes.");
     } finally {
@@ -1292,7 +1545,7 @@ export default function TeacherNotesPage() {
   return (
     <main className="mx-auto max-w-7xl px-4 py-6 space-y-6">
       {/* Header bleu nuit avec établissement + année scolaire */}
-      <header className="rounded-2xl border border-indigo-800/60 bg-gradient-to-r from-slate-950 via-indigo-900 to-slate-900 px-4 py-4 md:px-6 md:py-5 text-white shadow-sm">
+      <header className="rounded-2xl border border-indigo-800/60 bg-linear-to-r from-slate-950 via-indigo-900 to-slate-900 px-4 py-4 md:px-6 md:py-5 text-white shadow-sm">
         <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div className="space-y-1">
             <p className="text-xs font-semibold uppercase tracking-[0.16em] text-indigo-200/80">
@@ -1339,7 +1592,7 @@ export default function TeacherNotesPage() {
       </header>
 
       {/* Sélection + création NOTE */}
-      <section className="rounded-2xl border border-emerald-200 bg-gradient-to-b from-emerald-50/60 to-white p-5 space-y-4 ring-1 ring-emerald-100">
+      <section className="rounded-2xl border border-emerald-200 bg-linear-to-b from-emerald-50/60 to-white p-5 space-y-4 ring-1 ring-emerald-100">
         <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
           <div>
             <div className="mb-1 flex items-center gap-2 text-xs text-slate-500">
@@ -1545,10 +1798,48 @@ export default function TeacherNotesPage() {
                         : label
                     }
                   >
-                    {label}
+                    <span className="inline-flex items-center gap-1">
+                      {label}
+                      {isEvalLocked(ev.id) && (
+                        <Lock className="h-3 w-3 text-amber-600" />
+                      )}
+                    </span>
                   </button>
                 );
               })}
+            </div>
+          )}
+
+
+          {/* ==== ACTIONS VERROU (mobile) ==== */}
+          {isMobile && currentActiveEvalId && (
+            <div className="mb-3 flex items-center justify-end">
+              {(() => {
+                const ev = evaluations.find((e) => e.id === currentActiveEvalId);
+                if (!ev) return null;
+                const locked = isEvalLocked(ev.id);
+                return (
+                  <GhostButton
+                    type="button"
+                    tone={locked ? "emerald" : "slate"}
+                    onClick={() => openLockModal(ev, locked ? "unlock" : "lock")}
+                    className="gap-2"
+                    title={locked ? "Déverrouiller cette évaluation (PIN)" : "Verrouiller cette évaluation (PIN)"}
+                  >
+                    {locked ? (
+                      <>
+                        <Unlock className="h-4 w-4" />
+                        Déverrouiller
+                      </>
+                    ) : (
+                      <>
+                        <Lock className="h-4 w-4" />
+                        Verrouiller
+                      </>
+                    )}
+                  </GhostButton>
+                );
+              })()}
             </div>
           )}
 
@@ -1562,10 +1853,10 @@ export default function TeacherNotesPage() {
                     <th className="px-3 py-2 w-12 sticky left-0 z-20 bg-slate-50">
                       N°
                     </th>
-                    <th className="px-3 py-2 w-40 sticky left-[3rem] z-20 bg-slate-50">
+                    <th className="px-3 py-2 w-40 sticky left-12 z-20 bg-slate-50">
                       Matricule
                     </th>
-                    <th className="px-3 py-2 w-64 sticky left-[13rem] z-20 bg-slate-50">
+                    <th className="px-3 py-2 w-64 sticky left-52 z-20 bg-slate-50">
                       Nom et prénoms
                     </th>
 
@@ -1595,6 +1886,35 @@ export default function TeacherNotesPage() {
                                 )}
                               </div>
                             </div>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                openLockModal(
+                                  ev,
+                                  isEvalLocked(ev.id) ? "unlock" : "lock"
+                                )
+                              }
+                              disabled={!!lockBusy[ev.id]}
+                              className={[
+                                "ml-1 inline-flex h-7 w-7 items-center justify-center rounded-lg border",
+                                isEvalLocked(ev.id)
+                                  ? "border-amber-200 text-amber-700 hover:bg-amber-50 focus:outline-none focus:ring-2 focus:ring-amber-500/40"
+                                  : "border-slate-200 text-slate-600 hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-slate-500/30",
+                                "disabled:opacity-60",
+                              ].join(" ")}
+                              title={
+                                isEvalLocked(ev.id)
+                                  ? "Déverrouiller (PIN)"
+                                  : "Verrouiller (PIN)"
+                              }
+                            >
+                              {isEvalLocked(ev.id) ? (
+                                <Unlock className="h-3.5 w-3.5" />
+                              ) : (
+                                <Lock className="h-3.5 w-3.5" />
+                              )}
+                            </button>
+
                             <button
                               type="button"
                               onClick={() => deleteEvaluation(ev)}
@@ -1636,10 +1956,10 @@ export default function TeacherNotesPage() {
                         <td className="px-3 py-2 w-12 sticky left-0 z-10 bg-white">
                           {idx + 1}
                         </td>
-                        <td className="px-3 py-2 w-40 sticky left-[3rem] z-10 bg-white">
+                        <td className="px-3 py-2 w-40 sticky left-12 z-10 bg-white">
                           {st.matricule ?? ""}
                         </td>
-                        <td className="px-3 py-2 w-64 sticky left-[13rem] z-10 bg-white">
+                        <td className="px-3 py-2 w-64 sticky left-52 z-10 bg-white">
                           {st.full_name}
                         </td>
 
@@ -1657,6 +1977,8 @@ export default function TeacherNotesPage() {
                                 step="0.25"
                                 min={0}
                                 max={scale}
+                                disabled={isEvalLocked(ev.id)}
+                                title={isEvalLocked(ev.id) ? "Évaluation verrouillée" : undefined}
                                 value={current == null ? "" : String(current)}
                                 onChange={(e) => {
                                   const raw = e.target.value.trim();
@@ -1742,7 +2064,9 @@ export default function TeacherNotesPage() {
                           step="0.25"
                           min={0}
                           max={scale}
-                          value={current == null ? "" : String(current)}
+                                disabled={isEvalLocked(ev.id)}
+                                title={isEvalLocked(ev.id) ? "Évaluation verrouillée" : undefined}
+                                value={current == null ? "" : String(current)}
                           onChange={(e) => {
                             const raw = e.target.value.trim();
                             const v =
@@ -1787,10 +2111,10 @@ export default function TeacherNotesPage() {
                     <th className="px-3 py-2 w-12 sticky left-0 z-20 bg-slate-50">
                       N°
                     </th>
-                    <th className="px-3 py-2 w-40 sticky left-[3rem] z-20 bg-slate-50">
+                    <th className="px-3 py-2 w-40 sticky left-12 z-20 bg-slate-50">
                       Matricule
                     </th>
-                    <th className="px-3 py-2 w-64 sticky left-[13rem] z-20 bg-slate-50">
+                    <th className="px-3 py-2 w-64 sticky left-52 z-20 bg-slate-50">
                       Nom et prénoms
                     </th>
 
@@ -1841,10 +2165,10 @@ export default function TeacherNotesPage() {
                           <td className="px-3 py-2 w-12 sticky left-0 z-10 bg-white">
                             {idx + 1}
                           </td>
-                          <td className="px-3 py-2 w-40 sticky left-[3rem] z-10 bg-white">
+                          <td className="px-3 py-2 w-40 sticky left-12 z-10 bg-white">
                             {row.student.matricule ?? ""}
                           </td>
-                          <td className="px-3 py-2 w-64 sticky left-[13rem] z-10 bg-white">
+                          <td className="px-3 py-2 w-64 sticky left-52 z-10 bg-white">
                             {row.student.full_name}
                           </td>
 
@@ -2145,6 +2469,108 @@ export default function TeacherNotesPage() {
           </div>
         </div>
       )}
-    </main>
+    
+      {/* ==== MODAL VERROUILLAGE (PIN) ==== */}
+      {lockModalOpen && lockTargetEv && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white shadow-xl">
+            <div className="flex items-center justify-between gap-3 border-b border-slate-200 px-4 py-3">
+              <div className="flex items-center gap-2">
+                {lockModalMode === "lock" ? (
+                  <Lock className="h-5 w-5 text-amber-600" />
+                ) : (
+                  <Unlock className="h-5 w-5 text-emerald-700" />
+                )}
+                <div>
+                  <div className="text-sm font-semibold text-slate-900">
+                    {lockModalMode === "lock" ? "Verrouiller" : "Déverrouiller"}
+                  </div>
+                  <div className="text-xs text-slate-500">
+                    {labelByEvalId[lockTargetEv.id] ?? "NOTE"} —{" "}
+                    {lockTargetEv.eval_date}
+                  </div>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                className="rounded-lg px-2 py-1 text-slate-500 hover:bg-slate-100"
+                onClick={() => {
+                  setLockModalOpen(false);
+                  setLockTargetEv(null);
+                  setPin("");
+                  setPin2("");
+                }}
+                aria-label="Fermer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="px-4 py-4 space-y-3">
+              <p className="text-sm text-slate-600">
+                {lockModalMode === "lock"
+                  ? "Le verrou empêche toute modification des notes de cette évaluation (même après rafraîchissement)."
+                  : "Entrez le code PIN pour déverrouiller et permettre la saisie / modification."}
+              </p>
+
+              <div className="space-y-1">
+                <label className="text-xs font-medium text-slate-700">
+                  Code PIN
+                </label>
+                <Input
+                  type="password"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  value={pin}
+                  onChange={(e) => setPin(e.target.value)}
+                  placeholder="••••"
+                />
+              </div>
+
+              {lockModalMode === "lock" && (
+                <div className="space-y-1">
+                  <label className="text-xs font-medium text-slate-700">
+                    Confirmer (optionnel)
+                  </label>
+                  <Input
+                    type="password"
+                    inputMode="numeric"
+                    autoComplete="one-time-code"
+                    value={pin2}
+                    onChange={(e) => setPin2(e.target.value)}
+                    placeholder="••••"
+                  />
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center justify-end gap-2 border-t border-slate-200 px-4 py-3">
+              <GhostButton
+                type="button"
+                onClick={() => {
+                  setLockModalOpen(false);
+                  setLockTargetEv(null);
+                  setPin("");
+                  setPin2("");
+                }}
+              >
+                Annuler
+              </GhostButton>
+
+              <PrimaryButton
+                type="button"
+                tone={lockModalMode === "lock" ? "amber" : "emerald"}
+                onClick={submitLockModal}
+                disabled={!!lockBusy[lockTargetEv.id]}
+              >
+                {lockModalMode === "lock" ? "Verrouiller" : "Déverrouiller"}
+              </PrimaryButton>
+            </div>
+          </div>
+        </div>
+      )}
+
+</main>
   );
 }

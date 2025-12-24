@@ -75,6 +75,27 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // ✅ CHECK LOCK (verrou global compte classe + compte prof)
+    // Si l'évaluation est verrouillée (grade_evaluation_locks.is_locked = true),
+    // on bloque toute écriture et on renvoie 423.
+    const { data: lock, error: lockErr } = await supabase
+      .from("grade_evaluation_locks")
+      .select("evaluation_id, is_locked, locked_at, locked_by")
+      .eq("evaluation_id", evaluation_id)
+      .maybeSingle();
+
+    if (lockErr) {
+      return bad(lockErr.message || "LOCK_CHECK_FAILED", 500);
+    }
+
+    if (lock?.is_locked) {
+      return bad("EVALUATION_LOCKED", 423, {
+        evaluation_id,
+        locked_at: lock.locked_at ?? null,
+        locked_by: lock.locked_by ?? null,
+      });
+    }
+
     const scale = Number(ge?.scale || 20);
     const violations: Violation[] = [];
 
@@ -87,7 +108,9 @@ export async function POST(req: NextRequest) {
       const hasScore = it?.score !== null && it?.score !== undefined;
 
       const comment =
-        it?.comment === null || it?.comment === undefined ? null : String(it.comment);
+        it?.comment === null || it?.comment === undefined
+          ? null
+          : String(it.comment);
 
       if (!student_id) {
         violations.push({ student_id: "", reason: "student_id manquant" });
