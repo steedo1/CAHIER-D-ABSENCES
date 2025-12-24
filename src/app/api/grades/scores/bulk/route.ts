@@ -22,10 +22,7 @@ type UpsertRow = {
 };
 
 function bad(error: string, status = 400, extra?: Record<string, unknown>) {
-  return NextResponse.json(
-    { ok: false, error, ...(extra ?? {}) },
-    { status }
-  );
+  return NextResponse.json({ ok: false, error, ...(extra ?? {}) }, { status });
 }
 
 function round2(n: number) {
@@ -69,15 +66,18 @@ async function ensureClassAccess(
   institutionId: string
 ): Promise<boolean> {
   if (!classId || !institutionId) return false;
+
   const { data: cls, error } = await srv
     .from("classes")
     .select("id,institution_id")
     .eq("id", classId)
     .maybeSingle();
+
   if (error) {
     console.error("[grades/scores/bulk] class check error", error);
     return false;
   }
+
   return !!cls && cls.institution_id === institutionId;
 }
 
@@ -87,7 +87,7 @@ async function ensureClassAccess(
 ========================================== */
 export async function POST(req: NextRequest) {
   try {
-    const { supa, user, profile, srv } = await getContext();
+    const { user, profile, srv } = await getContext();
     if (!user || !profile || !srv) {
       return bad("UNAUTHENTICATED", 401);
     }
@@ -136,10 +136,7 @@ export async function POST(req: NextRequest) {
       console.error("[grades/scores/bulk] grade_evaluations error", geErr, {
         evaluation_id,
       });
-      return bad(
-        geErr?.message || "EVALUATION_NOT_FOUND_OR_FORBIDDEN",
-        404
-      );
+      return bad(geErr?.message || "EVALUATION_NOT_FOUND_OR_FORBIDDEN", 404);
     }
 
     // Vérifier que la classe de cette évaluation appartient bien à l'établissement
@@ -155,6 +152,38 @@ export async function POST(req: NextRequest) {
         institution_id: profile.institution_id,
       });
       return bad("FORBIDDEN", 403);
+    }
+
+    // ✅ Bloquer l'écriture si l'évaluation est verrouillée (PIN)
+    try {
+      const { data: lockRow, error: lockErr } = await srv
+        .from("grade_evaluation_locks")
+        .select("is_locked, locked_at, teacher_id")
+        .eq("evaluation_id", evaluation_id)
+        .maybeSingle();
+
+      // Si la table n'existe pas encore (migration pas faite), on ne casse rien
+      if (lockErr) {
+        const msg = String(lockErr.message || "");
+        const looksLikeMissingTable =
+          msg.includes('relation "grade_evaluation_locks" does not exist') ||
+          msg.includes("42P01");
+        if (!looksLikeMissingTable) {
+          console.error("[grades/scores/bulk] lock check error", lockErr);
+          return bad("LOCK_CHECK_FAILED", 500);
+        }
+      }
+
+      if (lockRow?.is_locked) {
+        return bad("EVALUATION_LOCKED", 423, {
+          locked: true,
+          locked_at: lockRow.locked_at,
+          teacher_id: lockRow.teacher_id,
+        });
+      }
+    } catch (e) {
+      console.error("[grades/scores/bulk] lock check unexpected", e);
+      return bad("LOCK_CHECK_FAILED", 500);
     }
 
     const scale = Number(ge.scale || 20);
@@ -240,9 +269,7 @@ export async function POST(req: NextRequest) {
     }
 
     if (!strict && violations.length > 0) {
-      warnings.push(
-        `${violations.length} ligne(s) ignorée(s) (validation)`
-      );
+      warnings.push(`${violations.length} ligne(s) ignorée(s) (validation)`);
     }
 
     console.log("[grades/scores/bulk] done", {

@@ -11,6 +11,9 @@ import {
   RefreshCw,
   FileSpreadsheet,
   Trash2,
+  Lock,
+  Unlock,
+  KeyRound,
 } from "lucide-react";
 
 /* =========================
@@ -74,6 +77,16 @@ type Evaluation = {
   is_published: boolean;
   published_at?: string | null;
 };
+
+type LockInfo = {
+  enabled: boolean;
+  locked: boolean;
+  locked_at: string | null;
+  teacher_id: string | null;
+};
+
+type LockAction = "lock" | "unlock";
+
 
 type GradesByEval = Record<string, Record<string, number | null>>;
 
@@ -430,6 +443,31 @@ export default function ClassDeviceNotesPage() {
   const [activeEvalId, setActiveEvalId] = useState<string | null>(null);
 
   /* ==========================================
+     Verrouillage d’évaluation (PIN)
+  ========================================== */
+  const [lockByEvalId, setLockByEvalId] = useState<Record<string, LockInfo>>(
+    {}
+  );
+  const [locksSupported, setLocksSupported] = useState<boolean>(true);
+
+  // Modal PIN (verrouiller / déverrouiller)
+  const [lockModalOpen, setLockModalOpen] = useState(false);
+  const [lockModalAction, setLockModalAction] = useState<LockAction>("lock");
+  const [lockModalEvalId, setLockModalEvalId] = useState<string | null>(null);
+  const [lockPin, setLockPin] = useState("");
+  const [lockBusy, setLockBusy] = useState(false);
+  const [lockErr, setLockErr] = useState<string | null>(null);
+
+  function openLockModal(action: LockAction, evaluation_id: string) {
+    setLockModalAction(action);
+    setLockModalEvalId(evaluation_id);
+    setLockPin("");
+    setLockErr(null);
+    setLockModalOpen(true);
+  }
+
+
+  /* ==========================================
      Chargement des classes (compte-classe)
   ========================================== */
   useEffect(() => {
@@ -628,6 +666,127 @@ export default function ClassDeviceNotesPage() {
   /* ==========================================
      Actions
   ========================================== */
+  // PIN: 4 à 8 chiffres (simple, adapté aux tablettes en classe)
+  function isValidPin(pin: string) {
+    return /^\d{4,8}$/.test(pin.trim());
+  }
+
+  async function refreshLockStatus(evaluation_id: string) {
+    try {
+      const url = `/api/grades/locks?evaluation_id=${encodeURIComponent(
+        evaluation_id
+      )}`;
+      const r = await fetch(url, { cache: "no-store" });
+      logInfo("refreshLockStatus -> GET", url, "status", r.status);
+
+      if (!r.ok) {
+        // Si l’endpoint n’existe pas / erreur : on cache la feature
+        setLocksSupported(false);
+        return;
+      }
+
+      const j: any = await r.json().catch((err) => {
+        logError("refreshLockStatus -> JSON parse error", err);
+        return null;
+      });
+
+      if (!j?.ok) {
+        setLocksSupported(false);
+        return;
+      }
+
+      if (j.enabled === false) {
+        setLocksSupported(false);
+        setLockByEvalId((m) => ({
+          ...m,
+          [evaluation_id]: {
+            enabled: false,
+            locked: false,
+            locked_at: null,
+            teacher_id: null,
+          },
+        }));
+        return;
+      }
+
+      setLocksSupported(true);
+      setLockByEvalId((m) => ({
+        ...m,
+        [evaluation_id]: {
+          enabled: true,
+          locked: !!j.locked,
+          locked_at: j.locked_at ?? null,
+          teacher_id: j.teacher_id ?? null,
+        },
+      }));
+    } catch (e) {
+      logError("refreshLockStatus -> exception", e);
+      setLocksSupported(false);
+    }
+  }
+
+  async function submitLockModal() {
+    const evaluation_id = lockModalEvalId;
+    if (!evaluation_id) return;
+
+    const pin = lockPin.trim();
+    if (!isValidPin(pin)) {
+      setLockErr("PIN invalide (4 à 8 chiffres).");
+      return;
+    }
+
+    setLockBusy(true);
+    setLockErr(null);
+    try {
+      const r = await fetch("/api/grades/locks", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: lockModalAction,
+          evaluation_id,
+          pin,
+        }),
+      });
+
+      const raw = await r.text();
+      logInfo("submitLockModal -> status", r.status, "body", raw);
+      let j: any = {};
+      try {
+        j = raw ? JSON.parse(raw) : {};
+      } catch (err) {
+        logError("submitLockModal -> JSON parse error", err);
+      }
+
+      if (!r.ok || !j?.ok) {
+        if (j?.error === "INVALID_PIN") {
+          setLockErr("PIN incorrect.");
+        } else if (j?.error === "LOCKS_DISABLED") {
+          setLocksSupported(false);
+          setLockErr("Le verrouillage n’est pas activé sur ce serveur.");
+        } else {
+          setLockErr(j?.error || "Échec de l’opération.");
+        }
+        return;
+      }
+
+      setLockModalOpen(false);
+      setLockPin("");
+      setLockErr(null);
+
+      await refreshLockStatus(evaluation_id);
+      setMsg(
+        lockModalAction === "lock"
+          ? "Évaluation verrouillée 🔒"
+          : "Évaluation déverrouillée ✅"
+      );
+    } catch (e: any) {
+      logError("submitLockModal -> exception", e);
+      setLockErr(e?.message || "Erreur réseau.");
+    } finally {
+      setLockBusy(false);
+    }
+  }
+
   function setGrade(
     evId: string,
     studentId: string,
@@ -639,37 +798,62 @@ export default function ClassDeviceNotesPage() {
         ? null
         : Math.max(0, Math.min(scale, value));
     logInfo("setGrade ->", { evId, studentId, value, clamped: v, scale });
+
+    const lock = lockByEvalId[evId];
+    if (lock?.locked) {
+      setMsg(
+        "Évaluation verrouillée 🔒. Déverrouillez-la avec le PIN pour modifier les notes."
+      );
+      return;
+    }
+
     setChanged((prev) => ({
       ...prev,
       [evId]: { ...(prev[evId] || {}), [studentId]: v },
     }));
   }
 
-  async function saveAllChanges() {
+    async function saveAllChanges() {
     if (!selected) {
       logInfo("saveAllChanges -> aucun selected, on annule.");
       return;
     }
+
     const perEval = Object.entries(changed).filter(
       ([, per]) => Object.keys(per).length > 0
     );
     logInfo("saveAllChanges -> perEval à enregistrer", perEval);
+
     if (perEval.length === 0) {
       setMsg("Aucun changement à enregistrer.");
       return;
     }
+
     setLoading(true);
     setMsg(null);
+
+    const savedEvalIds: string[] = [];
+    const lockedEvalIds: string[] = [];
+
     try {
       for (const [evaluation_id, per] of perEval) {
+        // Si on sait déjà que l’évaluation est verrouillée, on saute (et on affiche après)
+        const knownLock = lockByEvalId[evaluation_id];
+        if (knownLock?.locked) {
+          lockedEvalIds.push(evaluation_id);
+          continue;
+        }
+
         const items = Object.entries(per).map(([student_id, score]) => ({
           student_id,
           score: score == null ? null : Number(score),
         }));
+
         logInfo("saveAllChanges -> POST /api/grades/scores/bulk", {
           evaluation_id,
           items,
         });
+
         const r = await fetch("/api/grades/scores/bulk", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -679,29 +863,80 @@ export default function ClassDeviceNotesPage() {
             delete_if_null: true,
           }),
         });
-        const text = await r.text();
-        logInfo("saveAllChanges -> response status", r.status, "body", text);
+
+        const raw = await r.text();
+        logInfo("saveAllChanges -> response status", r.status, "body", raw);
+
         let j: any = {};
         try {
-          j = text ? JSON.parse(text) : {};
+          j = raw ? JSON.parse(raw) : {};
         } catch (err) {
           logError("saveAllChanges -> JSON parse error", err);
         }
-        if (!r.ok || !j?.ok)
+
+        // 🧷 Verrouillage côté serveur (423)
+        if (r.status === 423 || j?.error === "EVALUATION_LOCKED") {
+          lockedEvalIds.push(evaluation_id);
+
+          setLockByEvalId((m) => ({
+            ...m,
+            [evaluation_id]: {
+              enabled: true,
+              locked: true,
+              locked_at: j?.locked_at ?? m?.[evaluation_id]?.locked_at ?? null,
+              teacher_id: j?.teacher_id ?? m?.[evaluation_id]?.teacher_id ?? null,
+            },
+          }));
+
+          continue;
+        }
+
+        if (!r.ok || !j?.ok) {
           throw new Error(j?.error || "Échec d’enregistrement.");
+        }
+
+        savedEvalIds.push(evaluation_id);
       }
 
-      setGrades((prev) => {
-        const next = { ...prev };
-        for (const [evId, per] of Object.entries(changed)) {
-          next[evId] = { ...(next[evId] || {}) };
-          for (const [sid, val] of Object.entries(per)) next[evId][sid] = val;
+      // Applique les notes en mémoire uniquement pour les évaluations réellement enregistrées
+      if (savedEvalIds.length > 0) {
+        setGrades((prev) => {
+          const next = { ...prev };
+          for (const evId of savedEvalIds) {
+            const per = changed[evId] || {};
+            next[evId] = { ...(next[evId] || {}) };
+            for (const [sid, val] of Object.entries(per)) next[evId][sid] = val;
+          }
+          return next;
+        });
+
+        setChanged((prev) => {
+          const next = { ...prev };
+          for (const evId of savedEvalIds) delete next[evId];
+          return next;
+        });
+      }
+
+      // Rafraîchit l’état des locks (au cas où)
+      if (locksSupported) {
+        for (const evId of lockedEvalIds) {
+          refreshLockStatus(evId).catch(() => null);
         }
-        return next;
-      });
-      setChanged({});
-      setMsg("Notes enregistrées ✅");
-      logInfo("saveAllChanges -> succès, notes mises à jour en mémoire.");
+      }
+
+      if (lockedEvalIds.length > 0 && savedEvalIds.length > 0) {
+        setMsg(
+          "Notes enregistrées ✅ (certaines évaluations sont verrouillées 🔒)."
+        );
+      } else if (lockedEvalIds.length > 0) {
+        setMsg(
+          "Évaluation(s) verrouillée(s) 🔒 : déverrouillez avec le PIN pour enregistrer."
+        );
+      } else {
+        setMsg("Notes enregistrées ✅");
+      }
+
+      logInfo("saveAllChanges -> terminé", { savedEvalIds, lockedEvalIds });
     } catch (e: any) {
       logError("saveAllChanges -> exception", e);
       setMsg(e?.message || "Échec d’enregistrement des notes.");
@@ -709,6 +944,7 @@ export default function ClassDeviceNotesPage() {
       setLoading(false);
     }
   }
+
 
   async function addEvaluation() {
     if (!selected) {
@@ -1644,6 +1880,25 @@ export default function ClassDeviceNotesPage() {
     if (!evaluations.length) return evaluations;
     if (!currentActiveEvalId) return evaluations;
     return evaluations.filter((ev) => ev.id === currentActiveEvalId);
+
+  const currentLock: LockInfo | undefined = currentActiveEvalId
+    ? lockByEvalId[currentActiveEvalId]
+    : undefined;
+
+  const isCurrentEvalLocked = !!currentLock?.locked;
+
+  const currentActiveEval = useMemo(() => {
+    if (!currentActiveEvalId) return null;
+    return evaluations.find((ev) => ev.id === currentActiveEvalId) || null;
+  }, [evaluations, currentActiveEvalId]);
+
+  // Recharge l’état de verrouillage dès qu’on change d’évaluation active
+  useEffect(() => {
+    if (!currentActiveEvalId) return;
+    if (!locksSupported) return;
+    refreshLockStatus(currentActiveEvalId);
+  }, [currentActiveEvalId, locksSupported]);
+
   }, [isMobile, evaluations, currentActiveEvalId]);
 
   /* ==========================================
@@ -1905,8 +2160,52 @@ export default function ClassDeviceNotesPage() {
               >
                 <Save className="h-4 w-4" /> Enregistrer
               </Button>
+              {locksSupported && currentActiveEvalId && (
+                <Button
+                  tone={isCurrentEvalLocked ? "slate" : "amber"}
+                  onClick={() =>
+                    openLockModal(
+                      isCurrentEvalLocked ? "unlock" : "lock",
+                      currentActiveEvalId
+                    )
+                  }
+                  disabled={loading}
+                  title={
+                    isCurrentEvalLocked
+                      ? "Déverrouiller l’évaluation (PIN)"
+                      : "Verrouiller l’évaluation (PIN)"
+                  }
+                >
+                  {isCurrentEvalLocked ? (
+                    <Unlock className="h-4 w-4" />
+                  ) : (
+                    <Lock className="h-4 w-4" />
+                  )}
+                  {isCurrentEvalLocked ? "Déverrouiller" : "Verrouiller"}
+                </Button>
+              )}
+
             </div>
           </div>
+
+
+          {isCurrentEvalLocked && currentActiveEval && (
+            <div className="mb-3 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+              <div className="flex items-center gap-2">
+                <Lock className="h-4 w-4" />
+                <div>
+                  <div className="font-semibold">
+                    Évaluation verrouillée (PIN)
+                  </div>
+                  <div className="text-xs leading-snug">
+                    {labelByEvalId[currentActiveEval.id] ?? "NOTE"} •{" "}
+                    {formatDateFr(currentActiveEval.eval_date)} — déverrouillez
+                    pour modifier les notes.
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Bandeau de boutons DEVOIR1, DEVOIR2, IE1… sur mobile */}
           {isMobile && evaluations.length > 0 && (
@@ -2049,6 +2348,10 @@ export default function ClassDeviceNotesPage() {
                                       : Number(raw.replace(",", "."));
                                   setGrade(ev.id, st.id, v, scale);
                                 }}
+                                disabled={
+                                  loading ||
+                                  (!!lockByEvalId[ev.id]?.locked && locksSupported)
+                                }
                                 aria-label={`Note ${st.full_name}`}
                               />
                             </td>
@@ -2136,6 +2439,10 @@ export default function ClassDeviceNotesPage() {
                                 : Number(raw.replace(",", "."));
                             setGrade(ev.id, st.id, v, scale);
                           }}
+                          disabled={
+                            loading ||
+                            (!!lockByEvalId[ev.id]?.locked && locksSupported)
+                          }
                           aria-label={`Note ${st.full_name}`}
                         />
                       </div>
@@ -2394,7 +2701,96 @@ export default function ClassDeviceNotesPage() {
       )}
 
       {/* Panneau publication */}
-      {showPublishPanel && (
+            {/* Modal PIN pour verrouillage / déverrouillage */}
+      {lockModalOpen && lockModalEvalId && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="w-full max-w-md rounded-2xl bg-white p-5 shadow-xl">
+            <div className="mb-2 flex items-center justify-between">
+              <div className="flex items-center gap-2 text-base font-semibold text-slate-900">
+                <KeyRound className="h-5 w-5" />
+                {lockModalAction === "lock"
+                  ? "Verrouiller l’évaluation"
+                  : "Déverrouiller l’évaluation"}
+              </div>
+              <button
+                className="rounded-md px-2 py-1 text-sm text-slate-600 hover:bg-slate-100"
+                onClick={() => {
+                  if (lockBusy) return;
+                  setLockModalOpen(false);
+                }}
+                aria-label="Fermer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="mb-3 text-xs text-slate-600">
+              {selected?.class_label}
+              {selected?.subject_name ? ` — ${selected.subject_name}` : ""}
+              {currentActiveEval && currentActiveEval.id === lockModalEvalId && (
+                <>
+                  {" "}
+                  • {labelByEvalId[currentActiveEval.id] ?? "NOTE"} •{" "}
+                  {formatDateFr(currentActiveEval.eval_date)}
+                </>
+              )}
+            </div>
+
+            <label className="block text-sm font-medium text-slate-700">
+              PIN
+            </label>
+            <input
+              className="mt-1 w-full rounded-xl border px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-slate-200"
+              inputMode="numeric"
+              pattern="\d*"
+              autoFocus
+              value={lockPin}
+              onChange={(e) => setLockPin(e.target.value)}
+              placeholder="4 à 8 chiffres"
+              disabled={lockBusy}
+            />
+
+            <div className="mt-1 text-xs text-slate-500">
+              Le PIN sert à bloquer toute modification sur cette évaluation.
+            </div>
+
+            {lockErr && (
+              <div className="mt-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+                {lockErr}
+              </div>
+            )}
+
+            <div className="mt-4 flex items-center justify-end gap-2">
+              <GhostButton
+                onClick={() => {
+                  if (lockBusy) return;
+                  setLockModalOpen(false);
+                }}
+              >
+                Annuler
+              </GhostButton>
+
+              <Button
+                tone={lockModalAction === "lock" ? "amber" : "slate"}
+                onClick={submitLockModal}
+                disabled={lockBusy}
+              >
+                {lockModalAction === "lock" ? (
+                  <>
+                    <Lock className="h-4 w-4" /> Verrouiller
+                  </>
+                ) : (
+                  <>
+                    <Unlock className="h-4 w-4" /> Déverrouiller
+                  </>
+                )}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+{showPublishPanel && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
           <div className="w-full max-w-3xl rounded-2xl bg-white shadow-xl border border-slate-200 p-4 md:p-6">
             <div className="mb-3 flex items-center justify-between gap-2">

@@ -1930,15 +1930,34 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  /* ✅ 10) ANNUEL : calculer uniquement si périodes définies ET bulletin = dernière période */
-  if (periodsDefined && isLastPeriod && periodsForYear.length) {
-    // calc moyenne générale d'un élève sur une période
-    const computeGeneralAvgMapForRange = async (
+  /* ✅ 10) ANNUEL — IMPORTANT
+     La moyenne annuelle ne se calcule PAS à partir des matières directement.
+     Elle se calcule uniquement à partir des moyennes de chaque période (trimestres / semestres),
+     pondérées par leurs coefficients.
+
+     ➜ Comme la "conduite" doit influencer la moyenne du trimestre,
+       l'annuel la prend INDIRECTEMENT en compte via les moyennes trimestrielles.
+
+     ➜ Cas particulier géré : un trimestre sans évaluations académiques mais avec seulement la conduite
+       (ex: moyenne trimestre = 19). Ce trimestre doit compter dans l'annuel. */
+  if (isLastPeriod) {
+    type PeriodGenAgg = { avg: number | null; sumCoeff: number };
+
+    const clampTo20 = (v: any): number | null => {
+      const n = Number(v);
+      if (!Number.isFinite(n)) return null;
+      if (n < 0) return 0;
+      if (n > 20) return 20;
+      return n;
+    };
+
+    // ✅ retourne (avg matières, somme des coeffs matières) par élève sur une plage de dates
+    const computeGeneralAggMapForRange = async (
       from: string,
       to: string
-    ): Promise<Map<string, number | null>> => {
-      const out = new Map<string, number | null>();
-      studentIds.forEach((sid) => out.set(sid, null));
+    ): Promise<Map<string, PeriodGenAgg>> => {
+      const out = new Map<string, PeriodGenAgg>();
+      studentIds.forEach((sid) => out.set(sid, { avg: null, sumCoeff: 0 }));
 
       // evals publiées sur la période
       const { data: eData, error: eErr } = await supabase
@@ -1949,28 +1968,42 @@ export async function GET(req: NextRequest) {
         .gte("eval_date", from)
         .lte("eval_date", to);
 
-      if (eErr || !eData?.length) return out;
+      if (eErr) {
+        console.error("[bulletin.annual] evals error", eErr);
+        return out;
+      }
 
-      const pevals = (eData as any[]) as EvalRow[];
-      const evalMap = new Map<string, EvalRow>();
-      pevals.forEach((ev) => evalMap.set(ev.id, ev));
+      const evals = (eData ?? []).filter((e: any) => !!e?.subject_id);
 
-      const evalIds = pevals.map((ev) => ev.id);
+      // pas d'évals => pas de moyenne matières
+      if (!evals.length) return out;
 
-      const { data: sData, error: sErr } = await supabase
+      const evalIds = evals.map((e: any) => e.id);
+
+      const { data: scData, error: scErr } = await supabase
         .from("student_grades")
         .select("evaluation_id, student_id, score")
         .in("evaluation_id", evalIds)
         .in("student_id", studentIds);
 
-      if (sErr || !sData?.length) return out;
+      if (scErr) {
+        console.error("[bulletin.annual] student_grades error", scErr);
+        return out;
+      }
 
-      const pscores = (sData as any[]) as ScoreRow[];
+      const pscores = scData ?? [];
 
-      const perStuSub = new Map<string, Map<string, { sumWeighted: number; sumCoeff: number }>>();
+      const evalMap = new Map<string, any>();
+      for (const e of evals) evalMap.set(e.id, e);
+
+      const perStuSub = new Map<
+        string,
+        Map<string, { sumWeighted: number; sumCoeff: number }>
+      >();
+
       const perStuComp = new Map<
         string,
-        Map<string, { subject_id: string; sumWeighted: number; sumCoeff: number }>
+        Map<string, { sumWeighted: number; sumCoeff: number }>
       >();
 
       for (const sc of pscores) {
@@ -2004,8 +2037,7 @@ export async function GET(req: NextRequest) {
               cm = new Map();
               perStuComp.set(sc.student_id, cm);
             }
-            const ccell =
-              cm.get(comp.id) || { subject_id: comp.subject_id, sumWeighted: 0, sumCoeff: 0 };
+            const ccell = cm.get(comp.id) || { sumWeighted: 0, sumCoeff: 0 };
             ccell.sumWeighted += norm20 * weight;
             ccell.sumCoeff += weight;
             cm.set(comp.id, ccell);
@@ -2013,25 +2045,31 @@ export async function GET(req: NextRequest) {
         }
       }
 
-      // calc general avg pour chaque élève
+      // calc général matières: ∑(moy_matière * coeff_matière) / ∑ coeff_matière
       for (const sid of studentIds) {
-        const sm = perStuSub.get(sid) || new Map();
-        const cm = perStuComp.get(sid) || new Map();
+        const sm = perStuSub.get(sid);
+        if (!sm) {
+          out.set(sid, { avg: null, sumCoeff: 0 });
+          continue;
+        }
 
         let sumGen = 0;
         let sumCoeffGen = 0;
 
+        // sur la base des matières configurées (include_in_average)
         for (const s of subjectsForReport) {
-          if (s.include_in_average === false) continue;
+          if (!s.include_in_average) continue;
+
           const coeffSub = Number(s.coeff_bulletin ?? 0);
           if (!coeffSub || coeffSub <= 0) continue;
 
           const comps = compsBySubject.get(s.subject_id) || [];
-
           let subAvg: number | null = null;
 
+          const cm = perStuComp.get(sid);
+
           // priorité sous-matières si existantes et notées
-          if (comps.length) {
+          if (comps.length && cm) {
             let sum = 0;
             let sumW = 0;
 
@@ -2056,7 +2094,8 @@ export async function GET(req: NextRequest) {
           if (subAvg === null) {
             const cell = sm.get(s.subject_id);
             if (cell && cell.sumCoeff > 0) {
-              subAvg = cell.sumWeighted / cell.sumCoeff;
+              const raw = cell.sumWeighted / cell.sumCoeff;
+              if (Number.isFinite(raw)) subAvg = raw;
             }
           }
 
@@ -2068,51 +2107,147 @@ export async function GET(req: NextRequest) {
         }
 
         const g = sumCoeffGen > 0 ? cleanNumber(sumGen / sumCoeffGen, 4) : null;
-        out.set(sid, g);
+        out.set(sid, { avg: g, sumCoeff: sumCoeffGen });
       }
 
       return out;
     };
 
-    const annualAvgByStudent = new Map<string, number | null>();
-    studentIds.forEach((sid) => annualAvgByStudent.set(sid, null));
+    // ✅ récupère la conduite (déjà sur 20) via l'API existante /api/admin/conduite/averages
+    const fetchConductOn20MapForRange = async (
+      from: string,
+      to: string
+    ): Promise<Map<string, number | null>> => {
+      const out = new Map<string, number | null>();
+      studentIds.forEach((sid) => out.set(sid, null));
 
+      try {
+        const cookie = req.headers.get("cookie") ?? "";
+        const url = `${req.nextUrl.origin}/api/admin/conduite/averages?class_id=${encodeURIComponent(
+          classId
+        )}&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`;
+
+        const resp = await fetch(url, {
+          method: "GET",
+          headers: cookie ? { cookie } : {},
+          cache: "no-store",
+        });
+
+        if (!resp.ok) return out;
+
+        const js: any = await resp.json().catch(() => null);
+        const items: any[] = Array.isArray(js?.items) ? js.items : [];
+
+        for (const it of items) {
+          const sid = String(it?.student_id ?? "").trim();
+          if (!sid) continue;
+          if (!out.has(sid)) continue;
+
+          const v = clampTo20(it?.total);
+          out.set(sid, v);
+        }
+
+        return out;
+      } catch (err) {
+        console.error("[bulletin.annual] fetch conduite error", err);
+        return out;
+      }
+    };
+
+    // ✅ combine moyenne matières (pondérée par coeff matières) + conduite (coeff 1)
+    const mergeMatiereAndConduct = (
+      genAgg: Map<string, PeriodGenAgg>,
+      conduct: Map<string, number | null>
+    ): Map<string, number | null> => {
+      const out = new Map<string, number | null>();
+      for (const sid of studentIds) {
+        const g = genAgg.get(sid) ?? { avg: null, sumCoeff: 0 };
+        const baseAvg = g.avg;
+        const baseCoeff = g.sumCoeff ?? 0;
+        const c = conduct.get(sid) ?? null;
+
+        let final: number | null = null;
+
+        if (c !== null && c !== undefined) {
+          if (baseAvg !== null && baseAvg !== undefined && Number.isFinite(baseAvg) && baseCoeff > 0) {
+            final = (Number(baseAvg) * baseCoeff + Number(c)) / (baseCoeff + 1);
+          } else {
+            // uniquement conduite
+            final = Number(c);
+          }
+        } else {
+          // uniquement matières
+          if (baseAvg !== null && baseAvg !== undefined && Number.isFinite(baseAvg)) final = Number(baseAvg);
+        }
+
+        out.set(sid, final !== null ? cleanNumber(final, 4) : null);
+      }
+      return out;
+    };
+
+    // périodes de la classe (déjà chargées plus haut)
+    const periodsForAnnual = (periods ?? []).filter(
+      (p: any) => !!p?.start_date && !!p?.end_date
+    );
+
+
+    // 1) Pré-calculer la moyenne de chaque période (trimestre) pour tous les élèves
+    const periodBundles: { weight: number; avgByStudent: Map<string, number | null> }[] = [];
+
+    for (const p of periodsForAnnual) {
+      const pf = String(p.start_date);
+      const pt = String(p.end_date);
+      const w = Math.max(0, Number(p.coeff ?? 0)) || 1;
+
+      const genAgg = await computeGeneralAggMapForRange(pf, pt);
+      const conductMap = await fetchConductOn20MapForRange(pf, pt);
+      const periodAvg = mergeMatiereAndConduct(genAgg, conductMap);
+
+      periodBundles.push({ weight: w, avgByStudent: periodAvg });
+    }
+
+    // 2) Annuel = ∑(moyenne_période * coeff_période) / ∑ coeff_période
+    const annualAvgByStudent = new Map<string, number | null>();
     for (const sid of studentIds) {
       let sum = 0;
       let sumW = 0;
 
-      for (const p of periodsForYear) {
-        const from = String(p.start_date);
-        const to = String(p.end_date);
-        const w =
-          p.coeff === null || p.coeff === undefined ? 1 : Math.max(0, Number(p.coeff) || 0) || 1;
+      for (const b of periodBundles) {
+        const v = b.avgByStudent.get(sid);
+        if (v === null || v === undefined) continue;
+        if (!Number.isFinite(v)) continue;
 
-        const map = await computeGeneralAvgMapForRange(from, to);
-        const avg = map.get(sid) ?? null;
-
-        if (typeof avg === "number" && Number.isFinite(avg)) {
-          sum += avg * w;
-          sumW += w;
-        }
+        sum += Number(v) * b.weight;
+        sumW += b.weight;
       }
 
-      const a = sumW > 0 ? cleanNumber(sum / sumW, 4) : null;
-      annualAvgByStudent.set(sid, a);
+      annualAvgByStudent.set(
+        sid,
+        sumW > 0 ? cleanNumber(sum / sumW, 4) : null
+      );
     }
 
-    const annualRankByStudent = buildRankMapFromAverageMap(annualAvgByStudent);
+    // classement annuel (sur les élèves ayant une moyenne annuelle)
+    const annualRankMap = new Map<string, number>();
+    const list = studentIds
+      .map((sid) => ({ sid, avg: annualAvgByStudent.get(sid) }))
+      .filter((x) => x.avg !== null && x.avg !== undefined && Number.isFinite(x.avg as number))
+      .sort((a, b) => Number(b.avg) - Number(a.avg));
 
+    let rank = 1;
+    for (const it of list) {
+      annualRankMap.set(it.sid, rank++);
+    }
+
+    // attach
     for (const it of items) {
-      const a = annualAvgByStudent.get(it.student_id) ?? null;
-      const r = annualRankByStudent.get(it.student_id) ?? null;
-      (it as any).annual_avg = a;
-      (it as any).annual_rank = r;
+      it.annual_avg = annualAvgByStudent.get(it.student_id) ?? null;
+      it.annual_rank = annualRankMap.get(it.student_id) ?? null;
     }
   } else {
-    // cohérence: si pas dernier trimestre -> valeurs null
     for (const it of items) {
-      (it as any).annual_avg = null;
-      (it as any).annual_rank = null;
+      it.annual_avg = null;
+      it.annual_rank = null;
     }
   }
 
