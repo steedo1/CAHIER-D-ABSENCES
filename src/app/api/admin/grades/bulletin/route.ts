@@ -1671,7 +1671,7 @@ export async function GET(req: NextRequest) {
 
   const perStudentSubjectComponent = new Map<
     string,
-    Map<string, { subject_id: string; sumWeighted: number; sumCoeff: number }>
+    Map<string, { sumWeighted: number; sumCoeff: number }>
   >();
 
   for (const sc of scores) {
@@ -1707,7 +1707,7 @@ export async function GET(req: NextRequest) {
           perStudentSubjectComponent.set(sc.student_id, stuCompMap);
         }
         const compCell =
-          stuCompMap.get(comp.id) || { subject_id: comp.subject_id, sumWeighted: 0, sumCoeff: 0 };
+          stuCompMap.get(comp.id) || { sumWeighted: 0, sumCoeff: 0 };
         compCell.sumWeighted += norm20 * weight;
         compCell.sumCoeff += weight;
         stuCompMap.set(comp.id, compCell);
@@ -1727,7 +1727,7 @@ export async function GET(req: NextRequest) {
 
     const stuCompMap =
       perStudentSubjectComponent.get(cs.student_id) ||
-      new Map<string, { subject_id: string; sumWeighted: number; sumCoeff: number }>();
+      new Map<string, { sumWeighted: number; sumCoeff: number }>();
 
     // sous-matières
     const per_subject_components =
@@ -2185,16 +2185,31 @@ export async function GET(req: NextRequest) {
       return out;
     };
 
-    // périodes de la classe (déjà chargées plus haut)
-    const periodsForAnnual = (periods ?? []).filter(
-      (p: any) => !!p?.start_date && !!p?.end_date
-    );
+    const { data: periodsForYear, error: pErr } = await supabase
+      .from("grade_periods")
+      .select("id, name, start_date, end_date, coeff, type, academic_year, institution_id")
+      .eq("institution_id", classRow.institution_id)
+      .eq("academic_year", classRow.academic_year)
+      .order("start_date", { ascending: true });
 
+    if (pErr) {
+      console.error("[bulletin] annual periods error", pErr);
+    }
 
+    const periods = (periodsForYear ?? [])
+      .filter((p: any) => !!p?.start_date && !!p?.end_date)
+      // ✅ ne garder que les trimestres (éviter d'inclure une période "Annuel" qui fausse l'annuel)
+      .filter((p: any) => {
+        const label = `${p?.name ?? ""} ${p?.type ?? ""}`.toLowerCase();
+        const isAnnual = /annuel|annual|année|annee|year/.test(label);
+        const isTrimester = /trimestre|trimester|\bt\s*1\b|\bt\s*2\b|\bt\s*3\b|t1|t2|t3/.test(label);
+        return isTrimester && !isAnnual;
+      })
+      .sort((a: any, b: any) => String(a.start_date).localeCompare(String(b.start_date)));
     // 1) Pré-calculer la moyenne de chaque période (trimestre) pour tous les élèves
     const periodBundles: { weight: number; avgByStudent: Map<string, number | null> }[] = [];
 
-    for (const p of periodsForAnnual) {
+    for (const p of periods) {
       const pf = String(p.start_date);
       const pt = String(p.end_date);
       const w = Math.max(0, Number(p.coeff ?? 0)) || 1;
