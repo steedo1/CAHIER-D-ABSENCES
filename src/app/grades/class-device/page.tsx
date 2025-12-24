@@ -1880,10 +1880,12 @@ export default function ClassDeviceNotesPage() {
     if (!evaluations.length) return evaluations;
     if (!currentActiveEvalId) return evaluations;
     return evaluations.filter((ev) => ev.id === currentActiveEvalId);
+  }, [isMobile, evaluations, currentActiveEvalId]);
 
-  const currentLock: LockInfo | undefined = currentActiveEvalId
-    ? lockByEvalId[currentActiveEvalId]
-    : undefined;
+  const currentLock: LockInfo | undefined = useMemo(() => {
+    if (!currentActiveEvalId) return undefined;
+    return lockByEvalId[currentActiveEvalId];
+  }, [lockByEvalId, currentActiveEvalId]);
 
   const isCurrentEvalLocked = !!currentLock?.locked;
 
@@ -1892,14 +1894,24 @@ export default function ClassDeviceNotesPage() {
     return evaluations.find((ev) => ev.id === currentActiveEvalId) || null;
   }, [evaluations, currentActiveEvalId]);
 
-  // Recharge l’état de verrouillage dès qu’on change d’évaluation active
+  // Recharge / précharge l’état de verrouillage (mobile: éval active, desktop: toutes visibles)
   useEffect(() => {
-    if (!currentActiveEvalId) return;
     if (!locksSupported) return;
-    refreshLockStatus(currentActiveEvalId);
-  }, [currentActiveEvalId, locksSupported]);
 
-  }, [isMobile, evaluations, currentActiveEvalId]);
+    const ids = (isMobile
+      ? currentActiveEvalId
+        ? [currentActiveEvalId]
+        : []
+      : evaluations.map((ev) => ev.id)
+    ) as string[];
+
+    for (const id of ids) {
+      if (!id) continue;
+      if (!lockByEvalId[id]) {
+        refreshLockStatus(id).catch(() => null);
+      }
+    }
+  }, [locksSupported, isMobile, currentActiveEvalId, evaluations, lockByEvalId]);
 
   /* ==========================================
      Rendu
@@ -2242,7 +2254,7 @@ export default function ClassDeviceNotesPage() {
                     <th className="px-3 py-2 w-12 sticky left-0 z-20 bg-slate-50">
                       N°
                     </th>
-                    <th className="px-3 py-2 w-40 sticky left-[3rem] z-20 bg-slate-50">
+                    <th className="px-3 py-2 w-40 sticky left-12 z-20 bg-slate-50">
                       Matricule
                     </th>
                     <th className="px-3 py-2 w-64 sticky left-[13rem] z-20 bg-slate-50">
@@ -2318,7 +2330,7 @@ export default function ClassDeviceNotesPage() {
                         <td className="px-3 py-2 w-12 sticky left-0 z-10 bg-white">
                           {idx + 1}
                         </td>
-                        <td className="px-3 py-2 w-40 sticky left-[3rem] z-10 bg-white">
+                        <td className="px-3 py-2 w-40 sticky left-12 z-10 bg-white">
                           {st.matricule ?? ""}
                         </td>
                         <td className="px-3 py-2 w-64 sticky left-[13rem] z-10 bg-white">
@@ -2479,7 +2491,7 @@ export default function ClassDeviceNotesPage() {
                     <th className="px-3 py-2 w-12 sticky left-0 z-20 bg-slate-50">
                       N°
                     </th>
-                    <th className="px-3 py-2 w-40 sticky left-[3rem] z-20 bg-slate-50">
+                    <th className="px-3 py-2 w-40 sticky left-12 z-20 bg-slate-50">
                       Matricule
                     </th>
                     <th className="px-3 py-2 w-64 sticky left-[13rem] z-20 bg-slate-50">
@@ -2530,7 +2542,7 @@ export default function ClassDeviceNotesPage() {
                         <td className="px-3 py-2 w-12 sticky left-0 z-10 bg-white">
                           {idx + 1}
                         </td>
-                        <td className="px-3 py-2 w-40 sticky left-[3rem] z-10 bg-white">
+                        <td className="px-3 py-2 w-40 sticky left-12 z-10 bg-white">
                           {row.student.matricule ?? ""}
                         </td>
                         <td className="px-3 py-2 w-64 sticky left-[13rem] z-10 bg-white">
