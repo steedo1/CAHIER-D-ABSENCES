@@ -28,7 +28,6 @@ function isUuid(v: string): boolean {
   );
 }
 
-// Normalisation du niveau pour les configs bulletin
 function normalizeBulletinLevel(level?: string | null): string | null {
   if (!level) return null;
   const x = String(level).trim().toLowerCase();
@@ -49,7 +48,8 @@ function normText(s?: string | null) {
   return (s ?? "").toString().trim().toLowerCase();
 }
 
-// EPS / EDHC / Musique / Vie scolaire => AUTRES
+/* ───────── Détection type de matière ───────── */
+
 function isOtherSubject(name?: string | null, code?: string | null): boolean {
   const n = normText(name);
   const c = normText(code);
@@ -91,6 +91,8 @@ function groupKey(s?: string | null) {
     .replace(/[^A-Z0-9]+/g, "");
 }
 
+/* ───────── Types ───────── */
+
 type BulletinSubjectGroupItem = {
   id: string;
   group_id: string;
@@ -111,27 +113,6 @@ type BulletinSubjectGroup = {
   annual_coeff: number;
   items: BulletinSubjectGroupItem[];
 };
-
-function findGroupByMeaning(
-  groups: BulletinSubjectGroup[],
-  meaning: "LETTRES" | "SCIENCES" | "AUTRES"
-): BulletinSubjectGroup | null {
-  const keys =
-    meaning === "LETTRES"
-      ? ["BILANLETTRES", "LETTRES", "LITTERAIRE", "LITTERATURE", "LANGUES"]
-      : meaning === "SCIENCES"
-      ? ["BILANSCIENCES", "SCIENCES", "SCIENTIFIQUE"]
-      : ["BILANAUTRES", "AUTRES", "DIVERS", "VIESCOLAIRE", "CONDUITE"];
-
-  for (const g of groups) {
-    const k1 = groupKey(g.code);
-    const k2 = groupKey(g.label);
-    if (keys.includes(k1) || keys.includes(k2)) return g;
-  }
-  return null;
-}
-
-/* ───────── Types locaux ───────── */
 
 type ClassRow = {
   id: string;
@@ -211,7 +192,7 @@ type ClassStudentRow = {
     | null;
 };
 
-/* ───────── Rangs matières / sous-matières ───────── */
+/* ───────── Rangs front ───────── */
 
 function applySubjectRanks(items: any[]) {
   if (!items || !items.length) return;
@@ -303,7 +284,26 @@ function applySubjectComponentRanks(items: any[]) {
   });
 }
 
-/* ───────── Fallback groupes (LETTRES / SCIENCES / AUTRES) ───────── */
+/* ───────── Groupes fallback (LETTRES / SCIENCES / AUTRES) ───────── */
+
+function findGroupByMeaning(
+  groups: BulletinSubjectGroup[],
+  meaning: "LETTRES" | "SCIENCES" | "AUTRES"
+): BulletinSubjectGroup | null {
+  const keys =
+    meaning === "LETTRES"
+      ? ["BILANLETTRES", "LETTRES", "LITTERAIRE", "LITTERATURE", "LANGUES"]
+      : meaning === "SCIENCES"
+      ? ["BILANSCIENCES", "SCIENCES", "SCIENTIFIQUE"]
+      : ["BILANAUTRES", "AUTRES", "DIVERS", "VIESCOLAIRE", "CONDUITE"];
+
+  for (const g of groups) {
+    const k1 = groupKey(g.code);
+    const k2 = groupKey(g.label);
+    if (keys.includes(k1) || keys.includes(k2)) return g;
+  }
+  return null;
+}
 
 function buildFallbackGroups(opts: {
   subjectIds: string[];
@@ -394,7 +394,162 @@ function buildFallbackGroups(opts: {
   return groups.filter((g) => g.items.length > 0);
 }
 
-/* ───────── Route GET publique ───────── */
+/* ───────── Helper : moyenne générale d’un élève sur UNE période [from, to] ───────── */
+
+async function computeStudentGeneralAvgForRange(opts: {
+  srv: SupabaseClient;
+  classId: string;
+  studentId: string;
+  from: string;
+  to: string;
+  subjectsForReport: {
+    subject_id: string;
+    coeff_bulletin: number;
+    include_in_average: boolean;
+  }[];
+  subjectComponentsBySubject: Map<string, BulletinSubjectComponent[]>;
+  subjectComponentById: Map<string, BulletinSubjectComponent>;
+}): Promise<number | null> {
+  const {
+    srv,
+    classId,
+    studentId,
+    from,
+    to,
+    subjectsForReport,
+    subjectComponentsBySubject,
+    subjectComponentById,
+  } = opts;
+
+  // Toutes les évaluations publiées de la période
+  let evalQuery = srv
+    .from("grade_evaluations")
+    .select(
+      "id, class_id, subject_id, teacher_id, eval_date, scale, coeff, is_published, subject_component_id"
+    )
+    .eq("class_id", classId)
+    .eq("is_published", true)
+    .gte("eval_date", from)
+    .lte("eval_date", to);
+
+  const { data: evalData, error: evalErr } = await evalQuery;
+  if (evalErr || !evalData || !evalData.length) return null;
+
+  const evals = evalData as EvalRow[];
+  const evalById = new Map<string, EvalRow>();
+  evals.forEach((e) => evalById.set(e.id, e));
+
+  const evalIds = evals.map((e) => e.id);
+
+  const { data: scoreData, error: scoreErr } = await srv
+    .from("student_grades")
+    .select("evaluation_id, student_id, score")
+    .in("evaluation_id", evalIds)
+    .eq("student_id", studentId);
+
+  if (scoreErr || !scoreData || !scoreData.length) return null;
+  const scores = scoreData as ScoreRow[];
+
+  const perSubject = new Map<string, { sumWeighted: number; sumCoeff: number }>();
+  const perComp = new Map<string, { subject_id: string; sumWeighted: number; sumCoeff: number }>();
+
+  for (const sc of scores) {
+    const ev = evalById.get(sc.evaluation_id);
+    if (!ev) continue;
+    if (!ev.subject_id) continue;
+    if (!ev.scale || ev.scale <= 0) continue;
+    if (sc.score === null || sc.score === undefined) continue;
+
+    const score = Number(sc.score);
+    if (!Number.isFinite(score)) continue;
+
+    const norm20 = (score / ev.scale) * 20;
+    const weight = ev.coeff ?? 1;
+    const sid = String(ev.subject_id);
+
+    const subjCell = perSubject.get(sid) || { sumWeighted: 0, sumCoeff: 0 };
+    subjCell.sumWeighted += norm20 * weight;
+    subjCell.sumCoeff += weight;
+    perSubject.set(sid, subjCell);
+
+    if (ev.subject_component_id) {
+      const comp = subjectComponentById.get(String(ev.subject_component_id));
+      if (comp) {
+        const compCell =
+          perComp.get(comp.id) || {
+            subject_id: comp.subject_id,
+            sumWeighted: 0,
+            sumCoeff: 0,
+          };
+        compCell.sumWeighted += norm20 * weight;
+        compCell.sumCoeff += weight;
+        perComp.set(comp.id, compCell);
+      }
+    }
+  }
+
+  // Moyenne /20 par matière pour CETTE période
+  const per_subject = subjectsForReport.map((s) => {
+    const comps = subjectComponentsBySubject.get(s.subject_id) || [];
+    let avg20: number | null = null;
+
+    if (comps.length) {
+      let sum = 0;
+      let sumW = 0;
+
+      for (const comp of comps) {
+        const cell = perComp.get(comp.id);
+        if (!cell || cell.sumCoeff <= 0) continue;
+
+        const compAvgRaw = cell.sumWeighted / cell.sumCoeff;
+        if (!Number.isFinite(compAvgRaw)) continue;
+
+        const w = comp.coeff_in_subject ?? 1;
+        if (!w || w <= 0) continue;
+
+        sum += compAvgRaw * w;
+        sumW += w;
+      }
+
+      if (sumW > 0) {
+        avg20 = cleanNumber(sum / sumW, 4);
+      }
+    }
+
+    if (avg20 === null) {
+      const cell = perSubject.get(s.subject_id);
+      if (cell && cell.sumCoeff > 0) {
+        avg20 = cleanNumber(cell.sumWeighted / cell.sumCoeff, 4);
+      }
+    }
+
+    return {
+      subject_id: s.subject_id,
+      avg20,
+    };
+  });
+
+  // Moyenne générale de la période
+  let sumGen = 0;
+  let sumCoeffGen = 0;
+
+  for (const s of subjectsForReport) {
+    if (s.include_in_average === false) continue;
+    const coeffSub = Number(s.coeff_bulletin ?? 0);
+    if (!coeffSub || coeffSub <= 0) continue;
+
+    const ps = per_subject.find((x) => x.subject_id === s.subject_id);
+    const subAvg = ps?.avg20 ?? null;
+    if (subAvg === null || subAvg === undefined) continue;
+
+    sumGen += Number(subAvg) * coeffSub;
+    sumCoeffGen += coeffSub;
+  }
+
+  return sumCoeffGen > 0 ? cleanNumber(sumGen / sumCoeffGen, 4) : null;
+}
+
+/* ───────── Route GET ───────── */
 
 export async function GET(req: NextRequest) {
   const srv = getSupabaseServiceClient() as unknown as SupabaseClient;
@@ -406,7 +561,7 @@ export async function GET(req: NextRequest) {
   let mode: "short" | "token" = "token";
   let payload: any = null;
 
-  // 1) Décodage du QR
+  // 1) Décodage QR
   if (shortCode) {
     mode = "short";
     const rec: any = await resolveBulletinByCode(srv, shortCode);
@@ -433,31 +588,27 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ ok: false, error: "invalid_payload" }, { status: 400 });
   }
 
-  // ✅ Robustesse: accepter plusieurs noms possibles dans le payload
+  // Dates de période depuis le payload (y compris i / o pour QR court)
   let dateFrom: string | null =
-    payload?.i
-      ?? payload?.periodFrom
-      ?? payload?.period_from
-      ?? payload?.from
-      ?? payload?.start_date
-      ?? payload?.startDate
-      ?? null;
+    payload?.i ??
+    payload?.periodFrom ??
+    payload?.period_from ??
+    payload?.from ??
+    payload?.start_date ??
+    payload?.startDate ??
+    null;
 
-  // ✅ FIX IMPORTANT : accepter aussi la clé courte "o" (date de fin) pour le QR short
   let dateTo: string | null =
-    payload?.o
-      ?? payload?.periodTo
-      ?? payload?.period_to
-      ?? payload?.to
-      ?? payload?.end_date
-      ?? payload?.endDate
-      ?? null;
+    payload?.o ??
+    payload?.periodTo ??
+    payload?.period_to ??
+    payload?.to ??
+    payload?.end_date ??
+    payload?.endDate ??
+    null;
 
   const academicYearToken: string | null =
-    payload?.academicYear ??
-    payload?.academic_year ??
-    payload?.year ??
-    null;
+    payload?.academicYear ?? payload?.academic_year ?? payload?.year ?? null;
 
   const periodLabelToken: string | null =
     payload?.periodLabel ??
@@ -470,7 +621,7 @@ export async function GET(req: NextRequest) {
 
   const periodCodeToken: string | null = payload?.periodCode ?? payload?.period_code ?? null;
 
-  // 2) Institution + Classe (avec head teacher) + Student
+  // 2) Institution, classe, élève
   const [
     { data: inst, error: instErr },
     { data: cls, error: clsErr },
@@ -511,7 +662,17 @@ export async function GET(req: NextRequest) {
 
   const bulletinLevel = normalizeBulletinLevel(classRow.level);
 
-  // ✅ Si dateFrom/dateTo manquent, on reconstruit à partir de grade_periods (year + label/code)
+  // 3) Résolution de la période (grade_periods)
+  let periodMeta: {
+    from: string | null;
+    to: string | null;
+    code?: string | null;
+    label?: string | null;
+    short_label?: string | null;
+    academic_year?: string | null;
+    coeff?: number | null;
+  } = { from: dateFrom, to: dateTo };
+
   if ((!dateFrom || !dateTo) && (academicYearToken || classRow.academic_year)) {
     const yearGuess = academicYearToken ?? classRow.academic_year ?? null;
     const labelGuess = periodCodeToken ?? periodLabelToken ?? payload?.period ?? null;
@@ -525,8 +686,8 @@ export async function GET(req: NextRequest) {
         .order("start_date", { ascending: true });
 
       const periods = (periodsData || []) as any[];
-
       const tok = normText(String(labelGuess));
+
       const exact =
         periods.find(
           (p) =>
@@ -556,28 +717,6 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  // head teacher
-  let headTeacher: HeadTeacherRow | null = null;
-  if (classRow.head_teacher_id) {
-    const { data: ht, error: htErr } = await srv
-      .from("profiles")
-      .select("id, display_name, phone, email")
-      .eq("id", classRow.head_teacher_id)
-      .maybeSingle();
-    if (!htErr && ht) headTeacher = ht as HeadTeacherRow;
-  }
-
-  // 3) Période de bulletin
-  let periodMeta: {
-    from: string | null;
-    to: string | null;
-    code?: string | null;
-    label?: string | null;
-    short_label?: string | null;
-    academic_year?: string | null;
-    coeff?: number | null;
-  } = { from: dateFrom, to: dateTo };
-
   if (dateFrom && dateTo) {
     const { data: gp, error: gpErr } = await srv
       .from("grade_periods")
@@ -599,8 +738,6 @@ export async function GET(req: NextRequest) {
           gp.coeff === null || gp.coeff === undefined ? null : cleanCoeff(gp.coeff),
       };
     } else {
-      // ✅ NEW: si les dates du QR ne matchent pas un grade_period,
-      // on tente de résoudre le VRAI trimestre via (année scolaire + label/code)
       const yearGuess = academicYearToken ?? classRow.academic_year ?? null;
       const labelGuess = periodCodeToken ?? periodLabelToken ?? payload?.period ?? null;
 
@@ -637,7 +774,6 @@ export async function GET(req: NextRequest) {
           null;
       }
 
-      // ✅ Si on a trouvé le vrai trimestre, on FORCE les dates officielles
       if (fuzzy?.start_date && fuzzy?.end_date) {
         dateFrom = String(fuzzy.start_date);
         dateTo = String(fuzzy.end_date);
@@ -655,7 +791,6 @@ export async function GET(req: NextRequest) {
               : cleanCoeff(fuzzy.coeff),
         };
       } else {
-        // Fallback inchangé
         periodMeta = {
           from: dateFrom,
           to: dateTo,
@@ -679,53 +814,63 @@ export async function GET(req: NextRequest) {
     };
   }
 
-  // ✅ Déterminer si on doit calculer une moyenne annuelle (uniquement dernière période)
-  let annualRange: { from: string | null; to: string | null } = { from: null, to: null };
+  // Prof principal
+  let headTeacher: HeadTeacherRow | null = null;
+  if (classRow.head_teacher_id) {
+    const { data: ht, error: htErr } = await srv
+      .from("profiles")
+      .select("id, display_name, phone, email")
+      .eq("id", classRow.head_teacher_id)
+      .maybeSingle();
+    if (!htErr && ht) headTeacher = ht as HeadTeacherRow;
+  }
+
+  // 4) Préparation calcul annuel (logique lycée : somme (Ti * coeff_i) / somme(coeff_i))
+  let periodLooksAnnual = false;
+  let yearForAnnual: string | null =
+    periodMeta.academic_year ?? academicYearToken ?? classRow.academic_year ?? null;
+  let yearPeriods: any[] = [];
   let shouldComputeAnnual = false;
 
-  const periodLooksAnnual = (() => {
+  {
     const txt =
       normText(periodMeta.code) +
       " " +
       normText(periodMeta.label) +
       " " +
       normText(periodMeta.short_label);
-    return /(annuel|annuelle|annual|année|annee)/.test(txt);
-  })();
+    periodLooksAnnual = /(annuel|annuelle|annual|année|annee)/.test(txt);
+  }
 
-  const yearForAnnual =
-    periodMeta.academic_year ?? academicYearToken ?? classRow.academic_year ?? null;
-
-  if (!periodLooksAnnual && yearForAnnual) {
+  if (yearForAnnual) {
     const { data: yearPeriodsData } = await srv
       .from("grade_periods")
-      .select("start_date, end_date")
+      .select("id, academic_year, code, label, short_label, start_date, end_date, coeff")
       .eq("institution_id", instId)
-      .eq("academic_year", yearForAnnual);
+      .eq("academic_year", yearForAnnual)
+      .order("start_date", { ascending: true });
 
-    const yearPeriods = (yearPeriodsData || []) as any[];
+    yearPeriods = (yearPeriodsData || []) as any[];
 
-    const starts = yearPeriods
-      .map((p) => (p?.start_date ? String(p.start_date) : ""))
-      .filter(Boolean)
-      .sort();
+    if (yearPeriods.length && dateTo) {
+      const ends = yearPeriods
+        .map((p) => (p?.end_date ? String(p.end_date) : ""))
+        .filter(Boolean)
+        .sort();
+      const maxEnd = ends.length ? ends[ends.length - 1] : null;
 
-    const ends = yearPeriods
-      .map((p) => (p?.end_date ? String(p.end_date) : ""))
-      .filter(Boolean)
-      .sort();
-
-    const minStart = starts.length ? starts[0] : null;
-    const maxEnd = ends.length ? ends[ends.length - 1] : null;
-
-    annualRange = { from: minStart, to: maxEnd };
-
-    if (dateTo && maxEnd && dateTo === maxEnd && minStart) {
-      shouldComputeAnnual = true;
+      // On calcule la moyenne annuelle soit :
+      // - si la période est marquée "annuel"
+      // - soit si c'est la dernière période de l'année (T3)
+      if (periodLooksAnnual) {
+        shouldComputeAnnual = true;
+      } else if (maxEnd && dateTo === maxEnd) {
+        shouldComputeAnnual = true;
+      }
     }
   }
 
-  // 4) Élèves de la classe
+  // 5) Élèves de la classe (pour calcul des rangs, etc.)
   const hasDateFilter = !!dateFrom || !!dateTo;
 
   let enrollQuery = srv
@@ -752,8 +897,11 @@ export async function GET(req: NextRequest) {
     )
     .eq("class_id", classId);
 
-  if (!hasDateFilter) enrollQuery = enrollQuery.is("end_date", null);
-  else if (dateFrom) enrollQuery = enrollQuery.or(`end_date.gte.${dateFrom},end_date.is.null`);
+  if (!hasDateFilter) {
+    enrollQuery = enrollQuery.is("end_date", null);
+  } else if (dateFrom) {
+    enrollQuery = enrollQuery.or(`end_date.gte.${dateFrom},end_date.is.null`);
+  }
 
   enrollQuery = enrollQuery.order("student_id", { ascending: true });
 
@@ -811,7 +959,7 @@ export async function GET(req: NextRequest) {
     });
   }
 
-  // 5) Coefficients bulletin par matière
+  // 6) Coeffs bulletin par matière
   let coeffAllQuery = srv
     .from("institution_subject_coeffs")
     .select("subject_id, coeff, include_in_average, level")
@@ -834,7 +982,7 @@ export async function GET(req: NextRequest) {
     });
   }
 
-  // 6) Evaluations publiées (période)
+  // 7) Évaluations (période du bulletin)
   let evals: EvalRow[] = [];
   {
     let evalQuery = srv
@@ -910,7 +1058,7 @@ export async function GET(req: NextRequest) {
     });
   }
 
-  // 7) Noms / codes matières
+  // 8) Infos matières
   const { data: subjData, error: subjErr } = await srv
     .from("subjects")
     .select("id, name, code")
@@ -942,7 +1090,7 @@ export async function GET(req: NextRequest) {
     };
   });
 
-  // 8) Sous-matières
+  // 9) Sous-matières
   let subjectComponentsForReport: BulletinSubjectComponent[] = [];
   const subjectComponentById = new Map<string, BulletinSubjectComponent>();
   const compsBySubject = new Map<string, BulletinSubjectComponent[]>();
@@ -989,7 +1137,7 @@ export async function GET(req: NextRequest) {
     });
   }
 
-  // 9) Groupes (BILAN LETTRES / SCIENCES / AUTRES)
+  // 10) Groupes de bilan
   let subjectGroups: BulletinSubjectGroup[] = [];
   const subjectInfoById = new Map<string, { name: string; code: string }>();
   subjects.forEach((s) =>
@@ -1048,7 +1196,7 @@ export async function GET(req: NextRequest) {
                 id: String(row.id),
                 group_id: String(row.group_id),
                 subject_id: sid,
-                subject_name: String(subjectName),
+                subject_name: subjectName,
                 order_index: idx + 1,
                 subject_coeff_override: null,
                 is_optional: false,
@@ -1063,7 +1211,9 @@ export async function GET(req: NextRequest) {
             g.code && String(g.code).trim() !== "" ? String(g.code) : String(g.label);
 
           const shortLabel =
-            g.short_label && String(g.short_label).trim() !== "" ? String(g.short_label) : null;
+            g.short_label && String(g.short_label).trim() !== ""
+              ? String(g.short_label)
+              : null;
 
           return {
             id: String(g.id),
@@ -1165,7 +1315,7 @@ export async function GET(req: NextRequest) {
 
   const hasGroupConfig = subjectGroups.length > 0;
 
-  // 10) Notes (student_grades) (période)
+  // 11) Notes (période courante) pour tous les élèves
   const evalById = new Map<string, EvalRow>();
   for (const e of evals) evalById.set(e.id, e);
 
@@ -1188,137 +1338,10 @@ export async function GET(req: NextRequest) {
     scores = (scoreData || []) as ScoreRow[];
   }
 
-  // ✅ Calcul annuel (uniquement pour l’élève demandé, et uniquement si dernière période)
-  let annual_avg_for_student: number | null = null;
-
-  if (shouldComputeAnnual && annualRange.from && annualRange.to) {
-    const { data: evalAnnualData, error: evalAnnualErr } = await srv
-      .from("grade_evaluations")
-      .select(
-        "id, class_id, subject_id, teacher_id, eval_date, scale, coeff, is_published, subject_component_id"
-      )
-      .eq("class_id", classId)
-      .eq("is_published", true)
-      .gte("eval_date", annualRange.from)
-      .lte("eval_date", annualRange.to);
-
-    if (!evalAnnualErr && evalAnnualData && evalAnnualData.length) {
-      const evalAnnuals = (evalAnnualData || []) as EvalRow[];
-      const evalAnnualById = new Map<string, EvalRow>();
-      evalAnnuals.forEach((e) => evalAnnualById.set(e.id, e));
-
-      const evalAnnualIds = evalAnnuals.map((e) => e.id);
-
-      const { data: annualScoreData, error: annualScoreErr } = await srv
-        .from("student_grades")
-        .select("evaluation_id, student_id, score")
-        .in("evaluation_id", evalAnnualIds)
-        .eq("student_id", studentId);
-
-      if (!annualScoreErr && annualScoreData && annualScoreData.length) {
-        const annualScores = (annualScoreData || []) as ScoreRow[];
-
-        const perSubjectAnnual = new Map<string, { sumWeighted: number; sumCoeff: number }>();
-        const perCompAnnual = new Map<
-          string,
-          { subject_id: string; sumWeighted: number; sumCoeff: number }
-        >();
-
-        for (const sc of annualScores) {
-          const ev = evalAnnualById.get(sc.evaluation_id);
-          if (!ev) continue;
-          if (!ev.subject_id) continue;
-          if (!ev.scale || ev.scale <= 0) continue;
-          if (sc.score === null || sc.score === undefined) continue;
-
-          const score = Number(sc.score);
-          if (!Number.isFinite(score)) continue;
-
-          const norm20 = (score / ev.scale) * 20;
-          const weight = ev.coeff ?? 1;
-
-          const sid = String(ev.subject_id);
-
-          const cellS = perSubjectAnnual.get(sid) || { sumWeighted: 0, sumCoeff: 0 };
-          cellS.sumWeighted += norm20 * weight;
-          cellS.sumCoeff += weight;
-          perSubjectAnnual.set(sid, cellS);
-
-          if (ev.subject_component_id) {
-            const comp = subjectComponentById.get(String(ev.subject_component_id));
-            if (comp) {
-              const cellC =
-                perCompAnnual.get(comp.id) || {
-                  subject_id: comp.subject_id,
-                  sumWeighted: 0,
-                  sumCoeff: 0,
-                };
-              cellC.sumWeighted += norm20 * weight;
-              cellC.sumCoeff += weight;
-              perCompAnnual.set(comp.id, cellC);
-            }
-          }
-        }
-
-        // Reconstituer avg20 annual par matière (même logique que la période)
-        const annual_per_subject = subjectsForReport.map((s) => {
-          const comps = compsBySubject.get(s.subject_id) || [];
-          let avg20: number | null = null;
-
-          if (comps.length) {
-            let sum = 0;
-            let sumW = 0;
-
-            for (const comp of comps) {
-              const cell = perCompAnnual.get(comp.id);
-              if (!cell || cell.sumCoeff <= 0) continue;
-
-              const compAvgRaw = cell.sumWeighted / cell.sumCoeff;
-              if (!Number.isFinite(compAvgRaw)) continue;
-
-              const w = comp.coeff_in_subject ?? 1;
-              if (!w || w <= 0) continue;
-
-              sum += compAvgRaw * w;
-              sumW += w;
-            }
-
-            if (sumW > 0) avg20 = cleanNumber(sum / sumW, 4);
-          }
-
-          if (avg20 === null) {
-            const cell = perSubjectAnnual.get(s.subject_id);
-            if (cell && cell.sumCoeff > 0) {
-              avg20 = cleanNumber(cell.sumWeighted / cell.sumCoeff, 4);
-            }
-          }
-
-          return { subject_id: s.subject_id, avg20 };
-        });
-
-        // moyenne générale annuelle
-        let sumGen = 0;
-        let sumCoeffGen = 0;
-
-        for (const s of subjectsForReport) {
-          if (s.include_in_average === false) continue;
-          const coeffSub = Number(s.coeff_bulletin ?? 0);
-          if (!coeffSub || coeffSub <= 0) continue;
-
-          const ps = (annual_per_subject as any[]).find((x) => x.subject_id === s.subject_id);
-          const subAvg = ps?.avg20 ?? null;
-          if (subAvg === null || subAvg === undefined) continue;
-
-          sumGen += Number(subAvg) * coeffSub;
-          sumCoeffGen += coeffSub;
-        }
-
-        annual_avg_for_student = sumCoeffGen > 0 ? cleanNumber(sumGen / sumCoeffGen, 4) : null;
-      }
-    }
-  }
-
-  const perStudentSubject = new Map<string, Map<string, { sumWeighted: number; sumCoeff: number }>>();
+  const perStudentSubject = new Map<
+    string,
+    Map<string, { sumWeighted: number; sumCoeff: number }>
+  >();
   const perStudentSubjectComponent = new Map<
     string,
     Map<string, { subject_id: string; sumWeighted: number; sumCoeff: number }>
@@ -1357,7 +1380,11 @@ export async function GET(req: NextRequest) {
           perStudentSubjectComponent.set(sc.student_id, stuCompMap);
         }
         const compCell =
-          stuCompMap.get(comp.id) || { subject_id: comp.subject_id, sumWeighted: 0, sumCoeff: 0 };
+          stuCompMap.get(comp.id) || {
+            subject_id: comp.subject_id,
+            sumWeighted: 0,
+            sumCoeff: 0,
+          };
         compCell.sumWeighted += norm20 * weight;
         compCell.sumCoeff += weight;
         stuCompMap.set(comp.id, compCell);
@@ -1365,7 +1392,7 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  // 11) Construire items pour tous les élèves de la classe
+  // 12) Construire items de bulletin pour tous les élèves
   const items = classStudents.map((cs) => {
     const stuLocal = cs.students || {};
     const fullName =
@@ -1457,7 +1484,7 @@ export async function GET(req: NextRequest) {
         for (const it of g.items) {
           const sid = it.subject_id;
 
-          const ps = (per_subject as any[]).find((x) => x.subject_id === sid);
+          const ps = per_subject.find((x) => x.subject_id === sid);
           const subAvg = ps?.avg20 ?? null;
           if (subAvg === null || subAvg === undefined) continue;
 
@@ -1491,7 +1518,7 @@ export async function GET(req: NextRequest) {
         const coeffSub = Number(s.coeff_bulletin ?? 0);
         if (!coeffSub || coeffSub <= 0) continue;
 
-        const ps = (per_subject as any[]).find((x) => x.subject_id === s.subject_id);
+        const ps = per_subject.find((x) => x.subject_id === s.subject_id);
         const subAvg = ps?.avg20 ?? null;
         if (subAvg === null || subAvg === undefined) continue;
 
@@ -1526,7 +1553,7 @@ export async function GET(req: NextRequest) {
   applySubjectRanks(items);
   applySubjectComponentRanks(items);
 
-  // On garde seulement l'élève concerné
+  // 13) Bulletin de l'élève du QR
   const bulletinForStudent = items.find((it) => it.student_id === studentId);
 
   if (!bulletinForStudent) {
@@ -1536,11 +1563,61 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  // ✅ Injecter annual_avg uniquement si calculé
+  // 14) Calcul de la moyenne annuelle selon les trimestres
+  //     Moyenne annuelle = (T1*c1 + T2*c2 + T3*c3) / (c1 + c2 + c3)
+  let annual_avg_for_student: number | null = null;
+
+  if (shouldComputeAnnual && yearPeriods.length && dateFrom && dateTo) {
+    let sumWeightedPeriods = 0;
+    let sumCoeffPeriods = 0;
+
+    for (const p of yearPeriods) {
+      const pStart = p?.start_date ? String(p.start_date) : null;
+      const pEnd = p?.end_date ? String(p.end_date) : null;
+      if (!pStart || !pEnd) continue;
+
+      const coeffPeriod =
+        p?.coeff === null || p?.coeff === undefined ? 1 : Number(p.coeff);
+      if (!Number.isFinite(coeffPeriod) || coeffPeriod <= 0) continue;
+
+      let periodAvg: number | null = null;
+
+      // Si c'est la période courante, on réutilise GeneralAvg déjà calculée
+      if (pStart === dateFrom && pEnd === dateTo) {
+        periodAvg = bulletinForStudent.general_avg ?? null;
+      } else {
+        periodAvg = await computeStudentGeneralAvgForRange({
+          srv,
+          classId,
+          studentId,
+          from: pStart,
+          to: pEnd,
+          subjectsForReport,
+          subjectComponentsBySubject: compsBySubject,
+          subjectComponentById,
+        });
+      }
+
+      if (periodAvg === null) continue;
+
+      sumWeightedPeriods += periodAvg * coeffPeriod;
+      sumCoeffPeriods += coeffPeriod;
+    }
+
+    if (sumCoeffPeriods > 0) {
+      annual_avg_for_student = cleanNumber(
+        sumWeightedPeriods / sumCoeffPeriods,
+        4
+      );
+    }
+  }
+
+  // On rattache annual_avg au bulletin de l'élève SI elle existe
   if (annual_avg_for_student !== null) {
     (bulletinForStudent as any).annual_avg = annual_avg_for_student;
   }
 
+  // 15) Réponse finale
   return NextResponse.json({
     ok: true,
     mode,
