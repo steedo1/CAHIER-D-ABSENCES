@@ -990,6 +990,9 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ ok: false, error: "MISSING_CLASS_ID" }, { status: 400 });
   }
 
+  // ✅ class_id non-null (utile dans les closures)
+  const classIdStr: string = classId;
+
   // ✅ origin PUBLIC (anti localhost)
   const origin = pickPublicOrigin(req.nextUrl.origin);
 
@@ -1231,6 +1234,62 @@ export async function GET(req: NextRequest) {
     });
   }
 
+  /* ───────── Conduite (coef 1) — helpers ───────── */
+  const clamp20 = (n: number) => Math.max(0, Math.min(20, n));
+
+  async function fetchConductAverageMap(
+    from: string,
+    to: string
+  ): Promise<Map<string, number | null>> {
+    const out = new Map<string, number | null>();
+    studentIds.forEach((sid) => out.set(sid, null));
+
+    try {
+      const qs = new URLSearchParams({ class_id: classIdStr, from, to });
+      const cookie = req.headers.get("cookie") ?? "";
+
+      const r = await fetch(
+        `${req.nextUrl.origin}/api/admin/conduite/averages?${qs.toString()}`,
+        {
+          method: "GET",
+          headers: cookie ? { cookie } : {},
+          cache: "no-store",
+        }
+      );
+
+      if (!r.ok) return out;
+
+      const j: any = await r.json();
+
+      // tolère plusieurs shapes: {items:[...]}, {data:[...]} ou tableau direct
+      const arr: any[] = Array.isArray(j)
+        ? j
+        : Array.isArray(j?.items)
+          ? j.items
+          : Array.isArray(j?.data)
+            ? j.data
+            : [];
+
+      for (const it of arr) {
+        const sid = String(it?.student_id ?? "");
+        if (!sid) continue;
+
+        // "total" attendu (note /20). On accepte aussi "avg" ou "value" si présent.
+        const raw =
+          it?.total ?? it?.avg ?? it?.value ?? it?.score ?? it?.note ?? null;
+
+        const total = Number(raw);
+        if (!Number.isFinite(total)) continue;
+
+        out.set(sid, clamp20(total));
+      }
+    } catch {
+      // ne casse jamais le bulletin si la conduite échoue
+    }
+
+    return out;
+  }
+
   /* 3) Coefficients bulletin par matière (on les charge même s'il n'y a pas d'évals) */
   let coeffAllQuery = supabase
     .from("institution_subject_coeffs")
@@ -1382,6 +1441,12 @@ export async function GET(req: NextRequest) {
   const subjects = (subjData || []) as SubjectRow[];
   const subjectById = new Map<string, SubjectRow>();
   for (const s of subjects) subjectById.set(s.id, s);
+
+  const isConductSubjectId = (subjectId: string): boolean => {
+    const meta = subjectById.get(String(subjectId));
+    const key = `${meta?.code ?? ""} ${meta?.name ?? ""}`.toLowerCase();
+    return key.includes("conduite") || key.includes("conduct");
+  };
 
   // ordre final des matières (par nom)
   const orderedSubjectIds = subjects.map((s) => s.id).filter((sid) => isUuid(sid));
@@ -1732,6 +1797,11 @@ export async function GET(req: NextRequest) {
   }
 
   /* 9) Construire la réponse (par élève) */
+
+  // ✅ Conduite (coef 1) : on la récupère une seule fois pour la période demandée
+  const conductAvgByStudent =
+    dateFrom && dateTo ? await fetchConductAverageMap(String(dateFrom), String(dateTo)) : null;
+
   const items = classStudents.map((cs) => {
     const stu = cs.students || {};
     const fullName =
@@ -1860,6 +1930,7 @@ export async function GET(req: NextRequest) {
     {
       let sumGen = 0;
       let sumCoeffGen = 0;
+      let conductAlreadyCounted = false;
 
       for (const s of subjectsForReport) {
         if (s.include_in_average === false) continue;
@@ -1870,8 +1941,21 @@ export async function GET(req: NextRequest) {
         const subAvg = ps?.avg20 ?? null;
         if (subAvg === null || subAvg === undefined) continue;
 
+        const sn = String((s as any).subject_name ?? "").toLowerCase();
+        const isConduct = sn.includes("conduite") || sn.includes("conduct");
+        if (isConduct) conductAlreadyCounted = true;
+
         sumGen += Number(subAvg) * coeffSub;
         sumCoeffGen += coeffSub;
+      }
+
+      // ✅ Injecter la conduite coef 1 (si non déjà comptée comme "matière")
+      if (!conductAlreadyCounted && conductAvgByStudent) {
+        const c = conductAvgByStudent.get(cs.student_id);
+        if (c !== null && c !== undefined && Number.isFinite(Number(c))) {
+          sumGen += Number(c) * 1;
+          sumCoeffGen += 1;
+        }
       }
 
       general_avg = sumCoeffGen > 0 ? cleanNumber(sumGen / sumCoeffGen, 4) : null;
@@ -2073,10 +2157,16 @@ export async function GET(req: NextRequest) {
       to: string,
       subjectsList: { subject_id: string; coeff_bulletin: number | null; include_in_average: boolean }[],
       compsMap: Map<string, BulletinSubjectComponent[]>,
-      compByIdMap: Map<string, BulletinSubjectComponent>
+      compByIdMap: Map<string, BulletinSubjectComponent>,
+      conductMap?: Map<string, number | null> | null
     ): Promise<Map<string, number | null>> => {
       const out = new Map<string, number | null>();
       studentIds.forEach((sid) => out.set(sid, null));
+
+      const conductSubjectIds = new Set<string>();
+      for (const s of subjectsList) {
+        if (isConductSubjectId(String(s.subject_id))) conductSubjectIds.add(String(s.subject_id));
+      }
 
       // evals publiées sur la période
       const { data: eData, error: eErr } = await supabase
@@ -2158,6 +2248,7 @@ export async function GET(req: NextRequest) {
 
         let sumGen = 0;
         let sumCoeffGen = 0;
+        let conductAlreadyCounted = false;
 
         for (const s of subjectsList) {
           if (s.include_in_average === false) continue;
@@ -2201,8 +2292,19 @@ export async function GET(req: NextRequest) {
           if (subAvg === null || subAvg === undefined) continue;
           if (!Number.isFinite(subAvg)) continue;
 
+          if (conductSubjectIds.has(String(s.subject_id))) conductAlreadyCounted = true;
+
           sumGen += Number(subAvg) * coeffSub;
           sumCoeffGen += coeffSub;
+        }
+
+        // ✅ Injecter la conduite coef 1 (si non déjà comptée comme "matière")
+        if (!conductAlreadyCounted && conductMap) {
+          const c = conductMap.get(sid);
+          if (c !== null && c !== undefined && Number.isFinite(Number(c))) {
+            sumGen += Number(c) * 1;
+            sumCoeffGen += 1;
+          }
         }
 
         const g = sumCoeffGen > 0 ? cleanNumber(sumGen / sumCoeffGen, 4) : null;
@@ -2224,7 +2326,16 @@ export async function GET(req: NextRequest) {
       const w =
         p.coeff === null || p.coeff === undefined ? 1 : Math.max(0, Number(p.coeff) || 0) || 1;
 
-      const map = await computeGeneralAvgMapForRange(from, to, annualSubjectsForReport, annualCompsBySubject, annualSubjectComponentById);
+      const conductMapForPeriod = await fetchConductAverageMap(from, to);
+
+      const map = await computeGeneralAvgMapForRange(
+        from,
+        to,
+        annualSubjectsForReport,
+        annualCompsBySubject,
+        annualSubjectComponentById,
+        conductMapForPeriod
+      );
       periodMaps.push({ w, map });
     }
 

@@ -831,25 +831,15 @@ function applyGroupRanksFront(items: (BulletinItemBase | BulletinItemWithRank)[]
   });
 }
 
-/* ───────── Ranks + stats (intègre CONDUITE coef 1) ───────── */
+/* ───────── Ranks + stats (API = source de vérité) ───────── */
 
-function computeRanksAndStats(
-  res: BulletinResponse | null,
-  conductSummary: ConductSummaryResponse | null
-): EnrichedBulletin | null {
+function computeRanksAndStats(res: BulletinResponse | null): EnrichedBulletin | null {
   if (!res) return null;
 
   const baseItems = res.items ?? [];
 
-  const conductMap = new Map<string, number>();
-  if (conductSummary && Array.isArray(conductSummary.items)) {
-    conductSummary.items.forEach((it) => {
-      if (!it.student_id) return;
-      const note = clampTo20(it.total);
-      if (note !== null) conductMap.set(it.student_id, note);
-    });
-  }
-
+  // Ne pas réinjecter la conduite ici : l'API bulletin calcule déjà general_avg (conduite incluse si applicable).
+  // Fallback : si l'API renvoie null, on peut recalculer une moyenne matières côté front sans casser l'affichage.
   const itemsWithAvg: BulletinItemWithRank[] = baseItems.map((it) => {
     const perSubject = it.per_subject ?? [];
 
@@ -860,6 +850,7 @@ function computeRanksAndStats(
       const cell = perSubject.find((ps) => ps.subject_id === s.subject_id);
       const val = cell?.avg20;
       if (val === null || val === undefined) return;
+
       const avg = Number(val);
       if (!Number.isFinite(avg)) return;
 
@@ -872,19 +863,15 @@ function computeRanksAndStats(
       sumCoeff += coeff;
     });
 
-    let baseAvg: number | null = null;
-    if (sumCoeff > 0) baseAvg = sum / sumCoeff;
+    const baseAvg = sumCoeff > 0 ? sum / sumCoeff : null;
 
-    const conductNote = conductMap.get(it.student_id) ?? null;
+    const apiAvg =
+      it.general_avg !== null && it.general_avg !== undefined
+        ? Number(it.general_avg)
+        : null;
 
-    let finalAvg: number | null;
-    if (conductNote !== null) {
-      const totalSum = sum + conductNote * 1;
-      const totalCoeff = sumCoeff + 1;
-      finalAvg = totalCoeff > 0 ? totalSum / totalCoeff : it.general_avg ?? baseAvg;
-    } else {
-      finalAvg = baseAvg ?? it.general_avg ?? null;
-    }
+    const finalAvg =
+      apiAvg !== null && Number.isFinite(apiAvg) ? apiAvg : baseAvg;
 
     const rounded =
       finalAvg !== null && Number.isFinite(finalAvg) ? round2(finalAvg) : null;
@@ -893,7 +880,7 @@ function computeRanksAndStats(
   });
 
   const withAvg = itemsWithAvg.filter(
-    (it) => it.general_avg !== null && Number.isFinite(it.general_avg as number)
+    (it) => typeof it.general_avg === "number" && Number.isFinite(it.general_avg)
   );
 
   const stats: ClassStats = { highest: null, lowest: null, classAvg: null };
@@ -940,6 +927,7 @@ function computeRanksAndStats(
 
   return { response: res, items: itemsWithRank, stats };
 }
+
 
 /* ───────── Helpers "bulletin officiel" ───────── */
 
@@ -2269,8 +2257,8 @@ export default function BulletinsPage() {
   };
 
   const enriched = useMemo(
-    () => computeRanksAndStats(bulletinRaw, conductSummary),
-    [bulletinRaw, conductSummary]
+    () => computeRanksAndStats(bulletinRaw),
+    [bulletinRaw]
   );
 
   const conductByStudentId = useMemo(() => {

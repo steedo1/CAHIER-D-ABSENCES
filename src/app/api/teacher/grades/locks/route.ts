@@ -39,6 +39,7 @@ async function ensureClassAccess(
   institutionId: string
 ): Promise<boolean> {
   if (!classId || !institutionId) return false;
+
   const { data: cls, error } = await srv
     .from("classes")
     .select("id,institution_id")
@@ -73,34 +74,36 @@ function verifyPin(pin: string, stored: string) {
 
 /* ==========================================
    GET : statut lock
+   - ✅ On valide l'accès à l'évaluation via RLS (client user)
+   - ✅ Puis on lit le lock via service role (car RLS peut masquer la ligne lock)
 ========================================== */
 export async function GET(req: NextRequest) {
   const url = new URL(req.url);
   const evaluation_id = String(url.searchParams.get("evaluation_id") || "").trim();
   if (!evaluation_id) return NextResponse.json({ ok: true, locked: false });
 
-  const { user, profile, srv } = await getContext();
+  const { supa, user, profile, srv } = await getContext();
   if (!user || !profile || !srv) {
     return NextResponse.json({ ok: true, locked: false }, { status: 401 });
   }
 
-  // Charger l'évaluation pour vérifier accès
-  const { data: ev, error: evErr } = await srv
+  // 1) Valider accès à l'évaluation via RLS (côté prof)
+  const { data: ev, error: evErr } = await supa
     .from("grade_evaluations")
-    .select("id,class_id,teacher_id")
+    .select("id,class_id")
     .eq("id", evaluation_id)
-    .maybeSingle();
+    .single();
 
-  if (evErr || !ev) return NextResponse.json({ ok: true, locked: false }, { status: 200 });
-
-  const allowed = await ensureClassAccess(srv, ev.class_id, profile.institution_id);
-  if (!allowed) return NextResponse.json({ ok: true, locked: false }, { status: 200 });
-
-  // Si l'éval appartient explicitement à un autre prof → on cache l'info
-  if (ev.teacher_id && ev.teacher_id !== user.id) {
+  if (evErr || !ev) {
+    // inaccessible via RLS => on renvoie locked:false (sans révéler l'info)
     return NextResponse.json({ ok: true, locked: false }, { status: 200 });
   }
 
+  // 2) Sécurité supplémentaire : classe ∈ établissement
+  const allowed = await ensureClassAccess(srv, ev.class_id, profile.institution_id);
+  if (!allowed) return NextResponse.json({ ok: true, locked: false }, { status: 200 });
+
+  // 3) Lire le lock via service role
   const { data: lockRow, error: lockErr } = await srv
     .from("grade_evaluation_locks")
     .select("is_locked, locked_at, teacher_id, locked_by")
@@ -127,9 +130,11 @@ export async function GET(req: NextRequest) {
 
 /* ==========================================
    POST : lock/unlock
+   - ✅ On valide l'accès à l'évaluation via RLS (client user)
+   - ✅ Ensuite, on lock/unlock via service role
 ========================================== */
 export async function POST(req: NextRequest) {
-  const { user, profile, srv } = await getContext();
+  const { supa, user, profile, srv } = await getContext();
   if (!user || !profile || !srv) return bad("UNAUTHENTICATED", 401);
 
   const body = await req.json().catch(() => ({}));
@@ -141,22 +146,27 @@ export async function POST(req: NextRequest) {
   if (action !== "lock" && action !== "unlock") return bad("action invalide");
   if (!pin) return bad("PIN invalide (4 à 8 chiffres)");
 
-  // Charger l'évaluation
-  const { data: ev, error: evErr } = await srv
+  // 1) Valider accès à l'évaluation via RLS (côté prof)
+  const { data: ev, error: evErr } = await supa
     .from("grade_evaluations")
     .select("id,class_id,subject_id,teacher_id")
     .eq("id", evaluation_id)
-    .maybeSingle();
+    .single();
 
-  if (evErr || !ev) return bad("EVALUATION_NOT_FOUND", 404);
+  if (evErr || !ev) {
+    // 404 si inexistante, 403 si RLS bloque
+    const code = (evErr as any)?.code;
+    return bad(
+      evErr?.message || "EVALUATION_NOT_FOUND_OR_FORBIDDEN",
+      code === "PGRST116" ? 404 : 403
+    );
+  }
 
+  // 2) Sécurité supplémentaire : classe ∈ établissement
   const allowed = await ensureClassAccess(srv, ev.class_id, profile.institution_id);
   if (!allowed) return bad("FORBIDDEN", 403);
 
-  // Si l'éval appartient explicitement à un autre prof → interdit
-  if (ev.teacher_id && ev.teacher_id !== user.id) return bad("FORBIDDEN", 403);
-
-  // Feature absente ?
+  // 3) Feature absente ?
   const tableCheck = await srv.from("grade_evaluation_locks").select("evaluation_id").limit(1);
   if (tableCheck.error) {
     const msg = String(tableCheck.error.message || "");
@@ -176,10 +186,10 @@ export async function POST(req: NextRequest) {
           institution_id: profile.institution_id,
           class_id: ev.class_id,
           subject_id: ev.subject_id,
-          // on conserve teacher_id = grade_evaluations.teacher_id (si null, on met le prof courant)
+          // si teacher_id est null dans l'évaluation, on met le prof courant
           teacher_id: ev.teacher_id ?? user.id,
           is_locked: true,
-          pin_hash: hashPin(pin), // "salt:hash"
+          pin_hash: hashPin(pin),
           locked_by: user.id,
           locked_at: now,
           updated_at: now,
@@ -191,7 +201,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true, enabled: true, locked: true, evaluation_id });
   }
 
-  // unlock (vérifie le PIN sur pin_hash="salt:hash")
+  // unlock
   const { data: lockRow, error: lockErr } = await srv
     .from("grade_evaluation_locks")
     .select("evaluation_id,is_locked,pin_hash")
@@ -199,7 +209,9 @@ export async function POST(req: NextRequest) {
     .maybeSingle();
 
   if (lockErr) return bad(lockErr.message || "LOCK_READ_FAILED", 400);
-  if (!lockRow?.is_locked) return NextResponse.json({ ok: true, enabled: true, locked: false, evaluation_id });
+  if (!lockRow?.is_locked) {
+    return NextResponse.json({ ok: true, enabled: true, locked: false, evaluation_id });
+  }
 
   const ok = verifyPin(pin, lockRow.pin_hash);
   if (!ok) return bad("INVALID_PIN", 403);

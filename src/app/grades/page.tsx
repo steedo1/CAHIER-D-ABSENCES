@@ -216,9 +216,11 @@ function Button(
 function GhostButton(
   p: React.ButtonHTMLAttributes<HTMLButtonElement> & {
     tone?: "red" | "slate" | "emerald";
+    children?: React.ReactNode;
   }
 ) {
-  const tone = p.tone ?? "slate";
+  const { tone: toneProp, className, children, ...rest } = p;
+  const tone = toneProp ?? "slate";
   const map: Record<"red" | "slate" | "emerald", string> = {
     red: "border-red-300 text-red-700 hover:bg-red-50 focus:ring-red-500/20",
     slate:
@@ -228,14 +230,16 @@ function GhostButton(
   };
   return (
     <button
-      {...p}
+      {...rest}
       className={[
         "inline-flex items-center gap-2 rounded-xl border px-3 py-1.5 text-sm",
         "transition focus:outline-none focus:ring-4",
         map[tone],
-        p.className ?? "",
+        className ?? "",
       ].join(" ")}
-    />
+    >
+      {children}
+    </button>
   );
 }
 
@@ -542,28 +546,26 @@ export default function TeacherNotesPage() {
   ========================================== */
   function normalizeLockResponse(evId: string, j: any): EvalLock | null {
     // On accepte plusieurs formes possibles (pour éviter de casser si l’API diffère)
-    const src =
-      j?.lock ??
-      j?.item ??
-      j?.data ??
-      (typeof j?.is_locked === "boolean" ? j : null) ??
-      null;
+    const src = j?.lock ?? j?.item ?? j?.data ?? j;
 
-    if (!src) return null;
+    if (!src || typeof src !== "object") return null;
 
-    const is_locked =
-      typeof src.is_locked === "boolean"
-        ? src.is_locked
-        : typeof src.locked === "boolean"
-        ? src.locked
-        : false;
+    // ✅ supporte "locked" (nos APIs) ET "is_locked" (autres variantes)
+    const lockedValue =
+      typeof (src as any).is_locked === "boolean"
+        ? (src as any).is_locked
+        : typeof (src as any).locked === "boolean"
+        ? (src as any).locked
+        : null;
+
+    if (lockedValue === null) return null;
 
     return {
-      evaluation_id: src.evaluation_id ?? evId,
-      is_locked,
-      locked_at: src.locked_at ?? null,
-      locked_by: src.locked_by ?? null,
-      teacher_id: src.teacher_id ?? null,
+      evaluation_id: (src as any).evaluation_id ?? evId,
+      is_locked: lockedValue,
+      locked_at: (src as any).locked_at ?? null,
+      locked_by: (src as any).locked_by ?? null,
+      teacher_id: (src as any).teacher_id ?? null,
     };
   }
 
@@ -2573,4 +2575,4 @@ export default function TeacherNotesPage() {
 
 </main>
   );
-}
+  }
