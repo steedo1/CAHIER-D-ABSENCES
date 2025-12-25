@@ -870,9 +870,6 @@ export async function GET(req: NextRequest) {
         .sort();
       const maxEnd = ends.length ? ends[ends.length - 1] : null;
 
-      // On calcule la moyenne annuelle soit :
-      // - si la période est marquée "annuel"
-      // - soit si c'est la dernière période de l'année (T3)
       if (periodLooksAnnual) {
         shouldComputeAnnual = true;
       } else if (maxEnd && dateTo === maxEnd) {
@@ -974,53 +971,199 @@ export async function GET(req: NextRequest) {
   const studentIds = classStudents.map((cs) => cs.student_id).filter(Boolean);
   const classIdStr = String(classId);
 
-  async function fetchConductAverageMap(
-    from: string,
-    to: string
-  ): Promise<Map<string, number | null>> {
+  async function fetchConductAverageMap(from: string, to: string): Promise<Map<string, number | null>> {
     const out = new Map<string, number | null>();
-    studentIds.forEach((sid) => out.set(sid, null));
+    studentIds.forEach((sid) => out.set(String(sid), null));
 
-    // Si on n'a pas de dates, on renvoie tout à null
     if (!from || !to) return out;
 
+    const pickStudentId = (row: any): string | null => {
+      const sid = row?.student_id ?? row?.studentId ?? row?.id ?? row?.student ?? null;
+      return sid ? String(sid) : null;
+    };
+
+    const pickAvg20 = (row: any): number | null => {
+      const raw =
+        row?.avg20 ??
+        row?.avg_20 ??
+        row?.average20 ??
+        row?.average_20 ??
+        row?.average ??
+        row?.avg ??
+        row?.value ??
+        row?.score ??
+        row?.note ??
+        row?.total ??
+        null;
+
+      const v = raw === null || raw === undefined ? null : cleanNumber(raw, 4);
+      return v;
+    };
+
+    const setFromRows = (rows: any[]) => {
+      for (const r of rows) {
+        const sid = pickStudentId(r);
+        if (!sid) continue;
+        const v = pickAvg20(r);
+        if (v === null) continue;
+        out.set(sid, v);
+      }
+    };
+
+    // 0) Résoudre period_id si possible (plus fiable que from/to si vos tables utilisent period_id)
+    let periodId: string | null = null;
+    try {
+      const { data: gp, error: gpErr } = await srv
+        .from("grade_periods")
+        .select("id")
+        .eq("institution_id", instId)
+        .eq("start_date", from)
+        .eq("end_date", to)
+        .maybeSingle();
+      if (!gpErr && gp?.id) periodId = String(gp.id);
+    } catch {
+      // ignore
+    }
+
+    // 1) Tentative RPC (si vous avez une fonction SQL)
+    const rpcNames = [
+      "get_conduite_averages",
+      "get_conduct_averages",
+      "conduite_averages",
+      "conduct_averages",
+      "get_conduite_average_map",
+      "get_conduct_average_map",
+    ];
+
+    const rpcArgSets = [
+      { class_id: classIdStr, from, to },
+      { p_class_id: classIdStr, p_from: from, p_to: to },
+      { classId: classIdStr, from, to },
+      { pClassId: classIdStr, pFrom: from, pTo: to },
+      periodId ? { class_id: classIdStr, period_id: periodId } : null,
+      periodId ? { p_class_id: classIdStr, p_period_id: periodId } : null,
+    ].filter(Boolean) as any[];
+
+    for (const fn of rpcNames) {
+      for (const args of rpcArgSets) {
+        try {
+          const { data, error } = await (srv as any).rpc(fn, args);
+          if (error || !data) continue;
+
+          const rows = Array.isArray(data)
+            ? data
+            : Array.isArray(data?.items)
+              ? data.items
+              : Array.isArray(data?.data)
+                ? data.data
+                : Array.isArray(data?.rows)
+                  ? data.rows
+                  : null;
+
+          if (rows && rows.length) {
+            setFromRows(rows);
+            // Si au moins un élève a une valeur, on valide.
+            const anyOk = studentIds.some((sid) => out.get(String(sid)) !== null);
+            if (anyOk) return out;
+          }
+        } catch {
+          // ignore
+        }
+      }
+    }
+
+    // 2) Tentative lecture directe de tables "agrégées"
+    const aggregatedTables = [
+      "conduite_period_averages",
+      "conduct_period_averages",
+      "student_conduite_period_averages",
+      "student_conduct_period_averages",
+      "student_conduite_averages",
+      "student_conduct_averages",
+      "conduite_scores",
+      "conduct_scores",
+      "student_conduite_scores",
+      "student_conduct_scores",
+    ];
+
+    const rangeCols = [
+      { fromCol: "from", toCol: "to" },
+      { fromCol: "start_date", toCol: "end_date" },
+      { fromCol: "date_from", toCol: "date_to" },
+      { fromCol: "period_from", toCol: "period_to" },
+      { fromCol: "period_start", toCol: "period_end" },
+    ];
+
+    const trySelect = async (table: string, apply: (q: any) => any) => {
+      try {
+        let q = (srv as any).from(table).select("*");
+        q = apply(q);
+        const { data, error } = await q;
+        if (error || !Array.isArray(data)) return null;
+        return data as any[];
+      } catch {
+        return null;
+      }
+    };
+
+    for (const table of aggregatedTables) {
+      // (a) Filtre period_id si possible
+      if (periodId) {
+        // plusieurs noms possibles
+        const periodKeys = ["period_id", "grade_period_id"];
+        for (const pk of periodKeys) {
+          // try with student filter, then without if column missing
+          let rows =
+            (await trySelect(table, (q) =>
+              q.eq("class_id", classIdStr).eq(pk, periodId).in("student_id", studentIds)
+            )) ||
+            (await trySelect(table, (q) => q.eq("class_id", classIdStr).eq(pk, periodId)));
+
+          if (rows && rows.length) {
+            setFromRows(rows);
+            const anyOk = studentIds.some((sid) => out.get(String(sid)) !== null);
+            if (anyOk) return out;
+          }
+        }
+      }
+
+      // (b) Filtre par bornes (from/to etc.)
+      for (const rc of rangeCols) {
+        let rows =
+          (await trySelect(table, (q) =>
+            q.eq("class_id", classIdStr).eq(rc.fromCol, from).eq(rc.toCol, to).in("student_id", studentIds)
+          )) ||
+          (await trySelect(table, (q) =>
+            q.eq("class_id", classIdStr).eq(rc.fromCol, from).eq(rc.toCol, to)
+          ));
+
+        if (rows && rows.length) {
+          setFromRows(rows);
+          const anyOk = studentIds.some((sid) => out.get(String(sid)) !== null);
+          if (anyOk) return out;
+        }
+      }
+    }
+
+    // 3) Fallback final (compat) : on tente encore l’endpoint admin (si un jour tu l’ouvres côté serveur)
     try {
       const qs = new URLSearchParams({ class_id: classIdStr, from, to });
-
-      // NB: route publique (QR) -> pas de cookie admin ici.
-      // On tente quand même l'endpoint, et on reste tolérant si ça échoue.
       const r = await fetch(
         `${req.nextUrl.origin}/api/admin/conduite/averages?${qs.toString()}`,
         { method: "GET" }
       );
+      if (r.ok) {
+        const data: any = await r.json().catch(() => null);
+        const items: any[] =
+          (data?.items as any[]) ||
+          (data?.data as any[]) ||
+          (data?.rows as any[]) ||
+          [];
 
-      if (!r.ok) return out;
-
-      const data: any = await r.json().catch(() => null);
-      const items: any[] =
-        (data?.items as any[]) ||
-        (data?.data as any[]) ||
-        (data?.rows as any[]) ||
-        [];
-
-      if (!Array.isArray(items)) return out;
-
-      for (const it of items) {
-        const sid = it?.student_id ?? it?.studentId ?? it?.id;
-        if (!sid) continue;
-
-        const raw =
-          it?.avg20 ??
-          it?.average ??
-          it?.total ??
-          it?.avg ??
-          it?.value ??
-          it?.score ??
-          it?.note ??
-          null;
-
-        const v = raw === null || raw === undefined ? null : cleanNumber(raw, 4);
-        out.set(String(sid), v);
+        if (Array.isArray(items) && items.length) {
+          setFromRows(items);
+          return out;
+        }
       }
     } catch {
       // ignore
@@ -1030,7 +1173,9 @@ export async function GET(req: NextRequest) {
   }
 
   const conductAvgMapCurrent =
-    dateFrom && dateTo ? await fetchConductAverageMap(dateFrom, dateTo) : new Map<string, number | null>();
+    dateFrom && dateTo
+      ? await fetchConductAverageMap(dateFrom, dateTo)
+      : new Map<string, number | null>();
 
   // Préchargement conduite par période (utile pour annual_avg)
   const conductByPeriodKey = new Map<string, Map<string, number | null>>();
@@ -1683,8 +1828,7 @@ export async function GET(req: NextRequest) {
         periodAvg = bulletinForStudent.general_avg ?? null;
       } else {
         const key = `${pStart}|${pEnd}`;
-        const conductNote =
-          conductByPeriodKey.get(key)?.get(studentId) ?? null;
+        const conductNote = conductByPeriodKey.get(key)?.get(studentId) ?? null;
 
         periodAvg = await computeStudentGeneralAvgForRange({
           srv,
@@ -1706,10 +1850,7 @@ export async function GET(req: NextRequest) {
     }
 
     if (sumCoeffPeriods > 0) {
-      annual_avg_for_student = cleanNumber(
-        sumWeightedPeriods / sumCoeffPeriods,
-        4
-      );
+      annual_avg_for_student = cleanNumber(sumWeightedPeriods / sumCoeffPeriods, 4);
     }
   }
 
@@ -1746,9 +1887,7 @@ export async function GET(req: NextRequest) {
     student: {
       id: stu.id,
       full_name:
-        stu.full_name ||
-        [stu.last_name, stu.first_name].filter(Boolean).join(" ") ||
-        null,
+        stu.full_name || [stu.last_name, stu.first_name].filter(Boolean).join(" ") || null,
       last_name: stu.last_name || null,
       first_name: stu.first_name || null,
       matricule: stu.matricule || null,

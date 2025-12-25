@@ -202,6 +202,38 @@ function isPhiloSubject(name?: string | null, code?: string | null): boolean {
   return /(philo|philosoph)/.test(n) || /(philo|philosoph)/.test(c);
 }
 
+// ✅ LETTRES / langues / Histoire-Géo
+function isLettersSubject(name?: string | null, code?: string | null): boolean {
+  // ⚠️ si c'est déjà "AUTRES", on ne le classe pas en lettres
+  if (isOtherSubject(name, code)) return false;
+
+  const n = normText(name);
+  const c = normText(code);
+
+  // PHILO est toujours dans LETTRES
+  if (isPhiloSubject(name, code)) return true;
+
+  // codes courts fréquents
+  if (
+    /(^|\b)(fr|francais|français|ang|anglais|esp|espagnol|all|allemand|ar|arabe|hg|hist|histoire|geo|geographie|géographie|lit|litt|eco|economie|économie)(\b|$)/.test(
+      c
+    )
+  ) {
+    return true;
+  }
+
+  // noms
+  return (
+    /(fran[cç]ais|french|anglais|english|espagnol|spanish|allemand|german|arabe|arabic)/.test(n) ||
+    /(histoire|hist\.|g[eé]ographie|histoire\s*-?\s*g[eé]o|hg)/.test(n) ||
+    /(litt[eé]r|lettres|grammaire|orthograph|conjug|lecture|r[eé]daction|expression|compr[eé]hension)/.test(
+      n
+    ) ||
+    /(economie|gestion|comptabilit|droit)/.test(n)
+  );
+}
+
+
 // ✅ Sciences
 function isScienceSubject(name?: string | null, code?: string | null): boolean {
   const n = normText(name);
@@ -211,8 +243,8 @@ function isScienceSubject(name?: string | null, code?: string | null): boolean {
   if (isOtherSubject(name, code)) return false;
 
   return (
-    /(math|math[ée]m|phys|chim|svt|bio|science|info|algo|stat|techno)/.test(c) ||
-    /(math|math[ée]m|phys|chim|svt|bio|science|informat|algo|stat|technolog)/.test(n)
+    /(math|math[ée]m|pc|phys|chim|svt|bio|science|info|algo|stat|techno|thermo|mec|m[ée]can|electr|[ée]lectr|opt|astron|geol|g[eé]ol)/.test(c) ||
+    /(math|math[ée]m|physique|chimie|svt|biolog|scienc|informat|algo|statist|technolog|thermo|m[ée]can|mecaniq|[ée]lectr|optique|astronom|g[eé]olog|g[eé]ophys)/.test(n)
   );
 }
 
@@ -861,10 +893,10 @@ function buildFallbackGroups(opts: {
     const name = meta.name;
     const code = meta.code;
 
-    if (isOtherSubject(name, code)) autres.push(sid);
-    else if (isPhiloSubject(name, code)) letters.push(sid);
-    else if (isScienceSubject(name, code)) sciences.push(sid);
-    else letters.push(sid);
+    // ✅ Règle blindée : AUTRES = tout ce qui n'est pas LETTRES et pas SCIENCES
+    if (isScienceSubject(name, code)) sciences.push(sid);
+    else if (isLettersSubject(name, code)) letters.push(sid);
+    else autres.push(sid);
   }
 
   const mkGroup = (p: {
@@ -1647,11 +1679,15 @@ export async function GET(req: NextRequest) {
           const name = meta.name;
           const code = meta.code;
 
-          if (isOtherSubject(name, code)) return gAutres?.id ?? null;
-          if (isPhiloSubject(name, code)) return gLetters?.id ?? null;
-          if (isScienceSubject(name, code)) return gSciences?.id ?? null;
+          // ✅ Règle blindée : AUTRES = complément de (LETTRES ∪ SCIENCES)
+          if (isScienceSubject(name, code) && gSciences?.id) return gSciences.id;
+          if (isLettersSubject(name, code) && gLetters?.id) return gLetters.id;
 
-          return gLetters?.id ?? null;
+          // par défaut, tout le reste en AUTRES
+          if (gAutres?.id) return gAutres.id;
+
+          // fallback ultime (si un groupe manque en DB)
+          return gLetters?.id ?? gSciences?.id ?? null;
         }
 
         // first seen
