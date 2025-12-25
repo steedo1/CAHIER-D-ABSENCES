@@ -2,8 +2,18 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
-import { Users, Clock, Save, Play, Square, LogOut } from "lucide-react";
+import { Users, Clock, Save, Play, Square, LogOut, WifiOff, RefreshCcw } from "lucide-react";
 import { getSupabaseBrowserClient } from "@/lib/supabase-browser";
+import {
+  registerServiceWorker,
+  offlineGetJson,
+  offlineMutateJson,
+  outboxCount,
+  flushOutbox,
+  cacheGet,
+  cacheSet,
+  clearOfflineAll,
+} from "@/lib/offline";
 
 /* ─────────────────────────────────────────
    Types
@@ -144,11 +154,6 @@ const toMinutes = (hm: string) => {
   return (isFinite(h) ? h : 0) * 60 + (isFinite(m) ? m : 0);
 };
 const minutesDiff = (a: string, b: string) => Math.max(0, toMinutes(b) - toMinutes(a));
-function jsWeekday1to6(date: Date): number {
-  const d = date.getDay(); // 0..6 (0 = dim)
-  if (d === 0) return 7; // dimanche → 7
-  return d; // 1..6
-}
 
 /* Helpers fuseau établissement */
 const hmInTZ = (d: Date, tz: string): string =>
@@ -179,9 +184,163 @@ const weekdayInTZ1to7 = (d: Date, tz: string): number => {
 };
 
 /* ─────────────────────────────────────────
+   Institution identity (même logique que la page offline qui marche)
+────────────────────────────────────────── */
+const DEFAULT_INSTITUTION_NAME = "NOM DE L'ETABLISSEMENT";
+
+const INSTITUTION_NAME_KEYS = [
+  "institution_name",
+  "institution_label",
+  "short_name",
+  "name",
+  "header_title",
+  "school_name",
+] as const;
+
+const ACADEMIC_YEAR_KEYS = [
+  "current_academic_year_label",
+  "academic_year_label",
+  "academic_year",
+  "year_label",
+  "header_academic_year",
+  "active_academic_year",
+  "school_year",
+  "annee_scolaire",
+] as const;
+
+function safeStr(x: any): string | null {
+  const s = String(x ?? "").trim();
+  return s.length ? s : null;
+}
+function isPlainObject(v: any): v is Record<string, any> {
+  return !!v && typeof v === "object" && !Array.isArray(v);
+}
+function pickFrom(obj: any, keys: readonly string[]): string | null {
+  if (!isPlainObject(obj)) return null;
+  for (const k of keys) {
+    const v = safeStr((obj as any)[k]);
+    if (v) return v;
+  }
+  return null;
+}
+function unwrapPayload(payload: any): { root: any; settings: any } {
+  let root = payload;
+
+  if (isPlainObject(root) && isPlainObject((root as any).item)) root = (root as any).item;
+  else if (isPlainObject(root) && Array.isArray((root as any).items) && (root as any).items[0])
+    root = (root as any).items[0];
+  else if (isPlainObject(root) && Array.isArray((root as any).data) && (root as any).data[0])
+    root = (root as any).data[0];
+
+  const settings =
+    (isPlainObject(root) &&
+    isPlainObject((root as any).settings_json) &&
+    Object.keys((root as any).settings_json).length
+      ? (root as any).settings_json
+      : null) ||
+    (isPlainObject(payload) &&
+    isPlainObject((payload as any).settings_json) &&
+    Object.keys((payload as any).settings_json).length
+      ? (payload as any).settings_json
+      : null);
+
+  return { root, settings };
+}
+function extractInstitutionIdentity(payload: any): { name: string | null; year: string | null } {
+  const { root, settings } = unwrapPayload(payload);
+
+  let name = pickFrom(settings, INSTITUTION_NAME_KEYS) || null;
+  let year = pickFrom(settings, ACADEMIC_YEAR_KEYS) || null;
+
+  if (!name) name = pickFrom(root, INSTITUTION_NAME_KEYS) || null;
+  if (!year) year = pickFrom(root, ACADEMIC_YEAR_KEYS) || null;
+
+  return { name, year };
+}
+
+function isClientSessionId(id: string | null | undefined) {
+  return !!id && id.startsWith("client:");
+}
+function clientSessionIdFromOpen(open: OpenSession | null) {
+  if (!open?.id) return null;
+  if (!isClientSessionId(open.id)) return null;
+  return open.id.slice("client:".length);
+}
+
+/* ─────────────────────────────────────────
    Component (teacher only)
 ────────────────────────────────────────── */
 export default function TeacherDashboard() {
+  // offline / sync
+  const [isOnline, setIsOnline] = useState<boolean>(true);
+  const [pending, setPending] = useState<number>(0);
+  const [syncing, setSyncing] = useState<boolean>(false);
+
+  async function refreshPending() {
+    try {
+      const n = await outboxCount();
+      setPending(Number.isFinite(n) ? n : 0);
+    } catch {
+      setPending(0);
+    }
+  }
+
+  async function syncNow() {
+    if (typeof navigator !== "undefined" && !navigator.onLine) {
+      setMsg("Hors connexion : synchronisation impossible.");
+      return;
+    }
+    setSyncing(true);
+    setMsg(null);
+    try {
+      await flushOutbox();
+      await refreshPending();
+
+      // refresh open session depuis le serveur (si dispo)
+      try {
+        const os = (await offlineGetJson("/api/teacher/sessions/open", "teacher:open:afterSync")) as any;
+        setOpen((os?.item as OpenSession) || null);
+        await cacheSet("teacher:local-open", null);
+      } catch {
+        /* ignore */
+      }
+
+      setMsg("Synchronisation terminée ✅");
+    } catch (e: any) {
+      setMsg(e?.message || "Synchronisation échouée");
+    } finally {
+      setSyncing(false);
+    }
+  }
+
+  useEffect(() => {
+    registerServiceWorker();
+
+    const online = typeof navigator !== "undefined" ? navigator.onLine : true;
+    setIsOnline(online);
+
+    void refreshPending();
+
+    const onOnline = () => {
+      setIsOnline(true);
+      void refreshPending();
+      void syncNow();
+    };
+    const onOffline = () => {
+      setIsOnline(false);
+      void refreshPending();
+    };
+
+    window.addEventListener("online", onOnline);
+    window.addEventListener("offline", onOffline);
+
+    return () => {
+      window.removeEventListener("online", onOnline);
+      window.removeEventListener("offline", onOffline);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // données prof
   const [teachClasses, setTeachClasses] = useState<TeachClass[]>([]);
   const options = useMemo(
@@ -206,7 +365,7 @@ export default function TeacherDashboard() {
     tz: "Africa/Abidjan",
     default_session_minutes: 60,
     auto_lateness: true,
-    institution_name: "NOM DE L'ETABLISSEMENT",
+    institution_name: DEFAULT_INSTITUTION_NAME,
     academic_year_label: null,
   });
   const [periodsByDay, setPeriodsByDay] = useState<Record<number, Period[]>>({});
@@ -244,34 +403,39 @@ export default function TeacherDashboard() {
     [rows]
   );
 
-  /* Chargement initial (classes + open) */
+  /* Chargement initial (classes + open) — OFFLINE OK */
   useEffect(() => {
     (async () => {
       try {
-        const [cl, os] = await Promise.all([
-          fetch("/api/teacher/classes", { cache: "no-store" })
-            .then((r) => r.json())
-            .catch(() => ({ items: [] })),
-          fetch("/api/teacher/sessions/open", { cache: "no-store" })
-            .then((r) => r.json())
-            .catch(() => ({ item: null })),
+        const [cl, os, localOpen] = await Promise.all([
+          offlineGetJson("/api/teacher/classes", "teacher:classes").catch(() => ({ items: [] })),
+          offlineGetJson("/api/teacher/sessions/open", "teacher:open").catch(() => ({ item: null })),
+          cacheGet("teacher:local-open").catch(() => null),
         ]);
-        setTeachClasses((cl.items || []) as TeachClass[]);
-        setOpen((os.item as OpenSession) || null);
+
+        setTeachClasses(((cl as any)?.items || []) as TeachClass[]);
+
+        const openServer = ((os as any)?.item as OpenSession) || null;
+        const openLocal = (localOpen as OpenSession) || null;
+
+        setOpen(openServer || openLocal || null);
       } catch {
         setTeachClasses([]);
-        setOpen(null);
+        try {
+          const localOpen = await cacheGet("teacher:local-open");
+          setOpen((localOpen as OpenSession) || null);
+        } catch {
+          setOpen(null);
+        }
       }
     })();
   }, []);
 
-  // Charger paramètres & périodes (lecture côté prof) + config conduite
+  // Charger paramètres & périodes (lecture côté prof) + config conduite — OFFLINE OK
   async function loadInstitutionBasics() {
-    async function getJson(url: string) {
+    async function getJson(url: string, key: string) {
       try {
-        const r = await fetch(url, { cache: "no-store" });
-        if (!r.ok) throw new Error("not ok");
-        return await r.json();
+        return await offlineGetJson(url, key);
       } catch {
         return null;
       }
@@ -279,44 +443,35 @@ export default function TeacherDashboard() {
 
     // 1) route unifiée si présente
     let basics: InstBasics | null =
-      (await getJson("/api/teacher/institution/basics")) as InstBasics | null;
+      (await getJson("/api/teacher/institution/basics", "teacher:inst:basics")) as InstBasics | null;
 
     // 2) sinon, anciennes routes (settings + periods)
     if (!basics) {
       const c =
-        (await getJson("/api/teacher/institution/settings")) ||
-        (await getJson("/api/institution/settings")) ||
-        (await getJson("/api/admin/institution/settings")) || {
+        (await getJson("/api/teacher/institution/settings", "teacher:inst:settings:teacher")) ||
+        (await getJson("/api/institution/settings", "teacher:inst:settings:institution")) ||
+        (await getJson("/api/admin/institution/settings", "teacher:inst:settings:admin")) || {
           tz: "Africa/Abidjan",
           default_session_minutes: 60,
           auto_lateness: true,
         };
 
       const p =
-        (await getJson("/api/teacher/institution/periods")) ||
-        (await getJson("/api/institution/periods")) ||
-        (await getJson("/api/admin/institution/periods")) || { periods: [] };
+        (await getJson("/api/teacher/institution/periods", "teacher:inst:periods:teacher")) ||
+        (await getJson("/api/institution/periods", "teacher:inst:periods:institution")) ||
+        (await getJson("/api/admin/institution/periods", "teacher:inst:periods:admin")) || {
+          periods: [],
+        };
+
+      const { name, year } = extractInstitutionIdentity(c);
 
       basics = {
-        tz: c?.tz || "Africa/Abidjan",
-        default_session_minutes: Number(c?.default_session_minutes || 60),
-        auto_lateness: !!c?.auto_lateness,
-        institution_name:
-          c?.institution_name ||
-          c?.institution_label ||
-          c?.short_name ||
-          c?.name ||
-          c?.header_title ||
-          c?.school_name ||
-          null,
-        academic_year_label:
-          c?.academic_year_label ||
-          c?.current_academic_year_label ||
-          c?.academic_year ||
-          c?.year_label ||
-          c?.header_academic_year ||
-          null,
-        periods: Array.isArray(p?.periods) ? p.periods : [],
+        tz: safeStr((c as any)?.tz) || "Africa/Abidjan",
+        default_session_minutes: Number((c as any)?.default_session_minutes || 60),
+        auto_lateness: !!(c as any)?.auto_lateness,
+        institution_name: name,
+        academic_year_label: year,
+        periods: Array.isArray((p as any)?.periods) ? (p as any).periods : [],
       };
     }
 
@@ -332,27 +487,11 @@ export default function TeacherDashboard() {
     }
 
     // 🔁 Complément : harmoniser le nom & l'année avec /api/admin/institution/settings
-    const adminSettings = await getJson("/api/admin/institution/settings");
+    const adminSettings = await getJson("/api/admin/institution/settings", "teacher:inst:adminSettings");
     if (adminSettings) {
-      const nameFromAdmin = String(
-        adminSettings?.institution_name ||
-          adminSettings?.name ||
-          adminSettings?.institution_label ||
-          ""
-      ).trim();
-
-      const yearFromAdmin =
-        adminSettings?.academic_year_label ||
-        adminSettings?.current_academic_year_label ||
-        adminSettings?.active_academic_year ||
-        null;
-
-      if (nameFromAdmin) {
-        basics.institution_name = nameFromAdmin;
-      }
-      if (yearFromAdmin && !basics.academic_year_label) {
-        basics.academic_year_label = yearFromAdmin;
-      }
+      const { name: nameFromAdmin, year: yearFromAdmin } = extractInstitutionIdentity(adminSettings);
+      if (nameFromAdmin) basics.institution_name = nameFromAdmin;
+      if (yearFromAdmin && !basics.academic_year_label) basics.academic_year_label = yearFromAdmin;
     }
 
     // Regrouper/trier par jour
@@ -372,36 +511,27 @@ export default function TeacherDashboard() {
     );
 
     setInst((prev) => ({
-      tz: basics!.tz || "Africa/Abidjan",
-      default_session_minutes: Number(basics!.default_session_minutes || 60),
-      auto_lateness: !!basics!.auto_lateness,
+      ...prev,
+      tz: safeStr(basics!.tz) || prev.tz || "Africa/Abidjan",
+      default_session_minutes: Number(basics!.default_session_minutes || prev.default_session_minutes || 60),
+      auto_lateness: typeof basics!.auto_lateness === "boolean" ? !!basics!.auto_lateness : prev.auto_lateness,
       institution_name:
-        basics!.institution_name ??
-        prev.institution_name ??
-        (basics as any)?.institution_label ??
-        (basics as any)?.short_name ??
-        (basics as any)?.name ??
-        null,
+        safeStr(basics!.institution_name) ||
+        prev.institution_name ||
+        DEFAULT_INSTITUTION_NAME,
       academic_year_label:
-        basics!.academic_year_label ??
-        prev.academic_year_label ??
-        (basics as any)?.academic_year_label ??
-        (basics as any)?.current_academic_year_label ??
-        (basics as any)?.academic_year ??
-        null,
+        safeStr(basics!.academic_year_label) || prev.academic_year_label || null,
     }));
     setPeriodsByDay(grouped);
 
-    // 3) Config conduite (maxima par rubrique) — loader ultra défensif
+    // 3) Config conduite (maxima par rubrique) — loader ultra défensif (OFFLINE OK)
     const defaults: ConductMax = { discipline: 7, tenue: 3, moralite: 4 };
 
     try {
       const rawConf =
-        ((await getJson("/api/teacher/conduct/settings")) as any) ??
-        ((await getJson("/api/institution/conduct/settings")) as any) ??
-        ((await getJson("/api/admin/conduct/settings")) as any);
-
-      console.log("[TeacherDashboard] conduct settings rawConf =", rawConf);
+        ((await getJson("/api/teacher/conduct/settings", "teacher:conduct:teacher")) as any) ??
+        ((await getJson("/api/institution/conduct/settings", "teacher:conduct:institution")) as any) ??
+        ((await getJson("/api/admin/conduct/settings", "teacher:conduct:admin")) as any);
 
       if (!rawConf) {
         setConductMax(defaults);
@@ -410,35 +540,24 @@ export default function TeacherDashboard() {
 
       let src: any = rawConf;
 
-      // cas { item: {...} }
       if (src && typeof src === "object" && src.item) {
         const it = src.item;
         src = it.settings_json || it.settings || it;
-      }
-      // cas { items: [...] }
-      else if (src && typeof src === "object" && Array.isArray(src.items) && src.items.length) {
+      } else if (src && typeof src === "object" && Array.isArray(src.items) && src.items.length) {
         const it = src.items[0];
         src = it.settings_json || it.settings || it;
-      }
-      // cas { data: [...] } (retour supabase brut)
-      else if (src && typeof src === "object" && Array.isArray(src.data) && src.data.length) {
+      } else if (src && typeof src === "object" && Array.isArray(src.data) && src.data.length) {
         const it = src.data[0];
         src = it.settings_json || it.settings || it;
-      }
-      // cas direct settings_json / settings
-      else if (src && typeof src === "object" && (src.settings_json || src.settings)) {
+      } else if (src && typeof src === "object" && (src.settings_json || src.settings)) {
         src = src.settings_json || src.settings;
-      }
-      // cas array direct [ {...} ]
-      else if (Array.isArray(src) && src.length) {
+      } else if (Array.isArray(src) && src.length) {
         const it = src[0];
         src =
           it && typeof it === "object" && (it.settings_json || it.settings)
             ? it.settings_json || it.settings
             : it;
       }
-
-      console.log("[TeacherDashboard] conduct settings src (parsed) =", src);
 
       const d = Number(
         src?.discipline_max ??
@@ -448,7 +567,11 @@ export default function TeacherDashboard() {
           defaults.discipline
       );
       const t = Number(
-        src?.tenue_max ?? src?.tenue ?? src?.max_tenue ?? src?.tenue_points_max ?? defaults.tenue
+        src?.tenue_max ??
+          src?.tenue ??
+          src?.max_tenue ??
+          src?.tenue_points_max ??
+          defaults.tenue
       );
       const m = Number(
         src?.moralite_max ??
@@ -470,42 +593,89 @@ export default function TeacherDashboard() {
   }
 
   useEffect(() => {
-    loadInstitutionBasics();
+    void loadInstitutionBasics();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /* ✅ Fallback doux : récupérer nom établissement + année via dataset / globals */
+  /* ✅ Nom établissement + année : dataset/global puis fallback API (OFFLINE OK) */
   useEffect(() => {
-    if (typeof window === "undefined") return;
-    try {
-      const body: any = document.body;
+    let cancelled = false;
 
-      const fromDataName =
-        body?.dataset?.institutionName || body?.dataset?.institution || null;
-      const fromGlobalName = (window as any).__MC_INSTITUTION_NAME__
-        ? String((window as any).__MC_INSTITUTION_NAME__)
-        : null;
-      const finalName = fromDataName || fromGlobalName;
+    (async () => {
+      if (typeof window === "undefined") return;
 
-      const fromDataYear =
-        body?.dataset?.academicYear ||
-        body?.dataset?.schoolYear ||
-        body?.dataset?.anneeScolaire ||
-        null;
-      const fromGlobalYear = (window as any).__MC_ACADEMIC_YEAR__
-        ? String((window as any).__MC_ACADEMIC_YEAR__)
-        : null;
-      const finalYear = fromDataYear || fromGlobalYear;
+      try {
+        const body: any = document.body;
 
-      if (!finalName && !finalYear) return;
+        const fromDataName =
+          safeStr(body?.dataset?.institutionName) ||
+          safeStr(body?.dataset?.institution);
+        const fromGlobalName = safeStr((window as any).__MC_INSTITUTION_NAME__);
+        const finalName = fromDataName || fromGlobalName;
 
-      setInst((prev) => ({
-        ...prev,
-        institution_name: finalName || prev.institution_name,
-        academic_year_label: finalYear || prev.academic_year_label || null,
-      }));
-    } catch {
-      // on ne casse rien si ça échoue
-    }
+        const fromDataYear =
+          safeStr(body?.dataset?.academicYear) ||
+          safeStr(body?.dataset?.schoolYear) ||
+          safeStr(body?.dataset?.anneeScolaire);
+        const fromGlobalYear = safeStr((window as any).__MC_ACADEMIC_YEAR__);
+        const finalYear = fromDataYear || fromGlobalYear;
+
+        if (finalName || finalYear) {
+          setInst((prev) => ({
+            ...prev,
+            institution_name:
+              finalName && finalName.trim().length > 0
+                ? !prev.institution_name || prev.institution_name === DEFAULT_INSTITUTION_NAME
+                  ? finalName
+                  : prev.institution_name
+                : prev.institution_name || DEFAULT_INSTITUTION_NAME,
+            academic_year_label: finalYear || prev.academic_year_label || null,
+          }));
+        }
+
+        // si les deux sont trouvés en local, on s'arrête
+        if (finalName && finalYear) return;
+
+        // fallback API
+        const endpoints = [
+          { url: "/api/teacher/institution/settings", key: "teacher:identity:settings:teacher" },
+          { url: "/api/institution/settings", key: "teacher:identity:settings:institution" },
+          { url: "/api/admin/institution/settings", key: "teacher:identity:settings:admin" },
+        ] as const;
+
+        for (const ep of endpoints) {
+          let data: any = null;
+          try {
+            data = await offlineGetJson(ep.url, ep.key);
+          } catch {
+            data = null;
+          }
+          const { name, year } = extractInstitutionIdentity(data);
+
+          if (name || year) {
+            if (cancelled) return;
+
+            setInst((prev) => ({
+              ...prev,
+              institution_name:
+                name && name.trim().length > 0
+                  ? !prev.institution_name || prev.institution_name === DEFAULT_INSTITUTION_NAME
+                    ? name
+                    : prev.institution_name
+                  : prev.institution_name || DEFAULT_INSTITUTION_NAME,
+              academic_year_label: year || prev.academic_year_label || null,
+            }));
+            break;
+          }
+        }
+      } catch {
+        /* ne casse rien */
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   // Calcul du créneau « du moment » + verrouillage heure/durée
@@ -516,7 +686,6 @@ export default function TeacherDashboard() {
     const wd = weekdayInTZ1to7(now, tz); // 1..6, 7 = dimanche (hors créneau)
     const slots = periodsByDay[wd] || [];
 
-    // Si pas de créneau aujourd’hui → fallback = maintenant (dans le fuseau établissement)
     if (wd === 7 || slots.length === 0) {
       setStartTime(nowHM);
       setDuration(inst.default_session_minutes || 60);
@@ -526,13 +695,9 @@ export default function TeacherDashboard() {
     }
 
     const nowMin = toMinutes(nowHM);
-    // 1) si on est dans un créneau → celui-ci
-    let pick = slots.find(
-      (s) => nowMin >= toMinutes(s.start_time) && nowMin < toMinutes(s.end_time)
-    );
-    // 2) sinon, le prochain non commencé
+
+    let pick = slots.find((s) => nowMin >= toMinutes(s.start_time) && nowMin < toMinutes(s.end_time));
     if (!pick) pick = slots.find((s) => nowMin <= toMinutes(s.start_time));
-    // 3) si après le dernier créneau → fallback = maintenant (au lieu du dernier créneau)
     if (!pick) {
       setStartTime(nowHM);
       setDuration(inst.default_session_minutes || 60);
@@ -543,24 +708,18 @@ export default function TeacherDashboard() {
 
     setStartTime(pick.start_time);
     setDuration(
-      Math.max(
-        1,
-        minutesDiff(pick.start_time, pick.end_time) ||
-          inst.default_session_minutes ||
-          60
-      )
+      Math.max(1, minutesDiff(pick.start_time, pick.end_time) || inst.default_session_minutes || 60)
     );
     setSlotLabel(`${pick.label} • ${pick.start_time} → ${pick.end_time}`);
     setLocked(true);
   }
 
-  // recalculer quand on a les périodes / paramètres / ou changement de classe
   useEffect(() => {
     computeDefaultsForNow();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [JSON.stringify(periodsByDay), inst.default_session_minutes, inst.tz, selKey]);
 
-  /* Charger roster si séance ouverte */
+  /* Charger roster si séance ouverte — OFFLINE OK */
   useEffect(() => {
     if (!open) {
       setRoster([]);
@@ -569,10 +728,11 @@ export default function TeacherDashboard() {
     }
     (async () => {
       setLoadingRoster(true);
-      const j = await fetch(`/api/teacher/roster?class_id=${open.class_id}`, {
-        cache: "no-store",
-      }).then((r) => r.json());
-      setRoster((j.items || []) as RosterItem[]);
+      const j = await offlineGetJson(
+        `/api/teacher/roster?class_id=${open.class_id}`,
+        `teacher:roster:${open.class_id}`
+      ).catch(() => ({ items: [] }));
+      setRoster(((j as any)?.items || []) as RosterItem[]);
       setRows({});
       setLoadingRoster(false);
     })();
@@ -595,7 +755,7 @@ export default function TeacherDashboard() {
     });
   }
 
-  /* Actions (séance) */
+  /* Actions (séance) — OFFLINE OK */
   async function startSession() {
     if (!sel) return;
     setBusy(true);
@@ -613,22 +773,41 @@ export default function TeacherDashboard() {
         0
       );
 
-      const payload = {
+      const clientSessionId = `${sel.class_id}_${sel.subject_id || "none"}_${started.toISOString()}`;
+
+      const body = {
         class_id: sel.class_id,
         subject_id: sel.subject_id,
         started_at: started.toISOString(),
-        expected_minutes: duration, // imposée par l’établissement
+        expected_minutes: duration,
+        client_session_id: clientSessionId,
       };
 
-      const r = await fetch("/api/teacher/sessions/start", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      const j = await r.json();
-      if (!r.ok) throw new Error(j?.error || "Échec démarrage séance");
-      setOpen(j.item as OpenSession);
-      setMsg("Séance démarrée ✅");
+      const r: any = await offlineMutateJson(
+        "/api/teacher/sessions/start",
+        { method: "POST", body },
+        { mergeKey: `teacher:start:${clientSessionId}`, meta: { clientSessionId } }
+      );
+
+      if (r?.ok) {
+        setOpen(r.data.item as OpenSession);
+        await cacheSet("teacher:local-open", null);
+        setMsg("Séance démarrée ✅");
+      } else {
+        const localOpen: OpenSession = {
+          id: `client:${clientSessionId}`,
+          class_id: sel.class_id,
+          class_label: sel.class_label,
+          subject_id: sel.subject_id,
+          subject_name: sel.subject_name,
+          started_at: started.toISOString(),
+          expected_minutes: duration,
+        };
+        setOpen(localOpen);
+        await cacheSet("teacher:local-open", localOpen);
+        setMsg("Hors connexion : séance enregistrée (sync dès que le réseau revient).");
+        await refreshPending();
+      }
     } catch (e: any) {
       setMsg(e?.message || "Échec démarrage séance");
     } finally {
@@ -643,21 +822,27 @@ export default function TeacherDashboard() {
     try {
       const marks = Object.entries(rows).map(([student_id, r]) => {
         if (r.absent) return { student_id, status: "absent" as const, reason: r.reason ?? null };
-        if (r.late)
-          return { student_id, status: "late" as const, reason: r.reason ?? null }; // minutes auto côté serveur
+        if (r.late) return { student_id, status: "late" as const, reason: r.reason ?? null };
         return { student_id, status: "present" as const };
       });
 
-      const r = await fetch("/api/teacher/attendance/bulk", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ session_id: open.id, marks }),
-      });
-      const j = await r.json();
-      if (!r.ok) throw new Error(j?.error || "Échec enregistrement");
-      setMsg(
-        `Enregistré ✅ : ${j.upserted} abs./ret. — ${j.deleted} suppressions (présent).`
+      const clientId = clientSessionIdFromOpen(open);
+      const body: any = { session_id: open.id, marks };
+      if (clientId) body.client_session_id = clientId;
+
+      const r: any = await offlineMutateJson(
+        "/api/teacher/attendance/bulk",
+        { method: "POST", body },
+        { mergeKey: `teacher:attendance:${open.id}` }
       );
+
+      if (r?.ok) {
+        const j = r.data || {};
+        setMsg(`Enregistré ✅ : ${j.upserted ?? 0} abs./ret. — ${j.deleted ?? 0} suppressions (présent).`);
+      } else {
+        setMsg("Hors connexion : enregistrement mis en attente (sync auto).");
+        await refreshPending();
+      }
     } catch (e: any) {
       setMsg(e?.message || "Échec enregistrement");
     } finally {
@@ -669,15 +854,29 @@ export default function TeacherDashboard() {
     if (!open) return;
     setBusy(true);
     setMsg(null);
+
     try {
-      const r = await fetch("/api/teacher/sessions/end", { method: "PATCH" });
-      const j = await r.json();
-      if (!r.ok) throw new Error(j?.error || "Échec fin de séance");
+      const clientId = clientSessionIdFromOpen(open);
+      const body = clientId ? { session_id: open.id, client_session_id: clientId } : undefined;
+
+      const r: any = await offlineMutateJson(
+        "/api/teacher/sessions/end",
+        body ? { method: "PATCH", body } : { method: "PATCH" },
+        { mergeKey: `teacher:end:${open.id}` }
+      );
+
+      // UI: on termine toujours localement
       setOpen(null);
       setRoster([]);
       setRows({});
-      setMsg("Séance terminée ✅");
+      await cacheSet("teacher:local-open", null);
       computeDefaultsForNow();
+
+      if (r?.ok) setMsg("Séance terminée ✅");
+      else {
+        setMsg("Hors connexion : fin de séance mise en attente (sync auto).");
+        await refreshPending();
+      }
     } catch (e: any) {
       setMsg(e?.message || "Échec fin de séance");
     } finally {
@@ -686,7 +885,7 @@ export default function TeacherDashboard() {
   }
 
   /* ─────────────────────────────────────────
-     SANCTIONS libres (cohérentes avec la config)
+     SANCTIONS libres (cohérentes avec la config) — OFFLINE OK
   ────────────────────────────────────────── */
   const ALLOWED_RUBRICS = ["discipline", "tenue", "moralite"] as const;
   type Rubric = (typeof ALLOWED_RUBRICS)[number];
@@ -703,10 +902,9 @@ export default function TeacherDashboard() {
   const [penaltyOpen, setPenaltyOpen] = useState(false);
   const [penRubric, setPenRubric] = useState<Rubric>("discipline");
   const [penBusy, setPenBusy] = useState(false);
-  const [penRows, setPenRows] = useState<
-    Record<string, { points: number; reason?: string }>
-  >({});
+  const [penRows, setPenRows] = useState<Record<string, { points: number; reason?: string }>>({});
   const [penMsg, setPenMsg] = useState<string | null>(null);
+
   const hasPenChanges = useMemo(
     () => Object.values(penRows).some((v) => (v.points || 0) > 0),
     [penRows]
@@ -725,14 +923,11 @@ export default function TeacherDashboard() {
       const maxVal = base[r];
       const disabled = maxVal <= 0;
       const labelBase = r === "discipline" ? "Discipline" : r === "tenue" ? "Tenue" : "Moralité";
-      const label = disabled
-        ? `${labelBase} (désactivée)`
-        : `${labelBase} (max ${maxVal})`;
+      const label = disabled ? `${labelBase} (désactivée)` : `${labelBase} (max ${maxVal})`;
       return { value: r, label, disabled, max: maxVal };
     });
   }, [conductMax]);
 
-  // Si une rubrique a max 0, on évite qu'elle reste sélectionnée
   useEffect(() => {
     setPenRubric((prev) => {
       const defaults: ConductMax = { discipline: 7, tenue: 3, moralite: 4 };
@@ -753,32 +948,34 @@ export default function TeacherDashboard() {
     return opt?.max ?? undefined;
   }, [rubricOptions, penRubric]);
 
-  const rubricDisabled =
-    currentRubricMax !== undefined && currentRubricMax <= 0;
+  const rubricDisabled = currentRubricMax !== undefined && currentRubricMax <= 0;
 
   async function ensureRosterForPenalty() {
     if (roster.length === 0 && sel?.class_id) {
       try {
         setLoadingRoster(true);
-        const j = await fetch(`/api/teacher/roster?class_id=${sel.class_id}`, {
-          cache: "no-store",
-        }).then((r) => r.json());
-        setRoster((j.items || []) as RosterItem[]);
+        const j = await offlineGetJson(
+          `/api/teacher/roster?class_id=${sel.class_id}`,
+          `teacher:roster:${sel.class_id}`
+        ).catch(() => ({ items: [] }));
+        setRoster(((j as any)?.items || []) as RosterItem[]);
       } finally {
         setLoadingRoster(false);
       }
     }
   }
+
   function openPenalty() {
     if (!sel) {
       setMsg("Sélectionnez d’abord une classe/discipline.");
       return;
     }
     setPenRows({});
-    setPenRubric((prev) => prev); // l'effet corrigera si max=0
+    setPenRubric((prev) => prev);
     setPenaltyOpen(true);
     void ensureRosterForPenalty();
   }
+
   function setPenPoint(student_id: string, n: number) {
     setPenRows((m) => {
       const cur = m[student_id] || { points: 0, reason: "" };
@@ -797,8 +994,10 @@ export default function TeacherDashboard() {
   function resetPenRows() {
     setPenRows({});
   }
+
   async function submitPenalties() {
     if (!sel) return;
+
     const items = Object.entries(penRows)
       .filter(([, v]) => (v.points || 0) > 0)
       .map(([student_id, v]) => ({
@@ -806,31 +1005,46 @@ export default function TeacherDashboard() {
         points: Number(v.points || 0),
         reason: (v.reason || "").trim() || null,
       }));
+
     if (items.length === 0) {
       setPenMsg("Aucune pénalité à enregistrer.");
       return;
     }
+
     setPenBusy(true);
     setPenMsg(null);
+
     try {
       const cleanRubric = coerceRubric(penRubric);
-      const res = await fetch("/api/teacher/penalties/bulk", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          class_id: sel.class_id,
-          subject_id: sel.subject_id,
-          rubric: cleanRubric,
-          items,
-        }),
-      });
-      const j = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(j?.error || "Échec d’enregistrement des sanctions");
-      setPenMsg(`Sanctions enregistrées (${items.length}).`);
-      setTimeout(() => {
-        setPenaltyOpen(false);
-        setPenRows({});
-      }, 600);
+
+      const mergeKey = `teacher:penalties:${sel.class_id}:${sel.subject_id ?? "none"}:${cleanRubric}:${new Date()
+        .toISOString()
+        .slice(0, 10)}`;
+
+      const r: any = await offlineMutateJson(
+        "/api/teacher/penalties/bulk",
+        {
+          method: "POST",
+          body: {
+            class_id: sel.class_id,
+            subject_id: sel.subject_id,
+            rubric: cleanRubric,
+            items,
+          },
+        },
+        { mergeKey }
+      );
+
+      if (r?.ok) {
+        setPenMsg(`Sanctions enregistrées (${items.length}).`);
+        setTimeout(() => {
+          setPenaltyOpen(false);
+          setPenRows({});
+        }, 600);
+      } else {
+        setPenMsg("Hors connexion : sanctions mises en attente (sync auto).");
+        await refreshPending();
+      }
     } catch (e: any) {
       setPenMsg(e?.message || "Échec d’enregistrement des sanctions");
     } finally {
@@ -838,10 +1052,9 @@ export default function TeacherDashboard() {
     }
   }
 
-  /* Déconnexion type "téléphone de classe" */
+  /* Déconnexion (avec nettoyage offline) */
   async function logout() {
     try {
-      // 1) Déconnexion Supabase côté navigateur
       try {
         const supabase = getSupabaseBrowserClient();
         await supabase.auth.signOut();
@@ -849,14 +1062,12 @@ export default function TeacherDashboard() {
         console.warn("[teacher/logout] supabase signOut:", e?.message || e);
       }
 
-      // 2) Nettoyage des cookies HttpOnly (sb-access/refresh, sb-*-auth-token)
       try {
         await fetch("/api/auth/sync", { method: "DELETE" });
       } catch (e: any) {
         console.warn("[teacher/logout] /api/auth/sync DELETE:", e?.message || e);
       }
 
-      // 3) Endpoints legacy éventuels
       const endpoints = ["/api/auth/signout", "/api/auth/logout", "/auth/signout"];
       for (const url of endpoints) {
         try {
@@ -866,12 +1077,17 @@ export default function TeacherDashboard() {
         }
       }
     } finally {
-      // 4) Retour écran de connexion global
+      // important : éviter de garder des queues offline d’un autre utilisateur
+      try {
+        await clearOfflineAll();
+      } catch {
+        /* ignore */
+      }
       window.location.href = "/login";
     }
   }
 
-  /* Barre d’actions collante (mobile) — sans “Prochaine heure” */
+  /* Barre d’actions collante (mobile) */
   const showSticky = true;
   const mobileBar = showSticky ? (
     <>
@@ -879,19 +1095,13 @@ export default function TeacherDashboard() {
       <div className="fixed inset-x-0 bottom-0 z-40 border-t bg-white/95 backdrop-blur md:hidden px-4 py-3 pb-[calc(env(safe-area-inset-bottom,0)+12px)]">
         {!open ? (
           <div className="grid grid-cols-2 gap-2">
-            <Button
-              onClick={startSession}
-              disabled={!selKey || busy}
-              aria-label="Démarrer l’appel"
-            >
+            <Button onClick={startSession} disabled={!selKey || busy} aria-label="Démarrer l’appel">
               <Play className="h-4 w-4" />
               {busy ? "Démarrage…" : "Appel"}
             </Button>
             <GhostButton
               tone="red"
-              onClick={() =>
-                penaltyOpen ? setPenaltyOpen(false) : openPenalty()
-              }
+              onClick={() => (penaltyOpen ? setPenaltyOpen(false) : openPenalty())}
               disabled={busy || (!selKey && !penaltyOpen)}
               aria-label="Sanctions"
             >
@@ -906,20 +1116,13 @@ export default function TeacherDashboard() {
             </Button>
             <GhostButton
               tone="red"
-              onClick={() =>
-                penaltyOpen ? setPenaltyOpen(false) : openPenalty()
-              }
+              onClick={() => (penaltyOpen ? setPenaltyOpen(false) : openPenalty())}
               disabled={busy || (!selKey && !penaltyOpen)}
               aria-label="Sanctions"
             >
               Sanctions
             </GhostButton>
-            <GhostButton
-              tone="red"
-              onClick={endSession}
-              disabled={busy}
-              aria-label="Terminer la séance"
-            >
+            <GhostButton tone="red" onClick={endSession} disabled={busy} aria-label="Terminer la séance">
               <Square className="h-4 w-4" />
               Stop
             </GhostButton>
@@ -931,7 +1134,7 @@ export default function TeacherDashboard() {
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-6 space-y-6">
-      {/* Header premium, même style que téléphone de classe */}
+      {/* Header premium */}
       <header className="overflow-hidden rounded-2xl border border-slate-800 bg-gradient-to-r from-slate-950 via-indigo-900 to-slate-950 px-4 py-4 sm:px-6 sm:py-5 shadow-sm">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="space-y-1">
@@ -950,8 +1153,37 @@ export default function TeacherDashboard() {
               Sélectionnez une classe avant de faire l’appel. Les minutes de retard sont{" "}
               <b>calculées automatiquement</b>.
             </p>
+
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <Chip tone={isOnline ? "emerald" : "amber"}>
+                {isOnline ? "En ligne" : "Hors ligne"}
+              </Chip>
+              {pending > 0 && (
+                <Chip tone="amber">
+                  {pending} en attente
+                </Chip>
+              )}
+              <GhostButton
+                tone="emerald"
+                onClick={syncNow}
+                disabled={!isOnline || syncing || pending === 0}
+                className="bg-white/90"
+                aria-label="Synchroniser"
+                title={!isOnline ? "Revenez en ligne pour synchroniser" : undefined}
+              >
+                <RefreshCcw className="h-4 w-4" />
+                {syncing ? "Sync…" : "Sync"}
+              </GhostButton>
+              {!isOnline && (
+                <span className="inline-flex items-center gap-1 text-xs text-amber-200/90">
+                  <WifiOff className="h-3.5 w-3.5" />
+                  Mode offline actif
+                </span>
+              )}
+            </div>
           </div>
-          {/* Bouton déconnexion or, très visible */}
+
+          {/* Bouton déconnexion */}
           <GhostButton
             tone="slate"
             onClick={logout}
@@ -981,8 +1213,7 @@ export default function TeacherDashboard() {
               ))}
             </Select>
             <div className="mt-1 text-[11px] text-slate-500">
-              <Chip tone="amber">Astuce</Chip> Seules les classes où vous êtes
-              affecté(e) apparaissent.
+              <Chip tone="amber">Astuce</Chip> Seules les classes où vous êtes affecté(e) apparaissent.
             </div>
           </div>
 
@@ -992,12 +1223,7 @@ export default function TeacherDashboard() {
               <Clock className="h-3.5 w-3.5" />
               Heure de début
             </div>
-            <Input
-              type="time"
-              value={startTime}
-              onChange={(e) => setStartTime(e.target.value)}
-              disabled={locked}
-            />
+            <Input type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} disabled={locked} />
             <div className="mt-1 text-[11px] text-slate-500">{slotLabel}</div>
           </div>
 
@@ -1018,28 +1244,20 @@ export default function TeacherDashboard() {
                 </option>
               ))}
             </Select>
-            <div className="mt-1 text-[11px] text-slate-500">
-              Verrouillée par l’établissement.
-            </div>
+            <div className="mt-1 text-[11px] text-slate-500">Verrouillée par l’établissement.</div>
           </div>
         </div>
 
         {/* Actions desktop */}
         {!open ? (
           <div className="hidden md:flex items-center gap-2">
-            <Button
-              onClick={startSession}
-              disabled={!selKey || busy}
-              aria-label="Démarrer l’appel"
-            >
+            <Button onClick={startSession} disabled={!selKey || busy} aria-label="Démarrer l’appel">
               <Play className="h-4 w-4" />
               {busy ? "Démarrage…" : "Démarrer l’appel"}
             </Button>
             <GhostButton
               tone="red"
-              onClick={() =>
-                penaltyOpen ? setPenaltyOpen(false) : openPenalty()
-              }
+              onClick={() => (penaltyOpen ? setPenaltyOpen(false) : openPenalty())}
               disabled={busy || (!selKey && !penaltyOpen)}
               aria-label="Sanctions"
             >
@@ -1048,32 +1266,19 @@ export default function TeacherDashboard() {
           </div>
         ) : (
           <div className="hidden md:flex items-center gap-2">
-            <Button
-              onClick={saveMarks}
-              disabled={busy}
-              aria-label="Enregistrer"
-            >
+            <Button onClick={saveMarks} disabled={busy} aria-label="Enregistrer">
               <Save className="h-4 w-4" />
-              {busy
-                ? "Enregistrement…"
-                : `Enregistrer${changedCount ? ` (${changedCount})` : ""}`}
+              {busy ? "Enregistrement…" : `Enregistrer${changedCount ? ` (${changedCount})` : ""}`}
             </Button>
             <GhostButton
               tone="red"
-              onClick={() =>
-                penaltyOpen ? setPenaltyOpen(false) : openPenalty()
-              }
+              onClick={() => (penaltyOpen ? setPenaltyOpen(false) : openPenalty())}
               disabled={busy || (!selKey && !penaltyOpen)}
               aria-label="Sanctions"
             >
               Sanctions
             </GhostButton>
-            <GhostButton
-              tone="red"
-              onClick={endSession}
-              disabled={busy}
-              aria-label="Terminer la séance"
-            >
+            <GhostButton tone="red" onClick={endSession} disabled={busy} aria-label="Terminer la séance">
               <Square className="h-4 w-4" />
               Terminer la séance
             </GhostButton>
@@ -1094,9 +1299,7 @@ export default function TeacherDashboard() {
               <div className="text-lg font-semibold">Autres sanctions</div>
               <div className="text-xs text-slate-500">
                 {sel
-                  ? `Classe : ${sel.class_label}${
-                      sel.subject_name ? ` • ${sel.subject_name}` : ""
-                    }`
+                  ? `Classe : ${sel.class_label}${sel.subject_name ? ` • ${sel.subject_name}` : ""}`
                   : "—"}
               </div>
             </div>
@@ -1104,11 +1307,7 @@ export default function TeacherDashboard() {
               <GhostButton onClick={() => resetPenRows()} disabled={penBusy}>
                 Remettre tous les points à 0
               </GhostButton>
-              <GhostButton
-                tone="red"
-                onClick={() => setPenaltyOpen(false)}
-                disabled={penBusy}
-              >
+              <GhostButton tone="red" onClick={() => setPenaltyOpen(false)} disabled={penBusy}>
                 Fermer
               </GhostButton>
             </div>
@@ -1116,46 +1315,32 @@ export default function TeacherDashboard() {
 
           <div className="grid gap-3 md:grid-cols-3 mb-3">
             <div className="md:col-span-1">
-              <div className="mb-1 text-xs text-slate-500">
-                Rubrique impactée
-              </div>
+              <div className="mb-1 text-xs text-slate-500">Rubrique impactée</div>
               <Select
                 value={penRubric}
                 onChange={(e) => setPenRubric(coerceRubric(e.target.value))}
                 disabled={penBusy || rubricOptions.every((o) => o.disabled)}
               >
                 {rubricOptions.map((opt) => (
-                  <option
-                    key={opt.value}
-                    value={opt.value}
-                    disabled={opt.disabled}
-                  >
+                  <option key={opt.value} value={opt.value} disabled={opt.disabled}>
                     {opt.label}
                   </option>
                 ))}
               </Select>
+
               <div className="mt-2 flex flex-wrap items-center gap-2">
-                <Chip tone={penRubric === "discipline" ? "emerald" : "slate"}>
-                  Discipline
-                </Chip>
-                <Chip tone={penRubric === "tenue" ? "emerald" : "slate"}>
-                  Tenue
-                </Chip>
-                <Chip tone={penRubric === "moralite" ? "emerald" : "slate"}>
-                  Moralité
-                </Chip>
+                <Chip tone={penRubric === "discipline" ? "emerald" : "slate"}>Discipline</Chip>
+                <Chip tone={penRubric === "tenue" ? "emerald" : "slate"}>Tenue</Chip>
+                <Chip tone={penRubric === "moralite" ? "emerald" : "slate"}>Moralité</Chip>
               </div>
+
               <div className="mt-2 text-[11px] text-slate-500">
-                <b>Note :</b> l’assiduité est <u>calculée automatiquement</u> via
-                les absences injustifiées.
+                <b>Note :</b> l’assiduité est <u>calculée automatiquement</u> via les absences injustifiées.
               </div>
             </div>
+
             <div className="md:col-span-2 flex items-end justify-end">
-              <Button
-                onClick={submitPenalties}
-                disabled={penBusy || !hasPenChanges || rubricDisabled}
-                tone="emerald"
-              >
+              <Button onClick={submitPenalties} disabled={penBusy || !hasPenChanges || rubricDisabled} tone="emerald">
                 {penBusy ? "Enregistrement…" : "Enregistrer les sanctions"}
               </Button>
             </div>
@@ -1175,29 +1360,19 @@ export default function TeacherDashboard() {
               <tbody className="divide-y">
                 {loadingRoster ? (
                   <tr>
-                    <td
-                      className="px-3 py-4 text-slate-500"
-                      colSpan={5}
-                    >
+                    <td className="px-3 py-4 text-slate-500" colSpan={5}>
                       Chargement de la liste…
                     </td>
                   </tr>
                 ) : !sel ? (
                   <tr>
-                    <td
-                      className="px-3 py-4 text-slate-500"
-                      colSpan={5}
-                    >
-                      Sélectionnez une classe/discipline pour saisir des
-                      sanctions.
+                    <td className="px-3 py-4 text-slate-500" colSpan={5}>
+                      Sélectionnez une classe/discipline pour saisir des sanctions.
                     </td>
                   </tr>
                 ) : roster.length === 0 ? (
                   <tr>
-                    <td
-                      className="px-3 py-4 text-slate-500"
-                      colSpan={5}
-                    >
+                    <td className="px-3 py-4 text-slate-500" colSpan={5}>
                       Aucun élève dans cette classe.
                     </td>
                   </tr>
@@ -1207,26 +1382,15 @@ export default function TeacherDashboard() {
                     return (
                       <tr key={st.id} className="hover:bg-slate-50/60">
                         <td className="px-3 py-2">{idx + 1}</td>
-                        <td className="px-3 py-2">
-                          {st.matricule ?? ""}
-                        </td>
+                        <td className="px-3 py-2">{st.matricule ?? ""}</td>
                         <td className="px-3 py-2">{st.full_name}</td>
                         <td className="px-3 py-2">
                           <Input
                             type="number"
                             min={0}
-                            max={
-                              currentRubricMax && currentRubricMax > 0
-                                ? currentRubricMax
-                                : undefined
-                            }
+                            max={currentRubricMax && currentRubricMax > 0 ? currentRubricMax : undefined}
                             value={pr.points || 0}
-                            onChange={(e) =>
-                              setPenPoint(
-                                st.id,
-                                parseInt(e.target.value || "0", 10)
-                              )
-                            }
+                            onChange={(e) => setPenPoint(st.id, parseInt(e.target.value || "0", 10))}
                             className="w-24"
                             aria-label={`Points à retrancher: ${st.full_name}`}
                             disabled={penBusy || rubricDisabled}
@@ -1236,9 +1400,7 @@ export default function TeacherDashboard() {
                           <Input
                             placeholder="(optionnel)"
                             value={pr.reason || ""}
-                            onChange={(e) =>
-                              setPenReason(st.id, e.target.value)
-                            }
+                            onChange={(e) => setPenReason(st.id, e.target.value)}
                             aria-label={`Motif: ${st.full_name}`}
                             disabled={penBusy}
                           />
@@ -1252,10 +1414,7 @@ export default function TeacherDashboard() {
           </div>
 
           {penMsg && (
-            <div
-              className="mt-3 text-sm text-slate-700"
-              aria-live="polite"
-            >
+            <div className="mt-3 text-sm text-slate-700" aria-live="polite">
               {penMsg}
             </div>
           )}
@@ -1267,25 +1426,17 @@ export default function TeacherDashboard() {
         <div className="rounded-2xl border bg-white p-5 shadow-sm">
           <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
             <div className="text-sm font-semibold text-slate-700">
-              Appel — {open.class_label}{" "}
-              {open.subject_name ? `• ${open.subject_name}` : ""} •{" "}
-              {new Date(open.started_at).toLocaleTimeString([], {
-                hour: "2-digit",
-                minute: "2-digit",
-              })}
+              Appel — {open.class_label} {open.subject_name ? `• ${open.subject_name}` : ""} •{" "}
+              {new Date(open.started_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
               {open.expected_minutes
-                ? ` → ${new Date(
-                    new Date(open.started_at).getTime() +
-                      open.expected_minutes * 60000
-                  ).toLocaleTimeString([], {
-                    hour: "2-digit",
-                    minute: "2-digit",
-                  })}`
+                ? ` → ${new Date(new Date(open.started_at).getTime() + open.expected_minutes * 60000).toLocaleTimeString(
+                    [],
+                    { hour: "2-digit", minute: "2-digit" }
+                  )}`
                 : ""}
             </div>
             <Chip>
-              {changedCount} modif
-              {changedCount > 1 ? "s" : ""} en cours
+              {changedCount} modif{changedCount > 1 ? "s" : ""} en cours
             </Chip>
           </div>
 
@@ -1298,25 +1449,18 @@ export default function TeacherDashboard() {
                   <th className="px-3 py-2">Nom et prénoms</th>
                   <th className="px-3 py-2">Absent</th>
                   <th className="px-3 py-2">Retard</th>
-                  {/* Colonne Motif supprimée */}
                 </tr>
               </thead>
               <tbody className="divide-y">
                 {loadingRoster ? (
                   <tr>
-                    <td
-                      className="px-3 py-4 text-slate-500"
-                      colSpan={5}
-                    >
+                    <td className="px-3 py-4 text-slate-500" colSpan={5}>
                       Chargement de la liste…
                     </td>
                   </tr>
                 ) : roster.length === 0 ? (
                   <tr>
-                    <td
-                      className="px-3 py-4 text-slate-500"
-                      colSpan={5}
-                    >
+                    <td className="px-3 py-4 text-slate-500" colSpan={5}>
                       Aucun élève dans cette classe.
                     </td>
                   </tr>
@@ -1326,18 +1470,14 @@ export default function TeacherDashboard() {
                     return (
                       <tr key={st.id} className="hover:bg-slate-50/60">
                         <td className="px-3 py-2">{idx + 1}</td>
-                        <td className="px-3 py-2">
-                          {st.matricule ?? ""}
-                        </td>
+                        <td className="px-3 py-2">{st.matricule ?? ""}</td>
                         <td className="px-3 py-2">{st.full_name}</td>
                         <td className="px-3 py-2">
                           <input
                             type="checkbox"
                             className="h-4 w-4 accent-red-600"
                             checked={!!r.absent}
-                            onChange={(e) =>
-                              toggleAbsent(st.id, e.target.checked)
-                            }
+                            onChange={(e) => toggleAbsent(st.id, e.target.checked)}
                             aria-label={`Absent: ${st.full_name}`}
                           />
                         </td>
@@ -1346,14 +1486,11 @@ export default function TeacherDashboard() {
                             type="checkbox"
                             className="h-4 w-4 accent-amber-600"
                             checked={!!r.late}
-                            onChange={(e) =>
-                              toggleLate(st.id, e.target.checked)
-                            }
+                            onChange={(e) => toggleLate(st.id, e.target.checked)}
                             disabled={!!r.absent}
                             aria-label={`Retard: ${st.full_name}`}
                           />
                         </td>
-                        {/* Colonne Motif supprimée */}
                       </tr>
                     );
                   })
