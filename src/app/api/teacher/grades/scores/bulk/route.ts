@@ -1,6 +1,7 @@
 // src/app/api/teacher/grades/scores/bulk/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
+import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -60,7 +61,7 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // Lire l'évaluation (et sa scale) — RLS protège l'accès
+    // Lire l'évaluation (RLS protège l'accès côté prof)
     const { data: ge, error: geErr } = await supabase
       .from("grade_evaluations")
       .select("id, scale, class_id, subject_id, is_published")
@@ -75,25 +76,40 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // ✅ CHECK LOCK (verrou global compte classe + compte prof)
-    // Si l'évaluation est verrouillée (grade_evaluation_locks.is_locked = true),
-    // on bloque toute écriture et on renvoie 423.
-    const { data: lock, error: lockErr } = await supabase
-      .from("grade_evaluation_locks")
-      .select("evaluation_id, is_locked, locked_at, locked_by")
-      .eq("evaluation_id", evaluation_id)
-      .maybeSingle();
+    // ✅ CHECK LOCK (ULTRA IMPORTANT)
+    // On lit le lock via service client, car côté prof la RLS peut masquer la ligne.
+    // Sécurité: on ne fait cette lecture qu'après avoir validé l'accès à l'évaluation via RLS (ci-dessus).
+    const srv = getSupabaseServiceClient();
 
-    if (lockErr) {
-      return bad(lockErr.message || "LOCK_CHECK_FAILED", 500);
-    }
+    try {
+      const { data: lockRow, error: lockErr } = await srv
+        .from("grade_evaluation_locks")
+        .select("evaluation_id, is_locked, locked_at, teacher_id, locked_by")
+        .eq("evaluation_id", evaluation_id)
+        .maybeSingle();
 
-    if (lock?.is_locked) {
-      return bad("EVALUATION_LOCKED", 423, {
-        evaluation_id,
-        locked_at: lock.locked_at ?? null,
-        locked_by: lock.locked_by ?? null,
-      });
+      // Si la table n'existe pas encore (migration pas faite), on ne casse rien
+      if (lockErr) {
+        const msg = String(lockErr.message || "");
+        const looksLikeMissingTable =
+          msg.includes('relation "grade_evaluation_locks" does not exist') ||
+          msg.includes("42P01");
+        if (!looksLikeMissingTable) {
+          return bad(lockErr.message || "LOCK_CHECK_FAILED", 500);
+        }
+      }
+
+      if (lockRow?.is_locked) {
+        return bad("EVALUATION_LOCKED", 423, {
+          evaluation_id,
+          locked: true,
+          locked_at: lockRow.locked_at ?? null,
+          teacher_id: lockRow.teacher_id ?? null,
+          locked_by: lockRow.locked_by ?? null,
+        });
+      }
+    } catch (e: any) {
+      return bad(e?.message || "LOCK_CHECK_FAILED", 500);
     }
 
     const scale = Number(ge?.scale || 20);
@@ -145,7 +161,7 @@ export async function POST(req: NextRequest) {
     let deleted = 0;
     const warnings: string[] = [];
 
-    // Upsert
+    // Upsert (RLS)
     if (upserts.length > 0) {
       const { data: upData, error: upErr } = await supabase
         .from("student_grades")
@@ -156,7 +172,7 @@ export async function POST(req: NextRequest) {
       upserted = upData?.length ?? 0;
     }
 
-    // Delete
+    // Delete (RLS)
     if (toDelete.length > 0) {
       const { count, error: delErr } = await supabase
         .from("student_grades")
