@@ -39,33 +39,47 @@ async function getOriginFromHeaders() {
   return normalizedHost;
 }
 
+/**
+ * ✅ Détecte si la période est ANNUELLE
+ * Important: ne pas confondre avec "année scolaire ..." dans un label de trimestre/semestre.
+ */
 function looksAnnualPeriod(period: any): boolean {
   if (!period) return false;
 
-  const code = String(period?.code ?? "").trim().toLowerCase();
-  const short = String(period?.short_label ?? "").trim().toLowerCase();
-  const label = String(period?.label ?? "").trim().toLowerCase();
-  const txt = `${code} ${short} ${label}`.toLowerCase();
+  const codeRaw = String(period?.code ?? "").trim();
+  const shortRaw = String(period?.short_label ?? "").trim();
+  const labelRaw = String(period?.label ?? "").trim();
 
-  // Cas fréquents : "Annuel", "Année", "Annual", code "AN", etc.
+  const codeUp = codeRaw.toUpperCase();
+  const shortUp = shortRaw.toUpperCase();
+  const labelLow = labelRaw.toLowerCase();
+
+  // ✅ Si c’est clairement un trimestre/semestre => PAS annuel
+  // (même si le label contient "année scolaire 2024-2025", etc.)
+  if (shortUp.startsWith("T") || shortUp.startsWith("S")) return false;
+  if (codeUp.startsWith("T") || codeUp.startsWith("S")) return false;
+  if (labelLow.includes("trimestre") || labelLow.includes("semestre")) return false;
+
+  const txt = `${codeRaw} ${shortRaw} ${labelRaw}`.toLowerCase();
+
+  // Cas fréquents : "Annuel", "Annual", etc.
+  if (txt.includes("annuel") || txt.includes("annuelle") || txt.includes("annual")) {
+    return true;
+  }
+
+  // ⚠️ "année"/"year" peut apparaître dans "année scolaire" → ne pas déclencher dans ce cas
   if (
-    txt.includes("annuel") ||
-    txt.includes("annuelle") ||
-    txt.includes("année") ||
-    txt.includes("annee") ||
-    txt.includes("annual") ||
-    txt.includes("year")
+    (txt.includes("année") || txt.includes("annee") || txt.includes("year")) &&
+    !txt.includes("année scolaire") &&
+    !txt.includes("annee scolaire") &&
+    !txt.includes("academic year")
   ) {
     return true;
   }
 
   // Codes courts possibles
-  if (["a", "an", "ann", "yr", "year"].includes(code)) return true;
-  if (["a", "an", "ann", "yr", "year"].includes(short)) return true;
-
-  // Si c’est clairement T1/T2/T3 ou S1/S2, ce n’est pas annuel
-  const shortUp = String(period?.short_label ?? "").trim().toUpperCase();
-  if (shortUp.startsWith("T") || shortUp.startsWith("S")) return false;
+  if (["A", "AN", "ANN", "YR", "YEAR"].includes(codeUp)) return true;
+  if (["A", "AN", "ANN", "YR", "YEAR"].includes(shortUp)) return true;
 
   return false;
 }

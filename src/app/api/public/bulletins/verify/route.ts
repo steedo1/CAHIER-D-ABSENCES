@@ -402,6 +402,7 @@ async function computeStudentGeneralAvgForRange(opts: {
   studentId: string;
   from: string;
   to: string;
+  conductAvg20?: number | null;
   subjectsForReport: {
     subject_id: string;
     coeff_bulletin: number;
@@ -416,6 +417,7 @@ async function computeStudentGeneralAvgForRange(opts: {
     studentId,
     from,
     to,
+    conductAvg20,
     subjectsForReport,
     subjectComponentsBySubject,
     subjectComponentById,
@@ -544,6 +546,15 @@ async function computeStudentGeneralAvgForRange(opts: {
 
     sumGen += Number(subAvg) * coeffSub;
     sumCoeffGen += coeffSub;
+  }
+
+  // + Conduite (coef 1) si disponible
+  if (conductAvg20 !== null && conductAvg20 !== undefined) {
+    const c = Number(conductAvg20);
+    if (Number.isFinite(c)) {
+      sumGen += c * 1;
+      sumCoeffGen += 1;
+    }
   }
 
   return sumCoeffGen > 0 ? cleanNumber(sumGen / sumCoeffGen, 4) : null;
@@ -959,6 +970,81 @@ export async function GET(req: NextRequest) {
     });
   }
 
+  // ───────── Conduite : moyenne /20 (coef 1) ─────────
+  const studentIds = classStudents.map((cs) => cs.student_id).filter(Boolean);
+  const classIdStr = String(classId);
+
+  async function fetchConductAverageMap(
+    from: string,
+    to: string
+  ): Promise<Map<string, number | null>> {
+    const out = new Map<string, number | null>();
+    studentIds.forEach((sid) => out.set(sid, null));
+
+    // Si on n'a pas de dates, on renvoie tout à null
+    if (!from || !to) return out;
+
+    try {
+      const qs = new URLSearchParams({ class_id: classIdStr, from, to });
+
+      // NB: route publique (QR) -> pas de cookie admin ici.
+      // On tente quand même l'endpoint, et on reste tolérant si ça échoue.
+      const r = await fetch(
+        `${req.nextUrl.origin}/api/admin/conduite/averages?${qs.toString()}`,
+        { method: "GET" }
+      );
+
+      if (!r.ok) return out;
+
+      const data: any = await r.json().catch(() => null);
+      const items: any[] =
+        (data?.items as any[]) ||
+        (data?.data as any[]) ||
+        (data?.rows as any[]) ||
+        [];
+
+      if (!Array.isArray(items)) return out;
+
+      for (const it of items) {
+        const sid = it?.student_id ?? it?.studentId ?? it?.id;
+        if (!sid) continue;
+
+        const raw =
+          it?.avg20 ??
+          it?.average ??
+          it?.total ??
+          it?.avg ??
+          it?.value ??
+          it?.score ??
+          it?.note ??
+          null;
+
+        const v = raw === null || raw === undefined ? null : cleanNumber(raw, 4);
+        out.set(String(sid), v);
+      }
+    } catch {
+      // ignore
+    }
+
+    return out;
+  }
+
+  const conductAvgMapCurrent =
+    dateFrom && dateTo ? await fetchConductAverageMap(dateFrom, dateTo) : new Map<string, number | null>();
+
+  // Préchargement conduite par période (utile pour annual_avg)
+  const conductByPeriodKey = new Map<string, Map<string, number | null>>();
+  if (shouldComputeAnnual && Array.isArray(yearPeriods) && yearPeriods.length) {
+    for (const p of yearPeriods) {
+      const ps = p?.start_date ? String(p.start_date) : null;
+      const pe = p?.end_date ? String(p.end_date) : null;
+      if (!ps || !pe) continue;
+      const key = `${ps}|${pe}`;
+      if (conductByPeriodKey.has(key)) continue;
+      conductByPeriodKey.set(key, await fetchConductAverageMap(ps, pe));
+    }
+  }
+
   // 6) Coeffs bulletin par matière
   let coeffAllQuery = srv
     .from("institution_subject_coeffs")
@@ -1319,7 +1405,7 @@ export async function GET(req: NextRequest) {
   const evalById = new Map<string, EvalRow>();
   for (const e of evals) evalById.set(e.id, e);
 
-  const studentIds = classStudents.map((cs) => cs.student_id);
+  const studentIdsInClass = classStudents.map((cs) => cs.student_id).filter(Boolean);
 
   let scores: ScoreRow[] = [];
   if (evals.length) {
@@ -1329,7 +1415,7 @@ export async function GET(req: NextRequest) {
       .from("student_grades")
       .select("evaluation_id, student_id, score")
       .in("evaluation_id", evalIds)
-      .in("student_id", studentIds);
+      .in("student_id", studentIdsInClass);
 
     if (scoreErr) {
       return NextResponse.json({ ok: false, error: "SCORES_ERROR" }, { status: 500 });
@@ -1526,6 +1612,16 @@ export async function GET(req: NextRequest) {
         sumCoeffGen += coeffSub;
       }
 
+      // + Conduite (coef 1)
+      const conductNote = conductAvgMapCurrent.get(cs.student_id) ?? null;
+      if (conductNote !== null && conductNote !== undefined) {
+        const c = Number(conductNote);
+        if (Number.isFinite(c)) {
+          sumGen += c * 1;
+          sumCoeffGen += 1;
+        }
+      }
+
       general_avg = sumCoeffGen > 0 ? cleanNumber(sumGen / sumCoeffGen, 4) : null;
     }
 
@@ -1586,12 +1682,17 @@ export async function GET(req: NextRequest) {
       if (pStart === dateFrom && pEnd === dateTo) {
         periodAvg = bulletinForStudent.general_avg ?? null;
       } else {
+        const key = `${pStart}|${pEnd}`;
+        const conductNote =
+          conductByPeriodKey.get(key)?.get(studentId) ?? null;
+
         periodAvg = await computeStudentGeneralAvgForRange({
           srv,
           classId,
           studentId,
           from: pStart,
           to: pEnd,
+          conductAvg20: conductNote,
           subjectsForReport,
           subjectComponentsBySubject: compsBySubject,
           subjectComponentById,
