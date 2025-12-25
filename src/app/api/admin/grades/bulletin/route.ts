@@ -1402,6 +1402,18 @@ export async function GET(req: NextRequest) {
     };
   });
 
+  // ✅ Forcer la matière "Conduite" à être comptée dans la moyenne générale
+  // (certaines configurations peuvent l'exclure par erreur)
+  for (const s of subjectsForReport as any[]) {
+    const meta = subjectById.get(String(s.subject_id));
+    const key = `${meta?.code ?? ""} ${meta?.name ?? ""}`.toLowerCase();
+    if (key.includes("conduite") || key.includes("conduct")) {
+      s.include_in_average = true;
+      const c = Number(s.coeff_bulletin ?? 0);
+      if (!c || c <= 0) s.coeff_bulletin = 1;
+    }
+  }
+
   /* 6bis) Sous-matières */
   let subjectComponentsForReport: BulletinSubjectComponent[] = [];
   const subjectComponentById = new Map<string, BulletinSubjectComponent>();
@@ -1936,10 +1948,132 @@ export async function GET(req: NextRequest) {
 
   /* ✅ 10) ANNUEL : calculer uniquement si périodes définies ET bulletin = dernière période */
   if (periodsDefined && isLastPeriod && periodsForYear.length) {
+    // ✅ Pour l'annuel, il faut considérer les moyennes de CHAQUE trimestre (ou période),
+    // en incluant toutes les matières réellement évaluées sur l'année.
+    // Sinon, si le dernier trimestre ne contient que quelques matières, l'annuel est faussé.
+    const yearFrom = String(periodsForYear[0]?.start_date ?? dateFrom ?? "");
+    const yearTo = String(lastPeriod?.end_date ?? dateTo ?? "");
+
+    // 1) Matières vues sur toute l'année (évaluations publiées)
+    const annualSubjectIds = new Set<string>(subjectIds);
+    if (yearFrom && yearTo) {
+      const { data: yEvals, error: yErr } = await supabase
+        .from("grade_evaluations")
+        .select("subject_id")
+        .eq("class_id", classId)
+        .eq("is_published", true)
+        .gte("eval_date", yearFrom)
+        .lte("eval_date", yearTo);
+
+      if (!yErr && yEvals?.length) {
+        for (const r of yEvals as any[]) {
+          const sid = r?.subject_id ? String(r.subject_id) : "";
+          if (sid && isUuid(sid)) annualSubjectIds.add(sid);
+        }
+      }
+    }
+
+    // 2) Charger le nom/code pour les matières manquantes
+    const annualOrderedSubjectIds = Array.from(annualSubjectIds).filter((sid) => isUuid(sid));
+    const missingMetaIds = annualOrderedSubjectIds.filter((sid) => !subjectById.has(sid));
+    if (missingMetaIds.length) {
+      const { data: addSubj, error: addSubjErr } = await srv
+        .from("subjects")
+        .select("id, name, code")
+        .in("id", missingMetaIds);
+
+      if (!addSubjErr && addSubj?.length) {
+        for (const s of addSubj as any[]) {
+          subjectById.set(String(s.id), { id: String(s.id), name: s.name ?? null, code: s.code ?? null } as any);
+        }
+      }
+    }
+
+    // 3) Liste matières pour le calcul annuel (coeff bulletin + include)
+    const annualSubjectsForReport = annualOrderedSubjectIds
+      .map((sid) => {
+        const s = subjectById.get(sid);
+        const name = (s as any)?.name || (s as any)?.code || "Matière";
+        const info = coeffBySubject.get(sid);
+        const coeffBulletin = info ? info.coeff : 1;
+        const includeInAverage = info ? info.include : true;
+
+        return {
+          subject_id: sid,
+          subject_name: name,
+          coeff_bulletin: coeffBulletin,
+          include_in_average: includeInAverage,
+        };
+      })
+      // tri alpha pour stabilité (nom puis id)
+      .sort((a, b) => {
+        const an = String(a.subject_name || "");
+        const bn = String(b.subject_name || "");
+        const c = an.localeCompare(bn, "fr", { sensitivity: "base" });
+        if (c !== 0) return c;
+        return String(a.subject_id).localeCompare(String(b.subject_id));
+      });
+
+    // ✅ Forcer Conduite incluse dans le calcul annuel
+    for (const s of annualSubjectsForReport as any[]) {
+      const meta = subjectById.get(String(s.subject_id));
+      const key = `${(meta as any)?.code ?? ""} ${(meta as any)?.name ?? ""}`.toLowerCase();
+      if (key.includes("conduite") || key.includes("conduct")) {
+        s.include_in_average = true;
+        const c = Number(s.coeff_bulletin ?? 0);
+        if (!c || c <= 0) s.coeff_bulletin = 1;
+      }
+    }
+
+    // 4) Étendre la liste des sous-matières pour le calcul annuel (si certaines matières n'apparaissent pas au dernier trimestre)
+    const annualSubjectComponentById = new Map<string, BulletinSubjectComponent>(subjectComponentById);
+    const annualCompsBySubject = new Map<string, BulletinSubjectComponent[]>();
+    // seed existing compsBySubject
+    compsBySubject.forEach((v, k) => annualCompsBySubject.set(k, v.slice()));
+
+    if (annualOrderedSubjectIds.length) {
+      const { data: addCompData, error: addCompErr } = await srv
+        .from("grade_subject_components")
+        .select("id, subject_id, label, short_label, coeff_in_subject, order_index, is_active")
+        .eq("institution_id", institutionId)
+        .in("subject_id", annualOrderedSubjectIds);
+
+      if (!addCompErr && addCompData?.length) {
+        for (const r of addCompData as any[]) {
+          if (r.is_active === false) continue;
+
+          const obj: BulletinSubjectComponent = {
+            id: String(r.id),
+            subject_id: String(r.subject_id),
+            label: (r.label ?? r.short_label ?? "Sous-matière") as any,
+            short_label: (r.short_label ?? null) as any,
+            coeff_in_subject:
+              r.coeff_in_subject !== null && r.coeff_in_subject !== undefined ? Number(r.coeff_in_subject) : 1,
+            order_index: r.order_index !== null && r.order_index !== undefined ? Number(r.order_index) : 1,
+          } as any;
+
+          annualSubjectComponentById.set(obj.id, obj);
+
+          const arr = annualCompsBySubject.get(obj.subject_id) || [];
+          // éviter doublons
+          if (!arr.find((x) => x.id === obj.id)) arr.push(obj);
+          annualCompsBySubject.set(obj.subject_id, arr);
+        }
+
+        // tri interne
+        annualCompsBySubject.forEach((arr) => {
+          arr.sort((a, b) => (a.order_index ?? 1) - (b.order_index ?? 1));
+        });
+      }
+    }
+
     // calc moyenne générale d'un élève sur une période
     const computeGeneralAvgMapForRange = async (
       from: string,
-      to: string
+      to: string,
+      subjectsList: { subject_id: string; coeff_bulletin: number | null; include_in_average: boolean }[],
+      compsMap: Map<string, BulletinSubjectComponent[]>,
+      compByIdMap: Map<string, BulletinSubjectComponent>
     ): Promise<Map<string, number | null>> => {
       const out = new Map<string, number | null>();
       studentIds.forEach((sid) => out.set(sid, null));
@@ -2025,12 +2159,12 @@ export async function GET(req: NextRequest) {
         let sumGen = 0;
         let sumCoeffGen = 0;
 
-        for (const s of subjectsForReport) {
+        for (const s of subjectsList) {
           if (s.include_in_average === false) continue;
           const coeffSub = Number(s.coeff_bulletin ?? 0);
           if (!coeffSub || coeffSub <= 0) continue;
 
-          const comps = compsBySubject.get(s.subject_id) || [];
+          const comps = compsMap.get(s.subject_id) || [];
 
           let subAvg: number | null = null;
 
@@ -2090,7 +2224,7 @@ export async function GET(req: NextRequest) {
       const w =
         p.coeff === null || p.coeff === undefined ? 1 : Math.max(0, Number(p.coeff) || 0) || 1;
 
-      const map = await computeGeneralAvgMapForRange(from, to);
+      const map = await computeGeneralAvgMapForRange(from, to, annualSubjectsForReport, annualCompsBySubject, annualSubjectComponentById);
       periodMaps.push({ w, map });
     }
 
