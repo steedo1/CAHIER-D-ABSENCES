@@ -289,6 +289,16 @@ type BulletinQRPayload = {
   periodFrom: string | null;
   periodTo: string | null;
   periodLabel: string | null;
+  periodShortLabel?: string | null;
+
+  // ✅ Snapshot (moyennes déjà calculées côté bulletin, utile pour la vérification publique sans cookie)
+  s?:
+    | {
+        g?: number | null; // general_avg
+        a?: number | null; // annual_avg
+      }
+    | null;
+
   iat: number; // ms
 };
 
@@ -403,6 +413,14 @@ async function addQrToItems<T extends { student_id: string }>(
   const periodLabel =
     opts.periodMeta.short_label ?? opts.periodMeta.label ?? opts.periodMeta.code ?? null;
 
+const snapFor = (row: any) => {
+  const g = cleanNumber((row as any)?.general_avg, 4);
+  const a = cleanNumber((row as any)?.annual_avg, 4);
+  if (g === null && a === null) return null;
+  return { g, a };
+};
+
+
   // On essaie le mode "short" par défaut (idéal pour le scan)
   const envMode = String(process.env.BULLETIN_QR_MODE || "short").toLowerCase();
   const preferShort = envMode !== "token";
@@ -435,6 +453,7 @@ async function addQrToItems<T extends { student_id: string }>(
           periodTo: opts.periodMeta.to ?? null,
           periodLabel,
           periodShortLabel: opts.periodMeta.short_label ?? null,
+          s: snapFor(it0),
         },
         expiresAt: null,
       });
@@ -477,6 +496,7 @@ async function addQrToItems<T extends { student_id: string }>(
                 periodTo: opts.periodMeta.to ?? null,
                 periodLabel,
                 periodShortLabel: opts.periodMeta.short_label ?? null,
+                s: snapFor(it),
               },
               expiresAt: null,
             });
@@ -501,6 +521,8 @@ async function addQrToItems<T extends { student_id: string }>(
             periodFrom: opts.periodMeta.from ?? null,
             periodTo: opts.periodMeta.to ?? null,
             periodLabel,
+            periodShortLabel: opts.periodMeta.short_label ?? null,
+            s: snapFor(it),
           });
 
           const url = token
