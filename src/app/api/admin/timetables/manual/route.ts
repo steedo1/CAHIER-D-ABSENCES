@@ -12,6 +12,12 @@ type ManualItem = {
   class_ids: string[];
 };
 
+type ClearSlot = {
+  weekday: number; // optionnel côté delete, mais utile pour le debug
+  period_id: string;
+  class_id: string;
+};
+
 function uniq<T>(arr: T[]): T[] {
   return Array.from(new Set((arr || []).filter(Boolean))) as T[];
 }
@@ -19,29 +25,23 @@ function uniq<T>(arr: T[]): T[] {
 function asIntWeekday(v: any): number | null {
   const n = Number(v);
   if (!Number.isFinite(n)) return null;
-  const i = Math.trunc(n);
-
-  // accepte 0..6 (JS getDay)
-  if (i >= 0 && i <= 6) return i;
-
-  // accepte 1..7 (ISO) -> 7 = dimanche -> 0
-  if (i >= 1 && i <= 7) return i === 7 ? 0 : i;
-
-  return null;
+  return Math.max(0, Math.min(6, Math.floor(n)));
 }
 
-async function guard(req: NextRequest) {
+async function guard(_req: NextRequest) {
   const supa = await getSupabaseServerClient();
   const srv = getSupabaseServiceClient();
 
   const {
     data: { user },
+    error: userErr,
   } = await supa.auth.getUser();
+
+  if (userErr) {
+    console.warn("[timetables/manual] auth_getUser_err", { error: userErr.message });
+  }
   if (!user) {
-    return {
-      ok: false as const,
-      res: NextResponse.json({ error: "unauthorized" }, { status: 401 }),
-    };
+    return { ok: false as const, res: NextResponse.json({ error: "unauthorized" }, { status: 401 }) };
   }
 
   const { data: me, error: meErr } = await supa
@@ -57,36 +57,34 @@ async function guard(req: NextRequest) {
     };
   }
 
-  const institution_id = me?.institution_id as string | null;
+  const institution_id = (me?.institution_id as string) || null;
   if (!institution_id) {
     return {
       ok: false as const,
       res: NextResponse.json(
-        {
-          error: "no_institution",
-          message: "Aucune institution associée à ce compte.",
-        },
+        { error: "no_institution", message: "Aucune institution associée." },
         { status: 400 }
       ),
     };
   }
 
-  const { data: roleRow } = await supa
+  const { data: roleRow, error: roleErr } = await supa
     .from("user_roles")
     .select("role")
     .eq("profile_id", user.id)
     .eq("institution_id", institution_id)
     .maybeSingle();
 
+  if (roleErr) {
+    console.error("[timetables/manual] role_err", { error: roleErr.message });
+  }
+
   const role = (roleRow?.role as string | undefined) || "";
   if (!["admin", "super_admin"].includes(role)) {
     return {
       ok: false as const,
       res: NextResponse.json(
-        {
-          error: "forbidden",
-          message: "Droits insuffisants pour gérer les emplois du temps.",
-        },
+        { error: "forbidden", message: "Droits insuffisants." },
         { status: 403 }
       ),
     };
@@ -94,25 +92,15 @@ async function guard(req: NextRequest) {
 
   return {
     ok: true as const,
-    supa,
     srv,
-    userId: user.id,
+    userId: user.id as string,
     institution_id,
   };
 }
 
 /**
- * GET = métadonnées pour la saisie manuelle :
- * - subject_id (obligatoire)
- * - teacher_id (optionnel) -> renvoie aussi les lignes existantes de ce prof pour cette matière
- *
- * Réponse :
- * {
- *   subject_id,
- *   teachers: [{ id, display_name, phone }],
- *   teacherClasses: [{ teacher_id, class_id, class_label }],
- *   existing: [{ weekday, period_id, class_id, class_label }]
- * }
+ * GET = meta pour l'édition manuelle d'un emploi du temps (matière + prof).
+ * Query: subject_id=...&teacher_id=...
  */
 export async function GET(req: NextRequest) {
   try {
@@ -121,49 +109,39 @@ export async function GET(req: NextRequest) {
     const { srv, institution_id } = g;
 
     const url = new URL(req.url);
-    const subject_id = url.searchParams.get("subject_id");
-    const teacher_id = url.searchParams.get("teacher_id");
+    const subject_id = url.searchParams.get("subject_id") || "";
+    const teacher_id = url.searchParams.get("teacher_id") || "";
 
     if (!subject_id) {
       return NextResponse.json(
-        {
-          error: "missing_subject",
-          message: "Paramètre subject_id requis.",
-        },
+        { error: "missing_subject", message: "subject_id manquant." },
         { status: 400 }
       );
     }
 
-    // Toutes les classes de l’établissement
-    const [{ data: classes }, { data: ctRows }] = await Promise.all([
-      srv
-        .from("classes")
-        .select("id,label")
-        .eq("institution_id", institution_id),
-      srv
-        .from("class_teachers")
-        .select("teacher_id,class_id,subject_id")
-        .eq("subject_id", subject_id),
-    ]);
+    // teachers liés à la matière (teacher_subjects)
+    const { data: tsRows, error: tsErr } = await srv
+      .from("teacher_subjects")
+      .select("teacher_id,subject_id")
+      .eq("institution_id", institution_id)
+      .eq("subject_id", subject_id);
 
-    const classesById = new Map<string, string>();
-    (classes || []).forEach((c: any) => {
-      classesById.set(c.id, c.label);
-    });
+    if (tsErr) {
+      return NextResponse.json({ error: "teacher_subjects_failed", message: tsErr.message }, { status: 400 });
+    }
 
-    const filteredCT = (ctRows || []).filter((row: any) =>
-      classesById.has(row.class_id)
-    );
+    const teacherIds = uniq((tsRows || []).map((r: any) => r.teacher_id as string));
 
-    const teacherIds = uniq(filteredCT.map((r: any) => r.teacher_id as string));
-
-    let teachers: { id: string; display_name: string; phone: string | null }[] =
-      [];
+    let teachers: { id: string; display_name: string; phone: string | null }[] = [];
     if (teacherIds.length > 0) {
-      const { data: teacherProfiles } = await srv
+      const { data: teacherProfiles, error: tpErr } = await srv
         .from("profiles")
         .select("id,display_name,phone")
         .in("id", teacherIds);
+
+      if (tpErr) {
+        return NextResponse.json({ error: "teachers_failed", message: tpErr.message }, { status: 400 });
+      }
 
       teachers = (teacherProfiles || []).map((t: any) => ({
         id: t.id as string,
@@ -172,27 +150,50 @@ export async function GET(req: NextRequest) {
       }));
     }
 
+    // classes de l'établissement
+    const { data: clsRows, error: clsErr } = await srv
+      .from("classes")
+      .select("id,label")
+      .eq("institution_id", institution_id);
+
+    if (clsErr) {
+      return NextResponse.json({ error: "classes_failed", message: clsErr.message }, { status: 400 });
+    }
+
+    const classesById = new Map<string, string>();
+    (clsRows || []).forEach((c: any) => classesById.set(String(c.id), String(c.label || "")));
+
+    // teacher_classes
+    const { data: ctRows, error: ctErr } = await srv
+      .from("class_teachers")
+      .select("teacher_id,class_id")
+      .eq("institution_id", institution_id);
+
+    if (ctErr) {
+      return NextResponse.json({ error: "class_teachers_failed", message: ctErr.message }, { status: 400 });
+    }
+
+    const filteredCT = (ctRows || []).filter((r: any) => teacherIds.includes(String(r.teacher_id)));
+
     const teacherClasses = filteredCT.map((r: any) => ({
       teacher_id: r.teacher_id as string,
       class_id: r.class_id as string,
       class_label: classesById.get(r.class_id) || "",
     }));
 
-    // Lignes d'emploi du temps existantes pour ce prof + cette matière
-    let existing: {
-      weekday: number;
-      period_id: string;
-      class_id: string;
-      class_label: string;
-    }[] = [];
-
+    // existant pour ce prof + matière
+    let existing: { weekday: number; period_id: string; class_id: string; class_label: string }[] = [];
     if (teacher_id) {
-      const { data: ttRows } = await srv
+      const { data: ttRows, error: ttErr } = await srv
         .from("teacher_timetables")
         .select("weekday,period_id,class_id")
         .eq("institution_id", institution_id)
         .eq("subject_id", subject_id)
         .eq("teacher_id", teacher_id);
+
+      if (ttErr) {
+        return NextResponse.json({ error: "existing_failed", message: ttErr.message }, { status: 400 });
+      }
 
       existing = (ttRows || []).map((r: any) => ({
         weekday: r.weekday as number,
@@ -202,37 +203,31 @@ export async function GET(req: NextRequest) {
       }));
     }
 
-    return NextResponse.json({
-      subject_id,
-      teachers,
-      teacherClasses,
-      existing,
-    });
+    return NextResponse.json({ subject_id, teachers, teacherClasses, existing });
   } catch (e: any) {
-    return NextResponse.json(
-      { error: e?.message || "manual_meta_failed" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: e?.message || "manual_meta_failed" }, { status: 500 });
   }
 }
 
 /**
  * POST = enregistrement de l'emploi du temps pour un prof + une matière.
  *
- * Body JSON :
+ * Body JSON:
  * {
  *   subject_id: string,
  *   teacher_id: string,
- *   items: ManualItem[]
+ *   items: ManualItem[],
+ *   clear_slots?: ClearSlot[] // ✅ NOUVEAU: slots explicitement vidés à supprimer
  * }
  *
- * Stratégie :
- *   - on efface toutes les lignes teacher_timetables pour (institution, subject, teacher)
+ * Stratégie:
+ *   - (optionnel) on supprime d'abord les slots "vidés" pour ce cours (subject_id) sans filtrer le teacher_id
+ *     => garantit qu'un créneau vide supprime l'ancien cours visible dans la vue par créneau
+ *   - on efface ensuite toutes les lignes teacher_timetables pour (institution, subject, teacher)
  *   - on insère les nouvelles lignes (une par classe / créneau)
  *
- * FIX IMPORTANT :
- *   - on force weekday = institution_periods.weekday (via period_id)
- *     pour éviter les décalages front (0..5 vs 1..6 etc).
+ * FIX IMPORTANT:
+ *   - on force weekday = institution_periods.weekday (via period_id) pour éviter les décalages front.
  */
 export async function POST(req: NextRequest) {
   try {
@@ -245,6 +240,7 @@ export async function POST(req: NextRequest) {
           subject_id?: string;
           teacher_id?: string;
           items?: ManualItem[];
+          clear_slots?: ClearSlot[];
         }
       | null;
 
@@ -258,22 +254,39 @@ export async function POST(req: NextRequest) {
     const subject_id = body.subject_id;
     const teacher_id = body.teacher_id;
     const items = (body.items || []) as ManualItem[];
+    const clear_slots = (body.clear_slots || []) as ClearSlot[];
 
     if (!subject_id || !teacher_id) {
       return NextResponse.json(
-        {
-          error: "missing_ids",
-          message: "subject_id et teacher_id sont obligatoires.",
-        },
+        { error: "missing_ids", message: "subject_id et teacher_id sont obligatoires." },
         { status: 400 }
       );
     }
 
-    // 1) On prépare la map period_id -> weekday (source de vérité)
+    // ✅ 0) Suppression explicite des créneaux vidés (sans filtre teacher_id)
+    // But: si un ancien enregistrement existe encore pour ce cours (même matière) sur ce créneau,
+    // on le supprime pour éviter qu'il reste visible dans la vue par créneau.
+    for (const s of clear_slots) {
+      const class_id = String((s as any)?.class_id || "");
+      const period_id = String((s as any)?.period_id || "");
+      if (!class_id || !period_id) continue;
+
+      const { error: delSlotErr } = await srv
+        .from("teacher_timetables")
+        .delete()
+        .match({ institution_id, subject_id, class_id, period_id });
+
+      if (delSlotErr) {
+        return NextResponse.json(
+          { error: "clear_slot_failed", message: delSlotErr.message, slot: { class_id, period_id } },
+          { status: 400 }
+        );
+      }
+    }
+
+    // 1) Map period_id -> weekday (source de vérité)
     const periodIds = uniq(
-      items
-        .map((it) => String(it.period_id || ""))
-        .filter((x) => x.length > 0)
+      items.map((it) => String(it.period_id || "")).filter((x) => x.length > 0)
     );
 
     const periodWeekdayById = new Map<string, number>();
@@ -298,7 +311,6 @@ export async function POST(req: NextRequest) {
         if (wd !== null) periodWeekdayById.set(pid, wd);
       });
 
-      // si certains period_id n'appartiennent pas à l'institution => on bloque (sinon rien ne remontera dans le monitor)
       const missing = periodIds.filter((pid) => !periodWeekdayById.has(pid));
       if (missing.length > 0) {
         return NextResponse.json(
@@ -313,7 +325,7 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // 2) On nettoie d'abord tout l'emploi du temps de ce prof pour cette matière
+    // 2) Nettoyage complet pour CE prof + matière (inchangé)
     const { error: delErr } = await srv
       .from("teacher_timetables")
       .delete()
@@ -321,10 +333,7 @@ export async function POST(req: NextRequest) {
 
     if (delErr) {
       return NextResponse.json(
-        {
-          error: "delete_failed",
-          message: delErr.message,
-        },
+        { error: "delete_failed", message: delErr.message },
         { status: 400 }
       );
     }
@@ -335,57 +344,46 @@ export async function POST(req: NextRequest) {
     for (const it of items) {
       if (!it.period_id) continue;
 
-      // ✅ weekday fiable = weekday du period_id (institution_periods)
       const wdFromPeriod = periodWeekdayById.get(String(it.period_id));
-      const weekday = wdFromPeriod ?? asIntWeekday(it.weekday);
-      if (weekday === null) continue;
+      const weekday = wdFromPeriod ?? asIntWeekday(it.weekday) ?? 0;
 
-      const classIds = uniq(it.class_ids || []);
-      if (!classIds.length) continue;
+      const classIds = uniq((it.class_ids || []).map((x) => String(x)));
 
       for (const class_id of classIds) {
         rowsToInsert.push({
           institution_id,
-          class_id,
-          subject_id,
           teacher_id,
-          weekday,
+          subject_id,
+          class_id,
           period_id: it.period_id,
-          created_by: userId,
+          weekday,
+          updated_by: userId,
         });
       }
     }
 
-    if (!rowsToInsert.length) {
-      return NextResponse.json({
-        ok: true,
-        inserted: 0,
-        message:
-          "Aucun créneau sélectionné : l'emploi du temps de ce professeur pour cette matière a été vidé.",
-      });
+    if (rowsToInsert.length > 0) {
+      const { error: insErr } = await srv
+        .from("teacher_timetables")
+        .insert(rowsToInsert);
+
+      if (insErr) {
+        return NextResponse.json(
+          { error: "insert_failed", message: insErr.message },
+          { status: 400 }
+        );
+      }
     }
-
-    const { error: insErr, count } = await srv
-      .from("teacher_timetables")
-      .insert(rowsToInsert, { count: "exact" });
-
-    if (insErr) {
-      return NextResponse.json(
-        { ok: false, error: insErr.message },
-        { status: 400 }
-      );
-    }
-
-    const inserted = typeof count === "number" ? count : rowsToInsert.length;
 
     return NextResponse.json({
       ok: true,
-      inserted,
-      message: `${inserted} créneaux enregistrés pour ce professeur.`,
+      message: "Emploi du temps enregistré avec succès.",
+      inserted: rowsToInsert.length,
+      cleared: clear_slots.length,
     });
   } catch (e: any) {
     return NextResponse.json(
-      { ok: false, error: e?.message || "manual_save_failed" },
+      { error: e?.message || "manual_save_failed" },
       { status: 500 }
     );
   }

@@ -511,6 +511,43 @@ export default function ImportEmploisDuTempsPage() {
       })
       .filter((it) => it.class_ids && it.class_ids.length > 0);
 
+    // IMPORTANT: si un créneau est vidé puis enregistré, on doit supprimer l'ancien cours
+    // (au minimum pour ce même cours = même subject_id) sur ce même créneau et cette même classe.
+    // On calcule donc les "slots à supprimer" = existant en base - sélection actuelle.
+    const selectedSet = new Set<string>();
+    for (const [key, class_ids] of Object.entries(cellSelection)) {
+      const [weekdayStr, period_id] = key.split("_");
+      const weekday = Number(weekdayStr);
+      for (const cid of class_ids || []) {
+        if (!cid) continue;
+        selectedSet.add(`${weekday}_${period_id}_${cid}`);
+      }
+    }
+
+    const clear_slots = (() => {
+      const removed =
+        (manualMeta?.existing || [])
+          .map((ex) => ({
+            weekday: Number(ex.weekday),
+            period_id: String(ex.period_id),
+            class_id: String(ex.class_id),
+          }))
+          .filter(
+            (ex) => !selectedSet.has(`${ex.weekday}_${ex.period_id}_${ex.class_id}`)
+          );
+
+      // dédoublonnage (sécurité)
+      const seen = new Set<string>();
+      const out: { weekday: number; period_id: string; class_id: string }[] = [];
+      for (const r of removed) {
+        const k = `${r.weekday}_${r.period_id}_${r.class_id}`;
+        if (seen.has(k)) continue;
+        seen.add(k);
+        out.push(r);
+      }
+      return out;
+    })();
+
     try {
       const res = await fetch("/api/admin/timetables/manual", {
         method: "POST",
@@ -521,6 +558,7 @@ export default function ImportEmploisDuTempsPage() {
           subject_id: selectedSubjectId,
           teacher_id: selectedTeacherId,
           items,
+          clear_slots,
         }),
       });
 
