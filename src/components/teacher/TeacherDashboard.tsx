@@ -34,6 +34,9 @@ type OpenSession = {
   subject_name: string | null;
   started_at: string;
   expected_minutes?: number | null;
+
+  // ✅ Heure effective du clic "Démarrer l’appel" (offline-friendly)
+  actual_call_at?: string | null;
 };
 
 type InstCfg = {
@@ -773,12 +776,16 @@ export default function TeacherDashboard() {
         0
       );
 
+      // ✅ Heure effective du clic (à envoyer au serveur, et à garder en offline)
+      const actualCallAt = new Date().toISOString();
+
       const clientSessionId = `${sel.class_id}_${sel.subject_id || "none"}_${started.toISOString()}`;
 
       const body = {
         class_id: sel.class_id,
         subject_id: sel.subject_id,
-        started_at: started.toISOString(),
+        started_at: started.toISOString(), // créneau (sera canonisé côté API)
+        actual_call_at: actualCallAt, // ✅ heure d'appel effectif
         expected_minutes: duration,
         client_session_id: clientSessionId,
       };
@@ -801,6 +808,7 @@ export default function TeacherDashboard() {
           subject_id: sel.subject_id,
           subject_name: sel.subject_name,
           started_at: started.toISOString(),
+          actual_call_at: actualCallAt, // ✅ affichage correct même offline
           expected_minutes: duration,
         };
         setOpen(localOpen);
@@ -1294,6 +1302,7 @@ export default function TeacherDashboard() {
       {/* Sanctions inline */}
       {penaltyOpen && (
         <div className="rounded-2xl border bg-white p-5 shadow-sm">
+          {/* ... inchangé ... */}
           <div className="flex items-center justify-between mb-3">
             <div>
               <div className="text-lg font-semibold">Autres sanctions</div>
@@ -1347,6 +1356,7 @@ export default function TeacherDashboard() {
           </div>
 
           <div className="overflow-x-auto rounded-xl border">
+            {/* ... inchangé ... */}
             <table className="min-w-full text-sm">
               <thead className="bg-slate-50 sticky top-0 z-10">
                 <tr className="text-left text-slate-600">
@@ -1425,16 +1435,21 @@ export default function TeacherDashboard() {
       {open && (
         <div className="rounded-2xl border bg-white p-5 shadow-sm">
           <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-            <div className="text-sm font-semibold text-slate-700">
-              Appel — {open.class_label} {open.subject_name ? `• ${open.subject_name}` : ""} •{" "}
-              {new Date(open.started_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-              {open.expected_minutes
-                ? ` → ${new Date(new Date(open.started_at).getTime() + open.expected_minutes * 60000).toLocaleTimeString(
-                    [],
-                    { hour: "2-digit", minute: "2-digit" }
-                  )}`
-                : ""}
-            </div>
+            {(() => {
+              const startIso = open.actual_call_at || open.started_at; // ✅ heure effective
+              const startMs = new Date(startIso).getTime();
+              const endMs = open.expected_minutes ? startMs + open.expected_minutes * 60000 : null;
+
+              return (
+                <div className="text-sm font-semibold text-slate-700">
+                  Appel — {open.class_label} {open.subject_name ? `• ${open.subject_name}` : ""} •{" "}
+                  {new Date(startIso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                  {endMs
+                    ? ` → ${new Date(endMs).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
+                    : ""}
+                </div>
+              );
+            })()}
             <Chip>
               {changedCount} modif{changedCount > 1 ? "s" : ""} en cours
             </Chip>

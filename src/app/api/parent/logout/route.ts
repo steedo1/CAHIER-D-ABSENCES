@@ -1,3 +1,4 @@
+//src/app/api/parent/logout/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { clearParentSessionCookie } from "@/lib/parent-session";
 

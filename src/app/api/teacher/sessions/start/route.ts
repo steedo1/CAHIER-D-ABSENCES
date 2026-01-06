@@ -10,7 +10,16 @@ type Body = {
   class_id?: string;
   subject_id?: string | null; // côté front = subjects.id (canonique) ou anciennement institution_subjects.id
   started_at?: string;
+
+  // ✅ IMPORTANT (offline-friendly) :
+  // - actual_call_at : heure réelle du clic "Démarrer l'appel" côté client
+  // - si non envoyé, on prendra started_at (mieux que "now serveur" en offline)
+  actual_call_at?: string | null;
+
   expected_minutes?: number | null;
+
+  // optionnels (debug / compat)
+  client_session_id?: string | null;
 };
 
 async function getAuthUser() {
@@ -163,6 +172,31 @@ function pickBestSession(rows: any[]) {
   })[0];
 }
 
+/* ✅ OFFLINE: choisir une heure d'appel "effective" fiable */
+function pickEffectiveCallAt(body: Body, started_at_in: string, nowISO: string) {
+  const now = new Date(nowISO).getTime();
+
+  const candidates = [
+    body.actual_call_at ?? null, // priorité
+    started_at_in ?? null,       // fallback (utile si le front ne passe pas actual_call_at)
+  ].filter(Boolean) as string[];
+
+  for (const c of candidates) {
+    const t = new Date(c).getTime();
+    if (!Number.isFinite(t)) continue;
+
+    // anti-futur: max +10 minutes (horloge device un peu en avance)
+    if (t > now + 10 * 60 * 1000) continue;
+
+    // anti-très-ancien: max 7 jours (offline long)
+    if (t < now - 7 * 24 * 60 * 60 * 1000) continue;
+
+    return new Date(t).toISOString();
+  }
+
+  return nowISO;
+}
+
 export async function POST(req: NextRequest) {
   try {
     const { user, error: authError } = await getAuthUser();
@@ -184,7 +218,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Normalisation de started_at → ISO cohérent
+    // Normalisation de started_at → ISO cohérent (sert à déterminer le créneau)
     let startedDate = new Date(raw_started_at);
     if (isNaN(startedDate.getTime())) {
       startedDate = new Date();
@@ -296,7 +330,8 @@ export async function POST(req: NextRequest) {
 
     // c) bornes du créneau (UTC) + started_at canonique = début du créneau
     const slotStartMin = currentPeriod?.startMin ?? startMin;
-    const slotEndMin = currentPeriod?.endMin ?? (startMin + Math.max(1, expected_minutes_body ?? 60));
+    const slotEndMin =
+      currentPeriod?.endMin ?? (startMin + Math.max(1, expected_minutes_body ?? 60));
 
     const slotStartHM = minToHM(slotStartMin);
     const slotEndHM = minToHM(Math.min(slotEndMin, 24 * 60));
@@ -307,15 +342,18 @@ export async function POST(req: NextRequest) {
     const slotStartUTC = zonedToUTC(y, mo, da, sH, sM, 0, tz);
     const slotEndUTC = zonedToUTC(y, mo, da, eH, eM, 0, tz);
 
-    const started_at = slotStartUTC.toISOString(); // ✅ canonique
+    const started_at = slotStartUTC.toISOString(); // ✅ canonique (créneau)
     const resolved_expected_minutes =
       expected_minutes_body ??
       (currentPeriod ? Math.max(1, currentPeriod.endMin - currentPeriod.startMin) : 60);
 
     const nowISO = new Date().toISOString();
 
+    // ✅ OFFLINE-FRIENDLY: on conserve l'heure effective du clic (ou started_at_in)
+    const effectiveCallAt = pickEffectiveCallAt(body, started_at_in, nowISO);
+
     // d) “UPSERT logique” : si une séance existe DÉJÀ dans ce créneau pour ce prof → on réutilise
-    // IMPORTANT: on ne filtre PLUS par class_id ni subject_id ici (c’est ça qui créait 2/3 lignes)
+    // IMPORTANT: on ne filtre PLUS par class_id ni subject_id ici
     const { data: sameSlot, error: slotErr } = await svc
       .from("teacher_sessions")
       .select("id, started_at, actual_call_at, created_at, ended_at, status, expected_minutes")
@@ -337,6 +375,7 @@ export async function POST(req: NextRequest) {
           class_id,
           subject_id,
           started_at,
+          actual_call_at,
           expected_minutes,
           classes!inner ( label ),
           institution_subjects!teacher_sessions_subject_id_fkey (
@@ -357,19 +396,16 @@ export async function POST(req: NextRequest) {
       const reuseSessionId = String(best.id);
 
       // On met à jour la ligne “canonique” pour refléter la demande courante
-      // (sans écraser actual_call_at s’il existe déjà — on garde le 1er clic)
+      // (sans écraser actual_call_at si déjà défini — on garde le 1er clic / 1ère info)
       const patch: any = {
         class_id,
         subject_id: instSubjectId,
         started_at, // canonique (= début de créneau)
         expected_minutes: resolved_expected_minutes,
       };
-      if (!best.actual_call_at) patch.actual_call_at = nowISO;
+      if (!best.actual_call_at) patch.actual_call_at = effectiveCallAt;
 
-      const { error: upErr } = await svc
-        .from("teacher_sessions")
-        .update(patch)
-        .eq("id", reuseSessionId);
+      const { error: upErr } = await svc.from("teacher_sessions").update(patch).eq("id", reuseSessionId);
 
       if (upErr) {
         // même si update échoue, on tente de renvoyer la séance existante
@@ -387,34 +423,33 @@ export async function POST(req: NextRequest) {
       const item = {
         id: session.id as string,
         class_id: session.class_id as string,
-        class_label:
-          (session.classes && (session.classes as any).label) || cls.label || "",
+        class_label: (session.classes && (session.classes as any).label) || cls.label || "",
         subject_id:
-          (session.institution_subjects &&
-            (session.institution_subjects as any).subject?.id) ||
+          (session.institution_subjects && (session.institution_subjects as any).subject?.id) ||
           raw_subject_id,
         subject_name:
-          (session.institution_subjects &&
-            (session.institution_subjects as any).subject?.name) || null,
-        started_at: session.started_at as string,
+          (session.institution_subjects && (session.institution_subjects as any).subject?.name) ||
+          null,
+        started_at: session.started_at as string, // début de créneau
+        actual_call_at: (session as any).actual_call_at as string | null, // ✅ heure effective
         expected_minutes: session.expected_minutes as number | null,
       };
 
       return NextResponse.json({ item }, { status: 200 });
     }
 
-    /* 4) Sinon: on crée la séance (mais started_at est CANONIQUE, et actual_call_at est posé) */
+    /* 4) Sinon: on crée la séance (started_at CANONIQUE, actual_call_at EFFECTIF) */
     const { data: session, error: insErr } = await svc
       .from("teacher_sessions")
       .insert({
-        institution_id: cls.institution_id, // ✅ NOT NULL
+        institution_id: cls.institution_id,
         class_id,
-        subject_id: instSubjectId, // ✅ FK vers institution_subjects.id
+        subject_id: instSubjectId,
         teacher_id: user.id,
-        created_by: user.id, // ✅ NOT NULL
-        started_at, // ✅ début de créneau
+        created_by: user.id,
+        started_at, // début de créneau
         expected_minutes: resolved_expected_minutes,
-        actual_call_at: nowISO, // ✅ 1er clic (pour éviter null)
+        actual_call_at: effectiveCallAt, // ✅ heure effective (offline-friendly)
       })
       .select(
         `
@@ -422,6 +457,7 @@ export async function POST(req: NextRequest) {
         class_id,
         subject_id,
         started_at,
+        actual_call_at,
         expected_minutes,
         classes!inner ( label ),
         institution_subjects!teacher_sessions_subject_id_fkey (
@@ -446,8 +482,7 @@ export async function POST(req: NextRequest) {
         );
       }
 
-      // Si tu ajoutes ensuite une contrainte UNIQUE “1 par créneau”, on peut tomber sur 23505 (race condition).
-      // Dans ce cas, on relit et on renvoie la séance existante.
+      // En cas de race condition (unique future) : relire et renvoyer
       if (pgCode === "23505") {
         const { data: retry, error: rErr } = await svc
           .from("teacher_sessions")
@@ -464,16 +499,15 @@ export async function POST(req: NextRequest) {
             const item = {
               id: s2.id as string,
               class_id: s2.class_id as string,
-              class_label:
-                (s2.classes && (s2.classes as any).label) || cls.label || "",
+              class_label: (s2.classes && (s2.classes as any).label) || cls.label || "",
               subject_id:
-                (s2.institution_subjects &&
-                  (s2.institution_subjects as any).subject?.id) ||
+                (s2.institution_subjects && (s2.institution_subjects as any).subject?.id) ||
                 raw_subject_id,
               subject_name:
-                (s2.institution_subjects &&
-                  (s2.institution_subjects as any).subject?.name) || null,
+                (s2.institution_subjects && (s2.institution_subjects as any).subject?.name) ||
+                null,
               started_at: s2.started_at as string,
+              actual_call_at: (s2 as any).actual_call_at as string | null,
               expected_minutes: s2.expected_minutes as number | null,
             };
             return NextResponse.json({ item }, { status: 200 });
@@ -488,15 +522,15 @@ export async function POST(req: NextRequest) {
     const item = {
       id: session.id as string,
       class_id: session.class_id as string,
-      class_label:
-        (session.classes && (session.classes as any).label) || cls.label || "",
+      class_label: (session.classes && (session.classes as any).label) || cls.label || "",
       subject_id:
-        (session.institution_subjects &&
-          (session.institution_subjects as any).subject?.id) || raw_subject_id,
+        (session.institution_subjects && (session.institution_subjects as any).subject?.id) ||
+        raw_subject_id,
       subject_name:
-        (session.institution_subjects &&
-          (session.institution_subjects as any).subject?.name) || null,
-      started_at: session.started_at as string,
+        (session.institution_subjects && (session.institution_subjects as any).subject?.name) ||
+        null,
+      started_at: session.started_at as string, // créneau
+      actual_call_at: (session as any).actual_call_at as string | null, // ✅ heure effective
       expected_minutes: session.expected_minutes as number | null,
     };
 
