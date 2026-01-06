@@ -1,7 +1,7 @@
 // src/components/auth/LoginCard.tsx
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/app/providers";
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -50,6 +50,7 @@ function Field({
     </div>
   );
 }
+
 function InputWrap({
   children,
   IconLeft,
@@ -69,6 +70,67 @@ function InputWrap({
   );
 }
 
+function sleep(ms: number) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+/**
+ * Sync SSR cookies via /api/auth/sync :
+ * - timeout court
+ * - retry 2x
+ * - exige res.ok (sinon on ne redirige pas "dans le vide")
+ */
+async function syncSsrSession(
+  accessToken: string,
+  refreshToken: string,
+  {
+    retries = 2,
+    timeoutMs = 4500,
+  }: { retries?: number; timeoutMs?: number } = {},
+) {
+  if (!accessToken || !refreshToken) return;
+
+  let lastErr: any = null;
+
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), timeoutMs);
+
+    try {
+      const res = await fetch("/api/auth/sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        cache: "no-store",
+        signal: ctrl.signal,
+        body: JSON.stringify({
+          access_token: accessToken,
+          refresh_token: refreshToken,
+        }),
+      });
+
+      if (!res.ok) {
+        const txt = await res.text().catch(() => "");
+        throw new Error(
+          txt || `sync_failed_http_${res.status || "unknown"}`,
+        );
+      }
+
+      clearTimeout(t);
+      return; // ✅ ok
+    } catch (e: any) {
+      clearTimeout(t);
+      lastErr = e;
+
+      // petite pause avant retry
+      if (attempt < retries) await sleep(250);
+    }
+  }
+
+  // Si on arrive ici : sync a échoué malgré retries
+  throw lastErr;
+}
+
 export default function LoginCard({
   redirectTo = "/redirect",
   compactHeader,
@@ -80,11 +142,8 @@ export default function LoginCard({
   const emailOnly = forcedMode === "emailOnly";
   const phoneOnly = forcedMode === "phoneOnly";
 
-  // Client Supabase (navigateur uniquement)
-  const supRef = useRef<SupabaseClient | null>(null);
-  useEffect(() => {
-    supRef.current = getSupabaseBrowserClient();
-  }, []);
+  // Supabase client (singleton par montage)
+  const supabase = useMemo(() => getSupabaseBrowserClient(), []);
 
   const [mode, setMode] = useState<"email" | "phone">(
     phoneOnly ? "phone" : "email",
@@ -104,14 +163,21 @@ export default function LoginCard({
   const emailRef = useRef<HTMLInputElement>(null);
   const phoneRef = useRef<HTMLInputElement>(null);
 
+  // Précharge la route de redirection (petit gain)
+  useEffect(() => {
+    router.prefetch(redirectTo);
+  }, [router, redirectTo]);
+
   // Redirection si déjà connecté
   const redirectedRef = useRef(false);
   useEffect(() => {
-    if (session && !redirectedRef.current) {
+    if (!loading && session && !redirectedRef.current && !submitting) {
       redirectedRef.current = true;
       router.replace(redirectTo);
+      // Force revalidation côté App Router (évite "session ancienne" affichée)
+      setTimeout(() => router.refresh(), 0);
     }
-  }, [session, router, redirectTo]);
+  }, [session, loading, submitting, router, redirectTo]);
 
   // Focus initial selon l’onglet
   useEffect(() => {
@@ -124,20 +190,25 @@ export default function LoginCard({
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (submitting) return; // garde anti double-clic très rapide
+    if (submitting) return;
 
     setErr(null);
     setSubmitting(true);
 
-    const supabase = supRef.current ?? getSupabaseBrowserClient();
-
     try {
+      let accessToken = "";
+      let refreshToken = "";
+
       if (mode === "email") {
-        const { error } = await supabase.auth.signInWithPassword({
+        const resp = await supabase.auth.signInWithPassword({
           email,
           password: pwdEmail,
         });
-        if (error) throw new Error(error.message || "Identifiants invalides.");
+        if (resp.error) {
+          throw new Error(resp.error.message || "Identifiants invalides.");
+        }
+        accessToken = resp.data.session?.access_token || "";
+        refreshToken = resp.data.session?.refresh_token || "";
       } else {
         // Candidats : normalisation standard + variante "conserver le 0"
         const n1 = normalizePhone(phone) || "";
@@ -148,56 +219,48 @@ export default function LoginCard({
         const tries = [n1, n2].filter(
           (v, i, a) => !!v && a.indexOf(v) === i,
         );
-        if (tries.length === 0)
-          throw new Error("Numéro de téléphone invalide.");
+        if (tries.length === 0) throw new Error("Numéro de téléphone invalide.");
 
         let lastErr: any = null;
         for (const candidate of tries) {
-          const { error } = await supabase.auth.signInWithPassword({
+          const resp = await supabase.auth.signInWithPassword({
             phone: candidate,
             password: pwdPhone,
           });
-          if (!error) {
+          if (!resp.error) {
+            accessToken = resp.data.session?.access_token || "";
+            refreshToken = resp.data.session?.refresh_token || "";
             lastErr = null;
             break;
           }
-          lastErr = error;
+          lastErr = resp.error;
         }
-        if (lastErr) throw new Error(lastErr.message || "Identifiants invalides.");
+        if (lastErr) {
+          throw new Error(lastErr.message || "Identifiants invalides.");
+        }
       }
+
+      // ⭐ Sync cookies SSR (robuste : retry + timeout + res.ok)
+      // Si ça échoue, on NE redirige pas vers un état incertain.
+      try {
+        await syncSsrSession(accessToken, refreshToken);
+      } catch (syncErr: any) {
+        console.warn("[LoginCard] /api/auth/sync failed:", syncErr?.message || syncErr);
+        throw new Error(
+          "Connexion réussie, mais la synchronisation serveur a échoué. Réessayez (ou vérifiez votre connexion).",
+        );
+      }
+
+      setSubmitting(false);
+      router.replace(redirectTo);
+      // Important avec App Router : forcer revalidation après navigation
+      setTimeout(() => router.refresh(), 0);
     } catch (authErr: any) {
       setSubmitting(false);
       setErr(authErr?.message || "Échec de la connexion.");
-      return;
     }
-
-    // ⭐ Sync cookies SSR (ET on attend vraiment la fin de /api/auth/sync)
-    try {
-      const { data, error } = await supabase.auth.getSession();
-      if (error) {
-        console.warn("[LoginCard] getSession error:", error.message || error);
-      }
-      const at = data.session?.access_token;
-      const rt = data.session?.refresh_token;
-      if (typeof at === "string" && typeof rt === "string") {
-        await fetch("/api/auth/sync", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ access_token: at, refresh_token: rt }),
-        });
-      }
-    } catch (syncErr: any) {
-      console.warn(
-        "[LoginCard] /api/auth/sync failed:",
-        syncErr?.message || syncErr,
-      );
-    }
-
-    setSubmitting(false);
-    router.replace(redirectTo);
   }
 
-  // Pas de disabled sur inputs (perte de focus) → readOnly uniquement pendant submit
   const disableButtons = submitting;
   const readOnlyInputs = submitting;
 
@@ -226,7 +289,6 @@ export default function LoginCard({
       {/* Sélecteur Email / Téléphone selon le contexte */}
       <div className="px-6 pt-4">
         <div className="inline-flex rounded-full border border-slate-200 bg-slate-50 p-1 text-sm shadow-sm">
-          {/* Onglet Email (masqué si phoneOnly) */}
           {!phoneOnly && (
             <button
               type="button"
@@ -243,7 +305,6 @@ export default function LoginCard({
             </button>
           )}
 
-          {/* Onglet Téléphone (masqué si emailOnly) */}
           {!emailOnly && (
             <button
               type="button"
@@ -493,9 +554,7 @@ export default function LoginCard({
         <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 px-4 backdrop-blur-sm">
           <div className="w-full max-w-md overflow-hidden rounded-2xl bg-white shadow-xl">
             <div className="bg-slate-50 px-5 py-3">
-              <div className="flex items-center gap-2 text-slate-8
-
-00">
+              <div className="flex items-center gap-2 text-slate-800">
                 <Lock className="h-4 w-4" />
                 <div className="text-sm font-semibold">
                   Mot de passe oublié ?

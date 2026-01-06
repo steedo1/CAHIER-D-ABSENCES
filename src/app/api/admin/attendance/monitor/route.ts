@@ -85,24 +85,46 @@ function parseWeekday(raw: any): number | null {
 }
 
 /**
- * Retourne plusieurs représentations possibles d’un même jour :
- * - JS getDay(): 0..6 (dim..sam)
- * - ISO: 1..7 (lun..dim)
- * - Lundi=0: 0..6 (lun..dim)
+ * Détecte l'encodage weekday réellement utilisé par l'établissement, à partir de institution_periods.weekday.
+ * Objectif: éviter les variantes ambiguës (vendredi=5 vs samedi=5 selon convention).
  */
-function weekdayVariants(jsDay0to6: number): number[] {
-  const s = new Set<number>();
-  if (Number.isFinite(jsDay0to6)) s.add(jsDay0to6);
+type WeekdayMode = "iso" | "js" | "mon0";
 
-  // ISO (lun=1 ... dim=7)
-  const iso = jsDay0to6 === 0 ? 7 : jsDay0to6;
-  s.add(iso);
+/**
+ * Heuristique sûre:
+ * - si on voit 7 -> ISO (lun=1..dim=7)
+ * - sinon si max==5 -> mon0 (lun=0..sam=5) [cas le plus courant quand on a 6 jours école]
+ * - sinon si on voit 0 et max==6 -> JS (dim=0..sam=6)
+ * - sinon -> ISO (lun=1..sam=6)
+ */
+function detectWeekdayMode(periods: any[]): WeekdayMode {
+  const vals = Array.from(
+    new Set(
+      (periods || [])
+        .map((p) => parseWeekday(p?.weekday))
+        .filter((v): v is number => v !== null && v !== undefined),
+    ),
+  );
 
-  // Lundi=0 (lun=0 ... dim=6)
-  const mon0 = (jsDay0to6 + 6) % 7;
-  s.add(mon0);
+  if (vals.includes(7)) return "iso";
 
-  return Array.from(s);
+  const max = vals.length ? Math.max(...vals) : 6;
+
+  // Mon..Sat encodé 0..5 (pas de dimanche)
+  if (max === 5) return "mon0";
+
+  // Dim..Sat 0..6
+  if (vals.includes(0) && max === 6) return "js";
+
+  // Par défaut: lun=1..sam=6 (ISO-like sans dimanche)
+  return "iso";
+}
+
+function jsDayToDbWeekday(jsDay0to6: number, mode: WeekdayMode): number {
+  if (mode === "js") return jsDay0to6; // 0=dim..6=sam
+  if (mode === "iso") return jsDay0to6 === 0 ? 7 : jsDay0to6; // 1=lun..7=dim
+  // mon0: 0=lun..6=dim
+  return (jsDay0to6 + 6) % 7;
 }
 
 /* Seuil en minutes au-delà duquel on considère l’appel « en retard » (pur affichage) */
@@ -114,10 +136,7 @@ const LATE_THRESHOLD_MIN =
 /* Fenêtre (en minutes) avant de considérer un appel comme « manquant ». */
 const MISSING_CONTROL_WINDOW_MIN =
   Number.isFinite(Number(process.env.ATTENDANCE_MISSING_CONTROL_WINDOW_MIN))
-    ? Math.max(
-        1,
-        Math.floor(Number(process.env.ATTENDANCE_MISSING_CONTROL_WINDOW_MIN)),
-      )
+    ? Math.max(1, Math.floor(Number(process.env.ATTENDANCE_MISSING_CONTROL_WINDOW_MIN)))
     : LATE_THRESHOLD_MIN;
 
 export async function GET(req: NextRequest) {
@@ -136,9 +155,7 @@ export async function GET(req: NextRequest) {
   } = await supa.auth.getUser();
 
   if (userErr) {
-    console.warn("[attendance/monitor] auth_getUser_err", {
-      error: userErr.message,
-    });
+    console.warn("[attendance/monitor] auth_getUser_err", { error: userErr.message });
   }
   if (!user) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
@@ -265,9 +282,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: tErr.message }, { status: 400 });
   }
   if (tsErr) {
-    console.error("[attendance/monitor] teacher_subjects_err", {
-      error: tsErr.message,
-    });
+    console.error("[attendance/monitor] teacher_subjects_err", { error: tsErr.message });
     // On ne bloque pas
   }
 
@@ -279,9 +294,7 @@ export async function GET(req: NextRequest) {
 
   const { data: sessions, error: sessErr } = await srv
     .from("teacher_sessions")
-    .select(
-      "id,institution_id,class_id,subject_id,teacher_id,started_at,actual_call_at,origin",
-    )
+    .select("id,institution_id,class_id,subject_id,teacher_id,started_at,actual_call_at,origin")
     .eq("institution_id", institution_id)
     .gte("started_at", dateMinIso.toISOString())
     .lt("started_at", dateMaxIso.toISOString());
@@ -320,6 +333,18 @@ export async function GET(req: NextRequest) {
       institution_id: String(p.institution_id),
     });
   });
+
+  // ✅ Détecte UNE convention weekday (source de vérité: institution_periods)
+  const weekdayMode = detectWeekdayMode(periods || []);
+
+  // ✅ Map weekday(db) -> dates (UNE seule convention, pas de variantes ambiguës)
+  const datesByWeekday = new Map<number, string[]>();
+  for (const d of dates) {
+    const wdDb = jsDayToDbWeekday(d.weekdayJs, weekdayMode);
+    const arr = datesByWeekday.get(wdDb) || [];
+    arr.push(d.ymd);
+    datesByWeekday.set(wdDb, arr);
+  }
 
   const classLabelById = new Map<string, string>();
   (classes || []).forEach((c: any) => {
@@ -409,8 +434,7 @@ export async function GET(req: NextRequest) {
 
   const sessionsIndex = new Map<string, SessIndexItem[]>();
   (sessions || []).forEach((s: any) => {
-    const callIso =
-      (s.actual_call_at as string | null) || (s.started_at as string | null);
+    const callIso = (s.actual_call_at as string | null) || (s.started_at as string | null);
     if (!callIso) return;
     const ymd = isoToYMD(callIso);
     const hm = isoToHM(callIso);
@@ -426,39 +450,22 @@ export async function GET(req: NextRequest) {
     arr.push({
       callMin,
       opened_from:
-        s.origin === "class_device"
-          ? "class_device"
-          : s.origin === "teacher"
-            ? "teacher"
-            : null,
+        s.origin === "class_device" ? "class_device" : s.origin === "teacher" ? "teacher" : null,
     });
     sessionsIndex.set(key, arr);
   });
-
-  /**
-   * Map weekday -> dates (tolérant aux 3 encodages)
-   */
-  const datesByWeekday = new Map<number, string[]>();
-  for (const d of dates) {
-    for (const wd of weekdayVariants(d.weekdayJs)) {
-      const arr = datesByWeekday.get(wd) || [];
-      arr.push(d.ymd);
-      datesByWeekday.set(wd, arr);
-    }
-  }
 
   // Calcul final des lignes
   const rows: MonitorRow[] = [];
 
   (tts || []).forEach((tt: any) => {
-    const weekday = parseWeekday(tt.weekday);
-    if (weekday === null) return;
-
-    const datesForDay = datesByWeekday.get(weekday);
-    if (!datesForDay || !datesForDay.length) return;
-
     const period = periodById.get(String(tt.period_id));
     if (!period) return;
+
+    // ✅ Source de vérité pour le jour : institution_periods.weekday
+    const weekday = period.weekday;
+    const datesForDay = datesByWeekday.get(weekday);
+    if (!datesForDay || !datesForDay.length) return;
 
     const startMin = period.startMin;
     const endMin = period.endMin;
@@ -482,7 +489,6 @@ export async function GET(req: NextRequest) {
         }
 
         if (!ok) {
-          // incohérent -> on ignore, mais sans casser si la config est incomplète
           return;
         }
       }
@@ -579,15 +585,16 @@ export async function GET(req: NextRequest) {
   });
 
   if (debug) {
-    const distinct = (arr: any[], key: string) =>
+    const distinctNums = (arr: any[], key: string) =>
       Array.from(
         new Set(
           (arr || [])
             .map((x) => x?.[key])
             .filter((v) => v !== null && v !== undefined)
-            .map((v) => String(v)),
+            .map((v) => Number(v))
+            .filter((n) => Number.isFinite(n)),
         ),
-      );
+      ).sort((a, b) => a - b);
 
     return NextResponse.json({
       rows,
@@ -603,13 +610,12 @@ export async function GET(req: NextRequest) {
           teacherSubjects: (teacherSubjects || []).length,
           rows: rows.length,
         },
+        weekdayMode,
         weekdays: {
-          datesKeys: Array.from(datesByWeekday.keys()).sort((a, b) => a - b),
-          ttWeekdays: distinct(tts || [], "weekday"),
-          periodWeekdays: distinct(periods || [], "weekday"),
+          periodWeekdaysDistinct: distinctNums(periods || [], "weekday"),
+          ttWeekdaysDistinct: distinctNums(tts || [], "weekday"),
+          datesByWeekdayKeys: Array.from(datesByWeekday.keys()).sort((a, b) => a - b),
         },
-        teachersWithAssignments: teacherHasSubjects.size,
-        allowedByTeacher: allowedByTeacher.size,
       },
     });
   }
