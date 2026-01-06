@@ -121,10 +121,10 @@ export async function GET(req: NextRequest) {
 
     // teachers liés à la matière (teacher_subjects)
     const { data: tsRows, error: tsErr } = await srv
-      .from("teacher_subjects")
-      .select("teacher_id,subject_id")
-      .eq("institution_id", institution_id)
-      .eq("subject_id", subject_id);
+  .from("teacher_subjects")
+  .select("teacher_id:profile_id,subject_id") // ✅ alias -> le code continue d'utiliser r.teacher_id
+  .eq("institution_id", institution_id)
+  .eq("subject_id", subject_id);
 
     if (tsErr) {
       return NextResponse.json({ error: "teacher_subjects_failed", message: tsErr.message }, { status: 400 });

@@ -164,7 +164,9 @@ function unwrapPayload(payload: any): { root: any; settings: any } {
     root = (root as any).data[0];
 
   const settings =
-    (isPlainObject(root) && isPlainObject((root as any).settings_json) && Object.keys((root as any).settings_json).length
+    (isPlainObject(root) &&
+    isPlainObject((root as any).settings_json) &&
+    Object.keys((root as any).settings_json).length
       ? (root as any).settings_json
       : null) ||
     (isPlainObject(payload) &&
@@ -964,12 +966,20 @@ export default function ClassDevicePage() {
 
       const clientSessionId = `${classId}_${subjectId || "none"}_${started.toISOString()}`;
 
+      // ✅ OFFLINE-SAFE: heure réelle du clic "Démarrer l’appel"
+      // - si offline, elle partira dans l’outbox et sera envoyée au sync
+      // - si online, c’est pareil, ça ne casse rien
+      const actualCallAtISO = new Date().toISOString();
+
       const body = {
         class_id: classId,
         subject_id: subjectId || null,
         started_at: started.toISOString(),
         expected_minutes: duration,
         client_session_id: clientSessionId,
+
+        // ✅ NOUVEAU: pour que l’admin voie l’heure réelle même si l’appel a été fait offline
+        actual_call_at: actualCallAtISO,
       };
 
       const r = await offlineMutateJson(

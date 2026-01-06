@@ -11,6 +11,14 @@ type Body = {
   subject_id?: string | null; // requis pour attribuer le prof
   started_at?: string; // ISO optionnel (utilisé pour déterminer le créneau)
   expected_minutes?: number | null; // optionnel: null => Auto (établissement)
+
+  /**
+   * ✅ IMPORTANT (offline-safe) :
+   * heure réelle du clic "appel" capturée côté client au moment de l’action.
+   * - online: optionnel (si absent => heure serveur comme avant)
+   * - offline: DOIT être fourni pour que la BDD garde l’heure réelle au lieu de l’heure de synchro
+   */
+  actual_call_at?: string; // ISO
 };
 
 /* ───────── utils ───────── */
@@ -140,6 +148,15 @@ function ymdInTZ(d: Date, tz: string) {
   }).format(d); // "YYYY-MM-DD"
 }
 
+/* ───────── ISO parsing safe ───────── */
+function parseIsoDate(v: any): Date | null {
+  const s = String(v || "").trim();
+  if (!s) return null;
+  const d = new Date(s);
+  if (isNaN(d.getTime())) return null;
+  return d;
+}
+
 export async function POST(req: NextRequest) {
   try {
     const supa = await getSupabaseServerClient();
@@ -158,15 +175,36 @@ export async function POST(req: NextRequest) {
       b?.subject_id && String(b.subject_id).trim() ? String(b.subject_id).trim() : null;
 
     if (!class_id) return NextResponse.json({ error: "class_id_required" }, { status: 400 });
-    if (!subject_id)
-      return NextResponse.json({ error: "subject_id_required" }, { status: 400 });
+    if (!subject_id) return NextResponse.json({ error: "subject_id_required" }, { status: 400 });
 
     // Timestamp fourni (sert à déterminer le créneau) — fallback: maintenant
     const startedAtRaw = b?.started_at ? new Date(b.started_at) : new Date();
     const startedAt = isNaN(startedAtRaw.getTime()) ? new Date() : startedAtRaw;
 
-    // Heure réelle du clic (serveur)
-    const clickNow = new Date();
+    // Heure serveur (réception)
+    const serverNow = new Date();
+
+    /**
+     * ✅ Heure "effective" d'appel à enregistrer :
+     * - si le client fournit actual_call_at (capturé au clic), on l’utilise (offline-safe)
+     * - sinon, on garde le comportement historique : heure serveur
+     *
+     * Protection minimale : on refuse une heure client trop dans le futur (> +5 min).
+     */
+    const candidateClientCall =
+      parseIsoDate((b as any)?.actual_call_at) ||
+      parseIsoDate((b as any)?.client_call_at) ||
+      parseIsoDate((b as any)?.click_at) ||
+      parseIsoDate((b as any)?.clicked_at) ||
+      null;
+
+    let actualCallAt: Date = serverNow;
+    if (candidateClientCall) {
+      const maxFutureMs = 5 * 60_000; // +5 min
+      if (candidateClientCall.getTime() <= serverNow.getTime() + maxFutureMs) {
+        actualCallAt = candidateClientCall;
+      }
+    }
 
     // Téléphone (auth)
     let phone = String((user as any).phone || "").trim();
@@ -205,8 +243,7 @@ export async function POST(req: NextRequest) {
         }
       });
     }
-    if (!match)
-      return NextResponse.json({ error: "forbidden_not_class_device" }, { status: 403 });
+    if (!match) return NextResponse.json({ error: "forbidden_not_class_device" }, { status: 403 });
 
     // Résoudre le VRAI teacher_id via class_teachers
     const { data: aff, error: affErr } = await srv
@@ -298,7 +335,7 @@ export async function POST(req: NextRequest) {
       slotStartedAt.setUTCSeconds(0, 0);
     }
     const slotStartedISO = slotStartedAt.toISOString();
-    const clickISO = clickNow.toISOString();
+    const callISO = actualCallAt.toISOString();
 
     // Libellé matière (optionnel pour l’UI)
     let subject_name: string | null = null;
@@ -315,8 +352,6 @@ export async function POST(req: NextRequest) {
      * ✅ Gestion anti-doublon : on tente un INSERT simple.
      *    - Si un index unique teacher_sessions_one_per_slot(institution_id, teacher_id, started_at)
      *      existe, il garantira "1 seule séance par créneau".
-     *    - Sinon, on acceptera plusieurs lignes mais on utilisera toujours la même séance
-     *      canonique lors de la récupération ci-dessous.
      */
     let session:
       | {
@@ -332,18 +367,18 @@ export async function POST(req: NextRequest) {
     const upPayload = {
       institution_id: cls.institution_id,
       teacher_id,
-      // on garde class/subject pour l’UI (mais la contrainte de vérité = créneau prof)
+      // on garde class/subject pour l’UI (mais la vérité = créneau prof)
       class_id,
       subject_id,
-      started_at: slotStartedISO,
-      actual_call_at: clickISO,
+      started_at: slotStartedISO, // début de créneau (canonique)
+      actual_call_at: callISO,    // ✅ heure effective (client si fournie, sinon serveur)
       expected_minutes,
       status: "open",
       created_by: user.id, // compte-classe
+      origin: "class_device", // utile pour monitoring (si ta colonne existe déjà)
     };
 
-    // 1) Tenter un INSERT simple ; si l'unicité déclenche un doublon,
-    //    on rattrape plus bas en lisant la séance existante.
+    // 1) Tenter un INSERT simple ; si l'unicité déclenche un doublon, on rattrape plus bas.
     const { data: inserted, error: insertErr } = await srv
       .from("teacher_sessions")
       .insert(upPayload as any)
@@ -358,12 +393,10 @@ export async function POST(req: NextRequest) {
     ) {
       // doublon sur l'index unique -> on récupérera la séance existante juste après
     } else if (insertErr) {
-      // autre type d'erreur : on remonte immédiatement
       return NextResponse.json({ error: insertErr.message }, { status: 400 });
     }
 
     // 2) Si doublon ou si aucune session insérée, on récupère la séance existante
-    //    (et on choisit la meilleure si doublons historiques)
     if (!session) {
       const { data: rows, error: selErr } = await srv
         .from("teacher_sessions")
@@ -371,7 +404,7 @@ export async function POST(req: NextRequest) {
         .eq("institution_id", cls.institution_id)
         .eq("teacher_id", teacher_id)
         .eq("started_at", slotStartedISO)
-        .order("actual_call_at", { ascending: true, nullsFirst: false })
+        .order("actual_call_at", { ascending: true, nullsFirst: false }) // la plus "ponctuelle"
         .order("created_at", { ascending: true })
         .limit(1);
 
@@ -379,12 +412,34 @@ export async function POST(req: NextRequest) {
       session = (rows as any[])?.[0] ?? null;
     }
 
-    // 3) Sécurité : si la séance existante n’avait pas actual_call_at / expected_minutes, on complète
-    if (session && (!session.actual_call_at || session.expected_minutes == null)) {
+    /**
+     * 3) Sécurité + correction :
+     * - si actual_call_at est NULL -> on le fixe (comme avant)
+     * - si actual_call_at existe mais est PLUS TARD que l’heure effective reçue (offline sync),
+     *   on corrige vers la PLUS PETITE heure, mais seulement si ça reste raisonnable autour du créneau.
+     */
+    if (session) {
       const patch: any = {};
-      if (!session.actual_call_at) patch.actual_call_at = clickISO;
-      if (session.expected_minutes == null && expected_minutes != null)
-        patch.expected_minutes = expected_minutes;
+
+      const existingCall = parseIsoDate(session.actual_call_at);
+      const candidate = actualCallAt;
+
+      // fenêtre raisonnable autour du créneau (évite des valeurs absurdes)
+      const windowMin = slotStartedAt.getTime() - 8 * 60_000 * 60; // -8h
+      const windowMax = slotStartedAt.getTime() + 12 * 60_000 * 60; // +12h
+      const candidateOk = candidate.getTime() >= windowMin && candidate.getTime() <= windowMax;
+
+      if (!existingCall) {
+        patch.actual_call_at = callISO;
+      } else if (candidateOk) {
+        // si le serveur avait mis l'heure de synchro (plus tard), on ramène au vrai clic
+        const diffMs = existingCall.getTime() - candidate.getTime();
+        if (diffMs > 60_000) {
+          patch.actual_call_at = callISO;
+        }
+      }
+
+      if (session.expected_minutes == null && expected_minutes != null) patch.expected_minutes = expected_minutes;
       if (!session.subject_id && subject_id) patch.subject_id = subject_id;
       if (!session.class_id && class_id) patch.class_id = class_id;
 
@@ -406,7 +461,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       item: {
         id: session.id,
-        class_id, // on renvoie la classe appelante (UI compte-classe)
+        class_id, // classe appelante (UI compte-classe)
         class_label: cls.label as string,
         subject_id,
         subject_name,
