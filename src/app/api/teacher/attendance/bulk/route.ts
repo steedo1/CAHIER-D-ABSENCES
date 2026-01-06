@@ -44,6 +44,15 @@ function buildPhoneVariants(raw: string) {
   };
 }
 
+/** ISO parsing safe */
+function parseIsoDate(v: any): Date | null {
+  const s = String(v || "").trim();
+  if (!s) return null;
+  const d = new Date(s);
+  if (isNaN(d.getTime())) return null;
+  return d;
+}
+
 /** HH:MM:SS -> minutes depuis minuit */
 function hmsToMin(hms: string | null | undefined) {
   const s = String(hms || "00:00:00").slice(0, 8);
@@ -95,7 +104,7 @@ export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => ({} as any));
   const session_id = String(body?.session_id || "");
 
-  // 🔹 on récupère le payload brut
+  // 🔹 payload marks brut
   const rawMarks: Mark[] = Array.isArray(body?.marks) ? body.marks : [];
   if (!session_id)
     return NextResponse.json({ error: "missing_session" }, { status: 400 });
@@ -117,7 +126,6 @@ export async function POST(req: NextRequest) {
   if (sErr) return NextResponse.json({ error: sErr.message }, { status: 400 });
   if (!sess) return NextResponse.json({ error: "session_not_found" }, { status: 404 });
 
-  // ✅ Figer en non-null pour TS (évite "sess peut être null")
   const session = sess as {
     id: string;
     class_id: string;
@@ -161,10 +169,7 @@ export async function POST(req: NextRequest) {
     .maybeSingle();
   if (cErr) return NextResponse.json({ error: cErr.message }, { status: 400 });
   if (!clsRow?.institution_id)
-    return NextResponse.json(
-      { error: "class_institution_missing" },
-      { status: 400 }
-    );
+    return NextResponse.json({ error: "class_institution_missing" }, { status: 400 });
 
   const { data: inst, error: iErr } = await srv
     .from("institutions")
@@ -181,12 +186,58 @@ export async function POST(req: NextRequest) {
       ? Math.floor(Number(inst?.default_session_minutes))
       : 60;
 
-  // Heure d'appel de référence pour ce POST
-  const callAtISO = session.actual_call_at || new Date().toISOString();
+  /**
+   * ✅ Heure effective à utiliser pour calculer weekday/retard :
+   * - priorité à session.actual_call_at si elle existe
+   * - sinon, si le client fournit actual_call_at (offline sync), on l'utilise
+   * - sinon fallback serveur "maintenant"
+   *
+   * Protection : on refuse une heure client trop dans le futur (> +5 min).
+   * Et on accepte la correction "plus tôt" seulement si c'est cohérent autour du créneau.
+   */
+  const serverNow = new Date();
+  const existingCall = parseIsoDate(session.actual_call_at);
+
+  const candidateClientCall =
+    parseIsoDate(body?.actual_call_at) ||
+    parseIsoDate(body?.client_call_at) ||
+    parseIsoDate(body?.click_at) ||
+    parseIsoDate(body?.clicked_at) ||
+    parseIsoDate(body?.call_at) ||
+    null;
+
+  const refSlot = parseIsoDate(session.started_at) || existingCall || serverNow;
+  const windowMin = refSlot.getTime() - 8 * 60_000 * 60; // -8h
+  const windowMax = refSlot.getTime() + 12 * 60_000 * 60; // +12h
+
+  let effectiveCallAt: Date = existingCall || serverNow;
+
+  if (candidateClientCall) {
+    const maxFutureMs = 5 * 60_000; // +5 min
+    const notTooFuture =
+      candidateClientCall.getTime() <= serverNow.getTime() + maxFutureMs;
+    const inWindow =
+      candidateClientCall.getTime() >= windowMin &&
+      candidateClientCall.getTime() <= windowMax;
+
+    if (notTooFuture && inWindow) {
+      if (!existingCall) {
+        effectiveCallAt = candidateClientCall;
+      } else {
+        const diffMs = existingCall.getTime() - candidateClientCall.getTime();
+        if (diffMs > 60_000) {
+          // existingCall semble être une heure de sync plus tard → on calcule avec l'heure réelle
+          effectiveCallAt = candidateClientCall;
+        }
+      }
+    }
+  }
+
+  const callAtISO = effectiveCallAt.toISOString();
   const { hm: callHM, weekday } = localHMAndWeekday(callAtISO, tz);
   const callMin = hmToMin(callHM);
 
-  // Périodes du jour
+  // Périodes du jour (selon le weekday calculé sur l'heure effective)
   const { data: periods, error: pErr } = await srv
     .from("institution_periods")
     .select("id, weekday, period_no, label, start_time, end_time, duration_min")
@@ -195,7 +246,6 @@ export async function POST(req: NextRequest) {
     .order("period_no", { ascending: true });
   if (pErr) return NextResponse.json({ error: pErr.message }, { status: 400 });
 
-  // Trouver la période courante (start <= now < end), sinon la dernière dont start <= now
   let currentPeriod:
     | {
         id: string;
@@ -216,10 +266,8 @@ export async function POST(req: NextRequest) {
           : Math.max(1, hmsToMin(p.end_time) - hmsToMin(p.start_time)),
     }));
 
-    // période contenant now
     currentPeriod =
       expanded.find((p: any) => callMin >= p.startMin && callMin < p.endMin) ??
-      // sinon la dernière commencée avant now
       [...expanded].reverse().find((p: any) => callMin >= p.startMin) ??
       null;
   }
@@ -241,11 +289,7 @@ export async function POST(req: NextRequest) {
     if (!currentPeriod) {
       // fallback : si pas de période trouvée, essayer vs started_at ; sinon 0
       if (session.started_at) {
-        // comparer l'heure locale de callAt vs l'heure locale de started_at
-        const { hm: startedHM } = localHMAndWeekday(
-          String(session.started_at),
-          tz
-        );
+        const { hm: startedHM } = localHMAndWeekday(String(session.started_at), tz);
         const diff = callMin - hmToMin(startedHM);
         return Math.max(0, Math.floor(diff));
       }
@@ -259,7 +303,6 @@ export async function POST(req: NextRequest) {
   const toDelete: string[] = [];
   const absentHours = Math.round((expectedMin / 60) * 100) / 100;
 
-  // 🔹 on travaille avec le tableau "marks" déjà dédupliqué
   for (const m of marks) {
     if (!m?.student_id) continue;
     const reason = (m?.reason ?? null) ? String(m.reason).trim() : null;
@@ -282,7 +325,6 @@ export async function POST(req: NextRequest) {
     }
 
     if (m.status === "late") {
-      // ⚠️ backend décide de la durée : si auto_lateness -> ignore l'input prof
       const minLate = autoLateness
         ? computeLateMinutes()
         : Math.max(0, Math.round(Number(m?.minutes_late || 0)));
@@ -325,13 +367,23 @@ export async function POST(req: NextRequest) {
     deleted = count || toDelete.length;
   }
 
-  // 4) Marquer l’heure réelle d’appel au premier marquage
-  if ((upserted > 0 || deleted > 0) && !session.actual_call_at) {
-    await srv
-      .from("teacher_sessions")
-      .update({ actual_call_at: callAtISO })
-      .eq("id", session_id)
-      .is("actual_call_at", null);
+  /**
+   * ✅ Fixer/corriger actual_call_at au moment du 1er marquage :
+   * - si NULL -> on met l'heure effective (client si fournie, sinon serveur)
+   * - si non-NULL mais plus tard que l'heure effective cohérente -> on corrige vers la plus petite
+   */
+  if (upserted > 0 || deleted > 0) {
+    const patch: any = {};
+    if (!existingCall) {
+      patch.actual_call_at = callAtISO;
+    } else if (effectiveCallAt.getTime() < existingCall.getTime() - 60_000) {
+      // on ne corrige que si c'est vraiment plus tôt (>1 min)
+      patch.actual_call_at = callAtISO;
+    }
+
+    if (Object.keys(patch).length) {
+      await srv.from("teacher_sessions").update(patch).eq("id", session_id);
+    }
   }
 
   // ✨ temps réel — déclenche le dispatch si des changements ont eu lieu (non bloquant)
