@@ -329,6 +329,31 @@ export default function ClassDevicePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // ✅ Helpers : distinguer offline / erreur serveur (sans casser offlineMutateJson)
+  function extractRespError(r: any): string | null {
+    const cands = [
+      r?.error,
+      r?.message,
+      r?.data?.error,
+      r?.data?.message,
+      r?.data?.details,
+    ];
+    for (const v of cands) {
+      const s = typeof v === "string" ? v.trim() : "";
+      if (s) return s;
+    }
+    return null;
+  }
+
+  function shouldTreatAsOffline(r: any): boolean {
+    // navigator.onLine peut mentir; si offlineMutateJson expose un flag, on l'accepte.
+    if (!isOnline) return true;
+    if (r?.offline === true) return true;
+    if (r?.queued === true) return true;
+    if (r?.status === 0) return true; // parfois utilisé pour "network error"
+    return false;
+  }
+
   /* ───────── Sanctions (inline) ───────── */
   const [penaltyOpen, setPenaltyOpen] = useState(false);
   const [penRubric, setPenRubric] = useState<Rubric>("discipline");
@@ -387,7 +412,10 @@ export default function ClassDevicePage() {
     if (!cid || roster.length > 0) return;
     try {
       setLoadingRoster(true);
-      const j = await offlineGetJson(`/api/class/roster?class_id=${cid}`, `classDevice:roster:${cid}`);
+      const j = await offlineGetJson(
+        `/api/class/roster?class_id=${cid}`,
+        `classDevice:roster:${cid}`
+      );
       setRoster((j?.items || []) as RosterItem[]);
     } finally {
       setLoadingRoster(false);
@@ -456,9 +484,12 @@ export default function ClassDevicePage() {
         setPenMsg(`Sanctions enregistrées (${items.length}).`);
         setPenRows({});
         setTimeout(() => setPenaltyOpen(false), 600);
-      } else {
+      } else if (shouldTreatAsOffline(r)) {
         setPenMsg("Hors connexion : sanctions mises en attente (sync auto).");
         await refreshPending();
+      } else {
+        const err = extractRespError(r);
+        setPenMsg(err ? `Erreur serveur : ${err}` : "Erreur serveur : échec enregistrement sanctions.");
       }
     } catch (e: any) {
       setPenMsg(e?.message || "Échec enregistrement sanctions");
@@ -595,10 +626,7 @@ export default function ClassDevicePage() {
       });
     } else {
       const settings =
-        (await getJson(
-          "/api/teacher/institution/settings",
-          "classDevice:inst:settings:teacher"
-        )) ||
+        (await getJson("/api/teacher/institution/settings", "classDevice:inst:settings:teacher")) ||
         (await getJson("/api/institution/settings", "classDevice:inst:settings:institution")) || {
           tz: "Africa/Abidjan",
           default_session_minutes: 60,
@@ -649,16 +677,10 @@ export default function ClassDevicePage() {
     }
 
     // 🔁 Complément : harmoniser le nom avec /api/admin/institution/settings (comme le dashboard)
-    const adminSettings = await getJson(
-      "/api/admin/institution/settings",
-      "classDevice:inst:adminSettings"
-    );
+    const adminSettings = await getJson("/api/admin/institution/settings", "classDevice:inst:adminSettings");
     if (adminSettings) {
       const nameFromAdmin = String(
-        adminSettings?.institution_name ||
-          adminSettings?.name ||
-          adminSettings?.institution_label ||
-          ""
+        adminSettings?.institution_name || adminSettings?.name || adminSettings?.institution_label || ""
       ).trim();
 
       const yearFromAdmin =
@@ -668,7 +690,8 @@ export default function ClassDevicePage() {
         null;
 
       if (nameFromAdmin) instConfig.institution_name = nameFromAdmin;
-      if (yearFromAdmin && !instConfig.academic_year_label) instConfig.academic_year_label = yearFromAdmin;
+      if (yearFromAdmin && !instConfig.academic_year_label)
+        instConfig.academic_year_label = yearFromAdmin;
     }
 
     Object.values(grouped).forEach((arr) =>
@@ -679,14 +702,10 @@ export default function ClassDevicePage() {
     setInst((prev) => ({
       ...prev,
       tz: instConfig.tz || prev.tz || "Africa/Abidjan",
-      default_session_minutes:
-        instConfig.default_session_minutes || prev.default_session_minutes || 60,
+      default_session_minutes: instConfig.default_session_minutes || prev.default_session_minutes || 60,
       auto_lateness:
-        typeof instConfig.auto_lateness === "boolean"
-          ? instConfig.auto_lateness
-          : prev.auto_lateness,
-      institution_name:
-        instConfig.institution_name || prev.institution_name || DEFAULT_INSTITUTION_NAME,
+        typeof instConfig.auto_lateness === "boolean" ? instConfig.auto_lateness : prev.auto_lateness,
+      institution_name: instConfig.institution_name || prev.institution_name || DEFAULT_INSTITUTION_NAME,
       academic_year_label: instConfig.academic_year_label || prev.academic_year_label || null,
     }));
     setPeriodsByDay(grouped);
@@ -777,8 +796,7 @@ export default function ClassDevicePage() {
         const body: any = document.body;
 
         // 1) DOM / globals
-        const fromDataName =
-          safeStr(body?.dataset?.institutionName) || safeStr(body?.dataset?.institution);
+        const fromDataName = safeStr(body?.dataset?.institutionName) || safeStr(body?.dataset?.institution);
         const fromGlobalName = safeStr((window as any).__MC_INSTITUTION_NAME__);
         const finalName = fromDataName || fromGlobalName;
 
@@ -807,18 +825,9 @@ export default function ClassDevicePage() {
 
         // 2) fallback API (settings)
         const endpoints = [
-          {
-            url: "/api/teacher/institution/settings",
-            key: "classDevice:identity:settings:teacher",
-          },
-          {
-            url: "/api/institution/settings",
-            key: "classDevice:identity:settings:institution",
-          },
-          {
-            url: "/api/admin/institution/settings",
-            key: "classDevice:identity:settings:admin",
-          },
+          { url: "/api/teacher/institution/settings", key: "classDevice:identity:settings:teacher" },
+          { url: "/api/institution/settings", key: "classDevice:identity:settings:institution" },
+          { url: "/api/admin/institution/settings", key: "classDevice:identity:settings:admin" },
         ] as const;
 
         for (const ep of endpoints) {
@@ -967,8 +976,6 @@ export default function ClassDevicePage() {
       const clientSessionId = `${classId}_${subjectId || "none"}_${started.toISOString()}`;
 
       // ✅ OFFLINE-SAFE: heure réelle du clic "Démarrer l’appel"
-      // - si offline, elle partira dans l’outbox et sera envoyée au sync
-      // - si online, c’est pareil, ça ne casse rien
       const actualCallAtISO = new Date().toISOString();
 
       const body = {
@@ -977,8 +984,6 @@ export default function ClassDevicePage() {
         started_at: started.toISOString(),
         expected_minutes: duration,
         client_session_id: clientSessionId,
-
-        // ✅ NOUVEAU: pour que l’admin voie l’heure réelle même si l’appel a été fait offline
         actual_call_at: actualCallAtISO,
       };
 
@@ -992,7 +997,8 @@ export default function ClassDevicePage() {
         setOpen(r.data.item as OpenSession);
         await cacheSet("classDevice:local-open", null);
         setMsg("Séance démarrée.");
-      } else {
+      } else if (shouldTreatAsOffline(r)) {
+        // ✅ uniquement si offline/queued : on crée une séance locale
         const cls = classes.find((c) => c.id === classId);
         const subj = subjects.find((s) => s.id === subjectId);
 
@@ -1010,6 +1016,10 @@ export default function ClassDevicePage() {
         await cacheSet("classDevice:local-open", localOpen);
         setMsg("Hors connexion : séance enregistrée (sync dès que le réseau revient).");
         await refreshPending();
+      } else {
+        // ✅ online mais erreur serveur : PAS de séance locale fantôme
+        const err = extractRespError(r);
+        setMsg(err ? `Erreur serveur : ${err}` : "Erreur serveur : impossible de démarrer la séance.");
       }
     } catch (e: any) {
       setMsg(e?.message || "Échec démarrage séance");
@@ -1039,9 +1049,12 @@ export default function ClassDevicePage() {
       if (r.ok) {
         const j = r.data;
         setMsg(`Enregistré : ${j.upserted} abs./ret. — ${j.deleted} suppressions (présent).`);
-      } else {
+      } else if (shouldTreatAsOffline(r)) {
         setMsg("Hors connexion : enregistrement mis en attente (sync auto).");
         await refreshPending();
+      } else {
+        const err = extractRespError(r);
+        setMsg(err ? `Erreur serveur : ${err}` : "Erreur serveur : échec de l’enregistrement.");
       }
     } catch (e: any) {
       setMsg(e?.message || "Échec enregistrement");
@@ -1055,24 +1068,40 @@ export default function ClassDevicePage() {
     setBusy(true);
     setMsg(null);
 
-    try {
-      const r = await offlineMutateJson(
-        "/api/class/sessions/end",
-        { method: "PATCH" },
-        { mergeKey: "endSession:last" }
-      );
-
-      // UI: on termine toujours localement (comme tu veux pour le mode téléphone)
+    const finishLocal = async () => {
       setOpen(null);
       setRoster([]);
       setRows({});
       await cacheSet("classDevice:local-open", null);
       computeDefaultsForNow();
+    };
 
-      if (r.ok) setMsg("Séance terminée.");
-      else {
+    try {
+      const openId = String(open.id || "");
+      const isClientLocal = openId.startsWith("client:");
+
+      // ✅ PATCH: envoyer session_id quand on a une vraie session serveur
+      const reqInit: any = { method: "PATCH" as const };
+      if (!isClientLocal) reqInit.body = { session_id: open.id };
+
+      const r = await offlineMutateJson(
+        "/api/class/sessions/end",
+        reqInit,
+        { mergeKey: isClientLocal ? "endSession:last" : `end:${open.id}` }
+      );
+
+      if (r.ok) {
+        await finishLocal();
+        setMsg("Séance terminée.");
+      } else if (shouldTreatAsOffline(r)) {
+        // offline/queued : on accepte de terminer localement, et ça partira au sync
+        await finishLocal();
         setMsg("Hors connexion : fin de séance mise en attente (sync auto).");
         await refreshPending();
+      } else {
+        // ✅ online mais erreur serveur : NE PAS terminer localement
+        const err = extractRespError(r);
+        setMsg(err ? `Erreur serveur : ${err}` : "Erreur serveur : impossible de terminer la séance.");
       }
     } catch (e: any) {
       setMsg(e?.message || "Échec fin de séance");
@@ -1319,10 +1348,7 @@ export default function ClassDevicePage() {
               </Select>
             </div>
             <div className="md:col-span-2 flex items-end justify-end">
-              <Button
-                onClick={submitClassPenalties}
-                disabled={penBusy || !hasPenChanges || rubricDisabled}
-              >
+              <Button onClick={submitClassPenalties} disabled={penBusy || !hasPenChanges || rubricDisabled}>
                 {penBusy ? "Enregistrement…" : "Enregistrer les sanctions"}
               </Button>
             </div>

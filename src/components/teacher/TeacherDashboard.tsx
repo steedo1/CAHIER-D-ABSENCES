@@ -301,7 +301,10 @@ export default function TeacherDashboard() {
 
       // refresh open session depuis le serveur (si dispo)
       try {
-        const os = (await offlineGetJson("/api/teacher/sessions/open", "teacher:open:afterSync")) as any;
+        const os = (await offlineGetJson(
+          "/api/teacher/sessions/open",
+          "teacher:open:afterSync"
+        )) as any;
         setOpen((os?.item as OpenSession) || null);
         await cacheSet("teacher:local-open", null);
       } catch {
@@ -344,6 +347,25 @@ export default function TeacherDashboard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // ✅ Helpers : distinguer "offline/queue" vs "erreur serveur"
+  function extractRespError(r: any): string | null {
+    const cands = [r?.error, r?.message, r?.data?.error, r?.data?.message, r?.data?.details];
+    for (const v of cands) {
+      const s = typeof v === "string" ? v.trim() : "";
+      if (s) return s;
+    }
+    return null;
+  }
+
+  function shouldTreatAsOffline(r: any): boolean {
+    // navigator.onLine peut mentir, mais on garde isOnline comme 1ère info.
+    if (!isOnline) return true;
+    if (r?.offline === true) return true;
+    if (r?.queued === true) return true;
+    if (r?.status === 0) return true; // certains wrappers mettent 0 = network error
+    return false;
+  }
+
   // données prof
   const [teachClasses, setTeachClasses] = useState<TeachClass[]>([]);
   const options = useMemo(
@@ -358,10 +380,7 @@ export default function TeacherDashboard() {
 
   // sélection classe
   const [selKey, setSelKey] = useState<string>("");
-  const sel = useMemo(
-    () => options.find((o) => o.key === selKey)?.value || null,
-    [options, selKey]
-  );
+  const sel = useMemo(() => options.find((o) => o.key === selKey)?.value || null, [options, selKey]);
 
   // paramètres établissement / périodes
   const [inst, setInst] = useState<InstCfg>({
@@ -385,9 +404,7 @@ export default function TeacherDashboard() {
 
   // horaire UI (verrouillé par l’établissement)
   const now = new Date();
-  const defTime = hhmm(
-    new Date(now.getFullYear(), now.getMonth(), now.getDate(), now.getHours(), 0)
-  );
+  const defTime = hhmm(new Date(now.getFullYear(), now.getMonth(), now.getDate(), now.getHours(), 0));
   const [startTime, setStartTime] = useState<string>(defTime);
   const [duration, setDuration] = useState<number>(60);
   const [locked, setLocked] = useState<boolean>(true); // verrouillage UI heure/durée
@@ -445,8 +462,10 @@ export default function TeacherDashboard() {
     }
 
     // 1) route unifiée si présente
-    let basics: InstBasics | null =
-      (await getJson("/api/teacher/institution/basics", "teacher:inst:basics")) as InstBasics | null;
+    let basics: InstBasics | null = (await getJson(
+      "/api/teacher/institution/basics",
+      "teacher:inst:basics"
+    )) as InstBasics | null;
 
     // 2) sinon, anciennes routes (settings + periods)
     if (!basics) {
@@ -516,14 +535,14 @@ export default function TeacherDashboard() {
     setInst((prev) => ({
       ...prev,
       tz: safeStr(basics!.tz) || prev.tz || "Africa/Abidjan",
-      default_session_minutes: Number(basics!.default_session_minutes || prev.default_session_minutes || 60),
-      auto_lateness: typeof basics!.auto_lateness === "boolean" ? !!basics!.auto_lateness : prev.auto_lateness,
+      default_session_minutes: Number(
+        basics!.default_session_minutes || prev.default_session_minutes || 60
+      ),
+      auto_lateness:
+        typeof basics!.auto_lateness === "boolean" ? !!basics!.auto_lateness : prev.auto_lateness,
       institution_name:
-        safeStr(basics!.institution_name) ||
-        prev.institution_name ||
-        DEFAULT_INSTITUTION_NAME,
-      academic_year_label:
-        safeStr(basics!.academic_year_label) || prev.academic_year_label || null,
+        safeStr(basics!.institution_name) || prev.institution_name || DEFAULT_INSTITUTION_NAME,
+      academic_year_label: safeStr(basics!.academic_year_label) || prev.academic_year_label || null,
     }));
     setPeriodsByDay(grouped);
 
@@ -570,11 +589,7 @@ export default function TeacherDashboard() {
           defaults.discipline
       );
       const t = Number(
-        src?.tenue_max ??
-          src?.tenue ??
-          src?.max_tenue ??
-          src?.tenue_points_max ??
-          defaults.tenue
+        src?.tenue_max ?? src?.tenue ?? src?.max_tenue ?? src?.tenue_points_max ?? defaults.tenue
       );
       const m = Number(
         src?.moralite_max ??
@@ -610,9 +625,7 @@ export default function TeacherDashboard() {
       try {
         const body: any = document.body;
 
-        const fromDataName =
-          safeStr(body?.dataset?.institutionName) ||
-          safeStr(body?.dataset?.institution);
+        const fromDataName = safeStr(body?.dataset?.institutionName) || safeStr(body?.dataset?.institution);
         const fromGlobalName = safeStr((window as any).__MC_INSTITUTION_NAME__);
         const finalName = fromDataName || fromGlobalName;
 
@@ -710,9 +723,7 @@ export default function TeacherDashboard() {
     }
 
     setStartTime(pick.start_time);
-    setDuration(
-      Math.max(1, minutesDiff(pick.start_time, pick.end_time) || inst.default_session_minutes || 60)
-    );
+    setDuration(Math.max(1, minutesDiff(pick.start_time, pick.end_time) || inst.default_session_minutes || 60));
     setSlotLabel(`${pick.label} • ${pick.start_time} → ${pick.end_time}`);
     setLocked(true);
   }
@@ -763,18 +774,11 @@ export default function TeacherDashboard() {
     if (!sel) return;
     setBusy(true);
     setMsg(null);
+
     try {
       const today = new Date();
       const [hhS, mmS] = (startTime || "08:00").split(":").map((x) => +x);
-      const started = new Date(
-        today.getFullYear(),
-        today.getMonth(),
-        today.getDate(),
-        hhS,
-        mmS,
-        0,
-        0
-      );
+      const started = new Date(today.getFullYear(), today.getMonth(), today.getDate(), hhS, mmS, 0, 0);
 
       // ✅ Heure effective du clic (à envoyer au serveur, et à garder en offline)
       const actualCallAt = new Date().toISOString();
@@ -800,7 +804,8 @@ export default function TeacherDashboard() {
         setOpen(r.data.item as OpenSession);
         await cacheSet("teacher:local-open", null);
         setMsg("Séance démarrée ✅");
-      } else {
+      } else if (shouldTreatAsOffline(r)) {
+        // ✅ uniquement si offline/queued : on crée une séance locale
         const localOpen: OpenSession = {
           id: `client:${clientSessionId}`,
           class_id: sel.class_id,
@@ -808,13 +813,17 @@ export default function TeacherDashboard() {
           subject_id: sel.subject_id,
           subject_name: sel.subject_name,
           started_at: started.toISOString(),
-          actual_call_at: actualCallAt, // ✅ affichage correct même offline
+          actual_call_at: actualCallAt,
           expected_minutes: duration,
         };
         setOpen(localOpen);
         await cacheSet("teacher:local-open", localOpen);
         setMsg("Hors connexion : séance enregistrée (sync dès que le réseau revient).");
         await refreshPending();
+      } else {
+        // ✅ online mais erreur serveur : PAS de séance locale fantôme
+        const err = extractRespError(r);
+        setMsg(err ? `Erreur serveur : ${err}` : "Erreur serveur : impossible de démarrer la séance.");
       }
     } catch (e: any) {
       setMsg(e?.message || "Échec démarrage séance");
@@ -827,6 +836,7 @@ export default function TeacherDashboard() {
     if (!open) return;
     setBusy(true);
     setMsg(null);
+
     try {
       const marks = Object.entries(rows).map(([student_id, r]) => {
         if (r.absent) return { student_id, status: "absent" as const, reason: r.reason ?? null };
@@ -846,10 +856,15 @@ export default function TeacherDashboard() {
 
       if (r?.ok) {
         const j = r.data || {};
-        setMsg(`Enregistré ✅ : ${j.upserted ?? 0} abs./ret. — ${j.deleted ?? 0} suppressions (présent).`);
-      } else {
+        setMsg(
+          `Enregistré ✅ : ${j.upserted ?? 0} abs./ret. — ${j.deleted ?? 0} suppressions (présent).`
+        );
+      } else if (shouldTreatAsOffline(r)) {
         setMsg("Hors connexion : enregistrement mis en attente (sync auto).");
         await refreshPending();
+      } else {
+        const err = extractRespError(r);
+        setMsg(err ? `Erreur serveur : ${err}` : "Erreur serveur : échec de l’enregistrement.");
       }
     } catch (e: any) {
       setMsg(e?.message || "Échec enregistrement");
@@ -863,27 +878,42 @@ export default function TeacherDashboard() {
     setBusy(true);
     setMsg(null);
 
-    try {
-      const clientId = clientSessionIdFromOpen(open);
-      const body = clientId ? { session_id: open.id, client_session_id: clientId } : undefined;
-
-      const r: any = await offlineMutateJson(
-        "/api/teacher/sessions/end",
-        body ? { method: "PATCH", body } : { method: "PATCH" },
-        { mergeKey: `teacher:end:${open.id}` }
-      );
-
-      // UI: on termine toujours localement
+    const finishLocal = async () => {
       setOpen(null);
       setRoster([]);
       setRows({});
       await cacheSet("teacher:local-open", null);
       computeDefaultsForNow();
+    };
 
-      if (r?.ok) setMsg("Séance terminée ✅");
-      else {
+    try {
+      const openId = String(open.id || "");
+      const clientId = clientSessionIdFromOpen(open);
+      const isLocal = openId.startsWith("client:");
+
+      // ✅ si session serveur -> on envoie session_id (plus robuste)
+      // ✅ si session locale -> on peut envoyer client_session_id (si ton API le supporte), sinon rien
+      const body: any = {};
+      if (!isLocal) body.session_id = open.id;
+      else if (clientId) body.client_session_id = clientId;
+
+      const r: any = await offlineMutateJson(
+        "/api/teacher/sessions/end",
+        Object.keys(body).length ? { method: "PATCH", body } : { method: "PATCH" },
+        { mergeKey: `teacher:end:${open.id}` }
+      );
+
+      if (r?.ok) {
+        await finishLocal();
+        setMsg("Séance terminée ✅");
+      } else if (shouldTreatAsOffline(r)) {
+        await finishLocal();
         setMsg("Hors connexion : fin de séance mise en attente (sync auto).");
         await refreshPending();
+      } else {
+        const err = extractRespError(r);
+        setMsg(err ? `Erreur serveur : ${err}` : "Erreur serveur : impossible de terminer la séance.");
+        // ❗ ne pas terminer localement si c'est une erreur serveur
       }
     } catch (e: any) {
       setMsg(e?.message || "Échec fin de séance");
@@ -913,10 +943,7 @@ export default function TeacherDashboard() {
   const [penRows, setPenRows] = useState<Record<string, { points: number; reason?: string }>>({});
   const [penMsg, setPenMsg] = useState<string | null>(null);
 
-  const hasPenChanges = useMemo(
-    () => Object.values(penRows).some((v) => (v.points || 0) > 0),
-    [penRows]
-  );
+  const hasPenChanges = useMemo(() => Object.values(penRows).some((v) => (v.points || 0) > 0), [penRows]);
 
   // Options de rubriques avec les maxima réels
   const rubricOptions = useMemo(() => {
@@ -1049,9 +1076,12 @@ export default function TeacherDashboard() {
           setPenaltyOpen(false);
           setPenRows({});
         }, 600);
-      } else {
+      } else if (shouldTreatAsOffline(r)) {
         setPenMsg("Hors connexion : sanctions mises en attente (sync auto).");
         await refreshPending();
+      } else {
+        const err = extractRespError(r);
+        setPenMsg(err ? `Erreur serveur : ${err}` : "Erreur serveur : échec d’enregistrement des sanctions.");
       }
     } catch (e: any) {
       setPenMsg(e?.message || "Échec d’enregistrement des sanctions");
@@ -1163,14 +1193,8 @@ export default function TeacherDashboard() {
             </p>
 
             <div className="mt-2 flex flex-wrap items-center gap-2">
-              <Chip tone={isOnline ? "emerald" : "amber"}>
-                {isOnline ? "En ligne" : "Hors ligne"}
-              </Chip>
-              {pending > 0 && (
-                <Chip tone="amber">
-                  {pending} en attente
-                </Chip>
-              )}
+              <Chip tone={isOnline ? "emerald" : "amber"}>{isOnline ? "En ligne" : "Hors ligne"}</Chip>
+              {pending > 0 && <Chip tone="amber">{pending} en attente</Chip>}
               <GhostButton
                 tone="emerald"
                 onClick={syncNow}
@@ -1231,7 +1255,12 @@ export default function TeacherDashboard() {
               <Clock className="h-3.5 w-3.5" />
               Heure de début
             </div>
-            <Input type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} disabled={locked} />
+            <Input
+              type="time"
+              value={startTime}
+              onChange={(e) => setStartTime(e.target.value)}
+              disabled={locked}
+            />
             <div className="mt-1 text-[11px] text-slate-500">{slotLabel}</div>
           </div>
 
@@ -1302,14 +1331,11 @@ export default function TeacherDashboard() {
       {/* Sanctions inline */}
       {penaltyOpen && (
         <div className="rounded-2xl border bg-white p-5 shadow-sm">
-          {/* ... inchangé ... */}
           <div className="flex items-center justify-between mb-3">
             <div>
               <div className="text-lg font-semibold">Autres sanctions</div>
               <div className="text-xs text-slate-500">
-                {sel
-                  ? `Classe : ${sel.class_label}${sel.subject_name ? ` • ${sel.subject_name}` : ""}`
-                  : "—"}
+                {sel ? `Classe : ${sel.class_label}${sel.subject_name ? ` • ${sel.subject_name}` : ""}` : "—"}
               </div>
             </div>
             <div className="flex items-center gap-2">
@@ -1349,14 +1375,17 @@ export default function TeacherDashboard() {
             </div>
 
             <div className="md:col-span-2 flex items-end justify-end">
-              <Button onClick={submitPenalties} disabled={penBusy || !hasPenChanges || rubricDisabled} tone="emerald">
+              <Button
+                onClick={submitPenalties}
+                disabled={penBusy || !hasPenChanges || rubricDisabled}
+                tone="emerald"
+              >
                 {penBusy ? "Enregistrement…" : "Enregistrer les sanctions"}
               </Button>
             </div>
           </div>
 
           <div className="overflow-x-auto rounded-xl border">
-            {/* ... inchangé ... */}
             <table className="min-w-full text-sm">
               <thead className="bg-slate-50 sticky top-0 z-10">
                 <tr className="text-left text-slate-600">
@@ -1398,7 +1427,9 @@ export default function TeacherDashboard() {
                           <Input
                             type="number"
                             min={0}
-                            max={currentRubricMax && currentRubricMax > 0 ? currentRubricMax : undefined}
+                            max={
+                              currentRubricMax && currentRubricMax > 0 ? currentRubricMax : undefined
+                            }
                             value={pr.points || 0}
                             onChange={(e) => setPenPoint(st.id, parseInt(e.target.value || "0", 10))}
                             className="w-24"
@@ -1436,7 +1467,7 @@ export default function TeacherDashboard() {
         <div className="rounded-2xl border bg-white p-5 shadow-sm">
           <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
             {(() => {
-              const startIso = open.actual_call_at || open.started_at; // ✅ heure effective
+              const startIso = open.actual_call_at || open.started_at;
               const startMs = new Date(startIso).getTime();
               const endMs = open.expected_minutes ? startMs + open.expected_minutes * 60000 : null;
 
@@ -1445,7 +1476,10 @@ export default function TeacherDashboard() {
                   Appel — {open.class_label} {open.subject_name ? `• ${open.subject_name}` : ""} •{" "}
                   {new Date(startIso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                   {endMs
-                    ? ` → ${new Date(endMs).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
+                    ? ` → ${new Date(endMs).toLocaleTimeString([], {
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })}`
                     : ""}
                 </div>
               );
