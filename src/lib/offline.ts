@@ -32,8 +32,9 @@ type MutateOpts = {
 };
 
 export type MutateResult<T = any> =
-  | { ok: true; data: T }
-  | { ok: false; queued: true };
+  | { ok: true; data: T; status: number }
+  | { ok: false; queued: true; offline: true; status: 0 }
+  | { ok: false; queued: false; offline: false; status: number; error: string; data?: any };
 
 const DB_NAME = "moncahier_offline_v1";
 const DB_VERSION = 1;
@@ -82,8 +83,10 @@ async function openDB(): Promise<IDBDatabase> {
       } else {
         const out = req.transaction?.objectStore("outbox");
         if (out) {
-          if (!out.indexNames.contains("mergeKey")) out.createIndex("mergeKey", "mergeKey", { unique: false });
-          if (!out.indexNames.contains("createdAt")) out.createIndex("createdAt", "createdAt", { unique: false });
+          if (!out.indexNames.contains("mergeKey"))
+            out.createIndex("mergeKey", "mergeKey", { unique: false });
+          if (!out.indexNames.contains("createdAt"))
+            out.createIndex("createdAt", "createdAt", { unique: false });
         }
       }
     };
@@ -266,9 +269,9 @@ export async function outboxCount(): Promise<number> {
 
 /**
  * Mutations JSON:
- * - Si online et HTTP ok -> { ok:true, data }
- * - Si online et HTTP error -> throw (ne queue pas)
- * - Si offline/network error -> queue + { ok:false, queued:true }
+ * - Si online et HTTP ok -> { ok:true, data, status }
+ * - Si online et HTTP error -> { ok:false, queued:false, offline:false, status, error, data? } (NE QUEUE PAS)
+ * - Si offline/network error -> queue + { ok:false, queued:true, offline:true, status:0 }
  */
 export async function offlineMutateJson<T = any>(
   url: string,
@@ -287,16 +290,19 @@ export async function offlineMutateJson<T = any>(
       body: bodyObj === undefined ? undefined : JSON.stringify(bodyObj),
     });
 
+    const status = res.status;
+    const j = await safeJson(res);
+
+    // ✅ HTTP error = PAS offline, PAS queued
     if (!res.ok) {
-      const j = await safeJson(res);
-      const msg = j?.error || j?.message || `HTTP ${res.status}`;
-      throw new Error(msg);
+      const msg = j?.error || j?.message || `HTTP ${status}`;
+      return { ok: false, queued: false, offline: false, status, error: msg, data: j };
     }
 
-    const j = (await safeJson(res)) as T;
-    return { ok: true, data: j };
+    // ✅ OK
+    return { ok: true, data: j as T, status };
   } catch {
-    // Network/offline -> on met en outbox
+    // ✅ Network/offline uniquement -> outbox + queued
     const row: OutboxRow = {
       id: uid(),
       url,
@@ -308,7 +314,7 @@ export async function offlineMutateJson<T = any>(
       meta: opts?.meta,
     };
     await outboxAdd(row);
-    return { ok: false, queued: true };
+    return { ok: false, queued: true, offline: true, status: 0 };
   }
 }
 

@@ -120,7 +120,7 @@ export default function ParentsLoginPage() {
                 <div className="relative h-10 w-10 rounded-xl bg-white shadow">
                   <Image
                     src="/nexa-digital-logo.png" // place ton logo dans /public
-                    alt="NEXA DIGITALE FOR EDUCATION"
+                    alt="NEXA DIGITAL FOR EDUCATION"
                     fill
                     className="object-contain"
                     priority
@@ -128,7 +128,7 @@ export default function ParentsLoginPage() {
                 </div>
                 <div>
                   <div className="text-xs font-semibold uppercase tracking-wide text-slate-800">
-                    NEXA DIGITALE FOR EDUCATION
+                    NEXA DIGITAL FOR EDUCATION
                   </div>
                   <div className="text-xs text-slate-500">
                     Espace Parents · Connexion par matricule élève

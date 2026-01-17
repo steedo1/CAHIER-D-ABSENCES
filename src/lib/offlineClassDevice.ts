@@ -1,3 +1,4 @@
+//src/lib/offlineClassDevice.ts
 "use client";
 
 export type ClassDeviceSnapshot<TState = any> = {

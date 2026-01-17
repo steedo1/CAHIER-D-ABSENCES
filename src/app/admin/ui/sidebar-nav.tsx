@@ -319,12 +319,12 @@ export default function SidebarNav() {
         )}
       </ul>
 
-      {/* ✅ Signature Nexa Digitale en bas du menu admin */}
+      {/* ✅ Signature Nexa Digital en bas du menu admin */}
       <div className="px-4 py-3 text-[11px] text-slate-500">
         <div>© {new Date().getFullYear()} Mon Cahier</div>
         <div className="text-[10px] text-slate-400">
           Conçu et développé par{" "}
-          <span className="font-semibold text-slate-200">NEXA DIGITALE SARL</span>
+          <span className="font-semibold text-slate-200">NEXA DIGITAL SARL</span>
         </div>
       </div>
     </nav>

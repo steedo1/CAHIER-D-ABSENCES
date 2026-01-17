@@ -752,7 +752,7 @@ export default function HomePage() {
             </div>
             <div className="mt-1 text-[11px] font-semibold text-slate-300">
               Conçu et développé par{" "}
-              <span className="text-slate-100">NEXA DIGITALE SARL</span>
+              <span className="text-slate-100">NEXA DIGITAL SARL</span>
             </div>
           </div>
           <div>

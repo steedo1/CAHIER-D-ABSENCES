@@ -1258,7 +1258,7 @@ export default function ParentPage() {
               <div className="mt-4 leading-tight text-white/80">
                 <div className="text-[12px] opacity-80">Développé par</div>
                 <div className="text-[15px] font-extrabold text-amber-300">
-                  Nexa Digitale
+                  Nexa Digital
                 </div>
               </div>
             </div>
@@ -1452,7 +1452,7 @@ export default function ParentPage() {
             <div className="mt-4 leading-tight text-white/80">
               <div className="text-[12px] opacity-80">Développé par</div>
               <div className="text-[15px] font-extrabold text-amber-300">
-                Nexa Digitale
+                Nexa Digital
               </div>
             </div>
           </div>

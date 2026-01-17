@@ -69,11 +69,11 @@ function LoginPageInner() {
       <div className="relative z-0 mx-auto max-w-7xl px-4 py-10">
         <header className="mb-6 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            {/* Logo Nexa Digitale */}
+            {/* Logo Nexa Digital */}
             <div className="relative h-10 w-10 md:h-12 md:w-12 rounded-xl bg-white/10 p-1.5 backdrop-blur-sm shadow-sm">
               <Image
                 src="/nexa-digital-logo.png" // ⚠️ place ce fichier dans /public
-                alt="NEXA DIGITALE FOR EDUCATION"
+                alt="NEXA DIGITAL FOR EDUCATION"
                 fill
                 className="object-contain"
                 priority
@@ -81,7 +81,7 @@ function LoginPageInner() {
             </div>
             <div className="flex flex-col">
               <span className="text-sm font-semibold text-white drop-shadow md:text-base">
-                NEXA DIGITALE FOR EDUCATION
+                NEXA DIGITAL FOR EDUCATION
               </span>
               <span className="text-[11px] text-white/80 drop-shadow md:text-xs">
                 {headerLabel}
@@ -94,7 +94,7 @@ function LoginPageInner() {
           {/* On propage le choix du cahier jusqu'à /redirect (si présent) */}
           <LoginCard redirectTo={redirectTo} forcedMode={forcedMode} />
           <footer className="mt-6 text-center text-xs text-white/80 drop-shadow-sm">
-            © {new Date().getFullYear()} NEXA DIGITALE SARL — Tous droits réservés
+            © {new Date().getFullYear()} NEXA DIGITAL SARL — Tous droits réservés
           </footer>
         </section>
       </div>
