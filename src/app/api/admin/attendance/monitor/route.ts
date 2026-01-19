@@ -102,8 +102,8 @@ function detectWeekdayMode(periods: any[]): WeekdayMode {
     new Set(
       (periods || [])
         .map((p) => parseWeekday(p?.weekday))
-        .filter((v): v is number => v !== null && v !== undefined),
-    ),
+        .filter((v): v is number => v !== null && v !== undefined)
+    )
   );
 
   if (vals.includes(7)) return "iso";
@@ -138,6 +138,9 @@ const MISSING_CONTROL_WINDOW_MIN =
   Number.isFinite(Number(process.env.ATTENDANCE_MISSING_CONTROL_WINDOW_MIN))
     ? Math.max(1, Math.floor(Number(process.env.ATTENDANCE_MISSING_CONTROL_WINDOW_MIN)))
     : LATE_THRESHOLD_MIN;
+
+// ✅ Tolérance maximale après la fin d’un créneau pour accepter un appel (si tu veux garder ce comportement)
+const MAX_CARRY_AFTER_END_MIN = 120;
 
 export async function GET(req: NextRequest) {
   const supa = await getSupabaseServerClient();
@@ -176,7 +179,7 @@ export async function GET(req: NextRequest) {
   if (!institution_id) {
     return NextResponse.json(
       { error: "no_institution", message: "Aucune institution associée." },
-      { status: 400 },
+      { status: 400 }
     );
   }
 
@@ -195,7 +198,7 @@ export async function GET(req: NextRequest) {
   if (!["admin", "super_admin"].includes(role)) {
     return NextResponse.json(
       { error: "forbidden", message: "Droits insuffisants pour cette vue." },
-      { status: 403 },
+      { status: 403 }
     );
   }
 
@@ -450,10 +453,51 @@ export async function GET(req: NextRequest) {
     arr.push({
       callMin,
       opened_from:
-        s.origin === "class_device" ? "class_device" : s.origin === "teacher" ? "teacher" : null,
+        s.origin === "class_device"
+          ? "class_device"
+          : s.origin === "teacher"
+          ? "teacher"
+          : null,
     });
     sessionsIndex.set(key, arr);
   });
+
+  // ✅ Empêche qu’un appel du créneau suivant "contamine" les créneaux précédents
+  type SlotLite = { period_id: string; startMin: number };
+  const nextStartMinBySlot = new Map<string, number | null>();
+  const slotsByGroup = new Map<string, Map<string, SlotLite>>();
+  // group = `${weekday}|${classId}|${subjectId}|${teacherId}`
+
+  (tts || []).forEach((tt: any) => {
+    const period = periodById.get(String(tt.period_id));
+    if (!period) return;
+
+    const weekday = period.weekday;
+    const classId = String(tt.class_id);
+    const subjectId = String(tt.subject_id || "");
+    const teacherId = String(tt.teacher_id);
+    const periodId = String(tt.period_id);
+
+    const group = `${weekday}|${classId}|${subjectId}|${teacherId}`;
+
+    let m = slotsByGroup.get(group);
+    if (!m) {
+      m = new Map<string, SlotLite>();
+      slotsByGroup.set(group, m);
+    }
+    if (!m.has(periodId)) {
+      m.set(periodId, { period_id: periodId, startMin: period.startMin });
+    }
+  });
+
+  for (const [group, m] of slotsByGroup.entries()) {
+    const arr = Array.from(m.values()).sort((a, b) => a.startMin - b.startMin);
+    for (let i = 0; i < arr.length; i++) {
+      const cur = arr[i];
+      const next = arr[i + 1] || null;
+      nextStartMinBySlot.set(`${group}|${cur.period_id}`, next ? next.startMin : null);
+    }
+  }
 
   // Calcul final des lignes
   const rows: MonitorRow[] = [];
@@ -512,10 +556,20 @@ export async function GET(req: NextRequest) {
       const key = [ymd, classId, subjectId, teacherId].join("|");
       const sessList = sessionsIndex.get(key) || [];
 
-      // Séance la plus ancienne dans le créneau (si plusieurs)
+      // ✅ Séance la plus ancienne DANS LE CRENEAU (sans “déborder” sur le créneau suivant)
       let best: SessIndexItem | null = null;
+
+      const group = `${weekday}|${classId}|${subjectId}|${teacherId}`;
+      const nextStartMin =
+        nextStartMinBySlot.get(`${group}|${String(tt.period_id)}`) ?? null;
+
       for (const s of sessList) {
-        if (s.callMin < startMin || s.callMin > endMin + 120) continue;
+        if (s.callMin < startMin) continue;
+        if (s.callMin > endMin + MAX_CARRY_AFTER_END_MIN) continue;
+
+        // ✅ si l’appel est à partir du début du créneau suivant, il appartient au suivant
+        if (nextStartMin !== null && s.callMin >= nextStartMin) continue;
+
         if (!best || s.callMin < best.callMin) best = s;
       }
 
@@ -592,15 +646,17 @@ export async function GET(req: NextRequest) {
             .map((x) => x?.[key])
             .filter((v) => v !== null && v !== undefined)
             .map((v) => Number(v))
-            .filter((n) => Number.isFinite(n)),
-        ),
+            .filter((n) => Number.isFinite(n))
+        )
       ).sort((a, b) => a - b);
 
     return NextResponse.json({
       rows,
       debug: {
         todayYmd,
-        nowUtcHHMM: `${String(now.getUTCHours()).padStart(2, "0")}:${String(now.getUTCMinutes()).padStart(2, "0")}`,
+        nowUtcHHMM: `${String(now.getUTCHours()).padStart(2, "0")}:${String(
+          now.getUTCMinutes()
+        ).padStart(2, "0")}`,
         nowMinutes,
         range: { from: toYMD(fromDate), to: toYMD(toDate), days: dates.length },
         counts: {
