@@ -1,7 +1,7 @@
 // src/app/class/page.tsx
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Users, BookOpen, Clock, Play, Save, Square, LogOut } from "lucide-react";
 import { getSupabaseBrowserClient } from "@/lib/supabase-browser";
 import {
@@ -113,6 +113,9 @@ type ConductMax = {
 
 /* Nom par défaut (fallback local / dev) */
 const DEFAULT_INSTITUTION_NAME = "NOM DE L'ETABLISSEMENT";
+
+/** Marqueur local : quand l’utilisateur termine une séance locale avant que la séance serveur existe. */
+const PENDING_END_KEY = "classDevice:pending-end";
 
 /* ───────── Institution identity helpers (même méthode que le fichier qui marche) ───────── */
 const INSTITUTION_NAME_KEYS = [
@@ -234,6 +237,10 @@ function coerceRubric(x: unknown): Rubric {
   return (ALLOWED_RUBRICS.includes(s as any) ? s : "discipline") as Rubric;
 }
 
+function isClientSessionId(id: any): boolean {
+  return typeof id === "string" && id.startsWith("client:");
+}
+
 export default function ClassDevicePage() {
   /* état de base */
   const [classes, setClasses] = useState<MyClass[]>([]);
@@ -271,6 +278,11 @@ export default function ClassDevicePage() {
   const [locked, setLocked] = useState<boolean>(true);
 
   const [open, setOpen] = useState<OpenSession | null>(null);
+  const openRef = useRef<OpenSession | null>(null);
+  useEffect(() => {
+    openRef.current = open;
+  }, [open]);
+
   const [roster, setRoster] = useState<RosterItem[]>([]);
   type Row = { absent?: boolean; late?: boolean; reason?: string };
   const [rows, setRows] = useState<Record<string, Row>>({});
@@ -298,6 +310,56 @@ export default function ClassDevicePage() {
     }
   }
 
+  // 🔁 Tente de récupérer une séance serveur et remplace une séance locale "client:*"
+  async function refreshServerOpenSession(): Promise<OpenSession | null> {
+    try {
+      const os = await offlineGetJson("/api/teacher/sessions/open", "classDevice:open-session");
+      const serverOpen = (os?.item as OpenSession) || null;
+
+      if (serverOpen && serverOpen.id && !isClientSessionId(serverOpen.id)) {
+        setOpen(serverOpen);
+        await cacheSet("classDevice:local-open", null);
+        return serverOpen;
+      }
+
+      return serverOpen;
+    } catch {
+      return null;
+    }
+  }
+
+  // 🔁 Si l'utilisateur a "terminé" une séance locale, on tente de fermer la séance serveur après sync
+  async function processPendingEnd(): Promise<void> {
+    try {
+      const pending = await cacheGet<any>(PENDING_END_KEY);
+      if (!pending) return;
+
+      // si pas en ligne, on attend
+      if (typeof navigator !== "undefined" && !navigator.onLine) return;
+
+      // récupérer la séance serveur ouverte (si elle existe maintenant)
+      const srv = await refreshServerOpenSession();
+      const srvId = srv?.id && !isClientSessionId(srv.id) ? String(srv.id) : "";
+
+      if (!srvId) return;
+
+      // tenter de fermer côté serveur
+      const r = await offlineMutateJson(
+        "/api/class/sessions/end",
+        { method: "PATCH", body: { session_id: srvId } },
+        { mergeKey: `end:${srvId}` }
+      );
+
+      // si réussi OU si mis en attente offline, on purge le pending
+      if ((r as any)?.ok || (r as any)?.queued || (r as any)?.offline) {
+        await cacheSet(PENDING_END_KEY, null);
+        await refreshPending();
+      }
+    } catch {
+      // ne casse rien
+    }
+  }
+
   async function syncNow() {
     if (syncing) return;
     setSyncing(true);
@@ -306,6 +368,15 @@ export default function ClassDevicePage() {
     } finally {
       setSyncing(false);
       await refreshPending();
+
+      // après sync, si on affichait une séance locale, on tente de la remplacer
+      const cur = openRef.current;
+      if (cur?.id && isClientSessionId(cur.id)) {
+        await refreshServerOpenSession();
+      }
+
+      // et si on avait un "end" en attente, on essaie de le rejouer
+      await processPendingEnd();
     }
   }
 
@@ -329,15 +400,9 @@ export default function ClassDevicePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ✅ Helpers : distinguer offline / erreur serveur (sans casser offlineMutateJson)
+  // ✅ Helpers : distinguer offline / erreur serveur
   function extractRespError(r: any): string | null {
-    const cands = [
-      r?.error,
-      r?.message,
-      r?.data?.error,
-      r?.data?.message,
-      r?.data?.details,
-    ];
+    const cands = [r?.error, r?.message, r?.data?.error, r?.data?.message, r?.data?.details];
     for (const v of cands) {
       const s = typeof v === "string" ? v.trim() : "";
       if (s) return s;
@@ -346,12 +411,34 @@ export default function ClassDevicePage() {
   }
 
   function shouldTreatAsOffline(r: any): boolean {
-    // navigator.onLine peut mentir; si offlineMutateJson expose un flag, on l'accepte.
     if (!isOnline) return true;
     if (r?.offline === true) return true;
     if (r?.queued === true) return true;
-    if (r?.status === 0) return true; // parfois utilisé pour "network error"
+    if (r?.status === 0) return true;
     return false;
+  }
+
+  // 🔒 Empêche d'envoyer un session_id "client:*" à une API serveur qui attend un UUID
+  async function ensureServerSessionOrExplain(): Promise<OpenSession | null> {
+    const cur = openRef.current;
+    if (!cur) return null;
+    if (!isClientSessionId(cur.id)) return cur;
+
+    // 1) si on a des actions en attente, essayer de sync d'abord
+    if (isOnline && pendingSync > 0) {
+      setMsg("Synchronisation en cours…");
+      await syncNow();
+    }
+
+    // 2) même si pendingSync==0, on tente un refresh serveur (cas séance serveur créée mais UI restée locale)
+    const srv = await refreshServerOpenSession();
+    if (srv && srv.id && !isClientSessionId(srv.id)) return srv;
+
+    await refreshPending();
+    setMsg(
+      "Séance en attente de synchronisation. Appuyez sur Sync puis réessayez (le Wi-Fi est probablement instable)."
+    );
+    return null;
   }
 
   /* ───────── Sanctions (inline) ───────── */
@@ -377,8 +464,7 @@ export default function ClassDevicePage() {
     return order.map((r) => {
       const maxVal = base[r];
       const disabled = maxVal <= 0;
-      const labelBase =
-        r === "discipline" ? "Discipline" : r === "tenue" ? "Tenue" : "Moralité";
+      const labelBase = r === "discipline" ? "Discipline" : r === "tenue" ? "Tenue" : "Moralité";
       const label = disabled ? `${labelBase} (désactivée)` : `${labelBase} (max ${maxVal})`;
       return { value: r, label, disabled, max: maxVal };
     });
@@ -412,15 +498,13 @@ export default function ClassDevicePage() {
     if (!cid || roster.length > 0) return;
     try {
       setLoadingRoster(true);
-      const j = await offlineGetJson(
-        `/api/class/roster?class_id=${cid}`,
-        `classDevice:roster:${cid}`
-      );
+      const j = await offlineGetJson(`/api/class/roster?class_id=${cid}`, `classDevice:roster:${cid}`);
       setRoster((j?.items || []) as RosterItem[]);
     } finally {
       setLoadingRoster(false);
     }
   }
+
   function openPenalty() {
     if (!(open?.class_id || classId)) {
       setMsg("Sélectionnez une classe/discipline d’abord.");
@@ -430,6 +514,7 @@ export default function ClassDevicePage() {
     setPenaltyOpen(true);
     void ensureRosterForPenalty();
   }
+
   function setPenPoint(student_id: string, n: number) {
     setPenRows((m) => {
       const cur = m[student_id] || { points: 0, reason: "" };
@@ -480,7 +565,7 @@ export default function ClassDevicePage() {
         { mergeKey: `penalties:${cid}:${coerceRubric(penRubric)}` }
       );
 
-      if (r.ok) {
+      if ((r as any).ok) {
         setPenMsg(`Sanctions enregistrées (${items.length}).`);
         setPenRows({});
         setTimeout(() => setPenaltyOpen(false), 600);
@@ -557,6 +642,9 @@ export default function ClassDevicePage() {
         setClasses([]);
         const local = await cacheGet("classDevice:local-open");
         setOpen(local || null);
+      } finally {
+        // tente de rejouer une fin en attente si on revient en ligne
+        void processPendingEnd();
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -677,7 +765,10 @@ export default function ClassDevicePage() {
     }
 
     // 🔁 Complément : harmoniser le nom avec /api/admin/institution/settings (comme le dashboard)
-    const adminSettings = await getJson("/api/admin/institution/settings", "classDevice:inst:adminSettings");
+    const adminSettings = await getJson(
+      "/api/admin/institution/settings",
+      "classDevice:inst:adminSettings"
+    );
     if (adminSettings) {
       const nameFromAdmin = String(
         adminSettings?.institution_name || adminSettings?.name || adminSettings?.institution_label || ""
@@ -690,8 +781,7 @@ export default function ClassDevicePage() {
         null;
 
       if (nameFromAdmin) instConfig.institution_name = nameFromAdmin;
-      if (yearFromAdmin && !instConfig.academic_year_label)
-        instConfig.academic_year_label = yearFromAdmin;
+      if (yearFromAdmin && !instConfig.academic_year_label) instConfig.academic_year_label = yearFromAdmin;
     }
 
     Object.values(grouped).forEach((arr) =>
@@ -702,10 +792,12 @@ export default function ClassDevicePage() {
     setInst((prev) => ({
       ...prev,
       tz: instConfig.tz || prev.tz || "Africa/Abidjan",
-      default_session_minutes: instConfig.default_session_minutes || prev.default_session_minutes || 60,
+      default_session_minutes:
+        instConfig.default_session_minutes || prev.default_session_minutes || 60,
       auto_lateness:
         typeof instConfig.auto_lateness === "boolean" ? instConfig.auto_lateness : prev.auto_lateness,
-      institution_name: instConfig.institution_name || prev.institution_name || DEFAULT_INSTITUTION_NAME,
+      institution_name:
+        instConfig.institution_name || prev.institution_name || DEFAULT_INSTITUTION_NAME,
       academic_year_label: instConfig.academic_year_label || prev.academic_year_label || null,
     }));
     setPeriodsByDay(grouped);
@@ -896,9 +988,7 @@ export default function ClassDevicePage() {
     }
 
     setStartTime(pick.start_time);
-    setDuration(
-      Math.max(1, minutesDiff(pick.start_time, pick.end_time) || inst.default_session_minutes || 60)
-    );
+    setDuration(Math.max(1, minutesDiff(pick.start_time, pick.end_time) || inst.default_session_minutes || 60));
     setSlotLabel(`${pick.label} • ${pick.start_time} → ${pick.end_time}`);
     setLocked(true);
   }
@@ -916,10 +1006,7 @@ export default function ClassDevicePage() {
       return;
     }
     (async () => {
-      const j = await offlineGetJson(
-        `/api/class/subjects?class_id=${classId}`,
-        `classDevice:subjects:${classId}`
-      );
+      const j = await offlineGetJson(`/api/class/subjects?class_id=${classId}`, `classDevice:subjects:${classId}`);
       const list = (j?.items || []) as Subject[];
       setSubjects(list);
       setSubjectId(list[0]?.id || "");
@@ -965,6 +1052,13 @@ export default function ClassDevicePage() {
   /* actions */
   async function startSession() {
     if (!classId) return;
+
+    // ✅ backend exige subject_id : on évite un rejet serveur (400)
+    if (!subjectId) {
+      setMsg("Choisissez une discipline avant de démarrer l’appel.");
+      return;
+    }
+
     setBusy(true);
     setMsg(null);
 
@@ -993,10 +1087,11 @@ export default function ClassDevicePage() {
         { mergeKey: `start:${clientSessionId}`, meta: { clientSessionId } }
       );
 
-      if (r.ok) {
-        setOpen(r.data.item as OpenSession);
+      if ((r as any).ok) {
+        setOpen((r as any).data.item as OpenSession);
         await cacheSet("classDevice:local-open", null);
         setMsg("Séance démarrée.");
+        await refreshPending();
       } else if (shouldTreatAsOffline(r)) {
         // ✅ uniquement si offline/queued : on crée une séance locale
         const cls = classes.find((c) => c.id === classId);
@@ -1017,7 +1112,6 @@ export default function ClassDevicePage() {
         setMsg("Hors connexion : séance enregistrée (sync dès que le réseau revient).");
         await refreshPending();
       } else {
-        // ✅ online mais erreur serveur : PAS de séance locale fantôme
         const err = extractRespError(r);
         setMsg(err ? `Erreur serveur : ${err}` : "Erreur serveur : impossible de démarrer la séance.");
       }
@@ -1029,11 +1123,21 @@ export default function ClassDevicePage() {
   }
 
   async function saveMarks() {
-    if (!open) return;
+    const cur = openRef.current;
+    if (!cur) return;
+
     setBusy(true);
     setMsg(null);
 
     try {
+      // ✅ Si on a une séance "client:*" et qu’on est en ligne, on doit d’abord la confirmer côté serveur
+      let sessionId = String(cur.id || "");
+      if (isClientSessionId(sessionId) && isOnline) {
+        const ensured = await ensureServerSessionOrExplain();
+        if (!ensured) return;
+        sessionId = String(ensured.id);
+      }
+
       const marks = Object.entries(rows).map(([student_id, r]) => {
         if (r.absent) return { student_id, status: "absent" as const, reason: r.reason ?? null };
         if (r.late) return { student_id, status: "late" as const, reason: r.reason ?? null };
@@ -1042,13 +1146,14 @@ export default function ClassDevicePage() {
 
       const r = await offlineMutateJson(
         "/api/teacher/attendance/bulk",
-        { method: "POST", body: { session_id: open.id, marks } },
-        { mergeKey: `attendance:${open.id}` }
+        { method: "POST", body: { session_id: sessionId, marks } },
+        { mergeKey: `attendance:${sessionId}` }
       );
 
-      if (r.ok) {
-        const j = r.data;
+      if ((r as any).ok) {
+        const j = (r as any).data;
         setMsg(`Enregistré : ${j.upserted} abs./ret. — ${j.deleted} suppressions (présent).`);
+        await refreshPending();
       } else if (shouldTreatAsOffline(r)) {
         setMsg("Hors connexion : enregistrement mis en attente (sync auto).");
         await refreshPending();
@@ -1064,7 +1169,9 @@ export default function ClassDevicePage() {
   }
 
   async function endSession() {
-    if (!open) return;
+    const cur = openRef.current;
+    if (!cur) return;
+
     setBusy(true);
     setMsg(null);
 
@@ -1077,29 +1184,40 @@ export default function ClassDevicePage() {
     };
 
     try {
-      const openId = String(open.id || "");
-      const isClientLocal = openId.startsWith("client:");
+      let openId = String(cur.id || "");
+      const isClientLocal = isClientSessionId(openId);
 
-      // ✅ PATCH: envoyer session_id quand on a une vraie session serveur
-      const reqInit: any = { method: "PATCH" as const };
-      if (!isClientLocal) reqInit.body = { session_id: open.id };
+      // ✅ Si séance locale et en ligne : essayer de sync + récupérer la vraie séance serveur
+      if (isClientLocal && isOnline) {
+        const ensured = await ensureServerSessionOrExplain();
+        if (ensured) {
+          openId = String(ensured.id);
+        } else {
+          // On termine localement, et on garde un marqueur pour fermer la séance serveur dès qu'elle existera
+          await cacheSet(PENDING_END_KEY, { at: new Date().toISOString() });
+          await finishLocal();
+          setMsg("Séance terminée localement. La fermeture serveur sera appliquée dès que la synchronisation sera possible.");
+          await refreshPending();
+          return;
+        }
+      }
 
+      // ✅ On envoie toujours session_id (UUID ou client:... si offline) — utile pour le mapping/évolutions API
       const r = await offlineMutateJson(
         "/api/class/sessions/end",
-        reqInit,
-        { mergeKey: isClientLocal ? "endSession:last" : `end:${open.id}` }
+        { method: "PATCH", body: { session_id: openId } },
+        { mergeKey: `end:${openId}` }
       );
 
-      if (r.ok) {
+      if ((r as any).ok) {
         await finishLocal();
         setMsg("Séance terminée.");
+        await refreshPending();
       } else if (shouldTreatAsOffline(r)) {
-        // offline/queued : on accepte de terminer localement, et ça partira au sync
         await finishLocal();
         setMsg("Hors connexion : fin de séance mise en attente (sync auto).");
         await refreshPending();
       } else {
-        // ✅ online mais erreur serveur : NE PAS terminer localement
         const err = extractRespError(r);
         setMsg(err ? `Erreur serveur : ${err}` : "Erreur serveur : impossible de terminer la séance.");
       }
@@ -1145,6 +1263,8 @@ export default function ClassDevicePage() {
       window.location.href = "/login";
     }
   }
+
+  const openIsClient = !!open?.id && isClientSessionId(open.id);
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-6 space-y-6">
@@ -1225,7 +1345,7 @@ export default function ClassDevicePage() {
               Discipline
             </div>
             <Select value={subjectId} onChange={(e) => setSubjectId(e.target.value)}>
-              {subjects.length === 0 ? <option value="">— (facultatif) —</option> : null}
+              {subjects.length === 0 ? <option value="">— Choisir —</option> : null}
               {subjects.map((s) => (
                 <option key={s.id} value={s.id}>
                   {s.label}
@@ -1269,10 +1389,16 @@ export default function ClassDevicePage() {
           </div>
         </div>
 
+        {openIsClient && (
+          <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+            Séance en attente de synchronisation (ID local). Appuyez sur <b>Sync</b> dès que le Wi-Fi est stable.
+          </div>
+        )}
+
         {/* Actions */}
         {!open ? (
           <div className="flex items-center gap-2">
-            <Button onClick={startSession} disabled={!classId || busy}>
+            <Button onClick={startSession} disabled={!classId || !subjectId || busy}>
               <Play className="h-4 w-4" />
               {busy ? "Démarrage…" : "Démarrer l’appel"}
             </Button>
@@ -1318,8 +1444,7 @@ export default function ClassDevicePage() {
               <div className="text-lg font-semibold">Autres sanctions</div>
               <div className="text-xs text-slate-500">
                 Rubriques : Discipline, Tenue, Moralité. Les maxima viennent des{" "}
-                <b>règles de conduite de l’établissement</b>. L’assiduité est calculée via les
-                absences.
+                <b>règles de conduite de l’établissement</b>. L’assiduité est calculée via les absences.
               </div>
             </div>
             <div className="flex items-center gap-2">
@@ -1435,6 +1560,7 @@ export default function ClassDevicePage() {
           <div className="mb-3 text-sm font-semibold text-slate-700">
             Appel — {open.class_label} {open.subject_name ? `• ${open.subject_name}` : ""} •{" "}
             {new Date(open.started_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+            {openIsClient ? " • (en attente de sync)" : ""}
           </div>
 
           <div className="overflow-x-auto rounded-xl border">
