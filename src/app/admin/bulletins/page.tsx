@@ -794,7 +794,12 @@ function applyComponentRanksFront(
 /* ───────── Rangs groupes (front) ───────── */
 
 function applyGroupRanksFront(items: (BulletinItemBase | BulletinItemWithRank)[]) {
-  type Entry = { itemIndex: number; groupIndex: number; avg: number; groupId: string };
+  type Entry = {
+    itemIndex: number;
+    groupIndex: number;
+    avg: number;
+    groupId: string;
+  };
   const byGroup = new Map<string, Entry[]>();
 
   items.forEach((it, itemIndex) => {
@@ -927,7 +932,6 @@ function computeRanksAndStats(res: BulletinResponse | null): EnrichedBulletin | 
 
   return { response: res, items: itemsWithRank, stats };
 }
-
 
 /* ───────── Helpers "bulletin officiel" ───────── */
 
@@ -1385,7 +1389,9 @@ function StudentBulletinCard({
           <td className="bdr px-1 py-[1px] text-center">
             {formatNumber(s.coeff_bulletin, 0)}
           </td>
-          <td className="bdr px-1 py-[1px] text-center">{formatNumber(moyCoeff)}</td>
+          <td className="bdr px-1 py-[1px] text-center">
+            {formatNumber(moyCoeff)}
+          </td>
           <td className="bdr px-1 py-[1px] text-center">{subjectRankLabel}</td>
           <td className="bdr px-1 py-[1px]">{appreciationLabel}</td>
           <td className="bdr px-1 py-[1px]">{subjectTeacher}</td>
@@ -1497,10 +1503,10 @@ function StudentBulletinCard({
                   {period.to ? formatDateFR(period.to) : "—"}
                 </div>
               )}
-                        </div>
+            </div>
 
             <div className="bdr absolute right-0 top-0 z-10 flex h-[110px] w-[110px] items-center justify-center overflow-hidden bg-white">
-{qrImgSrc ? (
+              {qrImgSrc ? (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img
                   src={qrImgSrc}
@@ -1510,7 +1516,7 @@ function StudentBulletinCard({
               ) : (
                 <div className="text-[8px] text-slate-500">QR</div>
               )}
-                        </div>
+            </div>
           </div>
         </div>
 
@@ -2274,7 +2280,6 @@ export default function BulletinsPage() {
   const items = useMemo(() => {
     const arr = [...(enriched?.items ?? [])];
 
-    // ✅ Tri alphabétique (accents ignorés, espaces normalisés)
     const norm = (s: string) =>
       String(s || "")
         .normalize("NFD")
@@ -2283,13 +2288,49 @@ export default function BulletinsPage() {
         .trim()
         .toUpperCase();
 
+    // ✅ Tri par moyenne générale décroissante
     arr.sort((a, b) => {
+      const avgA =
+        a.general_avg !== null &&
+        a.general_avg !== undefined &&
+        Number.isFinite(Number(a.general_avg))
+          ? Number(a.general_avg)
+          : -Infinity;
+
+      const avgB =
+        b.general_avg !== null &&
+        b.general_avg !== undefined &&
+        Number.isFinite(Number(b.general_avg))
+          ? Number(b.general_avg)
+          : -Infinity;
+
+      // 1) moyenne décroissante
+      if (avgB !== avgA) return avgB - avgA;
+
+      // 2) rang croissant si disponible
+      const rankA =
+        a.rank !== null &&
+        a.rank !== undefined &&
+        Number.isFinite(Number(a.rank))
+          ? Number(a.rank)
+          : Infinity;
+
+      const rankB =
+        b.rank !== null &&
+        b.rank !== undefined &&
+        Number.isFinite(Number(b.rank))
+          ? Number(b.rank)
+          : Infinity;
+
+      if (rankA !== rankB) return rankA - rankB;
+
+      // 3) nom alphabétique pour stabilité
       const an = norm(a.full_name);
       const bn = norm(b.full_name);
       const cmp = an.localeCompare(bn, "fr", { sensitivity: "base" });
       if (cmp !== 0) return cmp;
 
-      // Tie-breakers (matricule puis id) pour un ordre stable
+      // 4) matricule puis id
       const am = norm(a.matricule || "");
       const bm = norm(b.matricule || "");
       const cmp2 = am.localeCompare(bm, "fr", { sensitivity: "base" });
@@ -2300,6 +2341,7 @@ export default function BulletinsPage() {
 
     return arr;
   }, [enriched]);
+
   const stats = enriched?.stats ?? { highest: null, lowest: null, classAvg: null };
   const classInfo = enriched?.response.class;
   const period = enriched?.response.period ?? { from: null, to: null };
@@ -2554,7 +2596,9 @@ export default function BulletinsPage() {
                     Signatures électroniques :{" "}
                   </span>
                   <span
-                    className={signaturesEnabled ? "text-emerald-600" : "text-slate-500"}
+                    className={
+                      signaturesEnabled ? "text-emerald-600" : "text-slate-500"
+                    }
                   >
                     {signaturesEnabled === null
                       ? "Non configurées"
