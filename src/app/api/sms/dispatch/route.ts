@@ -18,11 +18,13 @@ export const dynamic = "force-dynamic";
 function rid() {
   return Math.random().toString(36).slice(2, 8);
 }
+
 function shortId(x: string | null | undefined, n = 8) {
   const s = String(x || "");
   if (s.length <= n) return s;
   return `${s.slice(0, 4)}…${s.slice(-4)}`;
 }
+
 function safeParse<T = any>(x: any): T | null {
   if (!x) return null;
   if (typeof x === "object") return x as T;
@@ -32,16 +34,82 @@ function safeParse<T = any>(x: any): T | null {
     return null;
   }
 }
+
 function s(v: unknown) {
   return String(v ?? "").trim();
 }
 
-const WAIT_STATUS = (process.env.SMS_WAIT_STATUS || process.env.PUSH_WAIT_STATUS || "pending").trim();
+function cloneJson<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value ?? null)) as T;
+}
+
+function buildMergedMeta(existingMeta: any, patch: Record<string, any>) {
+  const base = safeParse<Record<string, any>>(existingMeta);
+  const cleanPatch = Object.fromEntries(
+    Object.entries(patch).filter(([, v]) => v !== undefined)
+  );
+
+  return {
+    ...(base && typeof base === "object" ? base : {}),
+    ...cleanPatch,
+  };
+}
+
+function extractOrangeResourceId(resourceURL: string | null | undefined) {
+  const url = String(resourceURL || "").trim();
+  if (!url) return null;
+  const marker = "/requests/";
+  const idx = url.lastIndexOf(marker);
+  if (idx < 0) return null;
+  const id = url.slice(idx + marker.length).trim();
+  return id || null;
+}
+
+function extractOrangeDebug(result: any) {
+  const response = result?.response ?? null;
+  const outbound =
+    response?.outboundSMSMessageRequest ??
+    response ??
+    null;
+
+  const resourceURL =
+    typeof result?.resourceURL === "string"
+      ? result.resourceURL
+      : typeof outbound?.resourceURL === "string"
+        ? outbound.resourceURL
+        : null;
+
+  const resourceId =
+    typeof result?.resourceId === "string" && result.resourceId
+      ? result.resourceId
+      : extractOrangeResourceId(resourceURL);
+
+  return {
+    provider: result?.provider || "orange_ci",
+    to: result?.to || null,
+    senderAddress: result?.senderAddress || null,
+    resourceURL,
+    resourceId,
+    response,
+  };
+}
+
+const WAIT_STATUS = (
+  process.env.SMS_WAIT_STATUS ||
+  process.env.PUSH_WAIT_STATUS ||
+  "pending"
+).trim();
+
 const MAX_ATTEMPTS = Number(process.env.SMS_MAX_ATTEMPTS || 5);
 
 /* ───────────────── Auth ───────────────── */
 function okAuth(req: Request) {
-  const secret = (process.env.CRON_SECRET || process.env.CRON_PUSH_SECRET || "").trim();
+  const secret = (
+    process.env.CRON_SECRET ||
+    process.env.CRON_PUSH_SECRET ||
+    ""
+  ).trim();
+
   const xCron = (req.headers.get("x-cron-secret") || "").trim();
   const auth = (req.headers.get("authorization") || "").trim();
   const bearer = auth.toLowerCase().startsWith("bearer ")
@@ -109,12 +177,14 @@ function hasSmsChannel(row: QueueRow) {
     const raw = row.channels;
     const arr = Array.isArray(raw) ? raw : raw ? JSON.parse(String(raw)) : [];
     const ok = Array.isArray(arr) && arr.includes("sms");
+
     if (!ok) {
       console.debug("[sms/dispatch] skip_no_sms_channel", {
         id: row.id,
         channels: raw,
       });
     }
+
     return ok;
   } catch (e: any) {
     console.warn("[sms/dispatch] channels_parse_error", {
@@ -134,7 +204,6 @@ function resolveSmsEventFromPayload(payload: any): SmsEventKind | null {
     if (event === "absent") return "absent";
     if (event === "late") return "late";
 
-    // cas "fix" : on essaye de déduire la nature corrigée
     if (event === "fix") {
       const minutesLate = Number(payload?.minutes_late || 0);
       return minutesLate > 0 ? "late" : "absent";
@@ -181,6 +250,7 @@ async function resolveTargetProfilesByRow(
   ) as string[];
 
   const deviceToParent = new Map<string, string>();
+
   if (deviceIds.length) {
     const { data: mapDev, error: mapErr } = await srv
       .from("parent_devices")
@@ -201,6 +271,7 @@ async function resolveTargetProfilesByRow(
   }
 
   const studToParents = new Map<string, string[]>();
+
   if (studentIds.length) {
     const { data: sgs, error: sgErr } = await srv
       .from("student_guardians")
@@ -214,9 +285,12 @@ async function resolveTargetProfilesByRow(
     } else {
       for (const row of (sgs || []) as StudentGuardianRow[]) {
         if (row.notifications_enabled === false) continue;
+
         const sid = String(row.student_id || "");
         const pid = String(row.parent_id || "");
+
         if (!sid || !pid) continue;
+
         const arr = studToParents.get(sid) || [];
         arr.push(pid);
         studToParents.set(sid, Array.from(new Set(arr)));
@@ -261,7 +335,9 @@ async function fetchSmsContactsByProfile(
 
   const { data, error } = await srv
     .from("parent_notification_contacts")
-    .select("id,profile_id,institution_id,phone_e164,sms_enabled,is_primary,verified_at,created_at")
+    .select(
+      "id,profile_id,institution_id,phone_e164,sms_enabled,is_primary,verified_at,created_at"
+    )
     .in("profile_id", profileIds)
     .eq("sms_enabled", true);
 
@@ -338,7 +414,6 @@ async function run(req: Request) {
 
   const srv = getSupabaseServiceClient();
 
-  // 1) récupérer les items en attente
   const { data: raw, error: pickErr } = await srv
     .from("notifications_queue")
     .select(
@@ -353,6 +428,7 @@ async function run(req: Request) {
       id,
       error: pickErr.message,
     });
+
     return NextResponse.json(
       { ok: false, error: pickErr.message, stage: "select", id },
       { status: 200 }
@@ -380,6 +456,7 @@ async function run(req: Request) {
   if (!rows.length) {
     const ms = Date.now() - t0;
     console.info("[sms/dispatch] done_empty", { id, ms });
+
     return NextResponse.json({
       ok: true,
       id,
@@ -390,15 +467,14 @@ async function run(req: Request) {
     });
   }
 
-  // 2) résoudre les profils cibles
   const targetProfilesByRow = await resolveTargetProfilesByRow(srv, rows);
 
   const allProfileIds = Array.from(
     new Set(Array.from(targetProfilesByRow.values()).flatMap((x) => x))
   );
 
-  // 3) charger les contacts SMS
   let contactsByProfile = new Map<string, ContactRow[]>();
+
   try {
     contactsByProfile = await fetchSmsContactsByProfile(srv, allProfileIds);
   } catch (e: any) {
@@ -406,17 +482,19 @@ async function run(req: Request) {
       id,
       error: String(e?.message || e),
     });
+
     return NextResponse.json(
       { ok: false, error: String(e?.message || e), stage: "contacts", id },
       { status: 200 }
     );
   }
 
-  // 4) cache de politiques établissement
   const policyCache = new Map<string, InstitutionSmsPolicy>();
 
   async function getPolicyCached(institutionId: string) {
-    if (policyCache.has(institutionId)) return policyCache.get(institutionId)!;
+    if (policyCache.has(institutionId)) {
+      return policyCache.get(institutionId)!;
+    }
     const policy = await getInstitutionSmsPolicy(srv, institutionId);
     policyCache.set(institutionId, policy);
     return policy;
@@ -427,6 +505,7 @@ async function run(req: Request) {
   const usedContactIds = new Set<string>();
 
   for (const n of rows) {
+    const nowIso = new Date().toISOString();
     const core = safeParse<any>(n.payload) || {};
     const institutionId = s(n.institution_id);
     const targetProfiles = targetProfilesByRow.get(n.id) || [];
@@ -434,14 +513,20 @@ async function run(req: Request) {
 
     let successes = 0;
     let lastError = "";
+    let provider: string | null = null;
+    let smsEvent: SmsEventKind | null = null;
+    let message = "";
+
+    const successTargets: any[] = [];
+    const failedTargets: any[] = [];
 
     if (!institutionId) {
       lastError = "missing_institution_id";
     } else {
       try {
         const policy = await getPolicyCached(institutionId);
-        const provider = resolveSmsProvider(policy);
-        const smsEvent = resolveSmsEventFromPayload(core);
+        provider = resolveSmsProvider(policy);
+        smsEvent = resolveSmsEventFromPayload(core);
 
         if (!policy.smsPremiumEnabled) {
           lastError = "sms_premium_disabled";
@@ -454,7 +539,7 @@ async function run(req: Request) {
         } else if (!targetProfiles.length) {
           lastError = "no_target_profiles";
         } else {
-          const message = buildSmsMessageFromQueue({
+          message = buildSmsMessageFromQueue({
             title: n.title,
             body: n.body,
             payload: core,
@@ -468,11 +553,18 @@ async function run(req: Request) {
 
             if (!best) {
               lastError = "no_sms_contact";
+              failedTargets.push({
+                profile_id: profileId,
+                contact_id: null,
+                phone_e164: null,
+                error: lastError,
+                at: new Date().toISOString(),
+              });
               continue;
             }
 
             try {
-              await sendOrangeSms({
+              const orangeResult = await sendOrangeSms({
                 to: best.phone_e164,
                 message,
               });
@@ -481,6 +573,66 @@ async function run(req: Request) {
               successes++;
               sentSmsSends++;
 
+              const orangeDebug = extractOrangeDebug(orangeResult);
+              const orangeResourceId =
+                orangeDebug.resourceId || extractOrangeResourceId(orangeDebug.resourceURL);
+              const acceptedAtIso = new Date().toISOString();
+
+              successTargets.push({
+                profile_id: profileId,
+                contact_id: best.id,
+                phone_e164: best.phone_e164,
+                at: acceptedAtIso,
+                orange: {
+                  ...orangeDebug,
+                  resourceId: orangeResourceId,
+                },
+              });
+
+              if (orangeResourceId && orangeDebug.resourceURL) {
+                const { error: outboxErr } = await srv
+                  .from("orange_sms_outbox")
+                  .upsert(
+                    {
+                      queue_id: n.id,
+                      institution_id: institutionId || null,
+                      profile_id: profileId,
+                      contact_id: best.id,
+                      phone_e164: best.phone_e164,
+                      sender_address: orangeResult.senderAddress,
+                      orange_resource_id: orangeResourceId,
+                      orange_resource_url: orangeDebug.resourceURL,
+                      provider_status: "accepted_by_orange",
+                      accepted_at: acceptedAtIso,
+                      raw_accept_payload: cloneJson(orangeResult.response),
+                      updated_at: acceptedAtIso,
+                    } as any,
+                    {
+                      onConflict: "orange_resource_id",
+                      ignoreDuplicates: false,
+                    }
+                  );
+
+                if (outboxErr) {
+                  console.error("[sms/dispatch] orange_outbox_upsert_fail", {
+                    id,
+                    qid: n.id,
+                    profile: shortId(profileId),
+                    contact: shortId(best.id),
+                    resourceId: orangeResourceId,
+                    error: outboxErr.message,
+                  });
+                } else {
+                  console.info("[sms/dispatch] orange_outbox_upsert_ok", {
+                    id,
+                    qid: n.id,
+                    profile: shortId(profileId),
+                    contact: shortId(best.id),
+                    resourceId: orangeResourceId,
+                  });
+                }
+              }
+
               console.info("[sms/dispatch] sms_send_ok", {
                 id,
                 qid: n.id,
@@ -488,9 +640,19 @@ async function run(req: Request) {
                 contact: shortId(best.id),
                 to: shortId(best.phone_e164, 18),
                 event: smsEvent,
+                resourceId: orangeResourceId,
               });
             } catch (e: any) {
               lastError = String(e?.message || e);
+
+              failedTargets.push({
+                profile_id: profileId,
+                contact_id: best.id,
+                phone_e164: best.phone_e164,
+                error: lastError,
+                at: new Date().toISOString(),
+              });
+
               console.warn("[sms/dispatch] sms_send_fail", {
                 id,
                 qid: n.id,
@@ -507,6 +669,51 @@ async function run(req: Request) {
       }
     }
 
+    const latestAccepted =
+      successTargets.length > 0 ? successTargets[successTargets.length - 1] : null;
+
+    const latestOrange = latestAccepted?.orange || null;
+
+    const nextMeta = buildMergedMeta(n.meta, {
+      sms_dispatch: {
+        run_id: id,
+        queue_id: n.id,
+        processed_at: nowIso,
+        institution_id: institutionId || null,
+        sms_event: smsEvent ?? null,
+        provider,
+        attempts,
+        final_status:
+          successes > 0
+            ? "sent"
+            : isTerminalErrorCode(lastError) || attempts >= MAX_ATTEMPTS
+              ? "error"
+              : WAIT_STATUS,
+        target_profiles: cloneJson(targetProfiles),
+        target_profile_count: targetProfiles.length,
+        message_preview: message ? message.slice(0, 200) : null,
+        success_count: successes,
+        failure_count: failedTargets.length,
+        success_targets: cloneJson(successTargets),
+        failed_targets: cloneJson(failedTargets),
+        last_error: successes > 0 ? null : s(lastError).slice(0, 300),
+      },
+      sms_delivery: latestOrange
+        ? {
+            provider: "orange_ci",
+            accepted_by_provider: true,
+            accepted_at: latestAccepted?.at || nowIso,
+            to: latestAccepted?.phone_e164 || null,
+            sender_address: latestOrange.senderAddress || null,
+            orange_resource_id: latestOrange.resourceId || null,
+            orange_resource_url: latestOrange.resourceURL || null,
+            delivery_status: null,
+            delivery_status_at: null,
+            terminal_delivered: null,
+          }
+        : undefined,
+    });
+
     if (successes > 0) {
       const { error: updErr } = await srv
         .from("notifications_queue")
@@ -515,6 +722,7 @@ async function run(req: Request) {
           sent_at: new Date().toISOString(),
           attempts,
           last_error: null,
+          meta: nextMeta,
         } as any)
         .eq("id", n.id);
 
@@ -546,6 +754,7 @@ async function run(req: Request) {
           status: statusForError,
           attempts,
           last_error: s(lastError).slice(0, 300),
+          meta: nextMeta,
         } as any)
         .eq("id", n.id);
 
@@ -569,7 +778,6 @@ async function run(req: Request) {
     }
   }
 
-  // 5) marquer les contacts utilisés
   if (usedContactIds.size > 0) {
     const { error: touchErr } = await srv
       .from("parent_notification_contacts")

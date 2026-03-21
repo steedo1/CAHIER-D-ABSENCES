@@ -5,398 +5,210 @@ import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-type QueueRow = {
-  id: string;
-  status: string | null;
-  created_at: string;
-  meta: any | null;
+type OrangeDeliveryInfoNotification = {
+  deliveryInfoNotification?: {
+    callbackData?: string | null;
+    deliveryInfo?: {
+      address?: string | null;
+      deliveryStatus?: string | null;
+    } | null;
+  } | null;
 };
 
 function rid() {
   return Math.random().toString(36).slice(2, 8);
 }
 
-function s(value: unknown) {
-  return String(value ?? "").trim();
+function s(v: unknown) {
+  return String(v ?? "").trim();
 }
 
-function safeJsonParse<T = any>(value: string): T | null {
-  try {
-    return JSON.parse(value) as T;
-  } catch {
-    return null;
-  }
+function shortId(x: string | null | undefined, n = 8) {
+  const str = s(x);
+  if (str.length <= n) return str;
+  return `${str.slice(0, 4)}…${str.slice(-4)}`;
 }
 
-function cloneJson<T = any>(value: T): T | null {
+function safeParse<T = any>(value: any): T | null {
+  if (!value) return null;
+  if (typeof value === "object") return value as T;
   try {
-    return JSON.parse(JSON.stringify(value));
+    return JSON.parse(String(value)) as T;
   } catch {
     return null;
   }
 }
 
 function buildMergedMeta(existingMeta: any, patch: Record<string, any>) {
-  let base: Record<string, any> = {};
-  if (existingMeta && typeof existingMeta === "object") {
-    base = existingMeta;
-  } else if (typeof existingMeta === "string") {
-    const parsed = safeJsonParse<Record<string, any>>(existingMeta);
-    if (parsed && typeof parsed === "object") {
-      base = parsed;
-    }
-  }
-
+  const base = safeParse<Record<string, any>>(existingMeta);
   return {
-    ...base,
+    ...(base && typeof base === "object" ? base : {}),
     ...patch,
   };
 }
 
-function normalizeHeaders(headers: Headers) {
-  const out: Record<string, string> = {};
-  headers.forEach((value, key) => {
-    out[key] = value;
-  });
-  return out;
+function isDeliveredToTerminal(status: string) {
+  return status === "DeliveredToTerminal";
 }
 
-function short(value: string | null | undefined, keep = 18) {
-  const v = s(value);
-  if (!v) return "";
-  if (v.length <= keep) return v;
-  return `${v.slice(0, 8)}…${v.slice(-6)}`;
-}
-
-function normalizeResourceUrl(value: string | null | undefined) {
-  const v = s(value);
-  if (!v) return "";
-  return v.replace(/\?.*$/, "").replace(/#.*$/, "");
-}
-
-function normalizePhone(value: string | null | undefined) {
-  const raw = s(value);
-  if (!raw) return "";
-  if (raw.startsWith("tel:+")) return raw.slice(4);
-  if (raw.startsWith("+")) return raw;
-  const digits = raw.replace(/\D/g, "");
-  if (digits.startsWith("225") && digits.length >= 11) return `+${digits}`;
-  if (digits.length === 10) return `+225${digits}`;
-  return raw;
-}
-
-function collectAllStrings(input: unknown, out: string[] = []) {
-  if (typeof input === "string") {
-    out.push(input);
-    return out;
-  }
-
-  if (Array.isArray(input)) {
-    for (const item of input) collectAllStrings(item, out);
-    return out;
-  }
-
-  if (input && typeof input === "object") {
-    for (const value of Object.values(input as Record<string, unknown>)) {
-      collectAllStrings(value, out);
-    }
-  }
-
-  return out;
-}
-
-function findFirstByKey(input: unknown, wantedKeys: string[]): string {
-  const wanted = new Set(wantedKeys.map((k) => k.toLowerCase()));
-
-  function walk(node: unknown): string {
-    if (!node || typeof node !== "object") return "";
-
-    if (Array.isArray(node)) {
-      for (const item of node) {
-        const found = walk(item);
-        if (found) return found;
-      }
-      return "";
-    }
-
-    for (const [key, value] of Object.entries(node as Record<string, unknown>)) {
-      if (wanted.has(key.toLowerCase())) {
-        if (typeof value === "string") return value;
-        if (typeof value === "number" || typeof value === "boolean") {
-          return String(value);
-        }
-      }
-
-      const nested = walk(value);
-      if (nested) return nested;
-    }
-
-    return "";
-  }
-
-  return walk(input);
-}
-
-function extractReceiptInfo(
-  req: NextRequest,
-  rawBody: string,
-  parsedBody: any
-) {
-  const query = Object.fromEntries(req.nextUrl.searchParams.entries());
-
-  const allStrings = collectAllStrings(parsedBody || rawBody || "");
-
-  const resourceURL =
-    normalizeResourceUrl(
-      s(query.resourceURL) ||
-        findFirstByKey(parsedBody, ["resourceURL", "resourceUrl"]) ||
-        allStrings.find((x) => x.includes("/smsmessaging/v1/outbound/")) ||
-        ""
-    );
-
-  const deliveryStatus =
-    s(query.deliveryStatus) ||
-    s(query.status) ||
-    findFirstByKey(parsedBody, [
-      "deliveryStatus",
-      "status",
-      "deliveryInfoStatus",
-      "deliveryStatusDescription",
-    ]) ||
-    "";
-
-  const recipientAddress =
-    normalizePhone(
-      s(query.address) ||
-        s(query.destinationAddress) ||
-        findFirstByKey(parsedBody, [
-          "address",
-          "destinationAddress",
-          "phoneNumber",
-          "msisdn",
-        ])
-    ) || "";
-
-  const callbackData =
-    s(query.callbackData) ||
-    findFirstByKey(parsedBody, ["callbackData"]) ||
-    "";
-
-  return {
-    resourceURL,
-    deliveryStatus,
-    recipientAddress,
-    callbackData,
-    query,
-  };
-}
-
-function extractResourceUrlsFromQueueMeta(meta: any): string[] {
-  const urls: string[] = [];
-
-  const push = (v: unknown) => {
-    const n = normalizeResourceUrl(s(v));
-    if (n) urls.push(n);
-  };
-
-  if (!meta || typeof meta !== "object") {
-    return urls;
-  }
-
-  const smsDispatch = (meta as any).sms_dispatch;
-  if (smsDispatch && typeof smsDispatch === "object") {
-    push(smsDispatch.resourceURL);
-
-    const successTargets = Array.isArray(smsDispatch.success_targets)
-      ? smsDispatch.success_targets
-      : [];
-
-    for (const t of successTargets) {
-      push(t?.orange?.resourceURL);
-      push(t?.resourceURL);
-    }
-  }
-
-  const smsDeliveryReceipt = (meta as any).sms_delivery_receipt;
-  if (smsDeliveryReceipt && typeof smsDeliveryReceipt === "object") {
-    push(smsDeliveryReceipt.resourceURL);
-  }
-
-  return Array.from(new Set(urls));
-}
-
-async function findMatchingQueueRowByResourceURL(
-  srv: ReturnType<typeof getSupabaseServiceClient>,
-  resourceURL: string
-): Promise<QueueRow | null> {
-  const normalized = normalizeResourceUrl(resourceURL);
-  if (!normalized) return null;
-
-  const { data, error } = await srv
-    .from("notifications_queue")
-    .select("id,status,created_at,meta")
-    .contains("channels", ["sms"])
-    .order("created_at", { ascending: false })
-    .limit(200);
-
-  if (error) {
-    console.warn("[sms/delivery-receipt] queue_lookup_error", {
-      error: error.message,
-    });
-    return null;
-  }
-
-  for (const row of (data || []) as QueueRow[]) {
-    const candidates = extractResourceUrlsFromQueueMeta(row.meta);
-    if (candidates.includes(normalized)) {
-      return row;
-    }
-  }
-
-  return null;
-}
-
-function buildReceiptPatch(params: {
-  runId: string;
-  headers: Record<string, string>;
-  rawBody: string;
-  parsedBody: any;
-  resourceURL: string;
-  deliveryStatus: string;
-  recipientAddress: string;
-  callbackData: string;
-  matchedQueueId: string | null;
-}) {
-  const nowIso = new Date().toISOString();
-
-  return {
-    sms_delivery_receipt: {
-      received_at: nowIso,
-      run_id: params.runId,
-      matched_queue_id: params.matchedQueueId,
-      resourceURL: params.resourceURL || null,
-      delivery_status: params.deliveryStatus || null,
-      recipient_address: params.recipientAddress || null,
-      callback_data: params.callbackData || null,
-      headers: cloneJson(params.headers),
-      payload: cloneJson(params.parsedBody) ?? params.rawBody.slice(0, 4000),
-      raw_preview: params.rawBody.slice(0, 2000),
-    },
-  };
+function isDeliveryImpossible(status: string) {
+  return status === "DeliveryImpossible";
 }
 
 export async function GET() {
-  return NextResponse.json({
-    ok: true,
-    route: "sms-delivery-receipt",
-    message: "Orange delivery receipt endpoint is alive.",
-  });
+  return NextResponse.json({ ok: true, route: "sms_delivery_receipt" });
 }
 
 export async function POST(req: NextRequest) {
-  const id = rid();
-  const t0 = Date.now();
-
-  const headers = normalizeHeaders(req.headers);
-  const rawBody = await req.text();
-  const contentType = s(req.headers.get("content-type")).toLowerCase();
-  const parsedBody =
-    contentType.includes("application/json") && rawBody
-      ? safeJsonParse(rawBody)
-      : safeJsonParse(rawBody) || null;
-
-  const {
-    resourceURL,
-    deliveryStatus,
-    recipientAddress,
-    callbackData,
-    query,
-  } = extractReceiptInfo(req, rawBody, parsedBody);
-
-  console.info("[sms/delivery-receipt] start", {
-    id,
-    contentType: contentType || "unknown",
-    userAgent: s(req.headers.get("user-agent")),
-    resourceURL: short(resourceURL, 40),
-    deliveryStatus,
-    recipientAddress,
-    callbackData: short(callbackData, 24),
-  });
-
+  const trace = rid();
   const srv = getSupabaseServiceClient();
 
-  let matchedQueue: QueueRow | null = null;
+  try {
+    const body = (await req.json().catch(() => null)) as OrangeDeliveryInfoNotification | null;
+    const notif = body?.deliveryInfoNotification || null;
 
-  if (resourceURL) {
-    matchedQueue = await findMatchingQueueRowByResourceURL(srv, resourceURL);
-  }
+    const resourceId = s(notif?.callbackData);
+    const address = s(notif?.deliveryInfo?.address);
+    const deliveryStatus = s(notif?.deliveryInfo?.deliveryStatus);
+    const nowIso = new Date().toISOString();
 
-  if (matchedQueue) {
-    const nextMeta = buildMergedMeta(
-      matchedQueue.meta,
-      buildReceiptPatch({
-        runId: id,
-        headers,
-        rawBody,
-        parsedBody,
-        resourceURL,
-        deliveryStatus,
-        recipientAddress,
-        callbackData,
-        matchedQueueId: matchedQueue.id,
-      })
-    );
-
-    const { error: updErr } = await srv
-      .from("notifications_queue")
-      .update({
-        meta: nextMeta,
-      } as any)
-      .eq("id", matchedQueue.id);
-
-    if (updErr) {
-      console.error("[sms/delivery-receipt] queue_update_error", {
-        id,
-        queueId: matchedQueue.id,
-        error: updErr.message,
+    if (!resourceId || !deliveryStatus) {
+      console.warn("[sms/dr] invalid_payload", {
+        trace,
+        hasBody: !!body,
+        resourceIdPresent: !!resourceId,
+        deliveryStatusPresent: !!deliveryStatus,
       });
-    } else {
-      console.info("[sms/delivery-receipt] queue_update_ok", {
-        id,
-        queueId: matchedQueue.id,
-        deliveryStatus,
-        resourceURL: short(resourceURL, 40),
-      });
+
+      return NextResponse.json({ ok: true, ignored: "invalid_payload" }, { status: 200 });
     }
-  } else {
-    console.warn("[sms/delivery-receipt] queue_not_matched", {
-      id,
-      resourceURL: short(resourceURL, 40),
+
+    const { data: outbox, error: outboxErr } = await srv
+      .from("orange_sms_outbox")
+      .select("*")
+      .eq("orange_resource_id", resourceId)
+      .maybeSingle();
+
+    if (outboxErr) {
+      console.error("[sms/dr] outbox_lookup_fail", {
+        trace,
+        resourceId,
+        error: outboxErr.message,
+      });
+      return NextResponse.json({ ok: true, ignored: "lookup_error" }, { status: 200 });
+    }
+
+    if (!outbox) {
+      console.warn("[sms/dr] unknown_resource_id", {
+        trace,
+        resourceId,
+        address: shortId(address, 18),
+        deliveryStatus,
+      });
+      return NextResponse.json({ ok: true, ignored: "unknown_resource_id" }, { status: 200 });
+    }
+
+    const outboxPatch: any = {
+      delivery_status: deliveryStatus,
+      delivery_status_at: nowIso,
+      raw_last_dr: body,
+      updated_at: nowIso,
+    };
+
+    if (isDeliveredToTerminal(deliveryStatus)) {
+      outboxPatch.delivered_at = nowIso;
+    }
+
+    if (isDeliveryImpossible(deliveryStatus)) {
+      outboxPatch.failed_at = nowIso;
+    }
+
+    const { error: outboxUpdErr } = await srv
+      .from("orange_sms_outbox")
+      .update(outboxPatch)
+      .eq("id", outbox.id);
+
+    if (outboxUpdErr) {
+      console.error("[sms/dr] outbox_update_fail", {
+        trace,
+        resourceId,
+        error: outboxUpdErr.message,
+      });
+      return NextResponse.json({ ok: true, ignored: "outbox_update_fail" }, { status: 200 });
+    }
+
+    const { data: queue, error: queueErr } = await srv
+      .from("notifications_queue")
+      .select("id,meta")
+      .eq("id", outbox.queue_id)
+      .maybeSingle();
+
+    if (queueErr) {
+      console.error("[sms/dr] queue_lookup_fail", {
+        trace,
+        resourceId,
+        queueId: outbox.queue_id,
+        error: queueErr.message,
+      });
+      return NextResponse.json({ ok: true, ignored: "queue_lookup_fail" }, { status: 200 });
+    }
+
+    if (queue) {
+      const nextMeta = buildMergedMeta(queue.meta, {
+        sms_delivery: {
+          provider: "orange_ci",
+          accepted_by_provider: true,
+          accepted_at: outbox.accepted_at,
+          to: outbox.phone_e164,
+          sender_address: outbox.sender_address,
+          orange_resource_id: resourceId,
+          orange_resource_url: outbox.orange_resource_url,
+          delivery_status: deliveryStatus,
+          delivery_status_at: nowIso,
+          terminal_delivered: isDeliveredToTerminal(deliveryStatus),
+          failed_delivery: isDeliveryImpossible(deliveryStatus),
+        },
+      });
+
+      const { error: queueUpdErr } = await srv
+        .from("notifications_queue")
+        .update({
+          meta: nextMeta,
+        } as any)
+        .eq("id", outbox.queue_id);
+
+      if (queueUpdErr) {
+        console.error("[sms/dr] queue_update_fail", {
+          trace,
+          resourceId,
+          queueId: outbox.queue_id,
+          error: queueUpdErr.message,
+        });
+      } else {
+        console.info("[sms/dr] queue_update_ok", {
+          trace,
+          resourceId,
+          queueId: shortId(outbox.queue_id),
+          deliveryStatus,
+        });
+      }
+    }
+
+    console.info("[sms/dr] ok", {
+      trace,
+      resourceId,
+      address: shortId(address, 18),
       deliveryStatus,
-      recipientAddress,
-      query,
+      queueId: shortId(outbox.queue_id),
     });
+
+    return NextResponse.json({ ok: true }, { status: 200 });
+  } catch (e: any) {
+    console.error("[sms/dr] fatal", {
+      trace,
+      error: String(e?.message || e),
+    });
+
+    return NextResponse.json({ ok: true, ignored: "fatal" }, { status: 200 });
   }
-
-  const ms = Date.now() - t0;
-
-  console.info("[sms/delivery-receipt] done", {
-    id,
-    matchedQueueId: matchedQueue?.id || null,
-    resourceURL: short(resourceURL, 40),
-    deliveryStatus,
-    recipientAddress,
-    ms,
-  });
-
-  // Toujours 200 pour ne pas faire rejeter le callback Orange
-  return NextResponse.json({
-    ok: true,
-    id,
-    matchedQueueId: matchedQueue?.id || null,
-    resourceURL: resourceURL || null,
-    deliveryStatus: deliveryStatus || null,
-    recipientAddress: recipientAddress || null,
-    ms,
-  });
 }

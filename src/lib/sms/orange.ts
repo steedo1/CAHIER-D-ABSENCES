@@ -23,6 +23,8 @@ export type OrangeSmsSendResult = {
   provider: "orange_ci";
   to: string;
   senderAddress: string;
+  resourceURL: string | null;
+  resourceId: string | null;
   response: unknown;
 };
 
@@ -96,7 +98,6 @@ function normalizePhoneToE164(raw: string): string {
     throw new Error("Numéro destinataire vide.");
   }
 
-  // Déjà E.164
   if (/^\+[1-9]\d{7,14}$/.test(value)) {
     return value;
   }
@@ -106,19 +107,16 @@ function normalizePhoneToE164(raw: string): string {
     throw new Error(`Numéro invalide: "${raw}"`);
   }
 
-  // 00225XXXXXXXXXX -> +225...
   if (digits.startsWith("00")) {
     const candidate = `+${digits.slice(2)}`;
     if (/^\+[1-9]\d{7,14}$/.test(candidate)) return candidate;
   }
 
-  // 225XXXXXXXXXX -> +225...
   if (digits.startsWith("225") && digits.length >= 11) {
     const candidate = `+${digits}`;
     if (/^\+[1-9]\d{7,14}$/.test(candidate)) return candidate;
   }
 
-  // Numéro ivoirien local sur 10 chiffres -> +225...
   if (digits.length === 10) {
     return `+225${digits}`;
   }
@@ -146,6 +144,26 @@ function safeJsonParse(text: string): unknown {
   } catch {
     return text;
   }
+}
+
+function extractResourceURL(parsed: any): string | null {
+  const outbound =
+    parsed?.outboundSMSMessageRequest ??
+    parsed ??
+    null;
+
+  return typeof outbound?.resourceURL === "string"
+    ? outbound.resourceURL
+    : null;
+}
+
+function extractResourceId(resourceURL: string | null): string | null {
+  if (!resourceURL) return null;
+  const marker = "/requests/";
+  const idx = resourceURL.lastIndexOf(marker);
+  if (idx < 0) return null;
+  const id = resourceURL.slice(idx + marker.length).trim();
+  return id || null;
 }
 
 async function readErrorPayload(response: Response): Promise<string> {
@@ -235,7 +253,7 @@ export async function getOrangeAccessToken(forceRefresh = false): Promise<string
   }
 
   const expiresInSec = Number(data.expires_in || 3600);
-  const safetyWindowMs = 60_000; // 1 min avant expiration
+  const safetyWindowMs = 60_000;
   const expiresAtMs = now + Math.max(30, expiresInSec) * 1000 - safetyWindowMs;
 
   cachedToken = {
@@ -308,7 +326,6 @@ export async function sendOrangeSms(
     cache: "no-store",
   });
 
-  // Si le token a expiré entre-temps, on réessaie une seule fois.
   if (response.status === 401) {
     console.warn("[sms/orange] send_401_retry", {
       url,
@@ -348,16 +365,15 @@ export async function sendOrangeSms(
   const text = await response.text().catch(() => "");
   const parsed = text ? safeJsonParse(text) : null;
 
-  const outbound =
-    (parsed as any)?.outboundSMSMessageRequest ??
-    parsed ??
-    null;
+  const resourceURL = extractResourceURL(parsed);
+  const resourceId = extractResourceId(resourceURL);
 
   console.info("[sms/orange] send_ok", {
     url,
     to: short(to, 18),
     senderAddress,
-    resourceURL: outbound?.resourceURL || null,
+    resourceURL,
+    resourceId,
   });
 
   return {
@@ -365,6 +381,8 @@ export async function sendOrangeSms(
     provider: "orange_ci",
     to,
     senderAddress,
+    resourceURL,
+    resourceId,
     response: parsed,
   };
 }
