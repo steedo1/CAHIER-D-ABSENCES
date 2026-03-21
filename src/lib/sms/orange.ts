@@ -39,8 +39,8 @@ const DEFAULT_SENDER =
   "tel:+2250000";
 
 /**
- * Petit cache mÃ©moire process-local.
- * Suffisant pour Ã©viter de demander un token Ã  chaque SMS.
+ * Petit cache mémoire process-local.
+ * Suffisant pour éviter de demander un token à chaque SMS.
  */
 let cachedToken: {
   accessToken: string;
@@ -49,7 +49,7 @@ let cachedToken: {
 
 function ensureServerSide() {
   if (typeof window !== "undefined") {
-    throw new Error("orange.ts doit Ãªtre utilisÃ© uniquement cÃ´tÃ© serveur.");
+    throw new Error("orange.ts doit être utilisé uniquement côté serveur.");
   }
 }
 
@@ -57,7 +57,19 @@ function short(value: string | null | undefined, keep = 10) {
   const s = String(value || "");
   if (!s) return "";
   if (s.length <= keep) return s;
-  return `${s.slice(0, 4)}â€¦${s.slice(-4)}`;
+  return `${s.slice(0, 4)}…${s.slice(-4)}`;
+}
+
+function hasAuthHeaderEnv() {
+  return !!process.env.ORANGE_AUTH_HEADER?.trim();
+}
+
+function hasClientIdEnv() {
+  return !!process.env.ORANGE_CLIENT_ID?.trim();
+}
+
+function hasClientSecretEnv() {
+  return !!process.env.ORANGE_CLIENT_SECRET?.trim();
 }
 
 function getAuthHeader(): string {
@@ -74,24 +86,24 @@ function getAuthHeader(): string {
   }
 
   throw new Error(
-    "Configuration Orange manquante: dÃ©finir ORANGE_AUTH_HEADER ou ORANGE_CLIENT_ID + ORANGE_CLIENT_SECRET."
+    "Configuration Orange manquante: définir ORANGE_AUTH_HEADER ou ORANGE_CLIENT_ID + ORANGE_CLIENT_SECRET."
   );
 }
 
 function normalizePhoneToE164(raw: string): string {
   const value = String(raw || "").trim();
   if (!value) {
-    throw new Error("NumÃ©ro destinataire vide.");
+    throw new Error("Numéro destinataire vide.");
   }
 
-  // DÃ©jÃ  E.164
+  // Déjà E.164
   if (/^\+[1-9]\d{7,14}$/.test(value)) {
     return value;
   }
 
   const digits = value.replace(/\D/g, "");
   if (!digits) {
-    throw new Error(`NumÃ©ro invalide: "${raw}"`);
+    throw new Error(`Numéro invalide: "${raw}"`);
   }
 
   // 00225XXXXXXXXXX -> +225...
@@ -106,12 +118,12 @@ function normalizePhoneToE164(raw: string): string {
     if (/^\+[1-9]\d{7,14}$/.test(candidate)) return candidate;
   }
 
-  // numÃ©ro ivoirien local sur 10 chiffres -> +225...
+  // Numéro ivoirien local sur 10 chiffres -> +225...
   if (digits.length === 10) {
     return `+225${digits}`;
   }
 
-  throw new Error(`Impossible de normaliser le numÃ©ro "${raw}" au format E.164.`);
+  throw new Error(`Impossible de normaliser le numéro "${raw}" au format E.164.`);
 }
 
 function toOrangeTelAddress(input: string): string {
@@ -157,8 +169,8 @@ async function readErrorPayload(response: Response): Promise<string> {
 }
 
 /**
- * RÃ©cupÃ¨re un access token OAuth Orange.
- * Utilise un cache mÃ©moire jusqu'Ã  un peu avant l'expiration.
+ * Récupère un access token OAuth Orange.
+ * Utilise un cache mémoire jusqu'à un peu avant l'expiration.
  */
 export async function getOrangeAccessToken(forceRefresh = false): Promise<string> {
   ensureServerSide();
@@ -171,10 +183,23 @@ export async function getOrangeAccessToken(forceRefresh = false): Promise<string
     cachedToken.accessToken &&
     now < cachedToken.expiresAtMs
   ) {
+    console.info("[sms/orange] oauth_cache_hit", {
+      forceRefresh,
+      expiresInMs: cachedToken.expiresAtMs - now,
+    });
     return cachedToken.accessToken;
   }
 
   const authHeader = getAuthHeader();
+
+  console.info("[sms/orange] oauth_start", {
+    oauthUrl: ORANGE_OAUTH_URL,
+    forceRefresh,
+    authMode: hasAuthHeaderEnv() ? "auth_header" : "client_credentials",
+    hasAuthHeaderEnv: hasAuthHeaderEnv(),
+    hasClientIdEnv: hasClientIdEnv(),
+    hasClientSecretEnv: hasClientSecretEnv(),
+  });
 
   const response = await fetch(ORANGE_OAUTH_URL, {
     method: "POST",
@@ -189,12 +214,23 @@ export async function getOrangeAccessToken(forceRefresh = false): Promise<string
 
   if (!response.ok) {
     const err = await readErrorPayload(response);
-    throw new Error(`Orange OAuth Ã©chouÃ©: ${err}`);
+    console.error("[sms/orange] oauth_fail", {
+      oauthUrl: ORANGE_OAUTH_URL,
+      status: response.status,
+      statusText: response.statusText,
+      error: err,
+      authMode: hasAuthHeaderEnv() ? "auth_header" : "client_credentials",
+    });
+    throw new Error(`Orange OAuth échoué: ${err}`);
   }
 
   const data = (await response.json()) as OrangeTokenResponse;
 
   if (!data?.access_token) {
+    console.error("[sms/orange] oauth_missing_token", {
+      oauthUrl: ORANGE_OAUTH_URL,
+      payloadKeys: Object.keys(data || {}),
+    });
     throw new Error("Orange OAuth: access_token absent.");
   }
 
@@ -206,6 +242,12 @@ export async function getOrangeAccessToken(forceRefresh = false): Promise<string
     accessToken: data.access_token,
     expiresAtMs,
   };
+
+  console.info("[sms/orange] oauth_ok", {
+    oauthUrl: ORANGE_OAUTH_URL,
+    tokenType: data.token_type || "unknown",
+    expiresInSec,
+  });
 
   return data.access_token;
 }
@@ -231,6 +273,18 @@ export async function sendOrangeSms(
   const encodedSender = encodeURIComponent(senderAddress);
   const url = `${ORANGE_SMS_BASE_URL}/smsmessaging/v1/outbound/${encodedSender}/requests`;
 
+  console.info("[sms/orange] send_start", {
+    smsBaseUrl: ORANGE_SMS_BASE_URL,
+    url,
+    to: short(to, 18),
+    senderAddress,
+    messageLength: message.length,
+    usedDefaultSender:
+      !input.senderAddress?.trim() &&
+      senderAddress === toOrangeTelAddress(DEFAULT_SENDER),
+    hasConfiguredSender: !!process.env.ORANGE_SMS_SENDER?.trim(),
+  });
+
   let accessToken = await getOrangeAccessToken(false);
 
   const payload = {
@@ -254,8 +308,14 @@ export async function sendOrangeSms(
     cache: "no-store",
   });
 
-  // Si le token a expirÃ© entre-temps, on rÃ©essaie une seule fois.
+  // Si le token a expiré entre-temps, on réessaie une seule fois.
   if (response.status === 401) {
+    console.warn("[sms/orange] send_401_retry", {
+      url,
+      to: short(to, 18),
+      senderAddress,
+    });
+
     accessToken = await getOrangeAccessToken(true);
 
     response = await fetch(url, {
@@ -272,13 +332,33 @@ export async function sendOrangeSms(
 
   if (!response.ok) {
     const err = await readErrorPayload(response);
+    console.error("[sms/orange] send_fail", {
+      url,
+      to: short(to, 18),
+      senderAddress,
+      status: response.status,
+      statusText: response.statusText,
+      error: err,
+    });
     throw new Error(
-      `Envoi SMS Orange Ã©chouÃ© vers ${short(to, 18)}: ${err}`
+      `Envoi SMS Orange échoué vers ${short(to, 18)}: ${err}`
     );
   }
 
   const text = await response.text().catch(() => "");
   const parsed = text ? safeJsonParse(text) : null;
+
+  const outbound =
+    (parsed as any)?.outboundSMSMessageRequest ??
+    parsed ??
+    null;
+
+  console.info("[sms/orange] send_ok", {
+    url,
+    to: short(to, 18),
+    senderAddress,
+    resourceURL: outbound?.resourceURL || null,
+  });
 
   return {
     ok: true,
@@ -290,7 +370,7 @@ export async function sendOrangeSms(
 }
 
 /**
- * Permet juste de vÃ©rifier rapidement si la config Orange est prÃ©sente.
+ * Permet juste de vérifier rapidement si la config Orange est présente.
  */
 export function isOrangeSmsConfigured(): boolean {
   try {
@@ -303,7 +383,7 @@ export function isOrangeSmsConfigured(): boolean {
 }
 
 /**
- * Vide le cache mÃ©moire du token.
+ * Vide le cache mémoire du token.
  * Pratique en debug/tests.
  */
 export function clearOrangeAccessTokenCache() {

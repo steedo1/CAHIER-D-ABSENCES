@@ -93,7 +93,7 @@ function cleanSentence(value: string): string {
   return compactSpaces(value).replace(/\s+([:;,.!?])/g, "$1");
 }
 
-function joinParts(parts: Array<Maybe<string>>, sep = " â€¢ "): string {
+function joinParts(parts: Array<Maybe<string>>, sep = " • "): string {
   return parts
     .map((x) => s(x))
     .filter(Boolean)
@@ -112,7 +112,7 @@ function studentNameFromPayload(payload: AttendanceSmsPayload | null | undefined
     payload?.student?.full_name,
     payload?.student?.display_name,
     payload?.student?.matricule,
-    "Ã‰lÃ¨ve"
+    "Élève"
   );
 }
 
@@ -133,6 +133,7 @@ function subjectNameFromPayload(payload: AttendanceSmsPayload | null | undefined
 function formatDateFr(iso: Maybe<string>): string {
   const raw = s(iso);
   if (!raw) return "";
+
   try {
     return new Date(raw).toLocaleDateString("fr-FR", {
       timeZone: SMS_TIMEZONE,
@@ -148,6 +149,7 @@ function formatDateFr(iso: Maybe<string>): string {
 function formatTimeFr(iso: Maybe<string>): string {
   const raw = s(iso);
   if (!raw) return "";
+
   try {
     return new Date(raw).toLocaleTimeString("fr-FR", {
       timeZone: SMS_TIMEZONE,
@@ -163,7 +165,7 @@ function formatTimeFr(iso: Maybe<string>): string {
 function formatDateTimeCompactFr(iso: Maybe<string>): string {
   const date = formatDateFr(iso);
   const time = formatTimeFr(iso);
-  return joinParts([date, time], " Ã  ");
+  return joinParts([date, time], " à ");
 }
 
 function normalizeAppName(appName?: string | null): string {
@@ -175,13 +177,15 @@ function limitSmsText(value: string, maxLength = DEFAULT_MAX_SMS_LENGTH): string
   if (clean.length <= maxLength) return clean;
 
   const trimmed = clean.slice(0, Math.max(0, maxLength - 1)).trim();
-  return `${trimmed}â€¦`;
+  return `${trimmed}…`;
 }
 
 function isAttendancePayload(payload: unknown): payload is AttendanceSmsPayload {
   if (!payload || typeof payload !== "object") return false;
+
   const kind = s((payload as any).kind).toLowerCase();
   const event = s((payload as any).event).toLowerCase();
+
   return kind === "attendance" || ["absent", "late", "fix"].includes(event);
 }
 
@@ -211,27 +215,26 @@ export function buildAttendanceSmsMessage(
   let main = "";
 
   if (event === "absent") {
-    main = `${appName}: ${studentName} a Ã©tÃ© marquÃ© absent`;
+    main = `${appName}: ${studentName} a été marqué absent`;
   } else if (event === "late") {
-    main = `${appName}: ${studentName} a Ã©tÃ© marquÃ© en retard`;
+    main = `${appName}: ${studentName} a été marqué en retard`;
     if (minutesLate > 0) {
       main += ` (${minutesLate} min)`;
     }
   } else {
-    // fix
     const lateFix =
       minutesLate > 0
-        ? `retard confirmÃ© (${minutesLate} min)`
-        : "absence confirmÃ©e";
-    main = `${appName}: correction d'assiduitÃ© pour ${studentName} - ${lateFix}`;
+        ? `retard confirmé (${minutesLate} min)`
+        : "absence confirmée";
+    main = `${appName}: correction d'assiduité pour ${studentName} - ${lateFix}`;
   }
 
   const details = joinParts(
     [
-      subjectName ? `MatiÃ¨re: ${subjectName}` : "",
+      subjectName ? `Matière: ${subjectName}` : "",
       classLabel ? `Classe: ${classLabel}` : "",
       when ? `Date: ${when}` : "",
-      institutionName ? `Ã‰tablissement: ${institutionName}` : "",
+      institutionName ? `Établissement: ${institutionName}` : "",
       reason ? `Motif: ${reason}` : "",
     ],
     " | "
@@ -270,11 +273,11 @@ export function buildGenericSmsMessage(
 }
 
 /**
- * PrÃ©vu pour plus tard :
- * SMS groupÃ© hebdomadaire des notes.
+ * Prévu pour plus tard :
+ * SMS groupé hebdomadaire des notes.
  *
  * Exemple :
- * Mon Cahier: Notes de KOUADIO Paul - Math 15/20, PC 14/20, FR 13/20.
+ * Mon Cahier: Notes disponibles pour KOUADIO Paul - Math 15/20, PC 14/20, FR 13/20.
  */
 export function buildGradesDigestSmsMessage(
   input: GradeDigestSmsInput,
@@ -282,7 +285,7 @@ export function buildGradesDigestSmsMessage(
 ): string {
   const appName = normalizeAppName(input.appName || options.appName);
   const institutionName = s(input.institutionName || options.institutionName);
-  const studentName = firstNonEmpty(input.studentName, "Ã‰lÃ¨ve");
+  const studentName = firstNonEmpty(input.studentName, "Élève");
   const maxLength = toSafeNumber(options.maxLength) ?? DEFAULT_MAX_SMS_LENGTH;
 
   const items = (input.items || [])
@@ -301,13 +304,13 @@ export function buildGradesDigestSmsMessage(
 
   const head = `${appName}: Notes disponibles pour ${studentName}`;
   const body = items.length ? items.join(", ") : "Aucune nouvelle note.";
-  const tail = institutionName ? ` Ã‰tablissement: ${institutionName}.` : "";
+  const tail = institutionName ? ` Établissement: ${institutionName}.` : "";
 
   return limitSmsText(`${head} - ${body}.${tail}`, maxLength);
 }
 
 /**
- * Point d'entrÃ©e unique pour le futur dispatcher SMS.
+ * Point d'entrée unique pour le dispatcher SMS.
  * Il choisit automatiquement le bon format selon le payload.
  */
 export function buildSmsMessageFromQueue(
