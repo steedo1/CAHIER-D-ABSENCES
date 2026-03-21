@@ -1,13 +1,13 @@
-//src/app/parents/page.tsx
+// src/app/parents/page.tsx
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
 
-/* ───────── routes dédiées parents + fallbacks ───────── */
+/* â”€â”€â”€â”€â”€â”€â”€â”€â”€ routes dÃ©diÃ©es parents + fallbacks â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 const LOGOUT_PARENTS = "/parents/logout";
 const LOGIN_PARENTS = "/parents/login";
 
-/* ───────── helpers ───────── */
+/* â”€â”€â”€â”€â”€â”€â”€â”€â”€ helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 function urlBase64ToUint8Array(base64: string) {
   const padding = "=".repeat((4 - (base64.length % 4)) % 4);
   const base64url = (base64 + padding).replace(/-/g, "+").replace(/_/g, "/");
@@ -59,7 +59,7 @@ function dayLabel(iso: string) {
     a.getFullYear() === b.getFullYear() &&
     a.getMonth() === b.getMonth() &&
     a.getDate() === b.getDate();
-  if (same(d, today)) return "Aujourd’hui";
+  if (same(d, today)) return "Aujourdâ€™hui";
   if (same(d, yday)) return "Hier";
   return d.toLocaleDateString([], {
     day: "2-digit",
@@ -70,13 +70,13 @@ function dayLabel(iso: string) {
 
 function rubricLabel(r: "discipline" | "tenue" | "moralite") {
   if (r === "tenue") return "Tenue";
-  if (r === "moralite") return "Moralité";
+  if (r === "moralite") return "MoralitÃ©";
   return "Discipline";
 }
 
 function gradeKindLabel(kind: "devoir" | "interro_ecrite" | "interro_orale") {
   if (kind === "devoir") return "Devoir";
-  if (kind === "interro_ecrite") return "Interrogation écrite";
+  if (kind === "interro_ecrite") return "Interrogation Ã©crite";
   return "Interrogation orale";
 }
 
@@ -96,8 +96,8 @@ function getInitials(name: string) {
 
 function startOfWeek(date: Date) {
   const d = new Date(date);
-  const day = d.getDay(); // 0 (dimanche) -> 6 (samedi)
-  const diff = day === 0 ? -6 : 1 - day; // Lundi
+  const day = d.getDay();
+  const diff = day === 0 ? -6 : 1 - day;
   d.setDate(d.getDate() + diff);
   d.setHours(0, 0, 0, 0);
   return d;
@@ -116,7 +116,30 @@ function isInDateRange(iso: string, from?: string | null, to?: string | null) {
   return true;
 }
 
-/* ───────── thèmes (couleurs différentes par enfant / matière) ───────── */
+function formatPhoneForDisplay(phone?: string | null) {
+  const s = String(phone || "").trim();
+  if (!s) return "Non configurÃ©";
+  if (!s.startsWith("+")) return s;
+  const digits = s.slice(1);
+  if (digits.startsWith("225") && digits.length >= 11) {
+    const core = digits.slice(3);
+    if (core.length === 10) {
+      return `+225 ${core.slice(0, 2)} ${core.slice(2, 4)} ${core.slice(
+        4,
+        6,
+      )} ${core.slice(6, 8)} ${core.slice(8, 10)}`;
+    }
+    if (core.length === 8) {
+      return `+225 ${core.slice(0, 2)} ${core.slice(2, 4)} ${core.slice(
+        4,
+        6,
+      )} ${core.slice(6, 8)}`;
+    }
+  }
+  return s;
+}
+
+/* â”€â”€â”€â”€â”€â”€â”€â”€â”€ thÃ¨mes (couleurs diffÃ©rentes par enfant / matiÃ¨re) â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 const THEMES = [
   {
     name: "emerald",
@@ -188,7 +211,7 @@ function themeFor(i: number) {
   return THEMES[i % THEMES.length];
 }
 
-/* ───────── thèmes par rubrique (pour jauges verticales) ───────── */
+/* â”€â”€â”€â”€â”€â”€â”€â”€â”€ thÃ¨mes par rubrique (pour jauges verticales) â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 const RUBRIC_THEMES = {
   assiduite: {
     bg: "bg-emerald-100",
@@ -214,12 +237,12 @@ const RUBRIC_THEMES = {
 
 type RubricKey = keyof typeof RUBRIC_THEMES;
 
-/* ───────── types ───────── */
+/* â”€â”€â”€â”€â”€â”€â”€â”€â”€ types â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 type Kid = { id: string; full_name: string; class_label: string | null };
 
 type Ev = {
   id: string;
-  when: string; // session.started_at
+  when: string;
   expected_minutes?: number | null;
   type: "absent" | "late";
   minutes_late?: number | null;
@@ -272,7 +295,48 @@ type KidGradeRow = {
 
 type NavSection = "dashboard" | "conduct" | "absences" | "notes";
 
-/* ───────── UI ───────── */
+type ParentNotificationContact = {
+  id: string;
+  institution_id: string | null;
+  profile_id: string;
+  phone_e164: string;
+  sms_enabled: boolean;
+  whatsapp_enabled: boolean;
+  is_primary: boolean;
+  verified_at: string | null;
+  last_used_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+type InstitutionNotificationSetting = {
+  institution_id: string;
+  push_enabled: boolean;
+  sms_premium_enabled: boolean;
+  sms_provider: string | null;
+  sms_sender_name: string | null;
+  sms_absence_enabled: boolean;
+  sms_late_enabled: boolean;
+  sms_notes_digest_enabled: boolean;
+  sms_notes_digest_weekday: number | null;
+  sms_notes_digest_hour: number | null;
+  whatsapp_premium_enabled: boolean;
+};
+
+type ParentNotificationContactsResponse = {
+  ok: boolean;
+  profile_id?: string;
+  source?: string;
+  preferred_institution_id?: string | null;
+  institution_ids?: string[];
+  contacts?: ParentNotificationContact[];
+  primary_contact?: ParentNotificationContact | null;
+  institution_settings?: InstitutionNotificationSetting[];
+  sms_premium_any_enabled?: boolean;
+  error?: string;
+};
+
+/* â”€â”€â”€â”€â”€â”€â”€â”€â”€ UI â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 function Button(
   p: React.ButtonHTMLAttributes<HTMLButtonElement> & {
     tone?: "emerald" | "slate" | "red" | "white" | "outline";
@@ -352,6 +416,56 @@ function Badge({
 function Skeleton({ className = "" }: { className?: string }) {
   return (
     <div className={`animate-pulse rounded-2xl bg-slate-200/70 ${className}`} />
+  );
+}
+
+function Toggle({
+  checked,
+  onChange,
+  label,
+  description,
+  disabled,
+}: {
+  checked: boolean;
+  onChange: (next: boolean) => void;
+  label: string;
+  description?: string;
+  disabled?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={() => onChange(!checked)}
+      className={[
+        "flex w-full items-center justify-between gap-3 rounded-2xl border p-3 text-left transition",
+        checked
+          ? "border-emerald-200 bg-emerald-50"
+          : "border-slate-200 bg-white hover:bg-slate-50",
+        disabled ? "opacity-60 cursor-not-allowed" : "",
+      ].join(" ")}
+    >
+      <div className="min-w-0">
+        <div className="text-[14px] font-bold text-slate-900">{label}</div>
+        {description && (
+          <div className="mt-1 text-[12px] text-slate-600">{description}</div>
+        )}
+      </div>
+
+      <div
+        className={[
+          "relative h-7 w-12 shrink-0 rounded-full transition",
+          checked ? "bg-emerald-500" : "bg-slate-300",
+        ].join(" ")}
+      >
+        <span
+          className={[
+            "absolute top-1 h-5 w-5 rounded-full bg-white shadow transition-all",
+            checked ? "left-6" : "left-1",
+          ].join(" ")}
+        />
+      </div>
+    </button>
   );
 }
 
@@ -454,7 +568,6 @@ const IconX = () => (
     <path d="M18 6l-12 12" />
   </svg>
 );
-
 const IconLock = () => (
   <svg
     width="16"
@@ -469,8 +582,49 @@ const IconLock = () => (
     <rect x="5" y="11" width="14" height="10" rx="2" />
   </svg>
 );
+const IconPhone = () => (
+  <svg
+    width="18"
+    height="18"
+    viewBox="0 0 24 24"
+    className="shrink-0"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+  >
+    <path d="M22 16.92v3a2 2 0 01-2.18 2 19.8 19.8 0 01-8.63-3.07 19.5 19.5 0 01-6-6A19.8 19.8 0 012.08 4.18 2 2 0 014.06 2h3a2 2 0 012 1.72c.12.9.35 1.77.68 2.6a2 2 0 01-.45 2.11L8.1 9.91a16 16 0 006 6l1.48-1.17a2 2 0 012.11-.45c.83.33 1.7.56 2.6.68A2 2 0 0122 16.92z" />
+  </svg>
+);
+const IconSparkles = () => (
+  <svg
+    width="18"
+    height="18"
+    viewBox="0 0 24 24"
+    className="shrink-0"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+  >
+    <path d="M12 3l1.6 4.4L18 9l-4.4 1.6L12 15l-1.6-4.4L6 9l4.4-1.6L12 3z" />
+    <path d="M19 16l.9 2.1L22 19l-2.1.9L19 22l-.9-2.1L16 19l2.1-.9L19 16z" />
+    <path d="M5 14l.9 2.1L8 17l-2.1.9L5 20l-.9-2.1L2 17l2.1-.9L5 14z" />
+  </svg>
+);
+const IconShield = () => (
+  <svg
+    width="18"
+    height="18"
+    viewBox="0 0 24 24"
+    className="shrink-0"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+  >
+    <path d="M12 3l7 4v5c0 5-3.5 8.5-7 10-3.5-1.5-7-5-7-10V7l7-4z" />
+  </svg>
+);
 
-/* ───────── Carte “tilt” ───────── */
+/* â”€â”€â”€â”€â”€â”€â”€â”€â”€ Carte â€œtiltâ€ â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 function TiltCard({
   children,
   className = "",
@@ -494,8 +648,8 @@ function TiltCard({
     if (!hasFinePointer) return;
     const el = e.currentTarget;
     const rect = el.getBoundingClientRect();
-    const px = (e.clientX - rect.left) / rect.width; // 0..1
-    const py = (e.clientY - rect.top) / rect.height; // 0..1
+    const px = (e.clientX - rect.left) / rect.width;
+    const py = (e.clientY - rect.top) / rect.height;
 
     const rotMax = 6;
     const rx = (py - 0.5) * -2 * rotMax;
@@ -546,7 +700,7 @@ function TiltCard({
   );
 }
 
-/* ───────── PUSH: ensure registration + subscribe + server upsert ───────── */
+/* â”€â”€â”€â”€â”€â”€â”€â”€â”€ PUSH: ensure registration + subscribe + server upsert â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 async function ensurePushSubscription() {
   if (typeof window === "undefined") return { ok: false, reason: "ssr" };
   if (!("serviceWorker" in navigator) || !("PushManager" in window))
@@ -614,7 +768,7 @@ async function ensurePushSubscription() {
   return { ok: true };
 }
 
-/* ───────── group by day ───────── */
+/* â”€â”€â”€â”€â”€â”€â”€â”€â”€ group by day â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 type DayGroup = {
   day: string;
   label: string;
@@ -647,7 +801,7 @@ function groupByDay(events: Ev[]): DayGroup[] {
   return groups;
 }
 
-/* ───────── fetch helpers (notes robustes) ───────── */
+/* â”€â”€â”€â”€â”€â”€â”€â”€â”€ fetch helpers (notes robustes) â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 async function fetchJsonSafe(
   url: string,
   init?: RequestInit,
@@ -708,7 +862,7 @@ async function firstOkItems(
   return { ok: false, err };
 }
 
-/* ───────── Jauge verticale par rubrique (mobile) ───────── */
+/* â”€â”€â”€â”€â”€â”€â”€â”€â”€ Jauge verticale par rubrique (mobile) â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 function VerticalGauge({
   label,
   value,
@@ -736,7 +890,7 @@ function VerticalGauge({
   };
 
   const vLabel = disabled
-    ? "Désactivée"
+    ? "DÃ©sactivÃ©e"
     : `${fmtNumber(value)} / ${fmtNumber(max)} pt${
         Math.abs(max - 1) < 0.001 ? "" : "s"
       }`;
@@ -763,7 +917,7 @@ function VerticalGauge({
   );
 }
 
-/* ───────── component ───────── */
+/* â”€â”€â”€â”€â”€â”€â”€â”€â”€ component â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 export default function ParentPage() {
   const [kids, setKids] = useState<Kid[]>([]);
   const [feed, setFeed] = useState<Record<string, Ev[]>>({});
@@ -780,7 +934,7 @@ export default function ParentPage() {
   const [loadingConduct, setLoadingConduct] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
 
-  // Filtre période conduite (90 jours)
+  // Filtre pÃ©riode conduite (90 jours)
   const [conductFrom, setConductFrom] = useState<string>("");
   const [conductTo, setConductTo] = useState<string>("");
 
@@ -792,22 +946,22 @@ export default function ParentPage() {
     Record<string, boolean>
   >({});
 
-  // Filtre période notes
+  // Filtre pÃ©riode notes
   const [gradeFilterMode, setGradeFilterMode] = useState<
     "week" | "month" | "all" | "custom"
   >("week");
   const [gradeFrom, setGradeFrom] = useState<string>("");
   const [gradeTo, setGradeTo] = useState<string>("");
 
-  // Matière sélectionnée par enfant
+  // MatiÃ¨re sÃ©lectionnÃ©e par enfant
   const [activeSubjectPerKid, setActiveSubjectPerKid] = useState<
     Record<string, string | "all" | null>
   >({});
 
-  // 🔔 notifications
+  // ðŸ”” notifications
   const [granted, setGranted] = useState(false);
 
-  // 📱 iOS / standalone
+  // ðŸ“± iOS / standalone
   const [isiOS, setIsiOS] = useState(false);
   const [isStandalone, setIsStandalone] = useState(false);
 
@@ -817,9 +971,28 @@ export default function ParentPage() {
   // Drawer mobile
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
-  // Sélection enfant + section
+  // SÃ©lection enfant + section
   const [activeChildId, setActiveChildId] = useState<string | "all">("all");
   const [activeSection, setActiveSection] = useState<NavSection>("dashboard");
+
+  // SMS premium
+  const [smsLoading, setSmsLoading] = useState(false);
+  const [smsSaving, setSmsSaving] = useState(false);
+  const [smsMsg, setSmsMsg] = useState<string | null>(null);
+  const [smsContacts, setSmsContacts] = useState<ParentNotificationContact[]>(
+    [],
+  );
+  const [smsPrimaryContact, setSmsPrimaryContact] =
+    useState<ParentNotificationContact | null>(null);
+  const [smsSettings, setSmsSettings] = useState<
+    InstitutionNotificationSetting[]
+  >([]);
+  const [smsPreferredInstitutionId, setSmsPreferredInstitutionId] = useState<
+    string | null
+  >(null);
+  const [smsInstitutionId, setSmsInstitutionId] = useState<string>("");
+  const [smsPhone, setSmsPhone] = useState<string>("");
+  const [smsEnabled, setSmsEnabled] = useState<boolean>(true);
 
   const hasKids = kids.length > 0;
 
@@ -837,6 +1010,37 @@ export default function ParentPage() {
   const showConductSection = isDashboard || isConduct;
   const showEventsSection = isDashboard || isAbsences;
   const showNotesSection = isNotes;
+
+  const smsAnyPremiumEnabled = useMemo(
+    () => smsSettings.some((s) => s.sms_premium_enabled),
+    [smsSettings],
+  );
+
+  const smsActiveSetting = useMemo(() => {
+    if (!smsSettings.length) return null;
+    if (smsInstitutionId) {
+      const byId = smsSettings.find((s) => s.institution_id === smsInstitutionId);
+      if (byId) return byId;
+    }
+    if (smsPreferredInstitutionId) {
+      const preferred = smsSettings.find(
+        (s) => s.institution_id === smsPreferredInstitutionId,
+      );
+      if (preferred) return preferred;
+    }
+    return smsSettings[0] || null;
+  }, [smsSettings, smsInstitutionId, smsPreferredInstitutionId]);
+
+  const smsSummaryLabel = useMemo(() => {
+    if (!smsSettings.length) return "Chargement de la configuration SMSâ€¦";
+    if (!smsAnyPremiumEnabled)
+      return "Le module SMS premium nâ€™est pas encore activÃ© par votre Ã©tablissement.";
+    if (!smsPrimaryContact?.phone_e164)
+      return "Ajoutez votre numÃ©ro pour recevoir les alertes SMS premium.";
+    if (!smsPrimaryContact.sms_enabled)
+      return "Votre numÃ©ro est enregistrÃ©, mais lâ€™envoi SMS est dÃ©sactivÃ©.";
+    return "Votre numÃ©ro principal est prÃªt pour les alertes SMS premium.";
+  }, [smsSettings, smsAnyPremiumEnabled, smsPrimaryContact]);
 
   // lock body scroll when drawer open
   useEffect(() => {
@@ -873,7 +1077,7 @@ export default function ParentPage() {
     return () => document.removeEventListener("visibilitychange", refresh);
   }, []);
 
-  // init période notes (week/month/all)
+  // init pÃ©riode notes
   useEffect(() => {
     const today = new Date();
     if (gradeFilterMode === "week") {
@@ -919,11 +1123,119 @@ export default function ParentPage() {
     }
   }
 
+  async function loadSmsContacts(silent = false) {
+    if (!silent) setSmsLoading(true);
+    try {
+      const res = await fetch("/api/parent/notification-contacts", {
+        cache: "no-store",
+        credentials: "include",
+      });
+      const j = (await res.json().catch(() => ({}))) as ParentNotificationContactsResponse;
+
+      if (!res.ok || !j?.ok) {
+        setSmsMsg(j?.error || "Impossible de charger la configuration SMS.");
+        return;
+      }
+
+      const contacts = j.contacts || [];
+      const primary = j.primary_contact || contacts.find((c) => c.is_primary) || null;
+      const settings = j.institution_settings || [];
+      const preferred = j.preferred_institution_id || null;
+
+      setSmsContacts(contacts);
+      setSmsPrimaryContact(primary);
+      setSmsSettings(settings);
+      setSmsPreferredInstitutionId(preferred);
+      setSmsPhone(primary?.phone_e164 || "");
+      setSmsEnabled(primary?.sms_enabled ?? true);
+
+      const chosenInstitutionId =
+        (primary?.institution_id as string | null) ||
+        preferred ||
+        settings[0]?.institution_id ||
+        "";
+
+      setSmsInstitutionId(chosenInstitutionId);
+      if (!silent) setSmsMsg(null);
+    } catch (e: any) {
+      setSmsMsg(e?.message || "Erreur de chargement SMS.");
+    } finally {
+      if (!silent) setSmsLoading(false);
+    }
+  }
+
+  async function saveSmsContact() {
+    setSmsSaving(true);
+    setSmsMsg(null);
+
+    try {
+      const hasExisting = !!smsPrimaryContact?.id;
+      const method = hasExisting ? "PATCH" : "POST";
+
+      const body: any = {
+        phone: smsPhone,
+        institution_id: smsInstitutionId || null,
+        sms_enabled: smsEnabled,
+        is_primary: true,
+      };
+
+      if (hasExisting) body.id = smsPrimaryContact!.id;
+
+      const res = await fetch("/api/parent/notification-contacts", {
+        method,
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify(body),
+      });
+
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok || !j?.ok) {
+        setSmsMsg(j?.error || "Impossible dâ€™enregistrer le numÃ©ro SMS.");
+        return;
+      }
+
+      setSmsMsg("NumÃ©ro SMS enregistrÃ© avec succÃ¨s âœ…");
+      await loadSmsContacts(true);
+    } catch (e: any) {
+      setSmsMsg(e?.message || "Erreur lors de lâ€™enregistrement du numÃ©ro.");
+    } finally {
+      setSmsSaving(false);
+    }
+  }
+
+  async function removeSmsContact() {
+    if (!smsPrimaryContact?.id) return;
+
+    setSmsSaving(true);
+    setSmsMsg(null);
+
+    try {
+      const res = await fetch("/api/parent/notification-contacts", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ id: smsPrimaryContact.id }),
+      });
+
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok || !j?.ok) {
+        setSmsMsg(j?.error || "Impossible de supprimer le contact SMS.");
+        return;
+      }
+
+      setSmsMsg("Contact SMS supprimÃ©.");
+      await loadSmsContacts(true);
+    } catch (e: any) {
+      setSmsMsg(e?.message || "Erreur lors de la suppression du contact.");
+    } finally {
+      setSmsSaving(false);
+    }
+  }
+
   async function loadKids(from?: string, to?: string) {
     setLoadingKids(true);
     setMsg(null);
     try {
-      // 1) enfants
       const j = await fetch("/api/parent/children", {
         cache: "no-store",
         credentials: "include",
@@ -938,7 +1250,6 @@ export default function ParentPage() {
         return "all";
       });
 
-      // 2) événements + sanctions + notes
       const feedEntries: Array<[string, Ev[]]> = [];
       const penEntries: Array<[string, KidPenalty[]]> = [];
       const gradeEntries: Array<[string, KidGradeRow[]]> = [];
@@ -963,7 +1274,6 @@ export default function ParentPage() {
           .catch(() => ({ items: [] }));
         penEntries.push([k.id, (p.items || []) as KidPenalty[]]);
 
-        // ✅ notes : fetch robuste + fallbacks (si route diffère)
         const sid = encodeURIComponent(k.id);
         const gradeUrls = [
           `/api/parent/children/grades?student_id=${sid}&limit=200`,
@@ -989,7 +1299,6 @@ export default function ParentPage() {
       setKidGrades(Object.fromEntries(gradeEntries));
       setKidGradesErr(gradeErrs);
 
-      // 3) expand auto si une seule ligne dans une journée
       const initialExpanded: Record<string, boolean> = {};
       for (const [kidId, list] of feedEntries) {
         const groups = groupByDay(list);
@@ -998,7 +1307,6 @@ export default function ParentPage() {
       }
       setExpanded(initialExpanded);
 
-      // 4) conduite
       const useFrom = from || conductFrom;
       const useTo = to || conductTo;
       await loadConductForAll(ks, useFrom, useTo);
@@ -1017,6 +1325,7 @@ export default function ParentPage() {
   useEffect(() => {
     if (!conductFrom || !conductTo) return;
     loadKids(conductFrom, conductTo);
+    loadSmsContacts(true);
     ensurePushSubscription().then((r) => {
       if (r.ok) setGranted(true);
     });
@@ -1028,17 +1337,17 @@ export default function ParentPage() {
     const r = await ensurePushSubscription();
     if (r.ok) {
       setGranted(true);
-      setMsg("Notifications push activées ✓");
+      setMsg("Notifications push activÃ©es âœ“");
     } else {
       setMsg("Activation push impossible: " + r.reason);
     }
   }
 
-  /* ───────── Déconnexion “propre” ───────── */
+  /* â”€â”€â”€â”€â”€â”€â”€â”€â”€ DÃ©connexion â€œpropreâ€ â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
   async function safeLogout() {
     if (loggingOut) return;
     setLoggingOut(true);
-    setMsg("Déconnexion en cours…");
+    setMsg("DÃ©connexion en coursâ€¦");
 
     try {
       if ("serviceWorker" in navigator) {
@@ -1121,20 +1430,19 @@ export default function ParentPage() {
   function gradeFilterLabel(mode: typeof gradeFilterMode): string {
     if (mode === "week") return "Semaine";
     if (mode === "month") return "Mois";
-    if (mode === "all") return "Toute l’année";
-    return "Période libre";
+    if (mode === "all") return "Toute lâ€™annÃ©e";
+    return "PÃ©riode libre";
   }
 
-  // Badge / libellé rubriques
   function rubricCellValue(val: number, max: number) {
-    if (!(Number.isFinite(max) && max > 0)) return "Désactivée";
+    if (!(Number.isFinite(max) && max > 0)) return "DÃ©sactivÃ©e";
     return val.toFixed(2).replace(".", ",");
   }
 
-  /* ───────── RENDER ───────── */
+  /* â”€â”€â”€â”€â”€â”€â”€â”€â”€ RENDER â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
   return (
     <div className="min-h-screen overflow-x-hidden bg-slate-100 text-slate-900 text-[15px]">
-      {/* ───── Drawer mobile ───── */}
+      {/* â”€â”€â”€â”€â”€ Drawer mobile â”€â”€â”€â”€â”€ */}
       {mobileNavOpen && (
         <div className="fixed inset-0 z-40 flex lg:hidden">
           <div className="relative flex h-full w-80 max-w-[86%] flex-col bg-[#003766] text-white shadow-2xl">
@@ -1165,7 +1473,6 @@ export default function ParentPage() {
               </button>
             </div>
 
-            {/* Enfants */}
             <div className="border-b border-white/10 px-4 py-4">
               <div className="mb-3 text-[12px] font-extrabold uppercase tracking-wide text-amber-200">
                 Enfants
@@ -1211,7 +1518,7 @@ export default function ParentPage() {
                       <div className="min-w-0 text-left">
                         <div className="truncate">{k.full_name}</div>
                         <div className="truncate text-[12px] text-emerald-100">
-                          {k.class_label || "—"}
+                          {k.class_label || "â€”"}
                         </div>
                       </div>
                     </button>
@@ -1220,7 +1527,6 @@ export default function ParentPage() {
               </div>
             </div>
 
-            {/* Navigation */}
             <nav className="flex-1 space-y-2 px-4 py-4">
               <SidebarNavItem
                 label="Tableau de bord"
@@ -1233,7 +1539,7 @@ export default function ParentPage() {
                 section="conduct"
               />
               <SidebarNavItem
-                label="Cahier d’absences"
+                label="Cahier dâ€™absences"
                 icon={<IconClipboard />}
                 section="absences"
               />
@@ -1244,7 +1550,6 @@ export default function ParentPage() {
               />
             </nav>
 
-            {/* Footer */}
             <div className="border-t border-white/15 px-4 py-4">
               <Button
                 tone="white"
@@ -1253,10 +1558,10 @@ export default function ParentPage() {
                 iconLeft={<IconPower />}
                 className="w-full justify-start rounded-2xl"
               >
-                {loggingOut ? "Déconnexion…" : "Se déconnecter"}
+                {loggingOut ? "DÃ©connexionâ€¦" : "Se dÃ©connecter"}
               </Button>
               <div className="mt-4 leading-tight text-white/80">
-                <div className="text-[12px] opacity-80">Développé par</div>
+                <div className="text-[12px] opacity-80">DÃ©veloppÃ© par</div>
                 <div className="text-[15px] font-extrabold text-amber-300">
                   Nexa Digital
                 </div>
@@ -1273,7 +1578,7 @@ export default function ParentPage() {
         </div>
       )}
 
-      {/* ───── HEADER PRINCIPAL sticky ───── */}
+      {/* â”€â”€â”€â”€â”€ HEADER PRINCIPAL sticky â”€â”€â”€â”€â”€ */}
       <header className="sticky top-0 z-30 bg-[#003766] text-white shadow">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-3 py-3 lg:px-4">
           <div className="flex min-w-0 items-center gap-3">
@@ -1310,7 +1615,7 @@ export default function ParentPage() {
         </div>
       </header>
 
-      {/* ───── Bottom tab bar mobile (app natif) ───── */}
+      {/* â”€â”€â”€â”€â”€ Bottom tab bar mobile â”€â”€â”€â”€â”€ */}
       <div className="fixed bottom-0 left-0 right-0 z-30 border-t bg-white/95 backdrop-blur lg:hidden">
         <div className="mx-auto flex max-w-6xl items-center justify-around px-2 py-2">
           {(
@@ -1346,7 +1651,7 @@ export default function ParentPage() {
         </div>
       </div>
 
-      {/* ───── CORPS ───── */}
+      {/* â”€â”€â”€â”€â”€ CORPS â”€â”€â”€â”€â”€ */}
       <div className="mx-auto flex w-full max-w-6xl min-w-0">
         {/* Sidebar desktop */}
         <aside className="hidden w-72 flex-col bg-[#003766] text-white lg:flex">
@@ -1407,7 +1712,7 @@ export default function ParentPage() {
                     <div className="min-w-0 text-left">
                       <div className="truncate">{k.full_name}</div>
                       <div className="truncate text-[12px] text-emerald-100">
-                        {k.class_label || "—"}
+                        {k.class_label || "â€”"}
                       </div>
                     </div>
                   </button>
@@ -1428,7 +1733,7 @@ export default function ParentPage() {
               section="conduct"
             />
             <SidebarNavItem
-              label="Cahier d’absences"
+              label="Cahier dâ€™absences"
               icon={<IconClipboard />}
               section="absences"
             />
@@ -1447,10 +1752,10 @@ export default function ParentPage() {
               iconLeft={<IconPower />}
               className="w-full justify-start rounded-2xl"
             >
-              {loggingOut ? "Déconnexion…" : "Se déconnecter"}
+              {loggingOut ? "DÃ©connexionâ€¦" : "Se dÃ©connecter"}
             </Button>
             <div className="mt-4 leading-tight text-white/80">
-              <div className="text-[12px] opacity-80">Développé par</div>
+              <div className="text-[12px] opacity-80">DÃ©veloppÃ© par</div>
               <div className="text-[15px] font-extrabold text-amber-300">
                 Nexa Digital
               </div>
@@ -1461,7 +1766,7 @@ export default function ParentPage() {
         {/* Contenu principal */}
         <main className="flex-1 min-w-0 px-3 py-5 lg:px-6 lg:py-6 pb-[calc(96px+env(safe-area-inset-bottom))]">
           <div className="mb-2 text-[12px] text-slate-500">
-            Vous êtes ici : <span className="mx-1">›</span> Accueil
+            Vous Ãªtes ici : <span className="mx-1">â€º</span> Accueil
           </div>
           <h1 className="mb-4 text-2xl font-extrabold text-slate-900">
             Bienvenue sur Mon Cahier
@@ -1481,34 +1786,49 @@ export default function ParentPage() {
           </div>
 
           {/* Carte Bienvenue */}
-          <section className="mb-6 rounded-2xl border border-slate-200 bg-white shadow-sm">
-            <div className="border-b border-slate-200 bg-slate-50 px-5 py-4">
-              <div className="inline-flex items-center gap-3 text-[15px] font-extrabold text-[#003766]">
-                <span className="flex h-8 w-8 items-center justify-center rounded-full border border-[#003766] text-sm">
-                  →
-                </span>
-                <span>Bienvenue</span>
+          <section className="mb-6 overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+            <div className="relative border-b border-slate-200 bg-gradient-to-r from-[#003766] via-[#004a84] to-[#006633] px-5 py-5 text-white">
+              <div className="absolute right-0 top-0 h-28 w-28 rounded-full bg-white/10 blur-2xl" />
+              <div className="absolute bottom-0 left-10 h-20 w-20 rounded-full bg-emerald-300/20 blur-2xl" />
+
+              <div className="relative flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                <div>
+                  <div className="inline-flex items-center gap-3 text-[15px] font-extrabold">
+                    <span className="flex h-8 w-8 items-center justify-center rounded-full border border-white/50 text-sm">
+                      â†’
+                    </span>
+                    <span>Bienvenue</span>
+                  </div>
+                  <p className="mt-3 max-w-2xl text-[14px] text-white/90">
+                    Consultez les absences, la conduite, les notes publiÃ©es et
+                    configurez vos notifications pour rester informÃ© en temps rÃ©el.
+                  </p>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge tone="emerald">
+                    Push standard {granted ? "activÃ©" : "disponible"}
+                  </Badge>
+                  <Badge tone={smsAnyPremiumEnabled ? "amber" : "slate"}>
+                    SMS premium {smsAnyPremiumEnabled ? "disponible" : "non activÃ©"}
+                  </Badge>
+                </div>
               </div>
             </div>
 
             <div className="space-y-4 px-5 py-5 text-[15px] text-slate-700">
-              <p>
-                Bienvenue sur Mon Cahier – espace parents. Consultez les absences,
-                la conduite et les notes de vos enfants pour l’année 2025-2026.
-              </p>
-
               <div className="rounded-2xl border border-red-300 bg-red-50 px-4 py-3 text-[15px] text-red-700">
                 <div className="text-[16px] font-extrabold uppercase">
-                  Information !
+                  Information
                 </div>
                 <p className="mt-2">
-                  Pour recevoir une alerte dès qu&apos;une absence, un retard ou
-                  une note est enregistrée, activez les notifications push sur
-                  votre téléphone.
+                  Pour recevoir une alerte dÃ¨s qu&apos;une absence, un retard ou
+                  une note est enregistrÃ©e, activez les notifications push sur
+                  votre tÃ©lÃ©phone. Vous pouvez aussi enregistrer votre numÃ©ro
+                  pour la formule SMS premium si votre Ã©tablissement l&apos;active.
                 </p>
               </div>
 
-              {/* ✅ FIX mobile : évite débordement, empile proprement */}
               <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
                 {!granted ? (
                   <Button
@@ -1522,7 +1842,7 @@ export default function ParentPage() {
                   </Button>
                 ) : (
                   <div className="w-full rounded-2xl bg-emerald-50 px-4 py-3 text-[14px] font-bold text-emerald-700 ring-1 ring-emerald-200">
-                    Notifications push activées ✅
+                    Notifications push activÃ©es âœ…
                   </div>
                 )}
 
@@ -1533,28 +1853,224 @@ export default function ParentPage() {
                   iconLeft={<IconPower />}
                   className="w-full"
                 >
-                  {loggingOut ? "Déconnexion…" : "Se déconnecter"}
+                  {loggingOut ? "DÃ©connexionâ€¦" : "Se dÃ©connecter"}
                 </Button>
               </div>
+            </div>
+          </section>
+
+          {/* Bloc SMS premium */}
+          <section className="mb-6 overflow-hidden rounded-3xl border border-amber-200 bg-white shadow-sm">
+            <div className="relative border-b border-amber-100 bg-gradient-to-r from-amber-500 via-orange-500 to-rose-500 px-5 py-5 text-white">
+              <div className="absolute right-0 top-0 h-28 w-28 rounded-full bg-white/10 blur-2xl" />
+              <div className="absolute bottom-0 left-10 h-20 w-20 rounded-full bg-yellow-200/20 blur-2xl" />
+
+              <div className="relative flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                <div className="min-w-0">
+                  <div className="inline-flex items-center gap-2 text-[15px] font-extrabold">
+                    <IconSparkles />
+                    <span>Notifications premium SMS</span>
+                  </div>
+                  <p className="mt-2 max-w-2xl text-[14px] text-white/90">
+                    Enregistrez votre numÃ©ro principal pour recevoir, si activÃ© par
+                    lâ€™Ã©tablissement, des SMS premium sur les absences et les retards.
+                  </p>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge tone={smsAnyPremiumEnabled ? "amber" : "slate"}>
+                    {smsAnyPremiumEnabled ? "Premium disponible" : "Premium inactif"}
+                  </Badge>
+                  <Badge tone={smsPrimaryContact?.phone_e164 ? "emerald" : "slate"}>
+                    {smsPrimaryContact?.phone_e164
+                      ? "NumÃ©ro enregistrÃ©"
+                      : "NumÃ©ro non configurÃ©"}
+                  </Badge>
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-4 px-5 py-5">
+              {smsMsg && (
+                <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-[14px] text-amber-900">
+                  {smsMsg}
+                </div>
+              )}
+
+              {smsLoading ? (
+                <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+                  <Skeleton className="h-36 w-full" />
+                  <Skeleton className="h-36 w-full lg:col-span-2" />
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+                  {/* RÃ©sumÃ© premium */}
+                  <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
+                    <div className="flex items-start gap-3">
+                      <div className="grid h-12 w-12 place-items-center rounded-2xl bg-amber-100 text-amber-700">
+                        <IconShield />
+                      </div>
+                      <div className="min-w-0">
+                        <div className="text-[16px] font-extrabold text-slate-900">
+                          Ã‰tat du service
+                        </div>
+                        <div className="mt-1 text-[13px] text-slate-600">
+                          {smsSummaryLabel}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="mt-4 space-y-2">
+                      <div className="flex items-center justify-between gap-3 rounded-2xl bg-white px-3 py-2 ring-1 ring-slate-200">
+                        <span className="text-[13px] font-semibold text-slate-700">
+                          NumÃ©ro actuel
+                        </span>
+                        <span className="text-[13px] font-extrabold text-slate-900">
+                          {formatPhoneForDisplay(smsPrimaryContact?.phone_e164)}
+                        </span>
+                      </div>
+
+                      <div className="flex items-center justify-between gap-3 rounded-2xl bg-white px-3 py-2 ring-1 ring-slate-200">
+                        <span className="text-[13px] font-semibold text-slate-700">
+                          Ã‰vÃ©nements SMS
+                        </span>
+                        <span className="text-[13px] font-extrabold text-slate-900">
+                          {smsActiveSetting?.sms_absence_enabled ||
+                          smsActiveSetting?.sms_late_enabled
+                            ? "Absences / retards"
+                            : "Non activÃ©s"}
+                        </span>
+                      </div>
+
+                      <div className="flex items-center justify-between gap-3 rounded-2xl bg-white px-3 py-2 ring-1 ring-slate-200">
+                        <span className="text-[13px] font-semibold text-slate-700">
+                          Fournisseur
+                        </span>
+                        <span className="text-[13px] font-extrabold uppercase text-slate-900">
+                          {smsActiveSetting?.sms_provider || "â€”"}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Formulaire */}
+                  <div className="lg:col-span-2 rounded-3xl border border-slate-200 bg-white p-4">
+                    <div className="mb-4 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                      <div>
+                        <div className="text-[16px] font-extrabold text-slate-900">
+                          Configurer mon numÃ©ro principal
+                        </div>
+                        <div className="mt-1 text-[13px] text-slate-600">
+                          Format conseillÃ© : +225XXXXXXXXXX ou numÃ©ro ivoirien local.
+                        </div>
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-2">
+                        {smsActiveSetting?.sms_absence_enabled && (
+                          <Badge tone="amber">SMS absence</Badge>
+                        )}
+                        {smsActiveSetting?.sms_late_enabled && (
+                          <Badge tone="amber">SMS retard</Badge>
+                        )}
+                        {smsActiveSetting?.sms_notes_digest_enabled && (
+                          <Badge tone="amber">Digest notes</Badge>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                      <div className="md:col-span-2">
+                        <label className="mb-2 block text-[13px] font-bold text-slate-700">
+                          NumÃ©ro de tÃ©lÃ©phone
+                        </label>
+                        <div className="relative">
+                          <span className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-slate-400">
+                            <IconPhone />
+                          </span>
+                          <Input
+                            value={smsPhone}
+                            onChange={(e) => setSmsPhone(e.target.value)}
+                            placeholder="+2250700000000"
+                            className="pl-12"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="md:col-span-2">
+                        <Toggle
+                          checked={smsEnabled}
+                          onChange={setSmsEnabled}
+                          label="Recevoir les SMS premium"
+                          description={
+                            smsAnyPremiumEnabled
+                              ? "Le numÃ©ro sera utilisÃ© lorsque lâ€™Ã©tablissement activera lâ€™envoi SMS pour vos alertes."
+                              : "Vous pouvez enregistrer votre numÃ©ro maintenant. Il sera prÃªt dÃ¨s lâ€™activation du module premium."
+                          }
+                        />
+                      </div>
+                    </div>
+
+                    <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
+                      <Button
+                        tone="emerald"
+                        onClick={saveSmsContact}
+                        disabled={smsSaving || !smsPhone.trim()}
+                        iconLeft={<IconPhone />}
+                        className="w-full"
+                      >
+                        {smsSaving
+                          ? "Enregistrementâ€¦"
+                          : smsPrimaryContact?.id
+                            ? "Mettre Ã  jour"
+                            : "Enregistrer"}
+                      </Button>
+
+                      <Button
+                        tone="white"
+                        onClick={() => loadSmsContacts()}
+                        disabled={smsSaving}
+                        className="w-full"
+                      >
+                        Actualiser
+                      </Button>
+
+                      <Button
+                        tone="red"
+                        onClick={removeSmsContact}
+                        disabled={smsSaving || !smsPrimaryContact?.id}
+                        className="w-full"
+                      >
+                        Supprimer
+                      </Button>
+                    </div>
+
+                    <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-[13px] text-slate-600">
+                      <b>Important :</b> les notifications push restent la formule
+                      standard. Le SMS est une option premium, activÃ©e selon les
+                      choix de lâ€™Ã©tablissement.
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           </section>
 
           {/* Hint iOS */}
           {isiOS && !isStandalone && !granted && (
             <div className="mb-5 rounded-2xl border border-amber-200/60 bg-amber-50/90 p-4 text-[14px] text-amber-900 shadow-sm">
-              <b>iPhone/iPad :</b> pour recevoir les notifications, ajoutez d’abord
-              l’application à l’écran d’accueil : ouvrez cette page dans{" "}
-              <b>Safari</b> → <b>Partager</b> → <b>Ajouter à l’écran d’accueil</b>,
-              puis rouvrez l’app et appuyez sur « Activer les notifications ».
+              <b>iPhone/iPad :</b> pour recevoir les notifications, ajoutez dâ€™abord
+              lâ€™application Ã  lâ€™Ã©cran dâ€™accueil : ouvrez cette page dans{" "}
+              <b>Safari</b> â†’ <b>Partager</b> â†’ <b>Ajouter Ã  lâ€™Ã©cran dâ€™accueil</b>,
+              puis rouvrez lâ€™app et appuyez sur Â« Activer les notifications Â».
             </div>
           )}
 
-          {/* ───── CONDUITE ───── */}
+          {/* â”€â”€â”€â”€â”€ CONDUITE â”€â”€â”€â”€â”€ */}
           {showConductSection && (
             <section className="mb-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
               <div className="mb-4 flex items-center justify-between gap-3">
                 <div className="text-[13px] font-extrabold uppercase tracking-wide text-slate-700">
-                  Conduite — points par rubrique
+                  Conduite â€” points par rubrique
                 </div>
 
                 <div className="hidden items-center gap-2 md:flex">
@@ -1574,12 +2090,11 @@ export default function ParentPage() {
                     disabled={loadingConduct}
                     className="px-4 py-3 text-[14px]"
                   >
-                    {loadingConduct ? "…" : "Valider"}
+                    {loadingConduct ? "â€¦" : "Valider"}
                   </Button>
                 </div>
               </div>
 
-              {/* filtres mobile */}
               <div className="mb-4 grid grid-cols-2 gap-2 md:hidden">
                 <Input
                   type="date"
@@ -1597,7 +2112,7 @@ export default function ParentPage() {
                     onClick={applyConductFilter}
                     disabled={loadingConduct}
                   >
-                    {loadingConduct ? "…" : "Valider"}
+                    {loadingConduct ? "â€¦" : "Valider"}
                   </Button>
                 </div>
               </div>
@@ -1610,7 +2125,7 @@ export default function ParentPage() {
                 </div>
               ) : !hasKids ? (
                 <div className="flex items-center justify-between rounded-2xl border bg-slate-50 p-4 text-[15px] text-slate-700">
-                  <div>Aucun enfant lié à votre compte pour l’instant.</div>
+                  <div>Aucun enfant liÃ© Ã  votre compte pour lâ€™instant.</div>
                   {!granted && (
                     <Button
                       tone="outline"
@@ -1623,7 +2138,6 @@ export default function ParentPage() {
                 </div>
               ) : (
                 <>
-                  {/* mobile : cartes */}
                   <div className="space-y-4 md:hidden">
                     {filteredKids.map((k) => {
                       const c = conduct[k.id];
@@ -1638,13 +2152,13 @@ export default function ParentPage() {
                                 {k.full_name}
                               </div>
                               <div className="text-[13px] text-slate-600">
-                                {k.class_label || "—"}
+                                {k.class_label || "â€”"}
                               </div>
                             </div>
                             {c ? (
                               <Badge tone="emerald">Points de conduite</Badge>
                             ) : (
-                              <Badge>—</Badge>
+                              <Badge>â€”</Badge>
                             )}
                           </div>
 
@@ -1652,7 +2166,7 @@ export default function ParentPage() {
                             <div className="mt-4 space-y-4">
                               <div className="grid grid-cols-2 gap-4">
                                 <VerticalGauge
-                                  label="Assiduité"
+                                  label="AssiduitÃ©"
                                   value={c.breakdown.assiduite}
                                   max={c.rubric_max.assiduite}
                                   rubric="assiduite"
@@ -1664,7 +2178,7 @@ export default function ParentPage() {
                                   rubric="tenue"
                                 />
                                 <VerticalGauge
-                                  label="Moralité"
+                                  label="MoralitÃ©"
                                   value={c.breakdown.moralite}
                                   max={c.rubric_max.moralite}
                                   rubric="moralite"
@@ -1679,14 +2193,14 @@ export default function ParentPage() {
 
                               <div className="rounded-2xl bg-slate-50 px-4 py-3 text-[14px] text-slate-700">
                                 <span className="font-extrabold">
-                                  Appréciation :{" "}
+                                  ApprÃ©ciation :{" "}
                                 </span>
                                 {c.appreciation}
                               </div>
                             </div>
                           ) : (
                             <div className="mt-3 text-[15px] text-slate-600">
-                              —
+                              â€”
                             </div>
                           )}
                         </div>
@@ -1694,7 +2208,6 @@ export default function ParentPage() {
                     })}
                   </div>
 
-                  {/* desktop : tableau */}
                   <div className="mt-3 hidden overflow-x-auto rounded-2xl border md:block">
                     {(() => {
                       const anyConduct = filteredKids
@@ -1715,19 +2228,19 @@ export default function ParentPage() {
                               <th className="px-4 py-3 text-left">Enfant</th>
                               <th className="px-4 py-3 text-left">Classe</th>
                               <th className="px-4 py-3 text-left">
-                                Assiduité (/{rubricMax.assiduite})
+                                AssiduitÃ© (/{rubricMax.assiduite})
                               </th>
                               <th className="px-4 py-3 text-left">
                                 Tenue (/{rubricMax.tenue})
                               </th>
                               <th className="px-4 py-3 text-left">
-                                Moralité (/{rubricMax.moralite})
+                                MoralitÃ© (/{rubricMax.moralite})
                               </th>
                               <th className="px-4 py-3 text-left">
                                 Discipline (/{rubricMax.discipline})
                               </th>
                               <th className="px-4 py-3 text-left">
-                                Appréciation
+                                ApprÃ©ciation
                               </th>
                             </tr>
                           </thead>
@@ -1743,7 +2256,7 @@ export default function ParentPage() {
                                     {k.full_name}
                                   </td>
                                   <td className="px-4 py-3">
-                                    {k.class_label || "—"}
+                                    {k.class_label || "â€”"}
                                   </td>
                                   {c ? (
                                     <>
@@ -1780,7 +2293,7 @@ export default function ParentPage() {
                                       className="px-4 py-3 text-slate-600"
                                       colSpan={5}
                                     >
-                                      —
+                                      â€”
                                     </td>
                                   )}
                                 </tr>
@@ -1796,13 +2309,13 @@ export default function ParentPage() {
             </section>
           )}
 
-          {/* ───── ABSENCES / SANCTIONS ───── */}
+          {/* â”€â”€â”€â”€â”€ ABSENCES / SANCTIONS â”€â”€â”€â”€â”€ */}
           {showEventsSection && (
             <section className="mb-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
               {(() => {
                 const title = isAbsences
-                  ? "Cahier d’absences — absences/retards récents et sanctions"
-                  : "Mes enfants — absences/retards récents, sanctions et notes publiées";
+                  ? "Cahier dâ€™absences â€” absences/retards rÃ©cents et sanctions"
+                  : "Mes enfants â€” absences/retards rÃ©cents, sanctions et notes publiÃ©es";
 
                 return (
                   <div className="mb-4 flex items-center justify-between gap-3">
@@ -1812,7 +2325,7 @@ export default function ParentPage() {
                     <div className="flex items-center gap-2">
                       {granted ? (
                         <span className="text-[13px] font-bold text-emerald-700">
-                          Notifications déjà activées ✅
+                          Notifications dÃ©jÃ  activÃ©es âœ…
                         </span>
                       ) : (
                         <Button
@@ -1837,7 +2350,7 @@ export default function ParentPage() {
                 </div>
               ) : !hasKids ? (
                 <div className="rounded-2xl border bg-slate-50 p-4 text-[15px] text-slate-700">
-                  Aucun enfant lié à votre compte pour l’instant.
+                  Aucun enfant liÃ© Ã  votre compte pour lâ€™instant.
                 </div>
               ) : (
                 <div className="space-y-4 md:grid md:grid-cols-2 md:gap-5 md:space-y-0 xl:grid-cols-3">
@@ -1872,7 +2385,7 @@ export default function ParentPage() {
                                 <div className="truncate font-extrabold text-slate-900 text-[15px]">
                                   {k.full_name}{" "}
                                   <span className="text-[13px] font-semibold text-slate-600">
-                                    ({k.class_label || "—"})
+                                    ({k.class_label || "â€”"})
                                   </span>
                                 </div>
                               </div>
@@ -1888,12 +2401,11 @@ export default function ParentPage() {
                                 }
                                 className="shrink-0 text-[13px] font-semibold text-slate-700 underline-offset-2 hover:underline"
                               >
-                                {showAll ? "Réduire" : "Voir plus"}
+                                {showAll ? "RÃ©duire" : "Voir plus"}
                               </button>
                             )}
                           </div>
 
-                          {/* évènements */}
                           {showEventsBlock && (
                             <ul className="mt-4 space-y-3">
                               {visibleGroups.map((g) => {
@@ -1915,8 +2427,8 @@ export default function ParentPage() {
                                     }`,
                                   );
                                 const summary = parts.length
-                                  ? parts.join(" • ")
-                                  : "Aucun évènement";
+                                  ? parts.join(" â€¢ ")
+                                  : "Aucun Ã©vÃ¨nement";
 
                                 return (
                                   <li
@@ -1942,7 +2454,7 @@ export default function ParentPage() {
                                         >
                                           {isOpen || hasSingle
                                             ? "Masquer"
-                                            : "Voir détails"}
+                                            : "Voir dÃ©tails"}
                                         </button>
                                       )}
                                     </div>
@@ -1967,7 +2479,7 @@ export default function ParentPage() {
                                                     </Badge>
                                                   )}
                                                   <span className="ml-2 font-semibold">
-                                                    {ev.subject_name || "—"}
+                                                    {ev.subject_name || "â€”"}
                                                   </span>
                                                 </div>
                                                 <div className="mt-1 text-[13px] text-slate-600">
@@ -1977,7 +2489,7 @@ export default function ParentPage() {
                                                   )}{" "}
                                                   {ev.type === "late" &&
                                                   ev.minutes_late
-                                                    ? `• ${ev.minutes_late} min`
+                                                    ? `â€¢ ${ev.minutes_late} min`
                                                     : ""}
                                                 </div>
                                               </div>
@@ -1994,18 +2506,17 @@ export default function ParentPage() {
 
                               {visibleGroups.length === 0 && (
                                 <li className="py-2 text-[15px] text-slate-600">
-                                  Aucun évènement récent.
+                                  Aucun Ã©vÃ¨nement rÃ©cent.
                                 </li>
                               )}
                             </ul>
                           )}
 
-                          {/* sanctions */}
                           {showSanctionsBlock && (
                             <div className="mt-4 rounded-2xl border bg-amber-50/40 p-4">
                               <div className="flex items-center justify-between gap-3">
                                 <div className="text-[15px] font-extrabold text-slate-800">
-                                  Sanctions récentes
+                                  Sanctions rÃ©centes
                                 </div>
                                 {(kidPenalties[k.id]?.length || 0) > 5 && (
                                   <button
@@ -2018,7 +2529,7 @@ export default function ParentPage() {
                                     className="text-[13px] font-semibold text-slate-700 underline-offset-2 hover:underline"
                                   >
                                     {showAllPenForKid[k.id]
-                                      ? "Réduire"
+                                      ? "RÃ©duire"
                                       : "Voir plus"}
                                   </button>
                                 )}
@@ -2026,7 +2537,7 @@ export default function ParentPage() {
 
                               {(kidPenalties[k.id]?.length || 0) === 0 ? (
                                 <div className="mt-3 text-[15px] text-slate-600">
-                                  Aucune sanction récente.
+                                  Aucune sanction rÃ©cente.
                                 </div>
                               ) : (
                                 <ul className="mt-3 divide-y">
@@ -2042,7 +2553,7 @@ export default function ParentPage() {
                                           </Badge>
                                         </span>
                                         <span className="font-extrabold">
-                                          −
+                                          âˆ’
                                           {Number(p.points || 0)
                                             .toFixed(2)
                                             .replace(".", ",")}{" "}
@@ -2050,14 +2561,14 @@ export default function ParentPage() {
                                         </span>
                                         {p.reason?.trim() ? (
                                           <span className="ml-2 text-[13px] text-slate-600">
-                                            — {p.reason.trim()}
+                                            â€” {p.reason.trim()}
                                           </span>
                                         ) : null}
                                       </div>
 
                                       <div className="mt-1 text-[13px] text-slate-500">
                                         {fmt(p.when)}
-                                        {p.class_label ? ` • ${p.class_label}` : ""}
+                                        {p.class_label ? ` â€¢ ${p.class_label}` : ""}
                                       </div>
                                     </li>
                                   ))}
@@ -2066,11 +2577,10 @@ export default function ParentPage() {
                             </div>
                           )}
 
-                          {/* petit bloc notes (résumé) sur dashboard */}
                           {showNotesBlock && (
                             <div className="mt-4 rounded-2xl border bg-slate-50 p-4">
                               <div className="mb-2 text-[15px] font-extrabold text-slate-800">
-                                Notes publiées (aperçu)
+                                Notes publiÃ©es (aperÃ§u)
                               </div>
                               <ul className="space-y-2 text-[14px] text-slate-700">
                                 {gradesForKid.slice(0, 3).map((g) => (
@@ -2080,7 +2590,7 @@ export default function ParentPage() {
                                   >
                                     <div className="min-w-0">
                                       <div className="truncate font-semibold">
-                                        {g.subject_name || "—"} ·{" "}
+                                        {g.subject_name || "â€”"} Â·{" "}
                                         {gradeKindLabel(g.eval_kind)}
                                       </div>
                                       <div className="text-[13px] text-slate-500">
@@ -2090,7 +2600,7 @@ export default function ParentPage() {
                                     <div className="shrink-0 text-right">
                                       {g.score == null ? (
                                         <span className="text-[13px] text-slate-500">
-                                          —
+                                          â€”
                                         </span>
                                       ) : (
                                         <span className="text-[15px] font-extrabold text-slate-900">
@@ -2105,7 +2615,6 @@ export default function ParentPage() {
                             </div>
                           )}
 
-                          {/* si les grades échouent : montre l'erreur (important) */}
                           {kidGradesErr[k.id] && (
                             <div className="mt-4 rounded-2xl border border-rose-200 bg-rose-50 p-3 text-[13px] text-rose-800">
                               <b>Notes indisponibles :</b> {kidGradesErr[k.id]}
@@ -2120,7 +2629,7 @@ export default function ParentPage() {
             </section>
           )}
 
-          {/* ───── CAHIER DE NOTES — onglet dédié ───── */}
+          {/* â”€â”€â”€â”€â”€ CAHIER DE NOTES â€” onglet dÃ©diÃ© â”€â”€â”€â”€â”€ */}
           {showNotesSection && (
             <section className="mb-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
               <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
@@ -2129,7 +2638,7 @@ export default function ParentPage() {
                     Cahier de notes
                   </div>
                   <div className="text-[13px] text-slate-500">
-                    Notes publiées par les enseignants, filtrées par période.
+                    Notes publiÃ©es par les enseignants, filtrÃ©es par pÃ©riode.
                   </div>
                 </div>
 
@@ -2180,7 +2689,7 @@ export default function ParentPage() {
                 </div>
               ) : !hasKids ? (
                 <div className="rounded-2xl border bg-slate-50 p-4 text-[15px] text-slate-700">
-                  Aucun enfant lié à votre compte pour l’instant.
+                  Aucun enfant liÃ© Ã  votre compte pour lâ€™instant.
                 </div>
               ) : (
                 <div className="space-y-4">
@@ -2201,7 +2710,7 @@ export default function ParentPage() {
                       const key = subjectKey(g);
                       if (!key) continue;
                       if (!subjectMap.has(key))
-                        subjectMap.set(key, g.subject_name || "—");
+                        subjectMap.set(key, g.subject_name || "â€”");
                     }
                     const subjectList = Array.from(subjectMap.entries());
 
@@ -2235,15 +2744,14 @@ export default function ParentPage() {
                                 {k.full_name}
                               </div>
                               <div className="text-[13px] text-slate-600">
-                                {k.class_label || "—"}
+                                {k.class_label || "â€”"}
                               </div>
                             </div>
                           </div>
 
-                          {/* matières : scroll horizontal (évite débordement) */}
                           <div className="flex items-center gap-2">
                             <span className="text-[13px] font-semibold text-slate-500">
-                              Matières :
+                              MatiÃ¨res :
                             </span>
                             <div className="flex max-w-full gap-2 overflow-x-auto whitespace-nowrap pb-1">
                               <button
@@ -2297,11 +2805,10 @@ export default function ParentPage() {
 
                         {filtered.length === 0 ? (
                           <div className="rounded-2xl bg-white px-4 py-3 text-[14px] text-slate-600">
-                            Aucune note publiée pour cette période.
+                            Aucune note publiÃ©e pour cette pÃ©riode.
                           </div>
                         ) : (
                           <>
-                            {/* ✅ mobile : liste cards */}
                             <div className="space-y-3 md:hidden">
                               {filtered.map((g) => (
                                 <div
@@ -2311,11 +2818,11 @@ export default function ParentPage() {
                                   <div className="flex items-start justify-between gap-3">
                                     <div className="min-w-0">
                                       <div className="text-[15px] font-extrabold text-slate-900 truncate">
-                                        {g.subject_name || "—"}
+                                        {g.subject_name || "â€”"}
                                       </div>
                                       <div className="text-[13px] text-slate-600">
                                         {gradeKindLabel(g.eval_kind)}{" "}
-                                        {g.title ? `• ${g.title}` : ""}
+                                        {g.title ? `â€¢ ${g.title}` : ""}
                                       </div>
                                       <div className="mt-1 text-[13px] text-slate-500">
                                         {fmt(g.eval_date)}
@@ -2324,7 +2831,7 @@ export default function ParentPage() {
                                     <div className="shrink-0 text-right">
                                       {g.score == null ? (
                                         <span className="text-[13px] text-slate-500">
-                                          —
+                                          â€”
                                         </span>
                                       ) : (
                                         <span className="text-[16px] font-extrabold text-slate-900">
@@ -2338,14 +2845,13 @@ export default function ParentPage() {
                               ))}
                             </div>
 
-                            {/* desktop : tableau */}
                             <div className="hidden overflow-x-auto rounded-2xl border bg-white md:block">
                               <table className="min-w-full text-[14px]">
                                 <thead className="bg-slate-50">
                                   <tr>
                                     <th className="px-4 py-3 text-left">Date</th>
                                     <th className="px-4 py-3 text-left">
-                                      Matière
+                                      MatiÃ¨re
                                     </th>
                                     <th className="px-4 py-3 text-left">Type</th>
                                     <th className="px-4 py-3 text-left">
@@ -2364,18 +2870,18 @@ export default function ParentPage() {
                                         {fmt(g.eval_date)}
                                       </td>
                                       <td className="px-4 py-3">
-                                        {g.subject_name || "—"}
+                                        {g.subject_name || "â€”"}
                                       </td>
                                       <td className="px-4 py-3">
                                         {gradeKindLabel(g.eval_kind)}
                                       </td>
                                       <td className="px-4 py-3">
-                                        {g.title || "—"}
+                                        {g.title || "â€”"}
                                       </td>
                                       <td className="px-4 py-3 text-right">
                                         {g.score == null ? (
                                           <span className="text-slate-500">
-                                            —
+                                            â€”
                                           </span>
                                         ) : (
                                           <span className="font-extrabold text-slate-900">
