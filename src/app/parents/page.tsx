@@ -1337,7 +1337,7 @@ export default function ParentPage() {
     const r = await ensurePushSubscription();
     if (r.ok) {
       setGranted(true);
-      setMsg("Notifications push activÃ©es âœ“");
+      setMsg("Notifications push activées“");
     } else {
       setMsg("Activation push impossible: " + r.reason);
     }

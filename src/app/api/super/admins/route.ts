@@ -1,3 +1,4 @@
+//src/app/api/super/admins/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
