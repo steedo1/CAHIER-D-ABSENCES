@@ -14,87 +14,39 @@ import {
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-/* -------------------------------------------------------
- * Helpers
- * ----------------------------------------------------- */
+/* ───────────────── helpers log ───────────────── */
 function rid() {
   return Math.random().toString(36).slice(2, 8);
 }
-
-function shortId(value: string | null | undefined, n = 8) {
-  const s = String(value || "");
+function shortId(x: string | null | undefined, n = 8) {
+  const s = String(x || "");
   if (s.length <= n) return s;
   return `${s.slice(0, 4)}…${s.slice(-4)}`;
 }
-
-function safeParse<T = any>(value: any): T | null {
-  if (!value) return null;
-  if (typeof value === "object") return value as T;
+function safeParse<T = any>(x: any): T | null {
+  if (!x) return null;
+  if (typeof x === "object") return x as T;
   try {
-    return JSON.parse(String(value)) as T;
+    return JSON.parse(String(x)) as T;
   } catch {
     return null;
   }
 }
-
-function s(value: unknown) {
-  return String(value ?? "").trim();
+function s(v: unknown) {
+  return String(v ?? "").trim();
 }
 
-function cloneJson<T = any>(value: T): T | null {
-  try {
-    return JSON.parse(JSON.stringify(value));
-  } catch {
-    return null;
-  }
-}
-
-function buildMergedMeta(existingMeta: any, patch: Record<string, any>) {
-  const base = safeParse<Record<string, any>>(existingMeta);
-  return {
-    ...(base && typeof base === "object" ? base : {}),
-    ...patch,
-  };
-}
-
-function extractOrangeDebug(result: any) {
-  const outbound =
-    result?.response?.outboundSMSMessageRequest ??
-    result?.response ??
-    null;
-
-  return {
-    to: result?.to ?? null,
-    senderAddress: result?.senderAddress ?? null,
-    resourceURL: outbound?.resourceURL ?? null,
-    response: cloneJson(outbound),
-  };
-}
-
-const WAIT_STATUS = (
-  process.env.SMS_WAIT_STATUS ||
-  process.env.PUSH_WAIT_STATUS ||
-  "pending"
-).trim();
-
+const WAIT_STATUS = (process.env.SMS_WAIT_STATUS || process.env.PUSH_WAIT_STATUS || "pending").trim();
 const MAX_ATTEMPTS = Number(process.env.SMS_MAX_ATTEMPTS || 5);
 
-/* -------------------------------------------------------
- * Auth
- * ----------------------------------------------------- */
+/* ───────────────── Auth ───────────────── */
 function okAuth(req: Request) {
-  const secret = (
-    process.env.CRON_SECRET ||
-    process.env.CRON_PUSH_SECRET ||
-    ""
-  ).trim();
-
+  const secret = (process.env.CRON_SECRET || process.env.CRON_PUSH_SECRET || "").trim();
   const xCron = (req.headers.get("x-cron-secret") || "").trim();
   const auth = (req.headers.get("authorization") || "").trim();
   const bearer = auth.toLowerCase().startsWith("bearer ")
     ? auth.slice(7).trim()
     : "";
-
   const fromVercelCron = req.headers.has("x-vercel-cron");
 
   const allowed =
@@ -112,9 +64,7 @@ function okAuth(req: Request) {
   return allowed;
 }
 
-/* -------------------------------------------------------
- * Types
- * ----------------------------------------------------- */
+/* ───────────────── Types ───────────────── */
 type QueueRow = {
   id: string;
   institution_id: string | null;
@@ -153,22 +103,18 @@ type ContactRow = {
   created_at: string;
 };
 
-/* -------------------------------------------------------
- * Channels
- * ----------------------------------------------------- */
+/* ───────────────── Channels ───────────────── */
 function hasSmsChannel(row: QueueRow) {
   try {
     const raw = row.channels;
     const arr = Array.isArray(raw) ? raw : raw ? JSON.parse(String(raw)) : [];
     const ok = Array.isArray(arr) && arr.includes("sms");
-
     if (!ok) {
       console.debug("[sms/dispatch] skip_no_sms_channel", {
         id: row.id,
         channels: raw,
       });
     }
-
     return ok;
   } catch (e: any) {
     console.warn("[sms/dispatch] channels_parse_error", {
@@ -179,9 +125,7 @@ function hasSmsChannel(row: QueueRow) {
   }
 }
 
-/* -------------------------------------------------------
- * Event resolution
- * ----------------------------------------------------- */
+/* ───────────────── Event resolution ───────────────── */
 function resolveSmsEventFromPayload(payload: any): SmsEventKind | null {
   const kind = s(payload?.kind).toLowerCase();
   const event = s(payload?.event).toLowerCase();
@@ -190,6 +134,7 @@ function resolveSmsEventFromPayload(payload: any): SmsEventKind | null {
     if (event === "absent") return "absent";
     if (event === "late") return "late";
 
+    // cas "fix" : on essaye de déduire la nature corrigée
     if (event === "fix") {
       const minutesLate = Number(payload?.minutes_late || 0);
       return minutesLate > 0 ? "late" : "absent";
@@ -216,9 +161,7 @@ function isTerminalErrorCode(msg: string) {
   ].includes(code);
 }
 
-/* -------------------------------------------------------
- * Target resolution
- * ----------------------------------------------------- */
+/* ───────────────── Target resolution ───────────────── */
 async function resolveTargetProfilesByRow(
   srv: ReturnType<typeof getSupabaseServiceClient>,
   rows: QueueRow[]
@@ -238,7 +181,6 @@ async function resolveTargetProfilesByRow(
   ) as string[];
 
   const deviceToParent = new Map<string, string>();
-
   if (deviceIds.length) {
     const { data: mapDev, error: mapErr } = await srv
       .from("parent_devices")
@@ -259,7 +201,6 @@ async function resolveTargetProfilesByRow(
   }
 
   const studToParents = new Map<string, string[]>();
-
   if (studentIds.length) {
     const { data: sgs, error: sgErr } = await srv
       .from("student_guardians")
@@ -273,11 +214,9 @@ async function resolveTargetProfilesByRow(
     } else {
       for (const row of (sgs || []) as StudentGuardianRow[]) {
         if (row.notifications_enabled === false) continue;
-
         const sid = String(row.student_id || "");
         const pid = String(row.parent_id || "");
         if (!sid || !pid) continue;
-
         const arr = studToParents.get(sid) || [];
         arr.push(pid);
         studToParents.set(sid, Array.from(new Set(arr)));
@@ -311,9 +250,7 @@ async function resolveTargetProfilesByRow(
   return out;
 }
 
-/* -------------------------------------------------------
- * Contacts
- * ----------------------------------------------------- */
+/* ───────────────── Contacts ───────────────── */
 async function fetchSmsContactsByProfile(
   srv: ReturnType<typeof getSupabaseServiceClient>,
   profileIds: string[]
@@ -324,9 +261,7 @@ async function fetchSmsContactsByProfile(
 
   const { data, error } = await srv
     .from("parent_notification_contacts")
-    .select(
-      "id,profile_id,institution_id,phone_e164,sms_enabled,is_primary,verified_at,created_at"
-    )
+    .select("id,profile_id,institution_id,phone_e164,sms_enabled,is_primary,verified_at,created_at")
     .in("profile_id", profileIds)
     .eq("sms_enabled", true);
 
@@ -378,9 +313,7 @@ function pickBestContactForInstitution(
   return contacts[0] || null;
 }
 
-/* -------------------------------------------------------
- * Main
- * ----------------------------------------------------- */
+/* ───────────────── Main ───────────────── */
 export const GET = run;
 export const POST = run;
 
@@ -405,7 +338,7 @@ async function run(req: Request) {
 
   const srv = getSupabaseServiceClient();
 
-  // 1) Fetch queued SMS jobs
+  // 1) récupérer les items en attente
   const { data: raw, error: pickErr } = await srv
     .from("notifications_queue")
     .select(
@@ -457,14 +390,14 @@ async function run(req: Request) {
     });
   }
 
-  // 2) Resolve target profiles
+  // 2) résoudre les profils cibles
   const targetProfilesByRow = await resolveTargetProfilesByRow(srv, rows);
 
   const allProfileIds = Array.from(
     new Set(Array.from(targetProfilesByRow.values()).flatMap((x) => x))
   );
 
-  // 3) Load SMS contacts
+  // 3) charger les contacts SMS
   let contactsByProfile = new Map<string, ContactRow[]>();
   try {
     contactsByProfile = await fetchSmsContactsByProfile(srv, allProfileIds);
@@ -479,13 +412,11 @@ async function run(req: Request) {
     );
   }
 
-  // 4) Cache institution policies
+  // 4) cache de politiques établissement
   const policyCache = new Map<string, InstitutionSmsPolicy>();
 
   async function getPolicyCached(institutionId: string) {
-    if (policyCache.has(institutionId)) {
-      return policyCache.get(institutionId)!;
-    }
+    if (policyCache.has(institutionId)) return policyCache.get(institutionId)!;
     const policy = await getInstitutionSmsPolicy(srv, institutionId);
     policyCache.set(institutionId, policy);
     return policy;
@@ -496,7 +427,6 @@ async function run(req: Request) {
   const usedContactIds = new Set<string>();
 
   for (const n of rows) {
-    const nowIso = new Date().toISOString();
     const core = safeParse<any>(n.payload) || {};
     const institutionId = s(n.institution_id);
     const targetProfiles = targetProfilesByRow.get(n.id) || [];
@@ -504,20 +434,14 @@ async function run(req: Request) {
 
     let successes = 0;
     let lastError = "";
-    let provider: string | null = null;
-    let smsEvent: SmsEventKind | null = null;
-    let message = "";
-
-    const successTargets: any[] = [];
-    const failedTargets: any[] = [];
 
     if (!institutionId) {
       lastError = "missing_institution_id";
     } else {
       try {
         const policy = await getPolicyCached(institutionId);
-        provider = resolveSmsProvider(policy);
-        smsEvent = resolveSmsEventFromPayload(core);
+        const provider = resolveSmsProvider(policy);
+        const smsEvent = resolveSmsEventFromPayload(core);
 
         if (!policy.smsPremiumEnabled) {
           lastError = "sms_premium_disabled";
@@ -530,7 +454,7 @@ async function run(req: Request) {
         } else if (!targetProfiles.length) {
           lastError = "no_target_profiles";
         } else {
-          message = buildSmsMessageFromQueue({
+          const message = buildSmsMessageFromQueue({
             title: n.title,
             body: n.body,
             payload: core,
@@ -544,18 +468,11 @@ async function run(req: Request) {
 
             if (!best) {
               lastError = "no_sms_contact";
-              failedTargets.push({
-                profile_id: profileId,
-                contact_id: null,
-                phone_e164: null,
-                error: "no_sms_contact",
-                at: new Date().toISOString(),
-              });
               continue;
             }
 
             try {
-              const orangeResult = await sendOrangeSms({
+              await sendOrangeSms({
                 to: best.phone_e164,
                 message,
               });
@@ -563,14 +480,6 @@ async function run(req: Request) {
               usedContactIds.add(best.id);
               successes++;
               sentSmsSends++;
-
-              successTargets.push({
-                profile_id: profileId,
-                contact_id: best.id,
-                phone_e164: best.phone_e164,
-                at: new Date().toISOString(),
-                orange: extractOrangeDebug(orangeResult),
-              });
 
               console.info("[sms/dispatch] sms_send_ok", {
                 id,
@@ -582,15 +491,6 @@ async function run(req: Request) {
               });
             } catch (e: any) {
               lastError = String(e?.message || e);
-
-              failedTargets.push({
-                profile_id: profileId,
-                contact_id: best.id,
-                phone_e164: best.phone_e164,
-                error: lastError,
-                at: new Date().toISOString(),
-              });
-
               console.warn("[sms/dispatch] sms_send_fail", {
                 id,
                 qid: n.id,
@@ -607,32 +507,6 @@ async function run(req: Request) {
       }
     }
 
-    const nextMeta = buildMergedMeta(n.meta, {
-      sms_dispatch: {
-        run_id: id,
-        queue_id: n.id,
-        processed_at: nowIso,
-        institution_id: institutionId || null,
-        sms_event: smsEvent ?? null,
-        provider,
-        attempts,
-        final_status:
-          successes > 0
-            ? "sent"
-            : isTerminalErrorCode(lastError) || attempts >= MAX_ATTEMPTS
-              ? "error"
-              : WAIT_STATUS,
-        target_profiles: cloneJson(targetProfiles),
-        target_profile_count: targetProfiles.length,
-        message_preview: message ? message.slice(0, 200) : null,
-        success_count: successes,
-        failure_count: failedTargets.length,
-        success_targets: cloneJson(successTargets),
-        failed_targets: cloneJson(failedTargets),
-        last_error: successes > 0 ? null : s(lastError).slice(0, 300),
-      },
-    });
-
     if (successes > 0) {
       const { error: updErr } = await srv
         .from("notifications_queue")
@@ -641,7 +515,6 @@ async function run(req: Request) {
           sent_at: new Date().toISOString(),
           attempts,
           last_error: null,
-          meta: nextMeta,
         } as any)
         .eq("id", n.id);
 
@@ -673,7 +546,6 @@ async function run(req: Request) {
           status: statusForError,
           attempts,
           last_error: s(lastError).slice(0, 300),
-          meta: nextMeta,
         } as any)
         .eq("id", n.id);
 
@@ -697,7 +569,7 @@ async function run(req: Request) {
     }
   }
 
-  // 5) Touch used contacts
+  // 5) marquer les contacts utilisés
   if (usedContactIds.size > 0) {
     const { error: touchErr } = await srv
       .from("parent_notification_contacts")
