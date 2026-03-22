@@ -43,6 +43,12 @@ function cloneJson<T>(value: T): T {
   return JSON.parse(JSON.stringify(value ?? null)) as T;
 }
 
+function previewText(value: unknown, max = 200) {
+  const text = String(value ?? "").trim();
+  if (!text) return null;
+  return text.length > max ? `${text.slice(0, max)}…` : text;
+}
+
 function buildMergedMeta(existingMeta: any, patch: Record<string, any>) {
   const base = safeParse<Record<string, any>>(existingMeta);
   const cleanPatch = Object.fromEntries(
@@ -58,11 +64,16 @@ function buildMergedMeta(existingMeta: any, patch: Record<string, any>) {
 function extractOrangeResourceId(resourceURL: string | null | undefined) {
   const url = String(resourceURL || "").trim();
   if (!url) return null;
+
   const marker = "/requests/";
   const idx = url.lastIndexOf(marker);
   if (idx < 0) return null;
-  const id = url.slice(idx + marker.length).trim();
-  return id || null;
+
+  const after = url.slice(idx + marker.length).trim();
+  if (!after) return null;
+
+  const clean = after.split("?")[0].split("#")[0].trim();
+  return clean || null;
 }
 
 function extractOrangeDebug(result: any) {
@@ -72,12 +83,19 @@ function extractOrangeDebug(result: any) {
     response ??
     null;
 
+  const locationHeader =
+    typeof result?.locationHeader === "string"
+      ? result.locationHeader
+      : null;
+
   const resourceURL =
     typeof result?.resourceURL === "string"
       ? result.resourceURL
       : typeof outbound?.resourceURL === "string"
         ? outbound.resourceURL
-        : null;
+        : typeof outbound?.resourceUrl === "string"
+          ? outbound.resourceUrl
+          : locationHeader;
 
   const resourceId =
     typeof result?.resourceId === "string" && result.resourceId
@@ -91,6 +109,11 @@ function extractOrangeDebug(result: any) {
     resourceURL,
     resourceId,
     response,
+    httpStatus:
+      typeof result?.httpStatus === "number" ? result.httpStatus : null,
+    locationHeader,
+    requestId:
+      typeof result?.requestId === "string" ? result.requestId : null,
   };
 }
 
@@ -522,11 +545,27 @@ async function run(req: Request) {
 
     if (!institutionId) {
       lastError = "missing_institution_id";
+      console.warn("[sms/dispatch] row_skip_missing_institution", {
+        id,
+        qid: n.id,
+      });
     } else {
       try {
         const policy = await getPolicyCached(institutionId);
         provider = resolveSmsProvider(policy);
         smsEvent = resolveSmsEventFromPayload(core);
+        console.info("[sms/dispatch] policy_check", {
+  id,
+  qid: n.id,
+  institution_id: institutionId,
+  smsEvent,
+  provider,
+  smsPremiumEnabled: policy.smsPremiumEnabled,
+  smsAbsenceEnabled: policy.smsAbsenceEnabled,
+  smsLateEnabled: policy.smsLateEnabled,
+  smsNotesDigestEnabled: policy.smsNotesDigestEnabled,
+  smsSenderName: policy.smsSenderName,
+});
 
         if (!policy.smsPremiumEnabled) {
           lastError = "sms_premium_disabled";
@@ -547,9 +586,41 @@ async function run(req: Request) {
             institutionName: undefined,
           });
 
+          console.info("[sms/dispatch] row_ready", {
+            id,
+            qid: n.id,
+            institution_id: institutionId,
+            event: smsEvent,
+            provider,
+            attempts,
+            target_profiles_count: targetProfiles.length,
+            message_length: message.length,
+            message_preview: previewText(message, 180),
+          });
+
+          if (message.length > 160) {
+            console.warn("[sms/dispatch] row_message_length_warning", {
+              id,
+              qid: n.id,
+              event: smsEvent,
+              message_length: message.length,
+              note:
+                "Le message dépasse 160 caractères. Cela peut compliquer la livraison ou segmenter le SMS selon le contrat/encodage.",
+            });
+          }
+
           for (const profileId of targetProfiles) {
             const contacts = contactsByProfile.get(profileId) || [];
             const best = pickBestContactForInstitution(contacts, institutionId);
+
+            console.info("[sms/dispatch] target_resolution", {
+              id,
+              qid: n.id,
+              profile: shortId(profileId),
+              contacts_found: contacts.length,
+              selected_contact: best ? shortId(best.id) : null,
+              selected_phone: best ? shortId(best.phone_e164, 18) : null,
+            });
 
             if (!best) {
               lastError = "no_sms_contact";
@@ -560,6 +631,14 @@ async function run(req: Request) {
                 error: lastError,
                 at: new Date().toISOString(),
               });
+
+              console.warn("[sms/dispatch] no_sms_contact_for_profile", {
+                id,
+                qid: n.id,
+                profile: shortId(profileId),
+                institution_id: institutionId,
+              });
+
               continue;
             }
 
@@ -575,7 +654,8 @@ async function run(req: Request) {
 
               const orangeDebug = extractOrangeDebug(orangeResult);
               const orangeResourceId =
-                orangeDebug.resourceId || extractOrangeResourceId(orangeDebug.resourceURL);
+                orangeDebug.resourceId ||
+                extractOrangeResourceId(orangeDebug.resourceURL);
               const acceptedAtIso = new Date().toISOString();
 
               successTargets.push({
@@ -604,7 +684,14 @@ async function run(req: Request) {
                       orange_resource_url: orangeDebug.resourceURL,
                       provider_status: "accepted_by_orange",
                       accepted_at: acceptedAtIso,
-                      raw_accept_payload: cloneJson(orangeResult.response),
+                      raw_accept_payload: cloneJson({
+                        response: orangeResult.response,
+                        meta: {
+                          httpStatus: orangeDebug.httpStatus,
+                          locationHeader: orangeDebug.locationHeader,
+                          requestId: orangeDebug.requestId,
+                        },
+                      }),
                       updated_at: acceptedAtIso,
                     } as any,
                     {
@@ -620,6 +707,7 @@ async function run(req: Request) {
                     profile: shortId(profileId),
                     contact: shortId(best.id),
                     resourceId: orangeResourceId,
+                    requestId: orangeDebug.requestId,
                     error: outboxErr.message,
                   });
                 } else {
@@ -629,8 +717,21 @@ async function run(req: Request) {
                     profile: shortId(profileId),
                     contact: shortId(best.id),
                     resourceId: orangeResourceId,
+                    requestId: orangeDebug.requestId,
                   });
                 }
+              } else {
+                console.warn("[sms/dispatch] orange_accept_missing_resource_trace", {
+                  id,
+                  qid: n.id,
+                  profile: shortId(profileId),
+                  contact: shortId(best.id),
+                  httpStatus: orangeDebug.httpStatus,
+                  requestId: orangeDebug.requestId,
+                  resourceURL: orangeDebug.resourceURL,
+                  resourceId: orangeResourceId,
+                  locationHeader: orangeDebug.locationHeader,
+                });
               }
 
               console.info("[sms/dispatch] sms_send_ok", {
@@ -640,6 +741,9 @@ async function run(req: Request) {
                 contact: shortId(best.id),
                 to: shortId(best.phone_e164, 18),
                 event: smsEvent,
+                httpStatus: orangeDebug.httpStatus,
+                requestId: orangeDebug.requestId,
+                locationHeader: orangeDebug.locationHeader,
                 resourceId: orangeResourceId,
               });
             } catch (e: any) {
@@ -659,13 +763,37 @@ async function run(req: Request) {
                 profile: shortId(profileId),
                 contact: shortId(best.id),
                 to: shortId(best.phone_e164, 18),
+                event: smsEvent,
+                attempts,
+                message_length: message.length,
                 error: lastError.slice(0, 300),
               });
             }
           }
         }
+
+        if (lastError && successes === 0) {
+          console.warn("[sms/dispatch] row_policy_or_resolution_blocked", {
+            id,
+            qid: n.id,
+            institution_id: institutionId,
+            event: smsEvent,
+            provider,
+            target_profiles_count: targetProfiles.length,
+            attempts,
+            reason: lastError,
+          });
+        }
       } catch (e: any) {
         lastError = String(e?.message || e);
+
+        console.error("[sms/dispatch] row_unhandled_error", {
+          id,
+          qid: n.id,
+          institution_id: institutionId,
+          attempts,
+          error: lastError.slice(0, 400),
+        });
       }
     }
 
@@ -673,6 +801,7 @@ async function run(req: Request) {
       successTargets.length > 0 ? successTargets[successTargets.length - 1] : null;
 
     const latestOrange = latestAccepted?.orange || null;
+    const partialFailure = successes > 0 && failedTargets.length > 0;
 
     const nextMeta = buildMergedMeta(n.meta, {
       sms_dispatch: {
@@ -685,15 +814,19 @@ async function run(req: Request) {
         attempts,
         final_status:
           successes > 0
-            ? "sent"
+            ? partialFailure
+              ? "sent_with_partial_failures"
+              : "sent"
             : isTerminalErrorCode(lastError) || attempts >= MAX_ATTEMPTS
               ? "error"
               : WAIT_STATUS,
         target_profiles: cloneJson(targetProfiles),
         target_profile_count: targetProfiles.length,
         message_preview: message ? message.slice(0, 200) : null,
+        message_length: message ? message.length : 0,
         success_count: successes,
         failure_count: failedTargets.length,
+        partial_failure: partialFailure,
         success_targets: cloneJson(successTargets),
         failed_targets: cloneJson(failedTargets),
         last_error: successes > 0 ? null : s(lastError).slice(0, 300),
@@ -707,6 +840,9 @@ async function run(req: Request) {
             sender_address: latestOrange.senderAddress || null,
             orange_resource_id: latestOrange.resourceId || null,
             orange_resource_url: latestOrange.resourceURL || null,
+            orange_http_status: latestOrange.httpStatus || null,
+            orange_request_id: latestOrange.requestId || null,
+            orange_location_header: latestOrange.locationHeader || null,
             delivery_status: null,
             delivery_status_at: null,
             terminal_delivered: null,
@@ -738,6 +874,7 @@ async function run(req: Request) {
           qid: n.id,
           attempts,
           successes,
+          partialFailure,
         });
       }
     } else {
@@ -788,6 +925,11 @@ async function run(req: Request) {
       console.warn("[sms/dispatch] touch_contacts_warn", {
         id,
         error: touchErr.message,
+      });
+    } else {
+      console.info("[sms/dispatch] touch_contacts_ok", {
+        id,
+        count: usedContactIds.size,
       });
     }
   }

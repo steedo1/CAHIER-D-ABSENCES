@@ -10,6 +10,19 @@ type OrangeApiErrorShape = {
   error?: string;
   error_description?: string;
   message?: string;
+  description?: string;
+  requestError?: {
+    serviceException?: {
+      messageId?: string;
+      text?: string;
+      variables?: string[];
+    };
+    policyException?: {
+      messageId?: string;
+      text?: string;
+      variables?: string[];
+    };
+  };
 };
 
 export type OrangeSmsSendInput = {
@@ -26,6 +39,9 @@ export type OrangeSmsSendResult = {
   resourceURL: string | null;
   resourceId: string | null;
   response: unknown;
+  httpStatus?: number;
+  locationHeader?: string | null;
+  requestId?: string | null;
 };
 
 const ORANGE_OAUTH_URL =
@@ -146,24 +162,95 @@ function safeJsonParse(text: string): unknown {
   }
 }
 
+function extractOrangeErrorDetail(parsed: OrangeApiErrorShape | unknown): string | null {
+  if (!parsed || typeof parsed !== "object") return null;
+
+  const p = parsed as OrangeApiErrorShape;
+
+  return (
+    p.requestError?.serviceException?.text ||
+    p.requestError?.policyException?.text ||
+    p.requestError?.serviceException?.messageId ||
+    p.requestError?.policyException?.messageId ||
+    p.error_description ||
+    p.description ||
+    p.message ||
+    p.error ||
+    null
+  );
+}
+
 function extractResourceURL(parsed: any): string | null {
   const outbound =
     parsed?.outboundSMSMessageRequest ??
     parsed ??
     null;
 
-  return typeof outbound?.resourceURL === "string"
-    ? outbound.resourceURL
-    : null;
+  if (typeof outbound?.resourceURL === "string") {
+    return outbound.resourceURL;
+  }
+
+  if (typeof outbound?.resourceUrl === "string") {
+    return outbound.resourceUrl;
+  }
+
+  return null;
 }
 
 function extractResourceId(resourceURL: string | null): string | null {
   if (!resourceURL) return null;
-  const marker = "/requests/";
-  const idx = resourceURL.lastIndexOf(marker);
-  if (idx < 0) return null;
-  const id = resourceURL.slice(idx + marker.length).trim();
-  return id || null;
+
+  try {
+    const marker = "/requests/";
+    const idx = resourceURL.lastIndexOf(marker);
+    if (idx < 0) return null;
+
+    const after = resourceURL.slice(idx + marker.length).trim();
+    if (!after) return null;
+
+    const clean = after.split("?")[0].split("#")[0].trim();
+    return clean || null;
+  } catch {
+    return null;
+  }
+}
+
+function previewText(value: unknown, max = 300): string | null {
+  if (value == null) return null;
+
+  try {
+    const text =
+      typeof value === "string"
+        ? value
+        : JSON.stringify(value);
+
+    if (!text) return null;
+    return text.length > max ? `${text.slice(0, max)}…` : text;
+  } catch {
+    return "[unserializable]";
+  }
+}
+
+function getResponseDebugHeaders(response: Response) {
+  return {
+    location: response.headers.get("location"),
+    contentType: response.headers.get("content-type"),
+    requestId:
+      response.headers.get("x-request-id") ||
+      response.headers.get("x-correlation-id") ||
+      response.headers.get("x-orange-request-id") ||
+      null,
+  };
+}
+
+function warnIfMessageLooksRisky(message: string) {
+  if (message.length > 160) {
+    console.warn("[sms/orange] message_length_warning", {
+      messageLength: message.length,
+      note:
+        "Le message dépasse 160 caractères. Selon le contrat/encodage, cela peut poser problème ou segmenter le SMS.",
+    });
+  }
 }
 
 async function readErrorPayload(response: Response): Promise<string> {
@@ -172,16 +259,12 @@ async function readErrorPayload(response: Response): Promise<string> {
     return `${response.status} ${response.statusText}`;
   }
 
-  const parsed = safeJsonParse(text) as OrangeApiErrorShape | string;
+  const parsed = safeJsonParse(text);
   if (typeof parsed === "string") {
     return `${response.status} ${response.statusText} - ${parsed}`;
   }
 
-  const detail =
-    parsed.error_description ||
-    parsed.message ||
-    parsed.error ||
-    text;
+  const detail = extractOrangeErrorDetail(parsed) || text;
 
   return `${response.status} ${response.statusText} - ${detail}`;
 }
@@ -283,6 +366,8 @@ export async function sendOrangeSms(
     throw new Error("Message SMS vide.");
   }
 
+  warnIfMessageLooksRisky(message);
+
   const senderAddress = toOrangeTelAddress(
     input.senderAddress?.trim() || DEFAULT_SENDER
   );
@@ -348,7 +433,9 @@ export async function sendOrangeSms(
   }
 
   if (!response.ok) {
+    const debugHeaders = getResponseDebugHeaders(response);
     const err = await readErrorPayload(response);
+
     console.error("[sms/orange] send_fail", {
       url,
       to: short(to, 18),
@@ -356,24 +443,37 @@ export async function sendOrangeSms(
       status: response.status,
       statusText: response.statusText,
       error: err,
+      locationHeader: debugHeaders.location,
+      requestId: debugHeaders.requestId,
+      contentType: debugHeaders.contentType,
+      messageLength: message.length,
     });
+
     throw new Error(
       `Envoi SMS Orange échoué vers ${short(to, 18)}: ${err}`
     );
   }
 
+  const debugHeaders = getResponseDebugHeaders(response);
   const text = await response.text().catch(() => "");
   const parsed = text ? safeJsonParse(text) : null;
 
-  const resourceURL = extractResourceURL(parsed);
+  const bodyResourceURL = extractResourceURL(parsed);
+  const resourceURL = bodyResourceURL || debugHeaders.location || null;
   const resourceId = extractResourceId(resourceURL);
 
   console.info("[sms/orange] send_ok", {
     url,
     to: short(to, 18),
     senderAddress,
+    status: response.status,
+    messageLength: message.length,
+    locationHeader: debugHeaders.location,
+    requestId: debugHeaders.requestId,
+    contentType: debugHeaders.contentType,
     resourceURL,
     resourceId,
+    responsePreview: previewText(parsed, 500),
   });
 
   return {
@@ -384,6 +484,9 @@ export async function sendOrangeSms(
     resourceURL,
     resourceId,
     response: parsed,
+    httpStatus: response.status,
+    locationHeader: debugHeaders.location,
+    requestId: debugHeaders.requestId,
   };
 }
 
