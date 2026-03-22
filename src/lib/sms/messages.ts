@@ -51,11 +51,46 @@ export type GradeDigestSmsItem = {
   scale?: number | string | null;
 };
 
+export type NotesDigestSmsPayload = {
+  kind?: string | null;
+  event?: string | null;
+
+  student?: {
+    id?: string | null;
+    name?: string | null;
+    full_name?: string | null;
+    display_name?: string | null;
+    matricule?: string | null;
+  } | null;
+
+  class?: {
+    id?: string | null;
+    label?: string | null;
+    name?: string | null;
+  } | null;
+
+  institution?: {
+    id?: string | null;
+    name?: string | null;
+  } | null;
+
+  period_label?: string | null;
+  average?: number | string | null;
+
+  items?: GradeDigestSmsItem[] | null;
+
+  title?: string | null;
+  body?: string | null;
+};
+
 export type GradeDigestSmsInput = {
   appName?: string | null;
   institutionName?: string | null;
   studentName?: string | null;
   items: GradeDigestSmsItem[];
+  classLabel?: string | null;
+  periodLabel?: string | null;
+  average?: number | string | null;
 };
 
 export type BuildSmsOptions = {
@@ -102,11 +137,11 @@ function sanitizeSmsText(value: string): string {
   const raw = String(value || "");
 
   const replaced = raw
-    .replace(/[‘’´`]/g, "'")
-    .replace(/[“”]/g, '"')
-    .replace(/[•·]/g, "-")
-    .replace(/[–—]/g, "-")
-    .replace(/…/g, "...")
+    .replace(/[â€˜â€™Â´`]/g, "'")
+    .replace(/[â€œâ€]/g, '"')
+    .replace(/[â€¢Â·]/g, "-")
+    .replace(/[â€“â€”]/g, "-")
+    .replace(/â€¦/g, "...")
     .replace(/\|/g, "-")
     .replace(/\u00A0/g, " ");
 
@@ -114,7 +149,10 @@ function sanitizeSmsText(value: string): string {
     .normalize("NFD")
     .replace(/\p{Diacritic}/gu, "");
 
-  const asciiSafe = withoutDiacritics.replace(/[^A-Za-z0-9 @!\"#\$%&'\(\)\*\+,\-\.\/:;<=>\?\n]/g, " ");
+  const asciiSafe = withoutDiacritics.replace(
+    /[^A-Za-z0-9 @!"#$%&'()*+,\-./:;<=>?\n]/g,
+    " "
+  );
 
   return compactSpaces(asciiSafe).replace(/\s+([:;,.!?])/g, "$1");
 }
@@ -141,7 +179,9 @@ function limitSmsText(value: string, maxLength = DEFAULT_MAX_SMS_LENGTH): string
   return `${trimmed}...`;
 }
 
-function studentNameFromPayload(payload: AttendanceSmsPayload | null | undefined): string {
+function studentNameFromPayload(
+  payload: AttendanceSmsPayload | NotesDigestSmsPayload | null | undefined
+): string {
   return firstNonEmpty(
     payload?.student?.name,
     payload?.student?.full_name,
@@ -151,7 +191,9 @@ function studentNameFromPayload(payload: AttendanceSmsPayload | null | undefined
   );
 }
 
-function classLabelFromPayload(payload: AttendanceSmsPayload | null | undefined): string {
+function classLabelFromPayload(
+  payload: AttendanceSmsPayload | NotesDigestSmsPayload | null | undefined
+): string {
   return firstNonEmpty(payload?.class?.label, payload?.class?.name);
 }
 
@@ -206,6 +248,20 @@ function isAttendancePayload(payload: unknown): payload is AttendanceSmsPayload 
   return kind === "attendance" || ["absent", "late", "fix"].includes(event);
 }
 
+function isNotesDigestPayload(payload: unknown): payload is NotesDigestSmsPayload {
+  if (!payload || typeof payload !== "object") return false;
+
+  const kind = s((payload as any).kind).toLowerCase();
+  const event = s((payload as any).event).toLowerCase();
+
+  return (
+    ["grades_digest", "grade_digest", "notes_digest", "weekly_notes", "weekly_grades"].includes(
+      kind
+    ) ||
+    ["grades_digest", "grade_digest", "notes_digest"].includes(event)
+  );
+}
+
 function resolveAttendanceEvent(payload: AttendanceSmsPayload): AttendanceEventKind {
   const event = s(payload.event).toLowerCase();
   if (event === "late") return "late";
@@ -235,9 +291,7 @@ export function buildAttendanceSmsMessage(
     main = `${appName}: ${studentName} absent`;
   } else if (event === "late") {
     main = `${appName}: ${studentName} en retard`;
-    if (minutesLate > 0) {
-      main += ` (${minutesLate} min)`;
-    }
+    if (minutesLate > 0) main += ` (${minutesLate} min)`;
   } else {
     main =
       minutesLate > 0
@@ -249,7 +303,7 @@ export function buildAttendanceSmsMessage(
     [
       subjectName ? `Matiere ${subjectName}` : "",
       classLabel ? `Classe ${classLabel}` : "",
-      when ? `${when}` : "",
+      when || "",
       institutionName ? `Etab ${institutionName}` : "",
       reason ? `Motif ${reason}` : "",
     ],
@@ -257,6 +311,48 @@ export function buildAttendanceSmsMessage(
   );
 
   return limitSmsText(details ? `${main}. ${details}.` : `${main}.`, maxLength);
+}
+
+export function buildGradesDigestSmsMessage(
+  input: GradeDigestSmsInput,
+  options: BuildSmsOptions = {}
+): string {
+  const appName = normalizeAppName(input.appName || options.appName);
+  const institutionName = sanitizeSmsText(s(input.institutionName || options.institutionName));
+  const studentName = sanitizeSmsText(firstNonEmpty(input.studentName, "Eleve"));
+  const classLabel = sanitizeSmsText(s(input.classLabel));
+  const periodLabel = sanitizeSmsText(s(input.periodLabel));
+  const average = sanitizeSmsText(s(input.average));
+  const maxLength = clampSmsMaxLength(options.maxLength);
+
+  const items = (input.items || [])
+    .map((it) => {
+      const subject = sanitizeSmsText(s(it.subject));
+      const score = sanitizeSmsText(s(it.score));
+      const scale = sanitizeSmsText(s(it.scale));
+
+      if (!subject) return "";
+      if (score && scale) return `${subject} ${score}/${scale}`;
+      if (score) return `${subject} ${score}`;
+      return subject;
+    })
+    .filter(Boolean);
+
+  const head = `${appName}: Notes ${studentName}`;
+  const meta = joinParts(
+    [
+      classLabel ? `Classe ${classLabel}` : "",
+      periodLabel ? periodLabel : "",
+      average ? `Moy ${average}` : "",
+    ],
+    " - "
+  );
+
+  const body = items.length ? items.join(", ") : "Nouvelles notes disponibles.";
+  const tail = institutionName ? ` Etab ${institutionName}.` : "";
+
+  const full = joinParts([head, meta, body], " - ");
+  return limitSmsText(`${full}.${tail}`, maxLength);
 }
 
 export function buildGenericSmsMessage(
@@ -273,49 +369,14 @@ export function buildGenericSmsMessage(
   const body = sanitizeSmsText(s(input.body));
 
   const text = joinParts(
-    [
-      title ? `${appName}: ${title}` : `${appName}: Notification`,
-      body || "",
-    ],
+    [title ? `${appName}: ${title}` : `${appName}: Notification`, body || ""],
     " - "
   );
 
   return limitSmsText(text, maxLength);
 }
 
-export function buildGradesDigestSmsMessage(
-  input: GradeDigestSmsInput,
-  options: BuildSmsOptions = {}
-): string {
-  const appName = normalizeAppName(input.appName || options.appName);
-  const institutionName = sanitizeSmsText(s(input.institutionName || options.institutionName));
-  const studentName = sanitizeSmsText(firstNonEmpty(input.studentName, "Eleve"));
-  const maxLength = clampSmsMaxLength(options.maxLength);
-
-  const items = (input.items || [])
-    .map((it) => {
-      const subject = sanitizeSmsText(s(it.subject));
-      if (!subject) return "";
-
-      const score = sanitizeSmsText(s(it.score));
-      const scale = sanitizeSmsText(s(it.scale));
-
-      if (score && scale) return `${subject} ${score}/${scale}`;
-      if (score) return `${subject} ${score}`;
-      return subject;
-    })
-    .filter(Boolean);
-
-  const head = `${appName}: Notes pour ${studentName}`;
-  const body = items.length ? items.join(", ") : "Aucune nouvelle note.";
-  const tail = institutionName ? ` Etab ${institutionName}.` : "";
-
-  return limitSmsText(`${head} - ${body}.${tail}`, maxLength);
-}
-
-export function buildSmsMessageFromQueue(
-  input: NotificationQueueSmsInput
-): string {
+export function buildSmsMessageFromQueue(input: NotificationQueueSmsInput): string {
   const payload = input.payload;
 
   if (isAttendancePayload(payload)) {
@@ -324,6 +385,27 @@ export function buildSmsMessageFromQueue(
       institutionName: input.institutionName,
       maxLength: input.maxLength,
     });
+  }
+
+  if (isNotesDigestPayload(payload)) {
+    const p = payload as NotesDigestSmsPayload;
+    return buildGradesDigestSmsMessage(
+      {
+        appName: input.appName,
+        institutionName:
+          p.institution?.name || input.institutionName,
+        studentName: studentNameFromPayload(p),
+        classLabel: classLabelFromPayload(p),
+        periodLabel: p.period_label,
+        average: p.average,
+        items: Array.isArray(p.items) ? p.items : [],
+      },
+      {
+        appName: input.appName,
+        institutionName: p.institution?.name || input.institutionName,
+        maxLength: input.maxLength,
+      }
+    );
   }
 
   return buildGenericSmsMessage(
