@@ -112,11 +112,7 @@ function pickStudentName(row: any, fallback: string) {
 }
 
 function pickClassLabel(row: any, fallback: string) {
-  return (
-    String(row?.label || "").trim() ||
-    String(row?.name || "").trim() ||
-    fallback
-  );
+  return String(row?.label || "").trim() || fallback;
 }
 
 function pickSubjectLabel(row: any, fallback = "Matiere") {
@@ -327,7 +323,7 @@ async function fetchClassRows(
   if (classId) {
     const { data, error } = await srv
       .from("classes")
-      .select("id,institution_id,label,name")
+      .select("id,institution_id,label")
       .eq("id", classId)
       .maybeSingle();
 
@@ -340,7 +336,7 @@ async function fetchClassRows(
 
   const { data, error } = await srv
     .from("classes")
-    .select("id,institution_id,label,name")
+    .select("id,institution_id,label")
     .eq("institution_id", institutionId);
 
   if (error) throw error;

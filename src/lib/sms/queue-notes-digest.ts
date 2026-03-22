@@ -46,7 +46,7 @@ export async function enqueueNotesDigestSms(opts: {
   if (!studentId) throw new Error("studentId manquant.");
   if (!studentName?.trim()) throw new Error("studentName manquant.");
   if (!Array.isArray(items) || items.length === 0) {
-    throw new Error("Aucune note Ã  envoyer.");
+    throw new Error("Aucune note A envoyer.");
   }
 
   const payload = {

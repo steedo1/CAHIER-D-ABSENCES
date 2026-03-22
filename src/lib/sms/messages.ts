@@ -137,11 +137,11 @@ function sanitizeSmsText(value: string): string {
   const raw = String(value || "");
 
   const replaced = raw
-    .replace(/[â€˜â€™Â´`]/g, "'")
-    .replace(/[â€œâ€]/g, '"')
-    .replace(/[â€¢Â·]/g, "-")
-    .replace(/[â€“â€”]/g, "-")
-    .replace(/â€¦/g, "...")
+    .replace(/[\u2018\u2019\u00B4`]/g, "'")
+    .replace(/[\u201C\u201D]/g, '"')
+    .replace(/[\u2022\u00B7]/g, "-")
+    .replace(/[\u2013\u2014]/g, "-")
+    .replace(/\u2026/g, "...")
     .replace(/\|/g, "-")
     .replace(/\u00A0/g, " ");
 
@@ -197,7 +197,9 @@ function classLabelFromPayload(
   return firstNonEmpty(payload?.class?.label, payload?.class?.name);
 }
 
-function subjectNameFromPayload(payload: AttendanceSmsPayload | null | undefined): string {
+function subjectNameFromPayload(
+  payload: AttendanceSmsPayload | null | undefined
+): string {
   return firstNonEmpty(payload?.subject?.name, payload?.subject?.label);
 }
 
@@ -242,8 +244,9 @@ function formatDateTimeCompactFr(iso: Maybe<string>): string {
 function isAttendancePayload(payload: unknown): payload is AttendanceSmsPayload {
   if (!payload || typeof payload !== "object") return false;
 
-  const kind = s((payload as any).kind).toLowerCase();
-  const event = s((payload as any).event).toLowerCase();
+  const obj = payload as Record<string, unknown>;
+  const kind = s(obj.kind).toLowerCase();
+  const event = s(obj.event).toLowerCase();
 
   return kind === "attendance" || ["absent", "late", "fix"].includes(event);
 }
@@ -251,8 +254,9 @@ function isAttendancePayload(payload: unknown): payload is AttendanceSmsPayload 
 function isNotesDigestPayload(payload: unknown): payload is NotesDigestSmsPayload {
   if (!payload || typeof payload !== "object") return false;
 
-  const kind = s((payload as any).kind).toLowerCase();
-  const event = s((payload as any).event).toLowerCase();
+  const obj = payload as Record<string, unknown>;
+  const kind = s(obj.kind).toLowerCase();
+  const event = s(obj.event).toLowerCase();
 
   return (
     ["grades_digest", "grade_digest", "notes_digest", "weekly_notes", "weekly_grades"].includes(
@@ -318,7 +322,9 @@ export function buildGradesDigestSmsMessage(
   options: BuildSmsOptions = {}
 ): string {
   const appName = normalizeAppName(input.appName || options.appName);
-  const institutionName = sanitizeSmsText(s(input.institutionName || options.institutionName));
+  const institutionName = sanitizeSmsText(
+    s(input.institutionName || options.institutionName)
+  );
   const studentName = sanitizeSmsText(firstNonEmpty(input.studentName, "Eleve"));
   const classLabel = sanitizeSmsText(s(input.classLabel));
   const periodLabel = sanitizeSmsText(s(input.periodLabel));
@@ -389,11 +395,11 @@ export function buildSmsMessageFromQueue(input: NotificationQueueSmsInput): stri
 
   if (isNotesDigestPayload(payload)) {
     const p = payload as NotesDigestSmsPayload;
+
     return buildGradesDigestSmsMessage(
       {
         appName: input.appName,
-        institutionName:
-          p.institution?.name || input.institutionName,
+        institutionName: p.institution?.name || input.institutionName,
         studentName: studentNameFromPayload(p),
         classLabel: classLabelFromPayload(p),
         periodLabel: p.period_label,
