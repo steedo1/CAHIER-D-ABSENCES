@@ -385,15 +385,16 @@ function buildCertificateHtml(args: {
     }
 
     body {
-      padding: 24px;
+      padding: 12px;
     }
 
     .page {
       width: 210mm;
-      min-height: 297mm;
-      margin: 0 auto 16px auto;
+      height: 297mm;
+      margin: 0 auto 10px auto;
       page-break-after: always;
       break-after: page;
+      overflow: hidden;
     }
 
     .page:last-child {
@@ -404,61 +405,64 @@ function buildCertificateHtml(args: {
     .sheet {
       position: relative;
       width: 100%;
-      min-height: 297mm;
+      height: 297mm;
       background: white;
-      padding: 18mm 16mm 18mm 16mm;
+      padding: 14mm 14mm 14mm 14mm;
       overflow: hidden;
+      display: flex;
+      flex-direction: column;
     }
 
     .sheet-border {
       position: absolute;
       inset: 10mm;
-      border: 1.8px solid #cbd5e1;
+      border: 1.4px solid #cbd5e1;
       pointer-events: none;
     }
 
     .top {
       position: relative;
       z-index: 1;
+      flex: 0 0 auto;
     }
 
     .republic {
       text-align: center;
-      margin-bottom: 12mm;
+      margin-bottom: 8mm;
     }
 
     .country {
-      font-size: 18px;
+      font-size: 17px;
       font-weight: 700;
-      letter-spacing: 0.4px;
+      letter-spacing: 0.3px;
       text-transform: uppercase;
     }
 
     .motto {
-      margin-top: 4px;
-      font-size: 13px;
+      margin-top: 3px;
+      font-size: 12px;
       font-style: italic;
     }
 
     .ministry {
-      margin-top: 9px;
-      font-size: 13px;
+      margin-top: 7px;
+      font-size: 12px;
       font-weight: 700;
       text-transform: uppercase;
-      line-height: 1.35;
+      line-height: 1.3;
     }
 
     .institution-row {
       display: grid;
-      grid-template-columns: 92px 1fr;
-      gap: 14px;
+      grid-template-columns: 82px 1fr;
+      gap: 12px;
       align-items: start;
-      margin-bottom: 10mm;
+      margin-bottom: 6mm;
     }
 
     .logo-wrap {
-      width: 92px;
-      height: 92px;
+      width: 82px;
+      height: 82px;
       border: 1px solid #cbd5e1;
       display: flex;
       align-items: center;
@@ -473,7 +477,7 @@ function buildCertificateHtml(args: {
     }
 
     .logo-placeholder {
-      font-size: 13px;
+      font-size: 12px;
       color: #64748b;
       font-weight: 600;
     }
@@ -483,55 +487,59 @@ function buildCertificateHtml(args: {
     }
 
     .institution-name {
-      font-size: 17px;
+      font-size: 16px;
       font-weight: 700;
       text-transform: uppercase;
-      line-height: 1.25;
+      line-height: 1.2;
     }
 
     .institution-sub {
-      margin-top: 4px;
-      font-size: 13px;
+      margin-top: 3px;
+      font-size: 12px;
       font-weight: 600;
     }
 
     .institution-meta {
-      margin-top: 3px;
-      font-size: 12px;
-      line-height: 1.4;
+      margin-top: 2px;
+      font-size: 11.5px;
+      line-height: 1.3;
     }
 
     .content {
       position: relative;
       z-index: 1;
-      margin-top: 10mm;
+      margin-top: 5mm;
+      display: flex;
+      flex-direction: column;
+      flex: 1;
+      min-height: 0;
     }
 
     .title-wrap {
       text-align: center;
-      margin-bottom: 13mm;
+      margin-bottom: 8mm;
     }
 
     .doc-ref {
       text-align: right;
-      font-size: 12px;
-      margin-bottom: 8px;
+      font-size: 11px;
+      margin-bottom: 6px;
       color: #334155;
       font-family: Arial, Helvetica, sans-serif;
     }
 
     h1 {
       margin: 0;
-      font-size: 23px;
+      font-size: 21px;
       text-transform: uppercase;
       text-decoration: underline;
-      letter-spacing: 0.6px;
+      letter-spacing: 0.4px;
     }
 
     .body {
-      font-size: 15.5px;
-      line-height: 1.85;
-      margin: 0 0 8mm 0;
+      font-size: 14.5px;
+      line-height: 1.65;
+      margin: 0 0 5mm 0;
     }
 
     .justified {
@@ -541,17 +549,17 @@ function buildCertificateHtml(args: {
     .student-box {
       border: 1px solid #cbd5e1;
       background: #f8fafc;
-      padding: 10px 14px;
-      margin: 9mm 0 10mm 0;
+      padding: 8px 12px;
+      margin: 5mm 0 6mm 0;
     }
 
     .student-box .row {
       display: grid;
-      grid-template-columns: 44mm 1fr;
+      grid-template-columns: 42mm 1fr;
       gap: 8px;
-      padding: 6px 0;
+      padding: 5px 0;
       border-bottom: 1px dashed #cbd5e1;
-      font-size: 15px;
+      font-size: 14px;
     }
 
     .student-box .row:last-child {
@@ -567,25 +575,26 @@ function buildCertificateHtml(args: {
     }
 
     .signature-wrap {
-      margin-top: 20mm;
+      margin-top: auto;
       display: flex;
       justify-content: flex-end;
+      padding-top: 8mm;
     }
 
     .signature-box {
-      width: 84mm;
+      width: 78mm;
       text-align: center;
-      font-size: 14px;
-      line-height: 1.6;
+      font-size: 13.5px;
+      line-height: 1.5;
     }
 
     .signature-title {
-      margin-top: 10px;
+      margin-top: 8px;
       font-weight: 700;
     }
 
     .signature-space {
-      height: 38mm;
+      height: 24mm;
     }
 
     .signature-name {
