@@ -1,18 +1,18 @@
 // src/lib/sms-dispatch.ts
-// Helper idempotent pour dÃ©clencher /api/sms/dispatch depuis nâ€™importe
+// Helper idempotent pour déclencher /api/sms/dispatch depuis n’importe
 // quelle route (prof, admin, cron inline, etc.).
-// Ne modifie pas la file ; il appelle juste lâ€™endpoint avec le bon secret.
+// Ne modifie pas la file ; il appelle juste l’endpoint avec le bon secret.
 
 export type SmsDispatchOpts = {
-  req?: Request;     // Request Next.js (pour lire host/proto si besoin)
-  reason?: string;   // utile pour les logs cÃ´tÃ© /api/sms/dispatch
+  req?: Request;
+  reason?: string;
   timeoutMs?: number;
-  retries?: number;  // nb de tentatives supplÃ©mentaires (dÃ©faut 2)
+  retries?: number;
+  baseUrl?: string;
 };
 
 let lastSmsFire = 0;
 
-/** Normalise une base URL : ajoute le schÃ©ma si absent, retire le trailing slash. */
 function sanitizeBase(u: string) {
   if (!u) return "";
   let s = u.trim();
@@ -20,7 +20,6 @@ function sanitizeBase(u: string) {
   return s.replace(/\/+$/, "");
 }
 
-/** Bascule entre apex et www (ex: app.moncahier.ci â†” www.app.moncahier.ci). */
 function swapApexWww(u: string) {
   try {
     const url = new URL(u);
@@ -32,16 +31,24 @@ function swapApexWww(u: string) {
   }
 }
 
-/**
- * DÃ©duit la base URL.
- * PRIORITÃ‰ :
- *   1) NEXT_PUBLIC_BASE_URL
- *   2) headers de la requÃªte
- *   3) VERCEL_URL
- *   4) localhost en dev
- */
-function resolveBaseFromReq(req?: Request) {
-  let base = (process.env.NEXT_PUBLIC_BASE_URL || "").trim();
+function resolveBaseFromReq(req?: Request, explicitBase?: string) {
+  let base = "";
+  let source = "";
+
+  if (explicitBase?.trim()) {
+    base = explicitBase.trim();
+    source = "opts.baseUrl";
+  }
+
+  if (!base && process.env.NEXT_PUBLIC_APP_URL?.trim()) {
+    base = process.env.NEXT_PUBLIC_APP_URL.trim();
+    source = "NEXT_PUBLIC_APP_URL";
+  }
+
+  if (!base && process.env.NEXT_PUBLIC_BASE_URL?.trim()) {
+    base = process.env.NEXT_PUBLIC_BASE_URL.trim();
+    source = "NEXT_PUBLIC_BASE_URL";
+  }
 
   if (!base && req) {
     const host =
@@ -50,16 +57,23 @@ function resolveBaseFromReq(req?: Request) {
       "";
     let proto = req.headers.get("x-forwarded-proto") || "";
     if (!proto) proto = /^localhost(:\d+)?$/i.test(host) ? "http" : "https";
-    if (host) base = `${proto}://${host}`;
+    if (host) {
+      base = `${proto}://${host}`;
+      source = "request_headers";
+    }
   }
 
-  if (!base) {
-    base = (process.env.VERCEL_URL || "").trim();
+  if (!base && process.env.VERCEL_URL?.trim()) {
+    base = process.env.VERCEL_URL.trim();
+    source = "VERCEL_URL";
   }
 
   base = sanitizeBase(base);
 
-  if (!base) base = "http://localhost:3000";
+  if (!base) {
+    base = "http://localhost:3000";
+    source = "localhost_fallback";
+  }
 
   try {
     const u = new URL(base);
@@ -69,7 +83,7 @@ function resolveBaseFromReq(req?: Request) {
     // ignore
   }
 
-  return base;
+  return { base, source };
 }
 
 async function callOnce(
@@ -103,7 +117,14 @@ async function callOnce(
       redirect: "follow",
     });
 
-    if (res.ok) return true;
+    if (res.ok) {
+      console.info("[inline-sms-dispatch] ok", {
+        url,
+        code: res.status,
+        mode,
+      });
+      return true;
+    }
 
     const txt = await res.text().catch(() => "");
     console.warn("[inline-sms-dispatch] non-2xx", {
@@ -125,14 +146,9 @@ async function callOnce(
   }
 }
 
-/**
- * DÃ©clenche le worker /api/sms/dispatch de maniÃ¨re fire-and-forget.
- * - throttle 200ms pour Ã©viter les rafales
- * - essaie x-cron-secret puis bearer
- * - fallback apex/www
- */
 export async function triggerSmsDispatch(opts: SmsDispatchOpts = {}) {
   const secret = (process.env.CRON_SECRET || process.env.CRON_PUSH_SECRET || "").trim();
+
   if (!secret) {
     console.warn("[inline-sms-dispatch] missing CRON_SECRET/CRON_PUSH_SECRET");
     return false;
@@ -142,16 +158,25 @@ export async function triggerSmsDispatch(opts: SmsDispatchOpts = {}) {
   if (now - lastSmsFire < 200) return true;
   lastSmsFire = now;
 
-  const base = resolveBaseFromReq(opts.req);
+  const { base, source } = resolveBaseFromReq(opts.req, opts.baseUrl);
   const url = `${base}/api/sms/dispatch`;
 
-  const timeoutMs = Math.max(400, Math.min(4000, opts.timeoutMs ?? 1200));
+  const timeoutMs = Math.max(1500, Math.min(10000, opts.timeoutMs ?? 5000));
   const retries = Math.max(0, Math.min(3, opts.retries ?? 2));
 
   const body = JSON.stringify({
     source: "inline",
     reason: opts.reason || "",
     ts: new Date().toISOString(),
+  });
+
+  console.info("[inline-sms-dispatch] start", {
+    base,
+    baseSource: source,
+    url,
+    timeoutMs,
+    retries,
+    hasReq: !!opts.req,
   });
 
   const tries: Array<{ url: string; mode: "x-cron" | "bearer" }> = [
