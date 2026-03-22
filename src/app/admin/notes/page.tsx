@@ -19,7 +19,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 
-/* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ Types API â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* Types API */
 type EvalKind = "devoir" | "interro_ecrite" | "interro_orale";
 
 type LevelRow = {
@@ -92,7 +92,7 @@ type GradeDigestSendResult =
 
 type DaysRange = 7 | 30 | 90;
 
-/* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ Mini UI helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* Mini UI helpers */
 function Skeleton({ className = "" }: { className?: string }) {
   return <div className={`animate-pulse rounded-lg bg-slate-200/70 ${className}`} />;
 }
@@ -145,6 +145,7 @@ function KpiTile({
     violet: "border-violet-200/80 bg-violet-50/60",
     amber: "border-amber-200/80 bg-amber-50/60",
   };
+
   return (
     <div
       className={[
@@ -162,12 +163,10 @@ function KpiTile({
               <Skeleton className="h-7 w-20" />
             ) : (
               <span className="text-2xl font-semibold text-slate-900">
-                {value === null ? "â€”" : value}
+                {value === null ? "—" : value}
               </span>
             )}
-            {suffix && !loading && (
-              <span className="text-xs text-slate-600">{suffix}</span>
-            )}
+            {suffix && !loading && <span className="text-xs text-slate-600">{suffix}</span>}
           </div>
         </div>
         <div className="rounded-xl bg-white/80 p-2 ring-1 ring-slate-200">
@@ -180,6 +179,7 @@ function KpiTile({
 
 function Segmented({ value, onChange }: { value: DaysRange; onChange: (v: DaysRange) => void }) {
   const options: DaysRange[] = [7, 30, 90];
+
   return (
     <div className="inline-flex rounded-full border border-emerald-200 bg-white p-1 text-xs shadow-sm">
       {options.map((d) => (
@@ -228,7 +228,7 @@ function QuickLink({
   );
 }
 
-/* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ Page principale â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* Page principale */
 export default function AdminNotesOverviewPage() {
   const [data, setData] = useState<NotesOverviewOk | NotesOverviewErr | null>(null);
   const [loading, setLoading] = useState(true);
@@ -242,14 +242,17 @@ export default function AdminNotesOverviewPage() {
   async function load(d: DaysRange = days) {
     try {
       setRefreshing(true);
-      const res = await fetch(`/api/admin/notes/overview?days=${d}`, { cache: "no-store" });
-      const json = (await res.json().catch(() => ({}))) as
-        | NotesOverviewOk
-        | NotesOverviewErr
-        | any;
+
+      const res = await fetch(`/api/admin/notes/overview?days=${d}`, {
+        cache: "no-store",
+      });
+
+      const json = (await res.json().catch(() => ({}))) as NotesOverviewOk | NotesOverviewErr | any;
+
       if (!res.ok || !json || !json.ok) {
         throw new Error((json && json.error) || `HTTP_${res.status}`);
       }
+
       setData(json);
       setUpdatedAt(new Date());
     } catch (e: any) {
@@ -304,6 +307,7 @@ export default function AdminNotesOverviewPage() {
   }, []);
 
   const isOk = !!data && "ok" in data && data.ok;
+
   const counts = isOk
     ? (data as NotesOverviewOk).counts
     : {
@@ -323,6 +327,7 @@ export default function AdminNotesOverviewPage() {
       };
 
   const latest = isOk ? (data as NotesOverviewOk).latest : ([] as LatestEvalRow[]);
+
   const periodLabel = useMemo(() => {
     const d = isOk ? (data as NotesOverviewOk).meta.days : days;
     return `${d} derniers jours`;
@@ -354,7 +359,7 @@ export default function AdminNotesOverviewPage() {
   function evalKindLabel(kind: EvalKind) {
     if (kind === "devoir") return "Devoir";
     if (kind === "interro_orale") return "Interrogation orale";
-    return "Interrogation Ã©crite";
+    return "Interrogation écrite";
   }
 
   const hasError = !!data && "ok" in data && !data.ok;
@@ -369,23 +374,26 @@ export default function AdminNotesOverviewPage() {
               "radial-gradient(500px 200px at 10% -10%, rgba(255,255,255,0.6), transparent 60%), radial-gradient(300px 120px at 90% 120%, rgba(255,255,255,0.5), transparent 60%)",
           }}
         />
+
         <div className="relative z-10 flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
           <div className="space-y-1">
             <div className="inline-flex items-center gap-2 rounded-full bg-white/10 px-3 py-1 text-xs font-semibold ring-1 ring-white/25">
               <NotebookPen className="h-4 w-4" />
-              Cahier de notes Â· Vue d&apos;ensemble
+              Cahier de notes · Vue d&apos;ensemble
             </div>
+
             <h1 className="text-xl font-semibold tracking-tight sm:text-2xl">
-              Suivi global des notes de l&apos;Ã©tablissement
+              Suivi global des notes de l&apos;établissement
             </h1>
+
             <p className="text-xs text-white/90 sm:text-sm">
-              Volume de contrÃ´les, publication et saisie des notes sur{" "}
+              Volume de contrôles, publication et saisie des notes sur{" "}
               <span className="font-semibold">{periodLabel}</span>.
             </p>
           </div>
 
-          <div className="w-full max-w-xl space-y-3 xl:w-auto xl:min-w-[430px]">
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
+          <div className="w-full max-w-xl xl:w-auto xl:min-w-[430px]">
+            <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-end">
               <Segmented
                 value={days}
                 onChange={(d) => {
@@ -393,6 +401,7 @@ export default function AdminNotesOverviewPage() {
                   load(d);
                 }}
               />
+
               <button
                 type="button"
                 onClick={() => load(days)}
@@ -405,52 +414,31 @@ export default function AdminNotesOverviewPage() {
                 <RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
                 Actualiser
               </button>
+
+              <button
+                type="button"
+                onClick={sendGradeDigest}
+                disabled={sendingGradeDigest}
+                className={[
+                  "inline-flex items-center justify-center gap-2 rounded-full px-4 py-2 text-sm font-semibold shadow-sm transition",
+                  sendingGradeDigest
+                    ? "bg-white/70 text-emerald-700"
+                    : "bg-white text-emerald-700 hover:bg-emerald-50",
+                ].join(" ")}
+              >
+                <Send className={`h-4 w-4 ${sendingGradeDigest ? "animate-pulse" : ""}`} />
+                {sendingGradeDigest ? "Envoi en cours..." : "Envoyer les notes"}
+              </button>
             </div>
 
-            <div className="rounded-2xl border border-white/20 bg-white/10 p-3 backdrop-blur-sm">
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <div className="space-y-1">
-                  <div className="inline-flex items-center gap-2 rounded-full bg-white/15 px-2.5 py-1 text-[11px] font-semibold ring-1 ring-white/20">
-                    <Send className="h-3.5 w-3.5" />
-                    SMS premium Â· Notes
-                  </div>
-                  <div className="text-sm font-semibold text-white">
-                    Envoyer le rÃ©sumÃ© SMS des notes
-                  </div>
-                  <div className="text-[11px] text-white/80 sm:text-xs">
-                    Action visible et rapide depuis le cahier de notes.
-                  </div>
-                </div>
-
-                <button
-                  type="button"
-                  onClick={sendGradeDigest}
-                  disabled={sendingGradeDigest}
-                  className={[
-                    "inline-flex items-center justify-center gap-2 rounded-full px-4 py-2 text-sm font-semibold shadow-sm transition",
-                    sendingGradeDigest
-                      ? "bg-white/70 text-emerald-700"
-                      : "bg-white text-emerald-700 hover:bg-emerald-50",
-                  ].join(" ")}
-                >
-                  <Send className={`h-4 w-4 ${sendingGradeDigest ? "animate-pulse" : ""}`} />
-                  {sendingGradeDigest ? "Envoi en cours..." : "Envoyer le rÃ©sumÃ©"}
-                </button>
-              </div>
-
-              <div className="mt-2 text-[11px] text-white/75">
-                Le push immÃ©diat reste sÃ©parÃ©. Ici, on dÃ©clenche uniquement le digest SMS.
-              </div>
-            </div>
-
-            <div className="flex items-center gap-2 text-[11px] text-white/80">
+            <div className="mt-3 flex items-center gap-2 text-[11px] text-white/80">
               <CalendarClock className="h-3.5 w-3.5" />
               {updatedAt
-                ? `Mis Ã  jour Ã  ${updatedAt.toLocaleTimeString([], {
+                ? `Mis à jour à ${updatedAt.toLocaleTimeString([], {
                     hour: "2-digit",
                     minute: "2-digit",
                   })}`
-                : "En attente de donnÃ©es..."}
+                : "En attente de données..."}
             </div>
           </div>
         </div>
@@ -458,9 +446,9 @@ export default function AdminNotesOverviewPage() {
         {hasError && (
           <div className="relative z-10 mt-4 rounded-xl border border-red-300/70 bg-red-50/90 px-4 py-2 text-xs text-red-800">
             {(data as NotesOverviewErr).error === "UNAUTHENTICATED"
-              ? "Session expirÃ©e. Merci de vous reconnecter."
+              ? "Session expirée. Merci de vous reconnecter."
               : (data as NotesOverviewErr).error === "FORBIDDEN"
-              ? "AccÃ¨s non autorisÃ© Ã  cette vue."
+              ? "Accès non autorisé à cette vue."
               : "Erreur lors du chargement des indicateurs du cahier de notes."}
           </div>
         )}
@@ -470,15 +458,15 @@ export default function AdminNotesOverviewPage() {
             <div className="flex items-start gap-2">
               <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
               <div>
-                <div className="font-semibold">RÃ©sumÃ© SMS lancÃ© avec succÃ¨s.</div>
+                <div className="font-semibold">Résumé SMS lancé avec succès.</div>
                 <div className="mt-1 text-xs text-emerald-800">
-                  {gradeDigestResult.notifications_created ?? 0} notification(s) crÃ©Ã©e(s)
-                  {" Â· "}
-                  {gradeDigestResult.students_count ?? 0} Ã©lÃ¨ve(s) concernÃ©(s)
+                  {gradeDigestResult.notifications_created ?? 0} notification(s) créée(s)
+                  {" · "}
+                  {gradeDigestResult.students_count ?? 0} élève(s) concerné(s)
                   {typeof gradeDigestResult.evaluations_count === "number" && (
                     <>
-                      {" Â· "}
-                      {gradeDigestResult.evaluations_count} Ã©valuation(s)
+                      {" · "}
+                      {gradeDigestResult.evaluations_count} évaluation(s)
                     </>
                   )}
                 </div>
@@ -497,25 +485,25 @@ export default function AdminNotesOverviewPage() {
             <div className="flex items-start gap-2">
               <XCircle className="mt-0.5 h-4 w-4 shrink-0" />
               <div>
-                <div className="font-semibold">Impossible dâ€™envoyer le rÃ©sumÃ© SMS.</div>
+                <div className="font-semibold">Impossible d’envoyer le résumé SMS.</div>
                 <div className="mt-1 text-xs text-red-800">
                   {gradeDigestResult.error === "SMS_NOTES_DIGEST_DISABLED"
-                    ? "Le SMS premium pour le digest des notes nâ€™est pas activÃ© pour cet Ã©tablissement."
+                    ? "Le SMS premium pour le digest des notes n’est pas activé pour cet établissement."
                     : gradeDigestResult.error === "DIGEST_ALREADY_SENT_FOR_PERIOD"
-                    ? "Un digest a dÃ©jÃ  Ã©tÃ© envoyÃ© pour cette pÃ©riode."
+                    ? "Un digest a déjà été envoyé pour cette période."
                     : gradeDigestResult.error === "FORBIDDEN"
-                    ? "AccÃ¨s non autorisÃ©."
+                    ? "Accès non autorisé."
                     : gradeDigestResult.error === "NETWORK_ERROR"
-                    ? "Erreur rÃ©seau."
+                    ? "Erreur réseau."
                     : gradeDigestResult.error}
                 </div>
 
                 {gradeDigestResult.policy && (
                   <div className="mt-2 text-[11px] text-red-800">
                     premium={String(!!gradeDigestResult.policy.smsPremiumEnabled)}
-                    {" Â· "}
-                    provider={gradeDigestResult.policy.smsProvider || "â€”"}
-                    {" Â· "}
+                    {" · "}
+                    provider={gradeDigestResult.policy.smsProvider || "—"}
+                    {" · "}
                     notes_digest={String(!!gradeDigestResult.policy.smsNotesDigestEnabled)}
                   </div>
                 )}
@@ -527,10 +515,10 @@ export default function AdminNotesOverviewPage() {
 
       <section className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
         <KpiTile
-          label="Ã‰valuations crÃ©Ã©es"
+          label="Évaluations créées"
           icon={NotebookPen}
           value={counts.evaluations_total.toLocaleString("fr-FR")}
-          suffix="contrÃ´les"
+          suffix="contrôles"
           tone="emerald"
           loading={loading}
         />
@@ -538,15 +526,15 @@ export default function AdminNotesOverviewPage() {
           label="Taux de publication"
           icon={TrendingUp}
           value={`${publishedRate}`.replace(".", ",")}
-          suffix="% publiÃ©es"
+          suffix="% publiées"
           tone="sky"
           loading={loading}
         />
         <KpiTile
-          label="Ã‰valuations en brouillon"
+          label="Évaluations en brouillon"
           icon={AlertTriangle}
           value={counts.evaluations_unpublished.toLocaleString("fr-FR")}
-          suffix="Ã  publier"
+          suffix="à publier"
           tone="amber"
           loading={loading}
         />
@@ -564,7 +552,7 @@ export default function AdminNotesOverviewPage() {
         <CardShell
           title="Par niveau"
           icon={<School className="h-4 w-4 text-slate-500" />}
-          subtitle="Volume dâ€™Ã©valuations et moyenne par niveau de classe"
+          subtitle="Volume d’évaluations et moyenne par niveau de classe"
         >
           {loading ? (
             <div className="space-y-2">
@@ -574,7 +562,7 @@ export default function AdminNotesOverviewPage() {
             </div>
           ) : breakdown.by_level.length === 0 ? (
             <div className="text-xs text-slate-500">
-              Aucun contrÃ´le enregistrÃ© sur la pÃ©riode choisie.
+              Aucun contrôle enregistré sur la période choisie.
             </div>
           ) : (
             <div className="overflow-x-auto">
@@ -582,7 +570,7 @@ export default function AdminNotesOverviewPage() {
                 <thead className="border-b bg-slate-50 text-slate-600">
                   <tr>
                     <th className="px-2 py-1.5 text-left">Niveau</th>
-                    <th className="px-2 py-1.5 text-right">Ã‰valuations</th>
+                    <th className="px-2 py-1.5 text-right">Évaluations</th>
                     <th className="px-2 py-1.5 text-right">Moyenne /20</th>
                   </tr>
                 </thead>
@@ -595,7 +583,7 @@ export default function AdminNotesOverviewPage() {
                       </td>
                       <td className="px-2 py-1.5 text-right tabular-nums">
                         {row.avg_20 == null
-                          ? "â€”"
+                          ? "—"
                           : row.avg_20.toLocaleString("fr-FR", {
                               minimumFractionDigits: 1,
                               maximumFractionDigits: 2,
@@ -611,9 +599,9 @@ export default function AdminNotesOverviewPage() {
 
         <div className="lg:col-span-2">
           <CardShell
-            title="Classes en difficultÃ©"
+            title="Classes en difficulté"
             icon={<AlertTriangle className="h-4 w-4 text-amber-600" />}
-            subtitle="Classes dont la moyenne globale est la plus faible sur la pÃ©riode"
+            subtitle="Classes dont la moyenne globale est la plus faible sur la période"
           >
             {loading ? (
               <div className="space-y-2">
@@ -623,7 +611,7 @@ export default function AdminNotesOverviewPage() {
               </div>
             ) : breakdown.worst_classes.length === 0 ? (
               <div className="text-xs text-slate-500">
-                Aucune moyenne calculable pour cette pÃ©riode.
+                Aucune moyenne calculable pour cette période.
               </div>
             ) : (
               <div className="overflow-x-auto">
@@ -632,7 +620,7 @@ export default function AdminNotesOverviewPage() {
                     <tr>
                       <th className="px-2 py-1.5 text-left">Classe</th>
                       <th className="px-2 py-1.5 text-left">Niveau</th>
-                      <th className="px-2 py-1.5 text-right">Ã‰valuations</th>
+                      <th className="px-2 py-1.5 text-right">Évaluations</th>
                       <th className="px-2 py-1.5 text-right">Moyenne /20</th>
                     </tr>
                   </thead>
@@ -642,13 +630,13 @@ export default function AdminNotesOverviewPage() {
                         <td className="px-2 py-1.5 font-medium text-slate-800">
                           {row.class_label}
                         </td>
-                        <td className="px-2 py-1.5 text-slate-700">{row.level || "â€”"}</td>
+                        <td className="px-2 py-1.5 text-slate-700">{row.level || "—"}</td>
                         <td className="px-2 py-1.5 text-right text-slate-700">
                           {row.evals.toLocaleString("fr-FR")}
                         </td>
                         <td className="px-2 py-1.5 text-right tabular-nums text-amber-700">
                           {row.avg_20 == null
-                            ? "â€”"
+                            ? "—"
                             : row.avg_20.toLocaleString("fr-FR", {
                                 minimumFractionDigits: 1,
                                 maximumFractionDigits: 2,
@@ -667,9 +655,9 @@ export default function AdminNotesOverviewPage() {
       <section className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <div className="lg:col-span-2">
           <CardShell
-            title="DerniÃ¨res Ã©valuations"
+            title="Dernières évaluations"
             icon={<NotebookPen className="h-4 w-4 text-slate-500" />}
-            subtitle="10 derniers contrÃ´les saisis, avec Ã©tat de publication"
+            subtitle="10 derniers contrôles saisis, avec état de publication"
           >
             {loading ? (
               <div className="space-y-2">
@@ -679,7 +667,7 @@ export default function AdminNotesOverviewPage() {
               </div>
             ) : latest.length === 0 ? (
               <div className="text-xs text-slate-500">
-                Aucun contrÃ´le enregistrÃ© sur la pÃ©riode.
+                Aucun contrôle enregistré sur la période.
               </div>
             ) : (
               <div className="overflow-x-auto">
@@ -688,12 +676,12 @@ export default function AdminNotesOverviewPage() {
                     <tr>
                       <th className="px-2 py-1.5 text-left">Date</th>
                       <th className="px-2 py-1.5 text-left">Classe</th>
-                      <th className="px-2 py-1.5 text-left">MatiÃ¨re</th>
+                      <th className="px-2 py-1.5 text-left">Matière</th>
                       <th className="px-2 py-1.5 text-left">Type</th>
-                      <th className="px-2 py-1.5 text-right">Ã‰chelle</th>
+                      <th className="px-2 py-1.5 text-right">Échelle</th>
                       <th className="px-2 py-1.5 text-right">Coeff</th>
                       <th className="px-2 py-1.5 text-left">Enseignant</th>
-                      <th className="px-2 py-1.5 text-center">Ã‰tat</th>
+                      <th className="px-2 py-1.5 text-center">État</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -706,7 +694,7 @@ export default function AdminNotesOverviewPage() {
                             <span className="ml-1 text-[11px] text-slate-500">({ev.level})</span>
                           )}
                         </td>
-                        <td className="px-2 py-1.5 text-slate-700">{ev.subject_name || "â€”"}</td>
+                        <td className="px-2 py-1.5 text-slate-700">{ev.subject_name || "—"}</td>
                         <td className="px-2 py-1.5 text-slate-700">
                           {evalKindLabel(ev.eval_kind)}
                         </td>
@@ -717,7 +705,7 @@ export default function AdminNotesOverviewPage() {
                         <td className="px-2 py-1.5 text-slate-700">
                           <span className="inline-flex items-center gap-1">
                             <User2 className="h-3.5 w-3.5 text-slate-400" />
-                            {ev.teacher_name || "â€”"}
+                            {ev.teacher_name || "—"}
                           </span>
                         </td>
                         <td className="px-2 py-1.5 text-center">
@@ -729,7 +717,7 @@ export default function AdminNotesOverviewPage() {
                                 : "bg-slate-50 text-slate-600 ring-1 ring-slate-200",
                             ].join(" ")}
                           >
-                            {ev.is_published ? "PubliÃ©" : "Brouillon"}
+                            {ev.is_published ? "Publié" : "Brouillon"}
                           </span>
                         </td>
                       </tr>
@@ -744,17 +732,17 @@ export default function AdminNotesOverviewPage() {
         <CardShell
           title="Actions rapides"
           icon={<BarChart3 className="h-4 w-4 text-emerald-600" />}
-          subtitle="AccÃ¨s direct aux vues dÃ©taillÃ©es du cahier de notes"
+          subtitle="Accès direct aux vues détaillées du cahier de notes"
         >
           <div className="space-y-2">
             <QuickLink href="/admin/notes/evaluations" icon={NotebookPen}>
-              Liste dÃ©taillÃ©e des Ã©valuations
+              Liste détaillée des évaluations
             </QuickLink>
             <QuickLink href="/admin/notes/statistiques" icon={BarChart3}>
-              Statistiques avancÃ©es (par classe / matiÃ¨re)
+              Statistiques avancées (par classe / matière)
             </QuickLink>
             <QuickLink href="/admin/classes" icon={School}>
-              ComplÃ©ter les classes avant la saisie
+              Compléter les classes avant la saisie
             </QuickLink>
           </div>
         </CardShell>
