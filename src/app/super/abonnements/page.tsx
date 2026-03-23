@@ -38,8 +38,15 @@ type ChannelSettings = {
   updated_at?: string | null;
 };
 
+type FinanceSettings = {
+  institution_id: string;
+  finance_premium_enabled: boolean;
+  updated_at?: string | null;
+};
+
 type PageRow = Institution & {
   channels: ChannelSettings;
+  finance: FinanceSettings;
 };
 
 function diffDays(dateISO: string | null | undefined) {
@@ -48,11 +55,7 @@ function diffDays(dateISO: string | null | undefined) {
   const d = new Date(`${dateISO}T00:00:00`);
   const ms =
     d.getTime() -
-    new Date(
-      today.getFullYear(),
-      today.getMonth(),
-      today.getDate()
-    ).getTime();
+    new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
   return Math.ceil(ms / (1000 * 60 * 60 * 24));
 }
 
@@ -65,7 +68,7 @@ function addMonthsISO(dateISO: string, months: number) {
 }
 
 function formatDate(dateISO: string | null | undefined) {
-  if (!dateISO) return "â€”";
+  if (!dateISO) return "—";
   try {
     return new Date(`${dateISO}T00:00:00`).toLocaleDateString("fr-FR");
   } catch {
@@ -74,7 +77,7 @@ function formatDate(dateISO: string | null | undefined) {
 }
 
 function formatDateTime(dateISO: string | null | undefined) {
-  if (!dateISO) return "â€”";
+  if (!dateISO) return "—";
   try {
     return new Date(dateISO).toLocaleString("fr-FR", {
       dateStyle: "short",
@@ -120,10 +123,7 @@ async function renewAction(formData: FormData) {
   await assertSuperAdmin();
 
   const institutionId = String(formData.get("id") || "").trim();
-  const months = Math.max(
-    1,
-    Math.trunc(Number(formData.get("months") || 12))
-  );
+  const months = Math.max(1, Math.trunc(Number(formData.get("months") || 12)));
 
   if (!institutionId) {
     throw new Error("Institution introuvable.");
@@ -163,7 +163,7 @@ async function saveChannelsAction(formData: FormData) {
   await assertSuperAdmin();
 
   const institutionId = String(formData.get("institution_id") || "").trim();
-  if (!institutionId) throw new Error("Ã‰tablissement introuvable.");
+  if (!institutionId) throw new Error("Établissement introuvable.");
 
   const smsPremiumEnabled = formData.get("sms_premium_enabled") === "on";
   const smsProvider = smsPremiumEnabled
@@ -196,6 +196,36 @@ async function saveChannelsAction(formData: FormData) {
 
   const { error } = await admin
     .from("institution_notification_channel_settings")
+    .upsert(payload, {
+      onConflict: "institution_id",
+      ignoreDuplicates: false,
+    });
+
+  if (error) throw new Error(error.message);
+
+  revalidatePath("/super/abonnements");
+}
+
+async function saveFinanceAction(formData: FormData) {
+  "use server";
+
+  await assertSuperAdmin();
+
+  const institutionId = String(formData.get("institution_id") || "").trim();
+  if (!institutionId) throw new Error("Établissement introuvable.");
+
+  const financePremiumEnabled =
+    formData.get("finance_premium_enabled") === "on";
+
+  const admin = getSupabaseServiceClient();
+
+  const payload = {
+    institution_id: institutionId,
+    finance_premium_enabled: financePremiumEnabled,
+  };
+
+  const { error } = await admin
+    .from("institution_finance_module_settings")
     .upsert(payload, {
       onConflict: "institution_id",
       ignoreDuplicates: false,
@@ -328,9 +358,23 @@ export default async function AbonnementsPage({
 
   if (sErr) throw new Error(sErr.message);
 
+  const { data: financeSettings, error: fErr } = institutionIds.length
+    ? await admin
+        .from("institution_finance_module_settings")
+        .select("institution_id,finance_premium_enabled,updated_at")
+        .in("institution_id", institutionIds)
+    : { data: [], error: null as any };
+
+  if (fErr) throw new Error(fErr.message);
+
   const settingsMap = new Map<string, ChannelSettings>();
   for (const row of (settings ?? []) as ChannelSettings[]) {
     settingsMap.set(String(row.institution_id), row);
+  }
+
+  const financeMap = new Map<string, FinanceSettings>();
+  for (const row of (financeSettings ?? []) as FinanceSettings[]) {
+    financeMap.set(String(row.institution_id), row);
   }
 
   const rows: PageRow[] = institutionRows
@@ -347,6 +391,11 @@ export default async function AbonnementsPage({
         sms_notes_digest_enabled: false,
         updated_at: null,
       },
+      finance: financeMap.get(inst.id) ?? {
+        institution_id: inst.id,
+        finance_premium_enabled: false,
+        updated_at: null,
+      },
     }))
     .filter((row) => {
       if (!q) return true;
@@ -357,10 +406,11 @@ export default async function AbonnementsPage({
     });
 
   const total = rows.length;
-  const today = new Date().toISOString().slice(0, 10);
-
-  const premiumCount = rows.filter(
+  const premiumSmsCount = rows.filter(
     (r) => r.channels.sms_premium_enabled
+  ).length;
+  const premiumFinanceCount = rows.filter(
+    (r) => r.finance.finance_premium_enabled
   ).length;
   const expiringSoon = rows.filter((r) => {
     const d = diffDays(r.subscription_expires_at);
@@ -386,9 +436,9 @@ export default async function AbonnementsPage({
             </h1>
 
             <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-200 sm:text-[15px]">
-              Ici, le push reste la formule standard. Le SMS est une option
-              premium accordÃ©e uniquement par le super admin au niveau de
-              lâ€™abonnement de lâ€™Ã©tablissement.
+              Ici, le push reste la formule standard. Le SMS et la Gestion
+              financière sont des options premium accordées uniquement par le
+              super admin au niveau de l’abonnement de l’établissement.
             </p>
 
             <div className="mt-4 flex flex-wrap items-center gap-2 text-xs font-semibold text-slate-200">
@@ -399,7 +449,10 @@ export default async function AbonnementsPage({
                 SMS = premium
               </span>
               <span className="rounded-full bg-violet-500/15 px-3 py-1 ring-1 ring-violet-400/25">
-                ContrÃ´le centralisÃ©
+                Finance = premium
+              </span>
+              <span className="rounded-full bg-sky-500/15 px-3 py-1 ring-1 ring-sky-400/25">
+                Contrôle centralisé
               </span>
             </div>
           </div>
@@ -415,7 +468,7 @@ export default async function AbonnementsPage({
                   type="text"
                   name="q"
                   defaultValue={q}
-                  placeholder="Rechercher un Ã©tablissement ou un code"
+                  placeholder="Rechercher un établissement ou un code"
                   className="w-full rounded-2xl border border-white/10 bg-white/90 py-3 pl-10 pr-4 text-sm text-slate-900 outline-none ring-0 placeholder:text-slate-500"
                 />
               </div>
@@ -428,34 +481,41 @@ export default async function AbonnementsPage({
         </div>
       </section>
 
-      <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-5">
         <StatCard
           icon={<Building2 className="h-6 w-6" />}
-          label="Ã‰tablissements"
+          label="Établissements"
           value={total}
-          hint="AffichÃ©s avec filtre actuel"
+          hint="Affichés avec filtre actuel"
           tone="slate"
         />
         <StatCard
           icon={<MessageSquareMore className="h-6 w-6" />}
           label="SMS premium"
-          value={premiumCount}
-          hint="Ã‰tablissements autorisÃ©s"
+          value={premiumSmsCount}
+          hint="Établissements autorisés"
           tone="violet"
         />
         <StatCard
+          icon={<Crown className="h-6 w-6" />}
+          label="Finance premium"
+          value={premiumFinanceCount}
+          hint="Établissements autorisés"
+          tone="emerald"
+        />
+        <StatCard
           icon={<CalendarClock className="h-6 w-6" />}
-          label="Expire â‰¤ 30 j"
+          label="Expire ≤ 30 j"
           value={expiringSoon}
-          hint="Ã€ surveiller rapidement"
+          hint="À surveiller rapidement"
           tone="amber"
         />
         <StatCard
           icon={<ShieldCheck className="h-6 w-6" />}
-          label="DÃ©jÃ  expirÃ©s"
+          label="Déjà expirés"
           value={expiredCount}
-          hint="Abonnements Ã  rÃ©gulariser"
-          tone="emerald"
+          hint="Abonnements à régulariser"
+          tone="slate"
         />
       </section>
 
@@ -463,28 +523,41 @@ export default async function AbonnementsPage({
         <div className="mb-4 flex flex-col gap-3 rounded-3xl border border-violet-100 bg-gradient-to-r from-violet-50 via-white to-amber-50 p-4">
           <div className="flex items-center gap-2 text-sm font-black uppercase tracking-[0.18em] text-slate-700">
             <Sparkles className="h-4 w-4 text-violet-600" />
-            RÃ¨gle mÃ©tier active
+            Règle métier active
           </div>
-          <div className="grid gap-3 text-sm text-slate-700 md:grid-cols-3">
+
+          <div className="grid gap-3 text-sm text-slate-700 md:grid-cols-4">
             <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
               <div className="font-bold text-slate-900">1. Push standard</div>
               <div className="mt-1 text-slate-600">
                 Les notifications push restent disponibles pour tous les
-                Ã©tablissements.
+                établissements.
               </div>
             </div>
+
             <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
               <div className="font-bold text-slate-900">2. SMS premium</div>
               <div className="mt-1 text-slate-600">
-                Le SMS ne part que si le super admin accorde la fonctionnalitÃ©
-                Ã  lâ€™Ã©tablissement.
+                Le SMS ne part que si le super admin accorde la fonctionnalité à
+                l’établissement.
               </div>
             </div>
+
             <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
-              <div className="font-bold text-slate-900">3. Parent = opt-in</div>
+              <div className="font-bold text-slate-900">
+                3. Finance premium
+              </div>
               <div className="mt-1 text-slate-600">
-                Le parent renseigne juste son numÃ©ro. Il nâ€™active jamais lui-mÃªme
-                le premium.
+                Le module Finance ne s’ouvre que si le super admin l’accorde à
+                l’établissement.
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
+              <div className="font-bold text-slate-900">4. Parent = opt-in</div>
+              <div className="mt-1 text-slate-600">
+                Le parent renseigne juste son numéro. Il n’active jamais
+                lui-même le premium.
               </div>
             </div>
           </div>
@@ -492,7 +565,7 @@ export default async function AbonnementsPage({
 
         {rows.length === 0 ? (
           <div className="rounded-3xl border border-dashed border-slate-300 bg-slate-50 px-5 py-10 text-center text-sm text-slate-600">
-            Aucun Ã©tablissement trouvÃ© pour ce filtre.
+            Aucun établissement trouvé pour ce filtre.
           </div>
         ) : (
           <div className="space-y-5">
@@ -526,8 +599,13 @@ export default async function AbonnementsPage({
                           />
                           <StatusPill
                             ok={row.channels.sms_premium_enabled}
-                            yesLabel="SMS premium accordÃ©"
-                            noLabel="SMS premium non accordÃ©"
+                            yesLabel="SMS premium accordé"
+                            noLabel="SMS premium non accordé"
+                          />
+                          <StatusPill
+                            ok={row.finance.finance_premium_enabled}
+                            yesLabel="Finance premium accordé"
+                            noLabel="Finance premium non accordé"
                           />
                           <StatusPill
                             ok={!!row.channels.sms_absence_enabled}
@@ -541,7 +619,7 @@ export default async function AbonnementsPage({
                           />
                         </div>
 
-                        <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
+                        <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-4">
                           <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
                             <div className="text-xs font-bold uppercase tracking-wide text-slate-500">
                               Expiration
@@ -566,7 +644,7 @@ export default async function AbonnementsPage({
                               ].join(" ")}
                             >
                               {daysLeft === null
-                                ? "â€”"
+                                ? "—"
                                 : isExpired
                                 ? `${Math.abs(daysLeft)} j de retard`
                                 : `${daysLeft} j`}
@@ -575,10 +653,19 @@ export default async function AbonnementsPage({
 
                           <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
                             <div className="text-xs font-bold uppercase tracking-wide text-slate-500">
-                              DerniÃ¨re mise Ã  jour canaux
+                              Dernière mise à jour SMS
                             </div>
                             <div className="mt-1 text-sm font-semibold text-slate-700">
                               {formatDateTime(row.channels.updated_at)}
+                            </div>
+                          </div>
+
+                          <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
+                            <div className="text-xs font-bold uppercase tracking-wide text-slate-500">
+                              Dernière mise à jour Finance
+                            </div>
+                            <div className="mt-1 text-sm font-semibold text-slate-700">
+                              {formatDateTime(row.finance.updated_at)}
                             </div>
                           </div>
                         </div>
@@ -591,7 +678,7 @@ export default async function AbonnementsPage({
                         <input type="hidden" name="id" value={row.id} />
                         <div className="flex items-center gap-2 text-sm font-black text-violet-900">
                           <RefreshCw className="h-4 w-4" />
-                          Renouveler lâ€™abonnement
+                          Renouveler l’abonnement
                         </div>
 
                         <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-[1fr_auto]">
@@ -614,8 +701,8 @@ export default async function AbonnementsPage({
                         </div>
 
                         <div className="mt-3 text-xs text-violet-900/80">
-                          Base de calcul : aujourdâ€™hui si lâ€™abonnement est expirÃ©,
-                          sinon la date actuelle dâ€™expiration.
+                          Base de calcul : aujourd’hui si l’abonnement est
+                          expiré, sinon la date actuelle d’expiration.
                         </div>
                       </form>
                     </div>
@@ -625,7 +712,7 @@ export default async function AbonnementsPage({
                     <div className="rounded-3xl border border-slate-200 bg-slate-50/60 p-4">
                       <div className="flex items-center gap-2 text-sm font-black uppercase tracking-[0.16em] text-slate-700">
                         <BellRing className="h-4 w-4 text-emerald-600" />
-                        RÃ©sumÃ© des canaux
+                        Résumé premium & notifications
                       </div>
 
                       <div className="mt-4 grid gap-3 sm:grid-cols-2">
@@ -636,13 +723,13 @@ export default async function AbonnementsPage({
                           <div className="mt-2 flex items-center gap-2">
                             <StatusPill
                               ok={true}
-                              yesLabel="Inclus dans lâ€™offre"
+                              yesLabel="Inclus dans l’offre"
                               noLabel="Non"
                             />
                           </div>
                           <p className="mt-3 text-sm text-slate-600">
                             Les push restent la formule standard pour cet
-                            Ã©tablissement.
+                            établissement.
                           </p>
                         </div>
 
@@ -653,13 +740,13 @@ export default async function AbonnementsPage({
                           <div className="mt-2 flex items-center gap-2">
                             <StatusPill
                               ok={row.channels.sms_premium_enabled}
-                              yesLabel="AutorisÃ©"
-                              noLabel="Non autorisÃ©"
+                              yesLabel="Autorisé"
+                              noLabel="Non autorisé"
                             />
                           </div>
                           <p className="mt-3 text-sm text-slate-600">
-                            Le parent peut enregistrer son numÃ©ro, mais aucun SMS
-                            ne partira tant que cette option nâ€™est pas accordÃ©e.
+                            Le parent peut enregistrer son numéro, mais aucun SMS
+                            ne partira tant que cette option n’est pas accordée.
                           </p>
                         </div>
 
@@ -668,176 +755,284 @@ export default async function AbonnementsPage({
                             Fournisseur SMS
                           </div>
                           <div className="mt-2 text-sm font-bold text-slate-900">
-                            {row.channels.sms_provider || "â€”"}
+                            {row.channels.sms_provider || "—"}
                           </div>
                           <p className="mt-3 text-sm text-slate-600">
-                            Tu peux le fixer maintenant mÃªme si lâ€™option premium
+                            Tu peux le fixer maintenant même si l’option premium
                             est encore inactive.
                           </p>
                         </div>
 
                         <div className="rounded-2xl border border-slate-200 bg-white p-4">
                           <div className="text-xs font-bold uppercase tracking-wide text-slate-500">
-                            Nom expÃ©diteur
+                            Nom expéditeur
                           </div>
                           <div className="mt-2 text-sm font-bold text-slate-900">
-                            {row.channels.sms_sender_name || "â€”"}
+                            {row.channels.sms_sender_name || "—"}
                           </div>
                           <p className="mt-3 text-sm text-slate-600">
-                            RÃ©glage prÃªt pour lâ€™intÃ©gration du provider SMS.
+                            Réglage prêt pour l’intégration du provider SMS.
+                          </p>
+                        </div>
+
+                        <div className="rounded-2xl border border-slate-200 bg-white p-4 sm:col-span-2">
+                          <div className="text-xs font-bold uppercase tracking-wide text-slate-500">
+                            Gestion financière premium
+                          </div>
+                          <div className="mt-2 flex items-center gap-2">
+                            <StatusPill
+                              ok={row.finance.finance_premium_enabled}
+                              yesLabel="Module autorisé"
+                              noLabel="Module non autorisé"
+                            />
+                          </div>
+                          <p className="mt-3 text-sm text-slate-600">
+                            Quand cette option est accordée, tout le module
+                            Finance s’active pour l’établissement : frais,
+                            paiements, reçus, impayés, dépenses et rapports.
                           </p>
                         </div>
                       </div>
                     </div>
 
-                    <form
-                      action={saveChannelsAction}
-                      className="rounded-3xl border border-violet-200 bg-gradient-to-br from-violet-50 via-white to-white p-4 shadow-sm"
-                    >
-                      <input
-                        type="hidden"
-                        name="institution_id"
-                        value={row.id}
-                      />
+                    <div className="space-y-5">
+                      <form
+                        action={saveChannelsAction}
+                        className="rounded-3xl border border-violet-200 bg-gradient-to-br from-violet-50 via-white to-white p-4 shadow-sm"
+                      >
+                        <input
+                          type="hidden"
+                          name="institution_id"
+                          value={row.id}
+                        />
 
-                      <div className="flex items-center gap-2 text-sm font-black uppercase tracking-[0.16em] text-violet-900">
-                        <Crown className="h-4 w-4" />
-                        Pilotage premium SMS
-                      </div>
+                        <div className="flex items-center gap-2 text-sm font-black uppercase tracking-[0.16em] text-violet-900">
+                          <Crown className="h-4 w-4" />
+                          Pilotage premium SMS
+                        </div>
 
-                      <div className="mt-4 space-y-4">
-                        <label className="flex items-start gap-3 rounded-2xl border border-violet-200 bg-white px-4 py-3">
-                          <input
-                            type="checkbox"
-                            name="sms_premium_enabled"
-                            defaultChecked={row.channels.sms_premium_enabled}
-                            className="mt-1 h-4 w-4 rounded border-slate-300 text-violet-600 focus:ring-violet-500"
-                          />
-                          <span className="min-w-0">
-                            <span className="block text-sm font-bold text-slate-900">
-                              Accorder le SMS premium Ã  cet Ã©tablissement
-                            </span>
-                            <span className="mt-1 block text-sm text-slate-600">
-                              Cette case autorise lâ€™Ã©tablissement Ã  utiliser le
-                              SMS comme fonctionnalitÃ© premium.
-                            </span>
-                          </span>
-                        </label>
-
-                        <div className="grid gap-4 sm:grid-cols-2">
-                          <div>
-                            <label className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-slate-500">
-                              Fournisseur SMS
-                            </label>
-                            <select
-                              name="sms_provider"
-                              defaultValue={row.channels.sms_provider || "orange_ci"}
-                              className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-semibold text-slate-800 outline-none"
-                            >
-                              <option value="orange_ci">Orange CI</option>
-                              <option value="twilio">Twilio</option>
-                              <option value="custom">Custom</option>
-                            </select>
-                          </div>
-
-                          <div>
-                            <label className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-slate-500">
-                              Nom expÃ©diteur
-                            </label>
+                        <div className="mt-4 space-y-4">
+                          <label className="flex items-start gap-3 rounded-2xl border border-violet-200 bg-white px-4 py-3">
                             <input
-                              type="text"
-                              name="sms_sender_name"
-                              defaultValue={row.channels.sms_sender_name || ""}
-                              placeholder="Ex. MONCAHIER"
-                              className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-semibold text-slate-800 outline-none placeholder:text-slate-400"
+                              type="checkbox"
+                              name="sms_premium_enabled"
+                              defaultChecked={row.channels.sms_premium_enabled}
+                              className="mt-1 h-4 w-4 rounded border-slate-300 text-violet-600 focus:ring-violet-500"
                             />
-                          </div>
-                        </div>
-
-                        <div className="rounded-2xl border border-slate-200 bg-white p-4">
-                          <div className="mb-3 text-xs font-bold uppercase tracking-wide text-slate-500">
-                            Ã‰vÃ©nements SMS autorisÃ©s
-                          </div>
-
-                          <div className="space-y-3">
-                            <label className="flex items-start gap-3">
-                              <input
-                                type="checkbox"
-                                name="sms_absence_enabled"
-                                defaultChecked={row.channels.sms_absence_enabled}
-                                className="mt-1 h-4 w-4 rounded border-slate-300 text-violet-600 focus:ring-violet-500"
-                              />
-                              <span>
-                                <span className="block text-sm font-bold text-slate-900">
-                                  SMS pour les absences
-                                </span>
-                                <span className="block text-sm text-slate-600">
-                                  Envoi SMS individuel quand une absence est
-                                  enregistrÃ©e.
-                                </span>
+                            <span className="min-w-0">
+                              <span className="block text-sm font-bold text-slate-900">
+                                Accorder le SMS premium à cet établissement
                               </span>
-                            </label>
-
-                            <label className="flex items-start gap-3">
-                              <input
-                                type="checkbox"
-                                name="sms_late_enabled"
-                                defaultChecked={row.channels.sms_late_enabled}
-                                className="mt-1 h-4 w-4 rounded border-slate-300 text-violet-600 focus:ring-violet-500"
-                              />
-                              <span>
-                                <span className="block text-sm font-bold text-slate-900">
-                                  SMS pour les retards
-                                </span>
-                                <span className="block text-sm text-slate-600">
-                                  Envoi SMS individuel quand un retard est
-                                  enregistrÃ©.
-                                </span>
+                              <span className="mt-1 block text-sm text-slate-600">
+                                Cette case autorise l’établissement à utiliser le
+                                SMS comme fonctionnalité premium.
                               </span>
-                            </label>
+                            </span>
+                          </label>
 
-                            <label className="flex items-start gap-3">
-                              <input
-                                type="checkbox"
-                                name="sms_notes_digest_enabled"
-                                defaultChecked={
-                                  row.channels.sms_notes_digest_enabled
+                          <div className="grid gap-4 sm:grid-cols-2">
+                            <div>
+                              <label className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-slate-500">
+                                Fournisseur SMS
+                              </label>
+                              <select
+                                name="sms_provider"
+                                defaultValue={
+                                  row.channels.sms_provider || "orange_ci"
                                 }
-                                className="mt-1 h-4 w-4 rounded border-slate-300 text-violet-600 focus:ring-violet-500"
+                                className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-semibold text-slate-800 outline-none"
+                              >
+                                <option value="orange_ci">Orange CI</option>
+                                <option value="twilio">Twilio</option>
+                                <option value="custom">Custom</option>
+                              </select>
+                            </div>
+
+                            <div>
+                              <label className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-slate-500">
+                                Nom expéditeur
+                              </label>
+                              <input
+                                type="text"
+                                name="sms_sender_name"
+                                defaultValue={row.channels.sms_sender_name || ""}
+                                placeholder="Ex. MONCAHIER"
+                                className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-semibold text-slate-800 outline-none placeholder:text-slate-400"
                               />
-                              <span>
-                                <span className="block text-sm font-bold text-slate-900">
-                                  Digest SMS des notes
+                            </div>
+                          </div>
+
+                          <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                            <div className="mb-3 text-xs font-bold uppercase tracking-wide text-slate-500">
+                              Événements SMS autorisés
+                            </div>
+
+                            <div className="space-y-3">
+                              <label className="flex items-start gap-3">
+                                <input
+                                  type="checkbox"
+                                  name="sms_absence_enabled"
+                                  defaultChecked={
+                                    row.channels.sms_absence_enabled
+                                  }
+                                  className="mt-1 h-4 w-4 rounded border-slate-300 text-violet-600 focus:ring-violet-500"
+                                />
+                                <span>
+                                  <span className="block text-sm font-bold text-slate-900">
+                                    SMS pour les absences
+                                  </span>
+                                  <span className="block text-sm text-slate-600">
+                                    Envoi SMS individuel quand une absence est
+                                    enregistrée.
+                                  </span>
                                 </span>
-                                <span className="block text-sm text-slate-600">
-                                  RÃ©servÃ© pour lâ€™envoi groupÃ© hebdomadaire des
-                                  notes.
+                              </label>
+
+                              <label className="flex items-start gap-3">
+                                <input
+                                  type="checkbox"
+                                  name="sms_late_enabled"
+                                  defaultChecked={row.channels.sms_late_enabled}
+                                  className="mt-1 h-4 w-4 rounded border-slate-300 text-violet-600 focus:ring-violet-500"
+                                />
+                                <span>
+                                  <span className="block text-sm font-bold text-slate-900">
+                                    SMS pour les retards
+                                  </span>
+                                  <span className="block text-sm text-slate-600">
+                                    Envoi SMS individuel quand un retard est
+                                    enregistré.
+                                  </span>
                                 </span>
+                              </label>
+
+                              <label className="flex items-start gap-3">
+                                <input
+                                  type="checkbox"
+                                  name="sms_notes_digest_enabled"
+                                  defaultChecked={
+                                    row.channels.sms_notes_digest_enabled
+                                  }
+                                  className="mt-1 h-4 w-4 rounded border-slate-300 text-violet-600 focus:ring-violet-500"
+                                />
+                                <span>
+                                  <span className="block text-sm font-bold text-slate-900">
+                                    Digest SMS des notes
+                                  </span>
+                                  <span className="block text-sm text-slate-600">
+                                    Réservé pour l’envoi groupé hebdomadaire des
+                                    notes.
+                                  </span>
+                                </span>
+                              </label>
+                            </div>
+                          </div>
+
+                          <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                            <span className="font-bold">Important :</span> le
+                            parent peut enregistrer son numéro depuis son espace,
+                            mais le SMS ne sera envoyé que si cette configuration
+                            premium est activée ici.
+                          </div>
+
+                          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                            <div className="text-xs text-slate-500">
+                              Push standard conservé automatiquement pour cet
+                              établissement.
+                            </div>
+
+                            <button className="inline-flex items-center justify-center gap-2 rounded-2xl bg-violet-600 px-4 py-3 text-sm font-bold text-white transition hover:bg-violet-700">
+                              <ShieldCheck className="h-4 w-4" />
+                              Enregistrer la configuration SMS
+                            </button>
+                          </div>
+                        </div>
+                      </form>
+
+                      <form
+                        action={saveFinanceAction}
+                        className="rounded-3xl border border-emerald-200 bg-gradient-to-br from-emerald-50 via-white to-white p-4 shadow-sm"
+                      >
+                        <input
+                          type="hidden"
+                          name="institution_id"
+                          value={row.id}
+                        />
+
+                        <div className="flex items-center gap-2 text-sm font-black uppercase tracking-[0.16em] text-emerald-900">
+                          <Crown className="h-4 w-4" />
+                          Pilotage premium Finance
+                        </div>
+
+                        <div className="mt-4 space-y-4">
+                          <label className="flex items-start gap-3 rounded-2xl border border-emerald-200 bg-white px-4 py-3">
+                            <input
+                              type="checkbox"
+                              name="finance_premium_enabled"
+                              defaultChecked={
+                                row.finance.finance_premium_enabled
+                              }
+                              className="mt-1 h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                            />
+                            <span className="min-w-0">
+                              <span className="block text-sm font-bold text-slate-900">
+                                Accorder le module Finance premium à cet
+                                établissement
                               </span>
-                            </label>
+                              <span className="mt-1 block text-sm text-slate-600">
+                                Si cette case est cochée, tout le module Finance
+                                est activé pour cet établissement.
+                              </span>
+                            </span>
+                          </label>
+
+                          <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                            <div className="text-sm font-bold text-slate-900">
+                              Ce qui s’active d’un coup
+                            </div>
+
+                            <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                              <div className="rounded-xl bg-slate-50 px-3 py-2 text-sm text-slate-700">
+                                • Frais scolaires
+                              </div>
+                              <div className="rounded-xl bg-slate-50 px-3 py-2 text-sm text-slate-700">
+                                • Paiements
+                              </div>
+                              <div className="rounded-xl bg-slate-50 px-3 py-2 text-sm text-slate-700">
+                                • Reçus
+                              </div>
+                              <div className="rounded-xl bg-slate-50 px-3 py-2 text-sm text-slate-700">
+                                • Impayés
+                              </div>
+                              <div className="rounded-xl bg-slate-50 px-3 py-2 text-sm text-slate-700">
+                                • Dépenses
+                              </div>
+                              <div className="rounded-xl bg-slate-50 px-3 py-2 text-sm text-slate-700">
+                                • Rapports financiers
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
+                            <span className="font-bold">Important :</span> comme
+                            pour le premium SMS, l’établissement doit aussi avoir
+                            un abonnement encore valide pour utiliser ce module.
+                          </div>
+
+                          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                            <div className="text-xs text-slate-500">
+                              Un seul interrupteur active tout le module
+                              Finance.
+                            </div>
+
+                            <button className="inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-4 py-3 text-sm font-bold text-white transition hover:bg-emerald-700">
+                              <ShieldCheck className="h-4 w-4" />
+                              Enregistrer la configuration Finance
+                            </button>
                           </div>
                         </div>
-
-                        <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-                          <span className="font-bold">Important :</span> le parent
-                          peut enregistrer son numÃ©ro depuis son espace, mais le
-                          SMS ne sera envoyÃ© que si cette configuration premium est
-                          activÃ©e ici.
-                        </div>
-
-                        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                          <div className="text-xs text-slate-500">
-                            Push standard conservÃ© automatiquement pour cet
-                            Ã©tablissement.
-                          </div>
-
-                          <button className="inline-flex items-center justify-center gap-2 rounded-2xl bg-violet-600 px-4 py-3 text-sm font-bold text-white transition hover:bg-violet-700">
-                            <ShieldCheck className="h-4 w-4" />
-                            Enregistrer la configuration
-                          </button>
-                        </div>
-                      </div>
-                    </form>
+                      </form>
+                    </div>
                   </div>
                 </article>
               );
@@ -849,34 +1044,45 @@ export default async function AbonnementsPage({
       <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
         <div className="flex items-center gap-2 text-sm font-black uppercase tracking-[0.16em] text-slate-700">
           <MessageSquareMore className="h-4 w-4 text-violet-600" />
-          Ce que cette page couvre dÃ©jÃ 
+          Ce que cette page couvre déjà
         </div>
 
-        <div className="mt-4 grid gap-3 md:grid-cols-3">
+        <div className="mt-4 grid gap-3 md:grid-cols-4">
           <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
             <div className="text-sm font-bold text-slate-900">
-              Abonnement Ã©tablissement
+              Abonnement établissement
             </div>
             <p className="mt-2 text-sm text-slate-600">
-              Date dâ€™expiration et renouvellement rapide depuis le mÃªme Ã©cran.
+              Date d’expiration et renouvellement rapide depuis le même écran.
             </p>
           </div>
 
           <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
             <div className="text-sm font-bold text-slate-900">
-              Accord premium centralisÃ©
+              Accord premium SMS
             </div>
             <p className="mt-2 text-sm text-slate-600">
-              Le super admin choisit quels Ã©tablissements ont droit au SMS.
+              Le super admin choisit quels établissements ont droit au SMS.
             </p>
           </div>
 
           <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
             <div className="text-sm font-bold text-slate-900">
-              PrÃ©paration du digest notes
+              Accord premium Finance
             </div>
             <p className="mt-2 text-sm text-slate-600">
-              La bascule existe dÃ©jÃ  pour ton futur envoi groupÃ© hebdomadaire.
+              Le super admin choisit quels établissements ont droit à tout le
+              module Finance.
+            </p>
+          </div>
+
+          <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+            <div className="text-sm font-bold text-slate-900">
+              Préparation du digest notes
+            </div>
+            <p className="mt-2 text-sm text-slate-600">
+              La bascule existe déjà pour ton futur envoi groupé hebdomadaire des
+              notes.
             </p>
           </div>
         </div>

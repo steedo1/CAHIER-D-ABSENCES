@@ -13,9 +13,9 @@ import {
   Inbox,
   BarChart3,
   Settings,
-  ShieldCheck,     // ✅ existant (Conduite + Règles de conduite)
-  NotebookPen,     // ✅ (Notes)
-  FileSpreadsheet, // ✅ (Bulletins)
+  ShieldCheck,
+  NotebookPen,
+  FileSpreadsheet,
 } from "lucide-react";
 import React from "react";
 import type { AppRole } from "@/lib/auth/role";
@@ -38,16 +38,36 @@ const BASE_NAV: NavItem[] = [
   { href: "/admin/dashboard", label: "Tableau de bord", Icon: LayoutDashboard },
 
   // ⭐️ Onglet prédictions IA, très visible et distinctif
-  { href: "/admin/notes/predictions", label: "Prédictions de réussite", Icon: BarChart3, badge: "IA" },
+  {
+    href: "/admin/notes/predictions",
+    label: "Prédictions de réussite",
+    Icon: BarChart3,
+    badge: "IA",
+  },
+
+  // ✅ Nouveau top-level : Finance Premium
+  {
+    href: "/admin/finance",
+    label: "Gestion financière",
+    Icon: FileSpreadsheet,
+    badge: "PRO",
+  },
 
   { href: "/admin/classes", label: "Créer vos Classes", Icon: School },
   { href: "/admin/users", label: "Utilisateurs & rôles", Icon: Users },
   { href: "/admin/affectations", label: "Attribution des classes", Icon: Puzzle },
   { href: "/admin/parents", label: "Liste des classes", Icon: UserRoundCheck },
-  { href: "/admin/import", label: "Import classes-enseignants", Icon: Inbox, badge: "OCT" },
-  // ✅ Nouvel onglet top-level pour l'import des emplois du temps (utilisable pour absences + notes)
-  { href: "/admin/import-emplois-du-temps", label: "Import emplois du temps", Icon: Inbox },
-  // ✅ Nouvel onglet dédié aux règles de conduite
+  {
+    href: "/admin/import",
+    label: "Import classes-enseignants",
+    Icon: Inbox,
+    badge: "OCT",
+  },
+  {
+    href: "/admin/import-emplois-du-temps",
+    label: "Import emplois du temps",
+    Icon: Inbox,
+  },
   { href: "/admin/regles-conduite", label: "Règles de conduite", Icon: ShieldCheck },
   { href: "/admin/parametres", label: "Paramètres", Icon: Settings },
 ];
@@ -60,7 +80,6 @@ const ABS_ITEMS: NavItem[] = [
   { href: "/admin/assiduite", label: "Assiduité & justifications", Icon: UserRoundCheck },
   { href: "/admin/statistiques", label: "Contrôle Enseignants", Icon: BarChart3 },
   { href: "/admin/absences/appels", label: "Surveillance des appels", Icon: BarChart3 },
-  // 🆕 Nouvelle vue panoramique par créneau
   {
     href: "/admin/absences/appels-matrice",
     label: "Vue par créneau",
@@ -82,11 +101,11 @@ const NOTES_ITEMS: NavItem[] = [
 export default function SidebarNav() {
   const pathname = usePathname();
 
-  // Rôle courant (pour adapter le menu)
   const [role, setRole] = React.useState<AppRole | null>(null);
 
   React.useEffect(() => {
     let cancelled = false;
+
     (async () => {
       try {
         const r = await fetch("/api/auth/role", { cache: "no-store" });
@@ -99,6 +118,7 @@ export default function SidebarNav() {
         if (!cancelled) setRole(null);
       }
     })();
+
     return () => {
       cancelled = true;
     };
@@ -106,7 +126,6 @@ export default function SidebarNav() {
 
   const isEducator = role === "educator";
 
-  // Ouverture auto selon l'URL courante
   const [absOpen, setAbsOpen] = React.useState<boolean>(() =>
     !!(
       pathname &&
@@ -116,6 +135,7 @@ export default function SidebarNav() {
         pathname.startsWith("/admin/assiduite"))
     )
   );
+
   const [notesOpen, setNotesOpen] = React.useState<boolean>(() =>
     pathname?.startsWith("/admin/notes") ?? false
   );
@@ -128,13 +148,13 @@ export default function SidebarNav() {
 
   const notesHeaderActive = pathname?.startsWith("/admin/notes");
 
-  // Base nav adaptée au rôle :
-  // 👉 Pour un ÉDUCATEUR : on retire les entrées purement "notes" (ex: prédictions IA)
+  // Pour un éducateur, on retire les entrées "notes" et "finance"
   const topNavItems = React.useMemo(
     () =>
       BASE_NAV.filter(({ href }) => {
         if (isEducator) {
           if (href.startsWith("/admin/notes")) return false;
+          if (href.startsWith("/admin/finance")) return false;
         }
         return true;
       }),
@@ -144,9 +164,9 @@ export default function SidebarNav() {
   return (
     <nav className="flex h-full flex-col">
       <ul className="mt-2 flex-1 space-y-1 px-2">
-        {/* Top-level items */}
         {topNavItems.map(({ href, label, Icon, badge }) => {
           const active = useIsActive(pathname, href);
+
           return (
             <li key={href}>
               <Link
@@ -177,9 +197,6 @@ export default function SidebarNav() {
           );
         })}
 
-        {/* ─────────────────────────────
-            Groupe pliable : Cahier des absences
-        ───────────────────────────── */}
         <li className="mt-2">
           <button
             type="button"
@@ -199,7 +216,6 @@ export default function SidebarNav() {
               ].join(" ")}
               aria-hidden
             >
-              {/* caret “>” */}
               <svg
                 viewBox="0 0 24 24"
                 className="h-5 w-5 opacity-70"
@@ -218,6 +234,7 @@ export default function SidebarNav() {
             <ul className="mt-1 space-y-1 pl-8">
               {ABS_ITEMS.map(({ href, label, Icon }) => {
                 const active = useIsActive(pathname, href);
+
                 return (
                   <li key={href}>
                     <Link
@@ -246,10 +263,6 @@ export default function SidebarNav() {
           )}
         </li>
 
-        {/* ─────────────────────────────
-            Groupe pliable : Cahier de notes
-            👉 Masqué pour les ÉDUCATEURS
-        ───────────────────────────── */}
         {!isEducator && (
           <li className="mt-2">
             <button
@@ -270,7 +283,6 @@ export default function SidebarNav() {
                 ].join(" ")}
                 aria-hidden
               >
-                {/* caret “>” */}
                 <svg
                   viewBox="0 0 24 24"
                   className="h-5 w-5 opacity-70"
@@ -289,6 +301,7 @@ export default function SidebarNav() {
               <ul className="mt-1 space-y-1 pl-8">
                 {NOTES_ITEMS.map(({ href, label, Icon }) => {
                   const active = useIsActive(pathname, href);
+
                   return (
                     <li key={href}>
                       <Link
@@ -319,7 +332,6 @@ export default function SidebarNav() {
         )}
       </ul>
 
-      {/* ✅ Signature Nexa Digital en bas du menu admin */}
       <div className="px-4 py-3 text-[11px] text-slate-500">
         <div>© {new Date().getFullYear()} Mon Cahier</div>
         <div className="text-[10px] text-slate-400">
