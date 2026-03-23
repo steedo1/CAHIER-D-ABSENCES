@@ -45,14 +45,6 @@ const BASE_NAV: NavItem[] = [
     badge: "IA",
   },
 
-  // ✅ Nouveau top-level : Finance Premium
-  {
-    href: "/admin/finance",
-    label: "Gestion financière",
-    Icon: FileSpreadsheet,
-    badge: "PRO",
-  },
-
   { href: "/admin/classes", label: "Créer vos Classes", Icon: School },
   { href: "/admin/users", label: "Utilisateurs & rôles", Icon: Users },
   { href: "/admin/affectations", label: "Attribution des classes", Icon: Puzzle },
@@ -70,6 +62,14 @@ const BASE_NAV: NavItem[] = [
   },
   { href: "/admin/regles-conduite", label: "Règles de conduite", Icon: ShieldCheck },
   { href: "/admin/parametres", label: "Paramètres", Icon: Settings },
+
+  // ✅ Déplacé ici : juste sous Paramètres et au-dessus du groupe Cahier des absences
+  {
+    href: "/admin/finance",
+    label: "Gestion financière",
+    Icon: FileSpreadsheet,
+    badge: "PRO",
+  },
 ];
 
 /* =========================
