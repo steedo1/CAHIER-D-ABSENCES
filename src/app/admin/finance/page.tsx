@@ -1,4 +1,3 @@
-// src/app/admin/finance/page.tsx
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import {
@@ -45,7 +44,6 @@ type FeeCategoryRow = {
 type FeeScheduleRow = {
   id: string;
   class_id: string | null;
-  academic_year: string | null;
   label: string;
   amount: number | string;
   due_date: string | null;
@@ -274,9 +272,7 @@ export default async function AdminFinancePage() {
     supabase
       .schema("finance")
       .from("fee_schedules")
-      .select(
-        "id,class_id,academic_year,label,amount,due_date,allow_partial,is_active"
-      )
+      .select("id,class_id,label,amount,due_date,allow_partial,is_active")
       .eq("school_id", institutionId)
       .order("created_at", { ascending: false }),
 
@@ -348,10 +344,6 @@ export default async function AdminFinancePage() {
   );
   const overdueAmount = overdueBalances.reduce(
     (sum, row) => sum + Number(row.balance_due || 0),
-    0
-  );
-  const receiptsAmount = postedReceipts.reduce(
-    (sum, row) => sum + Number(row.total_amount || 0),
     0
   );
   const expensesAmount = postedExpenses.reduce(
