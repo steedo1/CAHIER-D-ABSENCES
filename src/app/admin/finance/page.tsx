@@ -31,7 +31,6 @@ type StudentRow = {
   first_name: string | null;
   last_name: string | null;
   matricule: string | null;
-  class_id: string | null;
 };
 
 type FeeCategoryRow = {
@@ -245,23 +244,14 @@ export default async function AdminFinancePage() {
 
   const classRows = (classes ?? []) as ClassRow[];
   const classMap = new Map(classRows.map((c) => [c.id, c]));
-  const classIds = classRows.map((c) => c.id);
 
   const [
-    { data: students, error: stuErr },
     { data: feeCategories, error: feeCatErr },
     { data: feeSchedules, error: feeSchErr },
     { data: balances, error: balErr },
     { data: receipts, error: recErr },
     { data: expenses, error: expErr },
   ] = await Promise.all([
-    classIds.length
-      ? supabase
-          .from("students")
-          .select("id,first_name,last_name,matricule,class_id")
-          .in("class_id", classIds)
-      : Promise.resolve({ data: [], error: null as any }),
-
     supabase
       .schema("finance")
       .from("fee_categories")
@@ -304,20 +294,35 @@ export default async function AdminFinancePage() {
       .limit(8),
   ]);
 
-  if (stuErr) throw new Error(stuErr.message);
   if (feeCatErr) throw new Error(feeCatErr.message);
   if (feeSchErr) throw new Error(feeSchErr.message);
   if (balErr) throw new Error(balErr.message);
   if (recErr) throw new Error(recErr.message);
   if (expErr) throw new Error(expErr.message);
 
-  const studentRows = (students ?? []) as StudentRow[];
   const feeCategoryRows = (feeCategories ?? []) as FeeCategoryRow[];
   const feeScheduleRows = (feeSchedules ?? []) as FeeScheduleRow[];
   const balanceRows = (balances ?? []) as ChargeBalanceRow[];
   const receiptRows = (receipts ?? []) as ReceiptRow[];
   const expenseRows = (expenses ?? []) as ExpenseRow[];
 
+  const studentIds = Array.from(
+    new Set([
+      ...balanceRows.map((r) => r.student_id),
+      ...receiptRows.map((r) => r.student_id),
+    ])
+  );
+
+  const { data: students, error: stuErr } = studentIds.length
+    ? await supabase
+        .from("students")
+        .select("id,first_name,last_name,matricule")
+        .in("id", studentIds)
+    : { data: [], error: null as any };
+
+  if (stuErr) throw new Error(stuErr.message);
+
+  const studentRows = (students ?? []) as StudentRow[];
   const studentMap = new Map(studentRows.map((s) => [s.id, s]));
 
   const activeFeeCategories = feeCategoryRows.filter((r) => r.is_active).length;
@@ -339,10 +344,6 @@ export default async function AdminFinancePage() {
     0
   );
   const totalDue = openBalances.reduce(
-    (sum, row) => sum + Number(row.balance_due || 0),
-    0
-  );
-  const overdueAmount = overdueBalances.reduce(
     (sum, row) => sum + Number(row.balance_due || 0),
     0
   );
@@ -449,7 +450,7 @@ export default async function AdminFinancePage() {
       <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard
           icon={<Users className="h-6 w-6" />}
-          label="Élèves"
+          label="Élèves concernés"
           value={studentRows.length}
           hint={`${classRows.length} classes`}
           tone="slate"
