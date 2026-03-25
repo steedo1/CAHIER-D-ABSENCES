@@ -16,6 +16,7 @@ import {
   ShieldCheck,
   NotebookPen,
   FileSpreadsheet,
+  FileText,
 } from "lucide-react";
 import React from "react";
 import type { AppRole } from "@/lib/auth/role";
@@ -96,6 +97,7 @@ const NOTES_ITEMS: NavItem[] = [
   { href: "/admin/notes/evaluations", label: "Évaluations", Icon: NotebookPen },
   { href: "/admin/bulletins", label: "Bulletins & moyennes", Icon: FileSpreadsheet },
   { href: "/admin/notes/statistiques", label: "Statistiques", Icon: BarChart3 },
+  { href: "/admin/notes/conseil-classe", label: "Conseil de classe", Icon: FileText },
 ];
 
 export default function SidebarNav() {
