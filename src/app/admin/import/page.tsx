@@ -1,9 +1,13 @@
 "use client";
 
 import type React from "react";
+import readXlsxFile from "read-excel-file/browser";
 import { useEffect, useMemo, useRef, useState } from "react";
 
-/* UI helpers */
+/* =========================
+   UI helpers
+========================= */
+
 function Textarea(p: React.TextareaHTMLAttributes<HTMLTextAreaElement>) {
   return (
     <textarea
@@ -15,6 +19,7 @@ function Textarea(p: React.TextareaHTMLAttributes<HTMLTextAreaElement>) {
     />
   );
 }
+
 function Button(p: React.ButtonHTMLAttributes<HTMLButtonElement>) {
   const { type = "button", ...rest } = p;
   return (
@@ -22,12 +27,13 @@ function Button(p: React.ButtonHTMLAttributes<HTMLButtonElement>) {
       type={type}
       {...rest}
       className={
-        "rounded-xl bg-emerald-600 text-white px-4 py-2 text-sm font-medium shadow " +
-        (p.disabled ? "opacity-60" : "hover:bg-emerald-700 transition")
+        "rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white shadow " +
+        (p.disabled ? "opacity-60" : "transition hover:bg-emerald-700")
       }
     />
   );
 }
+
 function SecondaryButton(p: React.ButtonHTMLAttributes<HTMLButtonElement>) {
   const { type = "button", ...rest } = p;
   return (
@@ -36,11 +42,12 @@ function SecondaryButton(p: React.ButtonHTMLAttributes<HTMLButtonElement>) {
       {...rest}
       className={
         "rounded-xl border px-4 py-2 text-sm font-medium " +
-        (p.disabled ? "opacity-60" : "hover:bg-slate-50 transition")
+        (p.disabled ? "opacity-60" : "transition hover:bg-slate-50")
       }
     />
   );
 }
+
 function Select(p: React.SelectHTMLAttributes<HTMLSelectElement>) {
   return (
     <select
@@ -53,30 +60,150 @@ function Select(p: React.SelectHTMLAttributes<HTMLSelectElement>) {
   );
 }
 
-/* Helpers d'affichage */
 function boolLabel(v: unknown) {
   if (v === true) return "Oui";
   if (v === false) return "Non";
   return "";
 }
 
-/* Types */
+/* =========================
+   Types
+========================= */
+
 type ClassItem = { id: string; name: string; level?: string | null };
 type Mode = "students" | "teachers" | "student_photos";
 type MatchMode = "auto" | "matricule" | "full_name";
 
+type ParsedFileResult = {
+  text: string;
+  normalizedFileName: string;
+  detectedType: "csv" | "tsv" | "txt" | "xlsx";
+};
+
+/* =========================
+   Fichiers / XLSX helpers
+========================= */
+
+function getExt(name: string) {
+  const m = String(name || "")
+    .toLowerCase()
+    .match(/\.([a-z0-9]+)$/i);
+  return m?.[1] ?? "";
+}
+
+async function readTextFile(file: File) {
+  return await file.text();
+}
+
+function formatDateYmd(d: Date) {
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function normalizeExcelCell(value: unknown): string {
+  if (value === null || value === undefined) return "";
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return formatDateYmd(value);
+  }
+  if (typeof value === "boolean") return value ? "Oui" : "Non";
+  return String(value);
+}
+
+function escapeCsvCell(value: unknown): string {
+  const s = normalizeExcelCell(value);
+  if (/[",\n\r]/.test(s)) {
+    return `"${s.replace(/"/g, '""')}"`;
+  }
+  return s;
+}
+
+function rowsToCsv(rows: unknown[][]): string {
+  return rows
+    .map((row) => (row || []).map((cell) => escapeCsvCell(cell)).join(","))
+    .join("\n");
+}
+
+async function readSpreadsheetAsCsv(file: File): Promise<string> {
+  const rows = await readXlsxFile(file);
+
+  if (!rows || rows.length === 0) {
+    throw new Error("Le fichier Excel est vide.");
+  }
+
+  const csv = rowsToCsv(rows as unknown[][]);
+
+  if (!csv.trim()) {
+    throw new Error("Le fichier Excel ne contient aucune donnée exploitable.");
+  }
+
+  return csv;
+}
+
+async function parseImportFile(file: File): Promise<ParsedFileResult> {
+  const ext = getExt(file.name);
+
+  if (ext === "csv") {
+    return {
+      text: await readTextFile(file),
+      normalizedFileName: file.name,
+      detectedType: "csv",
+    };
+  }
+
+  if (ext === "txt") {
+    return {
+      text: await readTextFile(file),
+      normalizedFileName: file.name,
+      detectedType: "txt",
+    };
+  }
+
+  if (ext === "tsv") {
+    return {
+      text: await readTextFile(file),
+      normalizedFileName: file.name,
+      detectedType: "tsv",
+    };
+  }
+
+  if (ext === "xlsx") {
+    return {
+      text: await readSpreadsheetAsCsv(file),
+      normalizedFileName: file.name,
+      detectedType: "xlsx",
+    };
+  }
+
+  if (ext === "xls") {
+    throw new Error(
+      "Le format .xls ancien n’est pas supporté. Enregistre le fichier en .xlsx ou .csv puis réessaie."
+    );
+  }
+
+  throw new Error(
+    "Format non supporté. Utilise un fichier .csv, .txt, .tsv ou .xlsx."
+  );
+}
+
+/* =========================
+   Page
+========================= */
+
 export default function ImportPage() {
   const [mode, setMode] = useState<Mode>("students");
 
-  // classes
   const [classes, setClasses] = useState<ClassItem[]>([]);
   const [level, setLevel] = useState<string>("");
   const [classId, setClassId] = useState<string>("");
 
   const levels = useMemo(
     () =>
-      Array.from(new Set(classes.map((c) => c.level).filter(Boolean) as string[])).sort(
-        (a, b) => String(a).localeCompare(String(b), undefined, { numeric: true })
+      Array.from(
+        new Set(classes.map((c) => c.level).filter(Boolean) as string[])
+      ).sort((a, b) =>
+        String(a).localeCompare(String(b), undefined, { numeric: true })
       ),
     [classes]
   );
@@ -86,20 +213,17 @@ export default function ImportPage() {
     [classes, level]
   );
 
-  // csv + preview
   const [csv, setCsv] = useState<string>("");
   const [preview, setPreview] = useState<any[] | null>(null);
 
-  // general state
   const [msg, setMsg] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [authErr, setAuthErr] = useState(false);
 
-  // file picker csv
   const fileRef = useRef<HTMLInputElement>(null);
   const [fileName, setFileName] = useState<string>("");
+  const [fileTypeLabel, setFileTypeLabel] = useState<string>("");
 
-  // ───────── Photos: state ─────────
   const photoRef = useRef<HTMLInputElement>(null);
   const [photoFiles, setPhotoFiles] = useState<File[]>([]);
   const [photoPreview, setPhotoPreview] = useState<any[] | null>(null);
@@ -113,7 +237,9 @@ export default function ImportPage() {
 
   async function loadClasses() {
     try {
-      const r = await fetch("/api/admin/classes?limit=500", { cache: "no-store" });
+      const r = await fetch("/api/admin/classes?limit=500", {
+        cache: "no-store",
+      });
       if (r.status === 401) {
         setAuthErr(true);
         return;
@@ -122,11 +248,10 @@ export default function ImportPage() {
       if (!r.ok) throw new Error(j?.error || `HTTP ${r.status}`);
       setClasses(j.items || []);
     } catch {
-      // silencieux
+      // no-op
     }
   }
 
-  // Reset UI bits when changing mode
   useEffect(() => {
     setMsg(null);
     setPreview(null);
@@ -152,20 +277,38 @@ export default function ImportPage() {
   async function onFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0];
     if (!f) return;
-    setFileName(f.name);
-    if (!/\.(csv|txt|tsv)$/i.test(f.name)) {
-      setMsg("Format non supporté. Utilisez un fichier .csv, .txt ou .tsv.");
-    }
-    const text = await f.text();
-    setCsv(text);
-    setPreview(null);
+
+    setLoading(true);
     setMsg(null);
+    setPreview(null);
+
+    try {
+      const parsed = await parseImportFile(f);
+      setFileName(parsed.normalizedFileName);
+      setFileTypeLabel(parsed.detectedType.toUpperCase());
+      setCsv(parsed.text);
+
+      if (parsed.detectedType === "xlsx") {
+        setMsg(
+          "Fichier Excel chargé avec succès. Le fichier a été converti automatiquement pour l’import."
+        );
+      }
+    } catch (e: any) {
+      setCsv("");
+      setFileName(f.name);
+      setFileTypeLabel("");
+      setMsg(e?.message || "Impossible de lire ce fichier.");
+    } finally {
+      setLoading(false);
+    }
   }
 
   function clearCsv() {
     setCsv("");
     setPreview(null);
     setFileName("");
+    setFileTypeLabel("");
+    setMsg(null);
     if (fileRef.current) fileRef.current.value = "";
   }
 
@@ -174,9 +317,13 @@ export default function ImportPage() {
     setMsg(null);
     setPreview(null);
     setLoading(true);
+
     try {
       const url =
-        mode === "students" ? "/api/admin/students/import" : "/api/admin/teachers/import";
+        mode === "students"
+          ? "/api/admin/students/import"
+          : "/api/admin/teachers/import";
+
       const body: any = { action: "preview", csv };
       if (mode === "students" && classId) body.class_id = classId;
 
@@ -198,6 +345,7 @@ export default function ImportPage() {
         setLoading(false);
         return;
       }
+
       setPreview(j.preview || []);
     } catch (e: any) {
       setMsg(e?.message || "Erreur réseau");
@@ -210,9 +358,13 @@ export default function ImportPage() {
     if (!canImport) return;
     setMsg(null);
     setLoading(true);
+
     try {
       const url =
-        mode === "students" ? "/api/admin/students/import" : "/api/admin/teachers/import";
+        mode === "students"
+          ? "/api/admin/students/import"
+          : "/api/admin/teachers/import";
+
       const body: any = { action: "commit", csv };
       if (mode === "students" && classId) body.class_id = classId;
 
@@ -236,8 +388,18 @@ export default function ImportPage() {
       }
 
       if (mode === "students") {
+        const inserted = j?.inserted ?? 0;
+        const updated = j?.updated ?? 0;
+        const updatedByName = j?.updated_by_name ?? 0;
+        const ambiguous = j?.ambiguous_name ?? 0;
+        const closedOld = j?.closed_old_enrollments ?? 0;
+        const reactivated = j?.reactivated_in_target ?? 0;
+        const insertedInTarget = j?.inserted_in_target ?? 0;
+
         setMsg(
-          `Import OK : ${j?.inserted ?? 0} élève(s) | maj identité : ${j?.updated_names ?? 0}`
+          `Import OK : ${inserted} élève(s) créé(s), ${updated} mise(s) à jour par matricule, ${updatedByName} mise(s) à jour par nom, ${insertedInTarget} inscription(s) ajoutée(s), ${reactivated} réactivée(s), ${closedOld} ancienne(s) clôturée(s)${
+            ambiguous ? `, ${ambiguous} nom(s) ambigu(s)` : ""
+          }.`
         );
       } else {
         const created = j?.created ?? 0;
@@ -245,12 +407,14 @@ export default function ImportPage() {
         const skipped = j?.skipped_no_phone ?? 0;
         const failed = j?.failed ?? 0;
         const subjectsAdded = j?.subjects_added ?? 0;
+
         setMsg(
           `Import OK : ${created} créé(s), ${updated} mis à jour, ${subjectsAdded} matière(s), ${skipped} sans téléphone${
             failed ? `, ${failed} échec(s)` : ""
-          }`
+          }.`
         );
       }
+
       setPreview(null);
     } catch (e: any) {
       setMsg(e?.message || "Erreur réseau");
@@ -259,15 +423,14 @@ export default function ImportPage() {
     }
   }
 
-  // placeholders
   const phStudents = `N°,Matricule,Nom et prénoms,Sexe,Date de naissance,Lieu de naissance,Nationalité,Régime,Redoublant,Interne,Affecté
 1,19659352H,Abia Yapi Christ Brayan,M,12/03/2010,Abidjan,Ivoirienne,Externe,Non,Non,Oui
 2,19578655R,Aboy Othniel,M,2010-05-02,Aboisso,Ivoirienne,Externe,Non,Non,Non`;
+
   const phTeachers = `Nom,Email,Téléphone,Disciplines
 M. FABRE,fabre@ecole.ci,+22501020304,Maths; Physique
 Mme KONE,kone@ecole.ci,+22505060708,Français`;
 
-  // ───────── Photos helpers ─────────
   function pickPhotos() {
     photoRef.current?.click();
   }
@@ -284,8 +447,10 @@ Mme KONE,kone@ecole.ci,+22505060708,Français`;
       setPhotoPreview(null);
       return;
     }
+
     setPhotoMsg(null);
     setPhotoLoading(true);
+
     try {
       const r = await fetch("/api/admin/students/photos/import", {
         method: "POST",
@@ -309,6 +474,7 @@ Mme KONE,kone@ecole.ci,+22505060708,Français`;
         setPhotoLoading(false);
         return;
       }
+
       setPhotoPreview(j.items || []);
     } catch (e: any) {
       setPhotoMsg(e?.message || "Erreur réseau");
@@ -325,7 +491,6 @@ Mme KONE,kone@ecole.ci,+22505060708,Français`;
     await runPhotoPreview(files, matchMode);
   }
 
-  // ✅ amélioration: si on change le matchMode, on relance la preview automatiquement
   useEffect(() => {
     if (mode !== "student_photos") return;
     if (!photoFiles.length) return;
@@ -364,7 +529,9 @@ Mme KONE,kone@ecole.ci,+22505060708,Français`;
 
       const updated = j?.updated ?? 0;
       const failed = j?.failed ?? 0;
-      setPhotoMsg(`Upload terminé : ${updated} photo(s) associée(s) ✅ | ${failed} échec(s)`);
+      setPhotoMsg(
+        `Upload terminé : ${updated} photo(s) associée(s) ✅ | ${failed} échec(s)`
+      );
 
       setPhotoPreview(j?.results || null);
     } catch (e: any) {
@@ -392,11 +559,12 @@ Mme KONE,kone@ecole.ci,+22505060708,Français`;
       <div>
         <h1 className="text-2xl font-semibold">Import</h1>
         <p className="text-slate-600">
-          Import flexible (élèves / enseignants) + import photos élèves (association automatique).
+          Import flexible (élèves / enseignants) + import photos élèves
+          (association automatique).
         </p>
       </div>
 
-      <div className="rounded-2xl border bg-white p-5 space-y-3">
+      <div className="space-y-3 rounded-2xl border bg-white p-5">
         <div className="flex flex-wrap gap-2">
           <Button onClick={() => setMode("students")} disabled={mode === "students"}>
             Élèves
@@ -404,17 +572,29 @@ Mme KONE,kone@ecole.ci,+22505060708,Français`;
           <Button onClick={() => setMode("teachers")} disabled={mode === "teachers"}>
             Enseignants
           </Button>
-          <Button onClick={() => setMode("student_photos")} disabled={mode === "student_photos"}>
+          <Button
+            onClick={() => setMode("student_photos")}
+            disabled={mode === "student_photos"}
+          >
             Photos élèves
           </Button>
         </div>
 
         {mode === "teachers" && (
           <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-[13px] text-amber-800">
-            <b>Téléphone obligatoire</b> pour chaque enseignant (connexion par{" "}
-            <i> téléphone + mot de passe</i>). Formats : <code>+22501020304</code>,{" "}
-            <code>0022501020304</code>, <code>01020304</code>. Colonnes :{" "}
-            <code>Nom</code>, <code>Email</code>, <code>Téléphone</code>, <code>Disciplines</code>.
+            <b>Téléphone obligatoire</b> pour chaque enseignant.
+            <br />
+            Formats : <code>+22501020304</code>, <code>0022501020304</code>,{" "}
+            <code>01020304</code>.
+            <br />
+            Colonnes : <code>Nom</code>, <code>Email</code>, <code>Téléphone</code>,{" "}
+            <code>Disciplines</code>.
+            <br />
+            <span className="font-medium">
+              Conseil :
+            </span>{" "}
+            dans Excel, mets la colonne téléphone au format <b>Texte</b> pour éviter la
+            perte d’un zéro initial.
           </div>
         )}
 
@@ -455,22 +635,23 @@ Mme KONE,kone@ecole.ci,+22505060708,Français`;
           </div>
         )}
 
-        {/* ───────── Mode PHOTOS ───────── */}
         {mode === "student_photos" ? (
           <div className="space-y-3">
             <div className="rounded-lg border bg-slate-50 p-3 text-[13px] text-slate-700">
-              <div className="font-semibold mb-1">Règle de nommage des fichiers (IMPORTANT)</div>
-              <ul className="list-disc pl-5 space-y-1">
+              <div className="mb-1 font-semibold">
+                Règle de nommage des fichiers
+              </div>
+              <ul className="list-disc space-y-1 pl-5">
                 <li>
-                  Option 1 (recommandée) : le fichier s’appelle <code>MATRICULE.jpg</code> (ex:{" "}
-                  <code>20166309J.jpg</code>)
+                  Recommandé : <code>MATRICULE.jpg</code> — ex :{" "}
+                  <code>20166309J.jpg</code>
                 </li>
                 <li>
-                  Option 2 : le fichier s’appelle <code>NOM Prénoms.jpg</code> et doit correspondre à{" "}
-                  <code>students.full_name</code> (ex: <code>ANOH Ekloi Acouba.jpg</code>)
+                  Ou : <code>NOM Prénoms.jpg</code> — ex :{" "}
+                  <code>ANOH Ekloi Acouba.jpg</code>
                 </li>
                 <li>
-                  L’app peut faire <b>Auto</b> : matricule d’abord, sinon nom complet.
+                  Le mode <b>Auto</b> essaie matricule puis nom complet.
                 </li>
               </ul>
             </div>
@@ -478,7 +659,10 @@ Mme KONE,kone@ecole.ci,+22505060708,Français`;
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
               <div>
                 <div className="mb-1 text-xs text-slate-500">Association</div>
-                <Select value={matchMode} onChange={(e) => setMatchMode(e.target.value as MatchMode)}>
+                <Select
+                  value={matchMode}
+                  onChange={(e) => setMatchMode(e.target.value as MatchMode)}
+                >
                   <option value="auto">Auto (matricule puis nom complet)</option>
                   <option value="matricule">Matricule uniquement</option>
                   <option value="full_name">Nom complet uniquement</option>
@@ -489,9 +673,8 @@ Mme KONE,kone@ecole.ci,+22505060708,Français`;
             <div className="flex flex-wrap items-center gap-2">
               <SecondaryButton onClick={pickPhotos}>Choisir des photos…</SecondaryButton>
               <SecondaryButton onClick={clearPhotos} disabled={!photoFiles.length}>
-                Effacer
+               Effacer
               </SecondaryButton>
-
               <Button onClick={uploadPhotos} disabled={!photoFiles.length || photoLoading}>
                 {photoLoading ? "…" : "Uploader & associer"}
               </Button>
@@ -504,6 +687,7 @@ Mme KONE,kone@ecole.ci,+22505060708,Français`;
                 className="hidden"
                 onChange={onPhotosChange}
               />
+
               {photoFiles.length > 0 && (
                 <span className="text-xs text-slate-500">
                   {photoFiles.length} photo(s) sélectionnée(s)
@@ -519,7 +703,7 @@ Mme KONE,kone@ecole.ci,+22505060708,Français`;
 
             {photoPreview && (
               <div className="rounded-xl border bg-white p-4">
-                <div className="text-sm font-semibold mb-2">
+                <div className="mb-2 text-sm font-semibold">
                   Prévisualisation / Résultats ({photoPreview.length})
                 </div>
                 <div className="overflow-x-auto">
@@ -537,7 +721,8 @@ Mme KONE,kone@ecole.ci,+22505060708,Français`;
                       {photoPreview.map((r: any, idx: number) => {
                         const ok = !!(r.match_ok ?? r.ok);
                         const student = r.student || null;
-                        const status = ok ? "OK" : (r.error || "not_found");
+                        const status = ok ? "OK" : r.error || "not_found";
+
                         return (
                           <tr key={idx} className="border-t">
                             <td className="px-3 py-2">{r.file_name}</td>
@@ -560,22 +745,32 @@ Mme KONE,kone@ecole.ci,+22505060708,Français`;
           </div>
         ) : (
           <>
-            {/* Zone CSV + barre d’actions fichiers */}
+            <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-[13px] text-slate-700">
+              Formats acceptés : <code>.csv</code>, <code>.txt</code>, <code>.tsv</code>,{" "}
+              <code>.xlsx</code>.
+              <br />
+              Les anciens fichiers <code>.xls</code> doivent être réenregistrés en{" "}
+              <code>.xlsx</code> ou <code>.csv</code>.
+            </div>
+
             <div className="space-y-2">
               <div className="flex flex-wrap items-center gap-2">
                 <SecondaryButton onClick={pickFile}>Choisir un fichier…</SecondaryButton>
                 <SecondaryButton onClick={clearCsv} disabled={!csv.trim() && !fileName}>
                   Effacer
                 </SecondaryButton>
+
                 {fileName && (
                   <span className="text-xs text-slate-500">
                     Fichier sélectionné : {fileName}
+                    {fileTypeLabel ? ` (${fileTypeLabel})` : ""}
                   </span>
                 )}
+
                 <input
                   ref={fileRef}
                   type="file"
-                  accept=".csv,.txt,.tsv"
+                  accept=".csv,.txt,.tsv,.xlsx"
                   className="hidden"
                   onChange={onFileChange}
                 />
@@ -609,9 +804,10 @@ Mme KONE,kone@ecole.ci,+22505060708,Français`;
 
       {preview && (
         <div className="rounded-xl border bg-white p-4">
-          <div className="text-sm font-semibold mb-2">
+          <div className="mb-2 text-sm font-semibold">
             Prévisualisation ({preview.length})
           </div>
+
           <div className="overflow-x-auto">
             {mode === "students" ? (
               <table className="min-w-full text-sm">
