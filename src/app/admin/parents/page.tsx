@@ -103,6 +103,16 @@ type StudentRow = {
   class_label: string | null;
   matricule?: string | null;
   level?: string | null;
+
+  // Champs additionnels compatibles avec le bulletin
+  birthdate?: string | null;
+  birth_date?: string | null;
+  birth_place?: string | null;
+  is_scholarship?: boolean | null;
+
+  // Photo élève
+  photo_url?: string | null;
+  student_photo_url?: string | null;
 };
 
 type InstitutionSettings = {
@@ -188,6 +198,13 @@ function formatDateLongFr(date = new Date()) {
   }
 }
 
+function formatDateShortFr(dateLike: string | null | undefined) {
+  if (!dateLike) return "—";
+  const d = new Date(dateLike);
+  if (Number.isNaN(d.getTime())) return String(dateLike);
+  return d.toLocaleDateString("fr-FR");
+}
+
 function institutionDisplayName(cfg: InstitutionSettings) {
   return (
     (cfg.institution_name || "").trim() ||
@@ -197,7 +214,7 @@ function institutionDisplayName(cfg: InstitutionSettings) {
   );
 }
 
-function buildCertificateHtml(args: {
+function buildAttestationHtml(args: {
   cfg: InstitutionSettings;
   academicYear: string;
   rows: StudentRow[];
@@ -239,7 +256,23 @@ function buildCertificateHtml(args: {
       (fallbackClassLabel || "").trim() ||
       "-";
 
-    const ref = `CF-${safeSlug(academicYear).toUpperCase()}-${safeSlug(
+    const birthDateLabel = formatDateShortFr(
+      student.birthdate || student.birth_date || null
+    );
+
+    const birthPlaceLabel = (student.birth_place || "").trim() || "—";
+
+    const scholarshipLabel =
+      student.is_scholarship === true
+        ? "boursier"
+        : student.is_scholarship === false
+        ? "non boursier"
+        : "boursier / non boursier";
+
+    const photoUrl =
+      (student.photo_url || student.student_photo_url || "").trim() || "";
+
+    const ref = `AF-${safeSlug(academicYear).toUpperCase()}-${safeSlug(
       classLabel
     ).toUpperCase()}-${String(idx + 1).padStart(4, "0")}`;
 
@@ -304,43 +337,65 @@ function buildCertificateHtml(args: {
           <main class="content">
             <div class="title-wrap">
               <div class="doc-ref">Ref. : ${escapeHtml(ref)}</div>
-              <h1>CERTIFICAT DE FREQUENTATION</h1>
+              <h1>ATTESTATION DE FREQUENTATION</h1>
             </div>
 
             <p class="body">
               Je soussigne(e), <strong>${escapeHtml(headName)}</strong>,
               <strong>${escapeHtml(headTitle)}</strong> de
-              <strong>${escapeHtml(institutionName)}</strong>, certifie que l'eleve :
+              <strong>${escapeHtml(institutionName)}</strong>, atteste que l'eleve :
             </p>
 
             <div class="student-box">
-              <div class="row">
-                <span class="label">Nom et prenoms</span>
-                <span class="value">${escapeHtml(
-                  nomAvantPrenoms(student.full_name || "")
-                )}</span>
-              </div>
-              <div class="row">
-                <span class="label">Matricule</span>
-                <span class="value">${escapeHtml(student.matricule || "-")}</span>
-              </div>
-              <div class="row">
-                <span class="label">Classe</span>
-                <span class="value">${escapeHtml(classLabel)}</span>
-              </div>
-              <div class="row">
-                <span class="label">Annee scolaire</span>
-                <span class="value">${escapeHtml(academicYear)}</span>
+              <div class="student-main">
+                <div class="student-left">
+                  <div class="row">
+                    <span class="label">Nom et prenoms</span>
+                    <span class="value">${escapeHtml(
+                      nomAvantPrenoms(student.full_name || "")
+                    )}</span>
+                  </div>
+                  <div class="row">
+                    <span class="label">Matricule</span>
+                    <span class="value">${escapeHtml(student.matricule || "-")}</span>
+                  </div>
+                  <div class="row">
+                    <span class="label">Classe</span>
+                    <span class="value">${escapeHtml(classLabel)}</span>
+                  </div>
+                  <div class="row">
+                    <span class="label">Annee scolaire</span>
+                    <span class="value">${escapeHtml(academicYear)}</span>
+                  </div>
+                  <div class="row">
+                    <span class="label">Date de naissance</span>
+                    <span class="value">${escapeHtml(birthDateLabel)}</span>
+                  </div>
+                  <div class="row">
+                    <span class="label">Lieu de naissance</span>
+                    <span class="value">${escapeHtml(birthPlaceLabel)}</span>
+                  </div>
+                </div>
+
+                <div class="student-photo">
+                  ${
+                    photoUrl
+                      ? `<img src="${escapeHtml(photoUrl)}" alt="Photo eleve" class="student-photo-img" />`
+                      : `<div class="student-photo-placeholder">PHOTO</div>`
+                  }
+                </div>
               </div>
             </div>
 
             <p class="body justified">
               est regulierement inscrit(e) dans notre etablissement et y suit
-              effectivement les cours au titre de l'annee scolaire susmentionnee.
+              effectivement les cours en qualite de <strong>${escapeHtml(
+                scholarshipLabel
+              )}</strong> au titre de l'annee scolaire susmentionnee.
             </p>
 
             <p class="body justified">
-              Le present certificat lui est delivre pour servir et valoir ce que
+              La presente attestation lui est delivree pour servir et valoir ce que
               de droit.
             </p>
 
@@ -363,7 +418,7 @@ function buildCertificateHtml(args: {
 <html lang="fr">
 <head>
   <meta charset="utf-8" />
-  <title>Certificats de frequentation</title>
+  <title>Attestations de frequentation</title>
   <style>
     @page {
       size: A4 portrait;
@@ -407,7 +462,7 @@ function buildCertificateHtml(args: {
       width: 100%;
       height: 297mm;
       background: white;
-      padding: 14mm 14mm 14mm 14mm;
+      padding: 13mm 13mm 13mm 13mm;
       overflow: hidden;
       display: flex;
       flex-direction: column;
@@ -428,11 +483,11 @@ function buildCertificateHtml(args: {
 
     .republic {
       text-align: center;
-      margin-bottom: 8mm;
+      margin-bottom: 7mm;
     }
 
     .country {
-      font-size: 17px;
+      font-size: 16px;
       font-weight: 700;
       letter-spacing: 0.3px;
       text-transform: uppercase;
@@ -440,29 +495,29 @@ function buildCertificateHtml(args: {
 
     .motto {
       margin-top: 3px;
-      font-size: 12px;
+      font-size: 11.5px;
       font-style: italic;
     }
 
     .ministry {
-      margin-top: 7px;
-      font-size: 12px;
+      margin-top: 6px;
+      font-size: 11.5px;
       font-weight: 700;
       text-transform: uppercase;
-      line-height: 1.3;
+      line-height: 1.25;
     }
 
     .institution-row {
       display: grid;
-      grid-template-columns: 82px 1fr;
+      grid-template-columns: 78px 1fr;
       gap: 12px;
       align-items: start;
-      margin-bottom: 6mm;
+      margin-bottom: 5mm;
     }
 
     .logo-wrap {
-      width: 82px;
-      height: 82px;
+      width: 78px;
+      height: 78px;
       border: 1px solid #cbd5e1;
       display: flex;
       align-items: center;
@@ -487,28 +542,28 @@ function buildCertificateHtml(args: {
     }
 
     .institution-name {
-      font-size: 16px;
+      font-size: 15px;
       font-weight: 700;
       text-transform: uppercase;
-      line-height: 1.2;
+      line-height: 1.15;
     }
 
     .institution-sub {
       margin-top: 3px;
-      font-size: 12px;
+      font-size: 11.5px;
       font-weight: 600;
     }
 
     .institution-meta {
       margin-top: 2px;
-      font-size: 11.5px;
-      line-height: 1.3;
+      font-size: 11px;
+      line-height: 1.25;
     }
 
     .content {
       position: relative;
       z-index: 1;
-      margin-top: 5mm;
+      margin-top: 4mm;
       display: flex;
       flex-direction: column;
       flex: 1;
@@ -517,7 +572,7 @@ function buildCertificateHtml(args: {
 
     .title-wrap {
       text-align: center;
-      margin-bottom: 8mm;
+      margin-bottom: 7mm;
     }
 
     .doc-ref {
@@ -530,16 +585,16 @@ function buildCertificateHtml(args: {
 
     h1 {
       margin: 0;
-      font-size: 21px;
+      font-size: 19px;
       text-transform: uppercase;
       text-decoration: underline;
       letter-spacing: 0.4px;
     }
 
     .body {
-      font-size: 14.5px;
-      line-height: 1.65;
-      margin: 0 0 5mm 0;
+      font-size: 14px;
+      line-height: 1.55;
+      margin: 0 0 4mm 0;
     }
 
     .justified {
@@ -549,17 +604,28 @@ function buildCertificateHtml(args: {
     .student-box {
       border: 1px solid #cbd5e1;
       background: #f8fafc;
-      padding: 8px 12px;
-      margin: 5mm 0 6mm 0;
+      padding: 8px 10px;
+      margin: 4mm 0 5mm 0;
+    }
+
+    .student-main {
+      display: grid;
+      grid-template-columns: 1fr 30mm;
+      gap: 10px;
+      align-items: start;
+    }
+
+    .student-left {
+      min-width: 0;
     }
 
     .student-box .row {
       display: grid;
       grid-template-columns: 42mm 1fr;
       gap: 8px;
-      padding: 5px 0;
+      padding: 3px 0;
       border-bottom: 1px dashed #cbd5e1;
-      font-size: 14px;
+      font-size: 13px;
     }
 
     .student-box .row:last-child {
@@ -574,18 +640,42 @@ function buildCertificateHtml(args: {
       font-weight: 600;
     }
 
+    .student-photo {
+      width: 30mm;
+      height: 38mm;
+      border: 1px solid #cbd5e1;
+      background: #fff;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+    }
+
+    .student-photo-img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    .student-photo-placeholder {
+      font-size: 11px;
+      color: #64748b;
+      font-weight: 700;
+      letter-spacing: 0.4px;
+    }
+
     .signature-wrap {
       margin-top: auto;
       display: flex;
       justify-content: flex-end;
-      padding-top: 8mm;
+      padding-top: 5mm;
     }
 
     .signature-box {
-      width: 78mm;
+      width: 76mm;
       text-align: center;
-      font-size: 13.5px;
-      line-height: 1.5;
+      font-size: 13px;
+      line-height: 1.45;
     }
 
     .signature-title {
@@ -594,7 +684,7 @@ function buildCertificateHtml(args: {
     }
 
     .signature-space {
-      height: 24mm;
+      height: 18mm;
     }
 
     .signature-name {
@@ -640,7 +730,7 @@ function openPrintDocument(html: string) {
   if (!win) {
     URL.revokeObjectURL(url);
     throw new Error(
-      "Impossible d'ouvrir la fenetre du certificat. Verifiez le bloqueur de pop-up."
+      "Impossible d'ouvrir la fenetre de l'attestation. Verifiez le bloqueur de pop-up."
     );
   }
 
@@ -1178,7 +1268,7 @@ export default function AdminStudentsByClassPage() {
     URL.revokeObjectURL(url);
   }
 
-  async function generateCertificates(rows: StudentRow[], label: string) {
+  async function generateAttestations(rows: StudentRow[], label: string) {
     if (!rows.length) {
       setMsg(`Aucun eleve pour ${label}.`);
       return;
@@ -1190,7 +1280,7 @@ export default function AdminStudentsByClassPage() {
     try {
       const cls = classes.find((c) => c.id === classId);
 
-      const html = buildCertificateHtml({
+      const html = buildAttestationHtml({
         cfg,
         academicYear: academicYear || computeAcademicYearFromDate(),
         rows,
@@ -1200,12 +1290,12 @@ export default function AdminStudentsByClassPage() {
       openPrintDocument(html);
 
       setMsg(
-        `${rows.length} certificat${rows.length > 1 ? "s" : ""} pret${
+        `${rows.length} attestation${rows.length > 1 ? "s" : ""} prete${
           rows.length > 1 ? "s" : ""
         } a imprimer`
       );
     } catch (e: any) {
-      setMsg(e?.message || "Impossible de generer les certificats");
+      setMsg(e?.message || "Impossible de generer les attestations");
     } finally {
       setDocsLoading(false);
     }
@@ -1372,7 +1462,7 @@ export default function AdminStudentsByClassPage() {
               </h1>
               <p className="mt-1 text-sm text-white/80">
                 Selectionnez un niveau, choisissez la classe, recherchez,
-                modifiez un eleve et generez les certificats de frequentation.
+                modifiez un eleve et generez les attestations de frequentation.
               </p>
             </div>
 
@@ -1397,32 +1487,32 @@ export default function AdminStudentsByClassPage() {
           <div className="flex flex-wrap items-center gap-2">
             <Button
               tone="slate"
-              onClick={() => generateCertificates(selectedStudents, "la selection")}
+              onClick={() => generateAttestations(selectedStudents, "la selection")}
               disabled={loading || docsLoading || selectedStudents.length === 0}
               title={
                 selectedStudents.length > 0
-                  ? "Generer les certificats des eleves coches"
+                  ? "Generer les attestations des eleves coches"
                   : "Cochez d'abord au moins un eleve"
               }
             >
-              {docsLoading ? "Generation..." : "Generer certificats selectionnes"}
+              {docsLoading ? "Generation..." : "Generer attestations selectionnees"}
               {selectedStudents.length > 0 ? ` (${selectedStudents.length})` : ""}
             </Button>
 
             <Button
               tone="white"
-              onClick={() => generateCertificates(pageItems, "la page")}
+              onClick={() => generateAttestations(pageItems, "la page")}
               disabled={loading || docsLoading || pageItems.length === 0}
             >
-              Certificats (page)
+              Attestations (page)
             </Button>
 
             <Button
               tone="white"
-              onClick={() => generateCertificates(studentsFiltered, "tous les resultats")}
+              onClick={() => generateAttestations(studentsFiltered, "tous les resultats")}
               disabled={loading || docsLoading || studentsFiltered.length === 0}
             >
-              Certificats (tous)
+              Attestations (tous)
             </Button>
 
             {selectedStudents.length > 0 ? (
@@ -1620,10 +1710,10 @@ export default function AdminStudentsByClassPage() {
                         <div className="flex flex-wrap gap-2">
                           <Button
                             tone="white"
-                            onClick={() => generateCertificates([student], "cet eleve")}
+                            onClick={() => generateAttestations([student], "cet eleve")}
                             disabled={docsLoading}
                           >
-                            Certificat
+                            Attestation
                           </Button>
 
                           <Button tone="white" onClick={() => openEdit(student)}>
