@@ -342,15 +342,15 @@ function buildAttestationHtml(args: {
 
             <p class="body">
               Je soussigne(e), <strong>${escapeHtml(headName)}</strong>,
-              <strong>${escapeHtml(headTitle)}</strong> de
-              <strong>${escapeHtml(institutionName)}</strong>, atteste que l'eleve :
+              <strong>${escapeHtml(headTitle)}</strong> du
+              <strong>${escapeHtml(institutionName)}</strong>, atteste que l'élève :
             </p>
 
             <div class="student-box">
               <div class="student-main">
                 <div class="student-left">
                   <div class="row">
-                    <span class="label">Nom et prenoms</span>
+                    <span class="label">Nom et prénoms</span>
                     <span class="value">${escapeHtml(
                       nomAvantPrenoms(student.full_name || "")
                     )}</span>
@@ -364,7 +364,7 @@ function buildAttestationHtml(args: {
                     <span class="value">${escapeHtml(classLabel)}</span>
                   </div>
                   <div class="row">
-                    <span class="label">Annee scolaire</span>
+                    <span class="label">Année scolaire</span>
                     <span class="value">${escapeHtml(academicYear)}</span>
                   </div>
                   <div class="row">
@@ -388,14 +388,14 @@ function buildAttestationHtml(args: {
             </div>
 
             <p class="body justified">
-              est regulierement inscrit(e) dans notre etablissement et y suit
-              effectivement les cours en qualite de <strong>${escapeHtml(
+              est régulièrement inscrit(e) dans notre établissement et y suit
+              effectivement les cours en qualité de <strong>${escapeHtml(
                 scholarshipLabel
-              )}</strong> au titre de l'annee scolaire susmentionnee.
+              )}</strong> au titre de l'année scolaire susmentionnée.
             </p>
 
             <p class="body justified">
-              La presente attestation lui est delivree pour servir et valoir ce que
+              La présente attestation lui est delivrée pour servir et valoir ce que
               de droit.
             </p>
 
@@ -418,7 +418,7 @@ function buildAttestationHtml(args: {
 <html lang="fr">
 <head>
   <meta charset="utf-8" />
-  <title>Attestations de frequentation</title>
+  <title>Attestations de fréquentation</title>
   <style>
     @page {
       size: A4 portrait;
