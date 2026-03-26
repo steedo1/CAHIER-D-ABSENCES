@@ -2695,7 +2695,7 @@ export default function AdminNotesStatsPage() {
 
       {/* ───────── Section 2 : Analyse par matière (mono-discipline) ───────── */}
       <Card
-        title="Analyse par matière"
+        title="Matrice par discipline"
         subtitle="On choisit une discipline d'abord, puis éventuellement un niveau et une classe pour voir les moyennes et rangs des élèves."
         icon={<BookOpen className="h-4 w-4 text-emerald-600" />}
         actions={

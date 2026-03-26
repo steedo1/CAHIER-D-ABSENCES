@@ -1082,6 +1082,43 @@ export default function ConseilClassePage() {
     }));
   }, [annualSheetEnabled, councilRows, periodSnapshots]);
 
+  const annualSheetStats = useMemo(() => {
+    if (!annualSheetEnabled) return null;
+
+    const annualRows = councilRows
+      .map((row) => {
+        const annualAvg = row.annual_avg;
+        const mentions = computeCouncilMentions(annualAvg, null);
+        return { annualAvg, mentions };
+      })
+      .filter(
+        (row): row is { annualAvg: number; mentions: CouncilMentions } =>
+          row.annualAvg !== null && row.annualAvg !== undefined && Number.isFinite(row.annualAvg)
+      );
+
+    const effectif = annualRows.length;
+    const annualVals = annualRows.map((row) => row.annualAvg);
+
+    return {
+      effectif,
+      above10: annualVals.filter((v) => v >= 10).length,
+      between85And10: annualVals.filter((v) => v >= 8.5 && v < 10).length,
+      below85: annualVals.filter((v) => v < 8.5).length,
+      lowest: annualVals.length ? Math.min(...annualVals) : null,
+      highest: annualVals.length ? Math.max(...annualVals) : null,
+      classAvg: annualVals.length
+        ? round2(annualVals.reduce((a, b) => a + b, 0) / annualVals.length)
+        : null,
+      excellence: annualRows.filter((row) => row.mentions.distinction === "excellence").length,
+      honour: annualRows.filter((row) => row.mentions.distinction === "honour").length,
+      encouragement: annualRows.filter((row) => row.mentions.distinction === "encouragement").length,
+      warningWork: annualRows.filter((row) => row.mentions.sanction === "warningWork").length,
+      blameWork: annualRows.filter((row) => row.mentions.sanction === "blameWork").length,
+      warningConduct: 0,
+      blameConduct: 0,
+    };
+  }, [annualSheetEnabled, councilRows]);
+
   const firstListChunk = useMemo(() => councilRows.slice(0, 16), [councilRows]);
   const continuationListChunks = useMemo(
     () => chunkArray(councilRows.slice(16), 22),
@@ -1144,7 +1181,8 @@ export default function ConseilClassePage() {
         }
       `}</style>
 
-      <div className="mx-auto flex max-w-7xl flex-col gap-4 bg-slate-100/70 p-4 md:p-6">
+      <div className="fixed inset-0 z-[80] overflow-auto bg-slate-100 print:static print:inset-auto print:z-auto print:overflow-visible">
+        <div className="mx-auto flex max-w-7xl flex-col gap-4 p-4 md:p-6 print:max-w-none print:p-0">
         <div className="screen-only flex flex-col gap-3 rounded-3xl border border-slate-200 bg-gradient-to-r from-emerald-50 to-white p-5 shadow-sm">
           <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
             <div>
@@ -1156,7 +1194,7 @@ export default function ConseilClassePage() {
                 Procès-verbal du conseil de classe
               </h1>
               <p className="text-sm text-slate-600">
-                Version mise à jour : mise en page officielle + fiche récapitulative annuelle
+                Version mise à jour : mise en page officielle + fiche complémentaire ajoutée
                 au dernier trimestre / semestre.
               </p>
             </div>
@@ -1339,19 +1377,7 @@ export default function ConseilClassePage() {
             </div>
           </div>
 
-          <div className="grid gap-3 xl:grid-cols-3">
-            <div>
-              <label className="mb-1 block text-xs font-semibold uppercase text-slate-500">
-                Analyse générale
-              </label>
-              <Textarea
-                rows={6}
-                value={analysisText}
-                onChange={(e) => setAnalysisText(e.target.value)}
-                placeholder="Analyse synthétique des résultats et du comportement de la classe…"
-              />
-            </div>
-
+          <div className="grid gap-3 xl:grid-cols-2">
             <div>
               <label className="mb-1 block text-xs font-semibold uppercase text-slate-500">
                 Problèmes relevés
@@ -1543,25 +1569,23 @@ export default function ConseilClassePage() {
                     </div>
                   </div>
 
-                  <OfficialNoteBox
-                    title="Analyse"
-                    content={analysisText || generalObservation || "—"}
-                    minHeightClass="min-h-[120px]"
-                  />
                 </div>
               </div>
 
-              <div className="mt-4 grid gap-4 md:grid-cols-2">
-                <OfficialNoteBox
-                  title="Problèmes de la classe"
-                  content={problemsText || "—"}
-                  minHeightClass="min-h-[140px]"
-                />
-                <OfficialNoteBox
-                  title="Proposition de solutions"
-                  content={solutionsText || "—"}
-                  minHeightClass="min-h-[140px]"
-                />
+              <div className="mt-4">
+                <OfficialSectionBar title="Analyse" />
+                <div className="mt-1 grid gap-4 md:grid-cols-2">
+                  <OfficialNoteBox
+                    title="Problèmes de la classe"
+                    content={problemsText || "—"}
+                    minHeightClass="min-h-[150px]"
+                  />
+                  <OfficialNoteBox
+                    title="Proposition de solutions"
+                    content={solutionsText || "—"}
+                    minHeightClass="min-h-[150px]"
+                  />
+                </div>
               </div>
 
               <div className="mt-5 grid gap-8 md:grid-cols-2">
@@ -1585,20 +1609,20 @@ export default function ConseilClassePage() {
               <OfficialPage>
                 <OfficialHeader
                   institution={institution}
-                  title="FICHE RECAPITULATIVE ANNUELLE"
-                  subtitle="CONSEIL DE CLASSE"
+                  title="PROCES VERBAL DE CONSEIL DE CLASSE"
+                  subtitle="FICHE COMPLEMENTAIRE DE FIN D'ANNEE"
                 />
                 <OfficialMainTitle
-                  title={`RECAPITULATIF DES MOYENNES - ${String(currentClassLabel).toUpperCase()}`}
+                  title={`RECAPITULATIF DES MOYENNES GENERALES ET ANNUELLES DE ${String(currentClassLabel).toUpperCase()}`}
                 />
                 <div className="mb-3 grid gap-2 md:grid-cols-4 text-[10px]">
                   <OfficialMiniInfo label="Année scolaire" value={currentAcademicYear} />
                   <OfficialMiniInfo label="Classe" value={currentClassLabel} />
-                  <OfficialMiniInfo label="Dernière période" value={currentPeriodLabel} />
+                  <OfficialMiniInfo label="Période du conseil" value={currentPeriodLabel} />
                   <OfficialMiniInfo label="Date du conseil" value={formatDateFR(councilDate)} />
                 </div>
 
-                <OfficialSectionBar title="Récapitulatif des trimestres / semestres et moyenne annuelle" />
+                <OfficialSectionBar title="Moyennes par trimestre / semestre et moyenne annuelle" />
                 <div className="overflow-hidden border border-slate-500">
                   <table className="cc-table w-full border-collapse text-[10px]">
                     <thead>
@@ -1636,21 +1660,11 @@ export default function ConseilClassePage() {
                   </table>
                 </div>
 
-                <div className="mt-4 grid gap-4 md:grid-cols-2">
-                  <OfficialNoteBox
-                    title="Lecture annuelle"
-                    content={
-                      generalObservation ||
-                      "Cette fiche est automatiquement ajoutée pour la dernière période afin de présenter les moyennes de toutes les périodes ainsi que la moyenne annuelle."
-                    }
-                    minHeightClass="min-h-[110px]"
-                  />
-                  <OfficialNoteBox
-                    title="Observation du conseil"
-                    content={analysisText || "—"}
-                    minHeightClass="min-h-[110px]"
-                  />
-                </div>
+                {annualSheetStats ? (
+                  <div className="mt-4">
+                    <OfficialClassStatsBlock classStats={annualSheetStats} />
+                  </div>
+                ) : null}
               </OfficialPage>
             ) : null}
 
@@ -1672,6 +1686,7 @@ export default function ConseilClassePage() {
             </OfficialPage>
           </div>
         )}
+        </div>
       </div>
     </>
   );
