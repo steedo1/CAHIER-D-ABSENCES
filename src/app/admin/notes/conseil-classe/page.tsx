@@ -1,8 +1,9 @@
+
 // src/app/admin/notes/conseil-classe/page.tsx
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
-import { Printer, RefreshCw, FileText, School, BarChart3, Users } from "lucide-react";
+import { Printer, RefreshCw, FileText, School } from "lucide-react";
 
 /* ───────── UI helpers ───────── */
 
@@ -253,6 +254,15 @@ type SubjectCouncilStat = {
   lt85: number;
 };
 
+type PeriodSnapshot = {
+  id: string;
+  label: string;
+  start_date: string;
+  end_date: string;
+  valuesByStudent: Map<string, number | null>;
+  ranksByStudent: Map<string, number | null>;
+};
+
 /* ───────── Helpers ───────── */
 
 function round2(n: number): number {
@@ -309,6 +319,30 @@ function clampTo20(value: number | null | undefined): number | null {
   if (n < 0) return 0;
   if (n > 20) return 20;
   return n;
+}
+
+function ratioPct(part: number, total: number): string {
+  if (!total) return "0.00%";
+  return `${((part * 100) / total).toFixed(2)}%`;
+}
+
+function shortPeriodLabel(period: GradePeriod | PeriodSnapshot): string {
+  const source: any = period;
+  return String(source.short_label || source.label || source.code || "").trim() || "Période";
+}
+
+function sortPeriodsByDate<T extends { start_date?: string | null; end_date?: string | null }>(
+  items: T[]
+): T[] {
+  return [...items].sort((a, b) => {
+    const sa = new Date(a.start_date || "").getTime();
+    const sb = new Date(b.start_date || "").getTime();
+    if (Number.isFinite(sa) && Number.isFinite(sb) && sa !== sb) return sa - sb;
+    const ea = new Date(a.end_date || "").getTime();
+    const eb = new Date(b.end_date || "").getTime();
+    if (Number.isFinite(ea) && Number.isFinite(eb) && ea !== eb) return ea - eb;
+    return 0;
+  });
 }
 
 function computeCouncilMentions(
@@ -478,6 +512,26 @@ function computeRanksAndStats(res: BulletinResponse | null): EnrichedBulletin | 
   };
 }
 
+function pickSpecificAverage(
+  subjectStats: SubjectCouncilStat[],
+  keywords: string[]
+): string {
+  const matches = subjectStats.filter((s) => {
+    const name = s.subject_name.toLowerCase();
+    return keywords.some((k) => name.includes(k));
+  });
+  if (matches.length === 0) return "—";
+  return matches.map((m) => formatNumber(m.avg20)).join(" / ");
+}
+
+function officialMarkColumns(distinction: CouncilMentions["distinction"]) {
+  return {
+    thfe: distinction === "excellence" ? "X" : "",
+    then: distinction === "honour" ? "X" : "",
+    th: distinction === "encouragement" ? "X" : "",
+  };
+}
+
 /* ───────── Page ───────── */
 
 export default function ConseilClassePage() {
@@ -497,6 +551,7 @@ export default function ConseilClassePage() {
 
   const [bulletinRaw, setBulletinRaw] = useState<BulletinResponse | null>(null);
   const [conductSummary, setConductSummary] = useState<ConductSummaryResponse | null>(null);
+  const [periodSnapshots, setPeriodSnapshots] = useState<PeriodSnapshot[]>([]);
 
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -604,6 +659,11 @@ export default function ConseilClassePage() {
     return periods.filter((p) => p.academic_year === selectedAcademicYear);
   }, [periods, selectedAcademicYear]);
 
+  const yearPeriodsSorted = useMemo(
+    () => sortPeriodsByDate(filteredPeriods),
+    [filteredPeriods]
+  );
+
   const selectedPeriod = useMemo(
     () => periods.find((p) => p.id === selectedPeriodId) || null,
     [periods, selectedPeriodId]
@@ -616,6 +676,57 @@ export default function ConseilClassePage() {
     setDateFrom(p.start_date || "");
     setDateTo(p.end_date || "");
   }, [selectedPeriodId, periods]);
+
+  async function fetchPeriodSnapshotsForYear(classId: string, academicYear: string) {
+    const yearPeriods = sortPeriodsByDate(
+      periods.filter((p) => (p.academic_year || "") === academicYear)
+    );
+    if (yearPeriods.length === 0) {
+      setPeriodSnapshots([]);
+      return;
+    }
+
+    const snapshots = await Promise.all(
+      yearPeriods.map(async (p): Promise<PeriodSnapshot | null> => {
+        try {
+          const params = new URLSearchParams();
+          params.set("class_id", classId);
+          params.set("from", p.start_date);
+          params.set("to", p.end_date);
+
+          const res = await fetch(`/api/admin/grades/bulletin?${params.toString()}`, {
+            cache: "no-store",
+          });
+          if (!res.ok) return null;
+          const json = (await res.json()) as BulletinResponse;
+          if (!json.ok) return null;
+
+          const enriched = computeRanksAndStats(json);
+          const valuesByStudent = new Map<string, number | null>();
+          const ranksByStudent = new Map<string, number | null>();
+
+          (enriched?.items ?? []).forEach((it) => {
+            valuesByStudent.set(it.student_id, it.general_avg ?? null);
+            ranksByStudent.set(it.student_id, it.rank ?? null);
+          });
+
+          return {
+            id: p.id,
+            label: shortPeriodLabel(p),
+            start_date: p.start_date,
+            end_date: p.end_date,
+            valuesByStudent,
+            ranksByStudent,
+          };
+        } catch (e) {
+          console.warn("[ConseilClasse] snapshot période ignoré", e);
+          return null;
+        }
+      })
+    );
+
+    setPeriodSnapshots(snapshots.filter((x): x is PeriodSnapshot => Boolean(x)));
+  }
 
   async function handleLoadCouncilData() {
     setErrorMsg(null);
@@ -632,6 +743,7 @@ export default function ConseilClassePage() {
     try {
       setLoading(true);
       setConductSummary(null);
+      setPeriodSnapshots([]);
 
       const params = new URLSearchParams();
       params.set("class_id", selectedClassId);
@@ -671,6 +783,15 @@ export default function ConseilClassePage() {
       }
       if (!chairName) {
         setChairName(institution?.institution_head_name || "");
+      }
+
+      const annualYear =
+        selectedAcademicYear ||
+        json.class?.academic_year ||
+        selectedPeriod?.academic_year ||
+        "";
+      if (annualYear) {
+        await fetchPeriodSnapshotsForYear(selectedClassId, annualYear);
       }
     } catch (e: any) {
       console.error(e);
@@ -778,6 +899,7 @@ export default function ConseilClassePage() {
       highest: enriched?.stats.highest ?? null,
       lowest: enriched?.stats.lowest ?? null,
       above10: validGeneral.filter((v) => v >= 10).length,
+      between85And10: validGeneral.filter((v) => v >= 8.5 && v < 10).length,
       below85: validGeneral.filter((v) => v < 8.5).length,
       annualClassAvg: annualVals.length
         ? round2(annualVals.reduce((a, b) => a + b, 0) / annualVals.length)
@@ -871,6 +993,86 @@ export default function ConseilClassePage() {
 
   const currentPeriodLabel = periodTitle(bulletinRaw?.period || selectedPeriod);
 
+  const isLastPeriodOfYear = useMemo(() => {
+    if (!selectedPeriod) return false;
+    const last = yearPeriodsSorted[yearPeriodsSorted.length - 1];
+    return Boolean(last && last.id === selectedPeriod.id);
+  }, [selectedPeriod, yearPeriodsSorted]);
+
+  const annualSheetEnabled = isLastPeriodOfYear && periodSnapshots.length > 1;
+
+  const studentPopulationStats = useMemo(() => {
+    const isAssigned = (r: CouncilStudentRow) => Boolean(r.is_assigned ?? r.is_affecte);
+    const isRepeater = (r: CouncilStudentRow) => Boolean(r.is_repeater);
+
+    const totalRepeaters = councilRows.filter(isRepeater).length;
+    const girlsRepeaters = councilRows.filter(
+      (r) => isRepeater(r) && normalizeSex(r.sex || r.gender || null) === "F"
+    ).length;
+    const boysRepeaters = councilRows.filter(
+      (r) => isRepeater(r) && normalizeSex(r.sex || r.gender || null) === "M"
+    ).length;
+
+    const totalAssigned = councilRows.filter(isAssigned).length;
+    const girlsAssigned = councilRows.filter(
+      (r) => isAssigned(r) && normalizeSex(r.sex || r.gender || null) === "F"
+    ).length;
+    const boysAssigned = councilRows.filter(
+      (r) => isAssigned(r) && normalizeSex(r.sex || r.gender || null) === "M"
+    ).length;
+
+    const totalNonAssigned = Math.max(0, councilRows.length - totalAssigned);
+    const girlsNonAssigned = Math.max(0, classStats.girls - girlsAssigned);
+    const boysNonAssigned = Math.max(0, classStats.boys - boysAssigned);
+
+    return {
+      girls: classStats.girls,
+      boys: classStats.boys,
+      total: councilRows.length,
+      girlsRepeaters,
+      boysRepeaters,
+      totalRepeaters,
+      girlsAssigned,
+      boysAssigned,
+      totalAssigned,
+      girlsNonAssigned,
+      boysNonAssigned,
+      totalNonAssigned,
+    };
+  }, [councilRows, classStats]);
+
+  const specificSubjects = useMemo(
+    () => [
+      { label: "FRANÇAIS", value: pickSpecificAverage(subjectStats, ["français", "francais"]) },
+      { label: "ANGLAIS", value: pickSpecificAverage(subjectStats, ["anglais", "english"]) },
+      { label: "PHILO", value: pickSpecificAverage(subjectStats, ["philo", "philosophie"]) },
+      {
+        label: "ALLESP",
+        value: pickSpecificAverage(subjectStats, ["allemand", "espagnol", "espagnol", "esp"]),
+      },
+    ],
+    [subjectStats]
+  );
+
+  const annualRecapRows = useMemo(() => {
+    if (!annualSheetEnabled) return [];
+    const orderedSnapshots = sortPeriodsByDate(periodSnapshots);
+    return councilRows.map((row) => ({
+      student_id: row.student_id,
+      full_name: row.full_name,
+      matricule: row.matricule,
+      rank: row.rank,
+      annual_avg: row.annual_avg ?? null,
+      annual_rank: row.annual_rank ?? null,
+      periods: orderedSnapshots.map((snap) => ({
+        id: snap.id,
+        label: snap.label,
+        avg: snap.valuesByStudent.get(row.student_id) ?? null,
+        rank: snap.ranksByStudent.get(row.student_id) ?? null,
+      })),
+    }));
+  }, [annualSheetEnabled, councilRows, periodSnapshots]);
+
   return (
     <>
       <style jsx global>{`
@@ -891,29 +1093,24 @@ export default function ConseilClassePage() {
             display: none !important;
           }
 
-          .pv-sheet {
+          .cc-page {
+            page-break-after: always;
+            break-after: page;
             box-shadow: none !important;
-            border: 0 !important;
             margin: 0 !important;
-            max-width: none !important;
+            width: auto !important;
+            min-height: auto !important;
           }
 
-          .pv-avoid-break {
-            page-break-inside: avoid;
-            break-inside: avoid;
+          .cc-page:last-child {
+            page-break-after: auto;
+            break-after: auto;
           }
 
-          table {
-            page-break-inside: auto;
-          }
-
-          thead {
-            display: table-header-group;
-          }
-
-          tr,
-          td,
-          th {
+          .cc-table,
+          .cc-table tr,
+          .cc-table td,
+          .cc-table th {
             page-break-inside: avoid;
             break-inside: avoid;
           }
@@ -932,8 +1129,8 @@ export default function ConseilClassePage() {
                 Procès-verbal du conseil de classe
               </h1>
               <p className="text-sm text-slate-600">
-                Version V1 : calcul automatique à partir des bulletins + conduite,
-                avec prise en charge de la moyenne annuelle au 3e trimestre.
+                Version mise à jour : mise en page officielle + fiche récapitulative annuelle
+                au dernier trimestre / semestre.
               </p>
             </div>
 
@@ -997,7 +1194,7 @@ export default function ConseilClassePage() {
                 <option value="">
                   {filteredPeriods.length === 0 ? "Aucune période" : "Sélectionner…"}
                 </option>
-                {filteredPeriods.map((p) => (
+                {yearPeriodsSorted.map((p) => (
                   <option key={p.id} value={p.id}>
                     {p.label || p.short_label || p.code || `${p.start_date} → ${p.end_date}`}
                   </option>
@@ -1168,276 +1365,379 @@ export default function ConseilClassePage() {
             </p>
           </div>
         ) : (
-          <div className="pv-sheet overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-xl">
-            <div className="border-b border-slate-200 px-6 py-5 md:px-8">
-              <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
-                <div className="flex-1">
-                  <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                    {institution?.country_name || "République de Côte d’Ivoire"}
-                  </div>
-                  <div className="text-[11px] text-slate-500">
-                    {institution?.country_motto || "Union - Discipline - Travail"}
-                  </div>
-                  <div className="mt-2 text-sm font-semibold text-slate-700">
-                    {institution?.ministry_name || "Ministère de l’Éducation Nationale"}
-                  </div>
-                  <div className="mt-3 text-lg font-bold text-slate-900">
-                    {institution?.institution_name || "Établissement"}
-                  </div>
-                  <div className="text-sm text-slate-600">
-                    {institution?.institution_region || ""}
-                    {institution?.institution_region && institution?.institution_postal_address
-                      ? " • "
-                      : ""}
-                    {institution?.institution_postal_address || ""}
-                  </div>
-                  <div className="text-sm text-slate-600">
-                    {institution?.institution_phone || ""}
-                    {institution?.institution_phone && institution?.institution_email ? " • " : ""}
-                    {institution?.institution_email || ""}
-                  </div>
-                </div>
+          <div className="flex flex-col gap-4">
+            <OfficialPage>
+              <OfficialHeader
+                institution={institution}
+                title="PROCES VERBAL DE CONSEIL DE CLASSE"
+                subtitle="COMPTE RENDU"
+              />
+              <OfficialMainTitle title={`PROCES VERBAL DU CONSEIL DE LA CLASSE DE ${String(currentClassLabel).toUpperCase()}`} />
+              <OfficialPopulationSummary
+                stats={studentPopulationStats}
+                classLabel={currentClassLabel}
+                academicYear={currentAcademicYear}
+                periodLabel={currentPeriodLabel}
+                councilDate={formatDateFR(councilDate)}
+              />
 
-                <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-right">
-                  <div className="text-[11px] font-semibold uppercase tracking-wide text-emerald-700">
-                    Procès-verbal
-                  </div>
-                  <div className="text-lg font-bold text-emerald-900">
-                    Conseil de classe
-                  </div>
-                  <div className="text-sm text-emerald-800">{currentPeriodLabel}</div>
-                </div>
-              </div>
-
-              <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-                <InfoCard label="Année scolaire" value={currentAcademicYear} />
-                <InfoCard label="Classe" value={currentClassLabel} />
-                <InfoCard label="Date du conseil" value={formatDateFR(councilDate)} />
-                <InfoCard label="Professeur principal" value={currentHeadTeacher} />
-                <InfoCard label="Président du conseil" value={chairName || "—"} />
-                <InfoCard label="Éducateur / Surveillant" value={educationOfficerName || "—"} />
-                <InfoCard label="Délégué de classe" value={classDelegateName || "—"} />
-                <InfoCard
-                  label="Période couverte"
-                  value={`${formatDateFR(dateFrom)} → ${formatDateFR(dateTo)}`}
-                />
-              </div>
-
-              {generalObservation ? (
-                <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
-                  <span className="font-semibold">Observation générale : </span>
-                  {generalObservation}
-                </div>
-              ) : null}
-            </div>
-
-            <div className="px-6 py-5 md:px-8">
-              <SectionTitle icon={<Users className="h-4 w-4" />} title="Statistiques générales de la classe" />
-
-              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-                <StatCard label="Effectif" value={String(classStats.effectif)} />
-                <StatCard label="Garçons" value={String(classStats.boys)} />
-                <StatCard label="Filles" value={String(classStats.girls)} />
-                <StatCard label="Moyenne de classe" value={formatNumber(classStats.classAvg)} />
-                <StatCard label="Moyenne annuelle" value={formatNumber(classStats.annualClassAvg)} />
-                <StatCard label="Plus forte moyenne" value={formatNumber(classStats.highest)} />
-                <StatCard label="Plus faible moyenne" value={formatNumber(classStats.lowest)} />
-                <StatCard label="Élèves ≥ 10" value={String(classStats.above10)} />
-                <StatCard label="Élèves < 8,5" value={String(classStats.below85)} />
-                <StatCard
-                  label="Mode"
-                  value={annualMode ? "Annuel activé" : "Trimestriel"}
-                />
-              </div>
-
-              <div className="mt-4 grid gap-3 lg:grid-cols-2">
-                <div className="rounded-2xl border border-slate-200 bg-white p-4">
-                  <h3 className="mb-3 text-sm font-semibold text-slate-900">
-                    Distinctions
-                  </h3>
-                  <div className="grid gap-2 sm:grid-cols-3">
-                    <MiniStat label="Excellence" value={classStats.excellence} tone="emerald" />
-                    <MiniStat
-                      label="Tableau d’honneur"
-                      value={classStats.honour}
-                      tone="blue"
-                    />
-                    <MiniStat
-                      label="Encouragement"
-                      value={classStats.encouragement}
-                      tone="amber"
-                    />
-                  </div>
-                </div>
-
-                <div className="rounded-2xl border border-slate-200 bg-white p-4">
-                  <h3 className="mb-3 text-sm font-semibold text-slate-900">
-                    Avertissements / blâmes
-                  </h3>
-                  <div className="grid gap-2 sm:grid-cols-4">
-                    <MiniStat
-                      label="Avert. travail"
-                      value={classStats.warningWork}
-                      tone="orange"
-                    />
-                    <MiniStat
-                      label="Avert. conduite"
-                      value={classStats.warningConduct}
-                      tone="orange"
-                    />
-                    <MiniStat label="Blâme travail" value={classStats.blameWork} tone="rose" />
-                    <MiniStat
-                      label="Blâme conduite"
-                      value={classStats.blameConduct}
-                      tone="rose"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              <div className="mt-6 pv-avoid-break">
-                <SectionTitle
-                  icon={<BarChart3 className="h-4 w-4" />}
-                  title="Analyse par matière"
-                />
-
-                <div className="overflow-x-auto rounded-2xl border border-slate-200">
-                  <table className="min-w-full border-collapse text-sm">
-                    <thead className="bg-slate-50">
-                      <tr className="text-left text-slate-700">
-                        <Th>Matière</Th>
-                        <Th>Coeff.</Th>
-                        <Th>Professeur</Th>
-                        <Th>Notés</Th>
-                        <Th>Non notés</Th>
-                        <Th>Moy. classe</Th>
-                        <Th>≥ 10</Th>
-                        <Th>8,5 à 9,99</Th>
-                        <Th>&lt; 8,5</Th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {subjectStats.map((s) => (
-                        <tr key={s.subject_id} className="border-t border-slate-200">
-                          <Td strong>{s.subject_name}</Td>
-                          <Td>{formatNumber(s.coeff, 0)}</Td>
-                          <Td>{s.teacher_name || "—"}</Td>
-                          <Td>{s.noted_count}</Td>
-                          <Td>{s.not_noted_count}</Td>
-                          <Td>{formatNumber(s.avg20)}</Td>
-                          <Td>{s.gte10}</Td>
-                          <Td>{s.between85And10}</Td>
-                          <Td>{s.lt85}</Td>
+              <OfficialSectionBar title="Liste de classe" />
+              <div className="overflow-hidden border border-slate-500">
+                <table className="cc-table w-full border-collapse text-[10px]">
+                  <thead>
+                    <tr className="bg-slate-200 text-left">
+                      <OfficialTh width="36px">No</OfficialTh>
+                      <OfficialTh>Nom et prénom</OfficialTh>
+                      <OfficialTh width="96px">No Matr.</OfficialTh>
+                      <OfficialTh width="94px">Date de naissance</OfficialTh>
+                      <OfficialTh width="60px">Moyenne</OfficialTh>
+                      <OfficialTh width="44px">Rang</OfficialTh>
+                      <OfficialTh width="46px">TH+FE</OfficialTh>
+                      <OfficialTh width="46px">TH+EN</OfficialTh>
+                      <OfficialTh width="44px">TH</OfficialTh>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {councilRows.map((row, idx) => {
+                      const marks = officialMarkColumns(row.mentions.distinction);
+                      return (
+                        <tr key={row.student_id} className="border-t border-slate-300">
+                          <OfficialTd center>{idx + 1}</OfficialTd>
+                          <OfficialTd strong>{row.full_name}</OfficialTd>
+                          <OfficialTd>{row.matricule || "—"}</OfficialTd>
+                          <OfficialTd>{formatDateFR(row.birthdate || row.birth_date)}</OfficialTd>
+                          <OfficialTd center>{formatNumber(row.general_avg)}</OfficialTd>
+                          <OfficialTd center>{row.rank ?? "—"}</OfficialTd>
+                          <OfficialTd center>{marks.thfe}</OfficialTd>
+                          <OfficialTd center>{marks.then}</OfficialTd>
+                          <OfficialTd center>{marks.th}</OfficialTd>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                      );
+                    })}
+                  </tbody>
+                </table>
               </div>
 
-              <div className="mt-6 pv-avoid-break">
-                <SectionTitle
-                  icon={<FileText className="h-4 w-4" />}
-                  title="Majors de la classe"
-                />
+              <div className="mt-3 grid gap-3 md:grid-cols-[1.2fr_0.8fr]">
+                <div>
+                  <OfficialSectionBar title="Statistiques de classe" />
+                  <div className="overflow-hidden border border-slate-500">
+                    <table className="cc-table w-full border-collapse text-[10px]">
+                      <thead>
+                        <tr className="bg-slate-200">
+                          <OfficialTh>Effectif classe</OfficialTh>
+                          <OfficialTh colSpan={2}>Moy &gt;= 10</OfficialTh>
+                          <OfficialTh colSpan={2}>10 &gt; M &gt;= 8,5</OfficialTh>
+                          <OfficialTh colSpan={2}>Moy &lt; 8,5</OfficialTh>
+                          <OfficialTh>Mini</OfficialTh>
+                          <OfficialTh>Maxi</OfficialTh>
+                          <OfficialTh>Moy</OfficialTh>
+                        </tr>
+                        <tr className="bg-slate-100">
+                          <OfficialTh></OfficialTh>
+                          <OfficialTh>Nombre</OfficialTh>
+                          <OfficialTh>%</OfficialTh>
+                          <OfficialTh>Nombre</OfficialTh>
+                          <OfficialTh>%</OfficialTh>
+                          <OfficialTh>Nombre</OfficialTh>
+                          <OfficialTh>%</OfficialTh>
+                          <OfficialTh></OfficialTh>
+                          <OfficialTh></OfficialTh>
+                          <OfficialTh></OfficialTh>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr className="border-t border-slate-300">
+                          <OfficialTd center>{classStats.effectif}</OfficialTd>
+                          <OfficialTd center>{classStats.above10}</OfficialTd>
+                          <OfficialTd center>{ratioPct(classStats.above10, classStats.effectif)}</OfficialTd>
+                          <OfficialTd center>{classStats.between85And10}</OfficialTd>
+                          <OfficialTd center>{ratioPct(classStats.between85And10, classStats.effectif)}</OfficialTd>
+                          <OfficialTd center>{classStats.below85}</OfficialTd>
+                          <OfficialTd center>{ratioPct(classStats.below85, classStats.effectif)}</OfficialTd>
+                          <OfficialTd center>{formatNumber(classStats.lowest)}</OfficialTd>
+                          <OfficialTd center>{formatNumber(classStats.highest)}</OfficialTd>
+                          <OfficialTd center>{formatNumber(classStats.classAvg)}</OfficialTd>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
 
-                <div className="grid gap-3 md:grid-cols-3">
-                  {topStudents.length > 0 ? (
-                    topStudents.map((row, idx) => (
-                      <div
-                        key={row.student_id}
-                        className="rounded-2xl border border-slate-200 bg-gradient-to-br from-slate-50 to-white p-4"
-                      >
-                        <div className="text-xs font-semibold uppercase text-slate-500">
-                          {idx + 1}
-                          {idx === 0 ? "er" : "e"} de la classe
-                        </div>
-                        <div className="mt-1 text-base font-semibold text-slate-900">
-                          {row.full_name}
-                        </div>
-                        <div className="mt-2 text-sm text-slate-600">
-                          Matricule : {row.matricule || "—"}
-                        </div>
-                        <div className="text-sm text-slate-600">
-                          Moyenne : {formatNumber(row.general_avg)}
-                        </div>
-                        <div className="text-sm text-slate-600">
-                          Rang : {row.rank ?? "—"}
-                        </div>
-                        {annualMode ? (
-                          <div className="text-sm text-slate-600">
-                            Moy. annuelle : {formatNumber(row.annual_avg)}
-                          </div>
-                        ) : null}
-                      </div>
-                    ))
-                  ) : (
-                    <div className="rounded-2xl border border-dashed border-slate-300 p-4 text-sm text-slate-500 md:col-span-3">
-                      Aucune moyenne exploitable pour déterminer les majors.
+                <div className="grid gap-3">
+                  <div>
+                    <OfficialSectionBar title="Distinctions" />
+                    <div className="overflow-hidden border border-slate-500">
+                      <table className="cc-table w-full border-collapse text-[10px]">
+                        <thead>
+                          <tr className="bg-slate-200">
+                            <OfficialTh>Distinctions</OfficialTh>
+                            <OfficialTh width="74px">Nombre</OfficialTh>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <tr className="border-t border-slate-300">
+                            <OfficialTd>Excellence</OfficialTd>
+                            <OfficialTd center>{classStats.excellence}</OfficialTd>
+                          </tr>
+                          <tr className="border-t border-slate-300">
+                            <OfficialTd>Tableau d'honneur</OfficialTd>
+                            <OfficialTd center>{classStats.honour}</OfficialTd>
+                          </tr>
+                          <tr className="border-t border-slate-300">
+                            <OfficialTd>Encouragements</OfficialTd>
+                            <OfficialTd center>{classStats.encouragement}</OfficialTd>
+                          </tr>
+                        </tbody>
+                      </table>
                     </div>
-                  )}
+                  </div>
+
+                  <div>
+                    <OfficialSectionBar title="Avertissements et sanctions" />
+                    <div className="overflow-hidden border border-slate-500">
+                      <table className="cc-table w-full border-collapse text-[10px]">
+                        <thead>
+                          <tr className="bg-slate-200">
+                            <OfficialTh>Avertissement / Travail</OfficialTh>
+                            <OfficialTh width="74px">Nombre</OfficialTh>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <tr className="border-t border-slate-300">
+                            <OfficialTd>Avertissement Travail</OfficialTd>
+                            <OfficialTd center>{classStats.warningWork}</OfficialTd>
+                          </tr>
+                          <tr className="border-t border-slate-300">
+                            <OfficialTd>Blâme Travail</OfficialTd>
+                            <OfficialTd center>{classStats.blameWork}</OfficialTd>
+                          </tr>
+                          <tr className="border-t border-slate-300">
+                            <OfficialTd>Avert. Conduite</OfficialTd>
+                            <OfficialTd center>{classStats.warningConduct}</OfficialTd>
+                          </tr>
+                          <tr className="border-t border-slate-300">
+                            <OfficialTd>Blâme Conduite</OfficialTd>
+                            <OfficialTd center>{classStats.blameConduct}</OfficialTd>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </OfficialPage>
+
+            <OfficialPage>
+              <OfficialSectionBar title="Statistiques par discipline" />
+              <div className="overflow-hidden border border-slate-500">
+                <table className="cc-table w-full border-collapse text-[10px]">
+                  <thead>
+                    <tr className="bg-slate-200">
+                      <OfficialTh>Matière</OfficialTh>
+                      <OfficialTh width="52px">Effectif</OfficialTh>
+                      <OfficialTh width="62px">N &gt;= 10</OfficialTh>
+                      <OfficialTh width="62px">% </OfficialTh>
+                      <OfficialTh width="62px">10 &gt; M &gt;= 8,5</OfficialTh>
+                      <OfficialTh width="62px">% </OfficialTh>
+                      <OfficialTh width="62px">M &lt; 8,5</OfficialTh>
+                      <OfficialTh width="62px">% </OfficialTh>
+                      <OfficialTh width="60px">Moy.</OfficialTh>
+                      <OfficialTh>Enseignant / Emargement</OfficialTh>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {subjectStats.map((s) => (
+                      <tr key={s.subject_id} className="border-t border-slate-300">
+                        <OfficialTd strong>{s.subject_name}</OfficialTd>
+                        <OfficialTd center>{classStats.effectif}</OfficialTd>
+                        <OfficialTd center>{s.gte10}</OfficialTd>
+                        <OfficialTd center>{ratioPct(s.gte10, classStats.effectif)}</OfficialTd>
+                        <OfficialTd center>{s.between85And10}</OfficialTd>
+                        <OfficialTd center>{ratioPct(s.between85And10, classStats.effectif)}</OfficialTd>
+                        <OfficialTd center>{s.lt85}</OfficialTd>
+                        <OfficialTd center>{ratioPct(s.lt85, classStats.effectif)}</OfficialTd>
+                        <OfficialTd center>{formatNumber(s.avg20)}</OfficialTd>
+                        <OfficialTd>{s.teacher_name || "—"}</OfficialTd>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="mt-4 grid gap-4 md:grid-cols-[1.2fr_0.8fr]">
+                <div>
+                  <OfficialSectionBar title="Majors de la classe" />
+                  <div className="overflow-hidden border border-slate-500">
+                    <table className="cc-table w-full border-collapse text-[10px]">
+                      <thead>
+                        <tr className="bg-slate-200">
+                          <OfficialTh width="42px">No</OfficialTh>
+                          <OfficialTh>Nom et prénom</OfficialTh>
+                          <OfficialTh width="96px">No matricule</OfficialTh>
+                          <OfficialTh width="94px">Date de naissance</OfficialTh>
+                          <OfficialTh width="60px">Moyenne</OfficialTh>
+                          <OfficialTh width="46px">Rang</OfficialTh>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {topStudents.length > 0 ? (
+                          topStudents.map((row, idx) => (
+                            <tr key={row.student_id} className="border-t border-slate-300">
+                              <OfficialTd center>{idx + 1}</OfficialTd>
+                              <OfficialTd strong>{row.full_name}</OfficialTd>
+                              <OfficialTd>{row.matricule || "—"}</OfficialTd>
+                              <OfficialTd>{formatDateFR(row.birthdate || row.birth_date)}</OfficialTd>
+                              <OfficialTd center>{formatNumber(row.general_avg)}</OfficialTd>
+                              <OfficialTd center>{row.rank ?? "—"}</OfficialTd>
+                            </tr>
+                          ))
+                        ) : (
+                          <tr className="border-t border-slate-300">
+                            <OfficialTd center colSpan={6}>
+                              Aucun major déterminé.
+                            </OfficialTd>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                <div>
+                  <OfficialSectionBar title="Matières spécifiques" />
+                  <div className="overflow-hidden border border-slate-500">
+                    <table className="cc-table w-full border-collapse text-[10px]">
+                      <thead>
+                        <tr className="bg-slate-200">
+                          {specificSubjects.map((item) => (
+                            <OfficialTh key={item.label}>{item.label}</OfficialTh>
+                          ))}
+                        </tr>
+                        <tr className="bg-white">
+                          {specificSubjects.map((item) => (
+                            <OfficialTd key={item.label} center strong>
+                              {item.value}
+                            </OfficialTd>
+                          ))}
+                        </tr>
+                      </thead>
+                    </table>
+                  </div>
                 </div>
               </div>
 
-              <div className="mt-6">
-                <SectionTitle
-                  icon={<School className="h-4 w-4" />}
-                  title="Liste des élèves et décisions du conseil"
-                />
+              <div className="mt-4 grid gap-4 md:grid-cols-2">
+                <OfficialNoteBox title="Analyse" content={analysisText || generalObservation} minHeightClass="min-h-[150px]" />
+                <OfficialNoteBox title="Problèmes de la classe" content={problemsText} minHeightClass="min-h-[150px]" />
+              </div>
 
-                <div className="overflow-x-auto rounded-2xl border border-slate-200">
-                  <table className="min-w-[1250px] w-full border-collapse text-sm">
-                    <thead className="bg-slate-50">
-                      <tr className="text-left text-slate-700">
-                        <Th>Rang</Th>
-                        <Th>Matricule</Th>
-                        <Th>Nom &amp; prénoms</Th>
-                        <Th>Sexe</Th>
-                        <Th>Date naissance</Th>
-                        <Th>Moy. trim.</Th>
-                        {annualMode ? <Th>Moy. annuelle</Th> : null}
-                        {annualMode ? <Th>Rang annuel</Th> : null}
-                        <Th>Conduite /20</Th>
-                        <Th>Distinction</Th>
-                        <Th>Sanction</Th>
-                        <Th>Appréciation</Th>
+              <div className="mt-4">
+                <OfficialSectionBar title="Proposition de solutions" />
+                <OfficialNoteBox content={solutionsText} minHeightClass="min-h-[120px]" />
+              </div>
+
+              <div className="mt-6 grid gap-8 md:grid-cols-2">
+                <div>
+                  <div className="mb-2 text-[11px] font-semibold uppercase text-slate-700">
+                    Les membres du conseil
+                  </div>
+                  <SignatureLines count={4} />
+                </div>
+                <div className="grid gap-6">
+                  <SimpleSignature label="Professeur principal" name={currentHeadTeacher} />
+                  <SimpleSignature label={institution?.institution_head_title || "Le Directeur"} name={chairName || institution?.institution_head_name || ""} />
+                </div>
+              </div>
+            </OfficialPage>
+
+            {annualSheetEnabled ? (
+              <OfficialPage>
+                <OfficialHeader
+                  institution={institution}
+                  title="FICHE RECAPITULATIVE ANNUELLE"
+                  subtitle="CONSEIL DE CLASSE"
+                />
+                <OfficialMainTitle title={`RECAPITULATIF DES MOYENNES - ${String(currentClassLabel).toUpperCase()}`} />
+                <div className="mb-3 grid gap-2 md:grid-cols-4 text-[10px]">
+                  <OfficialMiniInfo label="Année scolaire" value={currentAcademicYear} />
+                  <OfficialMiniInfo label="Classe" value={currentClassLabel} />
+                  <OfficialMiniInfo label="Dernière période" value={currentPeriodLabel} />
+                  <OfficialMiniInfo label="Date du conseil" value={formatDateFR(councilDate)} />
+                </div>
+
+                <OfficialSectionBar title="Récapitulatif des trimestres / semestres et moyenne annuelle" />
+                <div className="overflow-hidden border border-slate-500">
+                  <table className="cc-table w-full border-collapse text-[10px]">
+                    <thead>
+                      <tr className="bg-slate-200">
+                        <OfficialTh width="42px">No</OfficialTh>
+                        <OfficialTh>Nom et prénom</OfficialTh>
+                        <OfficialTh width="90px">Matricule</OfficialTh>
+                        {sortPeriodsByDate(periodSnapshots).map((snap) => (
+                          <React.Fragment key={snap.id}>
+                            <OfficialTh width="66px">{snap.label}</OfficialTh>
+                            <OfficialTh width="54px">Rang</OfficialTh>
+                          </React.Fragment>
+                        ))}
+                        <OfficialTh width="74px">Moy. ann.</OfficialTh>
+                        <OfficialTh width="60px">Rang ann.</OfficialTh>
                       </tr>
                     </thead>
                     <tbody>
-                      {councilRows.map((row) => (
-                        <tr key={row.student_id} className="border-t border-slate-200 align-top">
-                          <Td>{row.rank ?? "—"}</Td>
-                          <Td>{row.matricule || "—"}</Td>
-                          <Td strong>{row.full_name}</Td>
-                          <Td>{normalizeSex(row.sex || row.gender || null) || "—"}</Td>
-                          <Td>{formatDateFR(row.birthdate || row.birth_date)}</Td>
-                          <Td>{formatNumber(row.general_avg)}</Td>
-                          {annualMode ? <Td>{formatNumber(row.annual_avg)}</Td> : null}
-                          {annualMode ? <Td>{row.annual_rank ?? "—"}</Td> : null}
-                          <Td>{formatNumber(row.conductOn20)}</Td>
-                          <Td>{labelDistinction(row.mentions.distinction)}</Td>
-                          <Td>{labelSanction(row.mentions.sanction)}</Td>
-                          <Td>{row.appreciation || "—"}</Td>
+                      {annualRecapRows.map((row, idx) => (
+                        <tr key={row.student_id} className="border-t border-slate-300">
+                          <OfficialTd center>{idx + 1}</OfficialTd>
+                          <OfficialTd strong>{row.full_name}</OfficialTd>
+                          <OfficialTd>{row.matricule || "—"}</OfficialTd>
+                          {row.periods.map((p) => (
+                            <React.Fragment key={p.id}>
+                              <OfficialTd center>{formatNumber(p.avg)}</OfficialTd>
+                              <OfficialTd center>{p.rank ?? "—"}</OfficialTd>
+                            </React.Fragment>
+                          ))}
+                          <OfficialTd center strong>{formatNumber(row.annual_avg)}</OfficialTd>
+                          <OfficialTd center strong>{row.annual_rank ?? "—"}</OfficialTd>
                         </tr>
                       ))}
                     </tbody>
                   </table>
                 </div>
+
+                <div className="mt-4 grid gap-4 md:grid-cols-2">
+                  <OfficialNoteBox
+                    title="Lecture annuelle"
+                    content={
+                      generalObservation ||
+                      "Cette fiche est automatiquement ajoutée pour la dernière période afin de présenter les moyennes de toutes les périodes ainsi que la moyenne annuelle."
+                    }
+                    minHeightClass="min-h-[120px]"
+                  />
+                  <OfficialNoteBox
+                    title="Observation du conseil"
+                    content={analysisText || "—"}
+                    minHeightClass="min-h-[120px]"
+                  />
+                </div>
+              </OfficialPage>
+            ) : null}
+
+            <OfficialPage>
+              <div className="pt-6" />
+              <div className="grid grid-cols-2 gap-8">
+                <SignatureLines count={4} />
+                <SignatureLines count={4} />
               </div>
 
-              <div className="mt-6 grid gap-4 lg:grid-cols-3">
-                <TextBlock title="Analyse générale" content={analysisText} />
-                <TextBlock title="Problèmes relevés" content={problemsText} />
-                <TextBlock title="Propositions de solutions" content={solutionsText} />
+              <div className="mt-24 grid gap-12 md:grid-cols-2 text-[11px]">
+                <SimpleSignature label="Professeur principal" name={currentHeadTeacher} />
+                <SimpleSignature
+                  label={`${institution?.institution_head_title || "Le Directeur"}${institution?.institution_region ? ` - ${institution.institution_region}` : ""}`}
+                  name={chairName || institution?.institution_head_name || ""}
+                  extra={`Aboisso, le ${formatDateFR(councilDate)}`}
+                />
               </div>
-
-              <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-                <SignatureBlock title="Président du conseil" name={chairName} />
-                <SignatureBlock title="Professeur principal" name={currentHeadTeacher} />
-                <SignatureBlock title="Éducateur / Surveillant" name={educationOfficerName} />
-                <SignatureBlock title="Délégué / Représentant" name={classDelegateName} />
-              </div>
-            </div>
+            </OfficialPage>
           </div>
         )}
       </div>
@@ -1447,109 +1747,271 @@ export default function ConseilClassePage() {
 
 /* ───────── Small components ───────── */
 
-function SectionTitle({
-  icon,
+function OfficialPage({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="cc-page mx-auto w-full max-w-[900px] bg-white p-5 shadow-[0_10px_30px_rgba(15,23,42,0.08)]">
+      {children}
+    </div>
+  );
+}
+
+function OfficialHeader({
+  institution,
   title,
+  subtitle,
 }: {
-  icon: React.ReactNode;
+  institution: InstitutionSettings | null;
   title: string;
+  subtitle?: string;
 }) {
   return (
-    <div className="mb-3 flex items-center gap-2">
-      <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-emerald-100 text-emerald-700">
-        {icon}
+    <div className="mb-3">
+      <div className="grid grid-cols-[1fr_auto_1fr] items-start gap-3">
+        <div className="text-[11px] leading-5 text-slate-800">
+          <div className="font-semibold">
+            {institution?.ministry_name || "Ministère de l’Éducation Nationale"}
+          </div>
+          <div>{institution?.country_name || "République de Côte d’Ivoire"}</div>
+          <div>{institution?.country_motto || "Union - Discipline - Travail"}</div>
+        </div>
+
+        <div className="flex flex-col items-center gap-1">
+          {institution?.institution_logo_url ? (
+            <img
+              src={institution.institution_logo_url}
+              alt="Logo"
+              className="h-14 w-14 object-contain"
+            />
+          ) : (
+            <div className="flex h-14 w-14 items-center justify-center rounded-full border border-slate-300 text-slate-400">
+              <School className="h-6 w-6" />
+            </div>
+          )}
+          <div className="bg-slate-500 px-4 py-1 text-center text-[11px] font-bold uppercase tracking-wide text-white">
+            {title}
+          </div>
+          {subtitle ? (
+            <div className="bg-slate-300 px-4 py-1 text-center text-[10px] font-semibold uppercase tracking-wide text-slate-800">
+              {subtitle}
+            </div>
+          ) : null}
+        </div>
+
+        <div className="text-right text-[11px] leading-5 text-slate-800">
+          <div className="font-semibold">
+            {institution?.institution_name || "Établissement"}
+          </div>
+          <div>{institution?.institution_region || "—"}</div>
+          <div>{institution?.institution_phone || ""}</div>
+          <div>{institution?.institution_email || ""}</div>
+        </div>
       </div>
-      <h2 className="text-base font-semibold text-slate-900">{title}</h2>
     </div>
   );
 }
 
-function InfoCard({ label, value }: { label: string; value: string }) {
+function OfficialMainTitle({ title }: { title: string }) {
   return (
-    <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-      <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-        {label}
-      </div>
-      <div className="mt-1 text-sm font-medium text-slate-900">{value || "—"}</div>
+    <div className="mb-3 text-center text-[18px] font-bold uppercase text-slate-900">
+      {title}
     </div>
   );
 }
 
-function StatCard({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-2xl border border-slate-200 bg-gradient-to-br from-white to-slate-50 px-4 py-4">
-      <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-        {label}
-      </div>
-      <div className="mt-2 text-2xl font-bold text-slate-900">{value}</div>
-    </div>
-  );
-}
-
-function MiniStat({
-  label,
-  value,
-  tone,
+function OfficialPopulationSummary({
+  stats,
+  classLabel,
+  academicYear,
+  periodLabel,
+  councilDate,
 }: {
-  label: string;
-  value: number;
-  tone: "emerald" | "blue" | "amber" | "orange" | "rose";
-}) {
-  const tones: Record<"emerald" | "blue" | "amber" | "orange" | "rose", string> = {
-    emerald: "border-emerald-200 bg-emerald-50 text-emerald-800",
-    blue: "border-blue-200 bg-blue-50 text-blue-800",
-    amber: "border-amber-200 bg-amber-50 text-amber-800",
-    orange: "border-orange-200 bg-orange-50 text-orange-800",
-    rose: "border-rose-200 bg-rose-50 text-rose-800",
+  stats: {
+    girls: number;
+    boys: number;
+    total: number;
+    girlsRepeaters: number;
+    boysRepeaters: number;
+    totalRepeaters: number;
+    girlsAssigned: number;
+    boysAssigned: number;
+    totalAssigned: number;
+    girlsNonAssigned: number;
+    boysNonAssigned: number;
+    totalNonAssigned: number;
   };
-
+  classLabel: string;
+  academicYear: string;
+  periodLabel: string;
+  councilDate: string;
+}) {
   return (
-    <div className={`rounded-xl border px-3 py-3 ${tones[tone]}`}>
-      <div className="text-[11px] font-semibold uppercase tracking-wide">{label}</div>
-      <div className="mt-1 text-xl font-bold">{value}</div>
+    <div className="mb-3 grid gap-3 md:grid-cols-[1.05fr_0.95fr]">
+      <div className="border border-slate-500">
+        <div className="bg-slate-200 px-2 py-1 text-[10px] font-semibold uppercase">
+          Synthèse administrative
+        </div>
+        <div className="grid grid-cols-2 gap-x-4 gap-y-1 px-2 py-2 text-[10px]">
+          <div><span className="font-semibold">Classe :</span> {classLabel}</div>
+          <div><span className="font-semibold">Année :</span> {academicYear}</div>
+          <div><span className="font-semibold">Période :</span> {periodLabel}</div>
+          <div><span className="font-semibold">Date :</span> {councilDate}</div>
+        </div>
+      </div>
+
+      <div className="border border-slate-500">
+        <table className="cc-table w-full border-collapse text-[10px]">
+          <thead>
+            <tr className="bg-slate-200">
+              <OfficialTh></OfficialTh>
+              <OfficialTh>Filles</OfficialTh>
+              <OfficialTh>Garçons</OfficialTh>
+              <OfficialTh>Total</OfficialTh>
+              <OfficialTh>Filles Red</OfficialTh>
+              <OfficialTh>Garçons Red</OfficialTh>
+              <OfficialTh>Total Red</OfficialTh>
+              <OfficialTh>Filles Aff</OfficialTh>
+              <OfficialTh>Garçons Aff</OfficialTh>
+              <OfficialTh>Total Aff</OfficialTh>
+              <OfficialTh>Filles N. Aff</OfficialTh>
+              <OfficialTh>Garçons N. Aff</OfficialTh>
+              <OfficialTh>Total N. Aff</OfficialTh>
+            </tr>
+          </thead>
+          <tbody>
+            <tr className="border-t border-slate-300">
+              <OfficialTd strong>Total</OfficialTd>
+              <OfficialTd center>{stats.girls}</OfficialTd>
+              <OfficialTd center>{stats.boys}</OfficialTd>
+              <OfficialTd center>{stats.total}</OfficialTd>
+              <OfficialTd center>{stats.girlsRepeaters}</OfficialTd>
+              <OfficialTd center>{stats.boysRepeaters}</OfficialTd>
+              <OfficialTd center>{stats.totalRepeaters}</OfficialTd>
+              <OfficialTd center>{stats.girlsAssigned}</OfficialTd>
+              <OfficialTd center>{stats.boysAssigned}</OfficialTd>
+              <OfficialTd center>{stats.totalAssigned}</OfficialTd>
+              <OfficialTd center>{stats.girlsNonAssigned}</OfficialTd>
+              <OfficialTd center>{stats.boysNonAssigned}</OfficialTd>
+              <OfficialTd center>{stats.totalNonAssigned}</OfficialTd>
+            </tr>
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
 
-function Th({ children }: { children: React.ReactNode }) {
+function OfficialSectionBar({ title }: { title: string }) {
   return (
-    <th className="px-3 py-3 text-xs font-semibold uppercase tracking-wide">
+    <div className="mb-1 bg-slate-500 px-2 py-1 text-[11px] font-bold uppercase tracking-wide text-white">
+      {title}
+    </div>
+  );
+}
+
+function OfficialTh({
+  children,
+  width,
+  colSpan,
+}: {
+  children?: React.ReactNode;
+  width?: string;
+  colSpan?: number;
+}) {
+  return (
+    <th
+      colSpan={colSpan}
+      style={width ? { width } : undefined}
+      className="border border-slate-300 px-2 py-1 text-center text-[10px] font-semibold uppercase text-slate-800"
+    >
       {children}
     </th>
   );
 }
 
-function Td({
+function OfficialTd({
   children,
+  center = false,
   strong = false,
+  colSpan,
 }: {
-  children: React.ReactNode;
+  children?: React.ReactNode;
+  center?: boolean;
   strong?: boolean;
+  colSpan?: number;
 }) {
   return (
-    <td className={["px-3 py-2.5 text-slate-700", strong ? "font-semibold text-slate-900" : ""].join(" ")}>
+    <td
+      colSpan={colSpan}
+      className={[
+        "border border-slate-300 px-2 py-1 text-[10px] text-slate-800",
+        center ? "text-center" : "text-left",
+        strong ? "font-semibold" : "",
+      ].join(" ")}
+    >
       {children}
     </td>
   );
 }
 
-function TextBlock({ title, content }: { title: string; content: string }) {
+function OfficialNoteBox({
+  title,
+  content,
+  minHeightClass = "min-h-[120px]",
+}: {
+  title?: string;
+  content: string;
+  minHeightClass?: string;
+}) {
   return (
-    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-      <h3 className="mb-2 text-sm font-semibold text-slate-900">{title}</h3>
-      <div className="min-h-[140px] whitespace-pre-wrap text-sm leading-6 text-slate-700">
+    <div className="border border-slate-500">
+      {title ? <OfficialSectionBar title={title} /> : null}
+      <div className={`${minHeightClass} whitespace-pre-wrap px-3 py-2 text-[10px] leading-5 text-slate-800`}>
         {content?.trim() || "—"}
       </div>
     </div>
   );
 }
 
-function SignatureBlock({ title, name }: { title: string; name?: string | null }) {
+function SignatureLines({ count = 4 }: { count?: number }) {
   return (
-    <div className="rounded-2xl border border-slate-200 p-4">
-      <div className="text-sm font-semibold text-slate-900">{title}</div>
-      <div className="mt-3 min-h-[52px] border-b border-dashed border-slate-300" />
-      <div className="mt-2 text-sm text-slate-700">{name?.trim() || "Nom à renseigner"}</div>
+    <div className="grid gap-6">
+      {Array.from({ length: count }).map((_, idx) => (
+        <div key={idx} className="border-b border-dotted border-slate-400" />
+      ))}
+    </div>
+  );
+}
+
+function SimpleSignature({
+  label,
+  name,
+  extra,
+}: {
+  label: string;
+  name?: string | null;
+  extra?: string;
+}) {
+  return (
+    <div className="text-[11px] text-slate-800">
+      {extra ? <div className="mb-1 text-right">{extra}</div> : null}
+      <div className="mb-8 border-b border-dotted border-transparent" />
+      <div className="font-semibold">{label}</div>
+      <div className="mt-1 uppercase">{name?.trim() || "................................"}</div>
+    </div>
+  );
+}
+
+function OfficialMiniInfo({
+  label,
+  value,
+}: {
+  label: string;
+  value: string;
+}) {
+  return (
+    <div className="border border-slate-400 px-2 py-1">
+      <div className="text-[9px] font-semibold uppercase text-slate-500">{label}</div>
+      <div className="text-[11px] font-semibold text-slate-900">{value || "—"}</div>
     </div>
   );
 }

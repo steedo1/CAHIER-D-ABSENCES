@@ -94,9 +94,9 @@ const ABS_ITEMS: NavItem[] = [
 ========================= */
 const NOTES_ITEMS: NavItem[] = [
   { href: "/admin/notes", label: "Vue d’ensemble", Icon: NotebookPen },
-  { href: "/admin/notes/evaluations", label: "Évaluations", Icon: NotebookPen },
-  { href: "/admin/bulletins", label: "Bulletins & moyennes", Icon: FileSpreadsheet },
-  { href: "/admin/notes/statistiques", label: "Statistiques", Icon: BarChart3 },
+  { href: "/admin/notes/evaluations", label: "Stats évaluations", Icon: NotebookPen },
+  { href: "/admin/bulletins", label: "Bulletins", Icon: FileSpreadsheet },
+  { href: "/admin/notes/statistiques", label: "Matrices", Icon: BarChart3 },
   { href: "/admin/notes/conseil-classe", label: "Conseil de classe", Icon: FileText },
 ];
 

@@ -341,7 +341,7 @@ function buildAttestationHtml(args: {
             </div>
 
             <p class="body">
-              Je soussigne(e), <strong>${escapeHtml(headName)}</strong>,
+              Je soussigné(e), <strong>${escapeHtml(headName)}</strong>,
               <strong>${escapeHtml(headTitle)}</strong> du
               <strong>${escapeHtml(institutionName)}</strong>, atteste que l'élève :
             </p>
@@ -401,7 +401,7 @@ function buildAttestationHtml(args: {
 
             <div class="signature-wrap">
               <div class="signature-box">
-                <div>Fait a ${escapeHtml(place)}, le ${escapeHtml(today)}</div>
+                <div>Fait à ${escapeHtml(place)} le ${escapeHtml(today)}</div>
                 <div class="signature-title">${escapeHtml(headTitle)}</div>
                 <div class="signature-space"></div>
                 <div class="signature-name">${escapeHtml(headName)}</div>
