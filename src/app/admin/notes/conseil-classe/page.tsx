@@ -345,6 +345,15 @@ function sortPeriodsByDate<T extends { start_date?: string | null; end_date?: st
   });
 }
 
+function chunkArray<T>(items: T[], size: number): T[][] {
+  if (size <= 0) return [items];
+  const chunks: T[][] = [];
+  for (let i = 0; i < items.length; i += size) {
+    chunks.push(items.slice(i, i + size));
+  }
+  return chunks;
+}
+
 function computeCouncilMentions(
   generalAvg: number | null | undefined,
   conductOn20: number | null | undefined
@@ -1073,6 +1082,12 @@ export default function ConseilClassePage() {
     }));
   }, [annualSheetEnabled, councilRows, periodSnapshots]);
 
+  const firstListChunk = useMemo(() => councilRows.slice(0, 16), [councilRows]);
+  const continuationListChunks = useMemo(
+    () => chunkArray(councilRows.slice(16), 22),
+    [councilRows]
+  );
+
   return (
     <>
       <style jsx global>{`
@@ -1091,6 +1106,11 @@ export default function ConseilClassePage() {
 
           .screen-only {
             display: none !important;
+          }
+
+          .cc-page {
+            width: auto !important;
+            min-height: auto !important;
           }
 
           .cc-page {
@@ -1115,9 +1135,16 @@ export default function ConseilClassePage() {
             break-inside: avoid;
           }
         }
+
+        @media screen {
+          .cc-page {
+            width: min(100%, 210mm);
+            min-height: 297mm;
+          }
+        }
       `}</style>
 
-      <div className="mx-auto flex max-w-7xl flex-col gap-4 p-4 md:p-6">
+      <div className="mx-auto flex max-w-7xl flex-col gap-4 bg-slate-100/70 p-4 md:p-6">
         <div className="screen-only flex flex-col gap-3 rounded-3xl border border-slate-200 bg-gradient-to-r from-emerald-50 to-white p-5 shadow-sm">
           <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
             <div>
@@ -1372,7 +1399,9 @@ export default function ConseilClassePage() {
                 title="PROCES VERBAL DE CONSEIL DE CLASSE"
                 subtitle="COMPTE RENDU"
               />
-              <OfficialMainTitle title={`PROCES VERBAL DU CONSEIL DE LA CLASSE DE ${String(currentClassLabel).toUpperCase()}`} />
+              <OfficialMainTitle
+                title={`PROCES VERBAL DU CONSEIL DE LA CLASSE DE ${String(currentClassLabel).toUpperCase()}`}
+              />
               <OfficialPopulationSummary
                 stats={studentPopulationStats}
                 classLabel={currentClassLabel}
@@ -1382,151 +1411,36 @@ export default function ConseilClassePage() {
               />
 
               <OfficialSectionBar title="Liste de classe" />
-              <div className="overflow-hidden border border-slate-500">
-                <table className="cc-table w-full border-collapse text-[10px]">
-                  <thead>
-                    <tr className="bg-slate-200 text-left">
-                      <OfficialTh width="36px">No</OfficialTh>
-                      <OfficialTh>Nom et prénom</OfficialTh>
-                      <OfficialTh width="96px">No Matr.</OfficialTh>
-                      <OfficialTh width="94px">Date de naissance</OfficialTh>
-                      <OfficialTh width="60px">Moyenne</OfficialTh>
-                      <OfficialTh width="44px">Rang</OfficialTh>
-                      <OfficialTh width="46px">TH+FE</OfficialTh>
-                      <OfficialTh width="46px">TH+EN</OfficialTh>
-                      <OfficialTh width="44px">TH</OfficialTh>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {councilRows.map((row, idx) => {
-                      const marks = officialMarkColumns(row.mentions.distinction);
-                      return (
-                        <tr key={row.student_id} className="border-t border-slate-300">
-                          <OfficialTd center>{idx + 1}</OfficialTd>
-                          <OfficialTd strong>{row.full_name}</OfficialTd>
-                          <OfficialTd>{row.matricule || "—"}</OfficialTd>
-                          <OfficialTd>{formatDateFR(row.birthdate || row.birth_date)}</OfficialTd>
-                          <OfficialTd center>{formatNumber(row.general_avg)}</OfficialTd>
-                          <OfficialTd center>{row.rank ?? "—"}</OfficialTd>
-                          <OfficialTd center>{marks.thfe}</OfficialTd>
-                          <OfficialTd center>{marks.then}</OfficialTd>
-                          <OfficialTd center>{marks.th}</OfficialTd>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
+              <OfficialClassListTable rows={firstListChunk} startIndex={0} />
 
-              <div className="mt-3 grid gap-3 md:grid-cols-[1.2fr_0.8fr]">
-                <div>
-                  <OfficialSectionBar title="Statistiques de classe" />
-                  <div className="overflow-hidden border border-slate-500">
-                    <table className="cc-table w-full border-collapse text-[10px]">
-                      <thead>
-                        <tr className="bg-slate-200">
-                          <OfficialTh>Effectif classe</OfficialTh>
-                          <OfficialTh colSpan={2}>Moy &gt;= 10</OfficialTh>
-                          <OfficialTh colSpan={2}>10 &gt; M &gt;= 8,5</OfficialTh>
-                          <OfficialTh colSpan={2}>Moy &lt; 8,5</OfficialTh>
-                          <OfficialTh>Mini</OfficialTh>
-                          <OfficialTh>Maxi</OfficialTh>
-                          <OfficialTh>Moy</OfficialTh>
-                        </tr>
-                        <tr className="bg-slate-100">
-                          <OfficialTh></OfficialTh>
-                          <OfficialTh>Nombre</OfficialTh>
-                          <OfficialTh>%</OfficialTh>
-                          <OfficialTh>Nombre</OfficialTh>
-                          <OfficialTh>%</OfficialTh>
-                          <OfficialTh>Nombre</OfficialTh>
-                          <OfficialTh>%</OfficialTh>
-                          <OfficialTh></OfficialTh>
-                          <OfficialTh></OfficialTh>
-                          <OfficialTh></OfficialTh>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        <tr className="border-t border-slate-300">
-                          <OfficialTd center>{classStats.effectif}</OfficialTd>
-                          <OfficialTd center>{classStats.above10}</OfficialTd>
-                          <OfficialTd center>{ratioPct(classStats.above10, classStats.effectif)}</OfficialTd>
-                          <OfficialTd center>{classStats.between85And10}</OfficialTd>
-                          <OfficialTd center>{ratioPct(classStats.between85And10, classStats.effectif)}</OfficialTd>
-                          <OfficialTd center>{classStats.below85}</OfficialTd>
-                          <OfficialTd center>{ratioPct(classStats.below85, classStats.effectif)}</OfficialTd>
-                          <OfficialTd center>{formatNumber(classStats.lowest)}</OfficialTd>
-                          <OfficialTd center>{formatNumber(classStats.highest)}</OfficialTd>
-                          <OfficialTd center>{formatNumber(classStats.classAvg)}</OfficialTd>
-                        </tr>
-                      </tbody>
-                    </table>
-                  </div>
+              {continuationListChunks.length === 0 ? (
+                <div className="mt-3">
+                  <OfficialClassStatsBlock classStats={classStats} />
                 </div>
-
-                <div className="grid gap-3">
-                  <div>
-                    <OfficialSectionBar title="Distinctions" />
-                    <div className="overflow-hidden border border-slate-500">
-                      <table className="cc-table w-full border-collapse text-[10px]">
-                        <thead>
-                          <tr className="bg-slate-200">
-                            <OfficialTh>Distinctions</OfficialTh>
-                            <OfficialTh width="74px">Nombre</OfficialTh>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          <tr className="border-t border-slate-300">
-                            <OfficialTd>Excellence</OfficialTd>
-                            <OfficialTd center>{classStats.excellence}</OfficialTd>
-                          </tr>
-                          <tr className="border-t border-slate-300">
-                            <OfficialTd>Tableau d'honneur</OfficialTd>
-                            <OfficialTd center>{classStats.honour}</OfficialTd>
-                          </tr>
-                          <tr className="border-t border-slate-300">
-                            <OfficialTd>Encouragements</OfficialTd>
-                            <OfficialTd center>{classStats.encouragement}</OfficialTd>
-                          </tr>
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-
-                  <div>
-                    <OfficialSectionBar title="Avertissements et sanctions" />
-                    <div className="overflow-hidden border border-slate-500">
-                      <table className="cc-table w-full border-collapse text-[10px]">
-                        <thead>
-                          <tr className="bg-slate-200">
-                            <OfficialTh>Avertissement / Travail</OfficialTh>
-                            <OfficialTh width="74px">Nombre</OfficialTh>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          <tr className="border-t border-slate-300">
-                            <OfficialTd>Avertissement Travail</OfficialTd>
-                            <OfficialTd center>{classStats.warningWork}</OfficialTd>
-                          </tr>
-                          <tr className="border-t border-slate-300">
-                            <OfficialTd>Blâme Travail</OfficialTd>
-                            <OfficialTd center>{classStats.blameWork}</OfficialTd>
-                          </tr>
-                          <tr className="border-t border-slate-300">
-                            <OfficialTd>Avert. Conduite</OfficialTd>
-                            <OfficialTd center>{classStats.warningConduct}</OfficialTd>
-                          </tr>
-                          <tr className="border-t border-slate-300">
-                            <OfficialTd>Blâme Conduite</OfficialTd>
-                            <OfficialTd center>{classStats.blameConduct}</OfficialTd>
-                          </tr>
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                </div>
-              </div>
+              ) : null}
             </OfficialPage>
+
+            {continuationListChunks.map((chunk, chunkIndex) => {
+              const isLastContinuation = chunkIndex === continuationListChunks.length - 1;
+              return (
+                <OfficialPage key={`class-list-cont-${chunkIndex}`}>
+                  {chunkIndex === 0 ? null : (
+                    <div className="mb-2 text-center text-[10px] font-semibold uppercase tracking-wide text-slate-600">
+                      Suite de la liste de classe
+                    </div>
+                  )}
+
+                  <OfficialSectionBar title="Liste de classe (suite)" />
+                  <OfficialClassListTable rows={chunk} startIndex={16 + chunkIndex * 22} />
+
+                  {isLastContinuation ? (
+                    <div className="mt-3">
+                      <OfficialClassStatsBlock classStats={classStats} />
+                    </div>
+                  ) : null}
+                </OfficialPage>
+              );
+            })}
 
             <OfficialPage>
               <OfficialSectionBar title="Statistiques par discipline" />
@@ -1537,11 +1451,11 @@ export default function ConseilClassePage() {
                       <OfficialTh>Matière</OfficialTh>
                       <OfficialTh width="52px">Effectif</OfficialTh>
                       <OfficialTh width="62px">N &gt;= 10</OfficialTh>
-                      <OfficialTh width="62px">% </OfficialTh>
+                      <OfficialTh width="62px">%</OfficialTh>
                       <OfficialTh width="62px">10 &gt; M &gt;= 8,5</OfficialTh>
-                      <OfficialTh width="62px">% </OfficialTh>
+                      <OfficialTh width="62px">%</OfficialTh>
                       <OfficialTh width="62px">M &lt; 8,5</OfficialTh>
-                      <OfficialTh width="62px">% </OfficialTh>
+                      <OfficialTh width="62px">%</OfficialTh>
                       <OfficialTh width="60px">Moy.</OfficialTh>
                       <OfficialTh>Enseignant / Emargement</OfficialTh>
                     </tr>
@@ -1565,7 +1479,7 @@ export default function ConseilClassePage() {
                 </table>
               </div>
 
-              <div className="mt-4 grid gap-4 md:grid-cols-[1.2fr_0.8fr]">
+              <div className="mt-4 grid gap-4 md:grid-cols-[1.18fr_0.82fr]">
                 <div>
                   <OfficialSectionBar title="Majors de la classe" />
                   <div className="overflow-hidden border border-slate-500">
@@ -1604,40 +1518,53 @@ export default function ConseilClassePage() {
                   </div>
                 </div>
 
-                <div>
-                  <OfficialSectionBar title="Matières spécifiques" />
-                  <div className="overflow-hidden border border-slate-500">
-                    <table className="cc-table w-full border-collapse text-[10px]">
-                      <thead>
-                        <tr className="bg-slate-200">
-                          {specificSubjects.map((item) => (
-                            <OfficialTh key={item.label}>{item.label}</OfficialTh>
-                          ))}
-                        </tr>
-                        <tr className="bg-white">
-                          {specificSubjects.map((item) => (
-                            <OfficialTd key={item.label} center strong>
-                              {item.value}
-                            </OfficialTd>
-                          ))}
-                        </tr>
-                      </thead>
-                    </table>
+                <div className="grid gap-4">
+                  <div>
+                    <OfficialSectionBar title="Matières spécifiques" />
+                    <div className="overflow-hidden border border-slate-500">
+                      <table className="cc-table w-full border-collapse text-[10px]">
+                        <thead>
+                          <tr className="bg-slate-200">
+                            {specificSubjects.map((item) => (
+                              <OfficialTh key={item.label}>{item.label}</OfficialTh>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <tr className="border-t border-slate-300 bg-white">
+                            {specificSubjects.map((item) => (
+                              <OfficialTd key={item.label} center strong>
+                                {item.value}
+                              </OfficialTd>
+                            ))}
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
                   </div>
+
+                  <OfficialNoteBox
+                    title="Analyse"
+                    content={analysisText || generalObservation || "—"}
+                    minHeightClass="min-h-[120px]"
+                  />
                 </div>
               </div>
 
               <div className="mt-4 grid gap-4 md:grid-cols-2">
-                <OfficialNoteBox title="Analyse" content={analysisText || generalObservation} minHeightClass="min-h-[150px]" />
-                <OfficialNoteBox title="Problèmes de la classe" content={problemsText} minHeightClass="min-h-[150px]" />
+                <OfficialNoteBox
+                  title="Problèmes de la classe"
+                  content={problemsText || "—"}
+                  minHeightClass="min-h-[140px]"
+                />
+                <OfficialNoteBox
+                  title="Proposition de solutions"
+                  content={solutionsText || "—"}
+                  minHeightClass="min-h-[140px]"
+                />
               </div>
 
-              <div className="mt-4">
-                <OfficialSectionBar title="Proposition de solutions" />
-                <OfficialNoteBox content={solutionsText} minHeightClass="min-h-[120px]" />
-              </div>
-
-              <div className="mt-6 grid gap-8 md:grid-cols-2">
+              <div className="mt-5 grid gap-8 md:grid-cols-2">
                 <div>
                   <div className="mb-2 text-[11px] font-semibold uppercase text-slate-700">
                     Les membres du conseil
@@ -1646,7 +1573,10 @@ export default function ConseilClassePage() {
                 </div>
                 <div className="grid gap-6">
                   <SimpleSignature label="Professeur principal" name={currentHeadTeacher} />
-                  <SimpleSignature label={institution?.institution_head_title || "Le Directeur"} name={chairName || institution?.institution_head_name || ""} />
+                  <SimpleSignature
+                    label={institution?.institution_head_title || "Le Directeur"}
+                    name={chairName || institution?.institution_head_name || ""}
+                  />
                 </div>
               </div>
             </OfficialPage>
@@ -1658,7 +1588,9 @@ export default function ConseilClassePage() {
                   title="FICHE RECAPITULATIVE ANNUELLE"
                   subtitle="CONSEIL DE CLASSE"
                 />
-                <OfficialMainTitle title={`RECAPITULATIF DES MOYENNES - ${String(currentClassLabel).toUpperCase()}`} />
+                <OfficialMainTitle
+                  title={`RECAPITULATIF DES MOYENNES - ${String(currentClassLabel).toUpperCase()}`}
+                />
                 <div className="mb-3 grid gap-2 md:grid-cols-4 text-[10px]">
                   <OfficialMiniInfo label="Année scolaire" value={currentAcademicYear} />
                   <OfficialMiniInfo label="Classe" value={currentClassLabel} />
@@ -1676,7 +1608,7 @@ export default function ConseilClassePage() {
                         <OfficialTh width="90px">Matricule</OfficialTh>
                         {sortPeriodsByDate(periodSnapshots).map((snap) => (
                           <React.Fragment key={snap.id}>
-                            <OfficialTh width="66px">{snap.label}</OfficialTh>
+                            <OfficialTh width="66px">{shortPeriodLabel(snap)}</OfficialTh>
                             <OfficialTh width="54px">Rang</OfficialTh>
                           </React.Fragment>
                         ))}
@@ -1711,19 +1643,19 @@ export default function ConseilClassePage() {
                       generalObservation ||
                       "Cette fiche est automatiquement ajoutée pour la dernière période afin de présenter les moyennes de toutes les périodes ainsi que la moyenne annuelle."
                     }
-                    minHeightClass="min-h-[120px]"
+                    minHeightClass="min-h-[110px]"
                   />
                   <OfficialNoteBox
                     title="Observation du conseil"
                     content={analysisText || "—"}
-                    minHeightClass="min-h-[120px]"
+                    minHeightClass="min-h-[110px]"
                   />
                 </div>
               </OfficialPage>
             ) : null}
 
             <OfficialPage>
-              <div className="pt-6" />
+              <div className="pt-4" />
               <div className="grid grid-cols-2 gap-8">
                 <SignatureLines count={4} />
                 <SignatureLines count={4} />
@@ -1749,7 +1681,7 @@ export default function ConseilClassePage() {
 
 function OfficialPage({ children }: { children: React.ReactNode }) {
   return (
-    <div className="cc-page mx-auto w-full max-w-[900px] bg-white p-5 shadow-[0_10px_30px_rgba(15,23,42,0.08)]">
+    <div className="cc-page mx-auto w-full max-w-[860px] bg-white p-4 md:p-5 shadow-[0_10px_30px_rgba(15,23,42,0.08)]">
       {children}
     </div>
   );
@@ -1904,6 +1836,184 @@ function OfficialSectionBar({ title }: { title: string }) {
   return (
     <div className="mb-1 bg-slate-500 px-2 py-1 text-[11px] font-bold uppercase tracking-wide text-white">
       {title}
+    </div>
+  );
+}
+
+function OfficialClassListTable({
+  rows,
+  startIndex = 0,
+}: {
+  rows: CouncilStudentRow[];
+  startIndex?: number;
+}) {
+  return (
+    <div className="overflow-hidden border border-slate-500">
+      <table className="cc-table w-full border-collapse text-[10px]">
+        <thead>
+          <tr className="bg-slate-200 text-left">
+            <OfficialTh width="36px">No</OfficialTh>
+            <OfficialTh>Nom et prénom</OfficialTh>
+            <OfficialTh width="96px">No Matr.</OfficialTh>
+            <OfficialTh width="94px">Date de naissance</OfficialTh>
+            <OfficialTh width="60px">Moyenne</OfficialTh>
+            <OfficialTh width="44px">Rang</OfficialTh>
+            <OfficialTh width="46px">TH+FE</OfficialTh>
+            <OfficialTh width="46px">TH+EN</OfficialTh>
+            <OfficialTh width="44px">TH</OfficialTh>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row, idx) => {
+            const marks = officialMarkColumns(row.mentions.distinction);
+            return (
+              <tr key={row.student_id} className="border-t border-slate-300">
+                <OfficialTd center>{startIndex + idx + 1}</OfficialTd>
+                <OfficialTd strong>{row.full_name}</OfficialTd>
+                <OfficialTd>{row.matricule || "—"}</OfficialTd>
+                <OfficialTd>{formatDateFR(row.birthdate || row.birth_date)}</OfficialTd>
+                <OfficialTd center>{formatNumber(row.general_avg)}</OfficialTd>
+                <OfficialTd center>{row.rank ?? "—"}</OfficialTd>
+                <OfficialTd center>{marks.thfe}</OfficialTd>
+                <OfficialTd center>{marks.then}</OfficialTd>
+                <OfficialTd center>{marks.th}</OfficialTd>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function OfficialClassStatsBlock({
+  classStats,
+}: {
+  classStats: {
+    effectif: number;
+    above10: number;
+    between85And10: number;
+    below85: number;
+    lowest: number | null;
+    highest: number | null;
+    classAvg: number | null;
+    excellence: number;
+    honour: number;
+    encouragement: number;
+    warningWork: number;
+    blameWork: number;
+    warningConduct: number;
+    blameConduct: number;
+  };
+}) {
+  return (
+    <div className="grid gap-3 md:grid-cols-[1.2fr_0.8fr]">
+      <div>
+        <OfficialSectionBar title="Statistiques de classe" />
+        <div className="overflow-hidden border border-slate-500">
+          <table className="cc-table w-full border-collapse text-[10px]">
+            <thead>
+              <tr className="bg-slate-200">
+                <OfficialTh>Effectif classe</OfficialTh>
+                <OfficialTh colSpan={2}>Moy &gt;= 10</OfficialTh>
+                <OfficialTh colSpan={2}>10 &gt; M &gt;= 8,5</OfficialTh>
+                <OfficialTh colSpan={2}>Moy &lt; 8,5</OfficialTh>
+                <OfficialTh>Mini</OfficialTh>
+                <OfficialTh>Maxi</OfficialTh>
+                <OfficialTh>Moy</OfficialTh>
+              </tr>
+              <tr className="bg-slate-100">
+                <OfficialTh></OfficialTh>
+                <OfficialTh>Nombre</OfficialTh>
+                <OfficialTh>%</OfficialTh>
+                <OfficialTh>Nombre</OfficialTh>
+                <OfficialTh>%</OfficialTh>
+                <OfficialTh>Nombre</OfficialTh>
+                <OfficialTh>%</OfficialTh>
+                <OfficialTh></OfficialTh>
+                <OfficialTh></OfficialTh>
+                <OfficialTh></OfficialTh>
+              </tr>
+            </thead>
+            <tbody>
+              <tr className="border-t border-slate-300">
+                <OfficialTd center>{classStats.effectif}</OfficialTd>
+                <OfficialTd center>{classStats.above10}</OfficialTd>
+                <OfficialTd center>{ratioPct(classStats.above10, classStats.effectif)}</OfficialTd>
+                <OfficialTd center>{classStats.between85And10}</OfficialTd>
+                <OfficialTd center>{ratioPct(classStats.between85And10, classStats.effectif)}</OfficialTd>
+                <OfficialTd center>{classStats.below85}</OfficialTd>
+                <OfficialTd center>{ratioPct(classStats.below85, classStats.effectif)}</OfficialTd>
+                <OfficialTd center>{formatNumber(classStats.lowest)}</OfficialTd>
+                <OfficialTd center>{formatNumber(classStats.highest)}</OfficialTd>
+                <OfficialTd center>{formatNumber(classStats.classAvg)}</OfficialTd>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div className="grid gap-3">
+        <div>
+          <OfficialSectionBar title="Distinctions" />
+          <div className="overflow-hidden border border-slate-500">
+            <table className="cc-table w-full border-collapse text-[10px]">
+              <thead>
+                <tr className="bg-slate-200">
+                  <OfficialTh>Distinctions</OfficialTh>
+                  <OfficialTh width="74px">Nombre</OfficialTh>
+                </tr>
+              </thead>
+              <tbody>
+                <tr className="border-t border-slate-300">
+                  <OfficialTd>Excellence</OfficialTd>
+                  <OfficialTd center>{classStats.excellence}</OfficialTd>
+                </tr>
+                <tr className="border-t border-slate-300">
+                  <OfficialTd>Tableau d'honneur</OfficialTd>
+                  <OfficialTd center>{classStats.honour}</OfficialTd>
+                </tr>
+                <tr className="border-t border-slate-300">
+                  <OfficialTd>Encouragements</OfficialTd>
+                  <OfficialTd center>{classStats.encouragement}</OfficialTd>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div>
+          <OfficialSectionBar title="Avertissements et sanctions" />
+          <div className="overflow-hidden border border-slate-500">
+            <table className="cc-table w-full border-collapse text-[10px]">
+              <thead>
+                <tr className="bg-slate-200">
+                  <OfficialTh>Avertissement / Travail</OfficialTh>
+                  <OfficialTh width="74px">Nombre</OfficialTh>
+                </tr>
+              </thead>
+              <tbody>
+                <tr className="border-t border-slate-300">
+                  <OfficialTd>Avertissement Travail</OfficialTd>
+                  <OfficialTd center>{classStats.warningWork}</OfficialTd>
+                </tr>
+                <tr className="border-t border-slate-300">
+                  <OfficialTd>Blâme Travail</OfficialTd>
+                  <OfficialTd center>{classStats.blameWork}</OfficialTd>
+                </tr>
+                <tr className="border-t border-slate-300">
+                  <OfficialTd>Avert. Conduite</OfficialTd>
+                  <OfficialTd center>{classStats.warningConduct}</OfficialTd>
+                </tr>
+                <tr className="border-t border-slate-300">
+                  <OfficialTd>Blâme Conduite</OfficialTd>
+                  <OfficialTd center>{classStats.blameConduct}</OfficialTd>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
