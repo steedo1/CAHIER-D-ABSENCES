@@ -1008,7 +1008,7 @@ export default function ConseilClassePage() {
     return Boolean(last && last.id === selectedPeriod.id);
   }, [selectedPeriod, yearPeriodsSorted]);
 
-  const annualSheetEnabled = annualMode && isLastPeriodOfYear;
+  const annualSheetEnabled = isLastPeriodOfYear;
 
   const studentPopulationStats = useMemo(() => {
     const isAssigned = (r: CouncilStudentRow) => Boolean(r.is_assigned ?? r.is_affecte);
@@ -1065,27 +1065,73 @@ export default function ConseilClassePage() {
 
   const annualRecapRows = useMemo(() => {
     if (!annualSheetEnabled) return [];
+
     const orderedSnapshots = sortPeriodsByDate(periodSnapshots);
-    return councilRows.map((row) => ({
-      student_id: row.student_id,
-      full_name: row.full_name,
-      matricule: row.matricule,
-      rank: row.rank,
-      annual_avg: row.annual_avg ?? null,
-      annual_rank: row.annual_rank ?? null,
-      periods: orderedSnapshots.map((snap) => ({
+
+    const baseRows = councilRows.map((row) => {
+      const periods = orderedSnapshots.map((snap) => ({
         id: snap.id,
         label: snap.label,
         avg: snap.valuesByStudent.get(row.student_id) ?? null,
         rank: snap.ranksByStudent.get(row.student_id) ?? null,
-      })),
+      }));
+
+      const annualFromApi =
+        row.annual_avg !== null && row.annual_avg !== undefined && Number.isFinite(Number(row.annual_avg))
+          ? Number(row.annual_avg)
+          : null;
+
+      const periodVals = periods
+        .map((p) => p.avg)
+        .filter((v): v is number => v !== null && v !== undefined && Number.isFinite(Number(v)))
+        .map((v) => Number(v));
+
+      const annualFallback = periodVals.length
+        ? round2(periodVals.reduce((a, b) => a + b, 0) / periodVals.length)
+        : null;
+
+      return {
+        student_id: row.student_id,
+        full_name: row.full_name,
+        matricule: row.matricule,
+        current_avg: row.general_avg ?? null,
+        current_rank: row.rank ?? null,
+        annual_avg: annualFromApi ?? annualFallback,
+        annual_rank:
+          row.annual_rank !== null && row.annual_rank !== undefined && Number.isFinite(Number(row.annual_rank))
+            ? Number(row.annual_rank)
+            : null,
+        periods,
+      };
+    });
+
+    const rankable = [...baseRows]
+      .filter((row) => row.annual_avg !== null && row.annual_avg !== undefined && Number.isFinite(Number(row.annual_avg)))
+      .sort((a, b) => Number(b.annual_avg ?? -Infinity) - Number(a.annual_avg ?? -Infinity));
+
+    let lastScore: number | null = null;
+    let lastRank = 0;
+    const fallbackRankByStudent = new Map<string, number>();
+
+    rankable.forEach((row, idx) => {
+      const score = Number(row.annual_avg ?? 0);
+      if (lastScore === null || score !== lastScore) {
+        lastRank = idx + 1;
+        lastScore = score;
+      }
+      fallbackRankByStudent.set(row.student_id, lastRank);
+    });
+
+    return baseRows.map((row) => ({
+      ...row,
+      annual_rank: row.annual_rank ?? fallbackRankByStudent.get(row.student_id) ?? null,
     }));
   }, [annualSheetEnabled, councilRows, periodSnapshots]);
 
   const annualSheetStats = useMemo(() => {
     if (!annualSheetEnabled) return null;
 
-    const annualRows = councilRows
+    const annualRows = annualRecapRows
       .map((row) => {
         const annualAvg = row.annual_avg;
         const mentions = computeCouncilMentions(annualAvg, null);
@@ -1093,11 +1139,11 @@ export default function ConseilClassePage() {
       })
       .filter(
         (row): row is { annualAvg: number; mentions: CouncilMentions } =>
-          row.annualAvg !== null && row.annualAvg !== undefined && Number.isFinite(row.annualAvg)
+          row.annualAvg !== null && row.annualAvg !== undefined && Number.isFinite(Number(row.annualAvg))
       );
 
     const effectif = annualRows.length;
-    const annualVals = annualRows.map((row) => row.annualAvg);
+    const annualVals = annualRows.map((row) => Number(row.annualAvg));
 
     return {
       effectif,
@@ -1117,7 +1163,7 @@ export default function ConseilClassePage() {
       warningConduct: 0,
       blameConduct: 0,
     };
-  }, [annualSheetEnabled, councilRows]);
+  }, [annualSheetEnabled, annualRecapRows]);
 
   const firstListChunk = useMemo(() => councilRows.slice(0, 16), [councilRows]);
   const continuationListChunks = useMemo(
@@ -1601,20 +1647,14 @@ export default function ConseilClassePage() {
                 </div>
               </div>
 
-              <div className="mt-5 grid gap-8 md:grid-cols-2">
-                <div>
-                  <div className="mb-2 text-[11px] font-semibold uppercase text-slate-700">
-                    Les membres du conseil
-                  </div>
-                  <SignatureLines count={4} />
-                </div>
-                <div className="grid gap-6">
-                  <SimpleSignature label="Professeur principal" name={currentHeadTeacher} />
-                  <SimpleSignature
-                    label={institution?.institution_head_title || "Le Directeur"}
-                    name={chairName || institution?.institution_head_name || ""}
-                  />
-                </div>
+              <div className="mt-12 grid gap-12 md:grid-cols-2">
+                <SimpleSignature label="Professeur principal" name={currentHeadTeacher} />
+                <SimpleSignature
+                  align="right"
+                  label={institution?.institution_head_title || "Le Directeur des études"}
+                  name={chairName || institution?.institution_head_name || ""}
+                  extra={`Aboisso, le ${formatDateFR(councilDate)}`}
+                />
               </div>
             </OfficialPage>
 
@@ -1623,7 +1663,7 @@ export default function ConseilClassePage() {
                 <OfficialHeader
                   institution={institution}
                   title="PROCES VERBAL DE CONSEIL DE CLASSE"
-                  subtitle="FICHE COMPLEMENTAIRE AJOUTEE AU CONSEIL DU 3E TRIMESTRE"
+                  subtitle="FICHE COMPLEMENTAIRE DE FIN D’ANNEE"
                 />
                 <OfficialMainTitle
                   title={`RECAPITULATIF DES MOYENNES GENERALES ET ANNUELLES DE ${String(currentClassLabel).toUpperCase()}`}
@@ -1643,6 +1683,8 @@ export default function ConseilClassePage() {
                         <OfficialTh width="42px">No</OfficialTh>
                         <OfficialTh>Nom et prénom</OfficialTh>
                         <OfficialTh width="90px">Matricule</OfficialTh>
+                        <OfficialTh width="70px">Moy. gén.</OfficialTh>
+                        <OfficialTh width="56px">Rang</OfficialTh>
                         {sortPeriodsByDate(periodSnapshots).map((snap) => (
                           <React.Fragment key={snap.id}>
                             <OfficialTh width="66px">{shortPeriodLabel(snap)}</OfficialTh>
@@ -1654,21 +1696,31 @@ export default function ConseilClassePage() {
                       </tr>
                     </thead>
                     <tbody>
-                      {annualRecapRows.map((row, idx) => (
-                        <tr key={row.student_id} className="border-t border-slate-300">
-                          <OfficialTd center>{idx + 1}</OfficialTd>
-                          <OfficialTd strong>{row.full_name}</OfficialTd>
-                          <OfficialTd>{row.matricule || "—"}</OfficialTd>
-                          {row.periods.map((p) => (
-                            <React.Fragment key={p.id}>
-                              <OfficialTd center>{formatNumber(p.avg)}</OfficialTd>
-                              <OfficialTd center>{p.rank ?? "—"}</OfficialTd>
-                            </React.Fragment>
-                          ))}
-                          <OfficialTd center strong>{formatNumber(row.annual_avg)}</OfficialTd>
-                          <OfficialTd center strong>{row.annual_rank ?? "—"}</OfficialTd>
+                      {annualRecapRows.length > 0 ? (
+                        annualRecapRows.map((row, idx) => (
+                          <tr key={row.student_id} className="border-t border-slate-300">
+                            <OfficialTd center>{idx + 1}</OfficialTd>
+                            <OfficialTd strong>{row.full_name}</OfficialTd>
+                            <OfficialTd>{row.matricule || "—"}</OfficialTd>
+                            <OfficialTd center>{formatNumber(row.current_avg)}</OfficialTd>
+                            <OfficialTd center>{row.current_rank ?? "—"}</OfficialTd>
+                            {row.periods.map((p) => (
+                              <React.Fragment key={p.id}>
+                                <OfficialTd center>{formatNumber(p.avg)}</OfficialTd>
+                                <OfficialTd center>{p.rank ?? "—"}</OfficialTd>
+                              </React.Fragment>
+                            ))}
+                            <OfficialTd center strong>{formatNumber(row.annual_avg)}</OfficialTd>
+                            <OfficialTd center strong>{row.annual_rank ?? "—"}</OfficialTd>
+                          </tr>
+                        ))
+                      ) : (
+                        <tr className="border-t border-slate-300">
+                          <OfficialTd center colSpan={5 + sortPeriodsByDate(periodSnapshots).length * 2 + 2}>
+                            Aucune donnée annuelle exploitable pour cette période.
+                          </OfficialTd>
                         </tr>
-                      ))}
+                      )}
                     </tbody>
                   </table>
                 </div>
@@ -2095,31 +2147,23 @@ function OfficialNoteBox({
   );
 }
 
-function SignatureLines({ count = 4 }: { count?: number }) {
-  return (
-    <div className="grid gap-6">
-      {Array.from({ length: count }).map((_, idx) => (
-        <div key={idx} className="border-b border-dotted border-slate-400" />
-      ))}
-    </div>
-  );
-}
-
 function SimpleSignature({
   label,
   name,
   extra,
+  align = "left",
 }: {
   label: string;
   name?: string | null;
   extra?: string;
+  align?: "left" | "right";
 }) {
   return (
-    <div className="text-[11px] text-slate-800">
-      {extra ? <div className="mb-1 text-right">{extra}</div> : null}
-      <div className="mb-8 border-b border-dotted border-transparent" />
+    <div className={`text-[11px] text-slate-800 ${align === "right" ? "text-right" : "text-left"}`}>
+      {extra ? <div className="mb-2">{extra}</div> : null}
+      <div className="h-12" />
       <div className="font-semibold">{label}</div>
-      <div className="mt-1 uppercase">{name?.trim() || "................................"}</div>
+      <div className="mt-2 uppercase">{name?.trim() || "................................"}</div>
     </div>
   );
 }
