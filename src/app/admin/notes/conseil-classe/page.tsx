@@ -1008,7 +1008,7 @@ export default function ConseilClassePage() {
     return Boolean(last && last.id === selectedPeriod.id);
   }, [selectedPeriod, yearPeriodsSorted]);
 
-  const annualSheetEnabled = isLastPeriodOfYear && periodSnapshots.length > 1;
+  const annualSheetEnabled = annualMode && isLastPeriodOfYear;
 
   const studentPopulationStats = useMemo(() => {
     const isAssigned = (r: CouncilStudentRow) => Boolean(r.is_assigned ?? r.is_affecte);
@@ -1141,6 +1141,24 @@ export default function ConseilClassePage() {
             print-color-adjust: exact;
           }
 
+          body * {
+            visibility: hidden !important;
+          }
+
+          .cc-preview-shell,
+          .cc-preview-shell * {
+            visibility: visible !important;
+          }
+
+          .cc-preview-shell {
+            position: static !important;
+            inset: auto !important;
+            overflow: visible !important;
+            background: #ffffff !important;
+            padding: 0 !important;
+            margin: 0 !important;
+          }
+
           .screen-only {
             display: none !important;
           }
@@ -1148,15 +1166,10 @@ export default function ConseilClassePage() {
           .cc-page {
             width: auto !important;
             min-height: auto !important;
-          }
-
-          .cc-page {
-            page-break-after: always;
-            break-after: page;
             box-shadow: none !important;
             margin: 0 !important;
-            width: auto !important;
-            min-height: auto !important;
+            page-break-after: always;
+            break-after: page;
           }
 
           .cc-page:last-child {
@@ -1181,7 +1194,7 @@ export default function ConseilClassePage() {
         }
       `}</style>
 
-      <div className="fixed inset-0 z-[80] overflow-auto bg-slate-100 print:static print:inset-auto print:z-auto print:overflow-visible">
+      <div className="cc-preview-shell fixed inset-0 z-[9999] overflow-auto bg-slate-100 print:static print:inset-auto print:z-auto print:overflow-visible">
         <div className="mx-auto flex max-w-7xl flex-col gap-4 p-4 md:p-6 print:max-w-none print:p-0">
         <div className="screen-only flex flex-col gap-3 rounded-3xl border border-slate-200 bg-gradient-to-r from-emerald-50 to-white p-5 shadow-sm">
           <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
@@ -1194,8 +1207,8 @@ export default function ConseilClassePage() {
                 Procès-verbal du conseil de classe
               </h1>
               <p className="text-sm text-slate-600">
-                Version mise à jour : mise en page officielle + fiche complémentaire ajoutée
-                au dernier trimestre / semestre.
+                Version mise à jour : mise en page officielle + fiche complémentaire annuelle
+                ajoutée au conseil du dernier trimestre.
               </p>
             </div>
 
@@ -1610,7 +1623,7 @@ export default function ConseilClassePage() {
                 <OfficialHeader
                   institution={institution}
                   title="PROCES VERBAL DE CONSEIL DE CLASSE"
-                  subtitle="FICHE COMPLEMENTAIRE DE FIN D'ANNEE"
+                  subtitle="FICHE COMPLEMENTAIRE AJOUTEE AU CONSEIL DU 3E TRIMESTRE"
                 />
                 <OfficialMainTitle
                   title={`RECAPITULATIF DES MOYENNES GENERALES ET ANNUELLES DE ${String(currentClassLabel).toUpperCase()}`}
@@ -1622,7 +1635,7 @@ export default function ConseilClassePage() {
                   <OfficialMiniInfo label="Date du conseil" value={formatDateFR(councilDate)} />
                 </div>
 
-                <OfficialSectionBar title="Moyennes par trimestre / semestre et moyenne annuelle" />
+                <OfficialSectionBar title="Recapitulatif des moyennes generales par periode et moyenne annuelle" />
                 <div className="overflow-hidden border border-slate-500">
                   <table className="cc-table w-full border-collapse text-[10px]">
                     <thead>
@@ -1668,22 +1681,7 @@ export default function ConseilClassePage() {
               </OfficialPage>
             ) : null}
 
-            <OfficialPage>
-              <div className="pt-4" />
-              <div className="grid grid-cols-2 gap-8">
-                <SignatureLines count={4} />
-                <SignatureLines count={4} />
-              </div>
 
-              <div className="mt-24 grid gap-12 md:grid-cols-2 text-[11px]">
-                <SimpleSignature label="Professeur principal" name={currentHeadTeacher} />
-                <SimpleSignature
-                  label={`${institution?.institution_head_title || "Le Directeur"}${institution?.institution_region ? ` - ${institution.institution_region}` : ""}`}
-                  name={chairName || institution?.institution_head_name || ""}
-                  extra={`Aboisso, le ${formatDateFR(councilDate)}`}
-                />
-              </div>
-            </OfficialPage>
           </div>
         )}
         </div>
