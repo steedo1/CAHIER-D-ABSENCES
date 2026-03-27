@@ -504,33 +504,6 @@ function annualDecisionLabel(avg: number | null | undefined): string {
   return "—";
 }
 
-function getSubjectScore(
-  row: CouncilStudentRow | null | undefined,
-  subjects: BulletinSubject[],
-  names: string[]
-): number | null {
-  if (!row) return null;
-  const lowered = names.map((n) => n.toLowerCase());
-  const nameById = new Map(
-    subjects.map((subject) => [subject.subject_id, String(subject.subject_name || "").toLowerCase()])
-  );
-  for (const cell of row.per_subject || []) {
-    const resolved = nameById.get(cell.subject_id) || "";
-    if (lowered.some((x) => resolved.includes(x))) {
-      if (cell.avg20 !== null && cell.avg20 !== undefined && Number.isFinite(Number(cell.avg20))) {
-        return Number(cell.avg20);
-      }
-    }
-  }
-  return null;
-}
-
-function formatSpecificPair(a: number | null, b: number | null): string {
-  if (a === null && b === null) return "—";
-  if (a !== null && b !== null) return `${formatNumber(a)} / ${formatNumber(b)}`;
-  return formatNumber(a ?? b);
-}
-
 /* ───────── Page ───────── */
 
 export default function ConseilClassePage() {
@@ -949,13 +922,57 @@ export default function ConseilClassePage() {
       );
   }, [enriched, councilRows]);
 
-  const topStudents = useMemo(
-    () =>
-      councilRows
-        .filter((r) => r.general_avg !== null && r.general_avg !== undefined)
-        .slice(0, 3),
-    [councilRows]
-  );
+  const councilTeacherRows = useMemo(() => {
+    const map = new Map<
+      string,
+      {
+        teacherName: string;
+        subjects: Set<string>;
+        signature: string | null;
+      }
+    >();
+
+    subjectStats.forEach((subject) => {
+      const teacherName = String(subject.teacher_name || "").trim();
+      if (!teacherName) return;
+
+      const key = teacherName.toLowerCase();
+      const existing = map.get(key);
+      if (existing) {
+        existing.subjects.add(subject.subject_name);
+        if (!existing.signature && subject.teacher_signature_png) {
+          existing.signature = subject.teacher_signature_png;
+        }
+        return;
+      }
+
+      map.set(key, {
+        teacherName,
+        subjects: new Set([subject.subject_name]),
+        signature: subject.teacher_signature_png || null,
+      });
+    });
+
+    return Array.from(map.values())
+      .map((row) => ({
+        teacherName: row.teacherName,
+        subjectsLabel: Array.from(row.subjects)
+          .sort((a, b) =>
+            a.localeCompare(b, undefined, {
+              sensitivity: "base",
+              numeric: true,
+            })
+          )
+          .join(", "),
+        signature: row.signature,
+      }))
+      .sort((a, b) =>
+        a.teacherName.localeCompare(b.teacherName, undefined, {
+          sensitivity: "base",
+          numeric: true,
+        })
+      );
+  }, [subjectStats]);
 
   const annualMode = useMemo(
     () => councilRows.some((r) => r.annual_avg !== null && r.annual_avg !== undefined),
@@ -1155,25 +1172,6 @@ export default function ConseilClassePage() {
       totalNonAff: rows.filter((r) => !isAff(r)).length,
     };
   }, [councilRows]);
-
-  const topStudent = topStudents[0] || null;
-  const specificSubjects = useMemo(() => {
-    const subjects = enriched?.response.subjects ?? [];
-    const francais = getSubjectScore(topStudent, subjects, ["français", "francais"]);
-    const anglais = getSubjectScore(topStudent, subjects, ["anglais"]);
-    const philo = getSubjectScore(topStudent, subjects, ["philosophie", "philo"]);
-    const allemand = getSubjectScore(topStudent, subjects, ["allemand"]);
-    const espagnol = getSubjectScore(topStudent, subjects, ["espagnol"]);
-
-    return {
-      francais,
-      anglais,
-      philo,
-      allemand,
-      espagnol,
-      allEspLabel: formatSpecificPair(allemand, espagnol),
-    };
-  }, [topStudent, enriched]);
 
   return (
     <>
@@ -1464,7 +1462,7 @@ export default function ConseilClassePage() {
             </div>
 
             <div className="md:col-span-2">
-              <label className="mb-1 block text-xs font-semibold uppercase text-slate-500">Directeur / Président</label>
+              <label className="mb-1 block text-xs font-semibold uppercase text-slate-500">Chef d'établissement / Directeur</label>
               <Input value={chairName} onChange={(e) => setChairName(e.target.value)} />
             </div>
 
@@ -1528,7 +1526,7 @@ export default function ConseilClassePage() {
                   <div className="mt-1"><strong>Date :</strong> {formatDateFR(councilDate)}</div>
                 </div>
                 <div>
-                  <div><strong>Président :</strong> {chairName || institution?.institution_head_name || "—"}</div>
+                  <div><strong>{institution?.institution_head_title || "Directeur"} :</strong> {chairName || institution?.institution_head_name || "—"}</div>
                   <div className="mt-1"><strong>Observation :</strong> {generalObservation || "—"}</div>
                 </div>
               </div>
@@ -1744,62 +1742,6 @@ export default function ConseilClassePage() {
                 </tbody>
               </table>
 
-              <div className="mt-3 grid grid-cols-[1.1fr_0.9fr] gap-3">
-                <div>
-                  <OfficialBand>Majors de la classe</OfficialBand>
-                  <table className="pv-grid-table mt-1">
-                    <thead>
-                      <tr>
-                        <th style={{ width: "8%" }}>No</th>
-                        <th>Nom et prénom</th>
-                        <th style={{ width: "18%" }}>No matricule</th>
-                        <th style={{ width: "18%" }}>Date de naissance</th>
-                        <th style={{ width: "12%" }}>Moyenne</th>
-                        <th style={{ width: "10%" }}>Rang</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {topStudent ? (
-                        <tr>
-                          <OfficialTd center>1</OfficialTd>
-                          <OfficialTd strong>{topStudent.full_name}</OfficialTd>
-                          <OfficialTd>{topStudent.matricule || "—"}</OfficialTd>
-                          <OfficialTd>{formatDateFR(topStudent.birthdate || topStudent.birth_date)}</OfficialTd>
-                          <OfficialTd center>{formatNumber(topStudent.general_avg)}</OfficialTd>
-                          <OfficialTd center>{topStudent.rank ?? "—"}</OfficialTd>
-                        </tr>
-                      ) : (
-                        <tr>
-                          <OfficialTd colSpan={6} center>Aucun major disponible.</OfficialTd>
-                        </tr>
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-
-                <div>
-                  <OfficialBand>Matières spécifiques</OfficialBand>
-                  <table className="pv-grid-table mt-1 pv-mini">
-                    <thead>
-                      <tr>
-                        <th>FRANÇAIS</th>
-                        <th>ANGLAIS</th>
-                        <th>PHILO</th>
-                        <th>ALL/ESP</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      <tr>
-                        <OfficialTd center>{formatNumber(specificSubjects.francais)}</OfficialTd>
-                        <OfficialTd center>{formatNumber(specificSubjects.anglais)}</OfficialTd>
-                        <OfficialTd center>{formatNumber(specificSubjects.philo)}</OfficialTd>
-                        <OfficialTd center>{specificSubjects.allEspLabel}</OfficialTd>
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-
               <div className="mt-3">
                 <OfficialBand>Analyse</OfficialBand>
                 <div className="mt-1 grid grid-cols-2 gap-3">
@@ -1808,62 +1750,89 @@ export default function ConseilClassePage() {
                     <div className="pv-ruled p-3 text-[11px] leading-6">{problemsText?.trim() || " "}</div>
                   </div>
                   <div>
-                    <div className="pv-band">Proposition de solutions</div>
+                    <div className="pv-band">Propositions de solution</div>
                     <div className="pv-ruled p-3 text-[11px] leading-6">{solutionsText?.trim() || " "}</div>
                   </div>
                 </div>
               </div>
 
               <div className="mt-3">
-                <OfficialBand>Les membres du conseil</OfficialBand>
-                <div className="border p-3 text-[11px]" style={{ borderColor: "var(--pv-grid)" }}>
-                  <div className="grid grid-cols-2 gap-x-10 gap-y-4">
-                    <ManualMemberField label="Le Président" />
-                    <ManualMemberField label="Le Professeur principal" />
-                    <ManualMemberField label="L’Éducateur" />
-                    <ManualMemberField label="Les Enseignants" />
-                  </div>
+                <OfficialBand>Membres du conseil</OfficialBand>
+                <div className="mt-1 border p-3 text-[11px]" style={{ borderColor: "var(--pv-grid)", background: "var(--pv-soft)" }}>
+                  <div className="mb-2 font-semibold uppercase">Champ manuel à compléter</div>
+                  <div className="pv-line-field" />
                 </div>
+
+                <table className="pv-grid-table mt-2 pv-mini">
+                  <thead>
+                    <tr>
+                      <th style={{ width: "7%" }}>No</th>
+                      <th style={{ width: "34%" }}>Enseignant</th>
+                      <th style={{ width: "33%" }}>Discipline(s)</th>
+                      <th style={{ width: "26%" }}>Émargement</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {councilTeacherRows.length > 0 ? (
+                      councilTeacherRows.map((row, index) => (
+                        <tr key={`${row.teacherName}-${index}`}>
+                          <OfficialTd center>{index + 1}</OfficialTd>
+                          <OfficialTd strong>{row.teacherName}</OfficialTd>
+                          <OfficialTd>{row.subjectsLabel || "—"}</OfficialTd>
+                          <OfficialTd>
+                            <div className="min-h-[36px] flex items-end">
+                              {row.signature ? (
+                                <img src={row.signature} alt="" className="h-5 max-w-full object-contain" />
+                              ) : (
+                                <div className="w-full border-b border-slate-400" />
+                              )}
+                            </div>
+                          </OfficialTd>
+                        </tr>
+                      ))
+                    ) : (
+                      <tr>
+                        <OfficialTd colSpan={4} center>Aucun enseignant trouvé pour cette classe.</OfficialTd>
+                      </tr>
+                    )}
+                    {Array.from({ length: Math.max(0, 2 - councilTeacherRows.length) }).map((_, idx) => (
+                      <tr key={`blank-member-${idx}`}>
+                        <OfficialTd center>{councilTeacherRows.length + idx + 1}</OfficialTd>
+                        <OfficialTd>&nbsp;</OfficialTd>
+                        <OfficialTd>&nbsp;</OfficialTd>
+                        <OfficialTd>
+                          <div className="min-h-[36px] flex items-end">
+                            <div className="w-full border-b border-slate-400" />
+                          </div>
+                        </OfficialTd>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
-            </div>
 
-            <div className="pv-page">
-              <OfficialHeader
-                institution={institution}
-                classLabel={currentClassLabel}
-                title={`PROCES VERBAL DU CONSEIL DE LA CLASSE DE ${String(currentClassLabel || "").toUpperCase()}`}
-              />
-
-              <div className="mt-4 flex min-h-[235mm] flex-col justify-between text-[12px]">
-                <div className="flex justify-end">
-                  <div className="grid w-[42%] grid-cols-2 gap-6">
-                    <BlankLines count={4} />
-                    <BlankLines count={4} />
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 items-end gap-10 pb-8">
+              <div className="mt-auto pt-4">
+                <div className="grid grid-cols-2 items-end gap-10 text-[12px]">
                   <div>
                     <div className="mb-1 font-semibold">Professeur principal</div>
-                    <div className="pv-sign-empty" />
-                    <div className="text-[13px]">{currentHeadTeacher || "—"}</div>
+                    <div className="h-16 border-b border-slate-400" />
+                    <div className="pt-2 text-[13px]">{currentHeadTeacher || "—"}</div>
                   </div>
 
                   <div className="text-right">
-                    <div className="mb-6">
+                    <div className="mb-2">
                       {(institution?.institution_region || "").trim()
                         ? `${institution?.institution_region}, le ${formatDateFR(councilDate)}`
                         : formatDateFR(councilDate)}
                     </div>
-                    <div className="mb-1 font-semibold">
-                      {institution?.institution_head_title || "Le Directeur"}
-                    </div>
-                    <div className="pv-sign-empty" />
-                    <div className="text-[13px]">{chairName || institution?.institution_head_name || "—"}</div>
+                    <div className="mb-1 font-semibold">{institution?.institution_head_title || "Le Directeur"}</div>
+                    <div className="ml-auto h-16 w-full border-b border-slate-400" />
+                    <div className="pt-2 text-[13px]">{chairName || institution?.institution_head_name || "—"}</div>
                   </div>
                 </div>
               </div>
             </div>
+
 
             {annualPeriods.length > 0 && annualRecapRows.length > 0 ? (
               <div className="pv-page">
@@ -2036,25 +2005,6 @@ function OfficialTd({
     >
       {children}
     </td>
-  );
-}
-
-function ManualMemberField({ label }: { label: string }) {
-  return (
-    <div>
-      <div className="font-semibold">{label}</div>
-      <div className="mt-2 pv-line-field" />
-    </div>
-  );
-}
-
-function BlankLines({ count }: { count: number }) {
-  return (
-    <div className="flex flex-col gap-4">
-      {Array.from({ length: count }).map((_, idx) => (
-        <div key={idx} className="border-b border-slate-400 pb-3" />
-      ))}
-    </div>
   );
 }
 
