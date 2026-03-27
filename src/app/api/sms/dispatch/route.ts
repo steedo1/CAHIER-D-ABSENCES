@@ -125,6 +125,15 @@ const WAIT_STATUS = (
 
 const MAX_ATTEMPTS = Number(process.env.SMS_MAX_ATTEMPTS || 5);
 
+const PROVIDER_ACCEPTED_STATUS = (
+  process.env.SMS_PROVIDER_ACCEPTED_STATUS || "accepted_by_orange"
+).trim();
+
+const PROVIDER_ACCEPTED_PARTIAL_STATUS = (
+  process.env.SMS_PROVIDER_ACCEPTED_PARTIAL_STATUS ||
+  "accepted_by_orange_partial"
+).trim();
+
 /* ───────────────── Auth ───────────────── */
 function okAuth(req: Request) {
   const secret = (
@@ -425,6 +434,8 @@ async function run(req: Request) {
     when: new Date().toISOString(),
     method: req.method,
     waitStatus: WAIT_STATUS,
+    providerAcceptedStatus: PROVIDER_ACCEPTED_STATUS,
+    providerAcceptedPartialStatus: PROVIDER_ACCEPTED_PARTIAL_STATUS,
   });
 
   if (!okAuth(req)) {
@@ -484,6 +495,7 @@ async function run(req: Request) {
       ok: true,
       id,
       attempted: 0,
+      accepted_sms_sends: 0,
       sent_sms_sends: 0,
       failed: 0,
       ms,
@@ -523,7 +535,7 @@ async function run(req: Request) {
     return policy;
   }
 
-  let sentSmsSends = 0;
+  let acceptedSmsSends = 0;
   let failed = 0;
   const usedContactIds = new Set<string>();
 
@@ -554,18 +566,19 @@ async function run(req: Request) {
         const policy = await getPolicyCached(institutionId);
         provider = resolveSmsProvider(policy);
         smsEvent = resolveSmsEventFromPayload(core);
+
         console.info("[sms/dispatch] policy_check", {
-  id,
-  qid: n.id,
-  institution_id: institutionId,
-  smsEvent,
-  provider,
-  smsPremiumEnabled: policy.smsPremiumEnabled,
-  smsAbsenceEnabled: policy.smsAbsenceEnabled,
-  smsLateEnabled: policy.smsLateEnabled,
-  smsNotesDigestEnabled: policy.smsNotesDigestEnabled,
-  smsSenderName: policy.smsSenderName,
-});
+          id,
+          qid: n.id,
+          institution_id: institutionId,
+          smsEvent,
+          provider,
+          smsPremiumEnabled: policy.smsPremiumEnabled,
+          smsAbsenceEnabled: policy.smsAbsenceEnabled,
+          smsLateEnabled: policy.smsLateEnabled,
+          smsNotesDigestEnabled: policy.smsNotesDigestEnabled,
+          smsSenderName: policy.smsSenderName,
+        });
 
         if (!policy.smsPremiumEnabled) {
           lastError = "sms_premium_disabled";
@@ -650,7 +663,7 @@ async function run(req: Request) {
 
               usedContactIds.add(best.id);
               successes++;
-              sentSmsSends++;
+              acceptedSmsSends++;
 
               const orangeDebug = extractOrangeDebug(orangeResult);
               const orangeResourceId =
@@ -734,7 +747,7 @@ async function run(req: Request) {
                 });
               }
 
-              console.info("[sms/dispatch] sms_send_ok", {
+              console.info("[sms/dispatch] sms_provider_accept_ok", {
                 id,
                 qid: n.id,
                 profile: shortId(profileId),
@@ -745,6 +758,10 @@ async function run(req: Request) {
                 requestId: orangeDebug.requestId,
                 locationHeader: orangeDebug.locationHeader,
                 resourceId: orangeResourceId,
+                queueStatusWillBe:
+                  failedTargets.length > 0
+                    ? PROVIDER_ACCEPTED_PARTIAL_STATUS
+                    : PROVIDER_ACCEPTED_STATUS,
               });
             } catch (e: any) {
               lastError = String(e?.message || e);
@@ -803,6 +820,18 @@ async function run(req: Request) {
     const latestOrange = latestAccepted?.orange || null;
     const partialFailure = successes > 0 && failedTargets.length > 0;
 
+    const successQueueStatus = partialFailure
+      ? PROVIDER_ACCEPTED_PARTIAL_STATUS
+      : PROVIDER_ACCEPTED_STATUS;
+
+    const failureQueueStatus =
+      isTerminalErrorCode(lastError) || attempts >= MAX_ATTEMPTS
+        ? "error"
+        : WAIT_STATUS;
+
+    const computedFinalStatus =
+      successes > 0 ? successQueueStatus : failureQueueStatus;
+
     const nextMeta = buildMergedMeta(n.meta, {
       sms_dispatch: {
         run_id: id,
@@ -812,14 +841,7 @@ async function run(req: Request) {
         sms_event: smsEvent ?? null,
         provider,
         attempts,
-        final_status:
-          successes > 0
-            ? partialFailure
-              ? "sent_with_partial_failures"
-              : "sent"
-            : isTerminalErrorCode(lastError) || attempts >= MAX_ATTEMPTS
-              ? "error"
-              : WAIT_STATUS,
+        final_status: computedFinalStatus,
         target_profiles: cloneJson(targetProfiles),
         target_profile_count: targetProfiles.length,
         message_preview: message ? message.slice(0, 200) : null,
@@ -843,6 +865,7 @@ async function run(req: Request) {
             orange_http_status: latestOrange.httpStatus || null,
             orange_request_id: latestOrange.requestId || null,
             orange_location_header: latestOrange.locationHeader || null,
+            queue_status: computedFinalStatus,
             delivery_status: null,
             delivery_status_at: null,
             terminal_delivered: null,
@@ -854,8 +877,8 @@ async function run(req: Request) {
       const { error: updErr } = await srv
         .from("notifications_queue")
         .update({
-          status: "sent",
-          sent_at: new Date().toISOString(),
+          status: successQueueStatus,
+          sent_at: null,
           attempts,
           last_error: null,
           meta: nextMeta,
@@ -863,32 +886,29 @@ async function run(req: Request) {
         .eq("id", n.id);
 
       if (updErr) {
-        console.error("[sms/dispatch] queue_update_sent_fail", {
+        console.error("[sms/dispatch] queue_update_provider_accept_fail", {
           id,
           qid: n.id,
           error: updErr.message,
+          queueStatus: successQueueStatus,
         });
       } else {
-        console.info("[sms/dispatch] queue_update_sent_ok", {
+        console.info("[sms/dispatch] queue_update_provider_accept_ok", {
           id,
           qid: n.id,
           attempts,
           successes,
           partialFailure,
+          queueStatus: successQueueStatus,
         });
       }
     } else {
       failed++;
 
-      const statusForError =
-        isTerminalErrorCode(lastError) || attempts >= MAX_ATTEMPTS
-          ? "error"
-          : WAIT_STATUS;
-
       const { error: updErr } = await srv
         .from("notifications_queue")
         .update({
-          status: statusForError,
+          status: failureQueueStatus,
           attempts,
           last_error: s(lastError).slice(0, 300),
           meta: nextMeta,
@@ -900,7 +920,7 @@ async function run(req: Request) {
           id,
           qid: n.id,
           attempts,
-          statusForError,
+          statusForError: failureQueueStatus,
           error: updErr.message,
         });
       } else {
@@ -908,7 +928,7 @@ async function run(req: Request) {
           id,
           qid: n.id,
           attempts,
-          statusForError,
+          statusForError: failureQueueStatus,
           lastError: s(lastError).slice(0, 200),
         });
       }
@@ -939,7 +959,7 @@ async function run(req: Request) {
   console.info("[sms/dispatch] done", {
     id,
     attempted: rows.length,
-    sent_sms_sends: sentSmsSends,
+    accepted_sms_sends: acceptedSmsSends,
     failed,
     ms,
   });
@@ -948,7 +968,8 @@ async function run(req: Request) {
     ok: true,
     id,
     attempted: rows.length,
-    sent_sms_sends: sentSmsSends,
+    accepted_sms_sends: acceptedSmsSends,
+    sent_sms_sends: acceptedSmsSends,
     failed,
     ms,
   });
