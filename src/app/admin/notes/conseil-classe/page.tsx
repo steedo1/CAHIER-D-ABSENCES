@@ -1,9 +1,8 @@
-
 // src/app/admin/notes/conseil-classe/page.tsx
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
-import { Printer, RefreshCw, FileText, School } from "lucide-react";
+import { Printer, RefreshCw, FileText, School, BarChart3, Users, X } from "lucide-react";
 
 /* ───────── UI helpers ───────── */
 
@@ -246,21 +245,13 @@ type SubjectCouncilStat = {
   subject_name: string;
   coeff: number;
   teacher_name: string | null;
+  teacher_signature_png?: string | null;
   noted_count: number;
   not_noted_count: number;
   avg20: number | null;
   gte10: number;
   between85And10: number;
   lt85: number;
-};
-
-type PeriodSnapshot = {
-  id: string;
-  label: string;
-  start_date: string;
-  end_date: string;
-  valuesByStudent: Map<string, number | null>;
-  ranksByStudent: Map<string, number | null>;
 };
 
 /* ───────── Helpers ───────── */
@@ -319,39 +310,6 @@ function clampTo20(value: number | null | undefined): number | null {
   if (n < 0) return 0;
   if (n > 20) return 20;
   return n;
-}
-
-function ratioPct(part: number, total: number): string {
-  if (!total) return "0.00%";
-  return `${((part * 100) / total).toFixed(2)}%`;
-}
-
-function shortPeriodLabel(period: GradePeriod | PeriodSnapshot): string {
-  const source: any = period;
-  return String(source.short_label || source.label || source.code || "").trim() || "Période";
-}
-
-function sortPeriodsByDate<T extends { start_date?: string | null; end_date?: string | null }>(
-  items: T[]
-): T[] {
-  return [...items].sort((a, b) => {
-    const sa = new Date(a.start_date || "").getTime();
-    const sb = new Date(b.start_date || "").getTime();
-    if (Number.isFinite(sa) && Number.isFinite(sb) && sa !== sb) return sa - sb;
-    const ea = new Date(a.end_date || "").getTime();
-    const eb = new Date(b.end_date || "").getTime();
-    if (Number.isFinite(ea) && Number.isFinite(eb) && ea !== eb) return ea - eb;
-    return 0;
-  });
-}
-
-function chunkArray<T>(items: T[], size: number): T[][] {
-  if (size <= 0) return [items];
-  const chunks: T[][] = [];
-  for (let i = 0; i < items.length; i += size) {
-    chunks.push(items.slice(i, i + size));
-  }
-  return chunks;
 }
 
 function computeCouncilMentions(
@@ -521,24 +479,77 @@ function computeRanksAndStats(res: BulletinResponse | null): EnrichedBulletin | 
   };
 }
 
-function pickSpecificAverage(
-  subjectStats: SubjectCouncilStat[],
-  keywords: string[]
-): string {
-  const matches = subjectStats.filter((s) => {
-    const name = s.subject_name.toLowerCase();
-    return keywords.some((k) => name.includes(k));
-  });
-  if (matches.length === 0) return "—";
-  return matches.map((m) => formatNumber(m.avg20)).join(" / ");
+
+function comparePeriods(a: GradePeriod, b: GradePeriod): number {
+  const aStart = a.start_date || "";
+  const bStart = b.start_date || "";
+  if (aStart !== bStart) return aStart.localeCompare(bStart);
+  const aEnd = a.end_date || "";
+  const bEnd = b.end_date || "";
+  if (aEnd !== bEnd) return aEnd.localeCompare(bEnd);
+  return (a.label || a.short_label || a.code || "").localeCompare(
+    b.label || b.short_label || b.code || "",
+    undefined,
+    { sensitivity: "base", numeric: true }
+  );
 }
 
-function officialMarkColumns(distinction: CouncilMentions["distinction"]) {
-  return {
-    thfe: distinction === "excellence" ? "X" : "",
-    then: distinction === "honour" ? "X" : "",
-    th: distinction === "encouragement" ? "X" : "",
-  };
+function shortPeriodLabel(
+  period:
+    | {
+        code?: string | null;
+        label?: string | null;
+        short_label?: string | null;
+      }
+    | null
+    | undefined,
+  fallbackIndex = 0
+): string {
+  const raw = (period?.short_label || period?.code || period?.label || "").trim();
+  if (!raw) return `T${fallbackIndex + 1}`;
+  const compact = raw
+    .replace(/trimestre/gi, "T")
+    .replace(/semestre/gi, "S")
+    .replace(/période/gi, "P")
+    .replace(/periode/gi, "P")
+    .replace(/\s+/g, " ")
+    .trim();
+  return compact;
+}
+
+function annualDecisionLabel(avg: number | null | undefined): string {
+  if (avg === null || avg === undefined || !Number.isFinite(Number(avg))) return "—";
+  const g = Number(avg);
+  if (g >= 16) return "Excellence";
+  if (g >= 14) return "Tableau d’honneur";
+  if (g >= 12) return "Encouragement";
+  return "—";
+}
+
+function safeLine(value?: string | null): string {
+  const v = String(value ?? "").trim();
+  return v || "................................................";
+}
+
+function getSubjectScore(
+  row: CouncilStudentRow | null | undefined,
+  subjects: BulletinSubject[],
+  names: string[]
+): number | null {
+  if (!row) return null;
+  const lowered = names.map((n) => n.toLowerCase());
+  const nameById = new Map(
+    subjects.map((subject) => [subject.subject_id, String(subject.subject_name || "").toLowerCase()])
+  );
+  for (const cell of row.per_subject || []) {
+    const resolved = nameById.get(cell.subject_id) || "";
+    if (lowered.some((x) => resolved.includes(x))) {
+      if (cell.avg20 !== null && cell.avg20 !== undefined && Number.isFinite(Number(cell.avg20))) {
+        return Number(cell.avg20);
+      }
+    }
+  }
+  return null;
 }
 
 /* ───────── Page ───────── */
@@ -560,7 +571,6 @@ export default function ConseilClassePage() {
 
   const [bulletinRaw, setBulletinRaw] = useState<BulletinResponse | null>(null);
   const [conductSummary, setConductSummary] = useState<ConductSummaryResponse | null>(null);
-  const [periodSnapshots, setPeriodSnapshots] = useState<PeriodSnapshot[]>([]);
 
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -575,6 +585,9 @@ export default function ConseilClassePage() {
   const [problemsText, setProblemsText] = useState("");
   const [solutionsText, setSolutionsText] = useState("");
   const [generalObservation, setGeneralObservation] = useState("");
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [yearPeriodBulletins, setYearPeriodBulletins] = useState<Record<string, EnrichedBulletin>>({});
+  const [yearRecapLoading, setYearRecapLoading] = useState(false);
 
   useEffect(() => {
     const run = async () => {
@@ -668,11 +681,6 @@ export default function ConseilClassePage() {
     return periods.filter((p) => p.academic_year === selectedAcademicYear);
   }, [periods, selectedAcademicYear]);
 
-  const yearPeriodsSorted = useMemo(
-    () => sortPeriodsByDate(filteredPeriods),
-    [filteredPeriods]
-  );
-
   const selectedPeriod = useMemo(
     () => periods.find((p) => p.id === selectedPeriodId) || null,
     [periods, selectedPeriodId]
@@ -686,131 +694,121 @@ export default function ConseilClassePage() {
     setDateTo(p.end_date || "");
   }, [selectedPeriodId, periods]);
 
-  async function fetchPeriodSnapshotsForYear(classId: string, academicYear: string) {
-    const yearPeriods = sortPeriodsByDate(
-      periods.filter((p) => (p.academic_year || "") === academicYear)
-    );
-    if (yearPeriods.length === 0) {
-      setPeriodSnapshots([]);
-      return;
-    }
 
-    const snapshots = await Promise.all(
-      yearPeriods.map(async (p): Promise<PeriodSnapshot | null> => {
-        try {
-          const params = new URLSearchParams();
-          params.set("class_id", classId);
-          params.set("from", p.start_date);
-          params.set("to", p.end_date);
+async function handleLoadCouncilData() {
+  setErrorMsg(null);
 
-          const res = await fetch(`/api/admin/grades/bulletin?${params.toString()}`, {
-            cache: "no-store",
-          });
-          if (!res.ok) return null;
-          const json = (await res.json()) as BulletinResponse;
-          if (!json.ok) return null;
-
-          const enriched = computeRanksAndStats(json);
-          const valuesByStudent = new Map<string, number | null>();
-          const ranksByStudent = new Map<string, number | null>();
-
-          (enriched?.items ?? []).forEach((it) => {
-            valuesByStudent.set(it.student_id, it.general_avg ?? null);
-            ranksByStudent.set(it.student_id, it.rank ?? null);
-          });
-
-          return {
-            id: p.id,
-            label: shortPeriodLabel(p),
-            start_date: p.start_date,
-            end_date: p.end_date,
-            valuesByStudent,
-            ranksByStudent,
-          };
-        } catch (e) {
-          console.warn("[ConseilClasse] snapshot période ignoré", e);
-          return null;
-        }
-      })
-    );
-
-    setPeriodSnapshots(snapshots.filter((x): x is PeriodSnapshot => Boolean(x)));
+  if (!selectedClassId) {
+    setErrorMsg("Veuillez sélectionner une classe.");
+    return;
+  }
+  if (!dateFrom || !dateTo) {
+    setErrorMsg("Veuillez choisir une période.");
+    return;
   }
 
-  async function handleLoadCouncilData() {
-    setErrorMsg(null);
+  try {
+    setLoading(true);
+    setConductSummary(null);
+    setYearPeriodBulletins({});
 
-    if (!selectedClassId) {
-      setErrorMsg("Veuillez sélectionner une classe.");
-      return;
+    const params = new URLSearchParams();
+    params.set("class_id", selectedClassId);
+    params.set("from", dateFrom);
+    params.set("to", dateTo);
+
+    const [resBulletin, resConduct] = await Promise.all([
+      fetch(`/api/admin/grades/bulletin?${params.toString()}`, { cache: "no-store" }),
+      fetch(`/api/admin/conduite/averages?${params.toString()}`, { cache: "no-store" }),
+    ]);
+
+    if (!resBulletin.ok) {
+      const txt = await resBulletin.text().catch(() => "");
+      throw new Error(
+        `Erreur bulletin (${resBulletin.status}) : ${txt || "Impossible de charger les données."}`
+      );
     }
-    if (!dateFrom || !dateTo) {
-      setErrorMsg("Veuillez choisir une période.");
-      return;
+
+    const json = (await resBulletin.json()) as BulletinResponse;
+    if (!json.ok) throw new Error("Réponse bulletin invalide.");
+
+    setBulletinRaw(json);
+
+    if (resConduct.ok) {
+      try {
+        const conductJson = (await resConduct.json()) as ConductSummaryResponse;
+        if (conductJson && Array.isArray(conductJson.items)) {
+          setConductSummary(conductJson);
+        }
+      } catch (err) {
+        console.warn("[ConseilClasse] lecture conduite impossible", err);
+      }
     }
 
-    try {
-      setLoading(true);
-      setConductSummary(null);
-      setPeriodSnapshots([]);
+    if (!headTeacherName) {
+      setHeadTeacherName(json.class?.head_teacher?.display_name || "");
+    }
+    if (!chairName) {
+      setChairName(institution?.institution_head_name || "");
+    }
 
-      const params = new URLSearchParams();
-      params.set("class_id", selectedClassId);
-      params.set("from", dateFrom);
-      params.set("to", dateTo);
+    const sortedPeriods = [...filteredPeriods].sort(comparePeriods);
+    const isLastPeriod =
+      !!selectedPeriodId &&
+      sortedPeriods.length > 0 &&
+      sortedPeriods[sortedPeriods.length - 1]?.id === selectedPeriodId;
 
-      const [resBulletin, resConduct] = await Promise.all([
-        fetch(`/api/admin/grades/bulletin?${params.toString()}`, { cache: "no-store" }),
-        fetch(`/api/admin/conduite/averages?${params.toString()}`, { cache: "no-store" }),
-      ]);
+    if (isLastPeriod && sortedPeriods.length > 0) {
+      setYearRecapLoading(true);
+      try {
+        const entries = await Promise.all(
+          sortedPeriods.map(async (period) => {
+            if (period.id === selectedPeriodId) {
+              return [period.id, computeRanksAndStats(json)] as const;
+            }
 
-      if (!resBulletin.ok) {
-        const txt = await resBulletin.text().catch(() => "");
-        throw new Error(
-          `Erreur bulletin (${resBulletin.status}) : ${txt || "Impossible de charger les données."}`
+            const p = new URLSearchParams();
+            p.set("class_id", selectedClassId);
+            p.set("from", period.start_date);
+            p.set("to", period.end_date);
+
+            try {
+              const res = await fetch(`/api/admin/grades/bulletin?${p.toString()}`, {
+                cache: "no-store",
+              });
+              if (!res.ok) return [period.id, null] as const;
+              const js = (await res.json()) as BulletinResponse;
+              if (!js?.ok) return [period.id, null] as const;
+              return [period.id, computeRanksAndStats(js)] as const;
+            } catch (err) {
+              console.warn("[ConseilClasse] bulletin période ignoré", period.id, err);
+              return [period.id, null] as const;
+            }
+          })
         );
-      }
 
-      const json = (await resBulletin.json()) as BulletinResponse;
-      if (!json.ok) throw new Error("Réponse bulletin invalide.");
-
-      setBulletinRaw(json);
-
-      if (resConduct.ok) {
-        try {
-          const conductJson = (await resConduct.json()) as ConductSummaryResponse;
-          if (conductJson && Array.isArray(conductJson.items)) {
-            setConductSummary(conductJson);
-          }
-        } catch (err) {
-          console.warn("[ConseilClasse] lecture conduite impossible", err);
-        }
+        const map: Record<string, EnrichedBulletin> = {};
+        entries.forEach(([id, data]) => {
+          if (data) map[id] = data;
+        });
+        setYearPeriodBulletins(map);
+      } finally {
+        setYearRecapLoading(false);
       }
-
-      if (!headTeacherName) {
-        setHeadTeacherName(json.class?.head_teacher?.display_name || "");
-      }
-      if (!chairName) {
-        setChairName(institution?.institution_head_name || "");
-      }
-
-      const annualYear =
-        selectedAcademicYear ||
-        json.class?.academic_year ||
-        selectedPeriod?.academic_year ||
-        "";
-      if (annualYear) {
-        await fetchPeriodSnapshotsForYear(selectedClassId, annualYear);
-      }
-    } catch (e: any) {
-      console.error(e);
-      setErrorMsg(e?.message || "Erreur lors du chargement des données du conseil.");
-    } finally {
-      setLoading(false);
+    } else {
+      setYearPeriodBulletins({});
     }
-  }
 
-  const enriched = useMemo(() => computeRanksAndStats(bulletinRaw), [bulletinRaw]);
+    setPreviewOpen(true);
+  } catch (e: any) {
+    console.error(e);
+    setErrorMsg(e?.message || "Erreur lors du chargement des données du conseil.");
+  } finally {
+    setLoading(false);
+  }
+}
+
+const enriched = useMemo(() => computeRanksAndStats(bulletinRaw), [bulletinRaw]);
 
   const conductByStudentId = useMemo(() => {
     const map = new Map<string, ConductItem>();
@@ -908,7 +906,6 @@ export default function ConseilClassePage() {
       highest: enriched?.stats.highest ?? null,
       lowest: enriched?.stats.lowest ?? null,
       above10: validGeneral.filter((v) => v >= 10).length,
-      between85And10: validGeneral.filter((v) => v >= 8.5 && v < 10).length,
       below85: validGeneral.filter((v) => v < 8.5).length,
       annualClassAvg: annualVals.length
         ? round2(annualVals.reduce((a, b) => a + b, 0) / annualVals.length)
@@ -925,50 +922,56 @@ export default function ConseilClassePage() {
     };
   }, [councilRows, enriched]);
 
-  const subjectStats = useMemo<SubjectCouncilStat[]>(() => {
-    const subjects = enriched?.response.subjects ?? [];
-    const effectif = councilRows.length;
 
-    return subjects
-      .map((subject) => {
-        const values = councilRows
-          .map((row) => {
-            const cell = row.per_subject?.find((ps) => ps.subject_id === subject.subject_id);
-            return cell?.avg20 ?? null;
-          })
-          .filter((v): v is number => v !== null && v !== undefined && Number.isFinite(v));
+const subjectStats = useMemo<SubjectCouncilStat[]>(() => {
+  const subjects = enriched?.response.subjects ?? [];
+  const effectif = councilRows.length;
 
-        let teacher_name: string | null = null;
-        for (const row of councilRows) {
+  return subjects
+    .map((subject) => {
+      const values = councilRows
+        .map((row) => {
           const cell = row.per_subject?.find((ps) => ps.subject_id === subject.subject_id);
-          if (cell?.teacher_name) {
-            teacher_name = cell.teacher_name;
-            break;
-          }
-        }
-
-        return {
-          subject_id: subject.subject_id,
-          subject_name: subject.subject_name,
-          coeff: Number(subject.coeff_bulletin ?? 0),
-          teacher_name,
-          noted_count: values.length,
-          not_noted_count: Math.max(0, effectif - values.length),
-          avg20: values.length
-            ? round2(values.reduce((a, b) => a + b, 0) / values.length)
-            : null,
-          gte10: values.filter((v) => v >= 10).length,
-          between85And10: values.filter((v) => v >= 8.5 && v < 10).length,
-          lt85: values.filter((v) => v < 8.5).length,
-        };
-      })
-      .sort((a, b) =>
-        a.subject_name.localeCompare(b.subject_name, undefined, {
-          sensitivity: "base",
-          numeric: true,
+          return cell?.avg20 ?? null;
         })
-      );
-  }, [enriched, councilRows]);
+        .filter((v): v is number => v !== null && v !== undefined && Number.isFinite(v));
+
+      let teacher_name: string | null = null;
+      let teacher_signature_png: string | null = null;
+      for (const row of councilRows) {
+        const cell = row.per_subject?.find((ps) => ps.subject_id === subject.subject_id);
+        if (cell?.teacher_name && !teacher_name) {
+          teacher_name = cell.teacher_name;
+        }
+        if (cell?.teacher_signature_png && !teacher_signature_png) {
+          teacher_signature_png = cell.teacher_signature_png;
+        }
+      }
+
+      return {
+        subject_id: subject.subject_id,
+        subject_name: subject.subject_name,
+        coeff: Number(subject.coeff_bulletin ?? 0),
+        teacher_name,
+        teacher_signature_png,
+        noted_count: values.length,
+        not_noted_count: Math.max(0, effectif - values.length),
+        avg20: values.length
+          ? round2(values.reduce((a, b) => a + b, 0) / values.length)
+          : null,
+        gte10: values.filter((v) => v >= 10).length,
+        between85And10: values.filter((v) => v >= 8.5 && v < 10).length,
+        lt85: values.filter((v) => v < 8.5).length,
+      };
+    })
+    .sort((a, b) =>
+      a.subject_name.localeCompare(b.subject_name, undefined, {
+        sensitivity: "base",
+        numeric: true,
+      })
+    );
+}, [enriched, councilRows]);
+
 
   const topStudents = useMemo(
     () =>
@@ -982,6 +985,160 @@ export default function ConseilClassePage() {
     () => councilRows.some((r) => r.annual_avg !== null && r.annual_avg !== undefined),
     [councilRows]
   );
+
+
+const sortedAcademicPeriods = useMemo(
+  () => [...filteredPeriods].sort(comparePeriods),
+  [filteredPeriods]
+);
+
+const isLastSelectedPeriod = useMemo(() => {
+  if (!selectedPeriodId) return false;
+  if (sortedAcademicPeriods.length === 0) return annualMode;
+  return sortedAcademicPeriods[sortedAcademicPeriods.length - 1]?.id === selectedPeriodId;
+}, [selectedPeriodId, sortedAcademicPeriods, annualMode]);
+
+const annualPeriods = useMemo(
+  () => (isLastSelectedPeriod ? sortedAcademicPeriods : []),
+  [isLastSelectedPeriod, sortedAcademicPeriods]
+);
+
+const annualRecapRows = useMemo(() => {
+  if (!isLastSelectedPeriod || annualPeriods.length === 0) return [];
+
+  const currentMap = new Map<string, CouncilStudentRow>(
+    councilRows.map((row) => [row.student_id, row] as [string, CouncilStudentRow])
+  );
+  const base = new Map<
+    string,
+    {
+      student_id: string;
+      full_name: string;
+      matricule: string | null;
+      birthdate: string | null;
+      annual_avg: number | null;
+      annual_rank: number | null;
+    }
+  >();
+
+  annualPeriods.forEach((period) => {
+    const bulletin = yearPeriodBulletins[period.id];
+    bulletin?.items?.forEach((item) => {
+      const existing = base.get(item.student_id);
+      const rowCurrent = currentMap.get(item.student_id);
+      base.set(item.student_id, {
+        student_id: item.student_id,
+        full_name: item.full_name,
+        matricule: item.matricule,
+        birthdate: item.birthdate || item.birth_date || existing?.birthdate || null,
+        annual_avg:
+          rowCurrent?.annual_avg ??
+          item.annual_avg ??
+          existing?.annual_avg ??
+          null,
+        annual_rank:
+          rowCurrent?.annual_rank ??
+          item.annual_rank ??
+          existing?.annual_rank ??
+          null,
+      });
+    });
+  });
+
+  const rows = Array.from(base.values()).map((baseRow) => {
+    const periods = annualPeriods.map((period) => {
+      const item =
+        yearPeriodBulletins[period.id]?.items?.find((x) => x.student_id === baseRow.student_id) ||
+        null;
+      return {
+        period_id: period.id,
+        label: shortPeriodLabel(period),
+        avg: item?.general_avg ?? null,
+        rank: item?.rank ?? null,
+      };
+    });
+
+    const validAvgs = periods
+      .map((p) => p.avg)
+      .filter((v): v is number => v !== null && v !== undefined && Number.isFinite(v));
+
+    const annual_avg =
+      baseRow.annual_avg !== null && baseRow.annual_avg !== undefined
+        ? Number(baseRow.annual_avg)
+        : validAvgs.length
+        ? round2(validAvgs.reduce((a, b) => a + b, 0) / validAvgs.length)
+        : null;
+
+    return {
+      ...baseRow,
+      periods,
+      annual_avg,
+      annual_rank: baseRow.annual_rank,
+    };
+  });
+
+  const withAnnual = rows.filter(
+    (row) => row.annual_avg !== null && row.annual_avg !== undefined && Number.isFinite(row.annual_avg)
+  );
+  const sorted = [...withAnnual].sort((a, b) => Number(b.annual_avg) - Number(a.annual_avg));
+  let lastScore: number | null = null;
+  let lastRank = 0;
+  const rankMap = new Map<string, number>();
+  sorted.forEach((row, idx) => {
+    const score = Number(row.annual_avg ?? 0);
+    if (lastScore === null || score !== lastScore) {
+      lastRank = idx + 1;
+      lastScore = score;
+    }
+    rankMap.set(row.student_id, lastRank);
+  });
+
+  return rows
+    .map((row) => ({
+      ...row,
+      annual_rank:
+        row.annual_rank !== null && row.annual_rank !== undefined
+          ? row.annual_rank
+          : rankMap.get(row.student_id) ?? null,
+    }))
+    .sort((a, b) => {
+      const rankA =
+        a.annual_rank !== null && a.annual_rank !== undefined ? Number(a.annual_rank) : Number.POSITIVE_INFINITY;
+      const rankB =
+        b.annual_rank !== null && b.annual_rank !== undefined ? Number(b.annual_rank) : Number.POSITIVE_INFINITY;
+      if (rankA !== rankB) return rankA - rankB;
+
+      const avgA = a.annual_avg !== null && a.annual_avg !== undefined ? Number(a.annual_avg) : -Infinity;
+      const avgB = b.annual_avg !== null && b.annual_avg !== undefined ? Number(b.annual_avg) : -Infinity;
+      if (avgB !== avgA) return avgB - avgA;
+
+      return a.full_name.localeCompare(b.full_name, undefined, {
+        sensitivity: "base",
+        numeric: true,
+      });
+    });
+}, [isLastSelectedPeriod, annualPeriods, yearPeriodBulletins, councilRows]);
+
+const annualRecapStats = useMemo(() => {
+  const vals = annualRecapRows
+    .map((row) => row.annual_avg)
+    .filter((v): v is number => v !== null && v !== undefined && Number.isFinite(v));
+
+  return {
+    effectif: annualRecapRows.length,
+    classAvg: vals.length ? round2(vals.reduce((a, b) => a + b, 0) / vals.length) : null,
+    highest: vals.length ? Math.max(...vals) : null,
+    lowest: vals.length ? Math.min(...vals) : null,
+    excellence: annualRecapRows.filter((row) => (row.annual_avg ?? -Infinity) >= 16).length,
+    honour: annualRecapRows.filter(
+      (row) => (row.annual_avg ?? -Infinity) >= 14 && (row.annual_avg ?? -Infinity) < 16
+    ).length,
+    encouragement: annualRecapRows.filter(
+      (row) => (row.annual_avg ?? -Infinity) >= 12 && (row.annual_avg ?? -Infinity) < 14
+    ).length,
+  };
+}, [annualRecapRows]);
+
 
   const currentClass = useMemo(
     () => classes.find((c) => c.id === selectedClassId) || null,
@@ -1000,1107 +1157,843 @@ export default function ConseilClassePage() {
   const currentHeadTeacher =
     headTeacherName || bulletinRaw?.class?.head_teacher?.display_name || "—";
 
-  const currentPeriodLabel = periodTitle(bulletinRaw?.period || selectedPeriod);
 
-  const isLastPeriodOfYear = useMemo(() => {
-    if (!selectedPeriod) return false;
-    const last = yearPeriodsSorted[yearPeriodsSorted.length - 1];
-    return Boolean(last && last.id === selectedPeriod.id);
-  }, [selectedPeriod, yearPeriodsSorted]);
+const currentPeriodLabel = periodTitle(bulletinRaw?.period || selectedPeriod);
 
-  const annualSheetEnabled = isLastPeriodOfYear;
+const summaryCounts = useMemo(() => {
+  const rows = councilRows;
+  const girls = rows.filter((r) => normalizeSex(r.sex || r.gender || null) === "F");
+  const boys = rows.filter((r) => normalizeSex(r.sex || r.gender || null) === "M");
+  const isRep = (r: CouncilStudentRow) => !!(r.is_repeater);
+  const isAff = (r: CouncilStudentRow) => !!(r.is_affecte ?? r.is_assigned);
 
-  const studentPopulationStats = useMemo(() => {
-    const isAssigned = (r: CouncilStudentRow) => Boolean(r.is_assigned ?? r.is_affecte);
-    const isRepeater = (r: CouncilStudentRow) => Boolean(r.is_repeater);
+  return {
+    girls: girls.length,
+    boys: boys.length,
+    total: rows.length,
+    girlsRep: girls.filter(isRep).length,
+    boysRep: boys.filter(isRep).length,
+    totalRep: rows.filter(isRep).length,
+    girlsAff: girls.filter(isAff).length,
+    boysAff: boys.filter(isAff).length,
+    totalAff: rows.filter(isAff).length,
+    girlsNonAff: girls.filter((r) => !isAff(r)).length,
+    boysNonAff: boys.filter((r) => !isAff(r)).length,
+    totalNonAff: rows.filter((r) => !isAff(r)).length,
+  };
+}, [councilRows]);
 
-    const totalRepeaters = councilRows.filter(isRepeater).length;
-    const girlsRepeaters = councilRows.filter(
-      (r) => isRepeater(r) && normalizeSex(r.sex || r.gender || null) === "F"
-    ).length;
-    const boysRepeaters = councilRows.filter(
-      (r) => isRepeater(r) && normalizeSex(r.sex || r.gender || null) === "M"
-    ).length;
+const topStudent = topStudents[0] || null;
+const specificSubjects = useMemo(
+  () => ({
+    francais: getSubjectScore(topStudent, enriched?.response.subjects ?? [], ["français", "francais"]),
+    anglais: getSubjectScore(topStudent, enriched?.response.subjects ?? [], ["anglais"]),
+    philo: getSubjectScore(topStudent, enriched?.response.subjects ?? [], ["philosophie", "philo"]),
+    allesp:
+      getSubjectScore(topStudent, enriched?.response.subjects ?? [], ["allemand"]) ??
+      getSubjectScore(topStudent, enriched?.response.subjects ?? [], ["espagnol"]),
+  }),
+  [topStudent, enriched]
+);
 
-    const totalAssigned = councilRows.filter(isAssigned).length;
-    const girlsAssigned = councilRows.filter(
-      (r) => isAssigned(r) && normalizeSex(r.sex || r.gender || null) === "F"
-    ).length;
-    const boysAssigned = councilRows.filter(
-      (r) => isAssigned(r) && normalizeSex(r.sex || r.gender || null) === "M"
-    ).length;
+const page2SubjectStats = subjectStats;
 
-    const totalNonAssigned = Math.max(0, councilRows.length - totalAssigned);
-    const girlsNonAssigned = Math.max(0, classStats.girls - girlsAssigned);
-    const boysNonAssigned = Math.max(0, classStats.boys - boysAssigned);
-
-    return {
-      girls: classStats.girls,
-      boys: classStats.boys,
-      total: councilRows.length,
-      girlsRepeaters,
-      boysRepeaters,
-      totalRepeaters,
-      girlsAssigned,
-      boysAssigned,
-      totalAssigned,
-      girlsNonAssigned,
-      boysNonAssigned,
-      totalNonAssigned,
-    };
-  }, [councilRows, classStats]);
-
-  const specificSubjects = useMemo(
-    () => [
-      { label: "FRANÇAIS", value: pickSpecificAverage(subjectStats, ["français", "francais"]) },
-      { label: "ANGLAIS", value: pickSpecificAverage(subjectStats, ["anglais", "english"]) },
-      { label: "PHILO", value: pickSpecificAverage(subjectStats, ["philo", "philosophie"]) },
-      {
-        label: "ALLESP",
-        value: pickSpecificAverage(subjectStats, ["allemand", "espagnol", "espagnol", "esp"]),
-      },
-    ],
-    [subjectStats]
-  );
-
-  const annualRecapRows = useMemo(() => {
-    if (!annualSheetEnabled) return [];
-
-    const orderedSnapshots = sortPeriodsByDate(periodSnapshots);
-
-    const baseRows = councilRows.map((row) => {
-      const periods = orderedSnapshots.map((snap) => ({
-        id: snap.id,
-        label: snap.label,
-        avg: snap.valuesByStudent.get(row.student_id) ?? null,
-        rank: snap.ranksByStudent.get(row.student_id) ?? null,
-      }));
-
-      const annualFromApi =
-        row.annual_avg !== null && row.annual_avg !== undefined && Number.isFinite(Number(row.annual_avg))
-          ? Number(row.annual_avg)
-          : null;
-
-      const periodVals = periods
-        .map((p) => p.avg)
-        .filter((v): v is number => v !== null && v !== undefined && Number.isFinite(Number(v)))
-        .map((v) => Number(v));
-
-      const annualFallback = periodVals.length
-        ? round2(periodVals.reduce((a, b) => a + b, 0) / periodVals.length)
-        : null;
-
-      return {
-        student_id: row.student_id,
-        full_name: row.full_name,
-        matricule: row.matricule,
-        current_avg: row.general_avg ?? null,
-        current_rank: row.rank ?? null,
-        annual_avg: annualFromApi ?? annualFallback,
-        annual_rank:
-          row.annual_rank !== null && row.annual_rank !== undefined && Number.isFinite(Number(row.annual_rank))
-            ? Number(row.annual_rank)
-            : null,
-        periods,
-      };
-    });
-
-    const rankable = [...baseRows]
-      .filter((row) => row.annual_avg !== null && row.annual_avg !== undefined && Number.isFinite(Number(row.annual_avg)))
-      .sort((a, b) => Number(b.annual_avg ?? -Infinity) - Number(a.annual_avg ?? -Infinity));
-
-    let lastScore: number | null = null;
-    let lastRank = 0;
-    const fallbackRankByStudent = new Map<string, number>();
-
-    rankable.forEach((row, idx) => {
-      const score = Number(row.annual_avg ?? 0);
-      if (lastScore === null || score !== lastScore) {
-        lastRank = idx + 1;
-        lastScore = score;
+return (
+  <>
+    <style jsx global>{`
+      :root {
+        --pv-ink: #0f274f;
+        --pv-grid: #9fb0c8;
+        --pv-head: #dfe6ef;
+        --pv-band: #7184a3;
+        --pv-soft: #f7f9fc;
       }
-      fallbackRankByStudent.set(row.student_id, lastRank);
-    });
 
-    return baseRows.map((row) => ({
-      ...row,
-      annual_rank: row.annual_rank ?? fallbackRankByStudent.get(row.student_id) ?? null,
-    }));
-  }, [annualSheetEnabled, councilRows, periodSnapshots]);
+      .pv-screen-wrap {
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 16px;
+      }
 
-  const annualSheetStats = useMemo(() => {
-    if (!annualSheetEnabled) return null;
+      .pv-page {
+        width: 210mm;
+        min-height: 297mm;
+        padding: 8mm 8mm 9mm;
+        box-sizing: border-box;
+        background: #fff;
+        color: #10233f;
+        font-family: Arial, Helvetica, sans-serif;
+        box-shadow: 0 10px 30px rgba(15, 39, 79, 0.12);
+        page-break-after: always;
+        break-after: page;
+      }
 
-    const annualRows = annualRecapRows
-      .map((row) => {
-        const annualAvg = row.annual_avg;
-        const mentions = computeCouncilMentions(annualAvg, null);
-        return { annualAvg, mentions };
-      })
-      .filter(
-        (row): row is { annualAvg: number; mentions: CouncilMentions } =>
-          row.annualAvg !== null && row.annualAvg !== undefined && Number.isFinite(Number(row.annualAvg))
-      );
+      .pv-page:last-of-type {
+        page-break-after: auto;
+        break-after: auto;
+      }
 
-    const effectif = annualRows.length;
-    const annualVals = annualRows.map((row) => Number(row.annualAvg));
+      .pv-page.compact {
+        padding-top: 6mm;
+      }
 
-    return {
-      effectif,
-      above10: annualVals.filter((v) => v >= 10).length,
-      between85And10: annualVals.filter((v) => v >= 8.5 && v < 10).length,
-      below85: annualVals.filter((v) => v < 8.5).length,
-      lowest: annualVals.length ? Math.min(...annualVals) : null,
-      highest: annualVals.length ? Math.max(...annualVals) : null,
-      classAvg: annualVals.length
-        ? round2(annualVals.reduce((a, b) => a + b, 0) / annualVals.length)
-        : null,
-      excellence: annualRows.filter((row) => row.mentions.distinction === "excellence").length,
-      honour: annualRows.filter((row) => row.mentions.distinction === "honour").length,
-      encouragement: annualRows.filter((row) => row.mentions.distinction === "encouragement").length,
-      warningWork: annualRows.filter((row) => row.mentions.sanction === "warningWork").length,
-      blameWork: annualRows.filter((row) => row.mentions.sanction === "blameWork").length,
-      warningConduct: 0,
-      blameConduct: 0,
-    };
-  }, [annualSheetEnabled, annualRecapRows]);
+      .pv-grid-table {
+        width: 100%;
+        border-collapse: collapse;
+        table-layout: fixed;
+        font-size: 11px;
+      }
 
-  const firstListChunk = useMemo(() => councilRows.slice(0, 16), [councilRows]);
-  const continuationListChunks = useMemo(
-    () => chunkArray(councilRows.slice(16), 22),
-    [councilRows]
-  );
+      .pv-grid-table th,
+      .pv-grid-table td {
+        border: 1px solid var(--pv-grid);
+        padding: 4px 5px;
+        vertical-align: middle;
+        word-break: break-word;
+      }
 
-  return (
-    <>
-      <style jsx global>{`
-        @media print {
-          @page {
-            size: A4 portrait;
-            margin: 8mm;
-          }
+      .pv-grid-table th {
+        background: var(--pv-head);
+        text-align: center;
+        font-weight: 700;
+      }
 
-          html,
-          body {
-            background: #ffffff !important;
-            -webkit-print-color-adjust: exact;
-            print-color-adjust: exact;
-          }
+      .pv-band {
+        background: var(--pv-band);
+        color: #fff;
+        font-weight: 700;
+        padding: 5px 8px;
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.02em;
+      }
 
-          body * {
-            visibility: hidden !important;
-          }
+      .pv-mini {
+        font-size: 10px;
+      }
 
-          .cc-preview-shell,
-          .cc-preview-shell * {
-            visibility: visible !important;
-          }
+      .pv-center {
+        text-align: center;
+      }
 
-          .cc-preview-shell {
-            position: static !important;
-            inset: auto !important;
-            overflow: visible !important;
-            background: #ffffff !important;
-            padding: 0 !important;
-            margin: 0 !important;
-          }
+      .pv-right {
+        text-align: right;
+      }
 
-          .screen-only {
-            display: none !important;
-          }
+      .pv-no-shadow {
+        box-shadow: none;
+      }
 
-          .cc-page {
-            width: auto !important;
-            min-height: auto !important;
-            box-shadow: none !important;
-            margin: 0 !important;
-            page-break-after: always;
-            break-after: page;
-          }
+      .pv-ruled {
+        min-height: 118px;
+        border: 1px solid var(--pv-grid);
+        background:
+          linear-gradient(#ffffff, #ffffff) padding-box,
+          repeating-linear-gradient(
+            to bottom,
+            transparent 0,
+            transparent 23px,
+            #d3dae5 23px,
+            #d3dae5 24px
+          );
+      }
 
-          .cc-page:last-child {
-            page-break-after: auto;
-            break-after: auto;
-          }
+      .pv-sign-line {
+        min-height: 28px;
+        border-bottom: 1px solid #7e8ea8;
+      }
 
-          .cc-table,
-          .cc-table tr,
-          .cc-table td,
-          .cc-table th {
-            page-break-inside: avoid;
-            break-inside: avoid;
-          }
+      .pv-sign-empty {
+        min-height: 120px;
+      }
+
+      .preview-overlay {
+        background: #dfe3ea;
+      }
+
+      .preview-overlay .pv-page {
+        margin: 0 auto;
+      }
+
+      @media print {
+        @page {
+          size: A4 portrait;
+          margin: 4mm;
         }
 
-        @media screen {
-          .cc-page {
-            width: min(100%, 210mm);
-            min-height: 297mm;
-          }
+        html,
+        body {
+          background: #fff !important;
+          -webkit-print-color-adjust: exact;
+          print-color-adjust: exact;
         }
-      `}</style>
 
-      <div className="cc-preview-shell fixed inset-0 z-[9999] overflow-auto bg-slate-100 print:static print:inset-auto print:z-auto print:overflow-visible">
-        <div className="mx-auto flex max-w-7xl flex-col gap-4 p-4 md:p-6 print:max-w-none print:p-0">
-        <div className="screen-only flex flex-col gap-3 rounded-3xl border border-slate-200 bg-gradient-to-r from-emerald-50 to-white p-5 shadow-sm">
-          <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-            <div>
-              <div className="mb-1 inline-flex items-center gap-2 rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-700">
-                <FileText className="h-3.5 w-3.5" />
-                Conseil de classe
-              </div>
-              <h1 className="text-xl font-semibold text-slate-900">
-                Procès-verbal du conseil de classe
-              </h1>
-              <p className="text-sm text-slate-600">
-                Version mise à jour : mise en page officielle + fiche complémentaire annuelle
-                ajoutée au conseil du dernier trimestre.
-              </p>
+        body * {
+          visibility: hidden !important;
+        }
+
+        .preview-overlay,
+        .preview-overlay * {
+          visibility: visible !important;
+        }
+
+        .preview-overlay {
+          position: static !important;
+          inset: auto !important;
+          overflow: visible !important;
+          background: transparent !important;
+          padding: 0 !important;
+        }
+
+        .preview-actions,
+        .screen-only {
+          display: none !important;
+        }
+
+        .pv-page {
+          box-shadow: none !important;
+          margin: 0 auto !important;
+          page-break-after: always;
+          break-after: page;
+        }
+
+        .pv-page:last-of-type {
+          page-break-after: auto;
+          break-after: auto;
+        }
+      }
+    `}</style>
+
+    <div className="pv-screen-wrap screen-only flex flex-col gap-4">
+      <div className="rounded-3xl border border-slate-200 bg-gradient-to-r from-emerald-50 to-white p-5 shadow-sm">
+        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <div>
+            <div className="mb-1 inline-flex items-center gap-2 rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-700">
+              <FileText className="h-3.5 w-3.5" />
+              Conseil de classe
             </div>
-
-            <div className="flex flex-wrap gap-2">
-              <Button
-                type="button"
-                variant="ghost"
-                onClick={handleLoadCouncilData}
-                disabled={loading || !selectedClassId}
-              >
-                <RefreshCw className="h-4 w-4" />
-                Recharger
-              </Button>
-
-              <Button
-                type="button"
-                onClick={() => window.print()}
-                disabled={!bulletinRaw || councilRows.length === 0}
-              >
-                <Printer className="h-4 w-4" />
-                Imprimer
-              </Button>
-            </div>
+            <h1 className="text-xl font-semibold text-slate-900">Procès-verbal du conseil de classe</h1>
+            <p className="text-sm text-slate-600">
+              Modèle officiel avec logo, membres du conseil, émargement et fiche annuelle de fin d’année.
+            </p>
           </div>
 
-          <div className="grid gap-3 md:grid-cols-6">
-            <div className="md:col-span-2">
-              <label className="mb-1 block text-xs font-semibold uppercase text-slate-500">
-                Année scolaire
-              </label>
-              <Select
-                value={selectedAcademicYear}
-                onChange={(e) => {
-                  setSelectedAcademicYear(e.target.value);
-                  setSelectedPeriodId("");
-                  setDateFrom("");
-                  setDateTo("");
-                }}
-                disabled={periodsLoading || academicYears.length === 0}
-              >
-                <option value="">
-                  {academicYears.length === 0 ? "Non configuré" : "Toutes années…"}
-                </option>
-                {academicYears.map((year) => (
-                  <option key={year} value={year}>
-                    {year}
-                  </option>
-                ))}
-              </Select>
-            </div>
-
-            <div className="md:col-span-2">
-              <label className="mb-1 block text-xs font-semibold uppercase text-slate-500">
-                Période
-              </label>
-              <Select
-                value={selectedPeriodId}
-                onChange={(e) => setSelectedPeriodId(e.target.value)}
-                disabled={periodsLoading || filteredPeriods.length === 0}
-              >
-                <option value="">
-                  {filteredPeriods.length === 0 ? "Aucune période" : "Sélectionner…"}
-                </option>
-                {yearPeriodsSorted.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.label || p.short_label || p.code || `${p.start_date} → ${p.end_date}`}
-                  </option>
-                ))}
-              </Select>
-            </div>
-
-            <div className="md:col-span-2">
-              <label className="mb-1 block text-xs font-semibold uppercase text-slate-500">
-                Classe
-              </label>
-              <Select
-                value={selectedClassId}
-                onChange={(e) => setSelectedClassId(e.target.value)}
-                disabled={classesLoading}
-              >
-                <option value="">Sélectionner une classe…</option>
-                {classes.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {(c.label || c.name || "").trim() || c.id}
-                  </option>
-                ))}
-              </Select>
-            </div>
-
-            <div className="md:col-span-2">
-              <label className="mb-1 block text-xs font-semibold uppercase text-slate-500">
-                Du
-              </label>
-              <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
-            </div>
-
-            <div className="md:col-span-2">
-              <label className="mb-1 block text-xs font-semibold uppercase text-slate-500">
-                Au
-              </label>
-              <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
-            </div>
-
-            <div className="md:col-span-2 flex items-end">
-              <Button
-                type="button"
-                className="w-full"
-                onClick={handleLoadCouncilData}
-                disabled={loading || !selectedClassId || !dateFrom || !dateTo}
-              >
-                {loading ? "Chargement…" : "Charger le procès-verbal"}
-              </Button>
-            </div>
-          </div>
-
-          {errorMsg ? (
-            <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
-              {errorMsg}
-            </div>
-          ) : null}
-
-          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-            <div>
-              <label className="mb-1 block text-xs font-semibold uppercase text-slate-500">
-                Date du conseil
-              </label>
-              <Input type="date" value={councilDate} onChange={(e) => setCouncilDate(e.target.value)} />
-            </div>
-
-            <div>
-              <label className="mb-1 block text-xs font-semibold uppercase text-slate-500">
-                Président du conseil
-              </label>
-              <Input value={chairName} onChange={(e) => setChairName(e.target.value)} />
-            </div>
-
-            <div>
-              <label className="mb-1 block text-xs font-semibold uppercase text-slate-500">
-                Professeur principal
-              </label>
-              <Input
-                value={headTeacherName}
-                onChange={(e) => setHeadTeacherName(e.target.value)}
-                placeholder="Nom du professeur principal"
-              />
-            </div>
-
-            <div>
-              <label className="mb-1 block text-xs font-semibold uppercase text-slate-500">
-                Éducateur / Surveillant
-              </label>
-              <Input
-                value={educationOfficerName}
-                onChange={(e) => setEducationOfficerName(e.target.value)}
-                placeholder="Nom"
-              />
-            </div>
-
-            <div className="md:col-span-2 xl:col-span-2">
-              <label className="mb-1 block text-xs font-semibold uppercase text-slate-500">
-                Délégué de classe
-              </label>
-              <Input
-                value={classDelegateName}
-                onChange={(e) => setClassDelegateName(e.target.value)}
-                placeholder="Nom du délégué / représentant"
-              />
-            </div>
-
-            <div className="md:col-span-2 xl:col-span-2">
-              <label className="mb-1 block text-xs font-semibold uppercase text-slate-500">
-                Observation générale
-              </label>
-              <Input
-                value={generalObservation}
-                onChange={(e) => setGeneralObservation(e.target.value)}
-                placeholder="Ex. Classe sérieuse, ensemble satisfaisant, discipline à renforcer…"
-              />
-            </div>
-          </div>
-
-          <div className="grid gap-3 xl:grid-cols-2">
-            <div>
-              <label className="mb-1 block text-xs font-semibold uppercase text-slate-500">
-                Problèmes relevés
-              </label>
-              <Textarea
-                rows={6}
-                value={problemsText}
-                onChange={(e) => setProblemsText(e.target.value)}
-                placeholder="Absences, retards, baisse de niveau, difficultés dans certaines matières…"
-              />
-            </div>
-
-            <div>
-              <label className="mb-1 block text-xs font-semibold uppercase text-slate-500">
-                Propositions de solutions
-              </label>
-              <Textarea
-                rows={6}
-                value={solutionsText}
-                onChange={(e) => setSolutionsText(e.target.value)}
-                placeholder="Renforcement, suivi des parents, tutorat, discipline, remédiation…"
-              />
-            </div>
+          <div className="flex flex-wrap gap-2">
+            <Button type="button" variant="ghost" onClick={handleLoadCouncilData} disabled={loading || !selectedClassId}>
+              <RefreshCw className="h-4 w-4" />
+              Recharger
+            </Button>
+            <Button type="button" variant="ghost" onClick={() => setPreviewOpen(true)} disabled={!bulletinRaw || councilRows.length === 0}>
+              Aperçu
+            </Button>
+            <Button type="button" onClick={() => { if (!previewOpen) setPreviewOpen(true); setTimeout(() => window.print(), 50); }} disabled={!bulletinRaw || councilRows.length === 0}>
+              <Printer className="h-4 w-4" />
+              Imprimer
+            </Button>
           </div>
         </div>
 
-        {!bulletinRaw || councilRows.length === 0 ? (
-          <div className="rounded-3xl border border-dashed border-slate-300 bg-white p-10 text-center shadow-sm">
-            <div className="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-full bg-slate-100">
-              <School className="h-7 w-7 text-slate-500" />
-            </div>
-            <h2 className="text-base font-semibold text-slate-900">
-              Aucun procès-verbal chargé
-            </h2>
-            <p className="mt-1 text-sm text-slate-500">
-              Choisis la classe et la période, puis clique sur{" "}
-              <span className="font-medium">“Charger le procès-verbal”</span>.
-            </p>
+        <div className="mt-4 grid gap-3 md:grid-cols-6">
+          <div className="md:col-span-2">
+            <label className="mb-1 block text-xs font-semibold uppercase text-slate-500">Année scolaire</label>
+            <Select
+              value={selectedAcademicYear}
+              onChange={(e) => {
+                setSelectedAcademicYear(e.target.value);
+                setSelectedPeriodId("");
+                setDateFrom("");
+                setDateTo("");
+              }}
+              disabled={periodsLoading || academicYears.length === 0}
+            >
+              <option value="">{academicYears.length === 0 ? "Non configuré" : "Toutes années…"}</option>
+              {academicYears.map((year) => (
+                <option key={year} value={year}>{year}</option>
+              ))}
+            </Select>
           </div>
-        ) : (
-          <div className="flex flex-col gap-4">
-            <OfficialPage>
-              <OfficialHeader
-                institution={institution}
-                title="PROCES VERBAL DE CONSEIL DE CLASSE"
-                subtitle="COMPTE RENDU"
-              />
-              <OfficialMainTitle
-                title={`PROCES VERBAL DU CONSEIL DE LA CLASSE DE ${String(currentClassLabel).toUpperCase()}`}
-              />
-              <OfficialPopulationSummary
-                stats={studentPopulationStats}
-                classLabel={currentClassLabel}
-                academicYear={currentAcademicYear}
-                periodLabel={currentPeriodLabel}
-                councilDate={formatDateFR(councilDate)}
-              />
 
-              <OfficialSectionBar title="Liste de classe" />
-              <OfficialClassListTable rows={firstListChunk} startIndex={0} />
+          <div className="md:col-span-2">
+            <label className="mb-1 block text-xs font-semibold uppercase text-slate-500">Période</label>
+            <Select
+              value={selectedPeriodId}
+              onChange={(e) => setSelectedPeriodId(e.target.value)}
+              disabled={periodsLoading || filteredPeriods.length === 0}
+            >
+              <option value="">{filteredPeriods.length === 0 ? "Aucune période" : "Sélectionner…"}</option>
+              {filteredPeriods.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.label || p.short_label || p.code || `${p.start_date} → ${p.end_date}`}
+                </option>
+              ))}
+            </Select>
+          </div>
 
-              {continuationListChunks.length === 0 ? (
-                <div className="mt-3">
-                  <OfficialClassStatsBlock classStats={classStats} />
-                </div>
-              ) : null}
-            </OfficialPage>
+          <div className="md:col-span-2">
+            <label className="mb-1 block text-xs font-semibold uppercase text-slate-500">Classe</label>
+            <Select value={selectedClassId} onChange={(e) => setSelectedClassId(e.target.value)} disabled={classesLoading}>
+              <option value="">Sélectionner une classe…</option>
+              {classes.map((c) => (
+                <option key={c.id} value={c.id}>{(c.label || c.name || "").trim() || c.id}</option>
+              ))}
+            </Select>
+          </div>
 
-            {continuationListChunks.map((chunk, chunkIndex) => {
-              const isLastContinuation = chunkIndex === continuationListChunks.length - 1;
-              return (
-                <OfficialPage key={`class-list-cont-${chunkIndex}`}>
-                  {chunkIndex === 0 ? null : (
-                    <div className="mb-2 text-center text-[10px] font-semibold uppercase tracking-wide text-slate-600">
-                      Suite de la liste de classe
-                    </div>
-                  )}
+          <div className="md:col-span-2">
+            <label className="mb-1 block text-xs font-semibold uppercase text-slate-500">Du</label>
+            <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
+          </div>
 
-                  <OfficialSectionBar title="Liste de classe (suite)" />
-                  <OfficialClassListTable rows={chunk} startIndex={16 + chunkIndex * 22} />
+          <div className="md:col-span-2">
+            <label className="mb-1 block text-xs font-semibold uppercase text-slate-500">Au</label>
+            <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
+          </div>
 
-                  {isLastContinuation ? (
-                    <div className="mt-3">
-                      <OfficialClassStatsBlock classStats={classStats} />
-                    </div>
-                  ) : null}
-                </OfficialPage>
-              );
-            })}
+          <div className="md:col-span-2 flex items-end">
+            <Button type="button" className="w-full" onClick={handleLoadCouncilData} disabled={loading || !selectedClassId || !dateFrom || !dateTo}>
+              {loading ? "Chargement…" : "Charger le procès-verbal"}
+            </Button>
+          </div>
 
-            <OfficialPage>
-              <OfficialSectionBar title="Statistiques par discipline" />
-              <div className="overflow-hidden border border-slate-500">
-                <table className="cc-table w-full border-collapse text-[10px]">
+          <div className="md:col-span-2">
+            <label className="mb-1 block text-xs font-semibold uppercase text-slate-500">Date du conseil</label>
+            <Input type="date" value={councilDate} onChange={(e) => setCouncilDate(e.target.value)} />
+          </div>
+
+          <div className="md:col-span-2">
+            <label className="mb-1 block text-xs font-semibold uppercase text-slate-500">Professeur principal</label>
+            <Input value={headTeacherName} onChange={(e) => setHeadTeacherName(e.target.value)} />
+          </div>
+
+          <div className="md:col-span-2">
+            <label className="mb-1 block text-xs font-semibold uppercase text-slate-500">Directeur / Président</label>
+            <Input value={chairName} onChange={(e) => setChairName(e.target.value)} />
+          </div>
+
+          <div className="md:col-span-3">
+            <label className="mb-1 block text-xs font-semibold uppercase text-slate-500">Problèmes de la classe</label>
+            <Textarea rows={5} value={problemsText} onChange={(e) => setProblemsText(e.target.value)} placeholder="Difficultés observées…" />
+          </div>
+
+          <div className="md:col-span-3">
+            <label className="mb-1 block text-xs font-semibold uppercase text-slate-500">Propositions de solutions</label>
+            <Textarea rows={5} value={solutionsText} onChange={(e) => setSolutionsText(e.target.value)} placeholder="Mesures proposées…" />
+          </div>
+        </div>
+
+        {errorMsg ? (
+          <div className="mt-3 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+            {errorMsg}
+          </div>
+        ) : null}
+      </div>
+    </div>
+
+    {previewOpen && bulletinRaw && councilRows.length > 0 ? (
+      <div className="preview-overlay fixed inset-0 z-[80] overflow-y-auto p-2 md:p-6">
+        <div className="preview-actions sticky top-2 z-10 mb-3 flex justify-end gap-2">
+          <Button variant="ghost" type="button" onClick={() => setPreviewOpen(false)}>
+            <X className="h-4 w-4" />
+            Fermer
+          </Button>
+          <Button variant="ghost" type="button" onClick={handleLoadCouncilData} disabled={loading || !selectedClassId}>
+            <RefreshCw className="h-4 w-4" />
+            Recharger
+          </Button>
+          <Button type="button" onClick={() => window.print()}>
+            <Printer className="h-4 w-4" />
+            Imprimer
+          </Button>
+        </div>
+
+        <div className="flex flex-col gap-4 pb-8">
+          <div className="pv-page">
+            <OfficialHeader
+              institution={institution}
+              classLabel={currentClassLabel}
+              title={`PROCES VERBAL DU CONSEIL DE LA CLASSE DE ${String(currentClassLabel || "").toUpperCase()}`}
+            />
+
+            <div className="mt-2 grid grid-cols-3 gap-3 text-[11px]">
+              <div>
+                <div><strong>Prof. principal :</strong> {currentHeadTeacher}</div>
+                <div className="mt-1"><strong>Classe :</strong> {currentClassLabel}</div>
+                <div className="mt-1"><strong>Période :</strong> {currentPeriodLabel}</div>
+              </div>
+              <div className="text-center">
+                <div><strong>Année :</strong> {currentAcademicYear}</div>
+                <div className="mt-1"><strong>Date :</strong> {formatDateFR(councilDate)}</div>
+              </div>
+              <div>
+                <div><strong>Président :</strong> {chairName || institution?.institution_head_name || "—"}</div>
+                <div className="mt-1"><strong>Observation :</strong> {generalObservation || "—"}</div>
+              </div>
+            </div>
+
+            <div className="mt-3">
+              <OfficialBand>Compte rendu</OfficialBand>
+              <table className="pv-grid-table mt-1 pv-mini">
+                <thead>
+                  <tr>
+                    <th></th>
+                    <th>Filles</th>
+                    <th>Garçons</th>
+                    <th>Total</th>
+                    <th>Filles Red.</th>
+                    <th>Garçons Red.</th>
+                    <th>Total Red.</th>
+                    <th>Filles Aff.</th>
+                    <th>Garçons Aff.</th>
+                    <th>Total Aff.</th>
+                    <th>Filles N. Aff.</th>
+                    <th>Garçons N. Aff.</th>
+                    <th>Total N. Aff.</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <OfficialTd strong>Total</OfficialTd>
+                    <OfficialTd center>{summaryCounts.girls}</OfficialTd>
+                    <OfficialTd center>{summaryCounts.boys}</OfficialTd>
+                    <OfficialTd center>{summaryCounts.total}</OfficialTd>
+                    <OfficialTd center>{summaryCounts.girlsRep}</OfficialTd>
+                    <OfficialTd center>{summaryCounts.boysRep}</OfficialTd>
+                    <OfficialTd center>{summaryCounts.totalRep}</OfficialTd>
+                    <OfficialTd center>{summaryCounts.girlsAff}</OfficialTd>
+                    <OfficialTd center>{summaryCounts.boysAff}</OfficialTd>
+                    <OfficialTd center>{summaryCounts.totalAff}</OfficialTd>
+                    <OfficialTd center>{summaryCounts.girlsNonAff}</OfficialTd>
+                    <OfficialTd center>{summaryCounts.boysNonAff}</OfficialTd>
+                    <OfficialTd center>{summaryCounts.totalNonAff}</OfficialTd>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <div className="mt-3">
+              <OfficialBand>Liste de classe</OfficialBand>
+              <table className="pv-grid-table mt-1">
+                <thead>
+                  <tr>
+                    <th style={{ width: "5%" }}>No</th>
+                    <th style={{ width: "32%" }}>Nom et prénom</th>
+                    <th style={{ width: "16%" }}>No Matr.</th>
+                    <th style={{ width: "15%" }}>Date de naissance</th>
+                    <th style={{ width: "9%" }}>Moyenne</th>
+                    <th style={{ width: "7%" }}>Rang</th>
+                    <th style={{ width: "5%" }}>TH+FE</th>
+                    <th style={{ width: "5%" }}>TH+EN</th>
+                    <th style={{ width: "6%" }}>TH</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {councilRows.map((row, index) => (
+                    <tr key={row.student_id}>
+                      <OfficialTd center>{index + 1}</OfficialTd>
+                      <OfficialTd strong>{row.full_name}</OfficialTd>
+                      <OfficialTd>{row.matricule || "—"}</OfficialTd>
+                      <OfficialTd>{formatDateFR(row.birthdate || row.birth_date)}</OfficialTd>
+                      <OfficialTd center>{formatNumber(row.general_avg)}</OfficialTd>
+                      <OfficialTd center>{row.rank ?? "—"}</OfficialTd>
+                      <OfficialTd center>{row.mentions.distinction === "excellence" ? "X" : ""}</OfficialTd>
+                      <OfficialTd center>{row.mentions.distinction === "encouragement" ? "X" : ""}</OfficialTd>
+                      <OfficialTd center>{row.mentions.distinction === "honour" ? "X" : ""}</OfficialTd>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="mt-3 grid grid-cols-[1.35fr_0.95fr] gap-3">
+              <div>
+                <OfficialBand>Statistiques de classe</OfficialBand>
+                <table className="pv-grid-table mt-1 pv-mini">
                   <thead>
-                    <tr className="bg-slate-200">
-                      <OfficialTh>Matière</OfficialTh>
-                      <OfficialTh width="52px">Effectif</OfficialTh>
-                      <OfficialTh width="62px">N &gt;= 10</OfficialTh>
-                      <OfficialTh width="62px">%</OfficialTh>
-                      <OfficialTh width="62px">10 &gt; M &gt;= 8,5</OfficialTh>
-                      <OfficialTh width="62px">%</OfficialTh>
-                      <OfficialTh width="62px">M &lt; 8,5</OfficialTh>
-                      <OfficialTh width="62px">%</OfficialTh>
-                      <OfficialTh width="60px">Moy.</OfficialTh>
-                      <OfficialTh>Enseignant / Emargement</OfficialTh>
+                    <tr>
+                      <th>Effectif classe</th>
+                      <th>Moy ≥ 10<br />Nombre</th>
+                      <th>Moy ≥ 10<br />%</th>
+                      <th>10 &gt; M ≥ 8,5<br />Nombre</th>
+                      <th>10 &gt; M ≥ 8,5<br />%</th>
+                      <th>Moy &lt; 8,5<br />Nombre</th>
+                      <th>Moy &lt; 8,5<br />%</th>
+                      <th>Mini</th>
+                      <th>Maxi</th>
+                      <th>Moy.</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {subjectStats.map((s) => (
-                      <tr key={s.subject_id} className="border-t border-slate-300">
-                        <OfficialTd strong>{s.subject_name}</OfficialTd>
-                        <OfficialTd center>{classStats.effectif}</OfficialTd>
-                        <OfficialTd center>{s.gte10}</OfficialTd>
-                        <OfficialTd center>{ratioPct(s.gte10, classStats.effectif)}</OfficialTd>
-                        <OfficialTd center>{s.between85And10}</OfficialTd>
-                        <OfficialTd center>{ratioPct(s.between85And10, classStats.effectif)}</OfficialTd>
-                        <OfficialTd center>{s.lt85}</OfficialTd>
-                        <OfficialTd center>{ratioPct(s.lt85, classStats.effectif)}</OfficialTd>
-                        <OfficialTd center>{formatNumber(s.avg20)}</OfficialTd>
-                        <OfficialTd>{s.teacher_name || "—"}</OfficialTd>
+                    <tr>
+                      <OfficialTd center>{classStats.effectif}</OfficialTd>
+                      <OfficialTd center>{classStats.above10}</OfficialTd>
+                      <OfficialTd center>
+                        {classStats.effectif ? formatNumber((classStats.above10 * 100) / classStats.effectif) + "%" : "0.00%"}
+                      </OfficialTd>
+                      <OfficialTd center>{Math.max(0, classStats.effectif - classStats.above10 - classStats.below85)}</OfficialTd>
+                      <OfficialTd center>
+                        {classStats.effectif
+                          ? formatNumber((Math.max(0, classStats.effectif - classStats.above10 - classStats.below85) * 100) / classStats.effectif) + "%"
+                          : "0.00%"}
+                      </OfficialTd>
+                      <OfficialTd center>{classStats.below85}</OfficialTd>
+                      <OfficialTd center>
+                        {classStats.effectif ? formatNumber((classStats.below85 * 100) / classStats.effectif) + "%" : "0.00%"}
+                      </OfficialTd>
+                      <OfficialTd center>{formatNumber(classStats.lowest)}</OfficialTd>
+                      <OfficialTd center>{formatNumber(classStats.highest)}</OfficialTd>
+                      <OfficialTd center>{formatNumber(classStats.classAvg)}</OfficialTd>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="flex flex-col gap-3">
+                <div>
+                  <OfficialBand>Distinctions</OfficialBand>
+                  <table className="pv-grid-table mt-1 pv-mini">
+                    <thead>
+                      <tr>
+                        <th>Distinctions</th>
+                        <th style={{ width: "28%" }}>Nombre</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr><OfficialTd>TH</OfficialTd><OfficialTd center>{classStats.honour}</OfficialTd></tr>
+                      <tr><OfficialTd>TH + Encouragements</OfficialTd><OfficialTd center>{classStats.encouragement}</OfficialTd></tr>
+                      <tr><OfficialTd>TH + Félicitations</OfficialTd><OfficialTd center>{classStats.excellence}</OfficialTd></tr>
+                    </tbody>
+                  </table>
+                </div>
+
+                <div>
+                  <OfficialBand>Avertissements et sanctions</OfficialBand>
+                  <table className="pv-grid-table mt-1 pv-mini">
+                    <thead>
+                      <tr>
+                        <th>Avertissement / Travail</th>
+                        <th style={{ width: "28%" }}>Nombre</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr><OfficialTd>Avertissement Travail</OfficialTd><OfficialTd center>{classStats.warningWork}</OfficialTd></tr>
+                      <tr><OfficialTd>Blâme Travail</OfficialTd><OfficialTd center>{classStats.blameWork}</OfficialTd></tr>
+                      <tr><OfficialTd>Avert. Conduite</OfficialTd><OfficialTd center>{classStats.warningConduct}</OfficialTd></tr>
+                      <tr><OfficialTd>Blâme Conduite</OfficialTd><OfficialTd center>{classStats.blameConduct}</OfficialTd></tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="pv-page compact">
+            <OfficialBand>Statistiques par discipline</OfficialBand>
+            <table className="pv-grid-table mt-1 pv-mini">
+              <thead>
+                <tr>
+                  <th style={{ width: "21%" }}>Matière</th>
+                  <th style={{ width: "8%" }}>Effectif</th>
+                  <th style={{ width: "8%" }}>N ≥ 10</th>
+                  <th style={{ width: "8%" }}>%</th>
+                  <th style={{ width: "10%" }}>10 &gt; M ≥ 8,5</th>
+                  <th style={{ width: "8%" }}>%</th>
+                  <th style={{ width: "8%" }}>M &lt; 8,5</th>
+                  <th style={{ width: "8%" }}>%</th>
+                  <th style={{ width: "8%" }}>Moy.</th>
+                  <th style={{ width: "13%" }}>Enseignant / Émargement</th>
+                </tr>
+              </thead>
+              <tbody>
+                {page2SubjectStats.map((s) => (
+                  <tr key={s.subject_id}>
+                    <OfficialTd strong>{s.subject_name}</OfficialTd>
+                    <OfficialTd center>{classStats.effectif}</OfficialTd>
+                    <OfficialTd center>{s.gte10}</OfficialTd>
+                    <OfficialTd center>{classStats.effectif ? formatNumber((s.gte10 * 100) / classStats.effectif) + "%" : "0.00%"}</OfficialTd>
+                    <OfficialTd center>{s.between85And10}</OfficialTd>
+                    <OfficialTd center>{classStats.effectif ? formatNumber((s.between85And10 * 100) / classStats.effectif) + "%" : "0.00%"}</OfficialTd>
+                    <OfficialTd center>{s.lt85}</OfficialTd>
+                    <OfficialTd center>{classStats.effectif ? formatNumber((s.lt85 * 100) / classStats.effectif) + "%" : "0.00%"}</OfficialTd>
+                    <OfficialTd center>{formatNumber(s.avg20)}</OfficialTd>
+                    <OfficialTd>
+                      <div className="min-h-[34px]">
+                        {s.teacher_signature_png ? (
+                          <img src={s.teacher_signature_png} alt="" className="mb-1 h-5 max-w-full object-contain" />
+                        ) : null}
+                        <div>{s.teacher_name || "—"}</div>
+                      </div>
+                    </OfficialTd>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+
+            <div className="mt-3 grid grid-cols-[1.1fr_0.9fr] gap-3">
+              <div>
+                <OfficialBand>Majors de la classe</OfficialBand>
+                <table className="pv-grid-table mt-1">
+                  <thead>
+                    <tr>
+                      <th style={{ width: "8%" }}>No</th>
+                      <th>Nom et prénom</th>
+                      <th style={{ width: "18%" }}>No matricule</th>
+                      <th style={{ width: "18%" }}>Date de naissance</th>
+                      <th style={{ width: "12%" }}>Moyenne</th>
+                      <th style={{ width: "10%" }}>Rang</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {topStudent ? (
+                      <tr>
+                        <OfficialTd center>1</OfficialTd>
+                        <OfficialTd strong>{topStudent.full_name}</OfficialTd>
+                        <OfficialTd>{topStudent.matricule || "—"}</OfficialTd>
+                        <OfficialTd>{formatDateFR(topStudent.birthdate || topStudent.birth_date)}</OfficialTd>
+                        <OfficialTd center>{formatNumber(topStudent.general_avg)}</OfficialTd>
+                        <OfficialTd center>{topStudent.rank ?? "—"}</OfficialTd>
+                      </tr>
+                    ) : (
+                      <tr>
+                        <OfficialTd colSpan={6} center>Aucun major disponible.</OfficialTd>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+
+              <div>
+                <OfficialBand>Matières spécifiques</OfficialBand>
+                <table className="pv-grid-table mt-1 pv-mini">
+                  <thead>
+                    <tr>
+                      <th>Français</th>
+                      <th>Anglais</th>
+                      <th>Philo</th>
+                      <th>All/Esp</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <OfficialTd center>{formatNumber(specificSubjects.francais)}</OfficialTd>
+                      <OfficialTd center>{formatNumber(specificSubjects.anglais)}</OfficialTd>
+                      <OfficialTd center>{formatNumber(specificSubjects.philo)}</OfficialTd>
+                      <OfficialTd center>{formatNumber(specificSubjects.allesp)}</OfficialTd>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div className="mt-3">
+              <OfficialBand>Analyse</OfficialBand>
+              <div className="mt-1 grid grid-cols-2 gap-3">
+                <div>
+                  <div className="pv-band">Problèmes de la classe</div>
+                  <div className="pv-ruled p-3 text-[11px] leading-6">{problemsText?.trim() || "—"}</div>
+                </div>
+                <div>
+                  <div className="pv-band">Proposition de solutions</div>
+                  <div className="pv-ruled p-3 text-[11px] leading-6">{solutionsText?.trim() || "—"}</div>
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-3">
+              <OfficialBand>Les membres du conseil</OfficialBand>
+              <div className="border p-3 text-[11px]" style={{ borderColor: "var(--pv-grid)" }}>
+                <div className="grid grid-cols-2 gap-x-10 gap-y-3">
+                  <MemberLine label="Président / Directeur" value={chairName || institution?.institution_head_name} />
+                  <MemberLine label="Professeur principal" value={currentHeadTeacher} />
+                  <MemberLine label="Éducateur / Surveillant" value={educationOfficerName} />
+                  <MemberLine label="Délégué / Représentant" value={classDelegateName} />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="pv-page">
+            <OfficialHeader
+              institution={institution}
+              classLabel={currentClassLabel}
+              title={`PROCES VERBAL DU CONSEIL DE LA CLASSE DE ${String(currentClassLabel || "").toUpperCase()}`}
+            />
+
+            <div className="mt-4 flex min-h-[235mm] flex-col justify-between text-[12px]">
+              <div className="flex justify-end">
+                <div className="grid w-[42%] grid-cols-2 gap-6">
+                  <BlankLines count={4} />
+                  <BlankLines count={4} />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 items-end gap-10 pb-8">
+                <div>
+                  <div className="mb-1 font-semibold">Professeur principal</div>
+                  <div className="pv-sign-empty" />
+                  <div className="text-[13px]">{currentHeadTeacher || "—"}</div>
+                </div>
+
+                <div className="text-right">
+                  <div className="mb-6">
+                    {(institution?.institution_region || "").trim()
+                      ? `${institution?.institution_region}, le ${formatDateFR(councilDate)}`
+                      : formatDateFR(councilDate)}
+                  </div>
+                  <div className="mb-1 font-semibold">
+                    {institution?.institution_head_title || "Le Directeur"}
+                  </div>
+                  <div className="pv-sign-empty" />
+                  <div className="text-[13px]">{chairName || institution?.institution_head_name || "—"}</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {annualPeriods.length > 0 && annualRecapRows.length > 0 ? (
+            <div className="pv-page">
+              <OfficialHeader
+                institution={institution}
+                classLabel={currentClassLabel}
+                title={`FICHE RECAPITULATIVE ANNUELLE DE LA CLASSE DE ${String(currentClassLabel || "").toUpperCase()}`}
+              />
+
+              <div className="mt-3 grid grid-cols-2 gap-3 text-[11px]">
+                <div><strong>Périodes prises en compte :</strong> {annualPeriods.map((p, idx) => shortPeriodLabel(p, idx)).join(" • ")}</div>
+                <div className="text-right">
+                  <strong>Moyenne annuelle de classe :</strong> {formatNumber(annualRecapStats.classAvg)}
+                </div>
+              </div>
+
+              <div className="mt-3 grid grid-cols-5 gap-2 text-[11px]">
+                <QuickCell label="Effectif" value={String(annualRecapStats.effectif)} />
+                <QuickCell label="1re annuelle" value={formatNumber(annualRecapStats.highest)} />
+                <QuickCell label="Dernière annuelle" value={formatNumber(annualRecapStats.lowest)} />
+                <QuickCell label="TH" value={String(annualRecapStats.honour)} />
+                <QuickCell label="TH + Enc./Fél." value={String(annualRecapStats.encouragement + annualRecapStats.excellence)} />
+              </div>
+
+              <div className="mt-3">
+                <OfficialBand>Récapitulatif des moyennes générales et annuelles</OfficialBand>
+                <table className="pv-grid-table mt-1 pv-mini">
+                  <thead>
+                    <tr>
+                      <th style={{ width: "4%" }}>No</th>
+                      <th style={{ width: "24%" }}>Nom et prénom</th>
+                      <th style={{ width: "12%" }}>No Matr.</th>
+                      {annualPeriods.map((p, idx) => (
+                        <React.Fragment key={p.id}>
+                          <th style={{ width: "7%" }}>{shortPeriodLabel(p, idx)}<br />Moy.</th>
+                          <th style={{ width: "5%" }}>{shortPeriodLabel(p, idx)}<br />Rg</th>
+                        </React.Fragment>
+                      ))}
+                      <th style={{ width: "8%" }}>Moy. ann.</th>
+                      <th style={{ width: "6%" }}>Rg ann.</th>
+                      <th style={{ width: "12%" }}>Décision annuelle</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {annualRecapRows.map((row, index) => (
+                      <tr key={row.student_id}>
+                        <OfficialTd center>{index + 1}</OfficialTd>
+                        <OfficialTd strong>{row.full_name}</OfficialTd>
+                        <OfficialTd>{row.matricule || "—"}</OfficialTd>
+                        {row.periods.map((p) => (
+                          <React.Fragment key={p.period_id}>
+                            <OfficialTd center>{formatNumber(p.avg)}</OfficialTd>
+                            <OfficialTd center>{p.rank ?? "—"}</OfficialTd>
+                          </React.Fragment>
+                        ))}
+                        <OfficialTd center strong>{formatNumber(row.annual_avg)}</OfficialTd>
+                        <OfficialTd center>{row.annual_rank ?? "—"}</OfficialTd>
+                        <OfficialTd center>{annualDecisionLabel(row.annual_avg)}</OfficialTd>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
 
-              <div className="mt-4 grid gap-4 md:grid-cols-[1.18fr_0.82fr]">
+              <div className="mt-3 grid grid-cols-2 gap-3">
                 <div>
-                  <OfficialSectionBar title="Majors de la classe" />
-                  <div className="overflow-hidden border border-slate-500">
-                    <table className="cc-table w-full border-collapse text-[10px]">
-                      <thead>
-                        <tr className="bg-slate-200">
-                          <OfficialTh width="42px">No</OfficialTh>
-                          <OfficialTh>Nom et prénom</OfficialTh>
-                          <OfficialTh width="96px">No matricule</OfficialTh>
-                          <OfficialTh width="94px">Date de naissance</OfficialTh>
-                          <OfficialTh width="60px">Moyenne</OfficialTh>
-                          <OfficialTh width="46px">Rang</OfficialTh>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {topStudents.length > 0 ? (
-                          topStudents.map((row, idx) => (
-                            <tr key={row.student_id} className="border-t border-slate-300">
-                              <OfficialTd center>{idx + 1}</OfficialTd>
-                              <OfficialTd strong>{row.full_name}</OfficialTd>
-                              <OfficialTd>{row.matricule || "—"}</OfficialTd>
-                              <OfficialTd>{formatDateFR(row.birthdate || row.birth_date)}</OfficialTd>
-                              <OfficialTd center>{formatNumber(row.general_avg)}</OfficialTd>
-                              <OfficialTd center>{row.rank ?? "—"}</OfficialTd>
-                            </tr>
-                          ))
-                        ) : (
-                          <tr className="border-t border-slate-300">
-                            <OfficialTd center colSpan={6}>
-                              Aucun major déterminé.
-                            </OfficialTd>
-                          </tr>
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-
-                <div className="grid gap-4">
-                  <div>
-                    <OfficialSectionBar title="Matières spécifiques" />
-                    <div className="overflow-hidden border border-slate-500">
-                      <table className="cc-table w-full border-collapse text-[10px]">
-                        <thead>
-                          <tr className="bg-slate-200">
-                            {specificSubjects.map((item) => (
-                              <OfficialTh key={item.label}>{item.label}</OfficialTh>
-                            ))}
-                          </tr>
-                        </thead>
-                        <tbody>
-                          <tr className="border-t border-slate-300 bg-white">
-                            {specificSubjects.map((item) => (
-                              <OfficialTd key={item.label} center strong>
-                                {item.value}
-                              </OfficialTd>
-                            ))}
-                          </tr>
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-
-                </div>
-              </div>
-
-              <div className="mt-4">
-                <OfficialSectionBar title="Analyse" />
-                <div className="mt-1 grid gap-4 md:grid-cols-2">
-                  <OfficialNoteBox
-                    title="Problèmes de la classe"
-                    content={problemsText || "—"}
-                    minHeightClass="min-h-[150px]"
-                  />
-                  <OfficialNoteBox
-                    title="Proposition de solutions"
-                    content={solutionsText || "—"}
-                    minHeightClass="min-h-[150px]"
-                  />
-                </div>
-              </div>
-
-              <div className="mt-12 grid gap-12 md:grid-cols-2">
-                <SimpleSignature label="Professeur principal" name={currentHeadTeacher} />
-                <SimpleSignature
-                  align="right"
-                  label={institution?.institution_head_title || "Le Directeur des études"}
-                  name={chairName || institution?.institution_head_name || ""}
-                  extra={`Aboisso, le ${formatDateFR(councilDate)}`}
-                />
-              </div>
-            </OfficialPage>
-
-            {annualSheetEnabled ? (
-              <OfficialPage>
-                <OfficialHeader
-                  institution={institution}
-                  title="PROCES VERBAL DE CONSEIL DE CLASSE"
-                  subtitle="FICHE COMPLEMENTAIRE DE FIN D’ANNEE"
-                />
-                <OfficialMainTitle
-                  title={`RECAPITULATIF DES MOYENNES GENERALES ET ANNUELLES DE ${String(currentClassLabel).toUpperCase()}`}
-                />
-                <div className="mb-3 grid gap-2 md:grid-cols-4 text-[10px]">
-                  <OfficialMiniInfo label="Année scolaire" value={currentAcademicYear} />
-                  <OfficialMiniInfo label="Classe" value={currentClassLabel} />
-                  <OfficialMiniInfo label="Période du conseil" value={currentPeriodLabel} />
-                  <OfficialMiniInfo label="Date du conseil" value={formatDateFR(councilDate)} />
-                </div>
-
-                <OfficialSectionBar title="Recapitulatif des moyennes generales par periode et moyenne annuelle" />
-                <div className="overflow-hidden border border-slate-500">
-                  <table className="cc-table w-full border-collapse text-[10px]">
+                  <OfficialBand>Distinctions annuelles</OfficialBand>
+                  <table className="pv-grid-table mt-1 pv-mini">
                     <thead>
-                      <tr className="bg-slate-200">
-                        <OfficialTh width="42px">No</OfficialTh>
-                        <OfficialTh>Nom et prénom</OfficialTh>
-                        <OfficialTh width="90px">Matricule</OfficialTh>
-                        <OfficialTh width="70px">Moy. gén.</OfficialTh>
-                        <OfficialTh width="56px">Rang</OfficialTh>
-                        {sortPeriodsByDate(periodSnapshots).map((snap) => (
-                          <React.Fragment key={snap.id}>
-                            <OfficialTh width="66px">{shortPeriodLabel(snap)}</OfficialTh>
-                            <OfficialTh width="54px">Rang</OfficialTh>
-                          </React.Fragment>
-                        ))}
-                        <OfficialTh width="74px">Moy. ann.</OfficialTh>
-                        <OfficialTh width="60px">Rang ann.</OfficialTh>
+                      <tr>
+                        <th>Libellé</th>
+                        <th style={{ width: "25%" }}>Nombre</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {annualRecapRows.length > 0 ? (
-                        annualRecapRows.map((row, idx) => (
-                          <tr key={row.student_id} className="border-t border-slate-300">
-                            <OfficialTd center>{idx + 1}</OfficialTd>
-                            <OfficialTd strong>{row.full_name}</OfficialTd>
-                            <OfficialTd>{row.matricule || "—"}</OfficialTd>
-                            <OfficialTd center>{formatNumber(row.current_avg)}</OfficialTd>
-                            <OfficialTd center>{row.current_rank ?? "—"}</OfficialTd>
-                            {row.periods.map((p) => (
-                              <React.Fragment key={p.id}>
-                                <OfficialTd center>{formatNumber(p.avg)}</OfficialTd>
-                                <OfficialTd center>{p.rank ?? "—"}</OfficialTd>
-                              </React.Fragment>
-                            ))}
-                            <OfficialTd center strong>{formatNumber(row.annual_avg)}</OfficialTd>
-                            <OfficialTd center strong>{row.annual_rank ?? "—"}</OfficialTd>
-                          </tr>
-                        ))
-                      ) : (
-                        <tr className="border-t border-slate-300">
-                          <OfficialTd center colSpan={5 + sortPeriodsByDate(periodSnapshots).length * 2 + 2}>
-                            Aucune donnée annuelle exploitable pour cette période.
-                          </OfficialTd>
-                        </tr>
-                      )}
+                      <tr><OfficialTd>Tableau d’honneur</OfficialTd><OfficialTd center>{annualRecapStats.honour}</OfficialTd></tr>
+                      <tr><OfficialTd>Encouragement</OfficialTd><OfficialTd center>{annualRecapStats.encouragement}</OfficialTd></tr>
+                      <tr><OfficialTd>Excellence</OfficialTd><OfficialTd center>{annualRecapStats.excellence}</OfficialTd></tr>
                     </tbody>
                   </table>
                 </div>
-
-                {annualSheetStats ? (
-                  <div className="mt-4">
-                    <OfficialClassStatsBlock classStats={annualSheetStats} />
+                <div>
+                  <OfficialBand>Observations</OfficialBand>
+                  <div className="pv-ruled p-3 text-[11px] leading-6">
+                    {yearRecapLoading
+                      ? "Calcul du récapitulatif annuel en cours…"
+                      : `Cette fiche récapitulative est ajoutée au conseil du dernier trimestre afin d’afficher T1, T2, T3 et la moyenne annuelle.`}
                   </div>
-                ) : null}
-              </OfficialPage>
-            ) : null}
-
-
-          </div>
-        )}
+                </div>
+              </div>
+            </div>
+          ) : null}
         </div>
       </div>
-    </>
+    ) : null}
+  </>
   );
 }
 
 /* ───────── Small components ───────── */
 
-function OfficialPage({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="cc-page mx-auto w-full max-w-[860px] bg-white p-4 md:p-5 shadow-[0_10px_30px_rgba(15,23,42,0.08)]">
-      {children}
-    </div>
-  );
-}
-
 function OfficialHeader({
   institution,
+  classLabel,
   title,
-  subtitle,
 }: {
   institution: InstitutionSettings | null;
+  classLabel: string;
   title: string;
-  subtitle?: string;
 }) {
   return (
-    <div className="mb-3">
+    <div>
       <div className="grid grid-cols-[1fr_auto_1fr] items-start gap-3">
-        <div className="text-[11px] leading-5 text-slate-800">
-          <div className="font-semibold">
-            {institution?.ministry_name || "Ministère de l’Éducation Nationale"}
-          </div>
-          <div>{institution?.country_name || "République de Côte d’Ivoire"}</div>
-          <div>{institution?.country_motto || "Union - Discipline - Travail"}</div>
+        <div className="text-[10px] leading-4">
+          <div className="font-bold uppercase">{institution?.country_name || "République"}</div>
+          <div>{institution?.country_motto || ""}</div>
         </div>
 
-        <div className="flex flex-col items-center gap-1">
+        <div className="flex justify-center">
           {institution?.institution_logo_url ? (
             <img
               src={institution.institution_logo_url}
-              alt="Logo"
-              className="h-14 w-14 object-contain"
+              alt="Logo établissement"
+              className="h-16 w-16 object-contain"
             />
           ) : (
-            <div className="flex h-14 w-14 items-center justify-center rounded-full border border-slate-300 text-slate-400">
-              <School className="h-6 w-6" />
-            </div>
+            <div className="h-16 w-16 rounded-full border border-slate-300" />
           )}
-          <div className="bg-slate-500 px-4 py-1 text-center text-[11px] font-bold uppercase tracking-wide text-white">
-            {title}
-          </div>
-          {subtitle ? (
-            <div className="bg-slate-300 px-4 py-1 text-center text-[10px] font-semibold uppercase tracking-wide text-slate-800">
-              {subtitle}
-            </div>
-          ) : null}
         </div>
 
-        <div className="text-right text-[11px] leading-5 text-slate-800">
-          <div className="font-semibold">
-            {institution?.institution_name || "Établissement"}
-          </div>
-          <div>{institution?.institution_region || "—"}</div>
-          <div>{institution?.institution_phone || ""}</div>
-          <div>{institution?.institution_email || ""}</div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function OfficialMainTitle({ title }: { title: string }) {
-  return (
-    <div className="mb-3 text-center text-[18px] font-bold uppercase text-slate-900">
-      {title}
-    </div>
-  );
-}
-
-function OfficialPopulationSummary({
-  stats,
-  classLabel,
-  academicYear,
-  periodLabel,
-  councilDate,
-}: {
-  stats: {
-    girls: number;
-    boys: number;
-    total: number;
-    girlsRepeaters: number;
-    boysRepeaters: number;
-    totalRepeaters: number;
-    girlsAssigned: number;
-    boysAssigned: number;
-    totalAssigned: number;
-    girlsNonAssigned: number;
-    boysNonAssigned: number;
-    totalNonAssigned: number;
-  };
-  classLabel: string;
-  academicYear: string;
-  periodLabel: string;
-  councilDate: string;
-}) {
-  return (
-    <div className="mb-3 grid gap-3 md:grid-cols-[1.05fr_0.95fr]">
-      <div className="border border-slate-500">
-        <div className="bg-slate-200 px-2 py-1 text-[10px] font-semibold uppercase">
-          Synthèse administrative
-        </div>
-        <div className="grid grid-cols-2 gap-x-4 gap-y-1 px-2 py-2 text-[10px]">
-          <div><span className="font-semibold">Classe :</span> {classLabel}</div>
-          <div><span className="font-semibold">Année :</span> {academicYear}</div>
-          <div><span className="font-semibold">Période :</span> {periodLabel}</div>
-          <div><span className="font-semibold">Date :</span> {councilDate}</div>
+        <div className="text-right text-[10px] leading-4">
+          <div className="font-bold uppercase">{institution?.ministry_name || "Ministère"}</div>
+          <div>{institution?.institution_name || ""}</div>
+          <div>{institution?.institution_code ? `Code : ${institution.institution_code}` : ""}</div>
         </div>
       </div>
 
-      <div className="border border-slate-500">
-        <table className="cc-table w-full border-collapse text-[10px]">
-          <thead>
-            <tr className="bg-slate-200">
-              <OfficialTh></OfficialTh>
-              <OfficialTh>Filles</OfficialTh>
-              <OfficialTh>Garçons</OfficialTh>
-              <OfficialTh>Total</OfficialTh>
-              <OfficialTh>Filles Red</OfficialTh>
-              <OfficialTh>Garçons Red</OfficialTh>
-              <OfficialTh>Total Red</OfficialTh>
-              <OfficialTh>Filles Aff</OfficialTh>
-              <OfficialTh>Garçons Aff</OfficialTh>
-              <OfficialTh>Total Aff</OfficialTh>
-              <OfficialTh>Filles N. Aff</OfficialTh>
-              <OfficialTh>Garçons N. Aff</OfficialTh>
-              <OfficialTh>Total N. Aff</OfficialTh>
-            </tr>
-          </thead>
-          <tbody>
-            <tr className="border-t border-slate-300">
-              <OfficialTd strong>Total</OfficialTd>
-              <OfficialTd center>{stats.girls}</OfficialTd>
-              <OfficialTd center>{stats.boys}</OfficialTd>
-              <OfficialTd center>{stats.total}</OfficialTd>
-              <OfficialTd center>{stats.girlsRepeaters}</OfficialTd>
-              <OfficialTd center>{stats.boysRepeaters}</OfficialTd>
-              <OfficialTd center>{stats.totalRepeaters}</OfficialTd>
-              <OfficialTd center>{stats.girlsAssigned}</OfficialTd>
-              <OfficialTd center>{stats.boysAssigned}</OfficialTd>
-              <OfficialTd center>{stats.totalAssigned}</OfficialTd>
-              <OfficialTd center>{stats.girlsNonAssigned}</OfficialTd>
-              <OfficialTd center>{stats.boysNonAssigned}</OfficialTd>
-              <OfficialTd center>{stats.totalNonAssigned}</OfficialTd>
-            </tr>
-          </tbody>
-        </table>
-      </div>
+      <h1 className="mt-2 text-center text-[16px] font-bold uppercase tracking-[0.02em]">
+        {title}
+      </h1>
     </div>
   );
 }
 
-function OfficialSectionBar({ title }: { title: string }) {
-  return (
-    <div className="mb-1 bg-slate-500 px-2 py-1 text-[11px] font-bold uppercase tracking-wide text-white">
-      {title}
-    </div>
-  );
-}
-
-function OfficialClassListTable({
-  rows,
-  startIndex = 0,
-}: {
-  rows: CouncilStudentRow[];
-  startIndex?: number;
-}) {
-  return (
-    <div className="overflow-hidden border border-slate-500">
-      <table className="cc-table w-full border-collapse text-[10px]">
-        <thead>
-          <tr className="bg-slate-200 text-left">
-            <OfficialTh width="36px">No</OfficialTh>
-            <OfficialTh>Nom et prénom</OfficialTh>
-            <OfficialTh width="96px">No Matr.</OfficialTh>
-            <OfficialTh width="94px">Date de naissance</OfficialTh>
-            <OfficialTh width="60px">Moyenne</OfficialTh>
-            <OfficialTh width="44px">Rang</OfficialTh>
-            <OfficialTh width="46px">TH+FE</OfficialTh>
-            <OfficialTh width="46px">TH+EN</OfficialTh>
-            <OfficialTh width="44px">TH</OfficialTh>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row, idx) => {
-            const marks = officialMarkColumns(row.mentions.distinction);
-            return (
-              <tr key={row.student_id} className="border-t border-slate-300">
-                <OfficialTd center>{startIndex + idx + 1}</OfficialTd>
-                <OfficialTd strong>{row.full_name}</OfficialTd>
-                <OfficialTd>{row.matricule || "—"}</OfficialTd>
-                <OfficialTd>{formatDateFR(row.birthdate || row.birth_date)}</OfficialTd>
-                <OfficialTd center>{formatNumber(row.general_avg)}</OfficialTd>
-                <OfficialTd center>{row.rank ?? "—"}</OfficialTd>
-                <OfficialTd center>{marks.thfe}</OfficialTd>
-                <OfficialTd center>{marks.then}</OfficialTd>
-                <OfficialTd center>{marks.th}</OfficialTd>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-function OfficialClassStatsBlock({
-  classStats,
-}: {
-  classStats: {
-    effectif: number;
-    above10: number;
-    between85And10: number;
-    below85: number;
-    lowest: number | null;
-    highest: number | null;
-    classAvg: number | null;
-    excellence: number;
-    honour: number;
-    encouragement: number;
-    warningWork: number;
-    blameWork: number;
-    warningConduct: number;
-    blameConduct: number;
-  };
-}) {
-  return (
-    <div className="grid gap-3 md:grid-cols-[1.2fr_0.8fr]">
-      <div>
-        <OfficialSectionBar title="Statistiques de classe" />
-        <div className="overflow-hidden border border-slate-500">
-          <table className="cc-table w-full border-collapse text-[10px]">
-            <thead>
-              <tr className="bg-slate-200">
-                <OfficialTh>Effectif classe</OfficialTh>
-                <OfficialTh colSpan={2}>Moy &gt;= 10</OfficialTh>
-                <OfficialTh colSpan={2}>10 &gt; M &gt;= 8,5</OfficialTh>
-                <OfficialTh colSpan={2}>Moy &lt; 8,5</OfficialTh>
-                <OfficialTh>Mini</OfficialTh>
-                <OfficialTh>Maxi</OfficialTh>
-                <OfficialTh>Moy</OfficialTh>
-              </tr>
-              <tr className="bg-slate-100">
-                <OfficialTh></OfficialTh>
-                <OfficialTh>Nombre</OfficialTh>
-                <OfficialTh>%</OfficialTh>
-                <OfficialTh>Nombre</OfficialTh>
-                <OfficialTh>%</OfficialTh>
-                <OfficialTh>Nombre</OfficialTh>
-                <OfficialTh>%</OfficialTh>
-                <OfficialTh></OfficialTh>
-                <OfficialTh></OfficialTh>
-                <OfficialTh></OfficialTh>
-              </tr>
-            </thead>
-            <tbody>
-              <tr className="border-t border-slate-300">
-                <OfficialTd center>{classStats.effectif}</OfficialTd>
-                <OfficialTd center>{classStats.above10}</OfficialTd>
-                <OfficialTd center>{ratioPct(classStats.above10, classStats.effectif)}</OfficialTd>
-                <OfficialTd center>{classStats.between85And10}</OfficialTd>
-                <OfficialTd center>{ratioPct(classStats.between85And10, classStats.effectif)}</OfficialTd>
-                <OfficialTd center>{classStats.below85}</OfficialTd>
-                <OfficialTd center>{ratioPct(classStats.below85, classStats.effectif)}</OfficialTd>
-                <OfficialTd center>{formatNumber(classStats.lowest)}</OfficialTd>
-                <OfficialTd center>{formatNumber(classStats.highest)}</OfficialTd>
-                <OfficialTd center>{formatNumber(classStats.classAvg)}</OfficialTd>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      <div className="grid gap-3">
-        <div>
-          <OfficialSectionBar title="Distinctions" />
-          <div className="overflow-hidden border border-slate-500">
-            <table className="cc-table w-full border-collapse text-[10px]">
-              <thead>
-                <tr className="bg-slate-200">
-                  <OfficialTh>Distinctions</OfficialTh>
-                  <OfficialTh width="74px">Nombre</OfficialTh>
-                </tr>
-              </thead>
-              <tbody>
-                <tr className="border-t border-slate-300">
-                  <OfficialTd>Excellence</OfficialTd>
-                  <OfficialTd center>{classStats.excellence}</OfficialTd>
-                </tr>
-                <tr className="border-t border-slate-300">
-                  <OfficialTd>Tableau d'honneur</OfficialTd>
-                  <OfficialTd center>{classStats.honour}</OfficialTd>
-                </tr>
-                <tr className="border-t border-slate-300">
-                  <OfficialTd>Encouragements</OfficialTd>
-                  <OfficialTd center>{classStats.encouragement}</OfficialTd>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-        <div>
-          <OfficialSectionBar title="Avertissements et sanctions" />
-          <div className="overflow-hidden border border-slate-500">
-            <table className="cc-table w-full border-collapse text-[10px]">
-              <thead>
-                <tr className="bg-slate-200">
-                  <OfficialTh>Avertissement / Travail</OfficialTh>
-                  <OfficialTh width="74px">Nombre</OfficialTh>
-                </tr>
-              </thead>
-              <tbody>
-                <tr className="border-t border-slate-300">
-                  <OfficialTd>Avertissement Travail</OfficialTd>
-                  <OfficialTd center>{classStats.warningWork}</OfficialTd>
-                </tr>
-                <tr className="border-t border-slate-300">
-                  <OfficialTd>Blâme Travail</OfficialTd>
-                  <OfficialTd center>{classStats.blameWork}</OfficialTd>
-                </tr>
-                <tr className="border-t border-slate-300">
-                  <OfficialTd>Avert. Conduite</OfficialTd>
-                  <OfficialTd center>{classStats.warningConduct}</OfficialTd>
-                </tr>
-                <tr className="border-t border-slate-300">
-                  <OfficialTd>Blâme Conduite</OfficialTd>
-                  <OfficialTd center>{classStats.blameConduct}</OfficialTd>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function OfficialTh({
-  children,
-  width,
-  colSpan,
-}: {
-  children?: React.ReactNode;
-  width?: string;
-  colSpan?: number;
-}) {
-  return (
-    <th
-      colSpan={colSpan}
-      style={width ? { width } : undefined}
-      className="border border-slate-300 px-2 py-1 text-center text-[10px] font-semibold uppercase text-slate-800"
-    >
-      {children}
-    </th>
-  );
+function OfficialBand({ children }: { children: React.ReactNode }) {
+  return <div className="pv-band">{children}</div>;
 }
 
 function OfficialTd({
@@ -2118,9 +2011,8 @@ function OfficialTd({
     <td
       colSpan={colSpan}
       className={[
-        "border border-slate-300 px-2 py-1 text-[10px] text-slate-800",
-        center ? "text-center" : "text-left",
-        strong ? "font-semibold" : "",
+        center ? "pv-center" : "",
+        strong ? "font-bold" : "",
       ].join(" ")}
     >
       {children}
@@ -2128,57 +2020,30 @@ function OfficialTd({
   );
 }
 
-function OfficialNoteBox({
-  title,
-  content,
-  minHeightClass = "min-h-[120px]",
-}: {
-  title?: string;
-  content: string;
-  minHeightClass?: string;
-}) {
+function MemberLine({ label, value }: { label: string; value?: string | null }) {
   return (
-    <div className="border border-slate-500">
-      {title ? <OfficialSectionBar title={title} /> : null}
-      <div className={`${minHeightClass} whitespace-pre-wrap px-3 py-2 text-[10px] leading-5 text-slate-800`}>
-        {content?.trim() || "—"}
-      </div>
-    </div>
-  );
-}
-
-function SimpleSignature({
-  label,
-  name,
-  extra,
-  align = "left",
-}: {
-  label: string;
-  name?: string | null;
-  extra?: string;
-  align?: "left" | "right";
-}) {
-  return (
-    <div className={`text-[11px] text-slate-800 ${align === "right" ? "text-right" : "text-left"}`}>
-      {extra ? <div className="mb-2">{extra}</div> : null}
-      <div className="h-12" />
+    <div>
       <div className="font-semibold">{label}</div>
-      <div className="mt-2 uppercase">{name?.trim() || "................................"}</div>
+      <div className="mt-1 border-b border-slate-400 pb-1">{safeLine(value)}</div>
     </div>
   );
 }
 
-function OfficialMiniInfo({
-  label,
-  value,
-}: {
-  label: string;
-  value: string;
-}) {
+function BlankLines({ count }: { count: number }) {
   return (
-    <div className="border border-slate-400 px-2 py-1">
-      <div className="text-[9px] font-semibold uppercase text-slate-500">{label}</div>
-      <div className="text-[11px] font-semibold text-slate-900">{value || "—"}</div>
+    <div className="flex flex-col gap-4">
+      {Array.from({ length: count }).map((_, idx) => (
+        <div key={idx} className="border-b border-slate-400 pb-3" />
+      ))}
+    </div>
+  );
+}
+
+function QuickCell({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="border px-2 py-2 text-center text-[11px]" style={{ borderColor: "var(--pv-grid)", background: "var(--pv-soft)" }}>
+      <div className="font-semibold uppercase">{label}</div>
+      <div className="mt-1 text-[13px] font-bold">{value}</div>
     </div>
   );
 }
