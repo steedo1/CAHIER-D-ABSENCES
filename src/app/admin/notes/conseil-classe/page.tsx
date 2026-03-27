@@ -1,2049 +1,1741 @@
-// src/app/admin/notes/conseil-classe/page.tsx
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
-import { Printer, RefreshCw, FileText, School, BarChart3, Users, X } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import {
+  FileSpreadsheet,
+  Filter,
+  Printer,
+  RefreshCw,
+  School,
+  ScrollText,
+} from "lucide-react";
 
 /* ───────── UI helpers ───────── */
-
-function Input(props: React.InputHTMLAttributes<HTMLInputElement>) {
+function Input(p: React.InputHTMLAttributes<HTMLInputElement>) {
   return (
     <input
-      {...props}
+      {...p}
       className={[
         "w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm",
         "shadow-sm outline-none transition",
         "focus:border-emerald-400 focus:ring-4 focus:ring-emerald-500/20",
         "disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400",
-        props.className ?? "",
+        p.className ?? "",
       ].join(" ")}
     />
   );
 }
 
-function Select(props: React.SelectHTMLAttributes<HTMLSelectElement>) {
+function Select(p: React.SelectHTMLAttributes<HTMLSelectElement>) {
   return (
     <select
-      {...props}
+      {...p}
       className={[
         "w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm",
         "shadow-sm outline-none transition",
         "focus:border-emerald-400 focus:ring-4 focus:ring-emerald-500/20",
         "disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400",
-        props.className ?? "",
+        p.className ?? "",
       ].join(" ")}
     />
   );
 }
 
-function Textarea(props: React.TextareaHTMLAttributes<HTMLTextAreaElement>) {
-  return (
-    <textarea
-      {...props}
-      className={[
-        "w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm",
-        "shadow-sm outline-none transition",
-        "focus:border-emerald-400 focus:ring-4 focus:ring-emerald-500/20",
-        "disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400",
-        props.className ?? "",
-      ].join(" ")}
-    />
-  );
-}
-
-type ButtonProps = React.ButtonHTMLAttributes<HTMLButtonElement> & {
-  variant?: "primary" | "ghost";
-};
-
-function Button({ variant = "primary", ...props }: ButtonProps) {
-  const base =
-    "inline-flex items-center justify-center gap-2 rounded-xl px-3 py-2 text-sm font-medium transition focus:outline-none focus:ring-4";
-  const variants: Record<NonNullable<ButtonProps["variant"]>, string> = {
-    primary:
-      "bg-emerald-500 text-white hover:bg-emerald-600 focus:ring-emerald-500/30 disabled:bg-emerald-300",
-    ghost:
-      "bg-white border border-slate-300 text-slate-700 hover:bg-slate-100 focus:ring-slate-400/30 disabled:opacity-60",
-  };
+function Button(p: React.ButtonHTMLAttributes<HTMLButtonElement>) {
   return (
     <button
-      {...props}
-      className={[base, variants[variant], props.className ?? ""].join(" ")}
+      {...p}
+      className={[
+        "inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white shadow",
+        p.disabled ? "cursor-not-allowed opacity-60" : "transition hover:bg-emerald-700",
+        p.className ?? "",
+      ].join(" ")}
     />
+  );
+}
+
+function GhostButton(p: React.ButtonHTMLAttributes<HTMLButtonElement>) {
+  return (
+    <button
+      {...p}
+      className={[
+        "inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700",
+        "transition hover:bg-slate-50",
+        p.className ?? "",
+      ].join(" ")}
+    />
+  );
+}
+
+function Card(props: {
+  title: string;
+  subtitle?: string;
+  icon?: React.ReactNode;
+  children: React.ReactNode;
+  actions?: React.ReactNode;
+}) {
+  const { title, subtitle, icon, children, actions } = props;
+  return (
+    <div className="rounded-2xl border bg-white p-5 shadow-sm">
+      <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <div className="flex items-center gap-2 text-base font-semibold text-slate-900">
+            {icon}
+            <span>{title}</span>
+          </div>
+          {subtitle && <p className="mt-0.5 text-xs text-slate-500">{subtitle}</p>}
+        </div>
+        {actions}
+      </div>
+      {children}
+    </div>
   );
 }
 
 /* ───────── Types ───────── */
 
-type ClassRow = {
+type EvalKind = "devoir" | "interro_ecrite" | "interro_orale";
+
+type ClassItem = {
   id: string;
-  name?: string;
-  label?: string | null;
-  level?: string | null;
-  academic_year?: string | null;
+  label: string;
+  level: string | null;
 };
 
-type GradePeriod = {
+type MatrixEval = {
   id: string;
-  academic_year: string | null;
-  code: string | null;
-  label: string | null;
-  short_label: string | null;
-  start_date: string;
-  end_date: string;
-  coeff: number | null;
+  eval_date: string;
+  eval_kind: EvalKind;
+  scale: number;
+  coeff: number;
+  title: string | null;
+  teacher_id: string | null;
+  teacher_name: string | null;
 };
 
-type InstitutionSettings = {
-  institution_name?: string | null;
-  institution_logo_url?: string | null;
-  institution_phone?: string | null;
-  institution_email?: string | null;
-  institution_region?: string | null;
-  institution_postal_address?: string | null;
-  institution_status?: string | null;
-  institution_head_name?: string | null;
-  institution_head_title?: string | null;
-  country_name?: string | null;
-  country_motto?: string | null;
-  ministry_name?: string | null;
-  institution_code?: string | null;
-};
-
-type BulletinSubject = {
-  subject_id: string;
-  subject_name: string;
-  coeff_bulletin: number;
-  include_in_average?: boolean;
-};
-
-type PerSubjectAvg = {
-  subject_id: string;
-  avg20: number | null;
-  subject_rank?: number | null;
-  teacher_name?: string | null;
-  teacher_signature_png?: string | null;
-};
-
-type BulletinItemBase = {
+type MatrixStudent = {
   student_id: string;
   full_name: string;
   matricule: string | null;
-
-  sex?: string | null;
-  gender?: string | null;
-  birthdate?: string | null;
-  birth_date?: string | null;
-  birth_place?: string | null;
-  nationality?: string | null;
-  regime?: string | null;
-  is_boarder?: boolean | null;
-  is_scholarship?: boolean | null;
-  is_repeater?: boolean | null;
-  is_assigned?: boolean | null;
-  is_affecte?: boolean | null;
-
-  per_subject: PerSubjectAvg[];
-  general_avg: number | null;
-
-  annual_avg?: number | null;
-  annual_rank?: number | null;
 };
 
-type BulletinItemWithRank = BulletinItemBase & {
-  rank: number | null;
-};
+type MatrixMarks = Record<
+  string,
+  Record<
+    string,
+    {
+      raw: number | null;
+      mark_20: number | null;
+    }
+  >
+>;
 
-type BulletinResponse = {
-  ok: boolean;
-  class: {
-    id: string;
-    label: string;
-    code?: string | null;
-    academic_year?: string | null;
-    head_teacher?: {
-      id: string;
-      display_name: string | null;
-      phone: string | null;
-      email: string | null;
-    } | null;
-  };
-  period: {
+type MatrixOk = {
+  ok: true;
+  meta: {
+    class_id: string;
+    subject_id: string;
+    class_label: string;
+    subject_name: string | null;
+    level: string | null;
     from: string | null;
     to: string | null;
-    code?: string | null;
-    label?: string | null;
-    short_label?: string | null;
-    academic_year?: string | null;
-    coeff?: number | null;
   };
-  subjects: BulletinSubject[];
-  items: BulletinItemBase[];
+  evaluations: MatrixEval[];
+  students: MatrixStudent[];
+  marks: MatrixMarks;
 };
 
-type ConductRubricMax = {
-  assiduite: number;
-  tenue: number;
-  moralite: number;
-  discipline: number;
+type MatrixErr = { ok: false; error: string };
+
+type AcademicYear = {
+  id: string;
+  code: string;
+  label: string;
+  start_date: string;
+  end_date: string;
+  is_current: boolean;
 };
 
-type ConductItem = {
-  student_id: string;
-  full_name: string;
-  breakdown: {
-    assiduite: number;
-    tenue: number;
-    moralite: number;
-    discipline: number;
-  };
-  total: number;
-  appreciation: string;
-  absence_count?: number;
-  tardy_count?: number;
-  absence_minutes?: number;
-  tardy_minutes?: number;
+type GradingPeriod = {
+  id: string;
+  code: string;
+  label: string;
+  short_label: string;
+  start_date: string | null;
+  end_date: string | null;
+  order_index: number;
+  is_active: boolean;
 };
 
-type ConductSummaryResponse = {
-  class_label: string;
-  rubric_max: ConductRubricMax;
-  total_max: number;
-  items: ConductItem[];
+type InstitutionMeta = {
+  institutionName: string;
+  logoUrl: string | null;
+  contactLine: string | null;
+  cityLine: string | null;
+  principalName: string | null;
+  principalRole: string | null;
 };
 
-type CouncilMentions = {
-  distinction: "excellence" | "honour" | "encouragement" | null;
-  sanction:
-    | "warningWork"
-    | "warningConduct"
-    | "blameWork"
-    | "blameConduct"
-    | null;
-};
-
-type ClassStats = {
-  highest: number | null;
-  lowest: number | null;
-  classAvg: number | null;
-};
-
-type EnrichedBulletin = {
-  response: BulletinResponse;
-  items: BulletinItemWithRank[];
-  stats: ClassStats;
-};
-
-type CouncilStudentRow = BulletinItemWithRank & {
-  conduct: ConductItem | null;
-  conductOn20: number | null;
-  mentions: CouncilMentions;
-  appreciation: string;
-};
-
-type SubjectCouncilStat = {
+type SubjectIndicator = {
   subject_id: string;
   subject_name: string;
-  coeff: number;
-  teacher_name: string | null;
-  teacher_signature_png?: string | null;
-  noted_count: number;
-  not_noted_count: number;
-  avg20: number | null;
-  gte10: number;
-  between85And10: number;
-  lt85: number;
+  teacher_names: string | null;
+  effectif: number;
+  ge10_count: number;
+  ge10_pct: number;
+  between85And10_count: number;
+  between85And10_pct: number;
+  lt85_count: number;
+  lt85_pct: number;
+  avg_20: number | null;
+};
+
+type StudentRow = MatrixStudent & {
+  general_avg: number | null;
+  general_rank: number | null;
+};
+
+type ConseilDocumentData = {
+  class_id: string;
+  class_label: string;
+  level: string | null;
+  students: StudentRow[];
+  classed_count: number;
+  class_avg_20: number | null;
+  class_min_20: number | null;
+  class_max_20: number | null;
+  moy_ge_10_count: number;
+  between85And10_count: number;
+  lt85_count: number;
+  subjectIndicators: SubjectIndicator[];
+  majorStudent: StudentRow | null;
+  specificSubjects: {
+    francais: string;
+    anglais: string;
+    philo: string;
+    allesp: string;
+  };
 };
 
 /* ───────── Helpers ───────── */
 
-function round2(n: number): number {
-  return Math.round(n * 100) / 100;
+const df = new Intl.DateTimeFormat("fr-FR", {
+  day: "2-digit",
+  month: "2-digit",
+  year: "numeric",
+});
+
+const nf = new Intl.NumberFormat("fr-FR", {
+  minimumFractionDigits: 1,
+  maximumFractionDigits: 2,
+});
+
+function computeRanks(values: Record<string, number | null | undefined>): Record<string, number> {
+  const entries: { id: string; value: number }[] = [];
+  for (const [id, v] of Object.entries(values)) {
+    if (v != null && !Number.isNaN(v)) {
+      entries.push({ id, value: v });
+    }
+  }
+  if (!entries.length) return {};
+
+  entries.sort((a, b) => b.value - a.value);
+
+  const ranks: Record<string, number> = {};
+  let currentRank = 1;
+  let prevValue = entries[0].value;
+  ranks[entries[0].id] = 1;
+
+  for (let i = 1; i < entries.length; i++) {
+    const { id, value } = entries[i];
+    if (value !== prevValue) {
+      currentRank += 1;
+      prevValue = value;
+    }
+    ranks[id] = currentRank;
+  }
+
+  return ranks;
 }
 
-function formatNumber(n: number | null | undefined, digits = 2): string {
-  if (n === null || n === undefined || !Number.isFinite(Number(n))) return "—";
-  return Number(n).toFixed(digits);
+function formatRank(r: number | null | undefined): string {
+  if (!r) return "—";
+  if (r === 1) return "1er";
+  return `${r}e`;
 }
 
-function formatDateFR(value: string | null | undefined): string {
-  if (!value) return "—";
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return value;
-  return d.toLocaleDateString("fr-FR");
+function safeLabel(v: string | null | undefined, fallback = "—") {
+  const s = String(v ?? "").trim();
+  return s || fallback;
 }
 
-function todayISO(): string {
-  const d = new Date();
-  const y = d.getFullYear();
-  const m = `${d.getMonth() + 1}`.padStart(2, "0");
-  const day = `${d.getDate()}`.padStart(2, "0");
-  return `${y}-${m}-${day}`;
+function escapeHtml(v: string | null | undefined) {
+  return String(v ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
-function normalizeSex(v?: string | null): "M" | "F" | null {
-  const x = String(v ?? "").trim().toLowerCase();
-  if (!x) return null;
-  if (["m", "masculin", "male", "garçon", "garcon", "homme"].includes(x)) return "M";
-  if (["f", "féminin", "feminin", "female", "fille", "femme"].includes(x)) return "F";
+function formatScore(v: number | null | undefined) {
+  return v == null || Number.isNaN(v) ? "—" : nf.format(v);
+}
+
+function percentOf(count: number, total: number) {
+  if (!total) return 0;
+  return (count / total) * 100;
+}
+
+function csvCell(v: string | number | null | undefined) {
+  const s = String(v ?? "").replace(/\"/g, '""');
+  return `"${s}"`;
+}
+
+function pickString(obj: any, keys: string[]) {
+  for (const key of keys) {
+    const raw = obj?.[key];
+    if (typeof raw === "string" && raw.trim()) return raw.trim();
+  }
   return null;
 }
 
-function periodTitle(
-  period:
-    | {
-        code?: string | null;
-        label?: string | null;
-        short_label?: string | null;
-      }
-    | null
-    | undefined
-) {
-  if (!period) return "Période";
-  const t = (period.label || period.short_label || period.code || "").trim();
-  return t || "Période";
-}
-
-function clampTo20(value: number | null | undefined): number | null {
-  if (value === null || value === undefined) return null;
-  const n = Number(value);
-  if (!Number.isFinite(n)) return null;
-  if (n < 0) return 0;
-  if (n > 20) return 20;
-  return n;
-}
-
-function computeCouncilMentions(
-  generalAvg: number | null | undefined,
-  conductOn20: number | null | undefined
-): CouncilMentions {
-  let distinction: CouncilMentions["distinction"] = null;
-  let sanction: CouncilMentions["sanction"] = null;
-
-  if (generalAvg !== null && generalAvg !== undefined && Number.isFinite(generalAvg)) {
-    const g = Number(generalAvg);
-    if (g >= 16) distinction = "excellence";
-    else if (g >= 14) distinction = "honour";
-    else if (g >= 12) distinction = "encouragement";
-    else if (g < 8) sanction = "blameWork";
-    else if (g < 10) sanction = "warningWork";
-  }
-
-  if (conductOn20 !== null && conductOn20 !== undefined && Number.isFinite(conductOn20)) {
-    const ratio = Number(conductOn20) / 20;
-    if (ratio <= 0.4) sanction = "blameConduct";
-    else if (ratio <= 0.6 && !sanction) sanction = "warningConduct";
-  }
-
-  return { distinction, sanction };
-}
-
-function computeCouncilAppreciationText(
-  mentions: CouncilMentions,
-  generalAvg: number | null | undefined,
-  conductOn20: number | null | undefined
-): string {
-  const g =
-    generalAvg !== null && generalAvg !== undefined ? Number(generalAvg) : null;
-  const c =
-    conductOn20 !== null && conductOn20 !== undefined && Number.isFinite(conductOn20)
-      ? Number(conductOn20)
-      : null;
-
-  if (mentions.sanction === "blameConduct") return "Conduite très insuffisante.";
-  if (mentions.sanction === "warningConduct") return "Conduite à améliorer.";
-  if (mentions.sanction === "blameWork") return "Résultats très insuffisants.";
-  if (mentions.sanction === "warningWork") return "Résultats insuffisants.";
-
-  if (mentions.distinction === "excellence") return "Excellent travail.";
-  if (mentions.distinction === "honour") return "Très bon travail.";
-  if (mentions.distinction === "encouragement") return "Assez bon travail.";
-
-  if (g !== null && Number.isFinite(g)) {
-    if (g >= 10) return "Travail passable.";
-    return "Travail moyen.";
-  }
-
-  if (c !== null && Number.isFinite(c)) {
-    if (c >= 14) return "Conduite satisfaisante.";
-    if (c >= 10) return "Conduite correcte.";
-    return "Conduite à suivre.";
-  }
-
-  return "";
-}
-
-function labelDistinction(v: CouncilMentions["distinction"]) {
-  switch (v) {
-    case "excellence":
-      return "Excellence";
-    case "honour":
-      return "Tableau d’honneur";
-    case "encouragement":
-      return "Encouragement";
-    default:
-      return "—";
-  }
-}
-
-function labelSanction(v: CouncilMentions["sanction"]) {
-  switch (v) {
-    case "warningWork":
-      return "Avert. travail";
-    case "warningConduct":
-      return "Avert. conduite";
-    case "blameWork":
-      return "Blâme travail";
-    case "blameConduct":
-      return "Blâme conduite";
-    default:
-      return "—";
-  }
-}
-
-function computeRanksAndStats(res: BulletinResponse | null): EnrichedBulletin | null {
-  if (!res) return null;
-
-  const itemsWithAvg: BulletinItemWithRank[] = (res.items ?? []).map((it) => {
-    const perSubject = it.per_subject ?? [];
-    let sum = 0;
-    let sumCoeff = 0;
-
-    (res.subjects ?? []).forEach((s) => {
-      const cell = perSubject.find((ps) => ps.subject_id === s.subject_id);
-      const val = cell?.avg20;
-      if (val === null || val === undefined) return;
-      const avg = Number(val);
-      if (!Number.isFinite(avg)) return;
-      if (s.include_in_average === false) return;
-      const coeff = Number(s.coeff_bulletin ?? 0);
-      if (!Number.isFinite(coeff) || coeff <= 0) return;
-      sum += avg * coeff;
-      sumCoeff += coeff;
-    });
-
-    const fallbackAvg = sumCoeff > 0 ? sum / sumCoeff : null;
-    const apiAvg =
-      it.general_avg !== null && it.general_avg !== undefined
-        ? Number(it.general_avg)
-        : null;
-    const finalAvg =
-      apiAvg !== null && Number.isFinite(apiAvg) ? apiAvg : fallbackAvg;
-
-    return {
-      ...it,
-      general_avg: finalAvg !== null ? round2(finalAvg) : null,
-      rank: null,
-    };
+function findSpecificSubject(indicators: SubjectIndicator[], patterns: string[]) {
+  const found = indicators.find((item) => {
+    const name = item.subject_name
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase();
+    return patterns.some((p) => name.includes(p));
   });
+  return found?.avg_20 ?? null;
+}
 
-  const withAvg = itemsWithAvg.filter(
-    (it) => typeof it.general_avg === "number" && Number.isFinite(it.general_avg)
-  );
+function buildSpecificSubjects(indicators: SubjectIndicator[]) {
+  const francais = findSpecificSubject(indicators, ["francais", "français"]);
+  const anglais = findSpecificSubject(indicators, ["anglais", "english"]);
+  const philo = findSpecificSubject(indicators, ["philo", "philosophie"]);
 
-  if (!withAvg.length) {
-    return {
-      response: res,
-      items: itemsWithAvg,
-      stats: { highest: null, lowest: null, classAvg: null },
-    };
-  }
-
-  const sorted = [...withAvg].sort((a, b) => (b.general_avg ?? 0) - (a.general_avg ?? 0));
-
-  let lastScore: number | null = null;
-  let lastRank = 0;
-  const rankByStudent = new Map<string, number>();
-
-  sorted.forEach((it, idx) => {
-    const g = it.general_avg ?? 0;
-    if (lastScore === null || g !== lastScore) {
-      lastRank = idx + 1;
-      lastScore = g;
-    }
-    rankByStudent.set(it.student_id, lastRank);
-  });
-
-  const sumAll = withAvg.reduce((acc, it) => acc + Number(it.general_avg ?? 0), 0);
+  const allemand = findSpecificSubject(indicators, ["allemand"]);
+  const espagnol = findSpecificSubject(indicators, ["espagnol"]);
+  const allespValues = [allemand, espagnol]
+    .filter((v): v is number => v != null)
+    .map((v) => nf.format(v));
 
   return {
-    response: res,
-    items: itemsWithAvg.map((it) => ({
-      ...it,
-      rank: rankByStudent.get(it.student_id) ?? null,
-    })),
-    stats: {
-      highest: sorted[0]?.general_avg ?? null,
-      lowest: sorted[sorted.length - 1]?.general_avg ?? null,
-      classAvg: round2(sumAll / withAvg.length),
-    },
+    francais: francais == null ? "" : nf.format(francais),
+    anglais: anglais == null ? "" : nf.format(anglais),
+    philo: philo == null ? "" : nf.format(philo),
+    allesp: allespValues.join(" / "),
   };
 }
 
+/* ───────── Page principale ───────── */
 
-function comparePeriods(a: GradePeriod, b: GradePeriod): number {
-  const aStart = a.start_date || "";
-  const bStart = b.start_date || "";
-  if (aStart !== bStart) return aStart.localeCompare(bStart);
-  const aEnd = a.end_date || "";
-  const bEnd = b.end_date || "";
-  if (aEnd !== bEnd) return aEnd.localeCompare(bEnd);
-  return (a.label || a.short_label || a.code || "").localeCompare(
-    b.label || b.short_label || b.code || "",
-    undefined,
-    { sensitivity: "base", numeric: true }
-  );
-}
+export default function AdminConseilClassePage() {
+  const [from, setFrom] = useState<string>("");
+  const [to, setTo] = useState<string>("");
+  const [status, setStatus] = useState<"all" | "published" | "draft">("all");
 
-function shortPeriodLabel(
-  period:
-    | {
-        code?: string | null;
-        label?: string | null;
-        short_label?: string | null;
+  const [years, setYears] = useState<AcademicYear[]>([]);
+  const [loadingYears, setLoadingYears] = useState(false);
+  const [selectedYearCode, setSelectedYearCode] = useState<string>("");
+
+  const [periods, setPeriods] = useState<GradingPeriod[]>([]);
+  const [loadingPeriods, setLoadingPeriods] = useState(false);
+  const [selectedPeriodId, setSelectedPeriodId] = useState<string>("");
+
+  const [allClasses, setAllClasses] = useState<ClassItem[]>([]);
+  const [loadingClasses, setLoadingClasses] = useState(false);
+  const [institutionMeta, setInstitutionMeta] = useState<InstitutionMeta>({
+    institutionName: "Établissement",
+    logoUrl: null,
+    contactLine: null,
+    cityLine: null,
+    principalName: null,
+    principalRole: "Le Directeur",
+  });
+
+  const [matrixLevel, setMatrixLevel] = useState<string>("");
+  const [matrixClassId, setMatrixClassId] = useState<string>("");
+  const [docData, setDocData] = useState<ConseilDocumentData | null>(null);
+  const [loadingDoc, setLoadingDoc] = useState(false);
+  const [docError, setDocError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setLoadingClasses(true);
+    fetch("/api/admin/classes?limit=500", { cache: "no-store" })
+      .then((r) => r.json())
+      .then((j) => {
+        const arr = (j.items || []) as any[];
+        const mapped: ClassItem[] = arr.map((c) => ({
+          id: String(c.id),
+          label: (c.label || c.name || "Classe").trim(),
+          level: (c.level ?? null) ? String(c.level).trim() : null,
+        }));
+        setAllClasses(mapped);
+      })
+      .catch((e) => {
+        console.error("[admin.conseil-classe] load classes error", e);
+        setAllClasses([]);
+      })
+      .finally(() => setLoadingClasses(false));
+  }, []);
+
+  useEffect(() => {
+    async function loadInstitutionSettings() {
+      try {
+        const r = await fetch("/api/admin/institution/settings", { cache: "no-store" });
+        const j = await r.json().catch(() => ({} as any));
+        const raw = j?.item || j?.institution || j || {};
+
+        setInstitutionMeta({
+          institutionName:
+            pickString(raw, [
+              "institution_name",
+              "school_name",
+              "establishment_name",
+              "name",
+              "label",
+            ]) || "Établissement",
+          logoUrl: pickString(raw, ["logo_url", "logo", "logoUrl"]),
+          contactLine:
+            [
+              pickString(raw, ["phone", "phone_number", "telephone"]),
+              pickString(raw, ["email", "contact_email"]),
+            ]
+              .filter(Boolean)
+              .join(" • ") || null,
+          cityLine:
+            [
+              pickString(raw, ["address", "adresse"]),
+              pickString(raw, ["city", "ville"]),
+            ]
+              .filter(Boolean)
+              .join(" • ") || null,
+          principalName: pickString(raw, [
+            "principal_name",
+            "head_name",
+            "director_name",
+            "responsible_name",
+          ]),
+          principalRole:
+            pickString(raw, ["principal_role", "head_role", "director_role"]) ||
+            "Le Directeur",
+        });
+      } catch (e) {
+        console.error("[admin.conseil-classe] institution settings", e);
       }
-    | null
-    | undefined,
-  fallbackIndex = 0
-): string {
-  const raw = (period?.short_label || period?.code || period?.label || "").trim();
-  if (!raw) return `T${fallbackIndex + 1}`;
-  const compact = raw
-    .replace(/trimestre/gi, "T")
-    .replace(/semestre/gi, "S")
-    .replace(/période/gi, "P")
-    .replace(/periode/gi, "P")
-    .replace(/\s+/g, " ")
-    .trim();
-  return compact;
-}
+    }
 
-function annualDecisionLabel(avg: number | null | undefined): string {
-  if (avg === null || avg === undefined || !Number.isFinite(Number(avg))) return "—";
-  const g = Number(avg);
-  if (g >= 16) return "Excellence";
-  if (g >= 14) return "Tableau d’honneur";
-  if (g >= 12) return "Encouragement";
-  return "—";
-}
+    loadInstitutionSettings();
+  }, []);
 
-function safeLine(value?: string | null): string {
-  const v = String(value ?? "").trim();
-  return v || "................................................";
-}
+  async function loadAcademicYears() {
+    setLoadingYears(true);
+    try {
+      const r = await fetch("/api/admin/institution/academic-years", {
+        cache: "no-store",
+      });
+      const j = await r.json().catch(() => ({} as any));
 
-function getSubjectScore(
-  row: CouncilStudentRow | null | undefined,
-  subjects: BulletinSubject[],
-  names: string[]
-): number | null {
-  if (!row) return null;
-  const lowered = names.map((n) => n.toLowerCase());
-  const nameById = new Map(
-    subjects.map((subject) => [subject.subject_id, String(subject.subject_name || "").toLowerCase()])
-  );
-  for (const cell of row.per_subject || []) {
-    const resolved = nameById.get(cell.subject_id) || "";
-    if (lowered.some((x) => resolved.includes(x))) {
-      if (cell.avg20 !== null && cell.avg20 !== undefined && Number.isFinite(Number(cell.avg20))) {
-        return Number(cell.avg20);
+      if (!r.ok || !j?.ok) {
+        throw new Error(j?.error || "Échec du chargement des années scolaires.");
       }
+
+      const items = Array.isArray(j.items) ? j.items : [];
+      const mapped: AcademicYear[] = items.map((y: any) => ({
+        id: String(y.id),
+        code: String(y.code),
+        label: String(y.label || y.code),
+        start_date: y.start_date ? String(y.start_date).slice(0, 10) : "",
+        end_date: y.end_date ? String(y.end_date).slice(0, 10) : "",
+        is_current: !!y.is_current,
+      }));
+      setYears(mapped);
+
+      const current = mapped.find((y) => y.is_current) || mapped[mapped.length - 1];
+      if (current) {
+        setSelectedYearCode((prev) => prev || current.code);
+      }
+    } catch (e: any) {
+      console.error("[admin.conseil-classe] loadAcademicYears", e);
+      setYears([]);
+    } finally {
+      setLoadingYears(false);
     }
   }
-  return null;
-}
 
-/* ───────── Page ───────── */
-
-export default function ConseilClassePage() {
-  const [classes, setClasses] = useState<ClassRow[]>([]);
-  const [classesLoading, setClassesLoading] = useState(false);
-
-  const [institution, setInstitution] = useState<InstitutionSettings | null>(null);
-  const [periods, setPeriods] = useState<GradePeriod[]>([]);
-  const [periodsLoading, setPeriodsLoading] = useState(false);
-
-  const [selectedAcademicYear, setSelectedAcademicYear] = useState("");
-  const [selectedPeriodId, setSelectedPeriodId] = useState("");
-  const [selectedClassId, setSelectedClassId] = useState("");
-
-  const [dateFrom, setDateFrom] = useState("");
-  const [dateTo, setDateTo] = useState("");
-
-  const [bulletinRaw, setBulletinRaw] = useState<BulletinResponse | null>(null);
-  const [conductSummary, setConductSummary] = useState<ConductSummaryResponse | null>(null);
-
-  const [loading, setLoading] = useState(false);
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
-
-  const [councilDate, setCouncilDate] = useState(todayISO());
-  const [chairName, setChairName] = useState("");
-  const [headTeacherName, setHeadTeacherName] = useState("");
-  const [educationOfficerName, setEducationOfficerName] = useState("");
-  const [classDelegateName, setClassDelegateName] = useState("");
-
-  const [analysisText, setAnalysisText] = useState("");
-  const [problemsText, setProblemsText] = useState("");
-  const [solutionsText, setSolutionsText] = useState("");
-  const [generalObservation, setGeneralObservation] = useState("");
-  const [previewOpen, setPreviewOpen] = useState(false);
-  const [yearPeriodBulletins, setYearPeriodBulletins] = useState<Record<string, EnrichedBulletin>>({});
-  const [yearRecapLoading, setYearRecapLoading] = useState(false);
-
-  useEffect(() => {
-    const run = async () => {
-      try {
-        setClassesLoading(true);
-        const res = await fetch("/api/admin/classes", { cache: "no-store" });
-        if (!res.ok) throw new Error(`Erreur classes: ${res.status}`);
-        const json = await res.json();
-        const items: ClassRow[] = Array.isArray(json)
-          ? json
-          : Array.isArray(json.items)
-          ? json.items
-          : [];
-        setClasses(items);
-        if (items.length > 0 && !selectedClassId) setSelectedClassId(items[0].id);
-      } catch (e: any) {
-        setErrorMsg(e?.message || "Erreur lors du chargement des classes.");
-      } finally {
-        setClassesLoading(false);
-      }
-    };
-    run();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  useEffect(() => {
-    const run = async () => {
-      try {
-        const res = await fetch("/api/admin/institution/settings", { cache: "no-store" });
-        if (!res.ok) return;
-        const json = await res.json();
-        setInstitution(json as InstitutionSettings);
-      } catch (e) {
-        console.error(e);
-      }
-    };
-    run();
-  }, []);
-
-  useEffect(() => {
-    const cls = classes.find((c) => c.id === selectedClassId);
-    if (cls?.academic_year) {
-      setSelectedAcademicYear(cls.academic_year);
+  async function loadPeriods(yearCode: string) {
+    if (!yearCode) {
+      setPeriods([]);
       setSelectedPeriodId("");
-      setDateFrom("");
-      setDateTo("");
+      return;
     }
-  }, [selectedClassId, classes]);
+
+    setLoadingPeriods(true);
+    try {
+      const params = new URLSearchParams();
+      params.set("academic_year", yearCode);
+
+      const r = await fetch(`/api/admin/institution/grading-periods?${params.toString()}`, {
+        cache: "no-store",
+      });
+      const j = await r.json().catch(() => ({} as any));
+
+      if (!r.ok || !j?.ok) {
+        throw new Error(j?.error || "Échec du chargement des périodes d'évaluation.");
+      }
+
+      const items = Array.isArray(j.items) ? j.items : [];
+      const mapped: GradingPeriod[] = items.map((p: any, idx: number) => ({
+        id: String(p.id),
+        code: String(p.code || ""),
+        label: String(p.label || ""),
+        short_label: String(p.short_label || p.label || ""),
+        start_date: p.start_date ? String(p.start_date).slice(0, 10) : null,
+        end_date: p.end_date ? String(p.end_date).slice(0, 10) : null,
+        order_index: Number(p.order_index ?? idx + 1),
+        is_active: p.is_active !== false,
+      }));
+
+      mapped.sort((a, b) => a.order_index - b.order_index);
+      setPeriods(mapped);
+
+      const def = mapped.find((p) => p.is_active && p.start_date && p.end_date) || mapped[0];
+      if (def) {
+        setSelectedPeriodId(def.id);
+        if (def.start_date) setFrom(def.start_date);
+        if (def.end_date) setTo(def.end_date);
+      }
+    } catch (e: any) {
+      console.error("[admin.conseil-classe] loadPeriods", e);
+      setPeriods([]);
+      setSelectedPeriodId("");
+    } finally {
+      setLoadingPeriods(false);
+    }
+  }
 
   useEffect(() => {
-    const run = async () => {
-      try {
-        setPeriodsLoading(true);
-        const params = new URLSearchParams();
-        if (selectedAcademicYear) params.set("academic_year", selectedAcademicYear);
-        const qs = params.toString();
-        const url = "/api/admin/institution/grading-periods" + (qs ? `?${qs}` : "");
-        const res = await fetch(url, { cache: "no-store" });
+    loadAcademicYears();
+  }, []);
 
-        if (!res.ok) {
-          setPeriods([]);
-          return;
-        }
+  useEffect(() => {
+    if (selectedYearCode) {
+      loadPeriods(selectedYearCode);
+    } else {
+      setPeriods([]);
+      setSelectedPeriodId("");
+    }
+  }, [selectedYearCode]);
 
-        const json = await res.json();
-        const items: GradePeriod[] = Array.isArray(json)
-          ? json
-          : Array.isArray(json.items)
-          ? json.items
-          : [];
-        setPeriods(items);
-      } catch (e) {
-        console.error(e);
-        setPeriods([]);
-      } finally {
-        setPeriodsLoading(false);
-      }
-    };
-    run();
-  }, [selectedAcademicYear]);
+  function handlePeriodChange(id: string) {
+    setSelectedPeriodId(id);
+    const p = periods.find((x) => x.id === id);
+    if (p) {
+      if (p.start_date) setFrom(p.start_date);
+      if (p.end_date) setTo(p.end_date);
+    }
+  }
 
-  const academicYears = useMemo(() => {
-    const s = new Set<string>();
-    classes.forEach((c) => c.academic_year && s.add(c.academic_year));
-    periods.forEach((p) => p.academic_year && s.add(p.academic_year));
-    return Array.from(s).sort();
-  }, [classes, periods]);
+  const currentYear = useMemo(
+    () => years.find((y) => y.code === selectedYearCode) || null,
+    [years, selectedYearCode]
+  );
 
-  const filteredPeriods = useMemo(() => {
-    if (!selectedAcademicYear) return periods;
-    return periods.filter((p) => p.academic_year === selectedAcademicYear);
-  }, [periods, selectedAcademicYear]);
-
-  const selectedPeriod = useMemo(
+  const currentPeriod = useMemo(
     () => periods.find((p) => p.id === selectedPeriodId) || null,
     [periods, selectedPeriodId]
   );
 
-  useEffect(() => {
-    if (!selectedPeriodId) return;
-    const p = periods.find((pp) => pp.id === selectedPeriodId);
-    if (!p) return;
-    setDateFrom(p.start_date || "");
-    setDateTo(p.end_date || "");
-  }, [selectedPeriodId, periods]);
+  const currentYearLabelSafe = currentYear?.label ?? "";
+  const currentPeriodLabelSafe =
+    currentPeriod?.short_label || currentPeriod?.label || currentPeriod?.code || "";
 
+  const levels = useMemo(() => {
+    const s = new Set<string>();
+    for (const c of allClasses) if (c.level) s.add(c.level);
+    return Array.from(s).sort((a, b) =>
+      a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" })
+    );
+  }, [allClasses]);
 
-async function handleLoadCouncilData() {
-  setErrorMsg(null);
-
-  if (!selectedClassId) {
-    setErrorMsg("Veuillez sélectionner une classe.");
-    return;
-  }
-  if (!dateFrom || !dateTo) {
-    setErrorMsg("Veuillez choisir une période.");
-    return;
-  }
-
-  try {
-    setLoading(true);
-    setConductSummary(null);
-    setYearPeriodBulletins({});
-
-    const params = new URLSearchParams();
-    params.set("class_id", selectedClassId);
-    params.set("from", dateFrom);
-    params.set("to", dateTo);
-
-    const [resBulletin, resConduct] = await Promise.all([
-      fetch(`/api/admin/grades/bulletin?${params.toString()}`, { cache: "no-store" }),
-      fetch(`/api/admin/conduite/averages?${params.toString()}`, { cache: "no-store" }),
-    ]);
-
-    if (!resBulletin.ok) {
-      const txt = await resBulletin.text().catch(() => "");
-      throw new Error(
-        `Erreur bulletin (${resBulletin.status}) : ${txt || "Impossible de charger les données."}`
-      );
-    }
-
-    const json = (await resBulletin.json()) as BulletinResponse;
-    if (!json.ok) throw new Error("Réponse bulletin invalide.");
-
-    setBulletinRaw(json);
-
-    if (resConduct.ok) {
-      try {
-        const conductJson = (await resConduct.json()) as ConductSummaryResponse;
-        if (conductJson && Array.isArray(conductJson.items)) {
-          setConductSummary(conductJson);
-        }
-      } catch (err) {
-        console.warn("[ConseilClasse] lecture conduite impossible", err);
-      }
-    }
-
-    if (!headTeacherName) {
-      setHeadTeacherName(json.class?.head_teacher?.display_name || "");
-    }
-    if (!chairName) {
-      setChairName(institution?.institution_head_name || "");
-    }
-
-    const sortedPeriods = [...filteredPeriods].sort(comparePeriods);
-    const isLastPeriod =
-      !!selectedPeriodId &&
-      sortedPeriods.length > 0 &&
-      sortedPeriods[sortedPeriods.length - 1]?.id === selectedPeriodId;
-
-    if (isLastPeriod && sortedPeriods.length > 0) {
-      setYearRecapLoading(true);
-      try {
-        const entries = await Promise.all(
-          sortedPeriods.map(async (period) => {
-            if (period.id === selectedPeriodId) {
-              return [period.id, computeRanksAndStats(json)] as const;
-            }
-
-            const p = new URLSearchParams();
-            p.set("class_id", selectedClassId);
-            p.set("from", period.start_date);
-            p.set("to", period.end_date);
-
-            try {
-              const res = await fetch(`/api/admin/grades/bulletin?${p.toString()}`, {
-                cache: "no-store",
-              });
-              if (!res.ok) return [period.id, null] as const;
-              const js = (await res.json()) as BulletinResponse;
-              if (!js?.ok) return [period.id, null] as const;
-              return [period.id, computeRanksAndStats(js)] as const;
-            } catch (err) {
-              console.warn("[ConseilClasse] bulletin période ignoré", period.id, err);
-              return [period.id, null] as const;
-            }
-          })
-        );
-
-        const map: Record<string, EnrichedBulletin> = {};
-        entries.forEach(([id, data]) => {
-          if (data) map[id] = data;
-        });
-        setYearPeriodBulletins(map);
-      } finally {
-        setYearRecapLoading(false);
-      }
-    } else {
-      setYearPeriodBulletins({});
-    }
-
-    setPreviewOpen(true);
-  } catch (e: any) {
-    console.error(e);
-    setErrorMsg(e?.message || "Erreur lors du chargement des données du conseil.");
-  } finally {
-    setLoading(false);
-  }
-}
-
-const enriched = useMemo(() => computeRanksAndStats(bulletinRaw), [bulletinRaw]);
-
-  const conductByStudentId = useMemo(() => {
-    const map = new Map<string, ConductItem>();
-    if (!conductSummary || !Array.isArray(conductSummary.items)) return map;
-    conductSummary.items.forEach((it) => map.set(it.student_id, it));
-    return map;
-  }, [conductSummary]);
-
-  const councilRows = useMemo<CouncilStudentRow[]>(() => {
-    const totalMax = conductSummary?.total_max ?? null;
-    const items = [...(enriched?.items ?? [])];
-
-    items.sort((a, b) => {
-      const avgA =
-        a.general_avg !== null && a.general_avg !== undefined
-          ? Number(a.general_avg)
-          : -Infinity;
-      const avgB =
-        b.general_avg !== null && b.general_avg !== undefined
-          ? Number(b.general_avg)
-          : -Infinity;
-      if (avgB !== avgA) return avgB - avgA;
-
-      const rankA =
-        a.rank !== null && a.rank !== undefined ? Number(a.rank) : Number.POSITIVE_INFINITY;
-      const rankB =
-        b.rank !== null && b.rank !== undefined ? Number(b.rank) : Number.POSITIVE_INFINITY;
-      if (rankA !== rankB) return rankA - rankB;
-
-      return (a.full_name || "").localeCompare(b.full_name || "", undefined, {
-        sensitivity: "base",
-        numeric: true,
-      });
-    });
-
-    return items.map((item) => {
-      const conduct = conductByStudentId.get(item.student_id) || null;
-      const conductOn20 =
-        conduct && totalMax && Number(totalMax) > 0
-          ? clampTo20(round2((Number(conduct.total || 0) * 20) / Number(totalMax)))
-          : null;
-
-      const mentions = computeCouncilMentions(item.general_avg, conductOn20);
-      const appreciation = computeCouncilAppreciationText(
-        mentions,
-        item.general_avg,
-        conductOn20
-      );
-
-      return {
-        ...item,
-        conduct,
-        conductOn20,
-        mentions,
-        appreciation,
-      };
-    });
-  }, [enriched, conductByStudentId, conductSummary]);
-
-  const classStats = useMemo(() => {
-    const effectif = councilRows.length;
-    const girls = councilRows.filter(
-      (r) => normalizeSex(r.sex || r.gender || null) === "F"
-    ).length;
-    const boys = councilRows.filter(
-      (r) => normalizeSex(r.sex || r.gender || null) === "M"
-    ).length;
-
-    const validGeneral = councilRows
-      .map((r) => r.general_avg)
-      .filter((v): v is number => v !== null && v !== undefined && Number.isFinite(v));
-
-    const annualVals = councilRows
-      .map((r) => r.annual_avg)
-      .filter((v): v is number => v !== null && v !== undefined && Number.isFinite(v));
-
-    const excellence = councilRows.filter((r) => r.mentions.distinction === "excellence").length;
-    const honour = councilRows.filter((r) => r.mentions.distinction === "honour").length;
-    const encouragement = councilRows.filter(
-      (r) => r.mentions.distinction === "encouragement"
-    ).length;
-
-    const warningWork = councilRows.filter((r) => r.mentions.sanction === "warningWork").length;
-    const warningConduct = councilRows.filter(
-      (r) => r.mentions.sanction === "warningConduct"
-    ).length;
-    const blameWork = councilRows.filter((r) => r.mentions.sanction === "blameWork").length;
-    const blameConduct = councilRows.filter((r) => r.mentions.sanction === "blameConduct").length;
-
-    return {
-      effectif,
-      girls,
-      boys,
-      classAvg: enriched?.stats.classAvg ?? null,
-      highest: enriched?.stats.highest ?? null,
-      lowest: enriched?.stats.lowest ?? null,
-      above10: validGeneral.filter((v) => v >= 10).length,
-      below85: validGeneral.filter((v) => v < 8.5).length,
-      annualClassAvg: annualVals.length
-        ? round2(annualVals.reduce((a, b) => a + b, 0) / annualVals.length)
-        : null,
-      annualHighest: annualVals.length ? Math.max(...annualVals) : null,
-      annualLowest: annualVals.length ? Math.min(...annualVals) : null,
-      excellence,
-      honour,
-      encouragement,
-      warningWork,
-      warningConduct,
-      blameWork,
-      blameConduct,
-    };
-  }, [councilRows, enriched]);
-
-
-const subjectStats = useMemo<SubjectCouncilStat[]>(() => {
-  const subjects = enriched?.response.subjects ?? [];
-  const effectif = councilRows.length;
-
-  return subjects
-    .map((subject) => {
-      const values = councilRows
-        .map((row) => {
-          const cell = row.per_subject?.find((ps) => ps.subject_id === subject.subject_id);
-          return cell?.avg20 ?? null;
+  const classesForLevel = useMemo(() => {
+    if (!matrixLevel) return [];
+    return allClasses
+      .filter((c) => c.level === matrixLevel)
+      .sort((a, b) =>
+        a.label.localeCompare(b.label, undefined, {
+          numeric: true,
+          sensitivity: "base",
         })
-        .filter((v): v is number => v !== null && v !== undefined && Number.isFinite(v));
+      );
+  }, [allClasses, matrixLevel]);
 
-      let teacher_name: string | null = null;
-      let teacher_signature_png: string | null = null;
-      for (const row of councilRows) {
-        const cell = row.per_subject?.find((ps) => ps.subject_id === subject.subject_id);
-        if (cell?.teacher_name && !teacher_name) {
-          teacher_name = cell.teacher_name;
+  const periodLabel = useMemo(() => {
+    const parts: string[] = [];
+
+    if (currentYear) {
+      parts.push(`Année scolaire : ${currentYear.label}`);
+    }
+    if (currentPeriod) {
+      const label = currentPeriod.short_label || currentPeriod.label || currentPeriod.code;
+      let dates = "";
+      if (currentPeriod.start_date && currentPeriod.end_date) {
+        dates = ` (${df.format(new Date(currentPeriod.start_date))} – ${df.format(
+          new Date(currentPeriod.end_date)
+        )})`;
+      }
+      parts.push(`Période : ${label}${dates}`);
+    } else if (from || to) {
+      try {
+        if (from && to) {
+          parts.push(`Du ${df.format(new Date(from))} au ${df.format(new Date(to))}`);
+        } else if (from && !to) {
+          parts.push(`À partir du ${df.format(new Date(from))}`);
+        } else if (!from && to) {
+          parts.push(`Jusqu'au ${df.format(new Date(to))}`);
         }
-        if (cell?.teacher_signature_png && !teacher_signature_png) {
-          teacher_signature_png = cell.teacher_signature_png;
-        }
+      } catch {
+        // ignore parse errors
+      }
+    }
+
+    return parts.length ? parts.join(" — ") : "Toutes les évaluations enregistrées";
+  }, [currentYear, currentPeriod, from, to]);
+
+  async function computeConseilData(classId: string): Promise<ConseilDocumentData | null> {
+    const classInfo = allClasses.find((c) => c.id === classId) || null;
+
+    const subsRes = await fetch(`/api/class/subjects?class_id=${classId}`, {
+      cache: "no-store",
+    });
+    const subsJson = await subsRes.json().catch(() => ({}));
+    const rawItems = (subsJson.items || []) as any[];
+    const subjectsForClass = rawItems.map((s) => ({
+      subject_id: String(s.id),
+      subject_name: (s.label || s.name || "").trim() || String(s.id),
+    }));
+
+    const studentsMap = new Map<string, MatrixStudent>();
+    const averages: Record<string, Record<string, number | null>> = {};
+    const subjectIndicators: SubjectIndicator[] = [];
+
+    for (const subj of subjectsForClass) {
+      const qs = new URLSearchParams();
+      qs.set("class_id", classId);
+      qs.set("subject_id", subj.subject_id);
+      if (from) qs.set("from", from);
+      if (to) qs.set("to", to);
+      if (status === "published") qs.set("published", "true");
+      if (status === "draft") qs.set("published", "false");
+
+      const res = await fetch(`/api/admin/notes/matrix?${qs.toString()}`, {
+        cache: "no-store",
+      });
+      const json = (await res.json().catch(() => ({}))) as MatrixOk | MatrixErr | any;
+      if (!res.ok || !json || !json.ok) {
+        console.error("[admin.conseil-classe] matrix error", subj.subject_id, json);
+        subjectIndicators.push({
+          subject_id: subj.subject_id,
+          subject_name: subj.subject_name,
+          teacher_names: null,
+          effectif: 0,
+          ge10_count: 0,
+          ge10_pct: 0,
+          between85And10_count: 0,
+          between85And10_pct: 0,
+          lt85_count: 0,
+          lt85_pct: 0,
+          avg_20: null,
+        });
+        continue;
       }
 
-      return {
-        subject_id: subject.subject_id,
-        subject_name: subject.subject_name,
-        coeff: Number(subject.coeff_bulletin ?? 0),
-        teacher_name,
-        teacher_signature_png,
-        noted_count: values.length,
-        not_noted_count: Math.max(0, effectif - values.length),
-        avg20: values.length
-          ? round2(values.reduce((a, b) => a + b, 0) / values.length)
-          : null,
-        gte10: values.filter((v) => v >= 10).length,
-        between85And10: values.filter((v) => v >= 8.5 && v < 10).length,
-        lt85: values.filter((v) => v < 8.5).length,
-      };
-    })
-    .sort((a, b) =>
-      a.subject_name.localeCompare(b.subject_name, undefined, {
+      const data = json as MatrixOk;
+      const evaluations = data.evaluations || [];
+      const marks = data.marks || {};
+      const students = data.students || [];
+
+      for (const st of students) {
+        if (!studentsMap.has(st.student_id)) studentsMap.set(st.student_id, st);
+      }
+
+      const teacherNames = Array.from(
+        new Set(
+          evaluations
+            .map((ev) => ev.teacher_name?.trim())
+            .filter((v): v is string => !!v)
+        )
+      ).join(" / ");
+
+      const metaByEval = new Map<string, { scale: number; coeff: number }>();
+      for (const ev of evaluations) {
+        metaByEval.set(ev.id, { scale: ev.scale, coeff: ev.coeff });
+      }
+
+      const subjectStudentAverages: number[] = [];
+
+      for (const st of students) {
+        const evalMarks = (marks as any)[st.student_id] || {};
+        let weightedSum = 0;
+        let weights = 0;
+
+        for (const [evalId, markObj] of Object.entries(evalMarks) as any) {
+          const meta = metaByEval.get(evalId);
+          if (!meta) continue;
+          if (markObj.raw == null) continue;
+
+          const mark20 =
+            markObj.mark_20 != null
+              ? Number(markObj.mark_20)
+              : (Number(markObj.raw) / meta.scale) * 20;
+
+          weightedSum += mark20 * meta.coeff;
+          weights += meta.coeff;
+        }
+
+        const avg20 = weights > 0 ? weightedSum / weights : null;
+        if (!averages[st.student_id]) averages[st.student_id] = {};
+        averages[st.student_id][subj.subject_id] = avg20;
+
+        if (avg20 != null) subjectStudentAverages.push(avg20);
+      }
+
+      const effectif = subjectStudentAverages.length;
+      const ge10_count = subjectStudentAverages.filter((v) => v >= 10).length;
+      const between85And10_count = subjectStudentAverages.filter((v) => v >= 8.5 && v < 10).length;
+      const lt85_count = subjectStudentAverages.filter((v) => v < 8.5).length;
+      const avg_20 = effectif
+        ? subjectStudentAverages.reduce((sum, value) => sum + value, 0) / effectif
+        : null;
+
+      subjectIndicators.push({
+        subject_id: subj.subject_id,
+        subject_name: subj.subject_name,
+        teacher_names: teacherNames || null,
+        effectif,
+        ge10_count,
+        ge10_pct: percentOf(ge10_count, effectif),
+        between85And10_count,
+        between85And10_pct: percentOf(between85And10_count, effectif),
+        lt85_count,
+        lt85_pct: percentOf(lt85_count, effectif),
+        avg_20,
+      });
+    }
+
+    const studentsList = Array.from(studentsMap.values()).sort((a, b) =>
+      a.full_name.localeCompare(b.full_name, undefined, {
         sensitivity: "base",
         numeric: true,
       })
     );
-}, [enriched, councilRows]);
 
+    const generalAverages: Record<string, number | null> = {};
+    let class_avg_20: number | null = null;
+    let class_min_20: number | null = null;
+    let class_max_20: number | null = null;
 
-  const topStudents = useMemo(
-    () =>
-      councilRows
-        .filter((r) => r.general_avg !== null && r.general_avg !== undefined)
-        .slice(0, 3),
-    [councilRows]
-  );
+    const classAverageList: number[] = [];
 
-  const annualMode = useMemo(
-    () => councilRows.some((r) => r.annual_avg !== null && r.annual_avg !== undefined),
-    [councilRows]
-  );
-
-
-const sortedAcademicPeriods = useMemo(
-  () => [...filteredPeriods].sort(comparePeriods),
-  [filteredPeriods]
-);
-
-const isLastSelectedPeriod = useMemo(() => {
-  if (!selectedPeriodId) return false;
-  if (sortedAcademicPeriods.length === 0) return annualMode;
-  return sortedAcademicPeriods[sortedAcademicPeriods.length - 1]?.id === selectedPeriodId;
-}, [selectedPeriodId, sortedAcademicPeriods, annualMode]);
-
-const annualPeriods = useMemo(
-  () => (isLastSelectedPeriod ? sortedAcademicPeriods : []),
-  [isLastSelectedPeriod, sortedAcademicPeriods]
-);
-
-const annualRecapRows = useMemo(() => {
-  if (!isLastSelectedPeriod || annualPeriods.length === 0) return [];
-
-  const currentMap = new Map<string, CouncilStudentRow>(
-    councilRows.map((row) => [row.student_id, row] as [string, CouncilStudentRow])
-  );
-  const base = new Map<
-    string,
-    {
-      student_id: string;
-      full_name: string;
-      matricule: string | null;
-      birthdate: string | null;
-      annual_avg: number | null;
-      annual_rank: number | null;
+    for (const st of studentsList) {
+      const values = Object.values(averages[st.student_id] || {}).filter(
+        (v): v is number => v != null
+      );
+      const avg = values.length ? values.reduce((a, b) => a + b, 0) / values.length : null;
+      generalAverages[st.student_id] = avg;
+      if (avg != null) classAverageList.push(avg);
     }
-  >();
 
-  annualPeriods.forEach((period) => {
-    const bulletin = yearPeriodBulletins[period.id];
-    bulletin?.items?.forEach((item) => {
-      const existing = base.get(item.student_id);
-      const rowCurrent = currentMap.get(item.student_id);
-      base.set(item.student_id, {
-        student_id: item.student_id,
-        full_name: item.full_name,
-        matricule: item.matricule,
-        birthdate: item.birthdate || item.birth_date || existing?.birthdate || null,
-        annual_avg:
-          rowCurrent?.annual_avg ??
-          item.annual_avg ??
-          existing?.annual_avg ??
-          null,
-        annual_rank:
-          rowCurrent?.annual_rank ??
-          item.annual_rank ??
-          existing?.annual_rank ??
-          null,
+    if (classAverageList.length) {
+      class_avg_20 = classAverageList.reduce((a, b) => a + b, 0) / classAverageList.length;
+      class_min_20 = Math.min(...classAverageList);
+      class_max_20 = Math.max(...classAverageList);
+    }
+
+    const rankValues: Record<string, number | null> = {};
+    for (const st of studentsList) {
+      rankValues[st.student_id] = generalAverages[st.student_id] ?? null;
+    }
+    const ranks = computeRanks(rankValues);
+
+    const studentRows: StudentRow[] = studentsList
+      .map((st) => ({
+        ...st,
+        general_avg: generalAverages[st.student_id] ?? null,
+        general_rank: ranks[st.student_id] ?? null,
+      }))
+      .sort((a, b) => {
+        const av = a.general_avg ?? -Infinity;
+        const bv = b.general_avg ?? -Infinity;
+        if (bv !== av) return bv - av;
+        return a.full_name.localeCompare(b.full_name, undefined, {
+          sensitivity: "base",
+          numeric: true,
+        });
       });
-    });
-  });
 
-  const rows = Array.from(base.values()).map((baseRow) => {
-    const periods = annualPeriods.map((period) => {
-      const item =
-        yearPeriodBulletins[period.id]?.items?.find((x) => x.student_id === baseRow.student_id) ||
-        null;
-      return {
-        period_id: period.id,
-        label: shortPeriodLabel(period),
-        avg: item?.general_avg ?? null,
-        rank: item?.rank ?? null,
-      };
-    });
-
-    const validAvgs = periods
-      .map((p) => p.avg)
-      .filter((v): v is number => v !== null && v !== undefined && Number.isFinite(v));
-
-    const annual_avg =
-      baseRow.annual_avg !== null && baseRow.annual_avg !== undefined
-        ? Number(baseRow.annual_avg)
-        : validAvgs.length
-        ? round2(validAvgs.reduce((a, b) => a + b, 0) / validAvgs.length)
-        : null;
+    const classedRows = studentRows.filter((st) => st.general_avg != null);
+    const moy_ge_10_count = classedRows.filter((st) => (st.general_avg ?? -1) >= 10).length;
+    const between85And10_count = classedRows.filter(
+      (st) => (st.general_avg ?? -1) >= 8.5 && (st.general_avg ?? -1) < 10
+    ).length;
+    const lt85_count = classedRows.filter((st) => (st.general_avg ?? 99) < 8.5).length;
 
     return {
-      ...baseRow,
-      periods,
-      annual_avg,
-      annual_rank: baseRow.annual_rank,
+      class_id: classId,
+      class_label: classInfo?.label || "Classe",
+      level: classInfo?.level ?? null,
+      students: studentRows,
+      classed_count: classedRows.length,
+      class_avg_20,
+      class_min_20,
+      class_max_20,
+      moy_ge_10_count,
+      between85And10_count,
+      lt85_count,
+      subjectIndicators: subjectIndicators.sort((a, b) =>
+        a.subject_name.localeCompare(b.subject_name, undefined, {
+          sensitivity: "base",
+          numeric: true,
+        })
+      ),
+      majorStudent: studentRows[0] || null,
+      specificSubjects: buildSpecificSubjects(subjectIndicators),
     };
-  });
+  }
 
-  const withAnnual = rows.filter(
-    (row) => row.annual_avg !== null && row.annual_avg !== undefined && Number.isFinite(row.annual_avg)
-  );
-  const sorted = [...withAnnual].sort((a, b) => Number(b.annual_avg) - Number(a.annual_avg));
-  let lastScore: number | null = null;
-  let lastRank = 0;
-  const rankMap = new Map<string, number>();
-  sorted.forEach((row, idx) => {
-    const score = Number(row.annual_avg ?? 0);
-    if (lastScore === null || score !== lastScore) {
-      lastRank = idx + 1;
-      lastScore = score;
+  async function loadDocument() {
+    if (!matrixClassId) {
+      setDocError("Choisissez d'abord une classe.");
+      return;
     }
-    rankMap.set(row.student_id, lastRank);
-  });
+    setLoadingDoc(true);
+    setDocError(null);
+    setDocData(null);
+    try {
+      const data = await computeConseilData(matrixClassId);
+      setDocData(data);
+    } catch (e: any) {
+      console.error("[admin.conseil-classe] loadDocument", e);
+      setDocError(e?.message || "Erreur lors de la préparation du procès-verbal.");
+      setDocData(null);
+    } finally {
+      setLoadingDoc(false);
+    }
+  }
 
-  return rows
-    .map((row) => ({
-      ...row,
-      annual_rank:
-        row.annual_rank !== null && row.annual_rank !== undefined
-          ? row.annual_rank
-          : rankMap.get(row.student_id) ?? null,
-    }))
-    .sort((a, b) => {
-      const rankA =
-        a.annual_rank !== null && a.annual_rank !== undefined ? Number(a.annual_rank) : Number.POSITIVE_INFINITY;
-      const rankB =
-        b.annual_rank !== null && b.annual_rank !== undefined ? Number(b.annual_rank) : Number.POSITIVE_INFINITY;
-      if (rankA !== rankB) return rankA - rankB;
+  function exportIndicatorsCsv() {
+    if (!docData) {
+      setDocError("Chargez d'abord le document avant l'export CSV.");
+      return;
+    }
 
-      const avgA = a.annual_avg !== null && a.annual_avg !== undefined ? Number(a.annual_avg) : -Infinity;
-      const avgB = b.annual_avg !== null && b.annual_avg !== undefined ? Number(b.annual_avg) : -Infinity;
-      if (avgB !== avgA) return avgB - avgA;
+    const rows: string[] = [];
+    rows.push([csvCell("Année scolaire"), csvCell(currentYearLabelSafe)].join(";"));
+    rows.push([csvCell("Période"), csvCell(currentPeriodLabelSafe || `${from || ""} → ${to || ""}`)].join(";"));
+    rows.push([csvCell("Classe"), csvCell(docData.class_label), csvCell("Niveau"), csvCell(docData.level)].join(";"));
+    rows.push("");
+    rows.push(
+      [
+        csvCell("Matière"),
+        csvCell("Effectif"),
+        csvCell("M >= 10 (N)"),
+        csvCell("M >= 10 (%)"),
+        csvCell("10 > M >= 8,5 (N)"),
+        csvCell("10 > M >= 8,5 (%)"),
+        csvCell("M < 8,5 (N)"),
+        csvCell("M < 8,5 (%)"),
+        csvCell("Moyenne"),
+        csvCell("Enseignant / Émargement"),
+      ].join(";")
+    );
 
-      return a.full_name.localeCompare(b.full_name, undefined, {
-        sensitivity: "base",
-        numeric: true,
-      });
+    for (const item of docData.subjectIndicators) {
+      rows.push(
+        [
+          csvCell(item.subject_name),
+          csvCell(item.effectif),
+          csvCell(item.ge10_count),
+          csvCell(`${item.ge10_pct.toFixed(2)}%`),
+          csvCell(item.between85And10_count),
+          csvCell(`${item.between85And10_pct.toFixed(2)}%`),
+          csvCell(item.lt85_count),
+          csvCell(`${item.lt85_pct.toFixed(2)}%`),
+          csvCell(item.avg_20 == null ? "" : nf.format(item.avg_20)),
+          csvCell(item.teacher_names || ""),
+        ].join(";")
+      );
+    }
+
+    const blob = new Blob([rows.join("\n")], {
+      type: "text/csv;charset=utf-8;",
     });
-}, [isLastSelectedPeriod, annualPeriods, yearPeriodBulletins, councilRows]);
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `conseil-classe-matieres-${docData.class_label}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
 
-const annualRecapStats = useMemo(() => {
-  const vals = annualRecapRows
-    .map((row) => row.annual_avg)
-    .filter((v): v is number => v !== null && v !== undefined && Number.isFinite(v));
+  function buildConseilHtml(data: ConseilDocumentData) {
+    const total = data.students.length;
+    const classed = data.classed_count;
+    const yearText = escapeHtml(currentYearLabelSafe || "—");
+    const periodText = escapeHtml(
+      currentPeriodLabelSafe || (from || to ? `${from || ""} → ${to || ""}` : "—")
+    );
+    const institutionName = escapeHtml(institutionMeta.institutionName);
+    const contactLine = escapeHtml(institutionMeta.contactLine || "");
+    const cityLine = escapeHtml(institutionMeta.cityLine || "");
+    const principalRole = escapeHtml(institutionMeta.principalRole || "Le Directeur");
+    const principalName = escapeHtml(institutionMeta.principalName || "");
+    const logoBlock = institutionMeta.logoUrl
+      ? `<img src="${escapeHtml(institutionMeta.logoUrl)}" alt="Logo établissement" class="logo" />`
+      : `<div class="logo placeholder-logo">LOGO</div>`;
 
-  return {
-    effectif: annualRecapRows.length,
-    classAvg: vals.length ? round2(vals.reduce((a, b) => a + b, 0) / vals.length) : null,
-    highest: vals.length ? Math.max(...vals) : null,
-    lowest: vals.length ? Math.min(...vals) : null,
-    excellence: annualRecapRows.filter((row) => (row.annual_avg ?? -Infinity) >= 16).length,
-    honour: annualRecapRows.filter(
-      (row) => (row.annual_avg ?? -Infinity) >= 14 && (row.annual_avg ?? -Infinity) < 16
-    ).length,
-    encouragement: annualRecapRows.filter(
-      (row) => (row.annual_avg ?? -Infinity) >= 12 && (row.annual_avg ?? -Infinity) < 14
-    ).length,
-  };
-}, [annualRecapRows]);
+    const studentRowsHtml = data.students
+      .map(
+        (student, index) => `
+          <tr>
+            <td class="center">${index + 1}</td>
+            <td>${escapeHtml(student.full_name)}</td>
+            <td>${escapeHtml(student.matricule || "")}</td>
+            <td class="center">&nbsp;</td>
+            <td class="center">${formatScore(student.general_avg)}</td>
+            <td class="center">${escapeHtml(formatRank(student.general_rank))}</td>
+            <td class="center manual-cell"></td>
+            <td class="center manual-cell"></td>
+            <td class="center manual-cell"></td>
+          </tr>
+        `
+      )
+      .join("");
 
+    const subjectRowsHtml = data.subjectIndicators
+      .map(
+        (item) => `
+          <tr>
+            <td>${escapeHtml(item.subject_name)}</td>
+            <td class="center">${item.effectif}</td>
+            <td class="center">${item.ge10_count}</td>
+            <td class="center">${nf.format(item.ge10_pct)}%</td>
+            <td class="center">${item.between85And10_count}</td>
+            <td class="center">${nf.format(item.between85And10_pct)}%</td>
+            <td class="center">${item.lt85_count}</td>
+            <td class="center">${nf.format(item.lt85_pct)}%</td>
+            <td class="center">${formatScore(item.avg_20)}</td>
+            <td>${escapeHtml(item.teacher_names || "")}</td>
+          </tr>
+        `
+      )
+      .join("");
 
-  const currentClass = useMemo(
-    () => classes.find((c) => c.id === selectedClassId) || null,
-    [classes, selectedClassId]
-  );
+    const specificSubjects = `
+      <table class="table compact-table">
+        <thead>
+          <tr>
+            <th>FRANÇAIS</th>
+            <th>ANGLAIS</th>
+            <th>PHILO</th>
+            <th>ALLESP</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="center">${escapeHtml(data.specificSubjects.francais || "")}</td>
+            <td class="center">${escapeHtml(data.specificSubjects.anglais || "")}</td>
+            <td class="center">${escapeHtml(data.specificSubjects.philo || "")}</td>
+            <td class="center">${escapeHtml(data.specificSubjects.allesp || "")}</td>
+          </tr>
+        </tbody>
+      </table>
+    `;
 
-  const currentClassLabel =
-    bulletinRaw?.class?.label || currentClass?.label || currentClass?.name || "Classe";
+    const majorRows = data.majorStudent
+      ? `
+        <tr>
+          <td class="center">1</td>
+          <td>${escapeHtml(data.majorStudent.full_name)}</td>
+          <td>${escapeHtml(data.majorStudent.matricule || "")}</td>
+          <td class="center">&nbsp;</td>
+          <td class="center">${formatScore(data.majorStudent.general_avg)}</td>
+          <td class="center">${escapeHtml(formatRank(data.majorStudent.general_rank))}</td>
+        </tr>
+      `
+      : `
+        <tr>
+          <td class="center">1</td>
+          <td>&nbsp;</td>
+          <td>&nbsp;</td>
+          <td>&nbsp;</td>
+          <td>&nbsp;</td>
+          <td>&nbsp;</td>
+        </tr>
+      `;
 
-  const currentAcademicYear =
-    selectedAcademicYear ||
-    bulletinRaw?.class?.academic_year ||
-    currentClass?.academic_year ||
-    "—";
-
-  const currentHeadTeacher =
-    headTeacherName || bulletinRaw?.class?.head_teacher?.display_name || "—";
-
-
-const currentPeriodLabel = periodTitle(bulletinRaw?.period || selectedPeriod);
-
-const summaryCounts = useMemo(() => {
-  const rows = councilRows;
-  const girls = rows.filter((r) => normalizeSex(r.sex || r.gender || null) === "F");
-  const boys = rows.filter((r) => normalizeSex(r.sex || r.gender || null) === "M");
-  const isRep = (r: CouncilStudentRow) => !!(r.is_repeater);
-  const isAff = (r: CouncilStudentRow) => !!(r.is_affecte ?? r.is_assigned);
-
-  return {
-    girls: girls.length,
-    boys: boys.length,
-    total: rows.length,
-    girlsRep: girls.filter(isRep).length,
-    boysRep: boys.filter(isRep).length,
-    totalRep: rows.filter(isRep).length,
-    girlsAff: girls.filter(isAff).length,
-    boysAff: boys.filter(isAff).length,
-    totalAff: rows.filter(isAff).length,
-    girlsNonAff: girls.filter((r) => !isAff(r)).length,
-    boysNonAff: boys.filter((r) => !isAff(r)).length,
-    totalNonAff: rows.filter((r) => !isAff(r)).length,
-  };
-}, [councilRows]);
-
-const topStudent = topStudents[0] || null;
-const specificSubjects = useMemo(
-  () => ({
-    francais: getSubjectScore(topStudent, enriched?.response.subjects ?? [], ["français", "francais"]),
-    anglais: getSubjectScore(topStudent, enriched?.response.subjects ?? [], ["anglais"]),
-    philo: getSubjectScore(topStudent, enriched?.response.subjects ?? [], ["philosophie", "philo"]),
-    allesp:
-      getSubjectScore(topStudent, enriched?.response.subjects ?? [], ["allemand"]) ??
-      getSubjectScore(topStudent, enriched?.response.subjects ?? [], ["espagnol"]),
-  }),
-  [topStudent, enriched]
-);
-
-const page2SubjectStats = subjectStats;
-
-return (
-  <>
-    <style jsx global>{`
-      :root {
-        --pv-ink: #0f274f;
-        --pv-grid: #9fb0c8;
-        --pv-head: #dfe6ef;
-        --pv-band: #7184a3;
-        --pv-soft: #f7f9fc;
-      }
-
-      .pv-screen-wrap {
-        max-width: 1200px;
-        margin: 0 auto;
-        padding: 16px;
-      }
-
-      .pv-page {
-        width: 210mm;
-        min-height: 297mm;
-        padding: 8mm 8mm 9mm;
-        box-sizing: border-box;
-        background: #fff;
-        color: #10233f;
-        font-family: Arial, Helvetica, sans-serif;
-        box-shadow: 0 10px 30px rgba(15, 39, 79, 0.12);
-        page-break-after: always;
-        break-after: page;
-      }
-
-      .pv-page:last-of-type {
-        page-break-after: auto;
-        break-after: auto;
-      }
-
-      .pv-page.compact {
-        padding-top: 6mm;
-      }
-
-      .pv-grid-table {
-        width: 100%;
-        border-collapse: collapse;
-        table-layout: fixed;
-        font-size: 11px;
-      }
-
-      .pv-grid-table th,
-      .pv-grid-table td {
-        border: 1px solid var(--pv-grid);
-        padding: 4px 5px;
-        vertical-align: middle;
-        word-break: break-word;
-      }
-
-      .pv-grid-table th {
-        background: var(--pv-head);
-        text-align: center;
-        font-weight: 700;
-      }
-
-      .pv-band {
-        background: var(--pv-band);
-        color: #fff;
-        font-weight: 700;
-        padding: 5px 8px;
-        font-size: 12px;
-        text-transform: uppercase;
-        letter-spacing: 0.02em;
-      }
-
-      .pv-mini {
-        font-size: 10px;
-      }
-
-      .pv-center {
-        text-align: center;
-      }
-
-      .pv-right {
-        text-align: right;
-      }
-
-      .pv-no-shadow {
-        box-shadow: none;
-      }
-
-      .pv-ruled {
-        min-height: 118px;
-        border: 1px solid var(--pv-grid);
-        background:
-          linear-gradient(#ffffff, #ffffff) padding-box,
-          repeating-linear-gradient(
-            to bottom,
-            transparent 0,
-            transparent 23px,
-            #d3dae5 23px,
-            #d3dae5 24px
-          );
-      }
-
-      .pv-sign-line {
-        min-height: 28px;
-        border-bottom: 1px solid #7e8ea8;
-      }
-
-      .pv-sign-empty {
-        min-height: 120px;
-      }
-
-      .preview-overlay {
-        background: #dfe3ea;
-      }
-
-      .preview-overlay .pv-page {
-        margin: 0 auto;
-      }
-
-      @media print {
-        @page {
-          size: A4 portrait;
-          margin: 4mm;
-        }
-
-        html,
-        body {
-          background: #fff !important;
-          -webkit-print-color-adjust: exact;
-          print-color-adjust: exact;
-        }
-
-        body * {
-          visibility: hidden !important;
-        }
-
-        .preview-overlay,
-        .preview-overlay * {
-          visibility: visible !important;
-        }
-
-        .preview-overlay {
-          position: static !important;
-          inset: auto !important;
-          overflow: visible !important;
-          background: transparent !important;
-          padding: 0 !important;
-        }
-
-        .preview-actions,
-        .screen-only {
-          display: none !important;
-        }
-
-        .pv-page {
-          box-shadow: none !important;
-          margin: 0 auto !important;
-          page-break-after: always;
-          break-after: page;
-        }
-
-        .pv-page:last-of-type {
-          page-break-after: auto;
-          break-after: auto;
-        }
-      }
-    `}</style>
-
-    <div className="pv-screen-wrap screen-only flex flex-col gap-4">
-      <div className="rounded-3xl border border-slate-200 bg-gradient-to-r from-emerald-50 to-white p-5 shadow-sm">
-        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-          <div>
-            <div className="mb-1 inline-flex items-center gap-2 rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-700">
-              <FileText className="h-3.5 w-3.5" />
-              Conseil de classe
-            </div>
-            <h1 className="text-xl font-semibold text-slate-900">Procès-verbal du conseil de classe</h1>
-            <p className="text-sm text-slate-600">
-              Modèle officiel avec logo, membres du conseil, émargement et fiche annuelle de fin d’année.
-            </p>
-          </div>
-
-          <div className="flex flex-wrap gap-2">
-            <Button type="button" variant="ghost" onClick={handleLoadCouncilData} disabled={loading || !selectedClassId}>
-              <RefreshCw className="h-4 w-4" />
-              Recharger
-            </Button>
-            <Button type="button" variant="ghost" onClick={() => setPreviewOpen(true)} disabled={!bulletinRaw || councilRows.length === 0}>
-              Aperçu
-            </Button>
-            <Button type="button" onClick={() => { if (!previewOpen) setPreviewOpen(true); setTimeout(() => window.print(), 50); }} disabled={!bulletinRaw || councilRows.length === 0}>
-              <Printer className="h-4 w-4" />
-              Imprimer
-            </Button>
-          </div>
+    const manualCouncilMembers = Array.from({ length: 6 })
+      .map(
+        () => `
+        <div class="manual-line-row">
+          <span class="manual-line"></span>
+          <span class="manual-line"></span>
         </div>
+      `
+      )
+      .join("");
 
-        <div className="mt-4 grid gap-3 md:grid-cols-6">
+    return `
+      <!doctype html>
+      <html>
+        <head>
+          <meta charset="utf-8" />
+          <title>Procès-verbal de conseil de classe – ${escapeHtml(data.class_label)}</title>
+          <style>
+            @page {
+              size: A4 portrait;
+              margin: 10mm;
+            }
+            * { box-sizing: border-box; }
+            body {
+              font-family: Arial, Helvetica, sans-serif;
+              color: #111827;
+              margin: 0;
+              font-size: 10px;
+            }
+            .page {
+              width: 100%;
+              min-height: 277mm;
+              page-break-after: always;
+              padding: 0;
+            }
+            .page:last-child { page-break-after: auto; }
+            .header-grid {
+              display: grid;
+              grid-template-columns: 90px 1fr 90px;
+              gap: 10px;
+              align-items: start;
+              margin-bottom: 10px;
+            }
+            .header-side {
+              font-size: 9px;
+              line-height: 1.35;
+              text-align: center;
+            }
+            .header-center {
+              text-align: center;
+            }
+            .logo {
+              width: 64px;
+              height: 64px;
+              object-fit: contain;
+              margin: 0 auto 4px;
+            }
+            .placeholder-logo {
+              border: 1px solid #94a3b8;
+              border-radius: 999px;
+              display: flex;
+              align-items: center;
+              justify-content: center;
+              font-size: 10px;
+              font-weight: bold;
+            }
+            .app-ribbon {
+              margin: 6px auto 0;
+              display: inline-block;
+              padding: 4px 12px;
+              border-radius: 999px;
+              background: #6b7280;
+              color: white;
+              font-size: 10px;
+              font-weight: bold;
+              letter-spacing: 0.03em;
+            }
+            .document-title {
+              margin-top: 10px;
+              font-size: 15px;
+              font-weight: 700;
+              text-align: center;
+              letter-spacing: 0.02em;
+              text-transform: uppercase;
+            }
+            .meta-list {
+              margin-top: 10px;
+              display: grid;
+              grid-template-columns: repeat(4, 1fr);
+              gap: 8px;
+              font-size: 10px;
+            }
+            .meta-box {
+              border: 1px solid #94a3b8;
+              padding: 6px 8px;
+              min-height: 38px;
+            }
+            .meta-box strong {
+              display: block;
+              margin-bottom: 3px;
+              font-size: 9px;
+              text-transform: uppercase;
+            }
+            .table {
+              width: 100%;
+              border-collapse: collapse;
+              margin-top: 8px;
+            }
+            .table th,
+            .table td {
+              border: 1px solid #6b7280;
+              padding: 4px 5px;
+              vertical-align: middle;
+            }
+            .table th {
+              background: #d1d5db;
+              font-weight: 700;
+            }
+            .table .center { text-align: center; }
+            .section-title {
+              margin-top: 10px;
+              font-size: 12px;
+              font-weight: 700;
+            }
+            .stats-grid {
+              display: grid;
+              grid-template-columns: 2fr 1fr 1fr 1fr 1.2fr 1.2fr 1.2fr;
+              margin-top: 8px;
+            }
+            .stats-grid > div {
+              border: 1px solid #6b7280;
+              padding: 5px 6px;
+              min-height: 46px;
+            }
+            .stats-grid .head {
+              background: #d1d5db;
+              font-weight: 700;
+              font-size: 9px;
+            }
+            .mini-grid {
+              display: grid;
+              grid-template-columns: 1fr 1fr;
+              gap: 10px;
+              margin-top: 10px;
+            }
+            .boxed-title {
+              background: #6b7280;
+              color: #fff;
+              padding: 5px 8px;
+              font-weight: 700;
+              text-transform: uppercase;
+              letter-spacing: 0.02em;
+              font-size: 10px;
+            }
+            .boxed-content {
+              border: 1px solid #6b7280;
+              border-top: none;
+              min-height: 82px;
+              padding: 8px;
+            }
+            .manual-line-row {
+              display: grid;
+              grid-template-columns: 1fr 1fr;
+              gap: 14px;
+              margin-bottom: 8px;
+            }
+            .manual-line {
+              display: block;
+              border-bottom: 1px dotted #6b7280;
+              min-height: 18px;
+            }
+            .analysis-grid {
+              display: grid;
+              grid-template-columns: 1fr 1fr;
+              gap: 8px;
+              margin-top: 8px;
+            }
+            .analysis-box {
+              border: 1px solid #6b7280;
+              min-height: 150px;
+            }
+            .analysis-box .head {
+              background: #6b7280;
+              color: white;
+              padding: 6px 8px;
+              font-weight: 700;
+              text-transform: uppercase;
+            }
+            .analysis-box .body {
+              padding: 8px;
+              min-height: 118px;
+            }
+            .signature-grid-top,
+            .signature-grid-bottom {
+              display: grid;
+              gap: 20px;
+            }
+            .signature-grid-top {
+              grid-template-columns: 1fr 1fr;
+              margin-top: 12px;
+            }
+            .signature-grid-bottom {
+              grid-template-columns: 1fr 1fr;
+              margin-top: 42px;
+            }
+            .signature-box {
+              min-height: 120px;
+              position: relative;
+            }
+            .signature-label {
+              position: absolute;
+              bottom: 0;
+              left: 0;
+              font-weight: 700;
+            }
+            .signature-name {
+              position: absolute;
+              bottom: 16px;
+              left: 0;
+              font-weight: 700;
+              text-transform: uppercase;
+            }
+            .signature-lines {
+              position: absolute;
+              top: 8px;
+              left: 0;
+              right: 0;
+            }
+            .signature-lines .line {
+              border-bottom: 1px dotted #6b7280;
+              height: 22px;
+            }
+            .footer-note {
+              position: absolute;
+              bottom: 6mm;
+              left: 0;
+              right: 0;
+              text-align: center;
+              font-size: 8.5px;
+              color: #6b7280;
+            }
+            .page-frame {
+              position: relative;
+              min-height: 255mm;
+            }
+            .compact-table th,
+            .compact-table td {
+              text-align: center;
+              padding: 6px 4px;
+            }
+            .manual-cell { min-width: 24px; }
+            .summary-row {
+              display: grid;
+              grid-template-columns: repeat(4, 1fr);
+              gap: 8px;
+              margin-top: 10px;
+            }
+            .summary-box {
+              border: 1px solid #6b7280;
+              padding: 6px 8px;
+            }
+            .summary-box .label {
+              display: block;
+              font-size: 8.5px;
+              color: #374151;
+              text-transform: uppercase;
+              margin-bottom: 3px;
+            }
+            .summary-box .value {
+              font-size: 11px;
+              font-weight: 700;
+            }
+          </style>
+        </head>
+        <body>
+          <section class="page">
+            <div class="page-frame">
+              <div class="header-grid">
+                <div class="header-side">
+                  <div><strong>République de Côte d'Ivoire</strong></div>
+                  <div>Union - Discipline - Travail</div>
+                  <div style="margin-top:8px;"><strong>Ministère de l'Éducation Nationale</strong></div>
+                </div>
+                <div class="header-center">
+                  ${logoBlock}
+                  <div style="font-weight:700; font-size:12px;">${institutionName}</div>
+                  ${contactLine ? `<div style="margin-top:3px;">${contactLine}</div>` : ""}
+                  ${cityLine ? `<div style="margin-top:2px;">${cityLine}</div>` : ""}
+                  <div class="app-ribbon">PROCÈS VERBAL DE CONSEIL DE CLASSE</div>
+                </div>
+                <div class="header-side">
+                  <div><strong>Année scolaire</strong></div>
+                  <div>${yearText}</div>
+                  <div style="margin-top:8px;"><strong>Période</strong></div>
+                  <div>${periodText}</div>
+                </div>
+              </div>
+
+              <div class="document-title">Procès verbal du conseil de la classe de ${escapeHtml(data.class_label)}</div>
+
+              <div class="meta-list">
+                <div class="meta-box"><strong>Filles</strong>—</div>
+                <div class="meta-box"><strong>Garçons</strong>—</div>
+                <div class="meta-box"><strong>Total</strong>${total}</div>
+                <div class="meta-box"><strong>Niveau</strong>${escapeHtml(data.level || "—")}</div>
+                <div class="meta-box"><strong>Filles red.</strong>—</div>
+                <div class="meta-box"><strong>Garçons red.</strong>—</div>
+                <div class="meta-box"><strong>Total red.</strong>—</div>
+                <div class="meta-box"><strong>Classés</strong>${classed}</div>
+                <div class="meta-box"><strong>Filles aff.</strong>—</div>
+                <div class="meta-box"><strong>Garçons aff.</strong>—</div>
+                <div class="meta-box"><strong>Total aff.</strong>—</div>
+                <div class="meta-box"><strong>Total non aff.</strong>—</div>
+              </div>
+
+              <div class="section-title">Liste de classe</div>
+              <table class="table">
+                <thead>
+                  <tr>
+                    <th class="center" style="width:32px;">No</th>
+                    <th>Nom et prénom</th>
+                    <th style="width:105px;">No Matr.</th>
+                    <th class="center" style="width:95px;">Date de naissance</th>
+                    <th class="center" style="width:65px;">Moyenne</th>
+                    <th class="center" style="width:55px;">Rang</th>
+                    <th class="center" style="width:45px;">TH+FE</th>
+                    <th class="center" style="width:45px;">TH+EN</th>
+                    <th class="center" style="width:45px;">TH</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${studentRowsHtml}
+                </tbody>
+              </table>
+
+              <div class="section-title">Statistiques de classe</div>
+              <div class="stats-grid">
+                <div class="head">Effectif classe</div>
+                <div class="head center">Classés</div>
+                <div class="head center">Moy ≥ 10<br/>Nombre / %</div>
+                <div class="head center">Élèves avec une moyenne<br/>8,5 ≤ Moy &lt; 10</div>
+                <div class="head center">Moy &lt; 8,5<br/>Nombre / %</div>
+                <div class="head center">Mini</div>
+                <div class="head center">Maxi / Moy</div>
+
+                <div><strong>TOTAL</strong></div>
+                <div class="center">${classed}</div>
+                <div class="center">${data.moy_ge_10_count}<br/>${nf.format(percentOf(data.moy_ge_10_count, classed))}%</div>
+                <div class="center">${data.between85And10_count}<br/>${nf.format(percentOf(data.between85And10_count, classed))}%</div>
+                <div class="center">${data.lt85_count}<br/>${nf.format(percentOf(data.lt85_count, classed))}%</div>
+                <div class="center">${formatScore(data.class_min_20)}</div>
+                <div class="center">${formatScore(data.class_max_20)} / ${formatScore(data.class_avg_20)}</div>
+              </div>
+
+              <div class="mini-grid">
+                <div>
+                  <div class="boxed-title">Distinctions</div>
+                  <div class="boxed-content">
+                    <div style="display:grid; grid-template-columns: 1fr 70px; gap:8px; margin-bottom:8px;">
+                      <div>TH</div><div class="center">&nbsp;</div>
+                      <div>TH + Encouragements</div><div class="center">&nbsp;</div>
+                      <div>Tableau d'honneur</div><div class="center">&nbsp;</div>
+                    </div>
+                  </div>
+                </div>
+                <div>
+                  <div class="boxed-title">Avertissements et sanctions</div>
+                  <div class="boxed-content">
+                    <div style="display:grid; grid-template-columns: 1fr 70px; gap:8px; margin-bottom:8px;">
+                      <div>Avertissement Travail</div><div class="center">&nbsp;</div>
+                      <div>Avert. Conduite</div><div class="center">&nbsp;</div>
+                      <div>Blâme Travail</div><div class="center">&nbsp;</div>
+                      <div>Blâme Conduite</div><div class="center">&nbsp;</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="section-title">Statistiques par discipline</div>
+              <table class="table">
+                <thead>
+                  <tr>
+                    <th>Matière</th>
+                    <th class="center" style="width:62px;">Effectif</th>
+                    <th class="center" style="width:70px;">M ≥ 10<br/>Nbre</th>
+                    <th class="center" style="width:70px;">M ≥ 10<br/>%</th>
+                    <th class="center" style="width:80px;">10 &gt; M ≥ 8,5<br/>Nbre</th>
+                    <th class="center" style="width:80px;">10 &gt; M ≥ 8,5<br/>%</th>
+                    <th class="center" style="width:70px;">M &lt; 8,5<br/>Nbre</th>
+                    <th class="center" style="width:70px;">M &lt; 8,5<br/>%</th>
+                    <th class="center" style="width:60px;">Moy.</th>
+                    <th>Enseignant / Émargement</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${subjectRowsHtml}
+                </tbody>
+              </table>
+
+              <div class="footer-note">Document généré depuis Mon Cahier – zones blanches conservées pour remplissage manuel après impression.</div>
+            </div>
+          </section>
+
+          <section class="page">
+            <div class="page-frame">
+              <div class="section-title">Majors de la classe</div>
+              <table class="table">
+                <thead>
+                  <tr>
+                    <th class="center" style="width:36px;">No</th>
+                    <th>Nom et prénom</th>
+                    <th style="width:110px;">No matricule</th>
+                    <th class="center" style="width:95px;">Date de naissance</th>
+                    <th class="center" style="width:65px;">Moyenne</th>
+                    <th class="center" style="width:55px;">Rang</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${majorRows}
+                </tbody>
+              </table>
+
+              <div class="section-title">Matières spécifiques</div>
+              ${specificSubjects}
+
+              <div class="analysis-grid">
+                <div class="analysis-box">
+                  <div class="head">Problèmes de la classe</div>
+                  <div class="body"></div>
+                </div>
+                <div class="analysis-box">
+                  <div class="head">Proposition de solutions</div>
+                  <div class="body"></div>
+                </div>
+              </div>
+
+              <div style="margin-top: 12px;">
+                <div class="boxed-title">Les membres du conseil</div>
+                <div class="boxed-content">
+                  ${manualCouncilMembers}
+                </div>
+              </div>
+
+              <div class="footer-note">Procès-verbal du conseil de classe – page 2</div>
+            </div>
+          </section>
+
+          <section class="page">
+            <div class="page-frame">
+              <div class="signature-grid-top">
+                <div class="signature-box">
+                  <div class="signature-lines">
+                    <div class="line"></div>
+                    <div class="line"></div>
+                    <div class="line"></div>
+                    <div class="line"></div>
+                  </div>
+                </div>
+                <div class="signature-box">
+                  <div class="signature-lines">
+                    <div class="line"></div>
+                    <div class="line"></div>
+                    <div class="line"></div>
+                    <div class="line"></div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="signature-grid-bottom">
+                <div class="signature-box">
+                  <div class="signature-name">Professeur principal</div>
+                  <div class="signature-label">Nom / Signature</div>
+                </div>
+                <div class="signature-box">
+                  <div style="position:absolute; top:0; right:0; font-size:10px;">
+                    ${cityLine ? `${cityLine.split("•").pop()?.trim() || ""}, ` : ""}${new Date().toLocaleDateString("fr-FR")}
+                  </div>
+                  ${principalName ? `<div class="signature-name">${principalName}</div>` : ""}
+                  <div class="signature-label">${principalRole}</div>
+                </div>
+              </div>
+
+              <div class="footer-note">Procès-verbal du conseil de classe – page 3</div>
+            </div>
+          </section>
+        </body>
+      </html>
+    `;
+  }
+
+  function printDocument() {
+    if (typeof window === "undefined" || !docData) {
+      setDocError("Chargez d'abord le document avant impression.");
+      return;
+    }
+
+    const html = buildConseilHtml(docData);
+    const win = window.open("", "_blank");
+    if (!win) return;
+    win.document.write(html);
+    win.document.close();
+    win.focus();
+    win.print();
+  }
+
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-col gap-1">
+        <h1 className="text-2xl font-semibold text-slate-900">Procès-verbal de conseil de classe</h1>
+        <p className="text-sm text-slate-600">
+          Nouveau rendu basé sur la page fonctionnelle des statistiques, avec les champs du modèle
+          papier et uniquement le tableau <strong>matières indicateurs</strong> conservé côté
+          données automatiques.
+        </p>
+      </div>
+
+      <Card
+        title="Filtres globaux"
+        subtitle="Année scolaire, période d'évaluation, état de publication et classe ciblée."
+        icon={<Filter className="h-4 w-4 text-emerald-600" />}
+      >
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-5 mb-3">
           <div className="md:col-span-2">
-            <label className="mb-1 block text-xs font-semibold uppercase text-slate-500">Année scolaire</label>
+            <div className="mb-1 text-xs text-slate-500">Année scolaire</div>
             <Select
-              value={selectedAcademicYear}
+              value={selectedYearCode}
               onChange={(e) => {
-                setSelectedAcademicYear(e.target.value);
+                setSelectedYearCode(e.target.value);
                 setSelectedPeriodId("");
-                setDateFrom("");
-                setDateTo("");
               }}
-              disabled={periodsLoading || academicYears.length === 0}
             >
-              <option value="">{academicYears.length === 0 ? "Non configuré" : "Toutes années…"}</option>
-              {academicYears.map((year) => (
-                <option key={year} value={year}>{year}</option>
-              ))}
-            </Select>
-          </div>
-
-          <div className="md:col-span-2">
-            <label className="mb-1 block text-xs font-semibold uppercase text-slate-500">Période</label>
-            <Select
-              value={selectedPeriodId}
-              onChange={(e) => setSelectedPeriodId(e.target.value)}
-              disabled={periodsLoading || filteredPeriods.length === 0}
-            >
-              <option value="">{filteredPeriods.length === 0 ? "Aucune période" : "Sélectionner…"}</option>
-              {filteredPeriods.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.label || p.short_label || p.code || `${p.start_date} → ${p.end_date}`}
+              <option value="">
+                {loadingYears ? "Chargement..." : "— Choisir une année scolaire —"}
+              </option>
+              {years.map((y) => (
+                <option key={y.id} value={y.code}>
+                  {y.label}
                 </option>
               ))}
             </Select>
           </div>
 
           <div className="md:col-span-2">
-            <label className="mb-1 block text-xs font-semibold uppercase text-slate-500">Classe</label>
-            <Select value={selectedClassId} onChange={(e) => setSelectedClassId(e.target.value)} disabled={classesLoading}>
-              <option value="">Sélectionner une classe…</option>
-              {classes.map((c) => (
-                <option key={c.id} value={c.id}>{(c.label || c.name || "").trim() || c.id}</option>
+            <div className="mb-1 text-xs text-slate-500">Période d'évaluation</div>
+            <Select
+              value={selectedPeriodId}
+              onChange={(e) => handlePeriodChange(e.target.value)}
+              disabled={!selectedYearCode || loadingPeriods}
+            >
+              <option value="">
+                {selectedYearCode
+                  ? loadingPeriods
+                    ? "Chargement..."
+                    : "— Toute l'année —"
+                  : "Sélectionnez d'abord une année"}
+              </option>
+              {periods.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.label}
+                </option>
               ))}
             </Select>
           </div>
 
-          <div className="md:col-span-2">
-            <label className="mb-1 block text-xs font-semibold uppercase text-slate-500">Du</label>
-            <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
-          </div>
-
-          <div className="md:col-span-2">
-            <label className="mb-1 block text-xs font-semibold uppercase text-slate-500">Au</label>
-            <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
-          </div>
-
-          <div className="md:col-span-2 flex items-end">
-            <Button type="button" className="w-full" onClick={handleLoadCouncilData} disabled={loading || !selectedClassId || !dateFrom || !dateTo}>
-              {loading ? "Chargement…" : "Charger le procès-verbal"}
-            </Button>
-          </div>
-
-          <div className="md:col-span-2">
-            <label className="mb-1 block text-xs font-semibold uppercase text-slate-500">Date du conseil</label>
-            <Input type="date" value={councilDate} onChange={(e) => setCouncilDate(e.target.value)} />
-          </div>
-
-          <div className="md:col-span-2">
-            <label className="mb-1 block text-xs font-semibold uppercase text-slate-500">Professeur principal</label>
-            <Input value={headTeacherName} onChange={(e) => setHeadTeacherName(e.target.value)} />
-          </div>
-
-          <div className="md:col-span-2">
-            <label className="mb-1 block text-xs font-semibold uppercase text-slate-500">Directeur / Président</label>
-            <Input value={chairName} onChange={(e) => setChairName(e.target.value)} />
-          </div>
-
-          <div className="md:col-span-3">
-            <label className="mb-1 block text-xs font-semibold uppercase text-slate-500">Problèmes de la classe</label>
-            <Textarea rows={5} value={problemsText} onChange={(e) => setProblemsText(e.target.value)} placeholder="Difficultés observées…" />
-          </div>
-
-          <div className="md:col-span-3">
-            <label className="mb-1 block text-xs font-semibold uppercase text-slate-500">Propositions de solutions</label>
-            <Textarea rows={5} value={solutionsText} onChange={(e) => setSolutionsText(e.target.value)} placeholder="Mesures proposées…" />
+          <div className="md:col-span-1">
+            <div className="mb-1 text-xs text-slate-500">État de publication</div>
+            <Select value={status} onChange={(e) => setStatus(e.target.value as any)}>
+              <option value="all">Toutes les évaluations</option>
+              <option value="published">Publié pour les parents</option>
+              <option value="draft">Brouillon uniquement</option>
+            </Select>
           </div>
         </div>
 
-        {errorMsg ? (
-          <div className="mt-3 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
-            {errorMsg}
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
+          <div className="md:col-span-2">
+            <div className="mb-1 text-xs text-slate-500">Du</div>
+            <Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
           </div>
-        ) : null}
-      </div>
-    </div>
-
-    {previewOpen && bulletinRaw && councilRows.length > 0 ? (
-      <div className="preview-overlay fixed inset-0 z-[80] overflow-y-auto p-2 md:p-6">
-        <div className="preview-actions sticky top-2 z-10 mb-3 flex justify-end gap-2">
-          <Button variant="ghost" type="button" onClick={() => setPreviewOpen(false)}>
-            <X className="h-4 w-4" />
-            Fermer
-          </Button>
-          <Button variant="ghost" type="button" onClick={handleLoadCouncilData} disabled={loading || !selectedClassId}>
-            <RefreshCw className="h-4 w-4" />
-            Recharger
-          </Button>
-          <Button type="button" onClick={() => window.print()}>
-            <Printer className="h-4 w-4" />
-            Imprimer
-          </Button>
+          <div className="md:col-span-2">
+            <div className="mb-1 text-xs text-slate-500">Au</div>
+            <Input type="date" value={to} onChange={(e) => setTo(e.target.value)} />
+          </div>
         </div>
 
-        <div className="flex flex-col gap-4 pb-8">
-          <div className="pv-page">
-            <OfficialHeader
-              institution={institution}
-              classLabel={currentClassLabel}
-              title={`PROCES VERBAL DU CONSEIL DE LA CLASSE DE ${String(currentClassLabel || "").toUpperCase()}`}
-            />
+        <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-4">
+          <div className="md:col-span-2">
+            <div className="mb-1 text-xs text-slate-500">Niveau</div>
+            <Select
+              value={matrixLevel}
+              onChange={(e) => {
+                setMatrixLevel(e.target.value);
+                setMatrixClassId("");
+                setDocData(null);
+                setDocError(null);
+              }}
+            >
+              <option value="">— Choisir un niveau —</option>
+              {levels.map((lvl) => (
+                <option key={lvl} value={lvl}>
+                  {lvl}
+                </option>
+              ))}
+            </Select>
+          </div>
+          <div className="md:col-span-2">
+            <div className="mb-1 text-xs text-slate-500">Classe</div>
+            <Select
+              value={matrixClassId}
+              onChange={(e) => {
+                setMatrixClassId(e.target.value);
+                setDocData(null);
+                setDocError(null);
+              }}
+              disabled={!matrixLevel || loadingClasses}
+            >
+              <option value="">
+                {loadingClasses ? "Chargement..." : "— Choisir une classe —"}
+              </option>
+              {classesForLevel.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.label}
+                </option>
+              ))}
+            </Select>
+          </div>
+        </div>
 
-            <div className="mt-2 grid grid-cols-3 gap-3 text-[11px]">
-              <div>
-                <div><strong>Prof. principal :</strong> {currentHeadTeacher}</div>
-                <div className="mt-1"><strong>Classe :</strong> {currentClassLabel}</div>
-                <div className="mt-1"><strong>Période :</strong> {currentPeriodLabel}</div>
+        <div className="mt-4 flex flex-wrap items-center gap-2">
+          <Button type="button" onClick={loadDocument} disabled={loadingDoc || !matrixClassId}>
+            {loadingDoc ? (
+              <RefreshCw className="h-4 w-4 animate-spin" />
+            ) : (
+              <ScrollText className="h-4 w-4" />
+            )}
+            Générer le procès-verbal
+          </Button>
+          <GhostButton
+            type="button"
+            onClick={() => {
+              setFrom("");
+              setTo("");
+              setStatus("all");
+              setSelectedYearCode("");
+              setSelectedPeriodId("");
+              setMatrixLevel("");
+              setMatrixClassId("");
+              setDocData(null);
+              setDocError(null);
+            }}
+          >
+            Réinitialiser
+          </GhostButton>
+          <span className="text-xs text-slate-500">{periodLabel}</span>
+        </div>
+
+        {docError && (
+          <div className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+            {docError}
+          </div>
+        )}
+      </Card>
+
+      <Card
+        title="Aperçu du document"
+        subtitle="Les zones manuelles restent volontairement vides pour être complétées après impression."
+        icon={<School className="h-4 w-4 text-emerald-600" />}
+        actions={
+          <div className="flex flex-wrap gap-2">
+            <GhostButton type="button" onClick={exportIndicatorsCsv} disabled={!docData}>
+              <FileSpreadsheet className="h-4 w-4" />
+              Export CSV (matières indicateurs)
+            </GhostButton>
+            <GhostButton type="button" onClick={printDocument} disabled={!docData}>
+              <Printer className="h-4 w-4" />
+              Imprimer le procès-verbal
+            </GhostButton>
+          </div>
+        }
+      >
+        {!docData ? (
+          <p className="text-sm text-slate-500">
+            Choisissez une classe puis cliquez sur <strong>Générer le procès-verbal</strong>.
+          </p>
+        ) : (
+          <div className="space-y-5">
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-4 text-xs">
+              <div className="rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-2">
+                <div className="text-[11px] text-slate-500">Classe</div>
+                <div className="text-sm font-semibold text-slate-900">
+                  {docData.class_label} {docData.level ? `(${docData.level})` : ""}
+                </div>
               </div>
-              <div className="text-center">
-                <div><strong>Année :</strong> {currentAcademicYear}</div>
-                <div className="mt-1"><strong>Date :</strong> {formatDateFR(councilDate)}</div>
+              <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+                <div className="text-[11px] text-slate-500">Effectif / Classés</div>
+                <div className="text-sm font-semibold text-slate-900">
+                  {docData.students.length} / {docData.classed_count}
+                </div>
               </div>
-              <div>
-                <div><strong>Président :</strong> {chairName || institution?.institution_head_name || "—"}</div>
-                <div className="mt-1"><strong>Observation :</strong> {generalObservation || "—"}</div>
+              <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+                <div className="text-[11px] text-slate-500">Moyenne de classe</div>
+                <div className="text-sm font-semibold text-slate-900">
+                  {docData.class_avg_20 == null ? "—" : `${nf.format(docData.class_avg_20)} /20`}
+                </div>
+              </div>
+              <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+                <div className="text-[11px] text-slate-500">Major</div>
+                <div className="text-sm font-semibold text-slate-900">
+                  {docData.majorStudent?.full_name || "—"}
+                </div>
               </div>
             </div>
 
-            <div className="mt-3">
-              <OfficialBand>Compte rendu</OfficialBand>
-              <table className="pv-grid-table mt-1 pv-mini">
-                <thead>
-                  <tr>
-                    <th></th>
-                    <th>Filles</th>
-                    <th>Garçons</th>
-                    <th>Total</th>
-                    <th>Filles Red.</th>
-                    <th>Garçons Red.</th>
-                    <th>Total Red.</th>
-                    <th>Filles Aff.</th>
-                    <th>Garçons Aff.</th>
-                    <th>Total Aff.</th>
-                    <th>Filles N. Aff.</th>
-                    <th>Garçons N. Aff.</th>
-                    <th>Total N. Aff.</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr>
-                    <OfficialTd strong>Total</OfficialTd>
-                    <OfficialTd center>{summaryCounts.girls}</OfficialTd>
-                    <OfficialTd center>{summaryCounts.boys}</OfficialTd>
-                    <OfficialTd center>{summaryCounts.total}</OfficialTd>
-                    <OfficialTd center>{summaryCounts.girlsRep}</OfficialTd>
-                    <OfficialTd center>{summaryCounts.boysRep}</OfficialTd>
-                    <OfficialTd center>{summaryCounts.totalRep}</OfficialTd>
-                    <OfficialTd center>{summaryCounts.girlsAff}</OfficialTd>
-                    <OfficialTd center>{summaryCounts.boysAff}</OfficialTd>
-                    <OfficialTd center>{summaryCounts.totalAff}</OfficialTd>
-                    <OfficialTd center>{summaryCounts.girlsNonAff}</OfficialTd>
-                    <OfficialTd center>{summaryCounts.boysNonAff}</OfficialTd>
-                    <OfficialTd center>{summaryCounts.totalNonAff}</OfficialTd>
-                  </tr>
-                </tbody>
-              </table>
+            <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+              Les blocs <strong>analyse</strong>, <strong>membres du conseil</strong> et les
+              <strong> zones de signature</strong> sont gardés vides exprès pour le remplissage
+              manuscrit après impression, comme sur ton modèle papier.
             </div>
 
-            <div className="mt-3">
-              <OfficialBand>Liste de classe</OfficialBand>
-              <table className="pv-grid-table mt-1">
-                <thead>
+            <div className="overflow-x-auto rounded-xl border">
+              <table className="min-w-full text-xs sm:text-sm">
+                <thead className="bg-slate-50 text-slate-600">
                   <tr>
-                    <th style={{ width: "5%" }}>No</th>
-                    <th style={{ width: "32%" }}>Nom et prénom</th>
-                    <th style={{ width: "16%" }}>No Matr.</th>
-                    <th style={{ width: "15%" }}>Date de naissance</th>
-                    <th style={{ width: "9%" }}>Moyenne</th>
-                    <th style={{ width: "7%" }}>Rang</th>
-                    <th style={{ width: "5%" }}>TH+FE</th>
-                    <th style={{ width: "5%" }}>TH+EN</th>
-                    <th style={{ width: "6%" }}>TH</th>
+                    <th className="px-2 py-2 text-left">Matière</th>
+                    <th className="px-2 py-2 text-center">Effectif</th>
+                    <th className="px-2 py-2 text-center">M ≥ 10</th>
+                    <th className="px-2 py-2 text-center">%</th>
+                    <th className="px-2 py-2 text-center">10 &gt; M ≥ 8,5</th>
+                    <th className="px-2 py-2 text-center">%</th>
+                    <th className="px-2 py-2 text-center">M &lt; 8,5</th>
+                    <th className="px-2 py-2 text-center">%</th>
+                    <th className="px-2 py-2 text-center">Moy.</th>
+                    <th className="px-2 py-2 text-left">Enseignant / Émargement</th>
                   </tr>
                 </thead>
-                <tbody>
-                  {councilRows.map((row, index) => (
-                    <tr key={row.student_id}>
-                      <OfficialTd center>{index + 1}</OfficialTd>
-                      <OfficialTd strong>{row.full_name}</OfficialTd>
-                      <OfficialTd>{row.matricule || "—"}</OfficialTd>
-                      <OfficialTd>{formatDateFR(row.birthdate || row.birth_date)}</OfficialTd>
-                      <OfficialTd center>{formatNumber(row.general_avg)}</OfficialTd>
-                      <OfficialTd center>{row.rank ?? "—"}</OfficialTd>
-                      <OfficialTd center>{row.mentions.distinction === "excellence" ? "X" : ""}</OfficialTd>
-                      <OfficialTd center>{row.mentions.distinction === "encouragement" ? "X" : ""}</OfficialTd>
-                      <OfficialTd center>{row.mentions.distinction === "honour" ? "X" : ""}</OfficialTd>
+                <tbody className="divide-y">
+                  {docData.subjectIndicators.map((item) => (
+                    <tr key={item.subject_id} className="hover:bg-slate-50/60">
+                      <td className="px-2 py-2 text-slate-800">{item.subject_name}</td>
+                      <td className="px-2 py-2 text-center">{item.effectif}</td>
+                      <td className="px-2 py-2 text-center">{item.ge10_count}</td>
+                      <td className="px-2 py-2 text-center">{nf.format(item.ge10_pct)}%</td>
+                      <td className="px-2 py-2 text-center">{item.between85And10_count}</td>
+                      <td className="px-2 py-2 text-center">{nf.format(item.between85And10_pct)}%</td>
+                      <td className="px-2 py-2 text-center">{item.lt85_count}</td>
+                      <td className="px-2 py-2 text-center">{nf.format(item.lt85_pct)}%</td>
+                      <td className="px-2 py-2 text-center">{formatScore(item.avg_20)}</td>
+                      <td className="px-2 py-2 text-slate-700">{item.teacher_names || ""}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
-
-            <div className="mt-3 grid grid-cols-[1.35fr_0.95fr] gap-3">
-              <div>
-                <OfficialBand>Statistiques de classe</OfficialBand>
-                <table className="pv-grid-table mt-1 pv-mini">
-                  <thead>
-                    <tr>
-                      <th>Effectif classe</th>
-                      <th>Moy ≥ 10<br />Nombre</th>
-                      <th>Moy ≥ 10<br />%</th>
-                      <th>10 &gt; M ≥ 8,5<br />Nombre</th>
-                      <th>10 &gt; M ≥ 8,5<br />%</th>
-                      <th>Moy &lt; 8,5<br />Nombre</th>
-                      <th>Moy &lt; 8,5<br />%</th>
-                      <th>Mini</th>
-                      <th>Maxi</th>
-                      <th>Moy.</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr>
-                      <OfficialTd center>{classStats.effectif}</OfficialTd>
-                      <OfficialTd center>{classStats.above10}</OfficialTd>
-                      <OfficialTd center>
-                        {classStats.effectif ? formatNumber((classStats.above10 * 100) / classStats.effectif) + "%" : "0.00%"}
-                      </OfficialTd>
-                      <OfficialTd center>{Math.max(0, classStats.effectif - classStats.above10 - classStats.below85)}</OfficialTd>
-                      <OfficialTd center>
-                        {classStats.effectif
-                          ? formatNumber((Math.max(0, classStats.effectif - classStats.above10 - classStats.below85) * 100) / classStats.effectif) + "%"
-                          : "0.00%"}
-                      </OfficialTd>
-                      <OfficialTd center>{classStats.below85}</OfficialTd>
-                      <OfficialTd center>
-                        {classStats.effectif ? formatNumber((classStats.below85 * 100) / classStats.effectif) + "%" : "0.00%"}
-                      </OfficialTd>
-                      <OfficialTd center>{formatNumber(classStats.lowest)}</OfficialTd>
-                      <OfficialTd center>{formatNumber(classStats.highest)}</OfficialTd>
-                      <OfficialTd center>{formatNumber(classStats.classAvg)}</OfficialTd>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-
-              <div className="flex flex-col gap-3">
-                <div>
-                  <OfficialBand>Distinctions</OfficialBand>
-                  <table className="pv-grid-table mt-1 pv-mini">
-                    <thead>
-                      <tr>
-                        <th>Distinctions</th>
-                        <th style={{ width: "28%" }}>Nombre</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      <tr><OfficialTd>TH</OfficialTd><OfficialTd center>{classStats.honour}</OfficialTd></tr>
-                      <tr><OfficialTd>TH + Encouragements</OfficialTd><OfficialTd center>{classStats.encouragement}</OfficialTd></tr>
-                      <tr><OfficialTd>TH + Félicitations</OfficialTd><OfficialTd center>{classStats.excellence}</OfficialTd></tr>
-                    </tbody>
-                  </table>
-                </div>
-
-                <div>
-                  <OfficialBand>Avertissements et sanctions</OfficialBand>
-                  <table className="pv-grid-table mt-1 pv-mini">
-                    <thead>
-                      <tr>
-                        <th>Avertissement / Travail</th>
-                        <th style={{ width: "28%" }}>Nombre</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      <tr><OfficialTd>Avertissement Travail</OfficialTd><OfficialTd center>{classStats.warningWork}</OfficialTd></tr>
-                      <tr><OfficialTd>Blâme Travail</OfficialTd><OfficialTd center>{classStats.blameWork}</OfficialTd></tr>
-                      <tr><OfficialTd>Avert. Conduite</OfficialTd><OfficialTd center>{classStats.warningConduct}</OfficialTd></tr>
-                      <tr><OfficialTd>Blâme Conduite</OfficialTd><OfficialTd center>{classStats.blameConduct}</OfficialTd></tr>
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            </div>
           </div>
-
-          <div className="pv-page compact">
-            <OfficialBand>Statistiques par discipline</OfficialBand>
-            <table className="pv-grid-table mt-1 pv-mini">
-              <thead>
-                <tr>
-                  <th style={{ width: "21%" }}>Matière</th>
-                  <th style={{ width: "8%" }}>Effectif</th>
-                  <th style={{ width: "8%" }}>N ≥ 10</th>
-                  <th style={{ width: "8%" }}>%</th>
-                  <th style={{ width: "10%" }}>10 &gt; M ≥ 8,5</th>
-                  <th style={{ width: "8%" }}>%</th>
-                  <th style={{ width: "8%" }}>M &lt; 8,5</th>
-                  <th style={{ width: "8%" }}>%</th>
-                  <th style={{ width: "8%" }}>Moy.</th>
-                  <th style={{ width: "13%" }}>Enseignant / Émargement</th>
-                </tr>
-              </thead>
-              <tbody>
-                {page2SubjectStats.map((s) => (
-                  <tr key={s.subject_id}>
-                    <OfficialTd strong>{s.subject_name}</OfficialTd>
-                    <OfficialTd center>{classStats.effectif}</OfficialTd>
-                    <OfficialTd center>{s.gte10}</OfficialTd>
-                    <OfficialTd center>{classStats.effectif ? formatNumber((s.gte10 * 100) / classStats.effectif) + "%" : "0.00%"}</OfficialTd>
-                    <OfficialTd center>{s.between85And10}</OfficialTd>
-                    <OfficialTd center>{classStats.effectif ? formatNumber((s.between85And10 * 100) / classStats.effectif) + "%" : "0.00%"}</OfficialTd>
-                    <OfficialTd center>{s.lt85}</OfficialTd>
-                    <OfficialTd center>{classStats.effectif ? formatNumber((s.lt85 * 100) / classStats.effectif) + "%" : "0.00%"}</OfficialTd>
-                    <OfficialTd center>{formatNumber(s.avg20)}</OfficialTd>
-                    <OfficialTd>
-                      <div className="min-h-[34px]">
-                        {s.teacher_signature_png ? (
-                          <img src={s.teacher_signature_png} alt="" className="mb-1 h-5 max-w-full object-contain" />
-                        ) : null}
-                        <div>{s.teacher_name || "—"}</div>
-                      </div>
-                    </OfficialTd>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-
-            <div className="mt-3 grid grid-cols-[1.1fr_0.9fr] gap-3">
-              <div>
-                <OfficialBand>Majors de la classe</OfficialBand>
-                <table className="pv-grid-table mt-1">
-                  <thead>
-                    <tr>
-                      <th style={{ width: "8%" }}>No</th>
-                      <th>Nom et prénom</th>
-                      <th style={{ width: "18%" }}>No matricule</th>
-                      <th style={{ width: "18%" }}>Date de naissance</th>
-                      <th style={{ width: "12%" }}>Moyenne</th>
-                      <th style={{ width: "10%" }}>Rang</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {topStudent ? (
-                      <tr>
-                        <OfficialTd center>1</OfficialTd>
-                        <OfficialTd strong>{topStudent.full_name}</OfficialTd>
-                        <OfficialTd>{topStudent.matricule || "—"}</OfficialTd>
-                        <OfficialTd>{formatDateFR(topStudent.birthdate || topStudent.birth_date)}</OfficialTd>
-                        <OfficialTd center>{formatNumber(topStudent.general_avg)}</OfficialTd>
-                        <OfficialTd center>{topStudent.rank ?? "—"}</OfficialTd>
-                      </tr>
-                    ) : (
-                      <tr>
-                        <OfficialTd colSpan={6} center>Aucun major disponible.</OfficialTd>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-
-              <div>
-                <OfficialBand>Matières spécifiques</OfficialBand>
-                <table className="pv-grid-table mt-1 pv-mini">
-                  <thead>
-                    <tr>
-                      <th>Français</th>
-                      <th>Anglais</th>
-                      <th>Philo</th>
-                      <th>All/Esp</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr>
-                      <OfficialTd center>{formatNumber(specificSubjects.francais)}</OfficialTd>
-                      <OfficialTd center>{formatNumber(specificSubjects.anglais)}</OfficialTd>
-                      <OfficialTd center>{formatNumber(specificSubjects.philo)}</OfficialTd>
-                      <OfficialTd center>{formatNumber(specificSubjects.allesp)}</OfficialTd>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
-            <div className="mt-3">
-              <OfficialBand>Analyse</OfficialBand>
-              <div className="mt-1 grid grid-cols-2 gap-3">
-                <div>
-                  <div className="pv-band">Problèmes de la classe</div>
-                  <div className="pv-ruled p-3 text-[11px] leading-6">{problemsText?.trim() || "—"}</div>
-                </div>
-                <div>
-                  <div className="pv-band">Proposition de solutions</div>
-                  <div className="pv-ruled p-3 text-[11px] leading-6">{solutionsText?.trim() || "—"}</div>
-                </div>
-              </div>
-            </div>
-
-            <div className="mt-3">
-              <OfficialBand>Les membres du conseil</OfficialBand>
-              <div className="border p-3 text-[11px]" style={{ borderColor: "var(--pv-grid)" }}>
-                <div className="grid grid-cols-2 gap-x-10 gap-y-3">
-                  <MemberLine label="Président / Directeur" value={chairName || institution?.institution_head_name} />
-                  <MemberLine label="Professeur principal" value={currentHeadTeacher} />
-                  <MemberLine label="Éducateur / Surveillant" value={educationOfficerName} />
-                  <MemberLine label="Délégué / Représentant" value={classDelegateName} />
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div className="pv-page">
-            <OfficialHeader
-              institution={institution}
-              classLabel={currentClassLabel}
-              title={`PROCES VERBAL DU CONSEIL DE LA CLASSE DE ${String(currentClassLabel || "").toUpperCase()}`}
-            />
-
-            <div className="mt-4 flex min-h-[235mm] flex-col justify-between text-[12px]">
-              <div className="flex justify-end">
-                <div className="grid w-[42%] grid-cols-2 gap-6">
-                  <BlankLines count={4} />
-                  <BlankLines count={4} />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 items-end gap-10 pb-8">
-                <div>
-                  <div className="mb-1 font-semibold">Professeur principal</div>
-                  <div className="pv-sign-empty" />
-                  <div className="text-[13px]">{currentHeadTeacher || "—"}</div>
-                </div>
-
-                <div className="text-right">
-                  <div className="mb-6">
-                    {(institution?.institution_region || "").trim()
-                      ? `${institution?.institution_region}, le ${formatDateFR(councilDate)}`
-                      : formatDateFR(councilDate)}
-                  </div>
-                  <div className="mb-1 font-semibold">
-                    {institution?.institution_head_title || "Le Directeur"}
-                  </div>
-                  <div className="pv-sign-empty" />
-                  <div className="text-[13px]">{chairName || institution?.institution_head_name || "—"}</div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {annualPeriods.length > 0 && annualRecapRows.length > 0 ? (
-            <div className="pv-page">
-              <OfficialHeader
-                institution={institution}
-                classLabel={currentClassLabel}
-                title={`FICHE RECAPITULATIVE ANNUELLE DE LA CLASSE DE ${String(currentClassLabel || "").toUpperCase()}`}
-              />
-
-              <div className="mt-3 grid grid-cols-2 gap-3 text-[11px]">
-                <div><strong>Périodes prises en compte :</strong> {annualPeriods.map((p, idx) => shortPeriodLabel(p, idx)).join(" • ")}</div>
-                <div className="text-right">
-                  <strong>Moyenne annuelle de classe :</strong> {formatNumber(annualRecapStats.classAvg)}
-                </div>
-              </div>
-
-              <div className="mt-3 grid grid-cols-5 gap-2 text-[11px]">
-                <QuickCell label="Effectif" value={String(annualRecapStats.effectif)} />
-                <QuickCell label="1re annuelle" value={formatNumber(annualRecapStats.highest)} />
-                <QuickCell label="Dernière annuelle" value={formatNumber(annualRecapStats.lowest)} />
-                <QuickCell label="TH" value={String(annualRecapStats.honour)} />
-                <QuickCell label="TH + Enc./Fél." value={String(annualRecapStats.encouragement + annualRecapStats.excellence)} />
-              </div>
-
-              <div className="mt-3">
-                <OfficialBand>Récapitulatif des moyennes générales et annuelles</OfficialBand>
-                <table className="pv-grid-table mt-1 pv-mini">
-                  <thead>
-                    <tr>
-                      <th style={{ width: "4%" }}>No</th>
-                      <th style={{ width: "24%" }}>Nom et prénom</th>
-                      <th style={{ width: "12%" }}>No Matr.</th>
-                      {annualPeriods.map((p, idx) => (
-                        <React.Fragment key={p.id}>
-                          <th style={{ width: "7%" }}>{shortPeriodLabel(p, idx)}<br />Moy.</th>
-                          <th style={{ width: "5%" }}>{shortPeriodLabel(p, idx)}<br />Rg</th>
-                        </React.Fragment>
-                      ))}
-                      <th style={{ width: "8%" }}>Moy. ann.</th>
-                      <th style={{ width: "6%" }}>Rg ann.</th>
-                      <th style={{ width: "12%" }}>Décision annuelle</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {annualRecapRows.map((row, index) => (
-                      <tr key={row.student_id}>
-                        <OfficialTd center>{index + 1}</OfficialTd>
-                        <OfficialTd strong>{row.full_name}</OfficialTd>
-                        <OfficialTd>{row.matricule || "—"}</OfficialTd>
-                        {row.periods.map((p) => (
-                          <React.Fragment key={p.period_id}>
-                            <OfficialTd center>{formatNumber(p.avg)}</OfficialTd>
-                            <OfficialTd center>{p.rank ?? "—"}</OfficialTd>
-                          </React.Fragment>
-                        ))}
-                        <OfficialTd center strong>{formatNumber(row.annual_avg)}</OfficialTd>
-                        <OfficialTd center>{row.annual_rank ?? "—"}</OfficialTd>
-                        <OfficialTd center>{annualDecisionLabel(row.annual_avg)}</OfficialTd>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-
-              <div className="mt-3 grid grid-cols-2 gap-3">
-                <div>
-                  <OfficialBand>Distinctions annuelles</OfficialBand>
-                  <table className="pv-grid-table mt-1 pv-mini">
-                    <thead>
-                      <tr>
-                        <th>Libellé</th>
-                        <th style={{ width: "25%" }}>Nombre</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      <tr><OfficialTd>Tableau d’honneur</OfficialTd><OfficialTd center>{annualRecapStats.honour}</OfficialTd></tr>
-                      <tr><OfficialTd>Encouragement</OfficialTd><OfficialTd center>{annualRecapStats.encouragement}</OfficialTd></tr>
-                      <tr><OfficialTd>Excellence</OfficialTd><OfficialTd center>{annualRecapStats.excellence}</OfficialTd></tr>
-                    </tbody>
-                  </table>
-                </div>
-                <div>
-                  <OfficialBand>Observations</OfficialBand>
-                  <div className="pv-ruled p-3 text-[11px] leading-6">
-                    {yearRecapLoading
-                      ? "Calcul du récapitulatif annuel en cours…"
-                      : `Cette fiche récapitulative est ajoutée au conseil du dernier trimestre afin d’afficher T1, T2, T3 et la moyenne annuelle.`}
-                  </div>
-                </div>
-              </div>
-            </div>
-          ) : null}
-        </div>
-      </div>
-    ) : null}
-  </>
-  );
-}
-
-/* ───────── Small components ───────── */
-
-function OfficialHeader({
-  institution,
-  classLabel,
-  title,
-}: {
-  institution: InstitutionSettings | null;
-  classLabel: string;
-  title: string;
-}) {
-  return (
-    <div>
-      <div className="grid grid-cols-[1fr_auto_1fr] items-start gap-3">
-        <div className="text-[10px] leading-4">
-          <div className="font-bold uppercase">{institution?.country_name || "République"}</div>
-          <div>{institution?.country_motto || ""}</div>
-        </div>
-
-        <div className="flex justify-center">
-          {institution?.institution_logo_url ? (
-            <img
-              src={institution.institution_logo_url}
-              alt="Logo établissement"
-              className="h-16 w-16 object-contain"
-            />
-          ) : (
-            <div className="h-16 w-16 rounded-full border border-slate-300" />
-          )}
-        </div>
-
-        <div className="text-right text-[10px] leading-4">
-          <div className="font-bold uppercase">{institution?.ministry_name || "Ministère"}</div>
-          <div>{institution?.institution_name || ""}</div>
-          <div>{institution?.institution_code ? `Code : ${institution.institution_code}` : ""}</div>
-        </div>
-      </div>
-
-      <h1 className="mt-2 text-center text-[16px] font-bold uppercase tracking-[0.02em]">
-        {title}
-      </h1>
-    </div>
-  );
-}
-
-function OfficialBand({ children }: { children: React.ReactNode }) {
-  return <div className="pv-band">{children}</div>;
-}
-
-function OfficialTd({
-  children,
-  center = false,
-  strong = false,
-  colSpan,
-}: {
-  children?: React.ReactNode;
-  center?: boolean;
-  strong?: boolean;
-  colSpan?: number;
-}) {
-  return (
-    <td
-      colSpan={colSpan}
-      className={[
-        center ? "pv-center" : "",
-        strong ? "font-bold" : "",
-      ].join(" ")}
-    >
-      {children}
-    </td>
-  );
-}
-
-function MemberLine({ label, value }: { label: string; value?: string | null }) {
-  return (
-    <div>
-      <div className="font-semibold">{label}</div>
-      <div className="mt-1 border-b border-slate-400 pb-1">{safeLine(value)}</div>
-    </div>
-  );
-}
-
-function BlankLines({ count }: { count: number }) {
-  return (
-    <div className="flex flex-col gap-4">
-      {Array.from({ length: count }).map((_, idx) => (
-        <div key={idx} className="border-b border-slate-400 pb-3" />
-      ))}
-    </div>
-  );
-}
-
-function QuickCell({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="border px-2 py-2 text-center text-[11px]" style={{ borderColor: "var(--pv-grid)", background: "var(--pv-soft)" }}>
-      <div className="font-semibold uppercase">{label}</div>
-      <div className="mt-1 text-[13px] font-bold">{value}</div>
+        )}
+      </Card>
     </div>
   );
 }
