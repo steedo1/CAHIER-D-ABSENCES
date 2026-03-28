@@ -1524,7 +1524,7 @@ export default function ParentPage() {
       {/* ————— Drawer mobile ————— */}
       {mobileNavOpen && (
         <div className="fixed inset-0 z-40 flex lg:hidden">
-          <div className="relative flex h-full w-80 max-w-[86%] flex-col bg-[#003766] text-white shadow-2xl">
+          <div className="relative flex h-full w-80 max-w-[86%] flex-col overflow-y-auto overscroll-contain bg-[#003766] text-white shadow-2xl">
             <div className="flex items-center justify-between border-b border-white/15 px-4 py-4">
               <div className="flex items-center gap-3">
                 <div className="grid h-11 w-11 place-items-center rounded-2xl bg-white/20 text-sm font-extrabold">
@@ -1712,7 +1712,7 @@ export default function ParentPage() {
       {/* ————— CORPS ————— */}
       <div className="mx-auto flex w-full max-w-6xl min-w-0">
         {/* Sidebar desktop */}
-        <aside className="hidden w-72 flex-col bg-[#003766] text-white lg:flex">
+        <aside className="hidden w-72 shrink-0 bg-[#003766] text-white lg:sticky lg:top-[72px] lg:flex lg:h-[calc(100vh-72px)] lg:flex-col lg:overflow-y-auto lg:overscroll-contain">
           <div className="border-b border-white/15 px-4 py-5">
             <div className="flex items-center gap-3">
               <div className="grid h-11 w-11 place-items-center rounded-2xl bg-white/20 text-sm font-extrabold">
@@ -1867,7 +1867,7 @@ export default function ParentPage() {
             </div>
           )}
 
-          {selectedKid && (
+          {selectedKid && !isHome && (
             <div className="mb-5 rounded-[32px] border border-slate-200 bg-white p-4 shadow-sm">
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
                 {tabs.map((tab) => {
