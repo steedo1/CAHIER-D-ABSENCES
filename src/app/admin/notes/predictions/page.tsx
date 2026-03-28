@@ -47,7 +47,7 @@ type KeySubjectScore = {
   eval_devoir_ratio_norm: number;
   eval_interro_ratio_norm: number;
   eval_volume_norm: number;
-  status: string;
+  status: "au_niveau" | "en_bonne_voie" | "en_retard";
 };
 
 type PredictionMetrics = {
@@ -108,6 +108,7 @@ function Input(p: React.InputHTMLAttributes<HTMLInputElement>) {
     />
   );
 }
+
 function Select(p: React.SelectHTMLAttributes<HTMLSelectElement>) {
   return (
     <select
@@ -121,6 +122,7 @@ function Select(p: React.SelectHTMLAttributes<HTMLSelectElement>) {
     />
   );
 }
+
 function Button(p: React.ButtonHTMLAttributes<HTMLButtonElement>) {
   return (
     <button
@@ -128,7 +130,7 @@ function Button(p: React.ButtonHTMLAttributes<HTMLButtonElement>) {
       className={[
         "inline-flex items-center justify-center rounded-xl px-4 py-2 text-sm font-medium shadow",
         "bg-emerald-600 text-white hover:bg-emerald-700",
-        p.disabled ? "opacity-60 cursor-not-allowed" : "",
+        p.disabled ? "cursor-not-allowed opacity-60" : "",
         p.className || "",
       ].join(" ")}
     />
@@ -143,10 +145,14 @@ async function fetchJSON<T = any>(url: string) {
   return j as T;
 }
 
+function clampCoverage(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  if (value < 0) return 0;
+  if (value > 100) return 100;
+  return value;
+}
+
 export default function PredictionsPage() {
-  // ─────────────────────────────
-  // 1) Chargement des classes
-  // ─────────────────────────────
   const [classes, setClasses] = useState<ClassRow[]>([]);
   const [authErr, setAuthErr] = useState(false);
   const [loadingInit, setLoadingInit] = useState(true);
@@ -154,7 +160,6 @@ export default function PredictionsPage() {
   const [levelFilter, setLevelFilter] = useState<string>("");
   const [classId, setClassId] = useState<string>("");
 
-  // Date d’examen (par défaut aujourd’hui au format YYYY-MM-DD)
   const [examDate, setExamDate] = useState<string>(() => {
     const d = new Date();
     const yyyy = d.getFullYear();
@@ -163,20 +168,13 @@ export default function PredictionsPage() {
     return `${yyyy}-${mm}-${dd}`;
   });
 
-  // ─────────────────────────────
-  // 2) Matières clés (top coeffs)
-  // ─────────────────────────────
   const [coreSubjects, setCoreSubjects] = useState<CoreSubjectInput[]>([]);
   const [loadingCore, setLoadingCore] = useState(false);
 
-  // ─────────────────────────────
-  // 3) Résultat du modèle
-  // ─────────────────────────────
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<PredictionResponse | null>(null);
 
-  // Charger les classes une seule fois
   useEffect(() => {
     (async () => {
       try {
@@ -215,31 +213,34 @@ export default function PredictionsPage() {
     [classes, classId]
   );
 
-  // Charger les matières clés dès qu’une classe est choisie
   useEffect(() => {
     if (!classId) {
       setCoreSubjects([]);
       return;
     }
+
     (async () => {
       setLoadingCore(true);
       setError(null);
       setResult(null);
+
       try {
         const url = `/api/admin/notes/core-subjects?class_id=${encodeURIComponent(
           classId
         )}`;
         const j = await fetchJSON<{ items: CoreSubject[] }>(url);
         const items = j.items || [];
-        if (items.length === 0) {
+
+        if (!items.length) {
           setCoreSubjects([]);
           return;
         }
-        // Par défaut, on met 60 % partout (l’admin ajuste)
+
         const withCoverage: CoreSubjectInput[] = items.map((s) => ({
           ...s,
           coverage: 60,
         }));
+
         setCoreSubjects(withCoverage);
       } catch (e: any) {
         if (e.message === "unauthorized") setAuthErr(true);
@@ -250,22 +251,21 @@ export default function PredictionsPage() {
     })();
   }, [classId]);
 
-  // Couverture pondérée globale (utilisée pour le modèle)
   const coverageWeighted = useMemo(() => {
     if (!coreSubjects.length) return 0;
+
     const totalCoeff = coreSubjects.reduce((sum, s) => sum + (s.coeff || 0), 0);
     if (!totalCoeff) return 0;
+
     const value =
       coreSubjects.reduce(
-        (sum, s) => sum + (s.coverage || 0) * (s.coeff / totalCoeff),
+        (sum, s) => sum + (s.coverage || 0) * ((s.coeff || 0) / totalCoeff),
         0
       ) || 0;
+
     return Math.round(value);
   }, [coreSubjects]);
 
-  // ─────────────────────────────
-  // 4) Lancer la prédiction
-  // ─────────────────────────────
   async function runPrediction() {
     setError(null);
     setResult(null);
@@ -274,10 +274,12 @@ export default function PredictionsPage() {
       setError("Veuillez d’abord choisir une classe.");
       return;
     }
+
     if (!examDate) {
       setError("Veuillez saisir une date d’examen.");
       return;
     }
+
     if (!selectedClass?.academic_year) {
       setError(
         "Année scolaire inconnue pour cette classe. Vérifiez la configuration des classes."
@@ -290,7 +292,7 @@ export default function PredictionsPage() {
       const payload = {
         class_id: classId,
         academic_year: selectedClass.academic_year,
-        exam_date: examDate, // déjà au format YYYY-MM-DD
+        exam_date: examDate,
         key_subjects_coverage: coverageWeighted,
         key_subjects: coreSubjects.map((s) => ({
           subject_id: s.subject_id,
@@ -312,6 +314,7 @@ export default function PredictionsPage() {
         setAuthErr(true);
         return;
       }
+
       if (!r.ok || !j.ok) {
         setError(j?.message || j?.error || "Erreur lors du calcul de la prédiction.");
         return;
@@ -360,8 +363,7 @@ export default function PredictionsPage() {
         </p>
       </div>
 
-      {/* ÉTAPE 1 – Choisir la classe et la date */}
-      <div className="rounded-2xl border border-emerald-100 bg-emerald-50/60 p-5 space-y-4">
+      <div className="space-y-4 rounded-2xl border border-emerald-100 bg-emerald-50/60 p-5">
         <div className="text-[11px] font-semibold uppercase tracking-wide text-emerald-700">
           ÉTAPE 1 • CHOISIR LA CLASSE ET LA DATE D&apos;EXAMEN
         </div>
@@ -422,36 +424,33 @@ export default function PredictionsPage() {
             </div>
 
             <div className="rounded-lg border border-emerald-100 bg-white px-3 py-2 text-xs text-slate-700 shadow-sm">
-              <div className="font-medium text-emerald-800 mb-0.5">Classe sélectionnée</div>
+              <div className="mb-0.5 font-medium text-emerald-800">Classe sélectionnée</div>
               <div>
                 Classe :{" "}
                 {selectedClass
-                  ? `${selectedClass.name}${
-                      selectedClass.level ? ` (${selectedClass.level})` : ""
-                    }`
+                  ? `${selectedClass.name}${selectedClass.level ? ` (${selectedClass.level})` : ""}`
                   : "—"}
               </div>
               <div>
-                Année scolaire :{" "}
-                {selectedClass?.academic_year ? selectedClass.academic_year : "—"}
+                Année scolaire : {selectedClass?.academic_year || "—"}
               </div>
             </div>
           </>
         )}
       </div>
 
-      {/* ÉTAPE 2 – Saisir l’exécution du programme */}
-      <div className="rounded-2xl border border-sky-100 bg-sky-50 p-5 space-y-4">
+      <div className="space-y-4 rounded-2xl border border-sky-100 bg-sky-50 p-5">
         <div className="text-[11px] font-semibold uppercase tracking-wide text-sky-800">
           ÉTAPE 2 • SAISIR L&apos;EXÉCUTION DU PROGRAMME
         </div>
+
         <p className="text-[12px] text-sky-900/80">
           Indiquez l&apos;avancement (en %) dans les matières clés. La plateforme calcule
           automatiquement une couverture globale pondérée selon les coefficients.
         </p>
 
         <div className="text-xs font-medium text-slate-700 mb-1">
-          Matières clés (3 plus gros coefficients pour ce niveau)
+          Matières clés (coefficients les plus élevés, ex æquo inclus)
         </div>
 
         {loadingCore && classId && (
@@ -473,7 +472,12 @@ export default function PredictionsPage() {
 
         {coreSubjects.length > 0 && (
           <>
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+            <div className="rounded-xl border border-sky-200 bg-white/80 px-4 py-3 text-xs text-sky-900">
+              <span className="font-semibold">{coreSubjects.length}</span>{" "}
+              matière(s) clé(s) retenue(s) pour cette classe.
+            </div>
+
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
               {coreSubjects.map((s, idx) => {
                 const label = s.subject_name || s.name || "Discipline";
                 return (
@@ -481,10 +485,8 @@ export default function PredictionsPage() {
                     key={s.subject_id}
                     className="rounded-2xl border border-white bg-white px-4 py-3 shadow-sm"
                   >
-                    <div className="text-sm font-semibold text-slate-800">
-                      {label}
-                    </div>
-                    <div className="text-[11px] text-slate-500 mb-2">
+                    <div className="text-sm font-semibold text-slate-800">{label}</div>
+                    <div className="mb-2 text-[11px] text-slate-500">
                       Coefficient : {s.coeff}
                     </div>
                     <div className="flex items-center gap-2">
@@ -500,12 +502,7 @@ export default function PredictionsPage() {
                               i === idx
                                 ? {
                                     ...x,
-                                    coverage:
-                                      !Number.isFinite(val) || val < 0
-                                        ? 0
-                                        : val > 100
-                                        ? 100
-                                        : val,
+                                    coverage: clampCoverage(val),
                                   }
                                 : x
                             )
@@ -520,7 +517,7 @@ export default function PredictionsPage() {
               })}
             </div>
 
-            <div className="mt-4 rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 flex items-center justify-between">
+            <div className="mt-4 flex items-center justify-between rounded-xl border border-sky-200 bg-sky-50 px-4 py-3">
               <div>
                 <div className="text-[11px] font-semibold uppercase tracking-wide text-sky-900">
                   Couverture globale des matières clés (pondérée)
@@ -543,7 +540,6 @@ export default function PredictionsPage() {
         )}
       </div>
 
-      {/* Barre d’actions */}
       <div className="flex flex-wrap items-center gap-3">
         <Button
           onClick={runPrediction}
@@ -557,6 +553,7 @@ export default function PredictionsPage() {
         >
           {running ? "Calcul en cours…" : "Lancer la prédiction"}
         </Button>
+
         <button
           type="button"
           onClick={resetForm}
@@ -564,6 +561,7 @@ export default function PredictionsPage() {
         >
           Réinitialiser
         </button>
+
         {result && (
           <span className="text-[12px] text-slate-600">
             Prédiction calculée pour le {result.input.exam_date} — couverture{" "}
@@ -578,10 +576,8 @@ export default function PredictionsPage() {
         </div>
       )}
 
-      {/* Résultats du modèle */}
       {result && (
         <div className="space-y-5">
-          {/* KPIs de synthèse */}
           <div className="grid grid-cols-1 gap-3 md:grid-cols-5">
             <div className="rounded-xl border bg-white px-4 py-3 shadow-sm">
               <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
@@ -591,6 +587,7 @@ export default function PredictionsPage() {
                 {result.metrics.predicted_success_rate.toFixed(1)}%
               </div>
             </div>
+
             <div className="rounded-xl border bg-white px-4 py-3 shadow-sm">
               <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
                 Assiduité moyenne
@@ -599,6 +596,7 @@ export default function PredictionsPage() {
                 {result.metrics.average_attendance_score.toFixed(1)}%
               </div>
             </div>
+
             <div className="rounded-xl border bg-white px-4 py-3 shadow-sm">
               <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
                 Score environnement (taille &amp; couverture)
@@ -607,6 +605,7 @@ export default function PredictionsPage() {
                 {result.metrics.env_score.toFixed(1)}/100
               </div>
             </div>
+
             <div className="rounded-xl border bg-white px-4 py-3 shadow-sm">
               <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
                 Effectif de la classe
@@ -615,6 +614,7 @@ export default function PredictionsPage() {
                 {result.metrics.class_size}
               </div>
             </div>
+
             <div className="rounded-xl border bg-white px-4 py-3 shadow-sm">
               <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
                 Moyenne générale de la classe
@@ -627,12 +627,12 @@ export default function PredictionsPage() {
             </div>
           </div>
 
-          {/* Synthèse par matière clé */}
           {result.key_subjects && result.key_subjects.length > 0 && (
-            <div className="rounded-2xl border border-indigo-100 bg-indigo-50/50 px-4 py-3 space-y-3">
+            <div className="space-y-3 rounded-2xl border border-indigo-100 bg-indigo-50/50 px-4 py-3">
               <div className="text-[11px] font-semibold uppercase tracking-wide text-indigo-900">
                 Synthèse par matière clé
               </div>
+
               <div className="overflow-x-auto">
                 <table className="min-w-full text-xs">
                   <thead className="bg-indigo-100/60">
@@ -670,15 +670,16 @@ export default function PredictionsPage() {
                       );
 
                       let statusClass =
-                        "bg-emerald-50 text-emerald-800 border border-emerald-200";
+                        "border border-emerald-200 bg-emerald-50 text-emerald-800";
                       let statusLabel = "Au niveau";
+
                       if (s.status === "en_retard") {
                         statusClass =
-                          "bg-rose-50 text-rose-800 border border-rose-200";
+                          "border border-rose-200 bg-rose-50 text-rose-800";
                         statusLabel = "En retard";
                       } else if (s.status === "en_bonne_voie") {
                         statusClass =
-                          "bg-amber-50 text-amber-800 border border-amber-200";
+                          "border border-amber-200 bg-amber-50 text-amber-800";
                         statusLabel = "En bonne voie";
                       }
 
@@ -718,7 +719,7 @@ export default function PredictionsPage() {
 
           {result.recommendations?.length > 0 && (
             <div className="rounded-2xl border border-amber-100 bg-amber-50 px-4 py-3">
-              <div className="text-[11px] font-semibold uppercase tracking-wide text-amber-900 mb-1">
+              <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-amber-900">
                 Recommandations pour l&apos;établissement
               </div>
               <ul className="list-disc space-y-1 pl-5 text-sm text-amber-900">
@@ -729,7 +730,6 @@ export default function PredictionsPage() {
             </div>
           )}
 
-          {/* Tableau élèves */}
           {result.students?.length > 0 && (
             <div className="rounded-2xl border border-slate-200 bg-white">
               <div className="border-b px-4 py-2 text-sm font-semibold text-slate-800">
@@ -776,7 +776,6 @@ export default function PredictionsPage() {
                   </thead>
                   <tbody>
                     {[...result.students]
-                      // ⇩⇩⇩ TRI ALPHABÉTIQUE PAR NOM + PRÉNOM ⇩⇩⇩
                       .sort((a, b) => {
                         const nameA = (a.full_name || "").toLocaleUpperCase();
                         const nameB = (b.full_name || "").toLocaleUpperCase();
@@ -787,7 +786,6 @@ export default function PredictionsPage() {
                           sensitivity: "base",
                         });
                       })
-                      // ⇧⇧⇧ au lieu de trier sur predicted_success ⇧⇧⇧
                       .map((s, idx) => (
                         <tr
                           key={s.student_id}
@@ -803,11 +801,11 @@ export default function PredictionsPage() {
                               </div>
                             )}
                           </td>
+
                           <td className="px-3 py-1.5 text-right text-slate-800">
-                            {s.general_avg_20 == null
-                              ? "—"
-                              : s.general_avg_20.toFixed(2)}
+                            {s.general_avg_20 == null ? "—" : s.general_avg_20.toFixed(2)}
                           </td>
+
                           <td className="px-3 py-1.5 text-right">
                             {s.academic_score.toFixed(1)}%
                           </td>
@@ -837,10 +835,10 @@ export default function PredictionsPage() {
                               className={[
                                 "inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium",
                                 s.risk_label === "Faible risque"
-                                  ? "bg-emerald-50 text-emerald-800 border border-emerald-200"
+                                  ? "border border-emerald-200 bg-emerald-50 text-emerald-800"
                                   : s.risk_label === "Risque moyen"
-                                  ? "bg-amber-50 text-amber-800 border border-amber-200"
-                                  : "bg-rose-50 text-rose-800 border border-rose-200",
+                                    ? "border border-amber-200 bg-amber-50 text-amber-800"
+                                    : "border border-rose-200 bg-rose-50 text-rose-800",
                               ].join(" ")}
                             >
                               {s.risk_label}

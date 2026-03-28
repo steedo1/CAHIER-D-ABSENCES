@@ -17,9 +17,9 @@ type Body = {
   class_id: string;
   academic_year: string; // ex: "2025-2026"
   exam_date: string; // "YYYY-MM-DD"
-  key_subjects_coverage: number; // 0..100 (global matières clés / couverture pondérée)
-  key_subject_ids?: string[]; // optionnel
-  key_subjects?: KeySubjectPayload[]; // 4 matières clés affichées dans l’UI
+  key_subjects_coverage: number; // 0..100
+  key_subject_ids?: string[];
+  key_subjects?: KeySubjectPayload[];
 };
 
 type StudentResult = {
@@ -40,11 +40,100 @@ type StudentResult = {
   risk_label: string;
 };
 
+type KeySubjectScore = {
+  subject_id: string;
+  subject_name: string;
+  coeff: number;
+  coverage_percent: number;
+  coverage_norm: number;
+  expected_coverage_norm: number;
+  eval_devoir_ratio_norm: number;
+  eval_interro_ratio_norm: number;
+  eval_volume_norm: number;
+  status: "au_niveau" | "en_bonne_voie" | "en_retard";
+};
+
 function clamp01(x: number): number {
   if (!Number.isFinite(x)) return 0;
   if (x < 0) return 0;
   if (x > 1) return 1;
   return x;
+}
+
+function normalizeCoeff(value: unknown): number {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+function normalizeCoverage(value: unknown, fallback = 60): number {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  if (n < 0) return 0;
+  if (n > 100) return 100;
+  return n;
+}
+
+function normalizeKeySubjects(
+  rawSubjects: KeySubjectPayload[] | undefined,
+  rawIds: string[] | undefined
+): Array<{
+  subject_id: string;
+  subject_name: string;
+  coeff: number;
+  coverage: number;
+}> {
+  const byId = new Map<
+    string,
+    {
+      subject_id: string;
+      subject_name: string;
+      coeff: number;
+      coverage: number;
+    }
+  >();
+
+  if (Array.isArray(rawSubjects) && rawSubjects.length > 0) {
+    for (const s of rawSubjects) {
+      const subject_id = String(s?.subject_id || "").trim();
+      if (!subject_id) continue;
+
+      const subject_name =
+        String(s?.name || "Discipline").trim() || "Discipline";
+      const coeff = normalizeCoeff(s?.coeff);
+      const coverage = normalizeCoverage(s?.coverage, 60);
+
+      const prev = byId.get(subject_id);
+      if (!prev || coeff > prev.coeff) {
+        byId.set(subject_id, {
+          subject_id,
+          subject_name,
+          coeff,
+          coverage,
+        });
+      }
+    }
+  } else if (Array.isArray(rawIds) && rawIds.length > 0) {
+    for (const rawId of rawIds) {
+      const subject_id = String(rawId || "").trim();
+      if (!subject_id) continue;
+
+      if (!byId.has(subject_id)) {
+        byId.set(subject_id, {
+          subject_id,
+          subject_name: "Discipline",
+          coeff: 1,
+          coverage: 60,
+        });
+      }
+    }
+  }
+
+  return [...byId.values()].sort((a, b) => {
+    if (b.coeff !== a.coeff) return b.coeff - a.coeff;
+    return a.subject_name.localeCompare(b.subject_name, "fr", {
+      sensitivity: "base",
+    });
+  });
 }
 
 function buildRecommendations(args: {
@@ -79,7 +168,6 @@ function buildRecommendations(args: {
     worstStudents,
   } = args;
 
-  // 1) Bilan global : moyenne générale de classe + taux de réussite prédit
   if (classGeneralAvg20 != null) {
     if (classGeneralAvg20 >= 12) {
       recs.push(
@@ -116,7 +204,6 @@ function buildRecommendations(args: {
     );
   }
 
-  // 2) Couverture du programme vs calendrier (100 % à J–30)
   const coverageGap = coverage - expectedCoverage;
 
   if (daysToExam <= 30) {
@@ -154,7 +241,6 @@ function buildRecommendations(args: {
     }
   }
 
-  // 3) Assiduité
   if (avgAttendance < 85) {
     recs.push(
       "Le taux d'assiduité moyen est faible. Renforcer le contrôle des appels, alerter rapidement les parents et envisager des mesures de rappel ou de sanction pédagogique."
@@ -165,7 +251,6 @@ function buildRecommendations(args: {
     );
   }
 
-  // 4) Volumes d’évaluations (norme 4 devoirs + 4 interrogations par matière)
   if (evalsDevoirRatio < 0.9 || evalsInterroRatio < 0.9) {
     recs.push(
       `Le volume d'évaluations reste en dessous du rythme conseillé dans les matières clés : environ ${evalsDevoirDone} devoir(s) et ${evalsInterroDone} interrogation(s) réalisés, alors que la norme cible est de 4 devoirs et 4 interrogations par matière. Planifier des évaluations supplémentaires (interrogations courtes, devoirs surveillés) pour mieux étaler la préparation des élèves.`
@@ -176,21 +261,18 @@ function buildRecommendations(args: {
     );
   }
 
-  // 5) Bonus
   if (ratioBonus > 0.3) {
     recs.push(
       "Limiter les ajustements de notes et les bonus : privilégier des évaluations régulières, transparentes et bien réparties dans l’année."
     );
   }
 
-  // 6) Brouillons
   if (avgDraftRatio > 0.2) {
     recs.push(
       "Réduire le nombre de notes conservées au brouillon : publier davantage d'évaluations pour refléter la réalité du travail des élèves et donner de la visibilité aux parents."
     );
   }
 
-  // 7) Élèves les plus à risque
   if (worstStudents.length) {
     recs.push(
       `Surveiller en priorité les élèves suivants : ${worstStudents.join(
@@ -251,7 +333,6 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Institution de l'utilisateur
     const { data: me, error: meErr } = await supa
       .from("profiles")
       .select("id,institution_id")
@@ -277,7 +358,6 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Vérifier rôle admin / super_admin
     const { data: roleRow } = await supa
       .from("user_roles")
       .select("role")
@@ -297,7 +377,6 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Vérifier la classe
     const { data: cls, error: clsErr } = await srv
       .from("classes")
       .select("id,label,level,academic_year,institution_id")
@@ -310,6 +389,7 @@ export async function POST(req: NextRequest) {
         { status: 400 }
       );
     }
+
     if (!cls || cls.institution_id !== institution_id) {
       return NextResponse.json(
         {
@@ -321,7 +401,6 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Année scolaire
     const { data: yearRow, error: yearErr } = await srv
       .from("academic_years")
       .select("id,code,label,start_date,end_date")
@@ -335,6 +414,7 @@ export async function POST(req: NextRequest) {
         { status: 400 }
       );
     }
+
     if (!yearRow) {
       return NextResponse.json(
         {
@@ -346,13 +426,10 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // ─────────────────────────────────────
-    //  Calendrier : couverture attendue à la date de la requête
-    //  (100% à J–30 par rapport à la date d’examen)
-    // ─────────────────────────────────────
     const today = new Date();
     const yearStart = new Date(yearRow.start_date);
     const oneMonthMs = 30 * 24 * 60 * 60 * 1000;
+
     let finalPrepDate = new Date(examDate.getTime() - oneMonthMs);
     if (Number.isNaN(finalPrepDate.getTime()) || finalPrepDate <= yearStart) {
       finalPrepDate = new Date(examDate.getTime());
@@ -368,6 +445,7 @@ export async function POST(req: NextRequest) {
         (today.getTime() - yearStart.getTime()) /
         (finalPrepDate.getTime() - yearStart.getTime());
     }
+
     if (!Number.isFinite(timelineFactor) || timelineFactor < 0) timelineFactor = 0;
     if (timelineFactor > 1) timelineFactor = 1;
 
@@ -376,44 +454,39 @@ export async function POST(req: NextRequest) {
       (examDate.getTime() - today.getTime()) / (24 * 60 * 60 * 1000)
     );
 
-    // ─────────────────────────────────────
-    //  Statistiques d’évaluations dans les matières clés
-    //  (norme 4 devoirs + 4 interrogations par matière)
-    // ─────────────────────────────────────
-    const key_subject_ids_from_ids = Array.isArray(raw.key_subject_ids)
-      ? raw.key_subject_ids
-      : [];
-    const key_subjects_raw = Array.isArray(raw.key_subjects)
-      ? raw.key_subjects
-      : [];
+    const normalizedKeySubjects = normalizeKeySubjects(
+      Array.isArray(raw.key_subjects) ? raw.key_subjects : [],
+      Array.isArray(raw.key_subject_ids) ? raw.key_subject_ids : []
+    );
 
-    let key_subject_ids: string[] = [];
-
-    if (key_subjects_raw.length) {
-      key_subject_ids = key_subjects_raw
-        .map((s: any) => String((s && s.subject_id) || "").trim())
-        .filter((x) => !!x);
-    } else if (key_subject_ids_from_ids.length) {
-      key_subject_ids = key_subject_ids_from_ids
-        .map((x) => String(x || "").trim())
-        .filter((x) => !!x);
-    }
-
+    const key_subject_ids = normalizedKeySubjects.map((s) => s.subject_id);
     const coreSubjectsCount =
-      key_subject_ids.length > 0 ? key_subject_ids.length : 4; // fallback 4
+      normalizedKeySubjects.length > 0 ? normalizedKeySubjects.length : 4;
 
     let evalsDevoir = 0;
     let evalsInterro = 0;
     let evalsTotal = 0;
 
+    const evalsBySubject = new Map<
+      string,
+      { devoir: number; interro: number; total: number }
+    >();
+
+    for (const s of normalizedKeySubjects) {
+      evalsBySubject.set(s.subject_id, {
+        devoir: 0,
+        interro: 0,
+        total: 0,
+      });
+    }
+
     if (key_subject_ids.length) {
       const { data: evalRows, error: evalErr } = await srv
         .from("grade_evaluations")
         .select("id, eval_kind, subject_id, is_published, eval_date")
-        // pas de filtre institution_id : la table ne possède pas cette colonne,
-        // et la classe est déjà contrôlée sur l'institution.
         .eq("class_id", class_id)
         .eq("academic_year", academic_year)
+        .eq("is_published", true)
         .lte("eval_date", exam_date_raw)
         .in("subject_id", key_subject_ids);
 
@@ -425,15 +498,30 @@ export async function POST(req: NextRequest) {
       }
 
       for (const ev of evalRows || []) {
-        evalsTotal += 1;
+        const subjectId = String((ev as any).subject_id || "").trim();
+        if (!subjectId) continue;
+
+        const bucket = evalsBySubject.get(subjectId);
+        if (!bucket) continue;
+
         const kind = String((ev as any).eval_kind || "").toLowerCase();
-        if (kind.startsWith("devoir")) evalsDevoir += 1;
-        if (kind.startsWith("interro")) evalsInterro += 1;
+
+        bucket.total += 1;
+        evalsTotal += 1;
+
+        if (kind.startsWith("devoir")) {
+          bucket.devoir += 1;
+          evalsDevoir += 1;
+        }
+        if (kind.startsWith("interro")) {
+          bucket.interro += 1;
+          evalsInterro += 1;
+        }
       }
     }
 
-    const idealDevoirTotal = coreSubjectsCount * 4; // 4 devoirs / matière
-    const idealInterroTotal = coreSubjectsCount * 4; // 4 interros / matière
+    const idealDevoirTotal = coreSubjectsCount * 4;
+    const idealInterroTotal = coreSubjectsCount * 4;
 
     const expectedDevoirNow = Math.round(idealDevoirTotal * timelineFactor);
     const expectedInterroNow = Math.round(idealInterroTotal * timelineFactor);
@@ -443,9 +531,59 @@ export async function POST(req: NextRequest) {
     const evalsInterroRatio =
       expectedInterroNow > 0 ? evalsInterro / expectedInterroNow : 0;
 
-    // ─────────────────────────────────────
-    //  Appel du modèle SQL
-    // ─────────────────────────────────────
+    const expectedPerSubject = Math.max(0, Math.round(4 * timelineFactor));
+
+    const keySubjectScores: KeySubjectScore[] = normalizedKeySubjects.map((s) => {
+      const stats = evalsBySubject.get(s.subject_id) || {
+        devoir: 0,
+        interro: 0,
+        total: 0,
+      };
+
+      const coverage_percent = normalizeCoverage(s.coverage, coverage);
+      const coverage_norm = coverage_percent / 100;
+      const expected_coverage_norm = expectedCoverage / 100;
+
+      const eval_devoir_ratio_norm =
+        expectedPerSubject > 0
+          ? Math.min(1.5, stats.devoir / expectedPerSubject)
+          : 0;
+
+      const eval_interro_ratio_norm =
+        expectedPerSubject > 0
+          ? Math.min(1.5, stats.interro / expectedPerSubject)
+          : 0;
+
+      const eval_volume_norm =
+        (eval_devoir_ratio_norm + eval_interro_ratio_norm) / 2;
+
+      let status: KeySubjectScore["status"] = "au_niveau";
+      if (
+        coverage_norm < expected_coverage_norm - 0.15 ||
+        eval_volume_norm < 0.75
+      ) {
+        status = "en_retard";
+      } else if (
+        coverage_norm < expected_coverage_norm - 0.05 ||
+        eval_volume_norm < 0.95
+      ) {
+        status = "en_bonne_voie";
+      }
+
+      return {
+        subject_id: s.subject_id,
+        subject_name: s.subject_name,
+        coeff: s.coeff,
+        coverage_percent,
+        coverage_norm,
+        expected_coverage_norm,
+        eval_devoir_ratio_norm,
+        eval_interro_ratio_norm,
+        eval_volume_norm,
+        status,
+      };
+    });
+
     const { data: rows, error: predErr } = await srv.rpc(
       "predict_success_for_class",
       {
@@ -453,7 +591,7 @@ export async function POST(req: NextRequest) {
         p_class_id: class_id,
         p_academic_year: academic_year,
         p_exam_date: exam_date_raw,
-        p_core_completion_percent: coverage, // 0..100
+        p_core_completion_percent: coverage,
       }
     );
 
@@ -466,7 +604,6 @@ export async function POST(req: NextRequest) {
 
     const preds = (rows || []) as any[];
 
-    // Aucun élève avec suffisamment de données
     if (!preds.length) {
       return NextResponse.json({
         ok: true,
@@ -502,6 +639,7 @@ export async function POST(req: NextRequest) {
           evals_interro_ratio: evalsInterroRatio,
           days_to_exam: daysToExam,
         },
+        key_subjects: keySubjectScores,
         recommendations: [
           "Aucune donnée suffisante (moyennes, assiduité, conduite) pour calculer une prédiction sur cette classe.",
         ],
@@ -509,16 +647,13 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // Taille de la classe renvoyée par la vue (même valeur pour chaque ligne)
     const classSize = Number(preds[0].class_size || preds.length);
 
-    // Ratio d'élèves ayant au moins un bonus explicite
     const bonusStudentsCount = preds.filter(
       (r) => Number(r.bonus_points_total || 0) > 0
     ).length;
     const bonusRatio = classSize ? bonusStudentsCount / classSize : 0;
 
-    // Score lié à la taille de la classe
     let envSizeScore = 100;
     if (classSize <= 30) envSizeScore = 100;
     else if (classSize <= 40) envSizeScore = 90;
@@ -526,7 +661,7 @@ export async function POST(req: NextRequest) {
     else if (classSize <= 60) envSizeScore = 70;
     else envSizeScore = 60;
 
-    const coverageScore = coverage; // 0..100
+    const coverageScore = coverage;
     const envScore = envSizeScore * 0.4 + coverageScore * 0.6;
 
     const students: StudentResult[] = [];
@@ -538,7 +673,6 @@ export async function POST(req: NextRequest) {
     let countClassGeneralAvg = 0;
 
     for (const row of preds) {
-      // Base académique : priorité matières clés -> toutes matières -> moyenne générale
       const rawAll = row.raw_all_avg_20 as number | null;
       const rawCore = row.raw_core_avg_20 as number | null;
       const generalAvg = row.general_avg_20 as number | null;
@@ -557,35 +691,29 @@ export async function POST(req: NextRequest) {
         countClassGeneralAvg += 1;
       }
 
-      // Présence (presence_rate 0..1)
       const presenceRate = Number(row.presence_rate ?? 0);
       const attendance_score = clamp01(presenceRate) * 100;
 
-      // Conduite
       const conductNorm =
         typeof row.conduct_norm === "number"
           ? Number(row.conduct_norm)
           : typeof row.conduct_total_20 === "number"
           ? Number(row.conduct_total_20) / 20
-          : 0.75; // base plutôt positive si rien
+          : 0.75;
       const conduct_score = clamp01(conductNorm) * 100;
 
-      // Bonus explicites
       const bonus_total = Number(row.bonus_points_total ?? 0);
       const personalPenalty = Math.min(bonus_total * 5, 40);
       const classPenalty = bonusRatio * 40;
       const bonus_score = Math.max(0, 100 - (personalPenalty + classPenalty));
 
-      // Notes au brouillon
       const draft_ratio =
         typeof row.draft_ratio === "number" ? Number(row.draft_ratio) : 0;
       const draft_score = Math.max(0, 100 - draft_ratio * 100);
 
-      // Prédiction finale (p_success 0..1 venant du modèle logistique)
       const p_success = clamp01(Number(row.p_success ?? 0));
       const predicted_success = p_success * 100;
 
-      // Label de risque (on traduit low/medium/high)
       let risk_label = "Risque élevé";
       if (row.risk_level === "low") risk_label = "Faible risque";
       else if (row.risk_level === "medium") risk_label = "Risque moyen";
@@ -684,9 +812,9 @@ export async function POST(req: NextRequest) {
         evals_interro_expected: expectedInterroNow,
         evals_devoir_ratio: evalsDevoirRatio,
         evals_interro_ratio: evalsInterroRatio,
-
         days_to_exam: daysToExam,
       },
+      key_subjects: keySubjectScores,
       recommendations,
       students,
     });

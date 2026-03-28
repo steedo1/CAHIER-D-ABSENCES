@@ -530,6 +530,7 @@ export default function ConseilClassePage() {
   const [councilDate, setCouncilDate] = useState(todayISO());
   const [chairName, setChairName] = useState("");
   const [headTeacherName, setHeadTeacherName] = useState("");
+  const [generalObservation, setGeneralObservation] = useState("");
   const [problemsText, setProblemsText] = useState("");
   const [solutionsText, setSolutionsText] = useState("");
   const [previewOpen, setPreviewOpen] = useState(false);
@@ -872,54 +873,77 @@ export default function ConseilClassePage() {
     };
   }, [councilRows, enriched]);
 
+  const effectiveSubjects = useMemo<BulletinSubject[]>(() => {
+    const subjectMetaById = new Map(
+      (enriched?.response.subjects ?? []).map((subject) => [subject.subject_id, subject] as const)
+    );
+    const seen = new Set<string>();
+    const subjects: BulletinSubject[] = [];
+
+    councilRows.forEach((row) => {
+      (row.per_subject ?? []).forEach((ps) => {
+        const subjectId = String(ps?.subject_id ?? "").trim();
+        if (!subjectId || seen.has(subjectId)) return;
+        seen.add(subjectId);
+
+        const meta = subjectMetaById.get(subjectId);
+        subjects.push({
+          subject_id: subjectId,
+          subject_name: meta?.subject_name || "Discipline",
+          coeff_bulletin: Number(meta?.coeff_bulletin ?? 0),
+          include_in_average: meta?.include_in_average,
+        });
+      });
+    });
+
+    return subjects.sort((a, b) =>
+      a.subject_name.localeCompare(b.subject_name, undefined, {
+        sensitivity: "base",
+        numeric: true,
+      })
+    );
+  }, [enriched, councilRows]);
+
   const subjectStats = useMemo<SubjectCouncilStat[]>(() => {
-    const subjects = enriched?.response.subjects ?? [];
     const effectif = councilRows.length;
 
-    return subjects
-      .map((subject) => {
-        const values = councilRows
-          .map((row) => {
-            const cell = row.per_subject?.find((ps) => ps.subject_id === subject.subject_id);
-            return cell?.avg20 ?? null;
-          })
-          .filter((v): v is number => v !== null && v !== undefined && Number.isFinite(v));
-
-        let teacher_name: string | null = null;
-        let teacher_signature_png: string | null = null;
-        for (const row of councilRows) {
+    return effectiveSubjects.map((subject) => {
+      const values = councilRows
+        .map((row) => {
           const cell = row.per_subject?.find((ps) => ps.subject_id === subject.subject_id);
-          if (cell?.teacher_name && !teacher_name) {
-            teacher_name = cell.teacher_name;
-          }
-          if (cell?.teacher_signature_png && !teacher_signature_png) {
-            teacher_signature_png = cell.teacher_signature_png;
-          }
-        }
-
-        return {
-          subject_id: subject.subject_id,
-          subject_name: subject.subject_name,
-          coeff: Number(subject.coeff_bulletin ?? 0),
-          teacher_name,
-          teacher_signature_png,
-          noted_count: values.length,
-          not_noted_count: Math.max(0, effectif - values.length),
-          avg20: values.length
-            ? round2(values.reduce((a, b) => a + b, 0) / values.length)
-            : null,
-          gte10: values.filter((v) => v >= 10).length,
-          between85And10: values.filter((v) => v >= 8.5 && v < 10).length,
-          lt85: values.filter((v) => v < 8.5).length,
-        };
-      })
-      .sort((a, b) =>
-        a.subject_name.localeCompare(b.subject_name, undefined, {
-          sensitivity: "base",
-          numeric: true,
+          return cell?.avg20 ?? null;
         })
-      );
-  }, [enriched, councilRows]);
+        .filter((v): v is number => v !== null && v !== undefined && Number.isFinite(v));
+
+      let teacher_name: string | null = null;
+      let teacher_signature_png: string | null = null;
+      for (const row of councilRows) {
+        const cell = row.per_subject?.find((ps) => ps.subject_id === subject.subject_id);
+        if (cell?.teacher_name && !teacher_name) {
+          teacher_name = cell.teacher_name;
+        }
+        if (cell?.teacher_signature_png && !teacher_signature_png) {
+          teacher_signature_png = cell.teacher_signature_png;
+        }
+      }
+
+      return {
+        subject_id: subject.subject_id,
+        subject_name: subject.subject_name,
+        coeff: Number(subject.coeff_bulletin ?? 0),
+        teacher_name,
+        teacher_signature_png,
+        noted_count: values.length,
+        not_noted_count: Math.max(0, effectif - values.length),
+        avg20: values.length
+          ? round2(values.reduce((a, b) => a + b, 0) / values.length)
+          : null,
+        gte10: values.filter((v) => v >= 10).length,
+        between85And10: values.filter((v) => v >= 8.5 && v < 10).length,
+        lt85: values.filter((v) => v < 8.5).length,
+      };
+    });
+  }, [effectiveSubjects, councilRows]);
 
   const councilTeacherRows = useMemo(() => {
     const map = new Map<
@@ -1129,19 +1153,6 @@ export default function ConseilClassePage() {
       ).length,
     };
   }, [annualRecapRows]);
-
-  const annualCouncilStats = useMemo(() => {
-    const validAnnual = annualRecapRows
-      .map((row) => row.annual_avg)
-      .filter((v): v is number => v !== null && v !== undefined && Number.isFinite(v));
-
-    return {
-      warningWork: validAnnual.filter((v) => v >= 8 && v < 10).length,
-      blameWork: validAnnual.filter((v) => v < 8).length,
-      warningConduct: classStats.warningConduct,
-      blameConduct: classStats.blameConduct,
-    };
-  }, [annualRecapRows, classStats.warningConduct, classStats.blameConduct]);
 
   const currentClass = useMemo(
     () => classes.find((c) => c.id === selectedClassId) || null,
@@ -1478,6 +1489,11 @@ export default function ConseilClassePage() {
               <Input value={chairName} onChange={(e) => setChairName(e.target.value)} />
             </div>
 
+            <div className="md:col-span-6">
+              <label className="mb-1 block text-xs font-semibold uppercase text-slate-500">Observation générale</label>
+              <Input value={generalObservation} onChange={(e) => setGeneralObservation(e.target.value)} placeholder="Observation générale de la séance…" />
+            </div>
+
             <div className="md:col-span-3">
               <label className="mb-1 block text-xs font-semibold uppercase text-slate-500">Problèmes de la classe</label>
               <Textarea rows={5} value={problemsText} onChange={(e) => setProblemsText(e.target.value)} placeholder="Difficultés observées…" />
@@ -1534,6 +1550,7 @@ export default function ConseilClassePage() {
                 </div>
                 <div>
                   <div><strong>{institution?.institution_head_title || "Directeur"} :</strong> {chairName || institution?.institution_head_name || "—"}</div>
+                  <div className="mt-1"><strong>Observation :</strong> {generalObservation || "—"}</div>
                 </div>
               </div>
 
@@ -1717,7 +1734,7 @@ export default function ConseilClassePage() {
                     <th style={{ width: "8%" }}>M &lt; 8,5</th>
                     <th style={{ width: "8%" }}>%</th>
                     <th style={{ width: "8%" }}>Moy.</th>
-                    <th style={{ width: "13%" }}>Enseignant</th>
+                    <th style={{ width: "13%" }}>Enseignant / Émargement</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1734,7 +1751,14 @@ export default function ConseilClassePage() {
                         <OfficialTd center>{s.lt85}</OfficialTd>
                         <OfficialTd center>{formatPercent(s.lt85, base)}</OfficialTd>
                         <OfficialTd center>{formatNumber(s.avg20)}</OfficialTd>
-                        <OfficialTd>{s.teacher_name || "—"}</OfficialTd>
+                        <OfficialTd>
+                          <div className="min-h-[34px]">
+                            {s.teacher_signature_png ? (
+                              <img src={s.teacher_signature_png} alt="" className="mb-1 h-5 max-w-full object-contain" />
+                            ) : null}
+                            <div>{s.teacher_name || "—"}</div>
+                          </div>
+                        </OfficialTd>
                       </tr>
                     );
                   })}
@@ -1758,10 +1782,8 @@ export default function ConseilClassePage() {
               <div className="mt-3">
                 <OfficialBand>Membres du conseil</OfficialBand>
                 <div className="mt-1 border p-3 text-[11px]" style={{ borderColor: "var(--pv-grid)", background: "var(--pv-soft)" }}>
-                  <div className="pv-manual-lines">
-                    <div />
-                    <div />
-                  </div>
+                  <div className="mb-2 font-semibold uppercase">Champ manuel à compléter</div>
+                  <div className="pv-line-field" />
                 </div>
 
                 <table className="pv-grid-table mt-2 pv-mini">
@@ -1782,7 +1804,11 @@ export default function ConseilClassePage() {
                           <OfficialTd>{row.subjectsLabel || "—"}</OfficialTd>
                           <OfficialTd>
                             <div className="min-h-[36px] flex items-end">
-                              <div className="w-full border-b border-slate-400" />
+                              {row.signature ? (
+                                <img src={row.signature} alt="" className="h-5 max-w-full object-contain" />
+                              ) : (
+                                <div className="w-full border-b border-slate-400" />
+                              )}
                             </div>
                           </OfficialTd>
                         </tr>
@@ -1848,10 +1874,10 @@ export default function ConseilClassePage() {
 
                 <div className="mt-3 grid grid-cols-5 gap-2 text-[11px]">
                   <QuickCell label="Effectif" value={String(annualRecapStats.effectif)} />
-                  <QuickCell label="Moy. classe" value={formatNumber(annualRecapStats.classAvg)} />
-                  <QuickCell label="Tableau d'honneur" value={String(annualRecapStats.honour)} />
-                  <QuickCell label="TH + Encour." value={String(annualRecapStats.encouragement)} />
-                  <QuickCell label="TH + Félic." value={String(annualRecapStats.excellence)} />
+                  <QuickCell label="1re annuelle" value={formatNumber(annualRecapStats.highest)} />
+                  <QuickCell label="Dernière annuelle" value={formatNumber(annualRecapStats.lowest)} />
+                  <QuickCell label="TH" value={String(annualRecapStats.honour)} />
+                  <QuickCell label="TH + Enc./Fél." value={String(annualRecapStats.encouragement + annualRecapStats.excellence)} />
                 </div>
 
                 <div className="mt-3">
@@ -1896,47 +1922,28 @@ export default function ConseilClassePage() {
 
                 <div className="mt-3 grid grid-cols-2 gap-3">
                   <div>
-                    <OfficialBand>Distinctions</OfficialBand>
+                    <OfficialBand>Distinctions annuelles</OfficialBand>
                     <table className="pv-grid-table mt-1 pv-mini">
                       <thead>
                         <tr>
-                          <th>Distinctions</th>
-                          <th style={{ width: "28%" }}>Nombre</th>
+                          <th>Libellé</th>
+                          <th style={{ width: "25%" }}>Nombre</th>
                         </tr>
                       </thead>
                       <tbody>
-                        <tr><OfficialTd>TH + Félicitations</OfficialTd><OfficialTd center>{annualRecapStats.excellence}</OfficialTd></tr>
-                        <tr><OfficialTd>TH + Encouragements</OfficialTd><OfficialTd center>{annualRecapStats.encouragement}</OfficialTd></tr>
-                        <tr><OfficialTd>Tableau d'honneur</OfficialTd><OfficialTd center>{annualRecapStats.honour}</OfficialTd></tr>
+                        <tr><OfficialTd>Tableau d’honneur</OfficialTd><OfficialTd center>{annualRecapStats.honour}</OfficialTd></tr>
+                        <tr><OfficialTd>Encouragement</OfficialTd><OfficialTd center>{annualRecapStats.encouragement}</OfficialTd></tr>
+                        <tr><OfficialTd>Excellence</OfficialTd><OfficialTd center>{annualRecapStats.excellence}</OfficialTd></tr>
                       </tbody>
                     </table>
                   </div>
                   <div>
-                    <OfficialBand>Avertissements et sanctions</OfficialBand>
-                    <table className="pv-grid-table mt-1 pv-mini">
-                      <thead>
-                        <tr>
-                          <th></th>
-                          <th style={{ width: "18%" }}>Nbre</th>
-                          <th>Avert. Conduite</th>
-                          <th style={{ width: "18%" }}>Blâme Conduite</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        <tr>
-                          <OfficialTd>Avertissement Travail</OfficialTd>
-                          <OfficialTd center>{annualCouncilStats.warningWork}</OfficialTd>
-                          <OfficialTd center>{annualCouncilStats.warningConduct}</OfficialTd>
-                          <OfficialTd center>{annualCouncilStats.blameConduct}</OfficialTd>
-                        </tr>
-                        <tr>
-                          <OfficialTd>Blâme Travail</OfficialTd>
-                          <OfficialTd center>{annualCouncilStats.blameWork}</OfficialTd>
-                          <OfficialTd center>0</OfficialTd>
-                          <OfficialTd center>0</OfficialTd>
-                        </tr>
-                      </tbody>
-                    </table>
+                    <OfficialBand>Observations</OfficialBand>
+                    <div className="pv-ruled p-3 text-[11px] leading-6">
+                      {yearRecapLoading
+                        ? "Calcul du récapitulatif annuel en cours…"
+                        : "Cette fiche récapitulative est ajoutée au conseil du dernier trimestre afin d’afficher toutes les périodes et la moyenne annuelle."}
+                    </div>
                   </div>
                 </div>
               </div>
@@ -1961,7 +1968,12 @@ function OfficialHeader({
 }) {
   return (
     <div>
-      <div className="grid grid-cols-[auto_1fr] items-start gap-3">
+      <div className="grid grid-cols-[1fr_auto_1fr] items-start gap-3">
+        <div className="text-[10px] leading-4">
+          <div className="font-bold uppercase">{institution?.country_name || "République"}</div>
+          <div>{institution?.country_motto || ""}</div>
+        </div>
+
         <div className="flex flex-col items-center justify-center">
           {institution?.institution_logo_url ? (
             <img

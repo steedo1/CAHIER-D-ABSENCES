@@ -6,6 +6,58 @@ import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+type SubjectCoeffRow = {
+  subject_id: string;
+  coeff: number;
+};
+
+type SubjectItem = {
+  subject_id: string;
+  subject_name: string;
+  coeff: number;
+};
+
+function normalizeCoeff(value: unknown): number {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+function selectTopSubjectsWithTies(
+  rows: SubjectItem[],
+  baseCount = 4
+): SubjectItem[] {
+  const dedup = new Map<string, SubjectItem>();
+
+  for (const row of rows) {
+    const subject_id = String(row.subject_id || "").trim();
+    if (!subject_id) continue;
+
+    const coeff = normalizeCoeff(row.coeff);
+    const subject_name = String(row.subject_name || "Discipline").trim() || "Discipline";
+
+    const prev = dedup.get(subject_id);
+    if (!prev || coeff > prev.coeff) {
+      dedup.set(subject_id, {
+        subject_id,
+        subject_name,
+        coeff,
+      });
+    }
+  }
+
+  const sorted = [...dedup.values()].sort((a, b) => {
+    if (b.coeff !== a.coeff) return b.coeff - a.coeff;
+    return a.subject_name.localeCompare(b.subject_name, "fr", {
+      sensitivity: "base",
+    });
+  });
+
+  if (sorted.length <= baseCount) return sorted;
+
+  const threshold = sorted[baseCount - 1]?.coeff ?? 0;
+  return sorted.filter((x) => x.coeff >= threshold);
+}
+
 export async function GET(req: NextRequest) {
   try {
     const supa = await getSupabaseServerClient();
@@ -27,7 +79,11 @@ export async function GET(req: NextRequest) {
 
     if (!class_id) {
       return NextResponse.json(
-        { ok: false, error: "missing_class_id", message: "class_id est requis." },
+        {
+          ok: false,
+          error: "missing_class_id",
+          message: "class_id est requis.",
+        },
         { status: 400 }
       );
     }
@@ -87,6 +143,7 @@ export async function GET(req: NextRequest) {
         { status: 400 }
       );
     }
+
     if (!cls || cls.institution_id !== institution_id) {
       return NextResponse.json(
         {
@@ -98,8 +155,8 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    const classLevel = cls.level as string | null;
-    const classAcademicYear = cls.academic_year as string | null;
+    const classLevel = (cls.level as string | null) || null;
+    const classAcademicYear = (cls.academic_year as string | null) || null;
 
     // Coeffs de matières pour ce niveau
     const { data: coeffRows, error: coeffErr } = await srv
@@ -116,9 +173,14 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    const rows = coeffRows || [];
-    if (!rows.length) {
-      // Pas de coefficients définis : la page tombera en fallback "couverture globale".
+    const coeffBase = (coeffRows || [])
+      .map((r: any) => ({
+        subject_id: String(r.subject_id || "").trim(),
+        coeff: normalizeCoeff(r.coeff),
+      }))
+      .filter((r) => !!r.subject_id);
+
+    if (!coeffBase.length) {
       return NextResponse.json({
         ok: true,
         class: {
@@ -132,64 +194,62 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    // --------------------------
-    // 1) Base : sujets avec coeffs sur ce niveau
-    // --------------------------
-    const levelSubjectIds = new Set<string>();
-    for (const r of rows) {
-      const sid = (r as any).subject_id as string | null;
-      if (sid) levelSubjectIds.add(sid);
-    }
+    const levelSubjectIds = new Set<string>(coeffBase.map((r) => r.subject_id));
 
-    // --------------------------
-    // 2) Matières réellement présentes dans la classe
-    //    - via class_teachers actifs
-    //    - via des notes dans grade_flat_marks
-    // --------------------------
-    const todayStr = new Date().toISOString().slice(0, 10);
+    // Matières réellement présentes dans la classe
     const actualSubjectIds = new Set<string>();
 
-    // 2.a) Subjects via class_teachers (affectations)
-    const { data: ctRows, error: ctErr } = await srv
-      .from("class_teachers")
-      .select("subject_id,start_date,end_date,institution_id")
-      .eq("class_id", class_id)
-      .eq("institution_id", institution_id);
+    // 1) via class_teachers actifs sur l'année scolaire de la classe
+    if (classAcademicYear) {
+      const { data: ayRow } = await srv
+        .from("academic_years")
+        .select("start_date,end_date")
+        .eq("institution_id", institution_id)
+        .eq("code", classAcademicYear)
+        .maybeSingle();
 
-    if (!ctErr) {
-      for (const row of ctRows || []) {
-        const r: any = row;
-        const sid = r.subject_id as string | null;
-        if (!sid) continue;
+      const yearStart = String(ayRow?.start_date || "");
+      const yearEnd = String(ayRow?.end_date || "");
 
-        const sd = (r.start_date as string | null) || null; // "YYYY-MM-DD"
-        const ed = (r.end_date as string | null) || null;   // "YYYY-MM-DD" ou null
+      const { data: ctRows, error: ctErr } = await srv
+        .from("class_teachers")
+        .select("subject_id,start_date,end_date,institution_id")
+        .eq("class_id", class_id)
+        .eq("institution_id", institution_id);
 
-        const isActive =
-          (!sd || sd <= todayStr) &&
-          (!ed || ed >= todayStr);
+      if (!ctErr) {
+        for (const row of ctRows || []) {
+          const sid = String((row as any).subject_id || "").trim();
+          if (!sid) continue;
 
-        if (isActive) {
-          actualSubjectIds.add(sid);
+          const sd = String((row as any).start_date || "");
+          const ed = String((row as any).end_date || "");
+
+          const overlapsAcademicYear =
+            (!yearStart || !ed || ed >= yearStart) &&
+            (!yearEnd || !sd || sd <= yearEnd);
+
+          if (overlapsAcademicYear) {
+            actualSubjectIds.add(sid);
+          }
         }
+      } else {
+        console.error("[core-subjects] class_teachers error", ctErr);
       }
-    } else {
-      console.error("[core-subjects] class_teachers error", ctErr);
     }
 
-    // 2.b) Subjects via grade_flat_marks (notes réelles)
+    // 2) via grade_flat_marks (notes réelles)
     if (classAcademicYear) {
-      let marksQuery = srv
+      const { data: marksRows, error: marksErr } = await srv
         .from("grade_flat_marks")
         .select("subject_id")
         .eq("institution_id", institution_id)
         .eq("class_id", class_id)
         .eq("academic_year", classAcademicYear);
 
-      const { data: marksRows, error: marksErr } = await marksQuery;
       if (!marksErr) {
         for (const row of marksRows || []) {
-          const sid = (row as any).subject_id as string | null;
+          const sid = String((row as any).subject_id || "").trim();
           if (sid) actualSubjectIds.add(sid);
         }
       } else {
@@ -197,29 +257,20 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    // --------------------------
-    // 3) Intersection : coeffs ∩ matières réellement présentes
-    // --------------------------
-    const intersectIds = new Set<string>();
-    for (const sid of actualSubjectIds) {
-      if (levelSubjectIds.has(sid)) {
-        intersectIds.add(sid);
-      }
-    }
-
+    // Intersection coeffs ∩ matières réellement présentes
     let usedSubjectIds: Set<string>;
-    if (intersectIds.size > 0) {
-      // Cas normal : on ne garde que les matières
-      // qui ont un coeff ET sont réellement présentes dans la classe
-      usedSubjectIds = intersectIds;
+    if (actualSubjectIds.size > 0) {
+      const intersect = new Set<string>();
+      for (const sid of actualSubjectIds) {
+        if (levelSubjectIds.has(sid)) intersect.add(sid);
+      }
+      usedSubjectIds = intersect.size > 0 ? intersect : levelSubjectIds;
     } else {
-      // Fallback : aucune matière trouvée via affectations/notes,
-      // on retombe sur tous les coeffs définis sur le niveau
       usedSubjectIds = levelSubjectIds;
     }
 
-    if (usedSubjectIds.size === 0) {
-      // Sécurité (ne devrait pas arriver si rows.length > 0)
+    const subjectIds = [...usedSubjectIds];
+    if (!subjectIds.length) {
       return NextResponse.json({
         ok: true,
         class: {
@@ -233,12 +284,7 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    const subjectIds = Array.from(usedSubjectIds);
-
-    // --------------------------
-    // 4) Récupération des noms dans subjects
-    // --------------------------
-    let subjectsById: Record<string, string> = {};
+    // Noms des matières
     const { data: subjRows, error: subjErr } = await srv
       .from("subjects")
       .select("id,name,code,subject_key")
@@ -251,28 +297,24 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    subjectsById = Object.fromEntries(
+    const subjectsById: Record<string, string> = Object.fromEntries(
       (subjRows || []).map((s: any) => [
-        s.id as string,
-        (s.name as string) ||
-          (s.code as string) ||
-          (s.subject_key as string) ||
-          "Discipline",
+        String(s.id),
+        String(s.name || s.code || s.subject_key || "Discipline"),
       ])
     );
 
-    // --------------------------
-    // 5) On construit les 3–4 matières clés (plus gros coeffs)
-    // --------------------------
-    const items = rows
-      .filter((r: any) => usedSubjectIds.has(r.subject_id as string))
-      .map((r: any) => ({
-        subject_id: r.subject_id as string,
+    const allEligibleItems: SubjectItem[] = coeffBase
+      .filter((r) => usedSubjectIds.has(r.subject_id))
+      .map((r) => ({
+        subject_id: r.subject_id,
         subject_name: subjectsById[r.subject_id] || "Discipline",
-        coeff: Number(r.coeff ?? 1),
-      }))
-      .sort((a, b) => b.coeff - a.coeff)
-      .slice(0, 4);
+        coeff: r.coeff,
+      }));
+
+    const items = selectTopSubjectsWithTies(allEligibleItems, 4);
+    const coeffThreshold =
+      items.length >= 4 ? items[3]?.coeff ?? null : items[items.length - 1]?.coeff ?? null;
 
     return NextResponse.json({
       ok: true,
@@ -282,6 +324,13 @@ export async function GET(req: NextRequest) {
         code: cls.code,
         level: cls.level,
         academic_year: cls.academic_year,
+      },
+      meta: {
+        rule: "top_coeffs_with_ties",
+        requested_base_count: 4,
+        coeff_threshold: coeffThreshold,
+        actual_subjects_found: actualSubjectIds.size,
+        used_subject_count: usedSubjectIds.size,
       },
       items,
     });

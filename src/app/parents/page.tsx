@@ -972,7 +972,7 @@ export default function ParentPage() {
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
   // Sélection enfant + section
-  const [activeChildId, setActiveChildId] = useState<string | "all">("all");
+  const [activeChildId, setActiveChildId] = useState<string>("");
   const [activeSection, setActiveSection] = useState<NavSection>("dashboard");
   const [attachMatricule, setAttachMatricule] = useState("");
   const [attachBusy, setAttachBusy] = useState(false);
@@ -999,23 +999,26 @@ export default function ParentPage() {
 
   const hasKids = kids.length > 0;
 
-  const filteredKids = useMemo(() => {
-    return activeChildId === "all"
-      ? kids
-      : kids.filter((k) => k.id === activeChildId);
+  const selectedKid = useMemo(() => {
+    if (!kids.length) return null;
+    return kids.find((k) => k.id === activeChildId) || kids[0] || null;
   }, [kids, activeChildId]);
+
+  const filteredKids = useMemo(() => {
+    return selectedKid ? [selectedKid] : [];
+  }, [selectedKid]);
 
   const isDashboard = activeSection === "dashboard";
   const isConduct = activeSection === "conduct";
   const isAbsences = activeSection === "absences";
   const isNotes = activeSection === "notes";
 
-  const showConductSection = isDashboard || isConduct;
-  const showEventsSection = isDashboard || isAbsences;
+  const showConductSection = isConduct;
+  const showEventsSection = isAbsences;
   const showNotesSection = isNotes;
 
   const sectionMeta: Record<NavSection, { breadcrumb: string; title: string; tab: string }> = {
-    dashboard: { breadcrumb: "Accueil", title: "Tableau de bord parent", tab: "Accueil" },
+    dashboard: { breadcrumb: "Accueil", title: "Accueil", tab: "Accueil" },
     conduct: { breadcrumb: "Conduite", title: "Conduite et points", tab: "Conduite" },
     absences: { breadcrumb: "Absences", title: "Cahier d'absences", tab: "Absences" },
     notes: { breadcrumb: "Notes", title: "Cahier de notes", tab: "Notes" },
@@ -1256,10 +1259,9 @@ export default function ParentPage() {
       setKids(ks);
 
       setActiveChildId((prev) => {
-        if (prev !== "all" && ks.some((k) => k.id === prev)) return prev;
-        if (ks.length === 1) return ks[0].id;
-        if (ks.length === 0) return "all";
-        return "all";
+        if (prev && ks.some((k) => k.id === prev)) return prev;
+        if (ks.length > 0) return ks[0].id;
+        return "";
       });
 
       const feedEntries: Array<[string, Ev[]]> = [];
@@ -1385,7 +1387,6 @@ export default function ParentPage() {
   useEffect(() => {
     if (!conductFrom || !conductTo) return;
     loadKids(conductFrom, conductTo);
-    loadSmsContacts(true);
     ensurePushSubscription().then((r) => {
       if (r.ok) setGranted(true);
     });
@@ -1538,24 +1539,6 @@ export default function ParentPage() {
                 Enfants
               </div>
               <div className="space-y-2">
-                <button
-                  onClick={() => {
-                    setActiveChildId("all");
-                    setMobileNavOpen(false);
-                  }}
-                  className={[
-                    "flex w-full items-center justify-between rounded-2xl px-3 py-3 text-[14px] font-semibold",
-                    activeChildId === "all"
-                      ? "bg-white text-[#003766]"
-                      : "text-white hover:bg-white/10",
-                  ].join(" ")}
-                >
-                  <span>Vue globale</span>
-                  <span className="rounded-full bg-black/20 px-2 py-1 text-[12px]">
-                    {kids.length || 0}
-                  </span>
-                </button>
-
                 {kids.map((k) => {
                   const active = activeChildId === k.id;
                   return (
@@ -1738,21 +1721,6 @@ export default function ParentPage() {
               Enfants
             </div>
             <div className="space-y-2">
-              <button
-                onClick={() => setActiveChildId("all")}
-                className={[
-                  "flex w-full items-center justify-between rounded-2xl px-3 py-3 text-[14px] font-semibold",
-                  activeChildId === "all"
-                    ? "bg-white text-[#003766]"
-                    : "text-white hover:bg-white/10",
-                ].join(" ")}
-              >
-                <span>Vue globale</span>
-                <span className="rounded-full bg-black/20 px-2 py-1 text-[12px]">
-                  {kids.length || 0}
-                </span>
-              </button>
-
               {kids.map((k) => {
                 const active = activeChildId === k.id;
                 return (
@@ -1825,12 +1793,20 @@ export default function ParentPage() {
 
         {/* Contenu principal */}
         <main className="flex-1 min-w-0 px-3 py-5 lg:px-6 lg:py-6 pb-[calc(96px+env(safe-area-inset-bottom))]">
-          <div className="mb-2 text-[12px] text-slate-500">
-            Vous êtes ici : <span className="mx-1">›</span> {currentSectionMeta.breadcrumb}
+          <div className="mb-5 flex flex-col gap-2 rounded-3xl border border-slate-200 bg-white px-4 py-4 shadow-sm">
+            <div className="text-[12px] text-slate-500">
+              Vous êtes ici : <span className="mx-1">›</span> {currentSectionMeta.breadcrumb}
+            </div>
+            <div className="flex flex-col gap-1 md:flex-row md:items-end md:justify-between">
+              <h1 className="text-2xl font-extrabold text-slate-900">
+                {currentSectionMeta.title}
+              </h1>
+              <div className="text-[14px] font-semibold text-slate-600">
+                {selectedKid?.full_name || "Aucun enfant sélectionné"}
+                {selectedKid?.class_label ? ` · ${selectedKid.class_label}` : ""}
+              </div>
+            </div>
           </div>
-          <h1 className="mb-4 text-2xl font-extrabold text-slate-900">
-            {currentSectionMeta.title}
-          </h1>
 
           {msg && (
             <div className="mb-4 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-[14px] text-emerald-800">
@@ -1846,59 +1822,32 @@ export default function ParentPage() {
 
           {isDashboard && (
             <>
-              <section className="mb-6 overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
-                <div className="relative border-b border-slate-200 bg-gradient-to-r from-[#003766] via-[#004a84] to-[#006633] px-5 py-5 text-white">
-                  <div className="absolute right-0 top-0 h-28 w-28 rounded-full bg-white/10 blur-2xl" />
-                  <div className="absolute bottom-0 left-10 h-20 w-20 rounded-full bg-emerald-300/20 blur-2xl" />
-
-                  <div className="relative flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                    <div>
-                      <div className="inline-flex items-center gap-3 text-[15px] font-extrabold">
-                        <span className="flex h-8 w-8 items-center justify-center rounded-full border border-white/50 text-sm">
-                          →
-                        </span>
-                        <span>Bienvenue</span>
-                      </div>
-                      <p className="mt-3 max-w-2xl text-[14px] text-white/90">
-                        Consultez les absences, la conduite, les notes publiées et configurez vos notifications pour rester informé en temps réel.
-                      </p>
+              <section className="mb-6 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+                <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+                  <div className="min-w-0">
+                    <div className="text-[12px] font-extrabold uppercase tracking-wide text-slate-500">
+                      Enfant sélectionné
                     </div>
-
-                    <div className="flex flex-wrap items-center gap-2">
-                      <Badge tone="emerald">
-                        Push standard {granted ? "activé" : "disponible"}
-                      </Badge>
-                      <Badge tone={smsAnyPremiumEnabled ? "amber" : "slate"}>
-                        SMS premium {smsAnyPremiumEnabled ? "disponible" : "non activé"}
-                      </Badge>
+                    <h2 className="mt-1 text-2xl font-extrabold text-slate-900">
+                      {selectedKid?.full_name || "Aucun enfant"}
+                    </h2>
+                    <div className="mt-1 text-[14px] text-slate-600">
+                      {selectedKid?.class_label || "Sélectionnez un enfant dans le menu."}
                     </div>
                   </div>
-                </div>
 
-                <div className="space-y-4 px-5 py-5 text-[15px] text-slate-700">
-                  <div className="rounded-2xl border border-red-300 bg-red-50 px-4 py-3 text-[15px] text-red-700">
-                    <div className="text-[16px] font-extrabold uppercase">
-                      Information
-                    </div>
-                    <p className="mt-2">
-                      Pour recevoir une alerte dès qu’une absence, un retard ou une note est enregistrée, activez les notifications push sur votre téléphone. Vous pouvez aussi enregistrer votre numéro pour la formule SMS premium si votre établissement l’active.
-                    </p>
-                  </div>
-
-                  <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  <div className="flex flex-wrap gap-2">
                     {!granted ? (
                       <Button
                         tone="emerald"
                         onClick={enablePush}
-                        title="Activer les notifications push"
                         iconLeft={<IconBell />}
-                        className="w-full"
                       >
                         Activer les notifications
                       </Button>
                     ) : (
-                      <div className="w-full rounded-2xl bg-emerald-50 px-4 py-3 text-[14px] font-bold text-emerald-700 ring-1 ring-emerald-200">
-                        Notifications push activées ✅
+                      <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-[14px] font-bold text-emerald-700">
+                        Notifications activées ✅
                       </div>
                     )}
 
@@ -1907,15 +1856,39 @@ export default function ParentPage() {
                       onClick={safeLogout}
                       disabled={loggingOut}
                       iconLeft={<IconPower />}
-                      className="w-full"
                     >
                       {loggingOut ? "Déconnexion…" : "Se déconnecter"}
                     </Button>
                   </div>
                 </div>
+
+                <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-3">
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+                    <div className="text-[12px] font-semibold uppercase tracking-wide text-slate-500">Conduite</div>
+                    <div className="mt-2 text-[18px] font-extrabold text-slate-900">
+                      {selectedKid && conduct[selectedKid.id]
+                        ? conduct[selectedKid.id]?.appreciation || "Disponible"
+                        : "Aucune donnée"}
+                    </div>
+                  </div>
+
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+                    <div className="text-[12px] font-semibold uppercase tracking-wide text-slate-500">Absences / retards</div>
+                    <div className="mt-2 text-[18px] font-extrabold text-slate-900">
+                      {selectedKid ? (feed[selectedKid.id]?.length || 0) : 0} évènement(s)
+                    </div>
+                  </div>
+
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+                    <div className="text-[12px] font-semibold uppercase tracking-wide text-slate-500">Notes publiées</div>
+                    <div className="mt-2 text-[18px] font-extrabold text-slate-900">
+                      {selectedKid ? (kidGrades[selectedKid.id]?.length || 0) : 0} note(s)
+                    </div>
+                  </div>
+                </div>
               </section>
 
-              <section className="mb-6 grid grid-cols-1 gap-4 xl:grid-cols-[1.3fr_0.7fr]">
+              <section className="mb-6 grid grid-cols-1 gap-4 xl:grid-cols-[1.1fr_0.9fr]">
                 <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
                   <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
                     <div>
@@ -1923,38 +1896,31 @@ export default function ParentPage() {
                         Ajouter un enfant par matricule
                       </div>
                       <div className="mt-1 text-[14px] text-slate-600">
-                        Le parent n’a plus besoin de se déconnecter puis se reconnecter. Il peut ajouter directement un autre enfant depuis ce tableau de bord.
+                        Ajoutez un autre enfant sans quitter la session.
                       </div>
                     </div>
-                    <Badge tone="slate">{kids.length} enfant{kids.length > 1 ? "s" : ""} lié{kids.length > 1 ? "s" : ""}</Badge>
+                    <Badge tone="slate">{kids.length} enfant{kids.length > 1 ? "s" : ""}</Badge>
                   </div>
 
                   <form onSubmit={attachChildByMatricule} className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-[1fr_auto]">
-                    <div>
-                      <label className="mb-2 block text-[13px] font-bold text-slate-700">
-                        Matricule élève
-                      </label>
-                      <Input
-                        value={attachMatricule}
-                        onChange={(e) => setAttachMatricule(e.target.value.toUpperCase())}
-                        placeholder="Ex : 20166309J"
-                        autoCapitalize="characters"
-                        autoCorrect="off"
-                        spellCheck={false}
-                        inputMode="text"
-                      />
-                    </div>
+                    <Input
+                      value={attachMatricule}
+                      onChange={(e) => setAttachMatricule(e.target.value.toUpperCase())}
+                      placeholder="Ex : 20166309J"
+                      autoCapitalize="characters"
+                      autoCorrect="off"
+                      spellCheck={false}
+                      inputMode="text"
+                    />
 
-                    <div className="flex items-end">
-                      <Button
-                        type="submit"
-                        tone="emerald"
-                        disabled={attachBusy || !attachMatricule.trim()}
-                        className="w-full md:w-auto"
-                      >
-                        {attachBusy ? "Ajout…" : "Ajouter"}
-                      </Button>
-                    </div>
+                    <Button
+                      type="submit"
+                      tone="emerald"
+                      disabled={attachBusy || !attachMatricule.trim()}
+                      className="w-full md:w-auto"
+                    >
+                      {attachBusy ? "Ajout…" : "Ajouter"}
+                    </Button>
                   </form>
 
                   {attachMsg && (
@@ -1962,222 +1928,23 @@ export default function ParentPage() {
                       {attachMsg}
                     </div>
                   )}
-
-                  <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-[13px] text-slate-600">
-                    Astuce : après ajout, l’enfant apparaît automatiquement dans la liste du sidebar et vous pouvez basculer d’un enfant à l’autre sans quitter la session.
-                  </div>
                 </div>
 
                 <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-                  <div className="text-[18px] font-extrabold text-slate-900">
-                    Vue active
-                  </div>
+                  <div className="text-[18px] font-extrabold text-slate-900">Vue actuelle</div>
                   <div className="mt-4 space-y-3">
                     <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-                      <div className="text-[12px] font-semibold uppercase tracking-wide text-slate-500">
-                        Section affichée
-                      </div>
-                      <div className="mt-1 text-[16px] font-extrabold text-slate-900">
-                        {currentSectionMeta.tab}
-                      </div>
+                      <div className="text-[12px] font-semibold uppercase tracking-wide text-slate-500">Onglet affiché</div>
+                      <div className="mt-1 text-[16px] font-extrabold text-slate-900">{currentSectionMeta.tab}</div>
                     </div>
-
                     <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-                      <div className="text-[12px] font-semibold uppercase tracking-wide text-slate-500">
-                        Enfant sélectionné
-                      </div>
-                      <div className="mt-1 text-[16px] font-extrabold text-slate-900">
-                        {activeChildId === "all"
-                          ? "Vue globale"
-                          : kids.find((k) => k.id === activeChildId)?.full_name || "Vue globale"}
-                      </div>
+                      <div className="text-[12px] font-semibold uppercase tracking-wide text-slate-500">Enfant affiché</div>
+                      <div className="mt-1 text-[16px] font-extrabold text-slate-900">{selectedKid?.full_name || "Aucun enfant sélectionné"}</div>
                     </div>
-
                     <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-[13px] text-slate-600">
-                      L’écran principal suit désormais le menu latéral : accueil, conduite, absences ou notes.
+                      L’écran principal suit les onglets du menu : accueil, conduite, absences et notes.
                     </div>
                   </div>
-                </div>
-              </section>
-
-              <section className="mb-6 overflow-hidden rounded-3xl border border-amber-200 bg-white shadow-sm">
-                <div className="relative border-b border-amber-100 bg-gradient-to-r from-amber-500 via-orange-500 to-rose-500 px-5 py-5 text-white">
-                  <div className="absolute right-0 top-0 h-28 w-28 rounded-full bg-white/10 blur-2xl" />
-                  <div className="absolute bottom-0 left-10 h-20 w-20 rounded-full bg-yellow-200/20 blur-2xl" />
-
-                  <div className="relative flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-                    <div className="min-w-0">
-                      <div className="inline-flex items-center gap-2 text-[15px] font-extrabold">
-                        <IconSparkles />
-                        <span>Notifications premium SMS</span>
-                      </div>
-                      <p className="mt-2 max-w-2xl text-[14px] text-white/90">
-                        Enregistrez votre numéro principal pour recevoir, si activé par l’établissement, des SMS premium sur les absences et les retards.
-                      </p>
-                    </div>
-
-                    <div className="flex flex-wrap items-center gap-2">
-                      <Badge tone={smsAnyPremiumEnabled ? "amber" : "slate"}>
-                        {smsAnyPremiumEnabled ? "Premium disponible" : "Premium inactif"}
-                      </Badge>
-                      <Badge tone={smsPrimaryContact?.phone_e164 ? "emerald" : "slate"}>
-                        {smsPrimaryContact?.phone_e164 ? "Numéro enregistré" : "Numéro non configuré"}
-                      </Badge>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="space-y-4 px-5 py-5">
-                  {smsMsg && (
-                    <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-[14px] text-amber-900">
-                      {smsMsg}
-                    </div>
-                  )}
-
-                  {smsLoading ? (
-                    <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-                      <Skeleton className="h-36 w-full" />
-                      <Skeleton className="h-36 w-full lg:col-span-2" />
-                    </div>
-                  ) : (
-                    <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-                      <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
-                        <div className="flex items-start gap-3">
-                          <div className="grid h-12 w-12 place-items-center rounded-2xl bg-amber-100 text-amber-700">
-                            <IconShield />
-                          </div>
-                          <div className="min-w-0">
-                            <div className="text-[16px] font-extrabold text-slate-900">
-                              État du service
-                            </div>
-                            <div className="mt-1 text-[13px] text-slate-600">
-                              {smsSummaryLabel}
-                            </div>
-                          </div>
-                        </div>
-
-                        <div className="mt-4 space-y-2">
-                          <div className="flex items-center justify-between gap-3 rounded-2xl bg-white px-3 py-2 ring-1 ring-slate-200">
-                            <span className="text-[13px] font-semibold text-slate-700">
-                              Numéro actuel
-                            </span>
-                            <span className="text-[13px] font-extrabold text-slate-900">
-                              {formatPhoneForDisplay(smsPrimaryContact?.phone_e164)}
-                            </span>
-                          </div>
-
-                          <div className="flex items-center justify-between gap-3 rounded-2xl bg-white px-3 py-2 ring-1 ring-slate-200">
-                            <span className="text-[13px] font-semibold text-slate-700">
-                              Événements SMS
-                            </span>
-                            <span className="text-[13px] font-extrabold text-slate-900">
-                              {smsActiveSetting?.sms_absence_enabled || smsActiveSetting?.sms_late_enabled
-                                ? "Absences / retards"
-                                : "Non activés"}
-                            </span>
-                          </div>
-
-                          <div className="flex items-center justify-between gap-3 rounded-2xl bg-white px-3 py-2 ring-1 ring-slate-200">
-                            <span className="text-[13px] font-semibold text-slate-700">
-                              Fournisseur
-                            </span>
-                            <span className="text-[13px] font-extrabold uppercase text-slate-900">
-                              {smsActiveSetting?.sms_provider || "—"}
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="lg:col-span-2 rounded-3xl border border-slate-200 bg-white p-4">
-                        <div className="mb-4 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-                          <div>
-                            <div className="text-[16px] font-extrabold text-slate-900">
-                              Configurer mon numéro principal
-                            </div>
-                            <div className="mt-1 text-[13px] text-slate-600">
-                              Format conseillé : +225XXXXXXXXXX ou numéro ivoirien local.
-                            </div>
-                          </div>
-
-                          <div className="flex flex-wrap items-center gap-2">
-                            {smsActiveSetting?.sms_absence_enabled && <Badge tone="amber">SMS absence</Badge>}
-                            {smsActiveSetting?.sms_late_enabled && <Badge tone="amber">SMS retard</Badge>}
-                            {smsActiveSetting?.sms_notes_digest_enabled && <Badge tone="amber">Digest notes</Badge>}
-                          </div>
-                        </div>
-
-                        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                          <div className="md:col-span-2">
-                            <label className="mb-2 block text-[13px] font-bold text-slate-700">
-                              Numéro de téléphone
-                            </label>
-                            <div className="relative">
-                              <span className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-slate-400">
-                                <IconPhone />
-                              </span>
-                              <Input
-                                value={smsPhone}
-                                onChange={(e) => setSmsPhone(e.target.value)}
-                                placeholder="+2250700000000"
-                                className="pl-12"
-                              />
-                            </div>
-                          </div>
-
-                          <div className="md:col-span-2">
-                            <Toggle
-                              checked={smsEnabled}
-                              onChange={setSmsEnabled}
-                              label="Recevoir les SMS premium"
-                              description={
-                                smsAnyPremiumEnabled
-                                  ? "Le numéro sera utilisé lorsque l’établissement activera l’envoi SMS pour vos alertes."
-                                  : "Vous pouvez enregistrer votre numéro maintenant. Il sera prêt dès l’activation du module premium."
-                              }
-                            />
-                          </div>
-                        </div>
-
-                        <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
-                          <Button
-                            tone="emerald"
-                            onClick={saveSmsContact}
-                            disabled={smsSaving || !smsPhone.trim()}
-                            iconLeft={<IconPhone />}
-                            className="w-full"
-                          >
-                            {smsSaving
-                              ? "Enregistrement…"
-                              : smsPrimaryContact?.id
-                                ? "Mettre à jour"
-                                : "Enregistrer"}
-                          </Button>
-
-                          <Button
-                            tone="white"
-                            onClick={() => loadSmsContacts()}
-                            disabled={smsSaving}
-                            className="w-full"
-                          >
-                            Actualiser
-                          </Button>
-
-                          <Button
-                            tone="red"
-                            onClick={removeSmsContact}
-                            disabled={smsSaving || !smsPrimaryContact?.id}
-                            className="w-full"
-                          >
-                            Supprimer
-                          </Button>
-                        </div>
-
-                        <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-[13px] text-slate-600">
-                          <b>Important :</b> les notifications push restent la formule standard. Le SMS est une option premium, activée selon les choix de l’établissement.
-                        </div>
-                      </div>
-                    </div>
-                  )}
                 </div>
               </section>
 
