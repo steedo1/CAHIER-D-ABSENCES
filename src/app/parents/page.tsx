@@ -293,7 +293,7 @@ type KidGradeRow = {
   subject_id?: string | null;
 };
 
-type NavSection = "dashboard" | "conduct" | "absences" | "notes" | "phone";
+type NavSection = "home" | "conduct" | "absences" | "notes";
 
 type ParentNotificationContact = {
   id: string;
@@ -973,7 +973,7 @@ export default function ParentPage() {
 
   // Sélection enfant + section
   const [activeChildId, setActiveChildId] = useState<string>("");
-  const [activeSection, setActiveSection] = useState<NavSection>("dashboard");
+  const [activeSection, setActiveSection] = useState<NavSection>("home");
   const [attachMatricule, setAttachMatricule] = useState("");
   const [attachBusy, setAttachBusy] = useState(false);
   const [attachMsg, setAttachMsg] = useState<string | null>(null);
@@ -1008,23 +1008,28 @@ export default function ParentPage() {
     return selectedKid ? [selectedKid] : [];
   }, [selectedKid]);
 
-  const isDashboard = activeSection === "dashboard";
+  const isHome = activeSection === "home";
   const isConduct = activeSection === "conduct";
   const isAbsences = activeSection === "absences";
   const isNotes = activeSection === "notes";
-  const isPhone = activeSection === "phone";
 
   const showConductSection = isConduct;
   const showEventsSection = isAbsences;
   const showNotesSection = isNotes;
 
   const sectionMeta: Record<NavSection, { breadcrumb: string; title: string; tab: string }> = {
-    dashboard: { breadcrumb: "Accueil", title: "Accueil", tab: "Accueil" },
+    home: { breadcrumb: "Accueil", title: "Accueil", tab: "Accueil" },
     conduct: { breadcrumb: "Conduite", title: "Conduite et points", tab: "Conduite" },
     absences: { breadcrumb: "Absences", title: "Cahier d'absences", tab: "Absences" },
     notes: { breadcrumb: "Notes", title: "Cahier de notes", tab: "Notes" },
-    phone: { breadcrumb: "Mon numéro", title: "Rattacher mon numéro", tab: "Mon numéro" },
   };
+
+  const tabs: Array<{ key: NavSection; label: string; icon: React.ReactNode }> = [
+    { key: "home", label: "Accueil", icon: <IconHome /> },
+    { key: "conduct", label: "Conduite", icon: <IconClipboard /> },
+    { key: "absences", label: "Absences", icon: <IconClipboard /> },
+    { key: "notes", label: "Notes", icon: <IconBook /> },
+  ];
 
   const currentSectionMeta = sectionMeta[activeSection];
 
@@ -1368,7 +1373,7 @@ export default function ParentPage() {
         null;
 
       if (added) setActiveChildId(added.id);
-      setActiveSection("dashboard");
+      setActiveSection("home");
       setAttachMatricule("");
       setAttachMsg("Enfant ajouté au tableau de bord avec succès.");
       if (typeof window !== "undefined") {
@@ -1463,32 +1468,6 @@ export default function ParentPage() {
     setMobileNavOpen(false);
     if (typeof window !== "undefined")
       window.scrollTo({ top: 0, behavior: "smooth" });
-  }
-
-  function SidebarNavItem({
-    label,
-    icon,
-    section,
-  }: {
-    label: string;
-    icon: React.ReactNode;
-    section: NavSection;
-  }) {
-    const active = activeSection === section;
-    return (
-      <button
-        onClick={() => selectSection(section)}
-        className={[
-          "flex w-full items-center gap-2 rounded-xl px-3 py-3 text-[15px] transition",
-          active
-            ? "bg-white text-[#003766] font-extrabold shadow-sm"
-            : "text-white/90 hover:bg-[#02427e]",
-        ].join(" ")}
-      >
-        <span className="text-white/80">{icon}</span>
-        <span className="truncate">{label}</span>
-      </button>
-    );
   }
 
   function gradeFilterLabel(mode: typeof gradeFilterMode): string {
@@ -1604,33 +1583,11 @@ export default function ParentPage() {
               </div>
             </div>
 
-            <nav className="flex-1 space-y-2 px-4 py-4">
-              <SidebarNavItem
-                label="Tableau de bord"
-                icon={<IconHome />}
-                section="dashboard"
-              />
-              <SidebarNavItem
-                label="Conduite & points"
-                icon={<IconClipboard />}
-                section="conduct"
-              />
-              <SidebarNavItem
-                label="Cahier d’absences"
-                icon={<IconClipboard />}
-                section="absences"
-              />
-              <SidebarNavItem
-                label="Cahier de notes"
-                icon={<IconBook />}
-                section="notes"
-              />
-              <SidebarNavItem
-                label="Rattacher mon numéro"
-                icon={<IconPhone />}
-                section="phone"
-              />
-            </nav>
+            <div className="flex-1 px-4 py-4">
+              <div className="rounded-2xl border border-white/15 bg-white/10 px-4 py-4 text-[13px] leading-6 text-white/90">
+                Choisissez d’abord un enfant dans cette colonne. Les onglets <b>Accueil</b>, <b>Conduite</b>, <b>Absences</b> et <b>Notes</b> s’affichent ensuite dans l’écran principal.
+              </div>
+            </div>
 
             <div className="border-t border-white/15 px-4 py-4">
               <Button
@@ -1696,42 +1653,6 @@ export default function ParentPage() {
           </div>
         </div>
       </header>
-
-      {/* ————— Bottom tab bar mobile ————— */}
-      <div className="fixed bottom-0 left-0 right-0 z-30 border-t bg-white/95 backdrop-blur lg:hidden">
-        <div className="mx-auto flex max-w-6xl items-center justify-around px-2 py-2">
-          {(
-            [
-              { s: "dashboard", label: "Accueil", icon: <IconHome /> },
-              { s: "conduct", label: "Conduite", icon: <IconClipboard /> },
-              { s: "absences", label: "Absences", icon: <IconClipboard /> },
-              { s: "notes", label: "Notes", icon: <IconBook /> },
-            ] as const
-          ).map((it) => {
-            const active = activeSection === it.s;
-            return (
-              <button
-                key={it.s}
-                onClick={() => selectSection(it.s)}
-                className={[
-                  "flex flex-1 flex-col items-center justify-center gap-1 rounded-2xl py-2",
-                  active ? "text-[#003766]" : "text-slate-500",
-                ].join(" ")}
-              >
-                <div className={active ? "font-extrabold" : ""}>{it.icon}</div>
-                <div
-                  className={[
-                    "text-[12px]",
-                    active ? "font-extrabold" : "font-semibold",
-                  ].join(" ")}
-                >
-                  {it.label}
-                </div>
-              </button>
-            );
-          })}
-        </div>
-      </div>
 
       {/* ————— CORPS ————— */}
       <div className="mx-auto flex w-full max-w-6xl min-w-0">
@@ -1819,33 +1740,11 @@ export default function ParentPage() {
             </div>
           </div>
 
-          <nav className="flex-1 space-y-2 px-4 py-4">
-            <SidebarNavItem
-              label="Tableau de bord"
-              icon={<IconHome />}
-              section="dashboard"
-            />
-            <SidebarNavItem
-              label="Conduite & points"
-              icon={<IconClipboard />}
-              section="conduct"
-            />
-            <SidebarNavItem
-              label="Cahier d’absences"
-              icon={<IconClipboard />}
-              section="absences"
-            />
-            <SidebarNavItem
-              label="Cahier de notes"
-              icon={<IconBook />}
-              section="notes"
-            />
-            <SidebarNavItem
-              label="Rattacher mon numéro"
-              icon={<IconPhone />}
-              section="phone"
-            />
-          </nav>
+          <div className="flex-1 px-4 py-4">
+            <div className="rounded-2xl border border-white/15 bg-white/10 px-4 py-4 text-[13px] leading-6 text-white/90">
+              Choisissez d’abord un enfant dans cette colonne. Les onglets <b>Accueil</b>, <b>Conduite</b>, <b>Absences</b> et <b>Notes</b> apparaissent dans l’écran principal.
+            </div>
+          </div>
 
           <div className="border-t border-white/15 px-4 py-4">
             <Button
@@ -1867,7 +1766,7 @@ export default function ParentPage() {
         </aside>
 
         {/* Contenu principal */}
-        <main className="flex-1 min-w-0 px-3 py-5 lg:px-6 lg:py-6 pb-[calc(96px+env(safe-area-inset-bottom))]">
+        <main className="flex-1 min-w-0 px-3 py-5 lg:px-6 lg:py-6 pb-6">
           <div className="mb-5 flex flex-col gap-2 rounded-3xl border border-slate-200 bg-white px-4 py-4 shadow-sm">
             <div className="text-[12px] text-slate-500">
               Vous êtes ici : <span className="mx-1">›</span> {currentSectionMeta.breadcrumb}
@@ -1889,177 +1788,135 @@ export default function ParentPage() {
             </div>
           )}
 
-          <div className="mb-4 border-b border-slate-200">
-            <button className="rounded-t-2xl border border-b-0 border-slate-200 bg-white px-5 py-3 text-[15px] font-extrabold text-[#003766]">
-              {currentSectionMeta.tab}
-            </button>
+          <div className="mb-5 rounded-3xl border border-slate-200 bg-white p-3 shadow-sm">
+            <div className="flex flex-wrap gap-2">
+              {tabs.map((tab) => {
+                const active = activeSection === tab.key;
+                return (
+                  <button
+                    key={tab.key}
+                    type="button"
+                    onClick={() => selectSection(tab.key)}
+                    disabled={!selectedKid}
+                    className={[
+                      "inline-flex items-center gap-2 rounded-2xl px-4 py-3 text-[14px] font-extrabold transition",
+                      active
+                        ? "bg-[#003766] text-white"
+                        : "bg-slate-100 text-slate-700 hover:bg-slate-200",
+                      !selectedKid ? "opacity-50 cursor-not-allowed" : "",
+                    ].join(" ")}
+                  >
+                    {tab.icon}
+                    <span>{tab.label}</span>
+                  </button>
+                );
+              })}
+            </div>
           </div>
 
-          {isDashboard && (
-            <>
-              <section className="mb-6 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-                <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
-                  <div className="min-w-0">
-                    <div className="text-[12px] font-extrabold uppercase tracking-wide text-slate-500">
-                      Enfant sélectionné
-                    </div>
-                    <h2 className="mt-1 text-2xl font-extrabold text-slate-900">
-                      {selectedKid?.full_name || "Aucun enfant"}
-                    </h2>
-                    <div className="mt-1 text-[14px] text-slate-600">
-                      {selectedKid?.class_label || "Sélectionnez un enfant dans le menu."}
-                    </div>
-                  </div>
-
-                  <div className="flex flex-wrap gap-2">
-                    {!granted ? (
-                      <Button
-                        tone="emerald"
-                        onClick={enablePush}
-                        iconLeft={<IconBell />}
-                      >
-                        Activer les notifications
-                      </Button>
-                    ) : (
-                      <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-[14px] font-bold text-emerald-700">
-                        Notifications activées ✅
-                      </div>
-                    )}
-
-                    <Button
-                      tone="slate"
-                      onClick={safeLogout}
-                      disabled={loggingOut}
-                      iconLeft={<IconPower />}
-                    >
-                      {loggingOut ? "Déconnexion…" : "Se déconnecter"}
-                    </Button>
-                  </div>
-                </div>
-
-                <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-3">
-                  <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
-                    <div className="text-[12px] font-semibold uppercase tracking-wide text-slate-500">Conduite</div>
-                    <div className="mt-2 text-[18px] font-extrabold text-slate-900">
-                      {selectedKid && conduct[selectedKid.id]
-                        ? conduct[selectedKid.id]?.appreciation || "Disponible"
-                        : "Aucune donnée"}
-                    </div>
-                  </div>
-
-                  <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
-                    <div className="text-[12px] font-semibold uppercase tracking-wide text-slate-500">Absences / retards</div>
-                    <div className="mt-2 text-[18px] font-extrabold text-slate-900">
-                      {selectedKid ? (feed[selectedKid.id]?.length || 0) : 0} évènement(s)
-                    </div>
-                  </div>
-
-                  <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
-                    <div className="text-[12px] font-semibold uppercase tracking-wide text-slate-500">Notes publiées</div>
-                    <div className="mt-2 text-[18px] font-extrabold text-slate-900">
-                      {selectedKid ? (kidGrades[selectedKid.id]?.length || 0) : 0} note(s)
-                    </div>
-                  </div>
-                </div>
-              </section>
-
-              {isiOS && !isStandalone && !granted && (
-                <div className="mb-5 rounded-2xl border border-amber-200/60 bg-amber-50/90 p-4 text-[14px] text-amber-900 shadow-sm">
-                  <b>iPhone/iPad :</b> pour recevoir les notifications, ajoutez d’abord l’application à l’écran d’accueil : ouvrez cette page dans <b>Safari</b> → <b>Partager</b> → <b>Ajouter à l’écran d’accueil</b>, puis rouvrez l’app et appuyez sur « Activer les notifications ».
-                </div>
-              )}
-            </>
+          {!selectedKid && !loadingKids && (
+            <div className="mb-6 rounded-3xl border border-slate-200 bg-white p-6 text-center text-[15px] text-slate-600 shadow-sm">
+              Choisissez d’abord un enfant dans la colonne de gauche.
+            </div>
           )}
 
-          {isPhone && (
-            <section className="mb-6 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-              <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
-                <div>
-                  <div className="text-[18px] font-extrabold text-slate-900">Rattacher mon numéro</div>
-                  <div className="mt-1 text-[14px] text-slate-600">
-                    Enregistrez le numéro qui doit recevoir les alertes liées à vos enfants.
+          {selectedKid && isHome && (
+            <section className="mb-6 space-y-4">
+              <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+                <div className="text-[12px] font-extrabold uppercase tracking-wide text-emerald-700">
+                  Accueil
+                </div>
+                <h2 className="mt-1 text-2xl font-extrabold text-slate-900">
+                  Rattacher ou mettre à jour le numéro parent
+                </h2>
+                <p className="mt-2 text-[14px] leading-6 text-slate-600">
+                  Un même numéro parent peut servir pour plusieurs enfants. En revanche,
+                  un enfant ne doit pas être lié à plusieurs numéros de téléphone parents.
+                  Les notifications push restent actives sans coût.
+                </p>
+              </div>
+
+              <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                  <div>
+                    <label className="mb-2 block text-[13px] font-extrabold uppercase tracking-wide text-slate-600">
+                      Numéro parent
+                    </label>
+                    <Input
+                      value={smsPhone}
+                      onChange={(e) => setSmsPhone(e.target.value)}
+                      placeholder="Ex : +2250713023762"
+                      inputMode="tel"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="mb-2 block text-[13px] font-extrabold uppercase tracking-wide text-slate-600">
+                      Numéro actuel
+                    </label>
+                    <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-[14px] text-slate-700">
+                      {smsPrimaryContact?.phone_e164
+                        ? `Numéro actuel : ${formatPhoneForDisplay(smsPrimaryContact.phone_e164)}`
+                        : "Aucun numéro rattaché pour le moment."}
+                    </div>
                   </div>
                 </div>
-                <Badge tone={smsPrimaryContact?.phone_e164 && smsEnabled ? "emerald" : "slate"}>
-                  {smsPrimaryContact?.phone_e164 && smsEnabled ? "Numéro actif" : "Aucun numéro actif"}
-                </Badge>
-              </div>
 
-              <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-[14px] text-slate-700">
-                {smsSummaryLabel}
-              </div>
-
-              <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-[1fr_auto]">
-                <div>
-                  <label className="mb-2 block text-[13px] font-extrabold uppercase tracking-wide text-slate-600">
-                    Numéro de téléphone
+                <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                  <label className="flex items-center justify-between gap-3 text-sm">
+                    <span>
+                      <span className="block font-semibold text-slate-900">
+                        Recevoir les SMS premium
+                      </span>
+                      <span className="block text-slate-600">
+                        {smsAnyPremiumEnabled
+                          ? "Le numéro sera utilisé quand l’établissement active les envois SMS."
+                          : "Vous pouvez déjà enregistrer le numéro. Les notifications push restent la formule standard."}
+                      </span>
+                    </span>
+                    <input
+                      type="checkbox"
+                      checked={smsEnabled}
+                      onChange={(e) => setSmsEnabled(e.target.checked)}
+                      className="h-5 w-5"
+                    />
                   </label>
-                  <Input
-                    value={smsPhone}
-                    onChange={(e) => setSmsPhone(e.target.value)}
-                    placeholder="Ex : +2250713023762"
-                    inputMode="tel"
-                  />
                 </div>
 
-                <div className="md:self-end">
-                  <div className="text-[13px] font-extrabold uppercase tracking-wide text-slate-600 md:mb-2">Réception SMS</div>
-                  <Toggle
-                    checked={smsEnabled}
-                    onChange={setSmsEnabled}
-                    label={smsEnabled ? "Activée" : "Désactivée"}
-                    description="Activer ou couper les SMS sur ce numéro."
-                  />
-                </div>
-              </div>
-
-              <div className="mt-4 flex flex-col gap-3 sm:flex-row">
-                <Button
-                  type="button"
-                  tone="emerald"
-                  onClick={saveSmsContact}
-                  disabled={smsSaving || smsLoading || !smsPhone.trim()}
-                  iconLeft={<IconPhone />}
-                >
-                  {smsSaving ? "Enregistrement…" : "Enregistrer le numéro"}
-                </Button>
-
-                {smsPrimaryContact?.id ? (
+                <div className="mt-4 flex flex-col gap-3 sm:flex-row">
                   <Button
                     type="button"
-                    tone="white"
-                    onClick={removeSmsContact}
-                    disabled={smsSaving}
+                    tone="emerald"
+                    onClick={saveSmsContact}
+                    disabled={smsSaving || smsLoading || !smsPhone.trim()}
+                    iconLeft={<IconPhone />}
                   >
-                    Supprimer le numéro
+                    {smsSaving ? "Enregistrement…" : "Enregistrer le numéro"}
                   </Button>
-                ) : null}
-              </div>
 
-              {smsMsg && (
-                <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-[14px] text-slate-700">
-                  {smsMsg}
+                  {smsPrimaryContact?.id ? (
+                    <Button
+                      type="button"
+                      tone="white"
+                      onClick={removeSmsContact}
+                      disabled={smsSaving}
+                    >
+                      Supprimer le numéro
+                    </Button>
+                  ) : null}
                 </div>
-              )}
 
-              <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
-                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
-                  <div className="text-[12px] font-semibold uppercase tracking-wide text-slate-500">Numéro actuel</div>
-                  <div className="mt-1 text-[18px] font-extrabold text-slate-900">
-                    {formatPhoneForDisplay(smsPrimaryContact?.phone_e164 || smsPhone)}
+                {smsMsg && (
+                  <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-[14px] text-slate-700">
+                    {smsMsg}
                   </div>
-                </div>
-                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
-                  <div className="text-[12px] font-semibold uppercase tracking-wide text-slate-500">État</div>
-                  <div className="mt-1 text-[18px] font-extrabold text-slate-900">
-                    {smsAnyPremiumEnabled ? "Réception disponible" : "Réception en attente d’activation"}
-                  </div>
-                </div>
+                )}
               </div>
             </section>
           )}
 
           {/* ————— CONDUITE ————— */}
+
           {showConductSection && (
             <section className="mb-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
               <div className="mb-4 flex items-center justify-between gap-3">
@@ -2307,9 +2164,7 @@ export default function ParentPage() {
           {showEventsSection && (
             <section className="mb-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
               {(() => {
-                const title = isAbsences
-                  ? "Cahier d’absences — absences/retards récents et sanctions"
-                  : "Mes enfants — absences/retards récents, sanctions et notes publiées";
+                const title = "Cahier d’absences — absences/retards récents et sanctions";
 
                 return (
                   <div className="mb-4 flex items-center justify-between gap-3">
@@ -2355,9 +2210,9 @@ export default function ParentPage() {
                     const t = themeFor(i);
                     const gradesForKid = kidGrades[k.id] || [];
 
-                    const showEventsBlock = isDashboard || isAbsences;
-                    const showSanctionsBlock = isDashboard || isAbsences;
-                    const showNotesBlock = isDashboard && gradesForKid.length > 0;
+                    const showEventsBlock = true;
+                    const showSanctionsBlock = true;
+                    const showNotesBlock = false;
 
                     return (
                       <TiltCard key={k.id} className={t.ring}>
