@@ -293,7 +293,7 @@ type KidGradeRow = {
   subject_id?: string | null;
 };
 
-type NavSection = "dashboard" | "conduct" | "absences" | "notes";
+type NavSection = "dashboard" | "conduct" | "absences" | "notes" | "phone";
 
 type ParentNotificationContact = {
   id: string;
@@ -1012,6 +1012,7 @@ export default function ParentPage() {
   const isConduct = activeSection === "conduct";
   const isAbsences = activeSection === "absences";
   const isNotes = activeSection === "notes";
+  const isPhone = activeSection === "phone";
 
   const showConductSection = isConduct;
   const showEventsSection = isAbsences;
@@ -1022,6 +1023,7 @@ export default function ParentPage() {
     conduct: { breadcrumb: "Conduite", title: "Conduite et points", tab: "Conduite" },
     absences: { breadcrumb: "Absences", title: "Cahier d'absences", tab: "Absences" },
     notes: { breadcrumb: "Notes", title: "Cahier de notes", tab: "Notes" },
+    phone: { breadcrumb: "Mon numéro", title: "Rattacher mon numéro", tab: "Mon numéro" },
   };
 
   const currentSectionMeta = sectionMeta[activeSection];
@@ -1387,6 +1389,7 @@ export default function ParentPage() {
   useEffect(() => {
     if (!conductFrom || !conductTo) return;
     loadKids(conductFrom, conductTo);
+    loadSmsContacts(true);
     ensurePushSubscription().then((r) => {
       if (r.ok) setGranted(true);
     });
@@ -1536,6 +1539,37 @@ export default function ParentPage() {
 
             <div className="border-b border-white/10 px-4 py-4">
               <div className="mb-3 text-[12px] font-extrabold uppercase tracking-wide text-amber-200">
+                Ajouter un enfant
+              </div>
+              <form onSubmit={attachChildByMatricule} className="space-y-2">
+                <Input
+                  value={attachMatricule}
+                  onChange={(e) => setAttachMatricule(e.target.value.toUpperCase())}
+                  placeholder="Matricule élève"
+                  autoCapitalize="characters"
+                  autoCorrect="off"
+                  spellCheck={false}
+                  inputMode="text"
+                  className="border-white/15 bg-white text-slate-900"
+                />
+                <Button
+                  type="submit"
+                  tone="white"
+                  disabled={attachBusy || !attachMatricule.trim()}
+                  className="w-full justify-center rounded-2xl"
+                >
+                  {attachBusy ? "Ajout…" : "Ajouter l’enfant"}
+                </Button>
+              </form>
+              {attachMsg && (
+                <div className="mt-3 rounded-2xl bg-white/10 px-3 py-3 text-[13px] text-white/90">
+                  {attachMsg}
+                </div>
+              )}
+            </div>
+
+            <div className="border-b border-white/10 px-4 py-4">
+              <div className="mb-3 text-[12px] font-extrabold uppercase tracking-wide text-amber-200">
                 Enfants
               </div>
               <div className="space-y-2">
@@ -1590,6 +1624,11 @@ export default function ParentPage() {
                 label="Cahier de notes"
                 icon={<IconBook />}
                 section="notes"
+              />
+              <SidebarNavItem
+                label="Rattacher mon numéro"
+                icon={<IconPhone />}
+                section="phone"
               />
             </nav>
 
@@ -1718,6 +1757,37 @@ export default function ParentPage() {
 
           <div className="border-b border-white/15 px-4 py-4">
             <div className="mb-3 text-[12px] font-extrabold uppercase tracking-wide text-amber-200">
+              Ajouter un enfant
+            </div>
+            <form onSubmit={attachChildByMatricule} className="space-y-2">
+              <Input
+                value={attachMatricule}
+                onChange={(e) => setAttachMatricule(e.target.value.toUpperCase())}
+                placeholder="Matricule élève"
+                autoCapitalize="characters"
+                autoCorrect="off"
+                spellCheck={false}
+                inputMode="text"
+                className="border-white/15 bg-white text-slate-900"
+              />
+              <Button
+                type="submit"
+                tone="white"
+                disabled={attachBusy || !attachMatricule.trim()}
+                className="w-full justify-center rounded-2xl"
+              >
+                {attachBusy ? "Ajout…" : "Ajouter l’enfant"}
+              </Button>
+            </form>
+            {attachMsg && (
+              <div className="mt-3 rounded-2xl bg-white/10 px-3 py-3 text-[13px] text-white/90">
+                {attachMsg}
+              </div>
+            )}
+          </div>
+
+          <div className="border-b border-white/15 px-4 py-4">
+            <div className="mb-3 text-[12px] font-extrabold uppercase tracking-wide text-amber-200">
               Enfants
             </div>
             <div className="space-y-2">
@@ -1769,6 +1839,11 @@ export default function ParentPage() {
               label="Cahier de notes"
               icon={<IconBook />}
               section="notes"
+            />
+            <SidebarNavItem
+              label="Rattacher mon numéro"
+              icon={<IconPhone />}
+              section="phone"
             />
           </nav>
 
@@ -1888,72 +1963,100 @@ export default function ParentPage() {
                 </div>
               </section>
 
-              <section className="mb-6 grid grid-cols-1 gap-4 xl:grid-cols-[1.1fr_0.9fr]">
-                <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-                  <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-                    <div>
-                      <div className="text-[18px] font-extrabold text-slate-900">
-                        Ajouter un enfant par matricule
-                      </div>
-                      <div className="mt-1 text-[14px] text-slate-600">
-                        Ajoutez un autre enfant sans quitter la session.
-                      </div>
-                    </div>
-                    <Badge tone="slate">{kids.length} enfant{kids.length > 1 ? "s" : ""}</Badge>
-                  </div>
-
-                  <form onSubmit={attachChildByMatricule} className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-[1fr_auto]">
-                    <Input
-                      value={attachMatricule}
-                      onChange={(e) => setAttachMatricule(e.target.value.toUpperCase())}
-                      placeholder="Ex : 20166309J"
-                      autoCapitalize="characters"
-                      autoCorrect="off"
-                      spellCheck={false}
-                      inputMode="text"
-                    />
-
-                    <Button
-                      type="submit"
-                      tone="emerald"
-                      disabled={attachBusy || !attachMatricule.trim()}
-                      className="w-full md:w-auto"
-                    >
-                      {attachBusy ? "Ajout…" : "Ajouter"}
-                    </Button>
-                  </form>
-
-                  {attachMsg && (
-                    <div className="mt-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-[14px] text-slate-700">
-                      {attachMsg}
-                    </div>
-                  )}
-                </div>
-
-                <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-                  <div className="text-[18px] font-extrabold text-slate-900">Vue actuelle</div>
-                  <div className="mt-4 space-y-3">
-                    <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-                      <div className="text-[12px] font-semibold uppercase tracking-wide text-slate-500">Onglet affiché</div>
-                      <div className="mt-1 text-[16px] font-extrabold text-slate-900">{currentSectionMeta.tab}</div>
-                    </div>
-                    <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-                      <div className="text-[12px] font-semibold uppercase tracking-wide text-slate-500">Enfant affiché</div>
-                      <div className="mt-1 text-[16px] font-extrabold text-slate-900">{selectedKid?.full_name || "Aucun enfant sélectionné"}</div>
-                    </div>
-                    <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-[13px] text-slate-600">
-                      L’écran principal suit les onglets du menu : accueil, conduite, absences et notes.
-                    </div>
-                  </div>
-                </div>
-              </section>
-
               {isiOS && !isStandalone && !granted && (
                 <div className="mb-5 rounded-2xl border border-amber-200/60 bg-amber-50/90 p-4 text-[14px] text-amber-900 shadow-sm">
                   <b>iPhone/iPad :</b> pour recevoir les notifications, ajoutez d’abord l’application à l’écran d’accueil : ouvrez cette page dans <b>Safari</b> → <b>Partager</b> → <b>Ajouter à l’écran d’accueil</b>, puis rouvrez l’app et appuyez sur « Activer les notifications ».
                 </div>
               )}
             </>
+          )}
+
+          {isPhone && (
+            <section className="mb-6 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+              <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
+                <div>
+                  <div className="text-[18px] font-extrabold text-slate-900">Rattacher mon numéro</div>
+                  <div className="mt-1 text-[14px] text-slate-600">
+                    Enregistrez le numéro qui doit recevoir les alertes liées à vos enfants.
+                  </div>
+                </div>
+                <Badge tone={smsPrimaryContact?.phone_e164 && smsEnabled ? "emerald" : "slate"}>
+                  {smsPrimaryContact?.phone_e164 && smsEnabled ? "Numéro actif" : "Aucun numéro actif"}
+                </Badge>
+              </div>
+
+              <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-[14px] text-slate-700">
+                {smsSummaryLabel}
+              </div>
+
+              <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-[1fr_auto]">
+                <div>
+                  <label className="mb-2 block text-[13px] font-extrabold uppercase tracking-wide text-slate-600">
+                    Numéro de téléphone
+                  </label>
+                  <Input
+                    value={smsPhone}
+                    onChange={(e) => setSmsPhone(e.target.value)}
+                    placeholder="Ex : +2250713023762"
+                    inputMode="tel"
+                  />
+                </div>
+
+                <div className="md:self-end">
+                  <div className="text-[13px] font-extrabold uppercase tracking-wide text-slate-600 md:mb-2">Réception SMS</div>
+                  <Toggle
+                    checked={smsEnabled}
+                    onChange={setSmsEnabled}
+                    label={smsEnabled ? "Activée" : "Désactivée"}
+                    description="Activer ou couper les SMS sur ce numéro."
+                  />
+                </div>
+              </div>
+
+              <div className="mt-4 flex flex-col gap-3 sm:flex-row">
+                <Button
+                  type="button"
+                  tone="emerald"
+                  onClick={saveSmsContact}
+                  disabled={smsSaving || smsLoading || !smsPhone.trim()}
+                  iconLeft={<IconPhone />}
+                >
+                  {smsSaving ? "Enregistrement…" : "Enregistrer le numéro"}
+                </Button>
+
+                {smsPrimaryContact?.id ? (
+                  <Button
+                    type="button"
+                    tone="white"
+                    onClick={removeSmsContact}
+                    disabled={smsSaving}
+                  >
+                    Supprimer le numéro
+                  </Button>
+                ) : null}
+              </div>
+
+              {smsMsg && (
+                <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-[14px] text-slate-700">
+                  {smsMsg}
+                </div>
+              )}
+
+              <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+                  <div className="text-[12px] font-semibold uppercase tracking-wide text-slate-500">Numéro actuel</div>
+                  <div className="mt-1 text-[18px] font-extrabold text-slate-900">
+                    {formatPhoneForDisplay(smsPrimaryContact?.phone_e164 || smsPhone)}
+                  </div>
+                </div>
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+                  <div className="text-[12px] font-semibold uppercase tracking-wide text-slate-500">État</div>
+                  <div className="mt-1 text-[18px] font-extrabold text-slate-900">
+                    {smsAnyPremiumEnabled ? "Réception disponible" : "Réception en attente d’activation"}
+                  </div>
+                </div>
+              </div>
+            </section>
           )}
 
           {/* ————— CONDUITE ————— */}

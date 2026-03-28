@@ -946,80 +946,33 @@ export default function ConseilClassePage() {
   }, [effectiveSubjects, councilRows]);
 
   const councilTeacherRows = useMemo(() => {
-    const subjectNameById = new Map(
-      (enriched?.response.subjects ?? []).map((subject) => [
-        String(subject.subject_id || "").trim(),
-        String(subject.subject_name || "Discipline").trim() || "Discipline",
-      ])
-    );
-
-    const map = new Map<
+    const grouped = new Map<
       string,
       {
         teacherName: string;
         subjects: Set<string>;
-        signature: string | null;
       }
     >();
 
-    for (const row of councilRows) {
-      for (const ps of row.per_subject ?? []) {
-        const teacherName = String(ps?.teacher_name || "").trim();
-        const subjectId = String(ps?.subject_id || "").trim();
+    subjectStats.forEach((subject) => {
+      const teacherName = String(subject.teacher_name || "").trim();
+      if (!teacherName) return;
 
-        if (!teacherName || !subjectId) continue;
+      const key = teacherName.toLowerCase();
+      const existing = grouped.get(key);
 
-        const subjectName =
-          subjectNameById.get(subjectId) ||
-          effectiveSubjects.find((s) => String(s.subject_id || "").trim() === subjectId)
-            ?.subject_name ||
-          "Discipline";
-
-        const key = teacherName.toLowerCase();
-        const existing = map.get(key);
-
-        if (existing) {
-          existing.subjects.add(subjectName);
-          if (!existing.signature && ps?.teacher_signature_png) {
-            existing.signature = ps.teacher_signature_png;
-          }
-          continue;
-        }
-
-        map.set(key, {
-          teacherName,
-          subjects: new Set([subjectName]),
-          signature: ps?.teacher_signature_png || null,
-        });
+      if (existing) {
+        existing.subjects.add(subject.subject_name);
+        return;
       }
-    }
 
-    // Fallback sûr: on retombe sur les stats par discipline si jamais
-    // aucune ligne n'a été remontée depuis les données bulletin.
-    if (map.size === 0) {
-      subjectStats.forEach((subject) => {
-        const teacherName = String(subject.teacher_name || "").trim();
-        if (!teacherName) return;
-
-        const key = teacherName.toLowerCase();
-        const existing = map.get(key);
-        if (existing) {
-          existing.subjects.add(subject.subject_name);
-          if (!existing.signature && subject.teacher_signature_png) {
-            existing.signature = subject.teacher_signature_png;
-          }
-          return;
-        }
-
-        map.set(key, {
-          teacherName,
-          subjects: new Set([subject.subject_name]),
-          signature: subject.teacher_signature_png || null,
-        });
+      grouped.set(key, {
+        teacherName,
+        subjects: new Set([subject.subject_name]),
       });
-    }
+    });
 
-    return Array.from(map.values())
+    return Array.from(grouped.values())
       .map((row) => ({
         teacherName: row.teacherName,
         subjectsLabel: Array.from(row.subjects)
@@ -1031,7 +984,6 @@ export default function ConseilClassePage() {
             })
           )
           .join(", "),
-        signature: row.signature,
       }))
       .sort((a, b) =>
         a.teacherName.localeCompare(b.teacherName, undefined, {
@@ -1039,7 +991,7 @@ export default function ConseilClassePage() {
           numeric: true,
         })
       );
-  }, [councilRows, effectiveSubjects, enriched, subjectStats]);
+  }, [subjectStats]);
 
   const annualMode = useMemo(
     () => councilRows.some((r) => r.annual_avg !== null && r.annual_avg !== undefined),
@@ -1769,16 +1721,15 @@ export default function ConseilClassePage() {
               <table className="pv-grid-table mt-1 pv-mini">
                 <thead>
                   <tr>
-                    <th style={{ width: "21%" }}>Matière</th>
-                    <th style={{ width: "8%" }}>Effectif</th>
-                    <th style={{ width: "8%" }}>N ≥ 10</th>
-                    <th style={{ width: "8%" }}>%</th>
-                    <th style={{ width: "10%" }}>10 &gt; M ≥ 8,5</th>
-                    <th style={{ width: "8%" }}>%</th>
-                    <th style={{ width: "8%" }}>M &lt; 8,5</th>
-                    <th style={{ width: "8%" }}>%</th>
-                    <th style={{ width: "8%" }}>Moy.</th>
-                    <th style={{ width: "13%" }}>Enseignant / Émargement</th>
+                    <th style={{ width: "24%" }}>Matière</th>
+                    <th style={{ width: "9%" }}>Effectif</th>
+                    <th style={{ width: "9%" }}>N ≥ 10</th>
+                    <th style={{ width: "9%" }}>%</th>
+                    <th style={{ width: "11%" }}>10 &gt; M ≥ 8,5</th>
+                    <th style={{ width: "9%" }}>%</th>
+                    <th style={{ width: "9%" }}>M &lt; 8,5</th>
+                    <th style={{ width: "9%" }}>%</th>
+                    <th style={{ width: "11%" }}>Moy.</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1795,14 +1746,6 @@ export default function ConseilClassePage() {
                         <OfficialTd center>{s.lt85}</OfficialTd>
                         <OfficialTd center>{formatPercent(s.lt85, base)}</OfficialTd>
                         <OfficialTd center>{formatNumber(s.avg20)}</OfficialTd>
-                        <OfficialTd>
-                          <div className="min-h-[34px]">
-                            {s.teacher_signature_png ? (
-                              <img src={s.teacher_signature_png} alt="" className="mb-1 h-5 max-w-full object-contain" />
-                            ) : null}
-                            <div>{s.teacher_name || "—"}</div>
-                          </div>
-                        </OfficialTd>
                       </tr>
                     );
                   })}
@@ -1840,28 +1783,19 @@ export default function ConseilClassePage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {councilTeacherRows.length > 0 ? (
-                      councilTeacherRows.map((row, index) => (
-                        <tr key={`${row.teacherName}-${index}`}>
-                          <OfficialTd center>{index + 1}</OfficialTd>
-                          <OfficialTd strong>{row.teacherName}</OfficialTd>
-                          <OfficialTd>{row.subjectsLabel || "—"}</OfficialTd>
-                          <OfficialTd>
-                            <div className="min-h-[36px] flex items-end">
-                              {row.signature ? (
-                                <img src={row.signature} alt="" className="h-5 max-w-full object-contain" />
-                              ) : (
-                                <div className="w-full border-b border-slate-400" />
-                              )}
-                            </div>
-                          </OfficialTd>
-                        </tr>
-                      ))
-                    ) : (
-                      <tr>
-                        <OfficialTd colSpan={4} center>Aucun enseignant trouvé pour cette classe.</OfficialTd>
+                    {councilTeacherRows.map((row, index) => (
+                      <tr key={`${row.teacherName}-${index}`}>
+                        <OfficialTd center>{index + 1}</OfficialTd>
+                        <OfficialTd strong>{row.teacherName}</OfficialTd>
+                        <OfficialTd>{row.subjectsLabel || "—"}</OfficialTd>
+                        <OfficialTd>
+                          <div className="min-h-[36px] flex items-end">
+                            <div className="w-full border-b border-slate-400" />
+                          </div>
+                        </OfficialTd>
                       </tr>
-                    )}
+                    ))}
+
                     {Array.from({ length: Math.max(0, 2 - councilTeacherRows.length) }).map((_, idx) => (
                       <tr key={`blank-member-${idx}`}>
                         <OfficialTd center>{councilTeacherRows.length + idx + 1}</OfficialTd>
