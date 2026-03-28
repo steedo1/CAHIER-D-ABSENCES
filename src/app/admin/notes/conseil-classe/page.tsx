@@ -946,6 +946,13 @@ export default function ConseilClassePage() {
   }, [effectiveSubjects, councilRows]);
 
   const councilTeacherRows = useMemo(() => {
+    const subjectNameById = new Map(
+      (enriched?.response.subjects ?? []).map((subject) => [
+        String(subject.subject_id || "").trim(),
+        String(subject.subject_name || "Discipline").trim() || "Discipline",
+      ])
+    );
+
     const map = new Map<
       string,
       {
@@ -955,31 +962,68 @@ export default function ConseilClassePage() {
       }
     >();
 
-    subjectStats.forEach((subject) => {
-      const teacherName = String(subject.teacher_name || "").trim();
-      if (!teacherName) return;
+    for (const row of councilRows) {
+      for (const ps of row.per_subject ?? []) {
+        const teacherName = String(ps?.teacher_name || "").trim();
+        const subjectId = String(ps?.subject_id || "").trim();
 
-      const key = teacherName.toLowerCase();
-      const existing = map.get(key);
-      if (existing) {
-        existing.subjects.add(subject.subject_name);
-        if (!existing.signature && subject.teacher_signature_png) {
-          existing.signature = subject.teacher_signature_png;
+        if (!teacherName || !subjectId) continue;
+
+        const subjectName =
+          subjectNameById.get(subjectId) ||
+          effectiveSubjects.find((s) => String(s.subject_id || "").trim() === subjectId)
+            ?.subject_name ||
+          "Discipline";
+
+        const key = teacherName.toLowerCase();
+        const existing = map.get(key);
+
+        if (existing) {
+          existing.subjects.add(subjectName);
+          if (!existing.signature && ps?.teacher_signature_png) {
+            existing.signature = ps.teacher_signature_png;
+          }
+          continue;
         }
-        return;
-      }
 
-      map.set(key, {
-        teacherName,
-        subjects: new Set([subject.subject_name]),
-        signature: subject.teacher_signature_png || null,
+        map.set(key, {
+          teacherName,
+          subjects: new Set([subjectName]),
+          signature: ps?.teacher_signature_png || null,
+        });
+      }
+    }
+
+    // Fallback sûr: on retombe sur les stats par discipline si jamais
+    // aucune ligne n'a été remontée depuis les données bulletin.
+    if (map.size === 0) {
+      subjectStats.forEach((subject) => {
+        const teacherName = String(subject.teacher_name || "").trim();
+        if (!teacherName) return;
+
+        const key = teacherName.toLowerCase();
+        const existing = map.get(key);
+        if (existing) {
+          existing.subjects.add(subject.subject_name);
+          if (!existing.signature && subject.teacher_signature_png) {
+            existing.signature = subject.teacher_signature_png;
+          }
+          return;
+        }
+
+        map.set(key, {
+          teacherName,
+          subjects: new Set([subject.subject_name]),
+          signature: subject.teacher_signature_png || null,
+        });
       });
-    });
+    }
 
     return Array.from(map.values())
       .map((row) => ({
         teacherName: row.teacherName,
         subjectsLabel: Array.from(row.subjects)
+          .filter(Boolean)
           .sort((a, b) =>
             a.localeCompare(b, undefined, {
               sensitivity: "base",
@@ -995,7 +1039,7 @@ export default function ConseilClassePage() {
           numeric: true,
         })
       );
-  }, [subjectStats]);
+  }, [councilRows, effectiveSubjects, enriched, subjectStats]);
 
   const annualMode = useMemo(
     () => councilRows.some((r) => r.annual_avg !== null && r.annual_avg !== undefined),
