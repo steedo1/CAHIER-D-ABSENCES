@@ -3,11 +3,11 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 
-/* â”€â”€â”€â”€â”€â”€â”€â”€â”€ routes dÃ©diÃ©es parents + fallbacks â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ————————— routes dédiées parents + fallbacks ————————— */
 const LOGOUT_PARENTS = "/parents/logout";
 const LOGIN_PARENTS = "/parents/login";
 
-/* â”€â”€â”€â”€â”€â”€â”€â”€â”€ helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ————————— helpers ————————— */
 function urlBase64ToUint8Array(base64: string) {
   const padding = "=".repeat((4 - (base64.length % 4)) % 4);
   const base64url = (base64 + padding).replace(/-/g, "+").replace(/_/g, "/");
@@ -59,7 +59,7 @@ function dayLabel(iso: string) {
     a.getFullYear() === b.getFullYear() &&
     a.getMonth() === b.getMonth() &&
     a.getDate() === b.getDate();
-  if (same(d, today)) return "Aujourdâ€™hui";
+  if (same(d, today)) return "Aujourd’hui";
   if (same(d, yday)) return "Hier";
   return d.toLocaleDateString([], {
     day: "2-digit",
@@ -70,13 +70,13 @@ function dayLabel(iso: string) {
 
 function rubricLabel(r: "discipline" | "tenue" | "moralite") {
   if (r === "tenue") return "Tenue";
-  if (r === "moralite") return "MoralitÃ©";
+  if (r === "moralite") return "Moralité";
   return "Discipline";
 }
 
 function gradeKindLabel(kind: "devoir" | "interro_ecrite" | "interro_orale") {
   if (kind === "devoir") return "Devoir";
-  if (kind === "interro_ecrite") return "Interrogation Ã©crite";
+  if (kind === "interro_ecrite") return "Interrogation écrite";
   return "Interrogation orale";
 }
 
@@ -118,7 +118,7 @@ function isInDateRange(iso: string, from?: string | null, to?: string | null) {
 
 function formatPhoneForDisplay(phone?: string | null) {
   const s = String(phone || "").trim();
-  if (!s) return "Non configurÃ©";
+  if (!s) return "Non configuré";
   if (!s.startsWith("+")) return s;
   const digits = s.slice(1);
   if (digits.startsWith("225") && digits.length >= 11) {
@@ -139,7 +139,7 @@ function formatPhoneForDisplay(phone?: string | null) {
   return s;
 }
 
-/* â”€â”€â”€â”€â”€â”€â”€â”€â”€ thÃ¨mes (couleurs diffÃ©rentes par enfant / matiÃ¨re) â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ————————— thèmes (couleurs différentes par enfant / matière) ————————— */
 const THEMES = [
   {
     name: "emerald",
@@ -211,7 +211,7 @@ function themeFor(i: number) {
   return THEMES[i % THEMES.length];
 }
 
-/* â”€â”€â”€â”€â”€â”€â”€â”€â”€ thÃ¨mes par rubrique (pour jauges verticales) â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ————————— thèmes par rubrique (pour jauges verticales) ————————— */
 const RUBRIC_THEMES = {
   assiduite: {
     bg: "bg-emerald-100",
@@ -237,7 +237,7 @@ const RUBRIC_THEMES = {
 
 type RubricKey = keyof typeof RUBRIC_THEMES;
 
-/* â”€â”€â”€â”€â”€â”€â”€â”€â”€ types â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ————————— types ————————— */
 type Kid = { id: string; full_name: string; class_label: string | null };
 
 type Ev = {
@@ -336,7 +336,7 @@ type ParentNotificationContactsResponse = {
   error?: string;
 };
 
-/* â”€â”€â”€â”€â”€â”€â”€â”€â”€ UI â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ————————— UI ————————— */
 function Button(
   p: React.ButtonHTMLAttributes<HTMLButtonElement> & {
     tone?: "emerald" | "slate" | "red" | "white" | "outline";
@@ -624,7 +624,7 @@ const IconShield = () => (
   </svg>
 );
 
-/* â”€â”€â”€â”€â”€â”€â”€â”€â”€ Carte â€œtiltâ€ â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ————————— Carte “tilt” ————————— */
 function TiltCard({
   children,
   className = "",
@@ -700,7 +700,7 @@ function TiltCard({
   );
 }
 
-/* â”€â”€â”€â”€â”€â”€â”€â”€â”€ PUSH: ensure registration + subscribe + server upsert â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ————————— PUSH: ensure registration + subscribe + server upsert ————————— */
 async function ensurePushSubscription() {
   if (typeof window === "undefined") return { ok: false, reason: "ssr" };
   if (!("serviceWorker" in navigator) || !("PushManager" in window))
@@ -768,7 +768,7 @@ async function ensurePushSubscription() {
   return { ok: true };
 }
 
-/* â”€â”€â”€â”€â”€â”€â”€â”€â”€ group by day â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ————————— group by day ————————— */
 type DayGroup = {
   day: string;
   label: string;
@@ -801,7 +801,7 @@ function groupByDay(events: Ev[]): DayGroup[] {
   return groups;
 }
 
-/* â”€â”€â”€â”€â”€â”€â”€â”€â”€ fetch helpers (notes robustes) â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ————————— fetch helpers (notes robustes) ————————— */
 async function fetchJsonSafe(
   url: string,
   init?: RequestInit,
@@ -862,7 +862,7 @@ async function firstOkItems(
   return { ok: false, err };
 }
 
-/* â”€â”€â”€â”€â”€â”€â”€â”€â”€ Jauge verticale par rubrique (mobile) â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ————————— Jauge verticale par rubrique (mobile) ————————— */
 function VerticalGauge({
   label,
   value,
@@ -890,7 +890,7 @@ function VerticalGauge({
   };
 
   const vLabel = disabled
-    ? "DÃ©sactivÃ©e"
+    ? "Désactivée"
     : `${fmtNumber(value)} / ${fmtNumber(max)} pt${
         Math.abs(max - 1) < 0.001 ? "" : "s"
       }`;
@@ -917,7 +917,7 @@ function VerticalGauge({
   );
 }
 
-/* â”€â”€â”€â”€â”€â”€â”€â”€â”€ component â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ————————— component ————————— */
 export default function ParentPage() {
   const [kids, setKids] = useState<Kid[]>([]);
   const [feed, setFeed] = useState<Record<string, Ev[]>>({});
@@ -934,7 +934,7 @@ export default function ParentPage() {
   const [loadingConduct, setLoadingConduct] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
 
-  // Filtre pÃ©riode conduite (90 jours)
+  // Filtre période conduite (90 jours)
   const [conductFrom, setConductFrom] = useState<string>("");
   const [conductTo, setConductTo] = useState<string>("");
 
@@ -946,14 +946,14 @@ export default function ParentPage() {
     Record<string, boolean>
   >({});
 
-  // Filtre pÃ©riode notes
+  // Filtre période notes
   const [gradeFilterMode, setGradeFilterMode] = useState<
     "week" | "month" | "all" | "custom"
   >("week");
   const [gradeFrom, setGradeFrom] = useState<string>("");
   const [gradeTo, setGradeTo] = useState<string>("");
 
-  // MatiÃ¨re sÃ©lectionnÃ©e par enfant
+  // Matière sélectionnée par enfant
   const [activeSubjectPerKid, setActiveSubjectPerKid] = useState<
     Record<string, string | "all" | null>
   >({});
@@ -971,9 +971,12 @@ export default function ParentPage() {
   // Drawer mobile
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
-  // SÃ©lection enfant + section
+  // Sélection enfant + section
   const [activeChildId, setActiveChildId] = useState<string | "all">("all");
   const [activeSection, setActiveSection] = useState<NavSection>("dashboard");
+  const [attachMatricule, setAttachMatricule] = useState("");
+  const [attachBusy, setAttachBusy] = useState(false);
+  const [attachMsg, setAttachMsg] = useState<string | null>(null);
 
   // SMS premium
   const [smsLoading, setSmsLoading] = useState(false);
@@ -1011,6 +1014,15 @@ export default function ParentPage() {
   const showEventsSection = isDashboard || isAbsences;
   const showNotesSection = isNotes;
 
+  const sectionMeta: Record<NavSection, { breadcrumb: string; title: string; tab: string }> = {
+    dashboard: { breadcrumb: "Accueil", title: "Tableau de bord parent", tab: "Accueil" },
+    conduct: { breadcrumb: "Conduite", title: "Conduite et points", tab: "Conduite" },
+    absences: { breadcrumb: "Absences", title: "Cahier d'absences", tab: "Absences" },
+    notes: { breadcrumb: "Notes", title: "Cahier de notes", tab: "Notes" },
+  };
+
+  const currentSectionMeta = sectionMeta[activeSection];
+
   const smsAnyPremiumEnabled = useMemo(
     () => smsSettings.some((s) => s.sms_premium_enabled),
     [smsSettings],
@@ -1032,14 +1044,14 @@ export default function ParentPage() {
   }, [smsSettings, smsInstitutionId, smsPreferredInstitutionId]);
 
   const smsSummaryLabel = useMemo(() => {
-    if (!smsSettings.length) return "Chargement de la configuration SMSâ€¦";
+    if (!smsSettings.length) return "Chargement de la configuration SMS…";
     if (!smsAnyPremiumEnabled)
-      return "Le module SMS premium nâ€™est pas encore activÃ© par votre Ã©tablissement.";
+      return "Le module SMS premium n’est pas encore activé par votre établissement.";
     if (!smsPrimaryContact?.phone_e164)
-      return "Ajoutez votre numÃ©ro pour recevoir les alertes SMS premium.";
+      return "Ajoutez votre numéro pour recevoir les alertes SMS premium.";
     if (!smsPrimaryContact.sms_enabled)
-      return "Votre numÃ©ro est enregistrÃ©, mais lâ€™envoi SMS est dÃ©sactivÃ©.";
-    return "Votre numÃ©ro principal est prÃªt pour les alertes SMS premium.";
+      return "Votre numéro est enregistré, mais l’envoi SMS est désactivé.";
+    return "Votre numéro principal est prêt pour les alertes SMS premium.";
   }, [smsSettings, smsAnyPremiumEnabled, smsPrimaryContact]);
 
   // lock body scroll when drawer open
@@ -1077,7 +1089,7 @@ export default function ParentPage() {
     return () => document.removeEventListener("visibilitychange", refresh);
   }, []);
 
-  // init pÃ©riode notes
+  // init période notes
   useEffect(() => {
     const today = new Date();
     if (gradeFilterMode === "week") {
@@ -1190,14 +1202,14 @@ export default function ParentPage() {
 
       const j = await res.json().catch(() => ({}));
       if (!res.ok || !j?.ok) {
-        setSmsMsg(j?.error || "Impossible dâ€™enregistrer le numÃ©ro SMS.");
+        setSmsMsg(j?.error || "Impossible d’enregistrer le numéro SMS.");
         return;
       }
 
-      setSmsMsg("NumÃ©ro SMS enregistrÃ© avec succÃ¨s âœ…");
+      setSmsMsg("Numéro SMS enregistré avec succès ✅");
       await loadSmsContacts(true);
     } catch (e: any) {
-      setSmsMsg(e?.message || "Erreur lors de lâ€™enregistrement du numÃ©ro.");
+      setSmsMsg(e?.message || "Erreur lors de l’enregistrement du numéro.");
     } finally {
       setSmsSaving(false);
     }
@@ -1223,7 +1235,7 @@ export default function ParentPage() {
         return;
       }
 
-      setSmsMsg("Contact SMS supprimÃ©.");
+      setSmsMsg("Contact SMS supprimé.");
       await loadSmsContacts(true);
     } catch (e: any) {
       setSmsMsg(e?.message || "Erreur lors de la suppression du contact.");
@@ -1232,7 +1244,7 @@ export default function ParentPage() {
     }
   }
 
-  async function loadKids(from?: string, to?: string) {
+  async function loadKids(from?: string, to?: string): Promise<Kid[]> {
     setLoadingKids(true);
     setMsg(null);
     try {
@@ -1310,10 +1322,58 @@ export default function ParentPage() {
       const useFrom = from || conductFrom;
       const useTo = to || conductTo;
       await loadConductForAll(ks, useFrom, useTo);
+      return ks;
     } catch (e: any) {
       setMsg(e?.message || "Erreur de chargement.");
+      return [];
     } finally {
       setLoadingKids(false);
+    }
+  }
+
+  async function attachChildByMatricule(e?: React.FormEvent) {
+    e?.preventDefault?.();
+    const cleanMatricule = attachMatricule.trim().toUpperCase();
+    if (!cleanMatricule) return;
+
+    setAttachBusy(true);
+    setAttachMsg(null);
+    const beforeIds = new Set(kids.map((k) => k.id));
+
+    try {
+      const res = await fetch("/api/parent/children/attach", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ matricule: cleanMatricule }),
+      });
+
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const err = String(j?.error || "ATTACH_FAILED");
+        setAttachMsg(err === "MATRICULE_NOT_FOUND" ? "Matricule introuvable." : "Impossible d’ajouter cet enfant pour le moment.");
+        return;
+      }
+
+      const refreshedKids = await loadKids(conductFrom, conductTo);
+      const hintedId = String(j?.child?.id || j?.item?.id || j?.student_id || "").trim();
+      const added =
+        refreshedKids.find((k) => k.id === hintedId) ||
+        refreshedKids.find((k) => !beforeIds.has(k.id)) ||
+        refreshedKids.find((k) => k.id !== activeChildId) ||
+        null;
+
+      if (added) setActiveChildId(added.id);
+      setActiveSection("dashboard");
+      setAttachMatricule("");
+      setAttachMsg("Enfant ajouté au tableau de bord avec succès.");
+      if (typeof window !== "undefined") {
+        window.scrollTo({ top: 0, behavior: "smooth" });
+      }
+    } catch (e: any) {
+      setAttachMsg(e?.message || "Échec de l’ajout. Réessayez.");
+    } finally {
+      setAttachBusy(false);
     }
   }
 
@@ -1343,11 +1403,11 @@ export default function ParentPage() {
     }
   }
 
-  /* â”€â”€â”€â”€â”€â”€â”€â”€â”€ DÃ©connexion â€œpropreâ€ â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+  /* ————————— Déconnexion “propre” ————————— */
   async function safeLogout() {
     if (loggingOut) return;
     setLoggingOut(true);
-    setMsg("DÃ©connexion en coursâ€¦");
+    setMsg("Déconnexion en cours…");
 
     try {
       if ("serviceWorker" in navigator) {
@@ -1430,19 +1490,19 @@ export default function ParentPage() {
   function gradeFilterLabel(mode: typeof gradeFilterMode): string {
     if (mode === "week") return "Semaine";
     if (mode === "month") return "Mois";
-    if (mode === "all") return "Toute lâ€™annÃ©e";
-    return "PÃ©riode libre";
+    if (mode === "all") return "Toute l’année";
+    return "Période libre";
   }
 
   function rubricCellValue(val: number, max: number) {
-    if (!(Number.isFinite(max) && max > 0)) return "DÃ©sactivÃ©e";
+    if (!(Number.isFinite(max) && max > 0)) return "Désactivée";
     return val.toFixed(2).replace(".", ",");
   }
 
-  /* â”€â”€â”€â”€â”€â”€â”€â”€â”€ RENDER â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+  /* ————————— RENDER ————————— */
   return (
     <div className="min-h-screen overflow-x-hidden bg-slate-100 text-slate-900 text-[15px]">
-      {/* â”€â”€â”€â”€â”€ Drawer mobile â”€â”€â”€â”€â”€ */}
+      {/* ————— Drawer mobile ————— */}
       {mobileNavOpen && (
         <div className="fixed inset-0 z-40 flex lg:hidden">
           <div className="relative flex h-full w-80 max-w-[86%] flex-col bg-[#003766] text-white shadow-2xl">
@@ -1518,7 +1578,7 @@ export default function ParentPage() {
                       <div className="min-w-0 text-left">
                         <div className="truncate">{k.full_name}</div>
                         <div className="truncate text-[12px] text-emerald-100">
-                          {k.class_label || "â€”"}
+                          {k.class_label || "—"}
                         </div>
                       </div>
                     </button>
@@ -1539,7 +1599,7 @@ export default function ParentPage() {
                 section="conduct"
               />
               <SidebarNavItem
-                label="Cahier dâ€™absences"
+                label="Cahier d’absences"
                 icon={<IconClipboard />}
                 section="absences"
               />
@@ -1558,10 +1618,10 @@ export default function ParentPage() {
                 iconLeft={<IconPower />}
                 className="w-full justify-start rounded-2xl"
               >
-                {loggingOut ? "DÃ©connexionâ€¦" : "Se dÃ©connecter"}
+                {loggingOut ? "Déconnexion…" : "Se déconnecter"}
               </Button>
               <div className="mt-4 leading-tight text-white/80">
-                <div className="text-[12px] opacity-80">DÃ©veloppÃ© par</div>
+                <div className="text-[12px] opacity-80">Développé par</div>
                 <div className="text-[15px] font-extrabold text-amber-300">
                   Nexa Digital
                 </div>
@@ -1578,7 +1638,7 @@ export default function ParentPage() {
         </div>
       )}
 
-      {/* â”€â”€â”€â”€â”€ HEADER PRINCIPAL sticky â”€â”€â”€â”€â”€ */}
+      {/* ————— HEADER PRINCIPAL sticky ————— */}
       <header className="sticky top-0 z-30 bg-[#003766] text-white shadow">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-3 py-3 lg:px-4">
           <div className="flex min-w-0 items-center gap-3">
@@ -1615,7 +1675,7 @@ export default function ParentPage() {
         </div>
       </header>
 
-      {/* â”€â”€â”€â”€â”€ Bottom tab bar mobile â”€â”€â”€â”€â”€ */}
+      {/* ————— Bottom tab bar mobile ————— */}
       <div className="fixed bottom-0 left-0 right-0 z-30 border-t bg-white/95 backdrop-blur lg:hidden">
         <div className="mx-auto flex max-w-6xl items-center justify-around px-2 py-2">
           {(
@@ -1651,7 +1711,7 @@ export default function ParentPage() {
         </div>
       </div>
 
-      {/* â”€â”€â”€â”€â”€ CORPS â”€â”€â”€â”€â”€ */}
+      {/* ————— CORPS ————— */}
       <div className="mx-auto flex w-full max-w-6xl min-w-0">
         {/* Sidebar desktop */}
         <aside className="hidden w-72 flex-col bg-[#003766] text-white lg:flex">
@@ -1712,7 +1772,7 @@ export default function ParentPage() {
                     <div className="min-w-0 text-left">
                       <div className="truncate">{k.full_name}</div>
                       <div className="truncate text-[12px] text-emerald-100">
-                        {k.class_label || "â€”"}
+                        {k.class_label || "—"}
                       </div>
                     </div>
                   </button>
@@ -1733,7 +1793,7 @@ export default function ParentPage() {
               section="conduct"
             />
             <SidebarNavItem
-              label="Cahier dâ€™absences"
+              label="Cahier d’absences"
               icon={<IconClipboard />}
               section="absences"
             />
@@ -1752,10 +1812,10 @@ export default function ParentPage() {
               iconLeft={<IconPower />}
               className="w-full justify-start rounded-2xl"
             >
-              {loggingOut ? "DÃ©connexionâ€¦" : "Se dÃ©connecter"}
+              {loggingOut ? "Déconnexion…" : "Se déconnecter"}
             </Button>
             <div className="mt-4 leading-tight text-white/80">
-              <div className="text-[12px] opacity-80">DÃ©veloppÃ© par</div>
+              <div className="text-[12px] opacity-80">Développé par</div>
               <div className="text-[15px] font-extrabold text-amber-300">
                 Nexa Digital
               </div>
@@ -1766,10 +1826,10 @@ export default function ParentPage() {
         {/* Contenu principal */}
         <main className="flex-1 min-w-0 px-3 py-5 lg:px-6 lg:py-6 pb-[calc(96px+env(safe-area-inset-bottom))]">
           <div className="mb-2 text-[12px] text-slate-500">
-            Vous Ãªtes ici : <span className="mx-1">â€º</span> Accueil
+            Vous êtes ici : <span className="mx-1">›</span> {currentSectionMeta.breadcrumb}
           </div>
           <h1 className="mb-4 text-2xl font-extrabold text-slate-900">
-            Bienvenue sur Mon Cahier
+            {currentSectionMeta.title}
           </h1>
 
           {msg && (
@@ -1778,299 +1838,363 @@ export default function ParentPage() {
             </div>
           )}
 
-          {/* Onglet */}
           <div className="mb-4 border-b border-slate-200">
             <button className="rounded-t-2xl border border-b-0 border-slate-200 bg-white px-5 py-3 text-[15px] font-extrabold text-[#003766]">
-              Accueil
+              {currentSectionMeta.tab}
             </button>
           </div>
 
-          {/* Carte Bienvenue */}
-          <section className="mb-6 overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
-            <div className="relative border-b border-slate-200 bg-gradient-to-r from-[#003766] via-[#004a84] to-[#006633] px-5 py-5 text-white">
-              <div className="absolute right-0 top-0 h-28 w-28 rounded-full bg-white/10 blur-2xl" />
-              <div className="absolute bottom-0 left-10 h-20 w-20 rounded-full bg-emerald-300/20 blur-2xl" />
+          {isDashboard && (
+            <>
+              <section className="mb-6 overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+                <div className="relative border-b border-slate-200 bg-gradient-to-r from-[#003766] via-[#004a84] to-[#006633] px-5 py-5 text-white">
+                  <div className="absolute right-0 top-0 h-28 w-28 rounded-full bg-white/10 blur-2xl" />
+                  <div className="absolute bottom-0 left-10 h-20 w-20 rounded-full bg-emerald-300/20 blur-2xl" />
 
-              <div className="relative flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                <div>
-                  <div className="inline-flex items-center gap-3 text-[15px] font-extrabold">
-                    <span className="flex h-8 w-8 items-center justify-center rounded-full border border-white/50 text-sm">
-                      â†’
-                    </span>
-                    <span>Bienvenue</span>
-                  </div>
-                  <p className="mt-3 max-w-2xl text-[14px] text-white/90">
-                    Consultez les absences, la conduite, les notes publiÃ©es et
-                    configurez vos notifications pour rester informÃ© en temps rÃ©el.
-                  </p>
-                </div>
-
-                <div className="flex flex-wrap items-center gap-2">
-                  <Badge tone="emerald">
-                    Push standard {granted ? "activÃ©" : "disponible"}
-                  </Badge>
-                  <Badge tone={smsAnyPremiumEnabled ? "amber" : "slate"}>
-                    SMS premium {smsAnyPremiumEnabled ? "disponible" : "non activÃ©"}
-                  </Badge>
-                </div>
-              </div>
-            </div>
-
-            <div className="space-y-4 px-5 py-5 text-[15px] text-slate-700">
-              <div className="rounded-2xl border border-red-300 bg-red-50 px-4 py-3 text-[15px] text-red-700">
-                <div className="text-[16px] font-extrabold uppercase">
-                  Information
-                </div>
-                <p className="mt-2">
-                  Pour recevoir une alerte dÃ¨s qu&apos;une absence, un retard ou
-                  une note est enregistrÃ©e, activez les notifications push sur
-                  votre tÃ©lÃ©phone. Vous pouvez aussi enregistrer votre numÃ©ro
-                  pour la formule SMS premium si votre Ã©tablissement l&apos;active.
-                </p>
-              </div>
-
-              <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
-                {!granted ? (
-                  <Button
-                    tone="emerald"
-                    onClick={enablePush}
-                    title="Activer les notifications push"
-                    iconLeft={<IconBell />}
-                    className="w-full"
-                  >
-                    Activer les notifications
-                  </Button>
-                ) : (
-                  <div className="w-full rounded-2xl bg-emerald-50 px-4 py-3 text-[14px] font-bold text-emerald-700 ring-1 ring-emerald-200">
-                    Notifications push activÃ©es âœ…
-                  </div>
-                )}
-
-                <Button
-                  tone="slate"
-                  onClick={safeLogout}
-                  disabled={loggingOut}
-                  iconLeft={<IconPower />}
-                  className="w-full"
-                >
-                  {loggingOut ? "DÃ©connexionâ€¦" : "Se dÃ©connecter"}
-                </Button>
-              </div>
-            </div>
-          </section>
-
-          {/* Bloc SMS premium */}
-          <section className="mb-6 overflow-hidden rounded-3xl border border-amber-200 bg-white shadow-sm">
-            <div className="relative border-b border-amber-100 bg-gradient-to-r from-amber-500 via-orange-500 to-rose-500 px-5 py-5 text-white">
-              <div className="absolute right-0 top-0 h-28 w-28 rounded-full bg-white/10 blur-2xl" />
-              <div className="absolute bottom-0 left-10 h-20 w-20 rounded-full bg-yellow-200/20 blur-2xl" />
-
-              <div className="relative flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-                <div className="min-w-0">
-                  <div className="inline-flex items-center gap-2 text-[15px] font-extrabold">
-                    <IconSparkles />
-                    <span>Notifications premium SMS</span>
-                  </div>
-                  <p className="mt-2 max-w-2xl text-[14px] text-white/90">
-                    Enregistrez votre numÃ©ro principal pour recevoir, si activÃ© par
-                    lâ€™Ã©tablissement, des SMS premium sur les absences et les retards.
-                  </p>
-                </div>
-
-                <div className="flex flex-wrap items-center gap-2">
-                  <Badge tone={smsAnyPremiumEnabled ? "amber" : "slate"}>
-                    {smsAnyPremiumEnabled ? "Premium disponible" : "Premium inactif"}
-                  </Badge>
-                  <Badge tone={smsPrimaryContact?.phone_e164 ? "emerald" : "slate"}>
-                    {smsPrimaryContact?.phone_e164
-                      ? "NumÃ©ro enregistrÃ©"
-                      : "NumÃ©ro non configurÃ©"}
-                  </Badge>
-                </div>
-              </div>
-            </div>
-
-            <div className="space-y-4 px-5 py-5">
-              {smsMsg && (
-                <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-[14px] text-amber-900">
-                  {smsMsg}
-                </div>
-              )}
-
-              {smsLoading ? (
-                <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-                  <Skeleton className="h-36 w-full" />
-                  <Skeleton className="h-36 w-full lg:col-span-2" />
-                </div>
-              ) : (
-                <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-                  {/* RÃ©sumÃ© premium */}
-                  <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
-                    <div className="flex items-start gap-3">
-                      <div className="grid h-12 w-12 place-items-center rounded-2xl bg-amber-100 text-amber-700">
-                        <IconShield />
+                  <div className="relative flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                    <div>
+                      <div className="inline-flex items-center gap-3 text-[15px] font-extrabold">
+                        <span className="flex h-8 w-8 items-center justify-center rounded-full border border-white/50 text-sm">
+                          →
+                        </span>
+                        <span>Bienvenue</span>
                       </div>
-                      <div className="min-w-0">
-                        <div className="text-[16px] font-extrabold text-slate-900">
-                          Ã‰tat du service
-                        </div>
-                        <div className="mt-1 text-[13px] text-slate-600">
-                          {smsSummaryLabel}
-                        </div>
-                      </div>
+                      <p className="mt-3 max-w-2xl text-[14px] text-white/90">
+                        Consultez les absences, la conduite, les notes publiées et configurez vos notifications pour rester informé en temps réel.
+                      </p>
                     </div>
 
-                    <div className="mt-4 space-y-2">
-                      <div className="flex items-center justify-between gap-3 rounded-2xl bg-white px-3 py-2 ring-1 ring-slate-200">
-                        <span className="text-[13px] font-semibold text-slate-700">
-                          NumÃ©ro actuel
-                        </span>
-                        <span className="text-[13px] font-extrabold text-slate-900">
-                          {formatPhoneForDisplay(smsPrimaryContact?.phone_e164)}
-                        </span>
-                      </div>
-
-                      <div className="flex items-center justify-between gap-3 rounded-2xl bg-white px-3 py-2 ring-1 ring-slate-200">
-                        <span className="text-[13px] font-semibold text-slate-700">
-                          Ã‰vÃ©nements SMS
-                        </span>
-                        <span className="text-[13px] font-extrabold text-slate-900">
-                          {smsActiveSetting?.sms_absence_enabled ||
-                          smsActiveSetting?.sms_late_enabled
-                            ? "Absences / retards"
-                            : "Non activÃ©s"}
-                        </span>
-                      </div>
-
-                      <div className="flex items-center justify-between gap-3 rounded-2xl bg-white px-3 py-2 ring-1 ring-slate-200">
-                        <span className="text-[13px] font-semibold text-slate-700">
-                          Fournisseur
-                        </span>
-                        <span className="text-[13px] font-extrabold uppercase text-slate-900">
-                          {smsActiveSetting?.sms_provider || "â€”"}
-                        </span>
-                      </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Badge tone="emerald">
+                        Push standard {granted ? "activé" : "disponible"}
+                      </Badge>
+                      <Badge tone={smsAnyPremiumEnabled ? "amber" : "slate"}>
+                        SMS premium {smsAnyPremiumEnabled ? "disponible" : "non activé"}
+                      </Badge>
                     </div>
                   </div>
+                </div>
 
-                  {/* Formulaire */}
-                  <div className="lg:col-span-2 rounded-3xl border border-slate-200 bg-white p-4">
-                    <div className="mb-4 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-                      <div>
-                        <div className="text-[16px] font-extrabold text-slate-900">
-                          Configurer mon numÃ©ro principal
-                        </div>
-                        <div className="mt-1 text-[13px] text-slate-600">
-                          Format conseillÃ© : +225XXXXXXXXXX ou numÃ©ro ivoirien local.
-                        </div>
-                      </div>
-
-                      <div className="flex flex-wrap items-center gap-2">
-                        {smsActiveSetting?.sms_absence_enabled && (
-                          <Badge tone="amber">SMS absence</Badge>
-                        )}
-                        {smsActiveSetting?.sms_late_enabled && (
-                          <Badge tone="amber">SMS retard</Badge>
-                        )}
-                        {smsActiveSetting?.sms_notes_digest_enabled && (
-                          <Badge tone="amber">Digest notes</Badge>
-                        )}
-                      </div>
+                <div className="space-y-4 px-5 py-5 text-[15px] text-slate-700">
+                  <div className="rounded-2xl border border-red-300 bg-red-50 px-4 py-3 text-[15px] text-red-700">
+                    <div className="text-[16px] font-extrabold uppercase">
+                      Information
                     </div>
+                    <p className="mt-2">
+                      Pour recevoir une alerte dès qu’une absence, un retard ou une note est enregistrée, activez les notifications push sur votre téléphone. Vous pouvez aussi enregistrer votre numéro pour la formule SMS premium si votre établissement l’active.
+                    </p>
+                  </div>
 
-                    <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                      <div className="md:col-span-2">
-                        <label className="mb-2 block text-[13px] font-bold text-slate-700">
-                          NumÃ©ro de tÃ©lÃ©phone
-                        </label>
-                        <div className="relative">
-                          <span className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-slate-400">
-                            <IconPhone />
-                          </span>
-                          <Input
-                            value={smsPhone}
-                            onChange={(e) => setSmsPhone(e.target.value)}
-                            placeholder="+2250700000000"
-                            className="pl-12"
-                          />
-                        </div>
-                      </div>
-
-                      <div className="md:col-span-2">
-                        <Toggle
-                          checked={smsEnabled}
-                          onChange={setSmsEnabled}
-                          label="Recevoir les SMS premium"
-                          description={
-                            smsAnyPremiumEnabled
-                              ? "Le numÃ©ro sera utilisÃ© lorsque lâ€™Ã©tablissement activera lâ€™envoi SMS pour vos alertes."
-                              : "Vous pouvez enregistrer votre numÃ©ro maintenant. Il sera prÃªt dÃ¨s lâ€™activation du module premium."
-                          }
-                        />
-                      </div>
-                    </div>
-
-                    <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
+                  <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                    {!granted ? (
                       <Button
                         tone="emerald"
-                        onClick={saveSmsContact}
-                        disabled={smsSaving || !smsPhone.trim()}
-                        iconLeft={<IconPhone />}
+                        onClick={enablePush}
+                        title="Activer les notifications push"
+                        iconLeft={<IconBell />}
                         className="w-full"
                       >
-                        {smsSaving
-                          ? "Enregistrementâ€¦"
-                          : smsPrimaryContact?.id
-                            ? "Mettre Ã  jour"
-                            : "Enregistrer"}
+                        Activer les notifications
                       </Button>
+                    ) : (
+                      <div className="w-full rounded-2xl bg-emerald-50 px-4 py-3 text-[14px] font-bold text-emerald-700 ring-1 ring-emerald-200">
+                        Notifications push activées ✅
+                      </div>
+                    )}
 
-                      <Button
-                        tone="white"
-                        onClick={() => loadSmsContacts()}
-                        disabled={smsSaving}
-                        className="w-full"
-                      >
-                        Actualiser
-                      </Button>
+                    <Button
+                      tone="slate"
+                      onClick={safeLogout}
+                      disabled={loggingOut}
+                      iconLeft={<IconPower />}
+                      className="w-full"
+                    >
+                      {loggingOut ? "Déconnexion…" : "Se déconnecter"}
+                    </Button>
+                  </div>
+                </div>
+              </section>
 
-                      <Button
-                        tone="red"
-                        onClick={removeSmsContact}
-                        disabled={smsSaving || !smsPrimaryContact?.id}
-                        className="w-full"
-                      >
-                        Supprimer
-                      </Button>
+              <section className="mb-6 grid grid-cols-1 gap-4 xl:grid-cols-[1.3fr_0.7fr]">
+                <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+                  <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                    <div>
+                      <div className="text-[18px] font-extrabold text-slate-900">
+                        Ajouter un enfant par matricule
+                      </div>
+                      <div className="mt-1 text-[14px] text-slate-600">
+                        Le parent n’a plus besoin de se déconnecter puis se reconnecter. Il peut ajouter directement un autre enfant depuis ce tableau de bord.
+                      </div>
+                    </div>
+                    <Badge tone="slate">{kids.length} enfant{kids.length > 1 ? "s" : ""} lié{kids.length > 1 ? "s" : ""}</Badge>
+                  </div>
+
+                  <form onSubmit={attachChildByMatricule} className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-[1fr_auto]">
+                    <div>
+                      <label className="mb-2 block text-[13px] font-bold text-slate-700">
+                        Matricule élève
+                      </label>
+                      <Input
+                        value={attachMatricule}
+                        onChange={(e) => setAttachMatricule(e.target.value.toUpperCase())}
+                        placeholder="Ex : 20166309J"
+                        autoCapitalize="characters"
+                        autoCorrect="off"
+                        spellCheck={false}
+                        inputMode="text"
+                      />
                     </div>
 
-                    <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-[13px] text-slate-600">
-                      <b>Important :</b> les notifications push restent la formule
-                      standard. Le SMS est une option premium, activÃ©e selon les
-                      choix de lâ€™Ã©tablissement.
+                    <div className="flex items-end">
+                      <Button
+                        type="submit"
+                        tone="emerald"
+                        disabled={attachBusy || !attachMatricule.trim()}
+                        className="w-full md:w-auto"
+                      >
+                        {attachBusy ? "Ajout…" : "Ajouter"}
+                      </Button>
+                    </div>
+                  </form>
+
+                  {attachMsg && (
+                    <div className="mt-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-[14px] text-slate-700">
+                      {attachMsg}
+                    </div>
+                  )}
+
+                  <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-[13px] text-slate-600">
+                    Astuce : après ajout, l’enfant apparaît automatiquement dans la liste du sidebar et vous pouvez basculer d’un enfant à l’autre sans quitter la session.
+                  </div>
+                </div>
+
+                <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+                  <div className="text-[18px] font-extrabold text-slate-900">
+                    Vue active
+                  </div>
+                  <div className="mt-4 space-y-3">
+                    <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                      <div className="text-[12px] font-semibold uppercase tracking-wide text-slate-500">
+                        Section affichée
+                      </div>
+                      <div className="mt-1 text-[16px] font-extrabold text-slate-900">
+                        {currentSectionMeta.tab}
+                      </div>
+                    </div>
+
+                    <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                      <div className="text-[12px] font-semibold uppercase tracking-wide text-slate-500">
+                        Enfant sélectionné
+                      </div>
+                      <div className="mt-1 text-[16px] font-extrabold text-slate-900">
+                        {activeChildId === "all"
+                          ? "Vue globale"
+                          : kids.find((k) => k.id === activeChildId)?.full_name || "Vue globale"}
+                      </div>
+                    </div>
+
+                    <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-[13px] text-slate-600">
+                      L’écran principal suit désormais le menu latéral : accueil, conduite, absences ou notes.
                     </div>
                   </div>
                 </div>
-              )}
-            </div>
-          </section>
+              </section>
 
-          {/* Hint iOS */}
-          {isiOS && !isStandalone && !granted && (
-            <div className="mb-5 rounded-2xl border border-amber-200/60 bg-amber-50/90 p-4 text-[14px] text-amber-900 shadow-sm">
-              <b>iPhone/iPad :</b> pour recevoir les notifications, ajoutez dâ€™abord
-              lâ€™application Ã  lâ€™Ã©cran dâ€™accueil : ouvrez cette page dans{" "}
-              <b>Safari</b> â†’ <b>Partager</b> â†’ <b>Ajouter Ã  lâ€™Ã©cran dâ€™accueil</b>,
-              puis rouvrez lâ€™app et appuyez sur Â« Activer les notifications Â».
-            </div>
+              <section className="mb-6 overflow-hidden rounded-3xl border border-amber-200 bg-white shadow-sm">
+                <div className="relative border-b border-amber-100 bg-gradient-to-r from-amber-500 via-orange-500 to-rose-500 px-5 py-5 text-white">
+                  <div className="absolute right-0 top-0 h-28 w-28 rounded-full bg-white/10 blur-2xl" />
+                  <div className="absolute bottom-0 left-10 h-20 w-20 rounded-full bg-yellow-200/20 blur-2xl" />
+
+                  <div className="relative flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                    <div className="min-w-0">
+                      <div className="inline-flex items-center gap-2 text-[15px] font-extrabold">
+                        <IconSparkles />
+                        <span>Notifications premium SMS</span>
+                      </div>
+                      <p className="mt-2 max-w-2xl text-[14px] text-white/90">
+                        Enregistrez votre numéro principal pour recevoir, si activé par l’établissement, des SMS premium sur les absences et les retards.
+                      </p>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Badge tone={smsAnyPremiumEnabled ? "amber" : "slate"}>
+                        {smsAnyPremiumEnabled ? "Premium disponible" : "Premium inactif"}
+                      </Badge>
+                      <Badge tone={smsPrimaryContact?.phone_e164 ? "emerald" : "slate"}>
+                        {smsPrimaryContact?.phone_e164 ? "Numéro enregistré" : "Numéro non configuré"}
+                      </Badge>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="space-y-4 px-5 py-5">
+                  {smsMsg && (
+                    <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-[14px] text-amber-900">
+                      {smsMsg}
+                    </div>
+                  )}
+
+                  {smsLoading ? (
+                    <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+                      <Skeleton className="h-36 w-full" />
+                      <Skeleton className="h-36 w-full lg:col-span-2" />
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+                      <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
+                        <div className="flex items-start gap-3">
+                          <div className="grid h-12 w-12 place-items-center rounded-2xl bg-amber-100 text-amber-700">
+                            <IconShield />
+                          </div>
+                          <div className="min-w-0">
+                            <div className="text-[16px] font-extrabold text-slate-900">
+                              État du service
+                            </div>
+                            <div className="mt-1 text-[13px] text-slate-600">
+                              {smsSummaryLabel}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="mt-4 space-y-2">
+                          <div className="flex items-center justify-between gap-3 rounded-2xl bg-white px-3 py-2 ring-1 ring-slate-200">
+                            <span className="text-[13px] font-semibold text-slate-700">
+                              Numéro actuel
+                            </span>
+                            <span className="text-[13px] font-extrabold text-slate-900">
+                              {formatPhoneForDisplay(smsPrimaryContact?.phone_e164)}
+                            </span>
+                          </div>
+
+                          <div className="flex items-center justify-between gap-3 rounded-2xl bg-white px-3 py-2 ring-1 ring-slate-200">
+                            <span className="text-[13px] font-semibold text-slate-700">
+                              Événements SMS
+                            </span>
+                            <span className="text-[13px] font-extrabold text-slate-900">
+                              {smsActiveSetting?.sms_absence_enabled || smsActiveSetting?.sms_late_enabled
+                                ? "Absences / retards"
+                                : "Non activés"}
+                            </span>
+                          </div>
+
+                          <div className="flex items-center justify-between gap-3 rounded-2xl bg-white px-3 py-2 ring-1 ring-slate-200">
+                            <span className="text-[13px] font-semibold text-slate-700">
+                              Fournisseur
+                            </span>
+                            <span className="text-[13px] font-extrabold uppercase text-slate-900">
+                              {smsActiveSetting?.sms_provider || "—"}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="lg:col-span-2 rounded-3xl border border-slate-200 bg-white p-4">
+                        <div className="mb-4 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                          <div>
+                            <div className="text-[16px] font-extrabold text-slate-900">
+                              Configurer mon numéro principal
+                            </div>
+                            <div className="mt-1 text-[13px] text-slate-600">
+                              Format conseillé : +225XXXXXXXXXX ou numéro ivoirien local.
+                            </div>
+                          </div>
+
+                          <div className="flex flex-wrap items-center gap-2">
+                            {smsActiveSetting?.sms_absence_enabled && <Badge tone="amber">SMS absence</Badge>}
+                            {smsActiveSetting?.sms_late_enabled && <Badge tone="amber">SMS retard</Badge>}
+                            {smsActiveSetting?.sms_notes_digest_enabled && <Badge tone="amber">Digest notes</Badge>}
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                          <div className="md:col-span-2">
+                            <label className="mb-2 block text-[13px] font-bold text-slate-700">
+                              Numéro de téléphone
+                            </label>
+                            <div className="relative">
+                              <span className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-slate-400">
+                                <IconPhone />
+                              </span>
+                              <Input
+                                value={smsPhone}
+                                onChange={(e) => setSmsPhone(e.target.value)}
+                                placeholder="+2250700000000"
+                                className="pl-12"
+                              />
+                            </div>
+                          </div>
+
+                          <div className="md:col-span-2">
+                            <Toggle
+                              checked={smsEnabled}
+                              onChange={setSmsEnabled}
+                              label="Recevoir les SMS premium"
+                              description={
+                                smsAnyPremiumEnabled
+                                  ? "Le numéro sera utilisé lorsque l’établissement activera l’envoi SMS pour vos alertes."
+                                  : "Vous pouvez enregistrer votre numéro maintenant. Il sera prêt dès l’activation du module premium."
+                              }
+                            />
+                          </div>
+                        </div>
+
+                        <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
+                          <Button
+                            tone="emerald"
+                            onClick={saveSmsContact}
+                            disabled={smsSaving || !smsPhone.trim()}
+                            iconLeft={<IconPhone />}
+                            className="w-full"
+                          >
+                            {smsSaving
+                              ? "Enregistrement…"
+                              : smsPrimaryContact?.id
+                                ? "Mettre à jour"
+                                : "Enregistrer"}
+                          </Button>
+
+                          <Button
+                            tone="white"
+                            onClick={() => loadSmsContacts()}
+                            disabled={smsSaving}
+                            className="w-full"
+                          >
+                            Actualiser
+                          </Button>
+
+                          <Button
+                            tone="red"
+                            onClick={removeSmsContact}
+                            disabled={smsSaving || !smsPrimaryContact?.id}
+                            className="w-full"
+                          >
+                            Supprimer
+                          </Button>
+                        </div>
+
+                        <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-[13px] text-slate-600">
+                          <b>Important :</b> les notifications push restent la formule standard. Le SMS est une option premium, activée selon les choix de l’établissement.
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </section>
+
+              {isiOS && !isStandalone && !granted && (
+                <div className="mb-5 rounded-2xl border border-amber-200/60 bg-amber-50/90 p-4 text-[14px] text-amber-900 shadow-sm">
+                  <b>iPhone/iPad :</b> pour recevoir les notifications, ajoutez d’abord l’application à l’écran d’accueil : ouvrez cette page dans <b>Safari</b> → <b>Partager</b> → <b>Ajouter à l’écran d’accueil</b>, puis rouvrez l’app et appuyez sur « Activer les notifications ».
+                </div>
+              )}
+            </>
           )}
 
-          {/* â”€â”€â”€â”€â”€ CONDUITE â”€â”€â”€â”€â”€ */}
+          {/* ————— CONDUITE ————— */}
           {showConductSection && (
             <section className="mb-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
               <div className="mb-4 flex items-center justify-between gap-3">
                 <div className="text-[13px] font-extrabold uppercase tracking-wide text-slate-700">
-                  Conduite â€” points par rubrique
+                  Conduite — points par rubrique
                 </div>
 
                 <div className="hidden items-center gap-2 md:flex">
@@ -2090,7 +2214,7 @@ export default function ParentPage() {
                     disabled={loadingConduct}
                     className="px-4 py-3 text-[14px]"
                   >
-                    {loadingConduct ? "â€¦" : "Valider"}
+                    {loadingConduct ? "…" : "Valider"}
                   </Button>
                 </div>
               </div>
@@ -2112,7 +2236,7 @@ export default function ParentPage() {
                     onClick={applyConductFilter}
                     disabled={loadingConduct}
                   >
-                    {loadingConduct ? "â€¦" : "Valider"}
+                    {loadingConduct ? "…" : "Valider"}
                   </Button>
                 </div>
               </div>
@@ -2125,7 +2249,7 @@ export default function ParentPage() {
                 </div>
               ) : !hasKids ? (
                 <div className="flex items-center justify-between rounded-2xl border bg-slate-50 p-4 text-[15px] text-slate-700">
-                  <div>Aucun enfant liÃ© Ã  votre compte pour lâ€™instant.</div>
+                  <div>Aucun enfant lié à votre compte pour l’instant.</div>
                   {!granted && (
                     <Button
                       tone="outline"
@@ -2152,13 +2276,13 @@ export default function ParentPage() {
                                 {k.full_name}
                               </div>
                               <div className="text-[13px] text-slate-600">
-                                {k.class_label || "â€”"}
+                                {k.class_label || "—"}
                               </div>
                             </div>
                             {c ? (
                               <Badge tone="emerald">Points de conduite</Badge>
                             ) : (
-                              <Badge>â€”</Badge>
+                              <Badge>—</Badge>
                             )}
                           </div>
 
@@ -2166,7 +2290,7 @@ export default function ParentPage() {
                             <div className="mt-4 space-y-4">
                               <div className="grid grid-cols-2 gap-4">
                                 <VerticalGauge
-                                  label="AssiduitÃ©"
+                                  label="Assiduité"
                                   value={c.breakdown.assiduite}
                                   max={c.rubric_max.assiduite}
                                   rubric="assiduite"
@@ -2178,7 +2302,7 @@ export default function ParentPage() {
                                   rubric="tenue"
                                 />
                                 <VerticalGauge
-                                  label="MoralitÃ©"
+                                  label="Moralité"
                                   value={c.breakdown.moralite}
                                   max={c.rubric_max.moralite}
                                   rubric="moralite"
@@ -2193,14 +2317,14 @@ export default function ParentPage() {
 
                               <div className="rounded-2xl bg-slate-50 px-4 py-3 text-[14px] text-slate-700">
                                 <span className="font-extrabold">
-                                  ApprÃ©ciation :{" "}
+                                  Appréciation :{" "}
                                 </span>
                                 {c.appreciation}
                               </div>
                             </div>
                           ) : (
                             <div className="mt-3 text-[15px] text-slate-600">
-                              â€”
+                              —
                             </div>
                           )}
                         </div>
@@ -2228,19 +2352,19 @@ export default function ParentPage() {
                               <th className="px-4 py-3 text-left">Enfant</th>
                               <th className="px-4 py-3 text-left">Classe</th>
                               <th className="px-4 py-3 text-left">
-                                AssiduitÃ© (/{rubricMax.assiduite})
+                                Assiduité (/{rubricMax.assiduite})
                               </th>
                               <th className="px-4 py-3 text-left">
                                 Tenue (/{rubricMax.tenue})
                               </th>
                               <th className="px-4 py-3 text-left">
-                                MoralitÃ© (/{rubricMax.moralite})
+                                Moralité (/{rubricMax.moralite})
                               </th>
                               <th className="px-4 py-3 text-left">
                                 Discipline (/{rubricMax.discipline})
                               </th>
                               <th className="px-4 py-3 text-left">
-                                ApprÃ©ciation
+                                Appréciation
                               </th>
                             </tr>
                           </thead>
@@ -2256,7 +2380,7 @@ export default function ParentPage() {
                                     {k.full_name}
                                   </td>
                                   <td className="px-4 py-3">
-                                    {k.class_label || "â€”"}
+                                    {k.class_label || "—"}
                                   </td>
                                   {c ? (
                                     <>
@@ -2293,7 +2417,7 @@ export default function ParentPage() {
                                       className="px-4 py-3 text-slate-600"
                                       colSpan={5}
                                     >
-                                      â€”
+                                      —
                                     </td>
                                   )}
                                 </tr>
@@ -2309,13 +2433,13 @@ export default function ParentPage() {
             </section>
           )}
 
-          {/* â”€â”€â”€â”€â”€ ABSENCES / SANCTIONS â”€â”€â”€â”€â”€ */}
+          {/* ————— ABSENCES / SANCTIONS ————— */}
           {showEventsSection && (
             <section className="mb-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
               {(() => {
                 const title = isAbsences
-                  ? "Cahier dâ€™absences â€” absences/retards rÃ©cents et sanctions"
-                  : "Mes enfants â€” absences/retards rÃ©cents, sanctions et notes publiÃ©es";
+                  ? "Cahier d’absences — absences/retards récents et sanctions"
+                  : "Mes enfants — absences/retards récents, sanctions et notes publiées";
 
                 return (
                   <div className="mb-4 flex items-center justify-between gap-3">
@@ -2325,7 +2449,7 @@ export default function ParentPage() {
                     <div className="flex items-center gap-2">
                       {granted ? (
                         <span className="text-[13px] font-bold text-emerald-700">
-                          Notifications dÃ©jÃ  activÃ©es âœ…
+                          Notifications déjà activées ✅
                         </span>
                       ) : (
                         <Button
@@ -2350,7 +2474,7 @@ export default function ParentPage() {
                 </div>
               ) : !hasKids ? (
                 <div className="rounded-2xl border bg-slate-50 p-4 text-[15px] text-slate-700">
-                  Aucun enfant liÃ© Ã  votre compte pour lâ€™instant.
+                  Aucun enfant lié à votre compte pour l’instant.
                 </div>
               ) : (
                 <div className="space-y-4 md:grid md:grid-cols-2 md:gap-5 md:space-y-0 xl:grid-cols-3">
@@ -2385,7 +2509,7 @@ export default function ParentPage() {
                                 <div className="truncate font-extrabold text-slate-900 text-[15px]">
                                   {k.full_name}{" "}
                                   <span className="text-[13px] font-semibold text-slate-600">
-                                    ({k.class_label || "â€”"})
+                                    ({k.class_label || "—"})
                                   </span>
                                 </div>
                               </div>
@@ -2401,7 +2525,7 @@ export default function ParentPage() {
                                 }
                                 className="shrink-0 text-[13px] font-semibold text-slate-700 underline-offset-2 hover:underline"
                               >
-                                {showAll ? "RÃ©duire" : "Voir plus"}
+                                {showAll ? "Réduire" : "Voir plus"}
                               </button>
                             )}
                           </div>
@@ -2427,8 +2551,8 @@ export default function ParentPage() {
                                     }`,
                                   );
                                 const summary = parts.length
-                                  ? parts.join(" â€¢ ")
-                                  : "Aucun Ã©vÃ¨nement";
+                                  ? parts.join(" ¢ ")
+                                  : "Aucun évènement";
 
                                 return (
                                   <li
@@ -2454,7 +2578,7 @@ export default function ParentPage() {
                                         >
                                           {isOpen || hasSingle
                                             ? "Masquer"
-                                            : "Voir dÃ©tails"}
+                                            : "Voir détails"}
                                         </button>
                                       )}
                                     </div>
@@ -2479,7 +2603,7 @@ export default function ParentPage() {
                                                     </Badge>
                                                   )}
                                                   <span className="ml-2 font-semibold">
-                                                    {ev.subject_name || "â€”"}
+                                                    {ev.subject_name || "—"}
                                                   </span>
                                                 </div>
                                                 <div className="mt-1 text-[13px] text-slate-600">
@@ -2489,7 +2613,7 @@ export default function ParentPage() {
                                                   )}{" "}
                                                   {ev.type === "late" &&
                                                   ev.minutes_late
-                                                    ? `â€¢ ${ev.minutes_late} min`
+                                                    ? `¢ ${ev.minutes_late} min`
                                                     : ""}
                                                 </div>
                                               </div>
@@ -2506,7 +2630,7 @@ export default function ParentPage() {
 
                               {visibleGroups.length === 0 && (
                                 <li className="py-2 text-[15px] text-slate-600">
-                                  Aucun Ã©vÃ¨nement rÃ©cent.
+                                  Aucun évènement récent.
                                 </li>
                               )}
                             </ul>
@@ -2516,7 +2640,7 @@ export default function ParentPage() {
                             <div className="mt-4 rounded-2xl border bg-amber-50/40 p-4">
                               <div className="flex items-center justify-between gap-3">
                                 <div className="text-[15px] font-extrabold text-slate-800">
-                                  Sanctions rÃ©centes
+                                  Sanctions récentes
                                 </div>
                                 {(kidPenalties[k.id]?.length || 0) > 5 && (
                                   <button
@@ -2529,7 +2653,7 @@ export default function ParentPage() {
                                     className="text-[13px] font-semibold text-slate-700 underline-offset-2 hover:underline"
                                   >
                                     {showAllPenForKid[k.id]
-                                      ? "RÃ©duire"
+                                      ? "Réduire"
                                       : "Voir plus"}
                                   </button>
                                 )}
@@ -2537,7 +2661,7 @@ export default function ParentPage() {
 
                               {(kidPenalties[k.id]?.length || 0) === 0 ? (
                                 <div className="mt-3 text-[15px] text-slate-600">
-                                  Aucune sanction rÃ©cente.
+                                  Aucune sanction récente.
                                 </div>
                               ) : (
                                 <ul className="mt-3 divide-y">
@@ -2553,7 +2677,7 @@ export default function ParentPage() {
                                           </Badge>
                                         </span>
                                         <span className="font-extrabold">
-                                          âˆ’
+                                          −
                                           {Number(p.points || 0)
                                             .toFixed(2)
                                             .replace(".", ",")}{" "}
@@ -2561,14 +2685,14 @@ export default function ParentPage() {
                                         </span>
                                         {p.reason?.trim() ? (
                                           <span className="ml-2 text-[13px] text-slate-600">
-                                            â€” {p.reason.trim()}
+                                            — {p.reason.trim()}
                                           </span>
                                         ) : null}
                                       </div>
 
                                       <div className="mt-1 text-[13px] text-slate-500">
                                         {fmt(p.when)}
-                                        {p.class_label ? ` â€¢ ${p.class_label}` : ""}
+                                        {p.class_label ? ` ¢ ${p.class_label}` : ""}
                                       </div>
                                     </li>
                                   ))}
@@ -2580,7 +2704,7 @@ export default function ParentPage() {
                           {showNotesBlock && (
                             <div className="mt-4 rounded-2xl border bg-slate-50 p-4">
                               <div className="mb-2 text-[15px] font-extrabold text-slate-800">
-                                Notes publiÃ©es (aperÃ§u)
+                                Notes publiées (aperçu)
                               </div>
                               <ul className="space-y-2 text-[14px] text-slate-700">
                                 {gradesForKid.slice(0, 3).map((g) => (
@@ -2590,7 +2714,7 @@ export default function ParentPage() {
                                   >
                                     <div className="min-w-0">
                                       <div className="truncate font-semibold">
-                                        {g.subject_name || "â€”"} Â·{" "}
+                                        {g.subject_name || "—"} ·{" "}
                                         {gradeKindLabel(g.eval_kind)}
                                       </div>
                                       <div className="text-[13px] text-slate-500">
@@ -2600,7 +2724,7 @@ export default function ParentPage() {
                                     <div className="shrink-0 text-right">
                                       {g.score == null ? (
                                         <span className="text-[13px] text-slate-500">
-                                          â€”
+                                          —
                                         </span>
                                       ) : (
                                         <span className="text-[15px] font-extrabold text-slate-900">
@@ -2629,7 +2753,7 @@ export default function ParentPage() {
             </section>
           )}
 
-          {/* â”€â”€â”€â”€â”€ CAHIER DE NOTES â€” onglet dÃ©diÃ© â”€â”€â”€â”€â”€ */}
+          {/* ————— CAHIER DE NOTES — onglet dédié ————— */}
           {showNotesSection && (
             <section className="mb-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
               <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
@@ -2638,7 +2762,7 @@ export default function ParentPage() {
                     Cahier de notes
                   </div>
                   <div className="text-[13px] text-slate-500">
-                    Notes publiÃ©es par les enseignants, filtrÃ©es par pÃ©riode.
+                    Notes publiées par les enseignants, filtrées par période.
                   </div>
                 </div>
 
@@ -2689,7 +2813,7 @@ export default function ParentPage() {
                 </div>
               ) : !hasKids ? (
                 <div className="rounded-2xl border bg-slate-50 p-4 text-[15px] text-slate-700">
-                  Aucun enfant liÃ© Ã  votre compte pour lâ€™instant.
+                  Aucun enfant lié à votre compte pour l’instant.
                 </div>
               ) : (
                 <div className="space-y-4">
@@ -2710,7 +2834,7 @@ export default function ParentPage() {
                       const key = subjectKey(g);
                       if (!key) continue;
                       if (!subjectMap.has(key))
-                        subjectMap.set(key, g.subject_name || "â€”");
+                        subjectMap.set(key, g.subject_name || "—");
                     }
                     const subjectList = Array.from(subjectMap.entries());
 
@@ -2744,14 +2868,14 @@ export default function ParentPage() {
                                 {k.full_name}
                               </div>
                               <div className="text-[13px] text-slate-600">
-                                {k.class_label || "â€”"}
+                                {k.class_label || "—"}
                               </div>
                             </div>
                           </div>
 
                           <div className="flex items-center gap-2">
                             <span className="text-[13px] font-semibold text-slate-500">
-                              MatiÃ¨res :
+                              Matières :
                             </span>
                             <div className="flex max-w-full gap-2 overflow-x-auto whitespace-nowrap pb-1">
                               <button
@@ -2805,7 +2929,7 @@ export default function ParentPage() {
 
                         {filtered.length === 0 ? (
                           <div className="rounded-2xl bg-white px-4 py-3 text-[14px] text-slate-600">
-                            Aucune note publiÃ©e pour cette pÃ©riode.
+                            Aucune note publiée pour cette période.
                           </div>
                         ) : (
                           <>
@@ -2818,11 +2942,11 @@ export default function ParentPage() {
                                   <div className="flex items-start justify-between gap-3">
                                     <div className="min-w-0">
                                       <div className="text-[15px] font-extrabold text-slate-900 truncate">
-                                        {g.subject_name || "â€”"}
+                                        {g.subject_name || "—"}
                                       </div>
                                       <div className="text-[13px] text-slate-600">
                                         {gradeKindLabel(g.eval_kind)}{" "}
-                                        {g.title ? `â€¢ ${g.title}` : ""}
+                                        {g.title ? `¢ ${g.title}` : ""}
                                       </div>
                                       <div className="mt-1 text-[13px] text-slate-500">
                                         {fmt(g.eval_date)}
@@ -2831,7 +2955,7 @@ export default function ParentPage() {
                                     <div className="shrink-0 text-right">
                                       {g.score == null ? (
                                         <span className="text-[13px] text-slate-500">
-                                          â€”
+                                          —
                                         </span>
                                       ) : (
                                         <span className="text-[16px] font-extrabold text-slate-900">
@@ -2851,7 +2975,7 @@ export default function ParentPage() {
                                   <tr>
                                     <th className="px-4 py-3 text-left">Date</th>
                                     <th className="px-4 py-3 text-left">
-                                      MatiÃ¨re
+                                      Matière
                                     </th>
                                     <th className="px-4 py-3 text-left">Type</th>
                                     <th className="px-4 py-3 text-left">
@@ -2870,18 +2994,18 @@ export default function ParentPage() {
                                         {fmt(g.eval_date)}
                                       </td>
                                       <td className="px-4 py-3">
-                                        {g.subject_name || "â€”"}
+                                        {g.subject_name || "—"}
                                       </td>
                                       <td className="px-4 py-3">
                                         {gradeKindLabel(g.eval_kind)}
                                       </td>
                                       <td className="px-4 py-3">
-                                        {g.title || "â€”"}
+                                        {g.title || "—"}
                                       </td>
                                       <td className="px-4 py-3 text-right">
                                         {g.score == null ? (
                                           <span className="text-slate-500">
-                                            â€”
+                                            —
                                           </span>
                                         ) : (
                                           <span className="font-extrabold text-slate-900">
