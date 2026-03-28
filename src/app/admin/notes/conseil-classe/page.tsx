@@ -256,6 +256,25 @@ type SubjectCouncilStat = {
   lt85: number;
 };
 
+
+type CurrentAffectationItem = {
+  teacher: {
+    id: string;
+    display_name: string | null;
+    email: string | null;
+    phone: string | null;
+  };
+  subject: {
+    id: string | null;
+    label: string;
+  };
+  classes: Array<{
+    id: string;
+    name: string | null;
+    level: string | null;
+  }>;
+};
+
 /* ───────── Helpers ───────── */
 
 function round2(n: number): number {
@@ -523,6 +542,7 @@ export default function ConseilClassePage() {
 
   const [bulletinRaw, setBulletinRaw] = useState<BulletinResponse | null>(null);
   const [conductSummary, setConductSummary] = useState<ConductSummaryResponse | null>(null);
+  const [currentAffectations, setCurrentAffectations] = useState<CurrentAffectationItem[]>([]);
 
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -657,6 +677,7 @@ export default function ConseilClassePage() {
     try {
       setLoading(true);
       setConductSummary(null);
+      setCurrentAffectations([]);
       setYearPeriodBulletins({});
 
       const params = new URLSearchParams();
@@ -664,9 +685,10 @@ export default function ConseilClassePage() {
       params.set("from", dateFrom);
       params.set("to", dateTo);
 
-      const [resBulletin, resConduct] = await Promise.all([
+      const [resBulletin, resConduct, resAffectations] = await Promise.all([
         fetch(`/api/admin/grades/bulletin?${params.toString()}`, { cache: "no-store" }),
         fetch(`/api/admin/conduite/averages?${params.toString()}`, { cache: "no-store" }),
+        fetch(`/api/admin/affectations/current`, { cache: "no-store" }),
       ]);
 
       if (!resBulletin.ok) {
@@ -690,6 +712,23 @@ export default function ConseilClassePage() {
         } catch (err) {
           console.warn("[ConseilClasse] lecture conduite impossible", err);
         }
+      }
+
+      if (resAffectations.ok) {
+        try {
+          const affectationsJson = (await resAffectations.json()) as {
+            items?: CurrentAffectationItem[];
+          };
+          setCurrentAffectations(
+            Array.isArray(affectationsJson?.items) ? affectationsJson.items : []
+          );
+        } catch (err) {
+          console.warn("[ConseilClasse] lecture affectations impossible", err);
+          setCurrentAffectations([]);
+        }
+      } else {
+        console.warn("[ConseilClasse] affectations/current indisponible", resAffectations.status);
+        setCurrentAffectations([]);
       }
 
       if (!headTeacherName) {
@@ -954,23 +993,32 @@ export default function ConseilClassePage() {
       }
     >();
 
-    subjectStats.forEach((subject) => {
-      const teacherName = String(subject.teacher_name || "").trim();
-      if (!teacherName) return;
+    currentAffectations
+      .filter((item) =>
+        Array.isArray(item.classes)
+          ? item.classes.some((cls) => String(cls?.id || "") === String(selectedClassId || ""))
+          : false
+      )
+      .forEach((item) => {
+        const teacherId = String(item.teacher?.id || "").trim();
+        const teacherName = String(
+          item.teacher?.display_name || item.teacher?.email || item.teacher?.phone || ""
+        ).trim();
+        const subjectLabel = String(item.subject?.label || "").trim();
 
-      const key = teacherName.toLowerCase();
-      const existing = grouped.get(key);
+        if (!teacherId || !teacherName) return;
 
-      if (existing) {
-        existing.subjects.add(subject.subject_name);
-        return;
-      }
+        const existing = grouped.get(teacherId);
+        if (existing) {
+          if (subjectLabel) existing.subjects.add(subjectLabel);
+          return;
+        }
 
-      grouped.set(key, {
-        teacherName,
-        subjects: new Set([subject.subject_name]),
+        grouped.set(teacherId, {
+          teacherName,
+          subjects: new Set(subjectLabel ? [subjectLabel] : []),
+        });
       });
-    });
 
     return Array.from(grouped.values())
       .map((row) => ({
@@ -991,7 +1039,7 @@ export default function ConseilClassePage() {
           numeric: true,
         })
       );
-  }, [subjectStats]);
+  }, [currentAffectations, selectedClassId]);
 
   const annualMode = useMemo(
     () => councilRows.some((r) => r.annual_avg !== null && r.annual_avg !== undefined),
