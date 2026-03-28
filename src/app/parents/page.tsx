@@ -1024,11 +1024,37 @@ export default function ParentPage() {
     notes: { breadcrumb: "Notes", title: "Cahier de notes", tab: "Notes" },
   };
 
-  const tabs: Array<{ key: NavSection; label: string; icon: React.ReactNode }> = [
-    { key: "home", label: "Accueil", icon: <IconHome /> },
-    { key: "conduct", label: "Conduite", icon: <IconClipboard /> },
-    { key: "absences", label: "Absences", icon: <IconClipboard /> },
-    { key: "notes", label: "Notes", icon: <IconBook /> },
+  const tabs: Array<{
+    key: NavSection;
+    label: string;
+    icon: React.ReactNode;
+    activeClass: string;
+    idleClass: string;
+  }> = [
+    {
+      key: "conduct",
+      label: "Conduite",
+      icon: <IconClipboard />,
+      activeClass:
+        "bg-gradient-to-r from-[#003766] to-[#0057a8] text-white shadow-lg shadow-[#003766]/20",
+      idleClass: "bg-[#e7f0fa] text-[#003766] hover:bg-[#d9e8f7]",
+    },
+    {
+      key: "absences",
+      label: "Absences",
+      icon: <IconClipboard />,
+      activeClass:
+        "bg-gradient-to-r from-[#a16207] to-[#d97706] text-white shadow-lg shadow-amber-900/20",
+      idleClass: "bg-[#fff3db] text-[#9a5d00] hover:bg-[#fde8ba]",
+    },
+    {
+      key: "notes",
+      label: "Notes",
+      icon: <IconBook />,
+      activeClass:
+        "bg-gradient-to-r from-[#166534] to-[#16a34a] text-white shadow-lg shadow-emerald-900/20",
+      idleClass: "bg-[#e8f8ef] text-[#166534] hover:bg-[#d7f1e2]",
+    },
   ];
 
   const currentSectionMeta = sectionMeta[activeSection];
@@ -1584,8 +1610,28 @@ export default function ParentPage() {
             </div>
 
             <div className="flex-1 px-4 py-4">
-              <div className="rounded-2xl border border-white/15 bg-white/10 px-4 py-4 text-[13px] leading-6 text-white/90">
-                Choisissez d’abord un enfant dans cette colonne. Les onglets <b>Accueil</b>, <b>Conduite</b>, <b>Absences</b> et <b>Notes</b> s’affichent ensuite dans l’écran principal.
+              <div className="space-y-2">
+                <div className="mb-3 text-[12px] font-extrabold uppercase tracking-wide text-amber-200">
+                  Navigation
+                </div>
+                <button
+                  type="button"
+                  onClick={() => selectSection("home")}
+                  className={[
+                    "flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-left text-[14px] font-extrabold transition",
+                    isHome ? "bg-white text-[#003766]" : "bg-white/10 text-white hover:bg-white/15",
+                  ].join(" ")}
+                >
+                  <span
+                    className={[
+                      "grid h-10 w-10 place-items-center rounded-2xl",
+                      isHome ? "bg-[#e7f0fa] text-[#003766]" : "bg-white/10 text-white",
+                    ].join(" ")}
+                  >
+                    <IconHome />
+                  </span>
+                  <span>Accueil</span>
+                </button>
               </div>
             </div>
 
@@ -1741,8 +1787,28 @@ export default function ParentPage() {
           </div>
 
           <div className="flex-1 px-4 py-4">
-            <div className="rounded-2xl border border-white/15 bg-white/10 px-4 py-4 text-[13px] leading-6 text-white/90">
-              Choisissez d’abord un enfant dans cette colonne. Les onglets <b>Accueil</b>, <b>Conduite</b>, <b>Absences</b> et <b>Notes</b> apparaissent dans l’écran principal.
+            <div className="space-y-2">
+              <div className="mb-3 text-[12px] font-extrabold uppercase tracking-wide text-amber-200">
+                Navigation
+              </div>
+              <button
+                type="button"
+                onClick={() => selectSection("home")}
+                className={[
+                  "flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-left text-[14px] font-extrabold transition",
+                  isHome ? "bg-white text-[#003766]" : "bg-white/10 text-white hover:bg-white/15",
+                ].join(" ")}
+              >
+                <span
+                  className={[
+                    "grid h-10 w-10 place-items-center rounded-2xl",
+                    isHome ? "bg-[#e7f0fa] text-[#003766]" : "bg-white/10 text-white",
+                  ].join(" ")}
+                >
+                  <IconHome />
+                </span>
+                <span>Accueil</span>
+              </button>
             </div>
           </div>
 
@@ -1776,8 +1842,12 @@ export default function ParentPage() {
                 {currentSectionMeta.title}
               </h1>
               <div className="text-[14px] font-semibold text-slate-600">
-                {selectedKid?.full_name || "Aucun enfant sélectionné"}
-                {selectedKid?.class_label ? ` · ${selectedKid.class_label}` : ""}
+                {isHome
+                  ? "Gestion du numéro parent"
+                  : selectedKid?.full_name || "Aucun enfant sélectionné"}
+                {!isHome && selectedKid?.class_label
+                  ? ` · ${selectedKid.class_label}`
+                  : ""}
               </div>
             </div>
           </div>
@@ -1788,57 +1858,93 @@ export default function ParentPage() {
             </div>
           )}
 
-          <div className="mb-5 rounded-3xl border border-slate-200 bg-white p-3 shadow-sm">
-            <div className="flex flex-wrap gap-2">
-              {tabs.map((tab) => {
-                const active = activeSection === tab.key;
-                return (
-                  <button
-                    key={tab.key}
-                    type="button"
-                    onClick={() => selectSection(tab.key)}
-                    disabled={!selectedKid}
-                    className={[
-                      "inline-flex items-center gap-2 rounded-2xl px-4 py-3 text-[14px] font-extrabold transition",
-                      active
-                        ? "bg-[#003766] text-white"
-                        : "bg-slate-100 text-slate-700 hover:bg-slate-200",
-                      !selectedKid ? "opacity-50 cursor-not-allowed" : "",
-                    ].join(" ")}
-                  >
-                    {tab.icon}
-                    <span>{tab.label}</span>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-          {!selectedKid && !loadingKids && (
-            <div className="mb-6 rounded-3xl border border-slate-200 bg-white p-6 text-center text-[15px] text-slate-600 shadow-sm">
-              Choisissez d’abord un enfant dans la colonne de gauche.
+          {selectedKid && (
+            <div className="mb-5 rounded-[32px] border border-slate-200 bg-white p-4 shadow-sm">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                {tabs.map((tab) => {
+                  const active = activeSection === tab.key;
+                  return (
+                    <button
+                      key={tab.key}
+                      type="button"
+                      onClick={() => selectSection(tab.key)}
+                      className={[
+                        "flex min-h-[94px] w-full items-center gap-4 rounded-[28px] px-5 py-5 text-left text-[15px] font-extrabold transition-transform duration-150 hover:-translate-y-0.5",
+                        active ? tab.activeClass : tab.idleClass,
+                      ].join(" ")}
+                    >
+                      <span
+                        className={[
+                          "grid h-14 w-14 shrink-0 place-items-center rounded-2xl",
+                          active ? "bg-white/15 text-white" : "bg-white/70",
+                        ].join(" ")}
+                      >
+                        {tab.icon}
+                      </span>
+                      <span className="text-[18px] leading-none">{tab.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           )}
 
-          {selectedKid && isHome && (
-            <section className="mb-6 space-y-4">
-              <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-                <div className="text-[12px] font-extrabold uppercase tracking-wide text-emerald-700">
-                  Accueil
-                </div>
-                <h2 className="mt-1 text-2xl font-extrabold text-slate-900">
-                  Rattacher ou mettre à jour le numéro parent
-                </h2>
-                <p className="mt-2 text-[14px] leading-6 text-slate-600">
-                  Un même numéro parent peut servir pour plusieurs enfants. En revanche,
-                  un enfant ne doit pas être lié à plusieurs numéros de téléphone parents.
-                  Les notifications push restent actives sans coût.
-                </p>
-              </div>
+          {!selectedKid && !loadingKids && !isHome && (
+            <div className="mb-6 rounded-3xl border border-slate-200 bg-white p-6 text-center text-[15px] text-slate-600 shadow-sm">
+              Sélectionnez un enfant pour afficher son tableau de bord.
+            </div>
+          )}
 
-              <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                  <div>
+          {isHome && (
+            <section className="mb-6">
+              <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1.35fr)_360px]">
+                <div className="rounded-[32px] border border-slate-200 bg-white p-5 shadow-sm lg:p-6">
+                  <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                    <div className="flex items-center gap-4">
+                      <div className="grid h-14 w-14 place-items-center rounded-3xl bg-[#e7f0fa] text-[#003766]">
+                        <IconPhone />
+                      </div>
+                      <div>
+                        <div className="text-[12px] font-extrabold uppercase tracking-[0.2em] text-slate-500">
+                          Accueil
+                        </div>
+                        <h2 className="mt-1 text-2xl font-extrabold text-slate-900">
+                          Numéro parent
+                        </h2>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap gap-2">
+                      <Badge tone="emerald">Push actives</Badge>
+                      <Badge tone={smsEnabled ? "emerald" : "slate"}>
+                        SMS {smsEnabled ? "activés" : "désactivés"}
+                      </Badge>
+                    </div>
+                  </div>
+
+                  <div className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-2">
+                    <div className="rounded-[28px] border border-slate-200 bg-slate-50 p-4">
+                      <div className="text-[12px] font-extrabold uppercase tracking-wide text-slate-500">
+                        Numéro actuel
+                      </div>
+                      <div className="mt-2 text-[18px] font-extrabold text-slate-900 break-words">
+                        {smsPrimaryContact?.phone_e164
+                          ? formatPhoneForDisplay(smsPrimaryContact.phone_e164)
+                          : "Aucun numéro enregistré"}
+                      </div>
+                    </div>
+
+                    <div className="rounded-[28px] border border-slate-200 bg-slate-50 p-4">
+                      <div className="text-[12px] font-extrabold uppercase tracking-wide text-slate-500">
+                        Statut SMS
+                      </div>
+                      <div className="mt-2 text-[18px] font-extrabold text-slate-900">
+                        {smsAnyPremiumEnabled ? "Disponible" : "En attente"}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="mt-6">
                     <label className="mb-2 block text-[13px] font-extrabold uppercase tracking-wide text-slate-600">
                       Numéro parent
                     </label>
@@ -1847,70 +1953,87 @@ export default function ParentPage() {
                       onChange={(e) => setSmsPhone(e.target.value)}
                       placeholder="Ex : +2250713023762"
                       inputMode="tel"
+                      className="h-14 text-[16px]"
                     />
                   </div>
 
-                  <div>
-                    <label className="mb-2 block text-[13px] font-extrabold uppercase tracking-wide text-slate-600">
-                      Numéro actuel
-                    </label>
-                    <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-[14px] text-slate-700">
-                      {smsPrimaryContact?.phone_e164
-                        ? `Numéro actuel : ${formatPhoneForDisplay(smsPrimaryContact.phone_e164)}`
-                        : "Aucun numéro rattaché pour le moment."}
+                  <div className="mt-4">
+                    <Toggle
+                      checked={smsEnabled}
+                      onChange={setSmsEnabled}
+                      label="Activer le SMS premium"
+                      description={
+                        smsAnyPremiumEnabled
+                          ? "Le numéro pourra être utilisé par l’établissement."
+                          : "Le numéro sera déjà enregistré pour plus tard."
+                      }
+                    />
+                  </div>
+
+                  <div className="mt-5 flex flex-col gap-3 sm:flex-row">
+                    <Button
+                      type="button"
+                      tone="emerald"
+                      onClick={saveSmsContact}
+                      disabled={smsSaving || smsLoading || !smsPhone.trim()}
+                      iconLeft={<IconPhone />}
+                      className="sm:min-w-[220px]"
+                    >
+                      {smsSaving ? "Enregistrement…" : "Enregistrer"}
+                    </Button>
+
+                    {smsPrimaryContact?.id ? (
+                      <Button
+                        type="button"
+                        tone="white"
+                        onClick={removeSmsContact}
+                        disabled={smsSaving}
+                        className="sm:min-w-[190px]"
+                      >
+                        Supprimer
+                      </Button>
+                    ) : null}
+                  </div>
+
+                  {smsMsg && (
+                    <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-[14px] text-slate-700">
+                      {smsMsg}
+                    </div>
+                  )}
+                </div>
+
+                <div className="rounded-[32px] bg-gradient-to-br from-[#003766] to-[#0057a8] p-5 text-white shadow-sm lg:p-6">
+                  <div className="text-[12px] font-extrabold uppercase tracking-[0.2em] text-white/70">
+                    Compte parent
+                  </div>
+                  <div className="mt-2 text-2xl font-extrabold leading-tight">
+                    Gérer le numéro et revenir ensuite aux onglets de l’enfant.
+                  </div>
+
+                  <div className="mt-6 space-y-3">
+                    <div className="rounded-[24px] bg-white/10 px-4 py-4 backdrop-blur-sm">
+                      <div className="text-[11px] font-extrabold uppercase tracking-wide text-white/70">
+                        Enfant actif
+                      </div>
+                      <div className="mt-1 text-[16px] font-bold">
+                        {selectedKid?.full_name || "Aucun enfant sélectionné"}
+                      </div>
+                      <div className="text-[13px] text-white/80">
+                        {selectedKid?.class_label || "—"}
+                      </div>
+                    </div>
+
+                    <div className="rounded-[24px] bg-white/10 px-4 py-4 backdrop-blur-sm">
+                      <div className="text-[11px] font-extrabold uppercase tracking-wide text-white/70">
+                        Notifications
+                      </div>
+                      <div className="mt-1 text-[16px] font-bold">Push : actives</div>
+                      <div className="text-[13px] text-white/80">
+                        SMS : {smsEnabled ? "activés" : "désactivés"}
+                      </div>
                     </div>
                   </div>
                 </div>
-
-                <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                  <label className="flex items-center justify-between gap-3 text-sm">
-                    <span>
-                      <span className="block font-semibold text-slate-900">
-                        Recevoir les SMS premium
-                      </span>
-                      <span className="block text-slate-600">
-                        {smsAnyPremiumEnabled
-                          ? "Le numéro sera utilisé quand l’établissement active les envois SMS."
-                          : "Vous pouvez déjà enregistrer le numéro. Les notifications push restent la formule standard."}
-                      </span>
-                    </span>
-                    <input
-                      type="checkbox"
-                      checked={smsEnabled}
-                      onChange={(e) => setSmsEnabled(e.target.checked)}
-                      className="h-5 w-5"
-                    />
-                  </label>
-                </div>
-
-                <div className="mt-4 flex flex-col gap-3 sm:flex-row">
-                  <Button
-                    type="button"
-                    tone="emerald"
-                    onClick={saveSmsContact}
-                    disabled={smsSaving || smsLoading || !smsPhone.trim()}
-                    iconLeft={<IconPhone />}
-                  >
-                    {smsSaving ? "Enregistrement…" : "Enregistrer le numéro"}
-                  </Button>
-
-                  {smsPrimaryContact?.id ? (
-                    <Button
-                      type="button"
-                      tone="white"
-                      onClick={removeSmsContact}
-                      disabled={smsSaving}
-                    >
-                      Supprimer le numéro
-                    </Button>
-                  ) : null}
-                </div>
-
-                {smsMsg && (
-                  <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-[14px] text-slate-700">
-                    {smsMsg}
-                  </div>
-                )}
               </div>
             </section>
           )}
