@@ -971,6 +971,7 @@ export default async function FinancePayrollPage({
     rate_second?: string;
     run_id?: string;
     print?: string;
+    autoprint?: string;
   }>;
 }) {
   const access = await getFinanceAccessForCurrentUser();
@@ -986,6 +987,7 @@ export default async function FinancePayrollPage({
   const rateFirst = Number(params?.rate_first || 1500) || 1500;
   const rateSecond = Number(params?.rate_second || 2000) || 2000;
   const printMode = String(params?.print || "") === "1";
+  const autoPrint = printMode && String(params?.autoprint || "") === "1";
   const requestedRunId = String(params?.run_id || "").trim();
 
   const { institutionId } = await getCurrentContextOrThrow();
@@ -1092,30 +1094,81 @@ export default async function FinancePayrollPage({
   const printDateLabel = formatLongDate(new Date());
 
   return (
-    <div className="space-y-6">
+    <div className={printMode ? "payroll-print-root" : "space-y-6"}>
       <style
         dangerouslySetInnerHTML={{
           __html: `
+            @page {
+              size: A4 portrait;
+              margin: 10mm;
+            }
+
             @media print {
+              html,
+              body {
+                margin: 0 !important;
+                padding: 0 !important;
+                background: white !important;
+              }
+
+              body * {
+                visibility: hidden;
+              }
+
+              .payroll-print-root,
+              .payroll-print-root * {
+                visibility: visible !important;
+              }
+
+              .payroll-print-root {
+                position: absolute;
+                inset: 0;
+                width: 100%;
+                background: white !important;
+              }
+
               .no-print {
                 display: none !important;
               }
-              body {
-                background: white !important;
-              }
+
               .print-sheet {
                 box-shadow: none !important;
-                border-color: transparent !important;
+                border: none !important;
                 border-radius: 0 !important;
                 padding: 0 !important;
+                margin: 0 !important;
+                background: white !important;
               }
+
+              .print-sheet > div {
+                max-width: none !important;
+              }
+
               .print-table-wrap {
                 overflow: visible !important;
+              }
+
+              a[href]::after {
+                content: none !important;
               }
             }
           `,
         }}
       />
+
+      {autoPrint ? (
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `
+              window.addEventListener("load", function () {
+                setTimeout(function () {
+                  try { window.print(); } catch (e) {}
+                }, 250);
+              });
+            `,
+          }}
+        />
+      ) : null}
 
       {!printMode ? (
         <section className="overflow-hidden rounded-[28px] border border-slate-200 bg-gradient-to-br from-slate-950 via-slate-900 to-emerald-950 px-6 py-7 text-white shadow-xl">
@@ -1234,48 +1287,8 @@ export default async function FinancePayrollPage({
                   Période du {formatDate(selectedRun.period_start)} au{" "}
                   {formatDate(selectedRun.period_end)}
                 </div>
-                <div className="mt-3 text-xs font-semibold text-slate-500">
-                  Pour imprimer en PDF : Ctrl+P puis “Enregistrer au format PDF”
-                </div>
-              </div>
-            </div>
-
-            <div className="mb-5 grid gap-3 md:grid-cols-4">
-              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-                <div className="text-xs font-bold uppercase tracking-wide text-slate-500">
-                  Périmètre
-                </div>
-                <div className="mt-1 text-sm font-semibold text-slate-900">
-                  {selectedRun.scope === "vacataires_only"
-                    ? "Vacataires seulement"
-                    : "Tous les enseignants"}
-                </div>
-              </div>
-
-              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-                <div className="text-xs font-bold uppercase tracking-wide text-slate-500">
-                  Tarif 1er cycle
-                </div>
-                <div className="mt-1 text-sm font-semibold text-slate-900">
-                  {formatMoney(selectedRun.default_rate_first_cycle)}
-                </div>
-              </div>
-
-              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-                <div className="text-xs font-bold uppercase tracking-wide text-slate-500">
-                  Tarif 2nd cycle
-                </div>
-                <div className="mt-1 text-sm font-semibold text-slate-900">
-                  {formatMoney(selectedRun.default_rate_second_cycle)}
-                </div>
-              </div>
-
-              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-                <div className="text-xs font-bold uppercase tracking-wide text-slate-500">
-                  Montant brut total
-                </div>
-                <div className="mt-1 text-sm font-black text-emerald-700">
-                  {formatMoney(totals.gross)}
+                <div className="no-print mt-3 text-xs font-semibold text-slate-500">
+                  Impression directe. Si besoin : Ctrl+P puis “Enregistrer au format PDF”.
                 </div>
               </div>
             </div>
@@ -1334,9 +1347,6 @@ export default async function FinancePayrollPage({
                           <div className="font-bold text-slate-900">
                             {row.teacher_name_snapshot || "Enseignant"}
                           </div>
-                          {row.notes ? (
-                            <div className="mt-1 text-xs text-slate-500">{row.notes}</div>
-                          ) : null}
                         </td>
                         <td className="border border-slate-300 px-3 py-4 text-slate-700">
                           {row.employment_type === "vacataire" ? "Vacataire" : "Permanent"}
@@ -1615,26 +1625,9 @@ export default async function FinancePayrollPage({
                     </h2>
                     <StatusPill status={selectedRun.status} />
                   </div>
-
-                  <div className="mt-2 grid gap-2 text-sm text-slate-600 sm:grid-cols-2 lg:grid-cols-4">
-                    <div>
-                      <span className="font-semibold text-slate-800">Période :</span>{" "}
-                      {formatDate(selectedRun.period_start)} → {formatDate(selectedRun.period_end)}
-                    </div>
-                    <div>
-                      <span className="font-semibold text-slate-800">Périmètre :</span>{" "}
-                      {selectedRun.scope === "vacataires_only"
-                        ? "Vacataires seulement"
-                        : "Tous les enseignants"}
-                    </div>
-                    <div>
-                      <span className="font-semibold text-slate-800">Tarif 1er cycle :</span>{" "}
-                      {formatMoney(selectedRun.default_rate_first_cycle)}
-                    </div>
-                    <div>
-                      <span className="font-semibold text-slate-800">Tarif 2nd cycle :</span>{" "}
-                      {formatMoney(selectedRun.default_rate_second_cycle)}
-                    </div>
+                  <div className="mt-2 text-sm text-slate-600">
+                    <span className="font-semibold text-slate-800">Période :</span>{" "}
+                    {formatDate(selectedRun.period_start)} → {formatDate(selectedRun.period_end)}
                   </div>
 
                   {selectedRun.notes ? (
@@ -1660,11 +1653,13 @@ export default async function FinancePayrollPage({
                       String(selectedRun.default_rate_first_cycle)
                     )}&rate_second=${encodeURIComponent(
                       String(selectedRun.default_rate_second_cycle)
-                    )}&run_id=${encodeURIComponent(selectedRun.id)}&print=1`}
+                    )}&run_id=${encodeURIComponent(selectedRun.id)}&print=1&autoprint=1`}
+                    target="_blank"
+                    rel="noreferrer"
                     className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-bold text-slate-700 hover:bg-slate-50"
                   >
                     <Printer className="h-4 w-4" />
-                    Vue impression / PDF
+                    Ouvrir et imprimer
                   </Link>
                 </div>
               </div>
@@ -1743,9 +1738,6 @@ export default async function FinancePayrollPage({
                               <div className="font-bold text-slate-900">
                                 {row.teacher_name_snapshot || "Enseignant"}
                               </div>
-                              {row.notes ? (
-                                <div className="mt-1 text-xs text-slate-500">{row.notes}</div>
-                              ) : null}
                             </td>
                             <td className="px-3 py-3 text-slate-700">
                               {row.employment_type === "vacataire" ? "Vacataire" : "Permanent"}
