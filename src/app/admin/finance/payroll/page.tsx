@@ -111,9 +111,6 @@ type InstitutionSettings = {
   institution_status?: string | null;
   institution_head_name?: string | null;
   institution_head_title?: string | null;
-  country_name?: string | null;
-  country_motto?: string | null;
-  ministry_name?: string | null;
   institution_code?: string | null;
 };
 
@@ -397,9 +394,6 @@ async function fetchInstitutionSettingsServer(): Promise<InstitutionSettings> {
     institution_status: json?.institution_status ?? "",
     institution_head_name: json?.institution_head_name ?? "",
     institution_head_title: json?.institution_head_title ?? "",
-    country_name: json?.country_name ?? "",
-    country_motto: json?.country_motto ?? "",
-    ministry_name: json?.ministry_name ?? "",
     institution_code: json?.institution_code ?? "",
   };
 }
@@ -702,9 +696,36 @@ async function generatePayrollDraftAction(formData: FormData) {
       }),
     ]);
 
+    const expectedSessions = expectedSlots.length;
+    const expectedMinutes = expectedSlots.reduce(
+      (acc, slot) => acc + Number(slot.expected_minutes || 0),
+      0
+    );
+
+    const actualRows = (stats.rows || []).filter(
+      (r) => !!r.actual_call_iso || Number(r.real_minutes || 0) > 0
+    );
+
+    let actualSessions = 0;
+    let actualMinutes = 0;
+    let sessionsFirstCycle = 0;
+    let sessionsSecondCycle = 0;
+
+    for (const row of actualRows) {
+      const cls = row.class_id ? classMap.get(row.class_id) : null;
+      const cycle = cycleFromLevel(cls?.level);
+      const effActual = Number(row.real_minutes || row.expected_minutes || 0);
+
+      actualSessions += 1;
+      actualMinutes += effActual;
+
+      if (cycle === "first_cycle") sessionsFirstCycle += 1;
+      else sessionsSecondCycle += 1;
+    }
+
     const actualBuckets = new Map<string, StatisticsDetailRow[]>();
 
-    for (const row of stats.rows || []) {
+    for (const row of actualRows) {
       const sessionDate = String(row.dateISO || "").slice(0, 10);
       const classId = String(row.class_id || "");
       const weekday = dayOfWeekFromIso(row.dateISO);
@@ -717,17 +738,7 @@ async function generatePayrollDraftAction(formData: FormData) {
       actualBuckets.set(key, arr);
     }
 
-    let expectedSessions = 0;
-    let actualSessions = 0;
-    let expectedMinutes = 0;
-    let actualMinutes = 0;
-    let sessionsFirstCycle = 0;
-    let sessionsSecondCycle = 0;
-
     const sessionItems = expectedSlots.map((slot) => {
-      expectedSessions += 1;
-      expectedMinutes += Number(slot.expected_minutes || 0);
-
       const key = `${slot.session_date}::${slot.weekday}::${slot.class_id}`;
       const bucket = actualBuckets.get(key) || [];
       const matched = bucket.length ? bucket.shift()! : null;
@@ -741,14 +752,6 @@ async function generatePayrollDraftAction(formData: FormData) {
                 0
             )
           : 0;
-
-      if (effActual > 0) {
-        actualSessions += 1;
-        actualMinutes += effActual;
-
-        if (slot.cycle === "first_cycle") sessionsFirstCycle += 1;
-        else sessionsSecondCycle += 1;
-      }
 
       return {
         class_id: slot.class_id,
@@ -1081,12 +1084,6 @@ export default async function FinancePayrollPage({
     (institutionCfg.institution_head_name || "").trim() || "Le premier responsable";
   const headTitle =
     (institutionCfg.institution_head_title || "").trim() || "Chef d’établissement";
-  const countryName =
-    (institutionCfg.country_name || "").trim() || "REPUBLIQUE DE COTE D’IVOIRE";
-  const countryMotto =
-    (institutionCfg.country_motto || "").trim() || "Union - Discipline - Travail";
-  const ministryName =
-    (institutionCfg.ministry_name || "").trim() || "MINISTERE DE L’EDUCATION NATIONALE";
   const place =
     (institutionCfg.institution_region || "").trim() ||
     (institutionCfg.institution_postal_address || "").trim() ||
@@ -1109,6 +1106,11 @@ export default async function FinancePayrollPage({
               .print-sheet {
                 box-shadow: none !important;
                 border-color: transparent !important;
+                border-radius: 0 !important;
+                padding: 0 !important;
+              }
+              .print-table-wrap {
+                overflow: visible !important;
               }
             }
           `,
@@ -1130,7 +1132,7 @@ export default async function FinancePayrollPage({
 
               <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-200 sm:text-[15px]">
                 Calcule la paie du mois à partir des séances attendues de l’emploi du temps,
-                compare avec les séances réellement remontées, puis fige un brouillon ou un état validé.
+                tout en conservant les heures accomplies issues des statistiques réelles.
               </p>
 
               <div className="mt-4 flex flex-wrap items-center gap-2 text-xs font-semibold text-slate-200">
@@ -1174,78 +1176,66 @@ export default async function FinancePayrollPage({
           </div>
         </section>
       ) : selectedRun ? (
-        <section className="print-sheet overflow-hidden rounded-[28px] border border-slate-200 bg-white px-8 py-8 shadow-sm">
+        <section className="print-sheet rounded-[28px] border border-slate-200 bg-white px-8 py-8 shadow-sm">
           <div className="mx-auto max-w-[1200px]">
-            <div className="mb-8 flex items-start justify-between gap-6 border-b border-slate-200 pb-6">
-              <div className="min-w-0 flex-1">
-                <div className="text-center">
-                  <div className="text-base font-black uppercase tracking-wide text-slate-900">
-                    {countryName}
-                  </div>
-                  <div className="mt-1 text-sm italic text-slate-600">{countryMotto}</div>
-                  <div className="mt-2 text-sm font-bold uppercase text-slate-800">
-                    {ministryName}
-                  </div>
+            <div className="mb-6 flex items-start justify-between gap-6 border-b border-slate-200 pb-5">
+              <div className="flex min-w-0 items-start gap-4">
+                <div className="flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-slate-200 bg-white">
+                  {logoUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={logoUrl}
+                      alt="Logo établissement"
+                      className="max-h-full max-w-full object-contain"
+                    />
+                  ) : (
+                    <div className="text-xs font-bold text-slate-400">LOGO</div>
+                  )}
                 </div>
 
-                <div className="mt-5 flex items-start gap-4">
-                  <div className="flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-slate-200 bg-white">
-                    {logoUrl ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img
-                        src={logoUrl}
-                        alt="Logo établissement"
-                        className="max-h-full max-w-full object-contain"
-                      />
-                    ) : (
-                      <div className="text-xs font-bold text-slate-400">LOGO</div>
-                    )}
+                <div className="min-w-0">
+                  <div className="text-xl font-black uppercase text-slate-900">
+                    {institutionName}
                   </div>
 
-                  <div className="min-w-0">
-                    <div className="text-xl font-black uppercase text-slate-900">
-                      {institutionName}
+                  {institutionCfg.institution_status ? (
+                    <div className="mt-1 text-sm font-semibold text-slate-700">
+                      {institutionCfg.institution_status}
                     </div>
+                  ) : null}
 
-                    {institutionCfg.institution_status ? (
-                      <div className="mt-1 text-sm font-semibold text-slate-700">
-                        {institutionCfg.institution_status}
+                  <div className="mt-1 space-y-1 text-sm text-slate-600">
+                    {institutionCfg.institution_region ? (
+                      <div>{institutionCfg.institution_region}</div>
+                    ) : null}
+                    {institutionCfg.institution_postal_address ? (
+                      <div>{institutionCfg.institution_postal_address}</div>
+                    ) : null}
+                    {institutionCfg.institution_phone || institutionCfg.institution_email ? (
+                      <div>
+                        {[institutionCfg.institution_phone, institutionCfg.institution_email]
+                          .filter(Boolean)
+                          .join(" - ")}
                       </div>
                     ) : null}
-
-                    <div className="mt-1 space-y-1 text-sm text-slate-600">
-                      {institutionCfg.institution_region ? (
-                        <div>{institutionCfg.institution_region}</div>
-                      ) : null}
-                      {institutionCfg.institution_postal_address ? (
-                        <div>{institutionCfg.institution_postal_address}</div>
-                      ) : null}
-                      {institutionCfg.institution_phone || institutionCfg.institution_email ? (
-                        <div>
-                          {[institutionCfg.institution_phone, institutionCfg.institution_email]
-                            .filter(Boolean)
-                            .join(" - ")}
-                        </div>
-                      ) : null}
-                      {institutionCfg.institution_code ? (
-                        <div>Code établissement : {institutionCfg.institution_code}</div>
-                      ) : null}
-                    </div>
+                    {institutionCfg.institution_code ? (
+                      <div>Code établissement : {institutionCfg.institution_code}</div>
+                    ) : null}
                   </div>
                 </div>
               </div>
 
               <div className="shrink-0 text-right">
-                <div className="text-xs font-bold uppercase tracking-[0.16em] text-slate-500">
-                  Document
-                </div>
-                <div className="mt-2 text-2xl font-black text-slate-900">FICHE DE PAIE</div>
+                <div className="text-2xl font-black text-slate-900">FICHE DE PAIE</div>
                 <div className="mt-2 text-sm text-slate-600">
                   {formatMonthLabel(selectedRun.period_month.slice(0, 7))}
                 </div>
                 <div className="mt-1 text-sm text-slate-600">
                   Période du {formatDate(selectedRun.period_start)} au{" "}
                   {formatDate(selectedRun.period_end)}
+                </div>
+                <div className="mt-3 text-xs font-semibold text-slate-500">
+                  Pour imprimer en PDF : Ctrl+P puis “Enregistrer au format PDF”
                 </div>
               </div>
             </div>
@@ -1301,7 +1291,7 @@ export default async function FinancePayrollPage({
                 Ce run ne contient encore aucune ligne.
               </div>
             ) : (
-              <div className="overflow-x-auto">
+              <div className="print-table-wrap overflow-x-auto">
                 <table className="min-w-full border-collapse text-sm">
                   <thead>
                     <tr className="bg-slate-100">
@@ -1380,7 +1370,10 @@ export default async function FinancePayrollPage({
                   </tbody>
                   <tfoot>
                     <tr className="bg-slate-50">
-                      <td className="border border-slate-300 px-3 py-3 font-black text-slate-900" colSpan={2}>
+                      <td
+                        className="border border-slate-300 px-3 py-3 font-black text-slate-900"
+                        colSpan={2}
+                      >
                         Total
                       </td>
                       <td className="border border-slate-300 px-3 py-3 text-right font-bold text-slate-900">
@@ -1671,7 +1664,7 @@ export default async function FinancePayrollPage({
                     className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-bold text-slate-700 hover:bg-slate-50"
                   >
                     <Printer className="h-4 w-4" />
-                    Vue impression
+                    Vue impression / PDF
                   </Link>
                 </div>
               </div>
@@ -1683,145 +1676,145 @@ export default async function FinancePayrollPage({
           )}
 
           {selectedRun ? (
-            <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-              <StatCard
-                icon={<FileSpreadsheet className="h-6 w-6" />}
-                label="Lignes"
-                value={selectedRunLines.length}
-                hint="Enseignants dans la fiche"
-                tone="slate"
-              />
-              <StatCard
-                icon={<CalendarClock className="h-6 w-6" />}
-                label="Séances attendues"
-                value={totals.expectedSessions}
-                hint={minutesToHourLabel(totals.expectedMinutes)}
-                tone="emerald"
-              />
-              <StatCard
-                icon={<CalendarClock className="h-6 w-6" />}
-                label="Séances accomplies"
-                value={totals.actualSessions}
-                hint={minutesToHourLabel(totals.actualMinutes)}
-                tone="amber"
-              />
-              <StatCard
-                icon={<Wallet className="h-6 w-6" />}
-                label="Montant brut"
-                value={formatMoney(totals.gross)}
-                hint={`${totals.firstCycle} séances 1er cycle • ${totals.secondCycle} séances 2nd cycle`}
-                tone="violet"
-              />
-            </section>
-          ) : null}
+            <>
+              <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                <StatCard
+                  icon={<FileSpreadsheet className="h-6 w-6" />}
+                  label="Lignes"
+                  value={selectedRunLines.length}
+                  hint="Enseignants dans la fiche"
+                  tone="slate"
+                />
+                <StatCard
+                  icon={<CalendarClock className="h-6 w-6" />}
+                  label="Séances attendues"
+                  value={totals.expectedSessions}
+                  hint={minutesToHourLabel(totals.expectedMinutes)}
+                  tone="emerald"
+                />
+                <StatCard
+                  icon={<CalendarClock className="h-6 w-6" />}
+                  label="Séances accomplies"
+                  value={totals.actualSessions}
+                  hint={minutesToHourLabel(totals.actualMinutes)}
+                  tone="amber"
+                />
+                <StatCard
+                  icon={<Wallet className="h-6 w-6" />}
+                  label="Montant brut"
+                  value={formatMoney(totals.gross)}
+                  hint={`${totals.firstCycle} séances 1er cycle • ${totals.secondCycle} séances 2nd cycle`}
+                  tone="violet"
+                />
+              </section>
 
-          {selectedRun ? (
-            <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
-              <div className="mb-4 flex items-center gap-2 text-sm font-black uppercase tracking-[0.16em] text-slate-700">
-                <BadgeDollarSign className="h-4 w-4 text-emerald-600" />
-                Fiche globale de paie
-              </div>
-
-              {selectedRunLines.length === 0 ? (
-                <div className="rounded-3xl border border-dashed border-slate-300 bg-slate-50 px-5 py-10 text-center text-sm text-slate-600">
-                  Ce run ne contient encore aucune ligne.
+              <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
+                <div className="mb-4 flex items-center gap-2 text-sm font-black uppercase tracking-[0.16em] text-slate-700">
+                  <BadgeDollarSign className="h-4 w-4 text-emerald-600" />
+                  Fiche globale de paie
                 </div>
-              ) : (
-                <div className="overflow-x-auto">
-                  <table className="min-w-full text-sm">
-                    <thead className="bg-slate-50">
-                      <tr>
-                        <th className="px-3 py-3 text-left font-bold text-slate-600">Enseignant</th>
-                        <th className="px-3 py-3 text-left font-bold text-slate-600">Statut</th>
-                        <th className="px-3 py-3 text-right font-bold text-slate-600">Séances prévues</th>
-                        <th className="px-3 py-3 text-right font-bold text-slate-600">Séances accomplies</th>
-                        <th className="px-3 py-3 text-right font-bold text-slate-600">Heures prévues</th>
-                        <th className="px-3 py-3 text-right font-bold text-slate-600">Heures accomplies</th>
-                        <th className="px-3 py-3 text-right font-bold text-slate-600">1er cycle</th>
-                        <th className="px-3 py-3 text-right font-bold text-slate-600">2nd cycle</th>
-                        <th className="px-3 py-3 text-right font-bold text-slate-600">Tarif 1er cycle</th>
-                        <th className="px-3 py-3 text-right font-bold text-slate-600">Tarif 2nd cycle</th>
-                        <th className="px-3 py-3 text-right font-bold text-slate-600">Montant</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {selectedRunLines.map((row) => (
-                        <tr key={row.id} className="border-t border-slate-100">
-                          <td className="px-3 py-3">
-                            <div className="font-bold text-slate-900">
-                              {row.teacher_name_snapshot || "Enseignant"}
-                            </div>
-                            {row.notes ? (
-                              <div className="mt-1 text-xs text-slate-500">{row.notes}</div>
-                            ) : null}
+
+                {selectedRunLines.length === 0 ? (
+                  <div className="rounded-3xl border border-dashed border-slate-300 bg-slate-50 px-5 py-10 text-center text-sm text-slate-600">
+                    Ce run ne contient encore aucune ligne.
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="min-w-full text-sm">
+                      <thead className="bg-slate-50">
+                        <tr>
+                          <th className="px-3 py-3 text-left font-bold text-slate-600">Enseignant</th>
+                          <th className="px-3 py-3 text-left font-bold text-slate-600">Statut</th>
+                          <th className="px-3 py-3 text-right font-bold text-slate-600">Séances prévues</th>
+                          <th className="px-3 py-3 text-right font-bold text-slate-600">Séances accomplies</th>
+                          <th className="px-3 py-3 text-right font-bold text-slate-600">Heures prévues</th>
+                          <th className="px-3 py-3 text-right font-bold text-slate-600">Heures accomplies</th>
+                          <th className="px-3 py-3 text-right font-bold text-slate-600">1er cycle</th>
+                          <th className="px-3 py-3 text-right font-bold text-slate-600">2nd cycle</th>
+                          <th className="px-3 py-3 text-right font-bold text-slate-600">Tarif 1er cycle</th>
+                          <th className="px-3 py-3 text-right font-bold text-slate-600">Tarif 2nd cycle</th>
+                          <th className="px-3 py-3 text-right font-bold text-slate-600">Montant</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {selectedRunLines.map((row) => (
+                          <tr key={row.id} className="border-t border-slate-100">
+                            <td className="px-3 py-3">
+                              <div className="font-bold text-slate-900">
+                                {row.teacher_name_snapshot || "Enseignant"}
+                              </div>
+                              {row.notes ? (
+                                <div className="mt-1 text-xs text-slate-500">{row.notes}</div>
+                              ) : null}
+                            </td>
+                            <td className="px-3 py-3 text-slate-700">
+                              {row.employment_type === "vacataire" ? "Vacataire" : "Permanent"}
+                            </td>
+                            <td className="px-3 py-3 text-right text-slate-700">
+                              {row.expected_sessions}
+                            </td>
+                            <td className="px-3 py-3 text-right font-semibold text-slate-900">
+                              {row.actual_sessions}
+                            </td>
+                            <td className="px-3 py-3 text-right text-slate-700">
+                              {minutesToHourLabel(row.expected_minutes)}
+                            </td>
+                            <td className="px-3 py-3 text-right font-semibold text-slate-900">
+                              {minutesToHourLabel(row.actual_minutes)}
+                            </td>
+                            <td className="px-3 py-3 text-right text-slate-700">
+                              {row.sessions_first_cycle}
+                            </td>
+                            <td className="px-3 py-3 text-right text-slate-700">
+                              {row.sessions_second_cycle}
+                            </td>
+                            <td className="px-3 py-3 text-right text-slate-700">
+                              {formatMoney(row.rate_first_cycle)}
+                            </td>
+                            <td className="px-3 py-3 text-right text-slate-700">
+                              {formatMoney(row.rate_second_cycle)}
+                            </td>
+                            <td className="px-3 py-3 text-right font-black text-emerald-700">
+                              {formatMoney(row.gross_amount)}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                      <tfoot>
+                        <tr className="border-t-2 border-slate-200 bg-slate-50">
+                          <td className="px-3 py-3 font-black text-slate-900" colSpan={2}>
+                            Total
                           </td>
-                          <td className="px-3 py-3 text-slate-700">
-                            {row.employment_type === "vacataire" ? "Vacataire" : "Permanent"}
+                          <td className="px-3 py-3 text-right font-bold text-slate-900">
+                            {totals.expectedSessions}
                           </td>
-                          <td className="px-3 py-3 text-right text-slate-700">
-                            {row.expected_sessions}
+                          <td className="px-3 py-3 text-right font-bold text-slate-900">
+                            {totals.actualSessions}
                           </td>
-                          <td className="px-3 py-3 text-right font-semibold text-slate-900">
-                            {row.actual_sessions}
+                          <td className="px-3 py-3 text-right font-bold text-slate-900">
+                            {minutesToHourLabel(totals.expectedMinutes)}
                           </td>
-                          <td className="px-3 py-3 text-right text-slate-700">
-                            {minutesToHourLabel(row.expected_minutes)}
+                          <td className="px-3 py-3 text-right font-bold text-slate-900">
+                            {minutesToHourLabel(totals.actualMinutes)}
                           </td>
-                          <td className="px-3 py-3 text-right font-semibold text-slate-900">
-                            {minutesToHourLabel(row.actual_minutes)}
+                          <td className="px-3 py-3 text-right font-bold text-slate-900">
+                            {totals.firstCycle}
                           </td>
-                          <td className="px-3 py-3 text-right text-slate-700">
-                            {row.sessions_first_cycle}
+                          <td className="px-3 py-3 text-right font-bold text-slate-900">
+                            {totals.secondCycle}
                           </td>
-                          <td className="px-3 py-3 text-right text-slate-700">
-                            {row.sessions_second_cycle}
-                          </td>
-                          <td className="px-3 py-3 text-right text-slate-700">
-                            {formatMoney(row.rate_first_cycle)}
-                          </td>
-                          <td className="px-3 py-3 text-right text-slate-700">
-                            {formatMoney(row.rate_second_cycle)}
-                          </td>
+                          <td className="px-3 py-3"></td>
+                          <td className="px-3 py-3"></td>
                           <td className="px-3 py-3 text-right font-black text-emerald-700">
-                            {formatMoney(row.gross_amount)}
+                            {formatMoney(totals.gross)}
                           </td>
                         </tr>
-                      ))}
-                    </tbody>
-                    <tfoot>
-                      <tr className="border-t-2 border-slate-200 bg-slate-50">
-                        <td className="px-3 py-3 font-black text-slate-900" colSpan={2}>
-                          Total
-                        </td>
-                        <td className="px-3 py-3 text-right font-bold text-slate-900">
-                          {totals.expectedSessions}
-                        </td>
-                        <td className="px-3 py-3 text-right font-bold text-slate-900">
-                          {totals.actualSessions}
-                        </td>
-                        <td className="px-3 py-3 text-right font-bold text-slate-900">
-                          {minutesToHourLabel(totals.expectedMinutes)}
-                        </td>
-                        <td className="px-3 py-3 text-right font-bold text-slate-900">
-                          {minutesToHourLabel(totals.actualMinutes)}
-                        </td>
-                        <td className="px-3 py-3 text-right font-bold text-slate-900">
-                          {totals.firstCycle}
-                        </td>
-                        <td className="px-3 py-3 text-right font-bold text-slate-900">
-                          {totals.secondCycle}
-                        </td>
-                        <td className="px-3 py-3"></td>
-                        <td className="px-3 py-3"></td>
-                        <td className="px-3 py-3 text-right font-black text-emerald-700">
-                          {formatMoney(totals.gross)}
-                        </td>
-                      </tr>
-                    </tfoot>
-                  </table>
-                </div>
-              )}
-            </section>
+                      </tfoot>
+                    </table>
+                  </div>
+                )}
+              </section>
+            </>
           ) : null}
         </>
       ) : null}
