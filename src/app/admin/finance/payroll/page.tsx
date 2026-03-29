@@ -80,25 +80,6 @@ type TeacherPayrollLineRow = {
   updated_at: string;
 };
 
-type TeacherPayrollLineSessionRow = {
-  id: string;
-  line_id: string;
-  run_id: string;
-  institution_id: string;
-  teacher_id: string;
-  class_id: string | null;
-  subject_id: string | null;
-  period_id: string | null;
-  session_date: string;
-  weekday: number | null;
-  cycle: SchoolCycle;
-  expected_minutes: number;
-  actual_minutes: number;
-  source_origin: string;
-  counted_for_pay: boolean;
-  created_at: string;
-};
-
 type StatisticsDetailRow = {
   id: string;
   dateISO: string;
@@ -490,7 +471,9 @@ async function generatePayrollDraftAction(formData: FormData) {
       periodEnd
     );
 
-    const rows = (stats.rows || []).filter((r) => !!r.actual_call_iso || Number(r.real_minutes || 0) > 0);
+    const rows = (stats.rows || []).filter(
+      (r) => !!r.actual_call_iso || Number(r.real_minutes || 0) > 0
+    );
 
     let expectedSessions = 0;
     let actualSessions = 0;
@@ -785,9 +768,7 @@ export default async function FinancePayrollPage({
     (requestedRunId
       ? runRows.find((r) => r.id === requestedRunId)
       : null) ||
-    runRows.find(
-      (r) => r.period_month === `${month}-01` && r.status === "draft"
-    ) ||
+    runRows.find((r) => r.period_month === `${month}-01` && r.status === "draft") ||
     runRows.find((r) => r.period_month === `${month}-01`) ||
     runRows[0] ||
     null;
@@ -838,16 +819,20 @@ export default async function FinancePayrollPage({
 
   return (
     <div className="space-y-6">
-      <style jsx global>{`
-        @media print {
-          .no-print {
-            display: none !important;
-          }
-          body {
-            background: white !important;
-          }
-        }
-      `}</style>
+      <style
+        dangerouslySetInnerHTML={{
+          __html: `
+            @media print {
+              .no-print {
+                display: none !important;
+              }
+              body {
+                background: white !important;
+              }
+            }
+          `,
+        }}
+      />
 
       {!printMode ? (
         <section className="overflow-hidden rounded-[28px] border border-slate-200 bg-gradient-to-br from-slate-950 via-slate-900 to-emerald-950 px-6 py-7 text-white shadow-xl">
@@ -949,7 +934,13 @@ export default async function FinancePayrollPage({
             icon={<Wallet className="h-6 w-6" />}
             label="Montant brut"
             value={formatMoney(totals.gross)}
-            hint={selectedRun ? (selectedRun.status === "validated" ? "Run validé" : "Run brouillon") : "Aucun brouillon"}
+            hint={
+              selectedRun
+                ? selectedRun.status === "validated"
+                  ? "Run validé"
+                  : "Run brouillon"
+                : "Aucun brouillon"
+            }
             tone="violet"
           />
         </section>
