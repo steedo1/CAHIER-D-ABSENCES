@@ -1170,6 +1170,43 @@ export default async function FinancePayrollPage({
         />
       ) : null}
 
+      <script
+        dangerouslySetInnerHTML={{
+          __html: `
+            document.addEventListener("submit", function (event) {
+              var form = event.target;
+              if (!(form instanceof HTMLFormElement)) return;
+              if (!form.hasAttribute("data-loading-form")) return;
+              if (form.getAttribute("data-submitting") === "true") return;
+
+              form.setAttribute("data-submitting", "true");
+
+              var controls = form.querySelectorAll("button, input, select, textarea");
+              controls.forEach(function (node) {
+                if (node instanceof HTMLButtonElement ||
+                    node instanceof HTMLInputElement ||
+                    node instanceof HTMLSelectElement ||
+                    node instanceof HTMLTextAreaElement) {
+                  node.setAttribute("aria-busy", "true");
+                  if (!(node instanceof HTMLInputElement && node.type === "hidden")) {
+                    node.disabled = true;
+                  }
+                }
+              });
+
+              form.querySelectorAll("[data-idle-label]").forEach(function (el) {
+                el.classList.add("hidden");
+              });
+
+              form.querySelectorAll("[data-loading-label]").forEach(function (el) {
+                el.classList.remove("hidden");
+                el.classList.add("inline-flex");
+              });
+            }, true);
+          `,
+        }}
+      />
+
       {!printMode ? (
         <section className="overflow-hidden rounded-[28px] border border-slate-200 bg-gradient-to-br from-slate-950 via-slate-900 to-emerald-950 px-6 py-7 text-white shadow-xl">
           <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
@@ -1477,7 +1514,11 @@ export default async function FinancePayrollPage({
                 Générer ou actualiser le brouillon
               </div>
 
-              <form action={generatePayrollDraftAction} className="grid gap-4 md:grid-cols-2">
+              <form
+                action={generatePayrollDraftAction}
+                className="grid gap-4 md:grid-cols-2"
+                data-loading-form
+              >
                 <div>
                   <div className="mb-1 text-xs font-bold uppercase tracking-wide text-slate-500">
                     Mois
@@ -1545,9 +1586,15 @@ export default async function FinancePayrollPage({
                 </div>
 
                 <div className="md:col-span-2 flex flex-wrap gap-3">
-                  <button className="inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-4 py-3 text-sm font-bold text-white hover:bg-emerald-700">
-                    <RefreshCcw className="h-4 w-4" />
-                    Générer / actualiser le brouillon
+                  <button className="inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-4 py-3 text-sm font-bold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-80">
+                    <span data-idle-label className="inline-flex items-center justify-center gap-2">
+                      <RefreshCcw className="h-4 w-4" />
+                      Générer / actualiser le brouillon
+                    </span>
+                    <span data-loading-label className="hidden items-center justify-center gap-2">
+                      <span className="inline-block h-4 w-4 rounded-full border-2 border-white/30 border-t-white animate-spin" />
+                      Chargement...
+                    </span>
                   </button>
 
                   <Link
@@ -1637,11 +1684,17 @@ export default async function FinancePayrollPage({
 
                 <div className="flex flex-wrap gap-3">
                   {selectedRun.status === "draft" ? (
-                    <form action={validatePayrollRunAction}>
+                    <form action={validatePayrollRunAction} data-loading-form>
                       <input type="hidden" name="run_id" value={selectedRun.id} />
-                      <button className="inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-4 py-3 text-sm font-bold text-white hover:bg-emerald-700">
-                        <BadgeCheck className="h-4 w-4" />
-                        Valider ce brouillon
+                      <button className="inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-4 py-3 text-sm font-bold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-80">
+                        <span data-idle-label className="inline-flex items-center justify-center gap-2">
+                          <BadgeCheck className="h-4 w-4" />
+                          Valider ce brouillon
+                        </span>
+                        <span data-loading-label className="hidden items-center justify-center gap-2">
+                          <span className="inline-block h-4 w-4 rounded-full border-2 border-white/30 border-t-white animate-spin" />
+                          Chargement...
+                        </span>
                       </button>
                     </form>
                   ) : null}
