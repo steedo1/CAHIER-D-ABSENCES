@@ -1,8 +1,6 @@
-// src/app/admin/finance/charges/page.tsx
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import {
-  BadgeCheck,
   CalendarClock,
   Layers3,
   Receipt,
@@ -12,6 +10,10 @@ import {
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { getFinanceAccessForCurrentUser } from "@/lib/finance-access";
+import {
+  getAdminStudentsServer,
+  type AdminStudentRow,
+} from "@/lib/admin-students-server";
 
 export const dynamic = "force-dynamic";
 
@@ -20,14 +22,6 @@ type ClassRow = {
   label: string;
   level: string | null;
   academic_year: string | null;
-};
-
-type StudentRow = {
-  id: string;
-  first_name: string | null;
-  last_name: string | null;
-  matricule: string | null;
-  class_id: string | null;
 };
 
 type FeeScheduleRow = {
@@ -69,14 +63,6 @@ type ChargeBalanceRow = {
 
 function formatMoney(value: number | string) {
   return `${Number(value || 0).toLocaleString("fr-FR")} F`;
-}
-
-function fullName(student: StudentRow | undefined | null) {
-  if (!student) return "Élève inconnu";
-  const parts = [student.first_name || "", student.last_name || ""]
-    .map((x) => x.trim())
-    .filter(Boolean);
-  return parts.join(" ") || student.matricule || "Élève sans nom";
 }
 
 async function getCurrentContextOrThrow() {
@@ -155,14 +141,8 @@ async function generateChargesForClassAction(formData: FormData) {
     );
   }
 
-  const { data: students, error: stuErr } = await admin
-    .from("students")
-    .select("id,first_name,last_name,matricule,class_id")
-    .eq("class_id", classId);
-
-  if (stuErr) throw new Error(stuErr.message);
-
-  const studentRows = (students ?? []) as StudentRow[];
+  const adminStudents = await getAdminStudentsServer();
+  const studentRows = adminStudents.filter((s) => s.class_id === classId);
 
   if (studentRows.length === 0) {
     throw new Error("Aucun élève trouvé dans cette classe.");
@@ -183,9 +163,12 @@ async function generateChargesForClassAction(formData: FormData) {
   if (exErr) throw new Error(exErr.message);
 
   const existingSet = new Set(
-    ((existingCharges ?? []) as Array<{ student_id: string; fee_schedule_id: string | null }>).map(
-      (row) => `${row.student_id}:${row.fee_schedule_id || ""}`
-    )
+    (
+      (existingCharges ?? []) as Array<{
+        student_id: string;
+        fee_schedule_id: string | null;
+      }>
+    ).map((row) => `${row.student_id}:${row.fee_schedule_id || ""}`)
   );
 
   const today = new Date().toISOString().slice(0, 10);
@@ -268,10 +251,10 @@ export default async function FinanceChargesPage() {
 
   const { institutionId } = await getCurrentContextOrThrow();
   const supabase = await getSupabaseServerClient();
+  const adminStudents = await getAdminStudentsServer();
 
   const [
     { data: classes, error: clsErr },
-    { data: students, error: stuErr },
     { data: schedules, error: schErr },
     { data: balances, error: balErr },
   ] = await Promise.all([
@@ -280,10 +263,6 @@ export default async function FinanceChargesPage() {
       .select("id,label,level,academic_year")
       .eq("institution_id", institutionId)
       .order("label", { ascending: true }),
-
-    supabase
-      .from("students")
-      .select("id,first_name,last_name,matricule,class_id"),
 
     supabase
       .schema("finance")
@@ -305,36 +284,43 @@ export default async function FinanceChargesPage() {
   ]);
 
   if (clsErr) throw new Error(clsErr.message);
-  if (stuErr) throw new Error(stuErr.message);
   if (schErr) throw new Error(schErr.message);
   if (balErr) throw new Error(balErr.message);
 
   const classRows = (classes ?? []) as ClassRow[];
-  const studentRows = (students ?? []) as StudentRow[];
+  const studentRows = adminStudents;
   const scheduleRows = (schedules ?? []) as FeeScheduleRow[];
   const balanceRows = (balances ?? []) as ChargeBalanceRow[];
 
-  const classMap = new Map(classRows.map((c) => [c.id, c]));
-  const studentsByClass = studentRows.reduce<Record<string, StudentRow[]>>((acc, row) => {
-    const key = row.class_id || "none";
-    if (!acc[key]) acc[key] = [];
-    acc[key].push(row);
-    return acc;
-  }, {});
+  const studentsByClass = studentRows.reduce<Record<string, AdminStudentRow[]>>(
+    (acc, row) => {
+      const key = row.class_id || "none";
+      if (!acc[key]) acc[key] = [];
+      acc[key].push(row);
+      return acc;
+    },
+    {}
+  );
 
-  const schedulesByClass = scheduleRows.reduce<Record<string, FeeScheduleRow[]>>((acc, row) => {
-    const key = row.class_id || "none";
-    if (!acc[key]) acc[key] = [];
-    acc[key].push(row);
-    return acc;
-  }, {});
+  const schedulesByClass = scheduleRows.reduce<Record<string, FeeScheduleRow[]>>(
+    (acc, row) => {
+      const key = row.class_id || "none";
+      if (!acc[key]) acc[key] = [];
+      acc[key].push(row);
+      return acc;
+    },
+    {}
+  );
 
-  const balancesByClass = balanceRows.reduce<Record<string, ChargeBalanceRow[]>>((acc, row) => {
-    const key = row.class_id || "none";
-    if (!acc[key]) acc[key] = [];
-    acc[key].push(row);
-    return acc;
-  }, {});
+  const balancesByClass = balanceRows.reduce<Record<string, ChargeBalanceRow[]>>(
+    (acc, row) => {
+      const key = row.class_id || "none";
+      if (!acc[key]) acc[key] = [];
+      acc[key].push(row);
+      return acc;
+    },
+    {}
+  );
 
   const totalStudents = studentRows.length;
   const totalSchedules = scheduleRows.length;
@@ -367,7 +353,10 @@ export default async function FinanceChargesPage() {
       dueAmount,
       recentBalances: classBalances
         .slice()
-        .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+        .sort(
+          (a, b) =>
+            new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+        )
         .slice(0, 4),
     };
   });
@@ -387,9 +376,8 @@ export default async function FinanceChargesPage() {
             </h1>
 
             <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-200 sm:text-[15px]">
-              Cette page permet de transformer les barèmes d’une classe en dettes
-              réelles pour les élèves. La génération est intelligente : elle ne
-              crée que les lignes manquantes.
+              Cette page transforme les barèmes d’une classe en dettes réelles
+              pour les élèves, sans lecture SQL directe de la table students.
             </p>
           </div>
 
@@ -412,7 +400,7 @@ export default async function FinanceChargesPage() {
           icon={<UserRound className="h-5 w-5" />}
           label="Élèves"
           value={totalStudents}
-          hint="Dans l’établissement"
+          hint="Remontés par l’API admin"
         />
         <StatCard
           icon={<Layers3 className="h-5 w-5" />}

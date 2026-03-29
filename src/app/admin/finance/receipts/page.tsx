@@ -1,4 +1,3 @@
-// src/app/admin/finance/receipts/page.tsx
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import {
@@ -12,6 +11,10 @@ import {
 } from "lucide-react";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getFinanceAccessForCurrentUser } from "@/lib/finance-access";
+import {
+  getAdminStudentsServer,
+  type AdminStudentRow,
+} from "@/lib/admin-students-server";
 
 export const dynamic = "force-dynamic";
 
@@ -20,14 +23,6 @@ type ClassRow = {
   label: string;
   level: string | null;
   academic_year: string | null;
-};
-
-type StudentRow = {
-  id: string;
-  first_name: string | null;
-  last_name: string | null;
-  matricule: string | null;
-  class_id: string | null;
 };
 
 type ReceiptRow = {
@@ -72,12 +67,9 @@ function formatMoney(value: number | string) {
   return `${Number(value || 0).toLocaleString("fr-FR")} F`;
 }
 
-function fullName(student: StudentRow | undefined | null) {
+function fullName(student: AdminStudentRow | undefined | null) {
   if (!student) return "Élève inconnu";
-  const parts = [student.first_name || "", student.last_name || ""]
-    .map((x) => x.trim())
-    .filter(Boolean);
-  return parts.join(" ") || student.matricule || "Élève sans nom";
+  return student.full_name || student.matricule || "Élève sans nom";
 }
 
 function normalize(input: string) {
@@ -178,6 +170,7 @@ export default async function FinanceReceiptsPage({
 
   const institutionId = await getCurrentInstitutionIdOrThrow();
   const supabase = await getSupabaseServerClient();
+  const adminStudents = await getAdminStudentsServer();
 
   const { data: classes, error: clsErr } = await supabase
     .from("classes")
@@ -208,18 +201,9 @@ export default async function FinanceReceiptsPage({
   if (recErr) throw new Error(recErr.message);
 
   const receiptRows = (receipts ?? []) as ReceiptRow[];
-  const studentIds = Array.from(new Set(receiptRows.map((r) => r.student_id)));
 
-  const { data: students, error: stuErr } = studentIds.length
-    ? await supabase
-        .from("students")
-        .select("id,first_name,last_name,matricule,class_id")
-        .in("id", studentIds)
-    : { data: [], error: null as any };
-
-  if (stuErr) throw new Error(stuErr.message);
-
-  const studentRows = (students ?? []) as StudentRow[];
+  const receiptStudentIds = new Set(receiptRows.map((r) => r.student_id));
+  const studentRows = adminStudents.filter((s) => receiptStudentIds.has(s.id));
   const studentMap = new Map(studentRows.map((s) => [s.id, s]));
 
   let filteredReceipts = receiptRows;
@@ -235,7 +219,8 @@ export default async function FinanceReceiptsPage({
   if (qn) {
     filteredReceipts = filteredReceipts.filter((row) => {
       const student = studentMap.get(row.student_id);
-      const cls = student?.class_id ? classMap.get(student.class_id) : null;
+      const cls =
+        student?.class_id ? classMap.get(student.class_id) : undefined;
 
       const haystack = normalize(
         [
@@ -245,6 +230,7 @@ export default async function FinanceReceiptsPage({
           row.academic_year || "",
           fullName(student),
           student?.matricule || "",
+          student?.class_label || "",
           cls?.label || "",
           cls?.level || "",
         ].join(" ")
@@ -422,7 +408,8 @@ export default async function FinanceReceiptsPage({
         ) : (
           filteredReceipts.map((row) => {
             const student = studentMap.get(row.student_id);
-            const cls = student?.class_id ? classMap.get(student.class_id) : null;
+            const cls =
+              student?.class_id ? classMap.get(student.class_id) : null;
             const items = (allocationsByReceipt[row.id] || []).map((alloc) => ({
               alloc,
               charge: chargeMap.get(alloc.student_charge_id),
@@ -454,7 +441,7 @@ export default async function FinanceReceiptsPage({
                         </div>
                         <div>
                           <span className="font-semibold text-slate-800">Classe :</span>{" "}
-                          {cls?.label || "—"}
+                          {student?.class_label || cls?.label || "—"}
                         </div>
                         <div>
                           <span className="font-semibold text-slate-800">Payeur :</span>{" "}
@@ -496,71 +483,95 @@ export default async function FinanceReceiptsPage({
                           timeStyle: "short",
                         })}
                       </div>
-                      <Link
-                        href="/admin/finance/payments"
-                        className="inline-flex items-center justify-center rounded-2xl border border-emerald-200 bg-white px-4 py-3 text-sm font-bold text-emerald-700 hover:bg-emerald-50"
-                      >
-                        Nouvel encaissement
-                      </Link>
                     </div>
                   </div>
                 </div>
 
-                <div className="space-y-4 px-5 py-5">
-                  <div className="text-sm font-black uppercase tracking-[0.16em] text-slate-700">
-                    Ventilation du reçu
-                  </div>
-
-                  {items.length === 0 ? (
-                    <div className="rounded-3xl border border-dashed border-slate-300 bg-slate-50 px-5 py-8 text-center text-sm text-slate-600">
-                      Aucune ventilation trouvée pour ce reçu.
+                <div className="grid gap-5 px-5 py-5 lg:grid-cols-[1.25fr_0.95fr]">
+                  <div>
+                    <div className="flex items-center gap-2 text-sm font-black uppercase tracking-[0.16em] text-slate-700">
+                      <Wallet className="h-4 w-4 text-emerald-600" />
+                      Ventilation du reçu
                     </div>
-                  ) : (
-                    items.map(({ alloc, charge }) => (
-                      <div
-                        key={alloc.id}
-                        className="rounded-3xl border border-slate-200 bg-slate-50/60 p-4"
-                      >
-                        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                          <div className="min-w-0">
-                            <div className="flex flex-wrap items-center gap-2">
-                              <h3 className="text-lg font-black text-slate-900">
-                                {charge?.label || "Dette inconnue"}
-                              </h3>
-                              {charge?.due_date ? (
-                                <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-bold text-slate-700 ring-1 ring-slate-200">
-                                  Échéance : {charge.due_date}
-                                </span>
-                              ) : null}
-                            </div>
 
-                            <div className="mt-3 grid gap-2 text-sm text-slate-600 sm:grid-cols-2 lg:grid-cols-4">
+                    {items.length === 0 ? (
+                      <div className="mt-4 rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-center text-sm text-slate-600">
+                        Aucune ventilation trouvée pour ce reçu.
+                      </div>
+                    ) : (
+                      <div className="mt-4 space-y-3">
+                        {items.map(({ alloc, charge }) => (
+                          <div
+                            key={alloc.id}
+                            className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4"
+                          >
+                            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                               <div>
-                                <span className="font-semibold text-slate-800">Montant alloué :</span>{" "}
+                                <div className="text-base font-black text-slate-900">
+                                  {charge?.label || "Dette introuvable"}
+                                </div>
+                                <div className="mt-1 text-sm text-slate-600">
+                                  Échéance : {charge?.due_date || "—"}
+                                </div>
+                                <div className="mt-1 text-xs text-slate-500">
+                                  Brut : {formatMoney(charge?.net_amount || 0)} • Déjà payé :{" "}
+                                  {formatMoney(charge?.paid_amount || 0)} • Reste :{" "}
+                                  {formatMoney(charge?.balance_due || 0)}
+                                </div>
+                              </div>
+
+                              <div className="rounded-full bg-sky-50 px-3 py-1.5 text-sm font-bold text-sky-700 ring-1 ring-sky-200">
                                 {formatMoney(alloc.amount)}
                               </div>
-                              <div>
-                                <span className="font-semibold text-slate-800">Dette brute :</span>{" "}
-                                {formatMoney(charge?.net_amount || 0)}
-                              </div>
-                              <div>
-                                <span className="font-semibold text-slate-800">Déjà payé :</span>{" "}
-                                {formatMoney(charge?.paid_amount || 0)}
-                              </div>
-                              <div>
-                                <span className="font-semibold text-slate-800">Reste dû :</span>{" "}
-                                {formatMoney(charge?.balance_due || 0)}
-                              </div>
                             </div>
                           </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
 
-                          <div className="rounded-full bg-emerald-50 px-3 py-1.5 text-sm font-bold text-emerald-700 ring-1 ring-emerald-200">
-                            {formatMoney(alloc.amount)}
-                          </div>
+                  <div>
+                    <div className="flex items-center gap-2 text-sm font-black uppercase tracking-[0.16em] text-slate-700">
+                      <CalendarClock className="h-4 w-4 text-emerald-600" />
+                      Informations complémentaires
+                    </div>
+
+                    <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50/70 p-4 text-sm text-slate-700">
+                      <div className="grid gap-3">
+                        <div>
+                          <span className="font-semibold text-slate-800">Date de paiement :</span>{" "}
+                          {new Date(row.payment_date).toLocaleString("fr-FR", {
+                            dateStyle: "short",
+                            timeStyle: "short",
+                          })}
+                        </div>
+                        <div>
+                          <span className="font-semibold text-slate-800">Créé le :</span>{" "}
+                          {new Date(row.created_at).toLocaleString("fr-FR", {
+                            dateStyle: "short",
+                            timeStyle: "short",
+                          })}
+                        </div>
+                        <div>
+                          <span className="font-semibold text-slate-800">Année :</span>{" "}
+                          {row.academic_year || cls?.academic_year || "—"}
+                        </div>
+                        <div>
+                          <span className="font-semibold text-slate-800">Statut :</span>{" "}
+                          {row.receipt_status === "posted" ? "Validé" : "Annulé"}
                         </div>
                       </div>
-                    ))
-                  )}
+                    </div>
+
+                    <div className="mt-4">
+                      <Link
+                        href="/admin/finance/payments"
+                        className="inline-flex items-center justify-center rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-bold text-slate-700 hover:bg-slate-50"
+                      >
+                        Retour aux encaissements
+                      </Link>
+                    </div>
+                  </div>
                 </div>
               </article>
             );

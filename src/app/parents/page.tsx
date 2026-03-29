@@ -1922,7 +1922,41 @@ export default function ParentPage() {
                 </div>
               </div>
 
-              <div className="mt-6">
+              <div className="mt-6 rounded-3xl border border-slate-200 bg-slate-50 p-4">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="flex min-w-0 items-center gap-3">
+                    <div className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-white text-[#003766] shadow-sm">
+                      <IconBell />
+                    </div>
+                    <div className="min-w-0">
+                      <div className="text-[16px] font-extrabold text-slate-900">
+                        Notifications push
+                      </div>
+                      <div className="mt-1 text-[14px] text-slate-500">
+                        {granted
+                          ? "Activées sur cet appareil"
+                          : "Non activées sur cet appareil"}
+                      </div>
+                    </div>
+                  </div>
+
+                  {granted ? (
+                    <Badge tone="emerald">Activées</Badge>
+                  ) : (
+                    <Button
+                      type="button"
+                      tone="outline"
+                      onClick={enablePush}
+                      iconLeft={<IconBell />}
+                      className="sm:min-w-[220px]"
+                    >
+                      Activer les push
+                    </Button>
+                  )}
+                </div>
+              </div>
+
+              <div className="mt-5">
                 <label className="mb-2 block text-[13px] font-extrabold uppercase tracking-wide text-slate-600">
                   Numéro à rattacher
                 </label>
@@ -2037,17 +2071,8 @@ export default function ParentPage() {
                   <Skeleton className="h-20 w-full" />
                 </div>
               ) : !hasKids ? (
-                <div className="flex items-center justify-between rounded-2xl border bg-slate-50 p-4 text-[15px] text-slate-700">
-                  <div>Aucun enfant lié à votre compte pour l’instant.</div>
-                  {!granted && (
-                    <Button
-                      tone="outline"
-                      onClick={enablePush}
-                      iconLeft={<IconBell />}
-                    >
-                      Activer les push
-                    </Button>
-                  )}
+                <div className="rounded-2xl border bg-slate-50 p-4 text-[15px] text-slate-700">
+                  Aucun enfant lié à votre compte pour l’instant.
                 </div>
               ) : (
                 <>
@@ -2235,19 +2260,8 @@ export default function ParentPage() {
                     </div>
                     <div className="flex items-center gap-2">
                       {granted ? (
-                        <span className="text-[13px] font-bold text-emerald-700">
-                          Notifications déjà activées ✅
-                        </span>
-                      ) : (
-                        <Button
-                          tone="outline"
-                          onClick={enablePush}
-                          title="Activer les notifications push"
-                          iconLeft={<IconBell />}
-                        >
-                          Activer les push
-                        </Button>
-                      )}
+                        <Badge tone="emerald">Push activées</Badge>
+                      ) : null}
                     </div>
                   </div>
                 );

@@ -407,9 +407,10 @@ export default function ImportPage() {
         const skipped = j?.skipped_no_phone ?? 0;
         const failed = j?.failed ?? 0;
         const subjectsAdded = j?.subjects_added ?? 0;
+        const payrollProfilesUpserted = j?.payroll_profiles_upserted ?? 0;
 
         setMsg(
-          `Import OK : ${created} créé(s), ${updated} mis à jour, ${subjectsAdded} matière(s), ${skipped} sans téléphone${
+          `Import OK : ${created} créé(s), ${updated} mis à jour, ${subjectsAdded} matière(s), ${payrollProfilesUpserted} fiche(s) de paie synchronisée(s), ${skipped} sans téléphone${
             failed ? `, ${failed} échec(s)` : ""
           }.`
         );
@@ -427,9 +428,9 @@ export default function ImportPage() {
 1,19659352H,Abia Yapi Christ Brayan,M,12/03/2010,Abidjan,Ivoirienne,Externe,Non,Non,Oui
 2,19578655R,Aboy Othniel,M,2010-05-02,Aboisso,Ivoirienne,Externe,Non,Non,Non`;
 
-  const phTeachers = `Nom,Email,Téléphone,Disciplines
-M. FABRE,fabre@ecole.ci,+22501020304,Maths; Physique
-Mme KONE,kone@ecole.ci,+22505060708,Français`;
+  const phTeachers = `Nom,Email,Téléphone,Disciplines,Statut,Paie active
+M. FABRE,fabre@ecole.ci,+22501020304,Maths; Physique,vacataire,Oui
+Mme KONE,kone@ecole.ci,+22505060708,Français,permanent,Oui`;
 
   function pickPhotos() {
     photoRef.current?.click();
@@ -587,14 +588,20 @@ Mme KONE,kone@ecole.ci,+22505060708,Français`;
             Formats : <code>+22501020304</code>, <code>0022501020304</code>,{" "}
             <code>01020304</code>.
             <br />
-            Colonnes : <code>Nom</code>, <code>Email</code>, <code>Téléphone</code>,{" "}
-            <code>Disciplines</code>.
+            Colonnes obligatoires : <code>Nom</code>, <code>Téléphone</code>.
             <br />
-            <span className="font-medium">
-              Conseil :
-            </span>{" "}
-            dans Excel, mets la colonne téléphone au format <b>Texte</b> pour éviter la
-            perte d’un zéro initial.
+            Colonnes supportées : <code>Email</code>, <code>Disciplines</code>,{" "}
+            <code>Statut</code>, <code>Paie active</code>.
+            <br />
+            <span className="font-medium">Statut</span> accepte{" "}
+            <code>vacataire</code> ou <code>permanent</code>.
+            <br />
+            <span className="font-medium">Paie active</span> accepte{" "}
+            <code>Oui/Non</code>, <code>True/False</code>, <code>1/0</code>.
+            <br />
+            <span className="font-medium">Conseil :</span> dans Excel, mets la
+            colonne téléphone au format <b>Texte</b> pour éviter la perte d’un
+            zéro initial.
           </div>
         )}
 
@@ -638,9 +645,7 @@ Mme KONE,kone@ecole.ci,+22505060708,Français`;
         {mode === "student_photos" ? (
           <div className="space-y-3">
             <div className="rounded-lg border bg-slate-50 p-3 text-[13px] text-slate-700">
-              <div className="mb-1 font-semibold">
-                Règle de nommage des fichiers
-              </div>
+              <div className="mb-1 font-semibold">Règle de nommage des fichiers</div>
               <ul className="list-disc space-y-1 pl-5">
                 <li>
                   Recommandé : <code>MATRICULE.jpg</code> — ex :{" "}
@@ -673,7 +678,7 @@ Mme KONE,kone@ecole.ci,+22505060708,Français`;
             <div className="flex flex-wrap items-center gap-2">
               <SecondaryButton onClick={pickPhotos}>Choisir des photos…</SecondaryButton>
               <SecondaryButton onClick={clearPhotos} disabled={!photoFiles.length}>
-               Effacer
+                Effacer
               </SecondaryButton>
               <Button onClick={uploadPhotos} disabled={!photoFiles.length || photoLoading}>
                 {photoLoading ? "…" : "Uploader & associer"}
@@ -854,6 +859,8 @@ Mme KONE,kone@ecole.ci,+22505060708,Français`;
                     <th className="px-3 py-2 text-left">Email</th>
                     <th className="px-3 py-2 text-left">Téléphone</th>
                     <th className="px-3 py-2 text-left">Disciplines</th>
+                    <th className="px-3 py-2 text-left">Type</th>
+                    <th className="px-3 py-2 text-left">Paie active</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -863,6 +870,10 @@ Mme KONE,kone@ecole.ci,+22505060708,Français`;
                       <td className="px-3 py-2">{r.email ?? ""}</td>
                       <td className="px-3 py-2">{r.phone ?? ""}</td>
                       <td className="px-3 py-2">{(r.subjects || []).join(", ")}</td>
+                      <td className="px-3 py-2">
+                        {r.employment_type === "vacataire" ? "Vacataire" : "Permanent"}
+                      </td>
+                      <td className="px-3 py-2">{boolLabel(r.payroll_enabled)}</td>
                     </tr>
                   ))}
                 </tbody>

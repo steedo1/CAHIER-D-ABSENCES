@@ -1,4 +1,5 @@
 import Link from "next/link";
+import type { ReactNode } from "react";
 import { redirect } from "next/navigation";
 import {
   ArrowRight,
@@ -13,9 +14,14 @@ import {
   AlertTriangle,
   School2,
   TrendingUp,
+  BadgeDollarSign,
 } from "lucide-react";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getFinanceAccessForCurrentUser } from "@/lib/finance-access";
+import {
+  getAdminStudentsServer,
+  type AdminStudentRow,
+} from "@/lib/admin-students-server";
 
 export const dynamic = "force-dynamic";
 
@@ -24,13 +30,6 @@ type ClassRow = {
   label: string;
   level: string | null;
   academic_year: string | null;
-};
-
-type StudentRow = {
-  id: string;
-  first_name: string | null;
-  last_name: string | null;
-  matricule: string | null;
 };
 
 type FeeCategoryRow = {
@@ -81,16 +80,26 @@ type ExpenseRow = {
   beneficiary: string | null;
 };
 
+type TeacherPayProfileRow = {
+  id: string;
+  profile_id: string;
+  employment_type: "vacataire" | "permanent";
+  payroll_enabled: boolean;
+};
+
+type TeacherPayrollRunRow = {
+  id: string;
+  status: "draft" | "validated" | "cancelled";
+  period_month: string;
+};
+
 function formatMoney(value: number | string) {
   return `${Number(value || 0).toLocaleString("fr-FR")} F`;
 }
 
-function fullName(student: StudentRow | undefined | null) {
+function fullName(student: AdminStudentRow | undefined | null) {
   if (!student) return "Élève inconnu";
-  const parts = [student.first_name || "", student.last_name || ""]
-    .map((x) => x.trim())
-    .filter(Boolean);
-  return parts.join(" ") || student.matricule || "Élève sans nom";
+  return student.full_name || student.matricule || "Élève sans nom";
 }
 
 async function getCurrentInstitutionIdOrThrow() {
@@ -126,7 +135,7 @@ function StatCard({
   hint,
   tone = "slate",
 }: {
-  icon: React.ReactNode;
+  icon: ReactNode;
   label: string;
   value: string | number;
   hint: string;
@@ -192,7 +201,7 @@ function QuickLinkCard({
   badge,
 }: {
   href: string;
-  icon: React.ReactNode;
+  icon: ReactNode;
   title: string;
   description: string;
   badge?: string;
@@ -233,6 +242,7 @@ export default async function AdminFinancePage() {
 
   const institutionId = await getCurrentInstitutionIdOrThrow();
   const supabase = await getSupabaseServerClient();
+  const adminStudents = await getAdminStudentsServer();
 
   const { data: classes, error: clsErr } = await supabase
     .from("classes")
@@ -251,6 +261,8 @@ export default async function AdminFinancePage() {
     { data: balances, error: balErr },
     { data: receipts, error: recErr },
     { data: expenses, error: expErr },
+    { data: teacherPayProfiles, error: payProfErr },
+    { data: teacherPayrollRuns, error: payRunErr },
   ] = await Promise.all([
     supabase
       .schema("finance")
@@ -292,6 +304,20 @@ export default async function AdminFinancePage() {
       .eq("school_id", institutionId)
       .order("expense_date", { ascending: false })
       .limit(8),
+
+    supabase
+      .schema("finance")
+      .from("teacher_pay_profiles")
+      .select("id,profile_id,employment_type,payroll_enabled")
+      .eq("institution_id", institutionId),
+
+    supabase
+      .schema("finance")
+      .from("teacher_payroll_runs")
+      .select("id,status,period_month")
+      .eq("institution_id", institutionId)
+      .order("generated_at", { ascending: false })
+      .limit(12),
   ]);
 
   if (feeCatErr) throw new Error(feeCatErr.message);
@@ -299,30 +325,23 @@ export default async function AdminFinancePage() {
   if (balErr) throw new Error(balErr.message);
   if (recErr) throw new Error(recErr.message);
   if (expErr) throw new Error(expErr.message);
+  if (payProfErr) throw new Error(payProfErr.message);
+  if (payRunErr) throw new Error(payRunErr.message);
 
   const feeCategoryRows = (feeCategories ?? []) as FeeCategoryRow[];
   const feeScheduleRows = (feeSchedules ?? []) as FeeScheduleRow[];
   const balanceRows = (balances ?? []) as ChargeBalanceRow[];
   const receiptRows = (receipts ?? []) as ReceiptRow[];
   const expenseRows = (expenses ?? []) as ExpenseRow[];
+  const teacherPayProfileRows = (teacherPayProfiles ?? []) as TeacherPayProfileRow[];
+  const teacherPayrollRunRows = (teacherPayrollRuns ?? []) as TeacherPayrollRunRow[];
 
-  const studentIds = Array.from(
-    new Set([
-      ...balanceRows.map((r) => r.student_id),
-      ...receiptRows.map((r) => r.student_id),
-    ])
-  );
+  const relevantStudentIds = new Set([
+    ...balanceRows.map((r) => r.student_id),
+    ...receiptRows.map((r) => r.student_id),
+  ]);
 
-  const { data: students, error: stuErr } = studentIds.length
-    ? await supabase
-        .from("students")
-        .select("id,first_name,last_name,matricule")
-        .in("id", studentIds)
-    : { data: [], error: null as any };
-
-  if (stuErr) throw new Error(stuErr.message);
-
-  const studentRows = (students ?? []) as StudentRow[];
+  const studentRows = adminStudents.filter((s) => relevantStudentIds.has(s.id));
   const studentMap = new Map(studentRows.map((s) => [s.id, s]));
 
   const activeFeeCategories = feeCategoryRows.filter((r) => r.is_active).length;
@@ -334,6 +353,19 @@ export default async function AdminFinancePage() {
     if (!r.due_date) return false;
     return new Date(`${r.due_date}T23:59:59`).getTime() < Date.now();
   });
+
+  const payrollEnabledTeachers = teacherPayProfileRows.filter(
+    (r) => r.payroll_enabled
+  );
+  const vacataireTeachers = teacherPayProfileRows.filter(
+    (r) => r.payroll_enabled && r.employment_type === "vacataire"
+  );
+  const payrollDraftRuns = teacherPayrollRunRows.filter(
+    (r) => r.status === "draft"
+  );
+  const payrollValidatedRuns = teacherPayrollRunRows.filter(
+    (r) => r.status === "validated"
+  );
 
   const totalBilled = balanceRows.reduce(
     (sum, row) => sum + Number(row.net_amount || 0),
@@ -403,7 +435,7 @@ export default async function AdminFinancePage() {
 
             <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-200 sm:text-[15px]">
               Vue centrale des frais, dettes élèves, encaissements manuels,
-              reçus, impayés, dépenses et rapports de l’établissement.
+              reçus, impayés, dépenses, rapports et désormais paie enseignants.
             </p>
 
             <div className="mt-4 flex flex-wrap items-center gap-2 text-xs font-semibold text-slate-200">
@@ -534,6 +566,44 @@ export default async function AdminFinancePage() {
           title="Rapports"
           description="Voir les synthèses financières et répartitions par classe ou catégorie."
         />
+        <QuickLinkCard
+          href="/admin/finance/payroll"
+          icon={<BadgeDollarSign className="h-5 w-5" />}
+          title="Paie enseignants"
+          description="Calculer la paie mensuelle des enseignants à partir des séances issues du téléphone de classe."
+          badge={`${payrollEnabledTeachers.length}`}
+        />
+      </section>
+
+      <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <StatCard
+          icon={<BadgeDollarSign className="h-6 w-6" />}
+          label="Profils paie actifs"
+          value={payrollEnabledTeachers.length}
+          hint={`${vacataireTeachers.length} vacataire(s)`}
+          tone="emerald"
+        />
+        <StatCard
+          icon={<CalendarClock className="h-6 w-6" />}
+          label="Brouillons paie"
+          value={payrollDraftRuns.length}
+          hint="Runs non validés"
+          tone="amber"
+        />
+        <StatCard
+          icon={<Receipt className="h-6 w-6" />}
+          label="Paies validées"
+          value={payrollValidatedRuns.length}
+          hint="Historique disponible"
+          tone="violet"
+        />
+        <StatCard
+          icon={<Users className="h-6 w-6" />}
+          label="Vacataires"
+          value={vacataireTeachers.length}
+          hint="Inclus dans paie active"
+          tone="slate"
+        />
       </section>
 
       <section className="grid gap-6 xl:grid-cols-2">
@@ -590,7 +660,13 @@ export default async function AdminFinancePage() {
             <div className="mt-5 space-y-4">
               {recentArrears.map((row) => {
                 const student = studentMap.get(row.student_id);
-                const cls = row.class_id ? classMap.get(row.class_id) : null;
+                const cls =
+                  row.class_id
+                    ? classMap.get(row.class_id)
+                    : student?.class_id
+                    ? classMap.get(student.class_id)
+                    : null;
+
                 const overdue =
                   !!row.due_date &&
                   new Date(`${row.due_date}T23:59:59`).getTime() < Date.now();
@@ -606,7 +682,7 @@ export default async function AdminFinancePage() {
                           {fullName(student)}
                         </h2>
                         <div className="mt-1 text-sm text-slate-600">
-                          {cls?.label || "—"} • {row.label}
+                          {student?.class_label || cls?.label || "—"} • {row.label}
                         </div>
                         <div className="mt-2 flex flex-wrap items-center gap-2">
                           <span

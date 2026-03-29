@@ -1,4 +1,4 @@
-// src/app/admin/finance/payments/page.tsx
+import type { ReactNode } from "react";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import {
@@ -12,6 +12,10 @@ import {
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { getFinanceAccessForCurrentUser } from "@/lib/finance-access";
+import {
+  getAdminStudentsServer,
+  type AdminStudentRow,
+} from "@/lib/admin-students-server";
 
 export const dynamic = "force-dynamic";
 
@@ -20,14 +24,6 @@ type ClassRow = {
   label: string;
   level: string | null;
   academic_year: string | null;
-};
-
-type StudentRow = {
-  id: string;
-  first_name: string | null;
-  last_name: string | null;
-  matricule: string | null;
-  class_id: string | null;
 };
 
 type ChargeBalanceRow = {
@@ -67,12 +63,9 @@ type ReceiptRow = {
   created_at: string;
 };
 
-function fullName(student: StudentRow | undefined | null) {
+function fullName(student: AdminStudentRow | undefined | null) {
   if (!student) return "Élève inconnu";
-  const parts = [student.first_name || "", student.last_name || ""]
-    .map((x) => x.trim())
-    .filter(Boolean);
-  return parts.join(" ") || student.matricule || "Élève sans nom";
+  return student.full_name || student.matricule || "Élève sans nom";
 }
 
 function formatMoney(value: number) {
@@ -232,16 +225,13 @@ async function createPaymentAction(formData: FormData) {
     } as any);
 
   if (allocErr) {
-    await admin
-      .schema("finance")
-      .from("receipts")
-      .delete()
-      .eq("id", receipt.id);
+    await admin.schema("finance").from("receipts").delete().eq("id", receipt.id);
 
     throw new Error(allocErr.message);
   }
 
   revalidatePath("/admin/finance/payments");
+  revalidatePath("/admin/finance/receipts");
   revalidatePath("/admin/finance");
 }
 
@@ -251,7 +241,7 @@ function StatCard({
   value,
   hint,
 }: {
-  icon: React.ReactNode;
+  icon: ReactNode;
   label: string;
   value: string | number;
   hint: string;
@@ -282,8 +272,7 @@ function StatusPill({
   tone?: "emerald" | "amber" | "slate";
 }) {
   const tones = {
-    emerald:
-      "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200",
+    emerald: "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200",
     amber: "bg-amber-50 text-amber-700 ring-1 ring-amber-200",
     slate: "bg-slate-100 text-slate-700 ring-1 ring-slate-200",
   };
@@ -307,6 +296,7 @@ export default async function FinancePaymentsPage() {
 
   const { institutionId } = await getCurrentContextOrThrow();
   const supabase = await getSupabaseServerClient();
+  const adminStudents = await getAdminStudentsServer();
 
   const { data: classes, error: clsErr } = await supabase
     .from("classes")
@@ -317,52 +307,45 @@ export default async function FinancePaymentsPage() {
   if (clsErr) throw new Error(clsErr.message);
 
   const classRows = (classes ?? []) as ClassRow[];
-  const classIds = classRows.map((c) => c.id);
+  const classMap = new Map(classRows.map((c) => [c.id, c]));
 
-  const [
-    { data: students, error: stuErr },
-    { data: balances, error: balErr },
-    { data: receipts, error: recErr },
-  ] = await Promise.all([
-    classIds.length
-      ? supabase
-          .from("students")
-          .select("id,first_name,last_name,matricule,class_id")
-          .in("class_id", classIds)
-      : Promise.resolve({ data: [], error: null as any }),
+  const [{ data: balances, error: balErr }, { data: receipts, error: recErr }] =
+    await Promise.all([
+      supabase
+        .schema("finance")
+        .from("v_charge_balances")
+        .select(
+          "id,school_id,academic_year_id,student_id,class_id,fee_schedule_id,fee_category_id,label,base_amount,adjustment_total,net_amount,paid_amount,balance_due,due_date,charge_date,computed_status,created_at,updated_at"
+        )
+        .eq("school_id", institutionId)
+        .gt("balance_due", 0)
+        .neq("computed_status", "cancelled")
+        .order("due_date", { ascending: true, nullsFirst: false }),
 
-    supabase
-      .schema("finance")
-      .from("v_charge_balances")
-      .select(
-        "id,school_id,academic_year_id,student_id,class_id,fee_schedule_id,fee_category_id,label,base_amount,adjustment_total,net_amount,paid_amount,balance_due,due_date,charge_date,computed_status,created_at,updated_at"
-      )
-      .eq("school_id", institutionId)
-      .gt("balance_due", 0)
-      .neq("computed_status", "cancelled")
-      .order("due_date", { ascending: true, nullsFirst: false }),
+      supabase
+        .schema("finance")
+        .from("receipts")
+        .select(
+          "id,school_id,academic_year_id,academic_year,student_id,receipt_no,receipt_status,payment_date,payer_name,reference_no,total_amount,notes,created_at"
+        )
+        .eq("school_id", institutionId)
+        .order("payment_date", { ascending: false })
+        .limit(12),
+    ]);
 
-    supabase
-      .schema("finance")
-      .from("receipts")
-      .select(
-        "id,school_id,academic_year_id,academic_year,student_id,receipt_no,receipt_status,payment_date,payer_name,reference_no,total_amount,notes,created_at"
-      )
-      .eq("school_id", institutionId)
-      .order("payment_date", { ascending: false })
-      .limit(12),
-  ]);
-
-  if (stuErr) throw new Error(stuErr.message);
   if (balErr) throw new Error(balErr.message);
   if (recErr) throw new Error(recErr.message);
 
-  const studentRows = (students ?? []) as StudentRow[];
   const balanceRows = (balances ?? []) as ChargeBalanceRow[];
   const receiptRows = (receipts ?? []) as ReceiptRow[];
 
+  const relevantStudentIds = new Set([
+    ...balanceRows.map((r) => r.student_id),
+    ...receiptRows.map((r) => r.student_id),
+  ]);
+
+  const studentRows = adminStudents.filter((s) => relevantStudentIds.has(s.id));
   const studentMap = new Map(studentRows.map((s) => [s.id, s]));
-  const classMap = new Map(classRows.map((c) => [c.id, c]));
 
   const totalDue = balanceRows.reduce(
     (sum, row) => sum + Number(row.balance_due || 0),
@@ -457,10 +440,18 @@ export default async function FinancePaymentsPage() {
                 <option value="">— Choisir une dette élève —</option>
                 {balanceRows.map((row) => {
                   const student = studentMap.get(row.student_id);
-                  const cls = row.class_id ? classMap.get(row.class_id) : null;
+                  const cls =
+                    row.class_id
+                      ? classMap.get(row.class_id)
+                      : student?.class_id
+                      ? classMap.get(student.class_id)
+                      : null;
+
                   const name = fullName(student);
-                  const classLabel = cls?.label || "Sans classe";
+                  const classLabel =
+                    student?.class_label || cls?.label || "Sans classe";
                   const matricule = student?.matricule ? ` — ${student.matricule}` : "";
+
                   return (
                     <option key={row.id} value={row.id}>
                       {name}
@@ -565,7 +556,13 @@ export default async function FinancePaymentsPage() {
               <div className="mt-5 space-y-4">
                 {balanceRows.map((row) => {
                   const student = studentMap.get(row.student_id);
-                  const cls = row.class_id ? classMap.get(row.class_id) : null;
+                  const cls =
+                    row.class_id
+                      ? classMap.get(row.class_id)
+                      : student?.class_id
+                      ? classMap.get(student.class_id)
+                      : null;
+
                   const overdue =
                     row.due_date &&
                     new Date(`${row.due_date}T23:59:59`).getTime() < Date.now();
@@ -595,7 +592,7 @@ export default async function FinancePaymentsPage() {
                           <div className="mt-3 grid gap-2 text-sm text-slate-600 sm:grid-cols-2">
                             <div>
                               <span className="font-semibold text-slate-800">Classe :</span>{" "}
-                              {cls?.label || "—"}
+                              {student?.class_label || cls?.label || "—"}
                               {cls?.level ? ` (${cls.level})` : ""}
                             </div>
                             <div>
@@ -646,9 +643,8 @@ export default async function FinancePaymentsPage() {
               <div className="mt-5 space-y-4">
                 {receiptRows.map((row) => {
                   const student = studentMap.get(row.student_id);
-                  const cls = student?.class_id
-                    ? classMap.get(student.class_id)
-                    : null;
+                  const cls =
+                    student?.class_id ? classMap.get(student.class_id) : null;
 
                   return (
                     <article
@@ -674,7 +670,7 @@ export default async function FinancePaymentsPage() {
                             </div>
                             <div>
                               <span className="font-semibold text-slate-800">Classe :</span>{" "}
-                              {cls?.label || "—"}
+                              {student?.class_label || cls?.label || "—"}
                             </div>
                             <div>
                               <span className="font-semibold text-slate-800">Payeur :</span>{" "}
@@ -693,7 +689,7 @@ export default async function FinancePaymentsPage() {
                             </div>
                             <div>
                               <span className="font-semibold text-slate-800">Année :</span>{" "}
-                              {row.academic_year || "—"}
+                              {row.academic_year || cls?.academic_year || "—"}
                             </div>
                           </div>
 
