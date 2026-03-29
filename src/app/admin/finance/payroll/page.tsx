@@ -1,3 +1,4 @@
+// src/app/admin/finance/payroll/page.tsx
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { revalidatePath } from "next/cache";
@@ -11,7 +12,6 @@ import {
   Printer,
   Receipt,
   RefreshCcw,
-  UserRound,
   Users,
   Wallet,
 } from "lucide-react";
@@ -89,12 +89,66 @@ type StatisticsDetailRow = {
   actual_call_iso?: string | null;
   class_id?: string | null;
   class_label?: string | null;
+  subject_id?: string | null;
+  period_id?: string | null;
 };
 
 type StatisticsDetailPayload = {
   rows: StatisticsDetailRow[];
   total_minutes: number;
   count: number;
+};
+
+type InstitutionSettings = {
+  institution_name?: string | null;
+  institution_label?: string | null;
+  name?: string | null;
+  institution_logo_url?: string | null;
+  institution_phone?: string | null;
+  institution_email?: string | null;
+  institution_region?: string | null;
+  institution_postal_address?: string | null;
+  institution_status?: string | null;
+  institution_head_name?: string | null;
+  institution_head_title?: string | null;
+  country_name?: string | null;
+  country_motto?: string | null;
+  ministry_name?: string | null;
+  institution_code?: string | null;
+};
+
+type PeriodScheduleRow = {
+  id: string;
+  weekday: number;
+  period_no: number | null;
+  start_time?: string | null;
+  end_time?: string | null;
+  duration_min?: number | null;
+};
+
+type TeacherTimetableRow = {
+  class_id: string;
+  subject_id: string;
+  period_id: string;
+  weekday: number;
+};
+
+type ClassTeacherAssignmentRow = {
+  class_id: string;
+  subject_id: string;
+  teacher_id: string;
+  start_date?: string | null;
+  end_date?: string | null;
+};
+
+type ExpectedSlot = {
+  class_id: string;
+  subject_id: string;
+  period_id: string;
+  session_date: string;
+  weekday: number;
+  cycle: SchoolCycle;
+  expected_minutes: number;
 };
 
 function formatMoney(value: number | string) {
@@ -112,6 +166,16 @@ function formatDate(value: string | null | undefined) {
   const d = new Date(value);
   if (Number.isNaN(d.getTime())) return "—";
   return d.toLocaleDateString("fr-FR", { dateStyle: "medium" });
+}
+
+function formatLongDate(value: string | Date | null | undefined) {
+  const d = value instanceof Date ? value : new Date(String(value || ""));
+  if (Number.isNaN(d.getTime())) return "—";
+  return d.toLocaleDateString("fr-FR", {
+    day: "2-digit",
+    month: "long",
+    year: "numeric",
+  });
 }
 
 function minutesToHourLabel(min: number) {
@@ -201,6 +265,38 @@ function buildOriginFromHeaders(h: Headers) {
   return `${proto}://${host}`;
 }
 
+function institutionDisplayName(cfg: InstitutionSettings) {
+  return (
+    (cfg.institution_name || "").trim() ||
+    (cfg.institution_label || "").trim() ||
+    (cfg.name || "").trim() ||
+    "Etablissement scolaire"
+  );
+}
+
+function overlapDateRange(
+  startDate: string | null | undefined,
+  endDate: string | null | undefined,
+  from: string,
+  to: string
+) {
+  const s = (startDate || "0001-01-01").slice(0, 10);
+  const e = (endDate || "9999-12-31").slice(0, 10);
+  return s <= to && e >= from;
+}
+
+function ymd(d: Date) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+function dbWeekdayToJs(dbWeekday: number) {
+  if (dbWeekday === 7) return 0;
+  return dbWeekday;
+}
+
 async function getCurrentContextOrThrow() {
   const supabase = await getSupabaseServerClient();
 
@@ -272,6 +368,42 @@ async function fetchStatisticsDetailServer(
   };
 }
 
+async function fetchInstitutionSettingsServer(): Promise<InstitutionSettings> {
+  const h = await headers();
+  const c = await cookies();
+  const origin = buildOriginFromHeaders(h);
+
+  const res = await fetch(`${origin}/api/admin/institution/settings`, {
+    method: "GET",
+    headers: {
+      cookie: c.toString(),
+      accept: "application/json",
+    },
+    cache: "no-store",
+  });
+
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) return {};
+
+  return {
+    institution_name: json?.institution_name ?? "",
+    institution_label: json?.institution_label ?? "",
+    name: json?.name ?? "",
+    institution_logo_url: json?.institution_logo_url ?? "",
+    institution_phone: json?.institution_phone ?? "",
+    institution_email: json?.institution_email ?? "",
+    institution_region: json?.institution_region ?? "",
+    institution_postal_address: json?.institution_postal_address ?? "",
+    institution_status: json?.institution_status ?? "",
+    institution_head_name: json?.institution_head_name ?? "",
+    institution_head_title: json?.institution_head_title ?? "",
+    country_name: json?.country_name ?? "",
+    country_motto: json?.country_motto ?? "",
+    ministry_name: json?.ministry_name ?? "",
+    institution_code: json?.institution_code ?? "",
+  };
+}
+
 async function getPayrollTeachers(
   institutionId: string
 ): Promise<PayrollTeacherRow[]> {
@@ -329,6 +461,99 @@ async function getPayrollTeachers(
       };
     })
     .sort((a, b) => teacherLabel(a).localeCompare(teacherLabel(b), "fr"));
+}
+
+async function buildExpectedSlotsForTeacher(params: {
+  admin: ReturnType<typeof getSupabaseServiceClient>;
+  institutionId: string;
+  teacherId: string;
+  periodStart: string;
+  periodEnd: string;
+  classMap: Map<string, ClassRow>;
+}) {
+  const { admin, institutionId, teacherId, periodStart, periodEnd, classMap } = params;
+
+  const [
+    { data: ttRows, error: ttErr },
+    { data: periodRows, error: pErr },
+    { data: ctRows, error: ctErr },
+  ] = await Promise.all([
+    admin
+      .from("teacher_timetables")
+      .select("class_id,subject_id,period_id,weekday")
+      .eq("institution_id", institutionId)
+      .eq("teacher_id", teacherId),
+
+    admin
+      .from("institution_periods")
+      .select("id,weekday,period_no,start_time,end_time,duration_min")
+      .eq("institution_id", institutionId),
+
+    admin
+      .from("class_teachers")
+      .select("class_id,subject_id,teacher_id,start_date,end_date")
+      .eq("institution_id", institutionId)
+      .eq("teacher_id", teacherId),
+  ]);
+
+  if (ttErr) throw new Error(ttErr.message);
+  if (pErr) throw new Error(pErr.message);
+  if (ctErr) throw new Error(ctErr.message);
+
+  const activeAssignments = new Set(
+    ((ctRows ?? []) as ClassTeacherAssignmentRow[])
+      .filter((r) => overlapDateRange(r.start_date, r.end_date, periodStart, periodEnd))
+      .map((r) => `${r.class_id}::${r.subject_id}`)
+  );
+
+  const periodById = new Map<string, PeriodScheduleRow>(
+    ((periodRows ?? []) as PeriodScheduleRow[]).map((p) => [String(p.id), p])
+  );
+
+  const from = new Date(`${periodStart}T00:00:00`);
+  const to = new Date(`${periodEnd}T00:00:00`);
+  const out: ExpectedSlot[] = [];
+
+  for (const row of (ttRows ?? []) as TeacherTimetableRow[]) {
+    const class_id = String(row.class_id || "");
+    const subject_id = String(row.subject_id || "");
+    const period_id = String(row.period_id || "");
+    const weekday = Number(row.weekday ?? -1);
+
+    if (!class_id || !subject_id || !period_id || weekday < 0) continue;
+    if (!activeAssignments.has(`${class_id}::${subject_id}`)) continue;
+
+    const period = periodById.get(period_id);
+    if (!period) continue;
+
+    const expected_minutes = Number(period.duration_min || 0);
+    if (expected_minutes <= 0) continue;
+
+    const cls = classMap.get(class_id) || null;
+    const cycle = cycleFromLevel(cls?.level);
+
+    for (let d = new Date(from); d <= to; d.setDate(d.getDate() + 1)) {
+      if (d.getDay() !== dbWeekdayToJs(weekday)) continue;
+
+      out.push({
+        class_id,
+        subject_id,
+        period_id,
+        session_date: ymd(d),
+        weekday,
+        cycle,
+        expected_minutes,
+      });
+    }
+  }
+
+  out.sort((a, b) =>
+    `${a.session_date}|${a.class_id}|${a.subject_id}|${a.period_id}`.localeCompare(
+      `${b.session_date}|${b.class_id}|${b.subject_id}|${b.period_id}`
+    )
+  );
+
+  return out;
 }
 
 async function generatePayrollDraftAction(formData: FormData) {
@@ -465,15 +690,32 @@ async function generatePayrollDraftAction(formData: FormData) {
   if (delLinesErr) throw new Error(delLinesErr.message);
 
   for (const teacher of eligibleTeachers) {
-    const stats = await fetchStatisticsDetailServer(
-      teacher.profile_id,
-      periodStart,
-      periodEnd
-    );
+    const [stats, expectedSlots] = await Promise.all([
+      fetchStatisticsDetailServer(teacher.profile_id, periodStart, periodEnd),
+      buildExpectedSlotsForTeacher({
+        admin,
+        institutionId,
+        teacherId: teacher.profile_id,
+        periodStart,
+        periodEnd,
+        classMap,
+      }),
+    ]);
 
-    const rows = (stats.rows || []).filter(
-      (r) => !!r.actual_call_iso || Number(r.real_minutes || 0) > 0
-    );
+    const actualBuckets = new Map<string, StatisticsDetailRow[]>();
+
+    for (const row of stats.rows || []) {
+      const sessionDate = String(row.dateISO || "").slice(0, 10);
+      const classId = String(row.class_id || "");
+      const weekday = dayOfWeekFromIso(row.dateISO);
+
+      if (!sessionDate || !classId) continue;
+
+      const key = `${sessionDate}::${weekday}::${classId}`;
+      const arr = actualBuckets.get(key) || [];
+      arr.push(row);
+      actualBuckets.set(key, arr);
+    }
 
     let expectedSessions = 0;
     let actualSessions = 0;
@@ -482,31 +724,43 @@ async function generatePayrollDraftAction(formData: FormData) {
     let sessionsFirstCycle = 0;
     let sessionsSecondCycle = 0;
 
-    const sessionItems = rows.map((row) => {
-      const cls = row.class_id ? classMap.get(row.class_id) : null;
-      const cycle = cycleFromLevel(cls?.level);
-      const effExpected = Number(row.expected_minutes || 0);
-      const effActual = Number(row.real_minutes || row.expected_minutes || 0);
-
+    const sessionItems = expectedSlots.map((slot) => {
       expectedSessions += 1;
-      actualSessions += 1;
-      expectedMinutes += effExpected;
-      actualMinutes += effActual;
+      expectedMinutes += Number(slot.expected_minutes || 0);
 
-      if (cycle === "first_cycle") sessionsFirstCycle += 1;
-      else sessionsSecondCycle += 1;
+      const key = `${slot.session_date}::${slot.weekday}::${slot.class_id}`;
+      const bucket = actualBuckets.get(key) || [];
+      const matched = bucket.length ? bucket.shift()! : null;
+
+      const effActual =
+        matched && (!!matched.actual_call_iso || Number(matched.real_minutes || 0) > 0)
+          ? Number(
+              matched.real_minutes ||
+                matched.expected_minutes ||
+                slot.expected_minutes ||
+                0
+            )
+          : 0;
+
+      if (effActual > 0) {
+        actualSessions += 1;
+        actualMinutes += effActual;
+
+        if (slot.cycle === "first_cycle") sessionsFirstCycle += 1;
+        else sessionsSecondCycle += 1;
+      }
 
       return {
-        class_id: row.class_id || null,
-        subject_id: null,
-        period_id: null,
-        session_date: String(row.dateISO).slice(0, 10),
-        weekday: dayOfWeekFromIso(row.dateISO),
-        cycle,
-        expected_minutes: effExpected,
+        class_id: slot.class_id,
+        subject_id: slot.subject_id,
+        period_id: slot.period_id,
+        session_date: slot.session_date,
+        weekday: slot.weekday,
+        cycle: slot.cycle,
+        expected_minutes: Number(slot.expected_minutes || 0),
         actual_minutes: effActual,
-        source_origin: "class_device",
-        counted_for_pay: true,
+        source_origin: effActual > 0 ? "class_device" : "timetable_expected",
+        counted_for_pay: effActual > 0,
       };
     });
 
@@ -734,24 +988,29 @@ export default async function FinancePayrollPage({
   const { institutionId } = await getCurrentContextOrThrow();
   const supabase = await getSupabaseServerClient();
 
-  const [{ data: runs, error: runsErr }, { data: teachersPay, error: teachersErr }] =
-    await Promise.all([
-      supabase
-        .schema("finance")
-        .from("teacher_payroll_runs")
-        .select(
-          "id,institution_id,period_month,period_start,period_end,scope,default_rate_first_cycle,default_rate_second_cycle,status,generated_at,validated_at,notes"
-        )
-        .eq("institution_id", institutionId)
-        .order("generated_at", { ascending: false })
-        .limit(24),
+  const [
+    { data: runs, error: runsErr },
+    { data: teachersPay, error: teachersErr },
+    institutionCfg,
+  ] = await Promise.all([
+    supabase
+      .schema("finance")
+      .from("teacher_payroll_runs")
+      .select(
+        "id,institution_id,period_month,period_start,period_end,scope,default_rate_first_cycle,default_rate_second_cycle,status,generated_at,validated_at,notes"
+      )
+      .eq("institution_id", institutionId)
+      .order("generated_at", { ascending: false })
+      .limit(24),
 
-      supabase
-        .schema("finance")
-        .from("teacher_pay_profiles")
-        .select("id,profile_id,employment_type,payroll_enabled")
-        .eq("institution_id", institutionId),
-    ]);
+    supabase
+      .schema("finance")
+      .from("teacher_pay_profiles")
+      .select("id,profile_id,employment_type,payroll_enabled")
+      .eq("institution_id", institutionId),
+
+    fetchInstitutionSettingsServer(),
+  ]);
 
   if (runsErr) throw new Error(runsErr.message);
   if (teachersErr) throw new Error(teachersErr.message);
@@ -817,6 +1076,24 @@ export default async function FinancePayrollPage({
     (r) => r.payroll_enabled && r.employment_type === "vacataire"
   );
 
+  const institutionName = institutionDisplayName(institutionCfg);
+  const headName =
+    (institutionCfg.institution_head_name || "").trim() || "Le premier responsable";
+  const headTitle =
+    (institutionCfg.institution_head_title || "").trim() || "Chef d’établissement";
+  const countryName =
+    (institutionCfg.country_name || "").trim() || "REPUBLIQUE DE COTE D’IVOIRE";
+  const countryMotto =
+    (institutionCfg.country_motto || "").trim() || "Union - Discipline - Travail";
+  const ministryName =
+    (institutionCfg.ministry_name || "").trim() || "MINISTERE DE L’EDUCATION NATIONALE";
+  const place =
+    (institutionCfg.institution_region || "").trim() ||
+    (institutionCfg.institution_postal_address || "").trim() ||
+    "................";
+  const logoUrl = (institutionCfg.institution_logo_url || "").trim();
+  const printDateLabel = formatLongDate(new Date());
+
   return (
     <div className="space-y-6">
       <style
@@ -828,6 +1105,10 @@ export default async function FinancePayrollPage({
               }
               body {
                 background: white !important;
+              }
+              .print-sheet {
+                box-shadow: none !important;
+                border-color: transparent !important;
               }
             }
           `,
@@ -848,8 +1129,8 @@ export default async function FinancePayrollPage({
               </h1>
 
               <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-200 sm:text-[15px]">
-                Calcule la paie du mois à partir des séances déjà remontées dans
-                les statistiques de classe, puis fige un brouillon ou un état validé.
+                Calcule la paie du mois à partir des séances attendues de l’emploi du temps,
+                compare avec les séances réellement remontées, puis fige un brouillon ou un état validé.
               </p>
 
               <div className="mt-4 flex flex-wrap items-center gap-2 text-xs font-semibold text-slate-200">
@@ -892,272 +1173,254 @@ export default async function FinancePayrollPage({
             </div>
           </div>
         </section>
-      ) : (
-        <section className="rounded-[28px] border border-slate-200 bg-white px-6 py-6 shadow-sm">
-          <h1 className="text-3xl font-black text-slate-900">
-            Fiche globale de paie enseignants
-          </h1>
-          <div className="mt-2 text-sm text-slate-600">
-            {selectedRun
-              ? `Période du ${formatDate(selectedRun.period_start)} au ${formatDate(
-                  selectedRun.period_end
-                )}`
-              : `Mois ${formatMonthLabel(month)}`}
-          </div>
-        </section>
-      )}
-
-      {!printMode ? (
-        <section className="no-print grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-          <StatCard
-            icon={<Users className="h-6 w-6" />}
-            label="Profils paie"
-            value={activePayrollTeachers.length}
-            hint={`${vacataires.length} vacataire(s)`}
-            tone="slate"
-          />
-          <StatCard
-            icon={<Receipt className="h-6 w-6" />}
-            label="Lignes calculées"
-            value={selectedRunLines.length}
-            hint={selectedRun ? "Run chargé" : "Aucun run chargé"}
-            tone="emerald"
-          />
-          <StatCard
-            icon={<CalendarClock className="h-6 w-6" />}
-            label="Séances"
-            value={totals.actualSessions}
-            hint={`${minutesToHourLabel(totals.actualMinutes)} réalisées`}
-            tone="amber"
-          />
-          <StatCard
-            icon={<Wallet className="h-6 w-6" />}
-            label="Montant brut"
-            value={formatMoney(totals.gross)}
-            hint={
-              selectedRun
-                ? selectedRun.status === "validated"
-                  ? "Run validé"
-                  : "Run brouillon"
-                : "Aucun brouillon"
-            }
-            tone="violet"
-          />
-        </section>
-      ) : null}
-
-      {!printMode ? (
-        <section className="no-print grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
-          <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
-            <div className="mb-4 text-sm font-black uppercase tracking-[0.16em] text-slate-700">
-              Générer ou actualiser le brouillon
-            </div>
-
-            <form action={generatePayrollDraftAction} className="grid gap-4 md:grid-cols-2">
-              <div>
-                <div className="mb-1 text-xs font-bold uppercase tracking-wide text-slate-500">
-                  Mois
+      ) : selectedRun ? (
+        <section className="print-sheet overflow-hidden rounded-[28px] border border-slate-200 bg-white px-8 py-8 shadow-sm">
+          <div className="mx-auto max-w-[1200px]">
+            <div className="mb-8 flex items-start justify-between gap-6 border-b border-slate-200 pb-6">
+              <div className="min-w-0 flex-1">
+                <div className="text-center">
+                  <div className="text-base font-black uppercase tracking-wide text-slate-900">
+                    {countryName}
+                  </div>
+                  <div className="mt-1 text-sm italic text-slate-600">{countryMotto}</div>
+                  <div className="mt-2 text-sm font-bold uppercase text-slate-800">
+                    {ministryName}
+                  </div>
                 </div>
-                <input
-                  type="month"
-                  name="month"
-                  defaultValue={month}
-                  className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-semibold text-slate-800 outline-none"
-                />
+
+                <div className="mt-5 flex items-start gap-4">
+                  <div className="flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-slate-200 bg-white">
+                    {logoUrl ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={logoUrl}
+                        alt="Logo établissement"
+                        className="max-h-full max-w-full object-contain"
+                      />
+                    ) : (
+                      <div className="text-xs font-bold text-slate-400">LOGO</div>
+                    )}
+                  </div>
+
+                  <div className="min-w-0">
+                    <div className="text-xl font-black uppercase text-slate-900">
+                      {institutionName}
+                    </div>
+
+                    {institutionCfg.institution_status ? (
+                      <div className="mt-1 text-sm font-semibold text-slate-700">
+                        {institutionCfg.institution_status}
+                      </div>
+                    ) : null}
+
+                    <div className="mt-1 space-y-1 text-sm text-slate-600">
+                      {institutionCfg.institution_region ? (
+                        <div>{institutionCfg.institution_region}</div>
+                      ) : null}
+                      {institutionCfg.institution_postal_address ? (
+                        <div>{institutionCfg.institution_postal_address}</div>
+                      ) : null}
+                      {institutionCfg.institution_phone || institutionCfg.institution_email ? (
+                        <div>
+                          {[institutionCfg.institution_phone, institutionCfg.institution_email]
+                            .filter(Boolean)
+                            .join(" - ")}
+                        </div>
+                      ) : null}
+                      {institutionCfg.institution_code ? (
+                        <div>Code établissement : {institutionCfg.institution_code}</div>
+                      ) : null}
+                    </div>
+                  </div>
+                </div>
               </div>
 
-              <div>
-                <div className="mb-1 text-xs font-bold uppercase tracking-wide text-slate-500">
+              <div className="shrink-0 text-right">
+                <div className="text-xs font-bold uppercase tracking-[0.16em] text-slate-500">
+                  Document
+                </div>
+                <div className="mt-2 text-2xl font-black text-slate-900">FICHE DE PAIE</div>
+                <div className="mt-2 text-sm text-slate-600">
+                  {formatMonthLabel(selectedRun.period_month.slice(0, 7))}
+                </div>
+                <div className="mt-1 text-sm text-slate-600">
+                  Période du {formatDate(selectedRun.period_start)} au{" "}
+                  {formatDate(selectedRun.period_end)}
+                </div>
+              </div>
+            </div>
+
+            <div className="mb-5 grid gap-3 md:grid-cols-4">
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                <div className="text-xs font-bold uppercase tracking-wide text-slate-500">
                   Périmètre
                 </div>
-                <select
-                  name="scope"
-                  defaultValue={scope}
-                  className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-semibold text-slate-800 outline-none"
-                >
-                  <option value="vacataires_only">Vacataires seulement</option>
-                  <option value="all_teachers">Tous les enseignants</option>
-                </select>
-              </div>
-
-              <div>
-                <div className="mb-1 text-xs font-bold uppercase tracking-wide text-slate-500">
-                  Tarif 1er cycle
-                </div>
-                <input
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  name="rate_first"
-                  defaultValue={rateFirst}
-                  className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-semibold text-slate-800 outline-none"
-                />
-              </div>
-
-              <div>
-                <div className="mb-1 text-xs font-bold uppercase tracking-wide text-slate-500">
-                  Tarif 2nd cycle
-                </div>
-                <input
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  name="rate_second"
-                  defaultValue={rateSecond}
-                  className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-semibold text-slate-800 outline-none"
-                />
-              </div>
-
-              <div className="md:col-span-2">
-                <div className="mb-1 text-xs font-bold uppercase tracking-wide text-slate-500">
-                  Notes
-                </div>
-                <textarea
-                  name="notes"
-                  rows={3}
-                  placeholder="Ex. Paie mars 2026 calculée sur les séances issues du téléphone de classe"
-                  className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-medium text-slate-800 outline-none"
-                />
-              </div>
-
-              <div className="md:col-span-2 flex flex-wrap gap-3">
-                <button className="inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-4 py-3 text-sm font-bold text-white hover:bg-emerald-700">
-                  <RefreshCcw className="h-4 w-4" />
-                  Générer / actualiser le brouillon
-                </button>
-
-                <Link
-                  href="/admin/finance"
-                  className="inline-flex items-center justify-center rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-bold text-slate-700 hover:bg-slate-50"
-                >
-                  Retour Finance
-                </Link>
-              </div>
-            </form>
-          </div>
-
-          <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
-            <div className="mb-4 text-sm font-black uppercase tracking-[0.16em] text-slate-700">
-              Runs enregistrés
-            </div>
-
-            {runRows.length === 0 ? (
-              <div className="rounded-3xl border border-dashed border-slate-300 bg-slate-50 px-5 py-10 text-center text-sm text-slate-600">
-                Aucun brouillon de paie enregistré.
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {runRows.map((run) => {
-                  const href = `/admin/finance/payroll?month=${encodeURIComponent(
-                    run.period_month.slice(0, 7)
-                  )}&scope=${encodeURIComponent(run.scope)}&rate_first=${encodeURIComponent(
-                    String(run.default_rate_first_cycle)
-                  )}&rate_second=${encodeURIComponent(
-                    String(run.default_rate_second_cycle)
-                  )}&run_id=${encodeURIComponent(run.id)}`;
-
-                  return (
-                    <Link
-                      key={run.id}
-                      href={href}
-                      className={`block rounded-2xl border p-4 transition hover:bg-slate-50 ${
-                        selectedRun?.id === run.id
-                          ? "border-emerald-300 bg-emerald-50/40"
-                          : "border-slate-200 bg-white"
-                      }`}
-                    >
-                      <div className="flex items-start justify-between gap-3">
-                        <div>
-                          <div className="text-base font-black text-slate-900">
-                            {formatMonthLabel(run.period_month.slice(0, 7))}
-                          </div>
-                          <div className="mt-1 text-sm text-slate-600">
-                            {run.scope === "vacataires_only"
-                              ? "Vacataires seulement"
-                              : "Tous les enseignants"}
-                          </div>
-                          <div className="mt-1 text-xs text-slate-500">
-                            Généré le {formatDate(run.generated_at)}
-                          </div>
-                        </div>
-
-                        <StatusPill status={run.status} />
-                      </div>
-                    </Link>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        </section>
-      ) : null}
-
-      {selectedRun ? (
-        <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-            <div>
-              <div className="flex flex-wrap items-center gap-2">
-                <h2 className="text-2xl font-black text-slate-900">
-                  {formatMonthLabel(selectedRun.period_month.slice(0, 7))}
-                </h2>
-                <StatusPill status={selectedRun.status} />
-              </div>
-
-              <div className="mt-2 grid gap-2 text-sm text-slate-600 sm:grid-cols-2 lg:grid-cols-4">
-                <div>
-                  <span className="font-semibold text-slate-800">Période :</span>{" "}
-                  {formatDate(selectedRun.period_start)} → {formatDate(selectedRun.period_end)}
-                </div>
-                <div>
-                  <span className="font-semibold text-slate-800">Périmètre :</span>{" "}
+                <div className="mt-1 text-sm font-semibold text-slate-900">
                   {selectedRun.scope === "vacataires_only"
                     ? "Vacataires seulement"
                     : "Tous les enseignants"}
                 </div>
-                <div>
-                  <span className="font-semibold text-slate-800">Tarif 1er cycle :</span>{" "}
+              </div>
+
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                <div className="text-xs font-bold uppercase tracking-wide text-slate-500">
+                  Tarif 1er cycle
+                </div>
+                <div className="mt-1 text-sm font-semibold text-slate-900">
                   {formatMoney(selectedRun.default_rate_first_cycle)}
                 </div>
-                <div>
-                  <span className="font-semibold text-slate-800">Tarif 2nd cycle :</span>{" "}
+              </div>
+
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                <div className="text-xs font-bold uppercase tracking-wide text-slate-500">
+                  Tarif 2nd cycle
+                </div>
+                <div className="mt-1 text-sm font-semibold text-slate-900">
                   {formatMoney(selectedRun.default_rate_second_cycle)}
                 </div>
               </div>
 
-              {selectedRun.notes ? (
-                <p className="mt-3 text-sm leading-6 text-slate-600">
-                  {selectedRun.notes}
-                </p>
-              ) : null}
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                <div className="text-xs font-bold uppercase tracking-wide text-slate-500">
+                  Montant brut total
+                </div>
+                <div className="mt-1 text-sm font-black text-emerald-700">
+                  {formatMoney(totals.gross)}
+                </div>
+              </div>
             </div>
 
-            {!printMode ? (
-              <div className="no-print flex flex-wrap gap-3">
-                {selectedRun.status === "draft" ? (
-                  <form action={validatePayrollRunAction}>
-                    <input type="hidden" name="run_id" value={selectedRun.id} />
-                    <button className="inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-4 py-3 text-sm font-bold text-white hover:bg-emerald-700">
-                      <BadgeCheck className="h-4 w-4" />
-                      Valider ce brouillon
-                    </button>
-                  </form>
-                ) : null}
-
-                <Link
-                  href={`/admin/finance/payroll?month=${encodeURIComponent(
-                    selectedRun.period_month.slice(0, 7)
-                  )}&scope=${encodeURIComponent(selectedRun.scope)}&rate_first=${encodeURIComponent(
-                    String(selectedRun.default_rate_first_cycle)
-                  )}&rate_second=${encodeURIComponent(
-                    String(selectedRun.default_rate_second_cycle)
-                  )}&run_id=${encodeURIComponent(selectedRun.id)}&print=1`}
-                  className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-bold text-slate-700 hover:bg-slate-50"
-                >
-                  <Printer className="h-4 w-4" />
-                  Vue impression
-                </Link>
+            {selectedRun.notes ? (
+              <div className="mb-5 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700">
+                <span className="font-bold text-slate-900">Note :</span> {selectedRun.notes}
               </div>
             ) : null}
+
+            {selectedRunLines.length === 0 ? (
+              <div className="rounded-3xl border border-dashed border-slate-300 bg-slate-50 px-5 py-10 text-center text-sm text-slate-600">
+                Ce run ne contient encore aucune ligne.
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="min-w-full border-collapse text-sm">
+                  <thead>
+                    <tr className="bg-slate-100">
+                      <th className="border border-slate-300 px-3 py-3 text-left font-black text-slate-700">
+                        Enseignant
+                      </th>
+                      <th className="border border-slate-300 px-3 py-3 text-left font-black text-slate-700">
+                        Statut
+                      </th>
+                      <th className="border border-slate-300 px-3 py-3 text-right font-black text-slate-700">
+                        Séances attendues
+                      </th>
+                      <th className="border border-slate-300 px-3 py-3 text-right font-black text-slate-700">
+                        Séances accomplies
+                      </th>
+                      <th className="border border-slate-300 px-3 py-3 text-right font-black text-slate-700">
+                        Heures prévues
+                      </th>
+                      <th className="border border-slate-300 px-3 py-3 text-right font-black text-slate-700">
+                        Heures accomplies
+                      </th>
+                      <th className="border border-slate-300 px-3 py-3 text-right font-black text-slate-700">
+                        1er cycle
+                      </th>
+                      <th className="border border-slate-300 px-3 py-3 text-right font-black text-slate-700">
+                        2nd cycle
+                      </th>
+                      <th className="border border-slate-300 px-3 py-3 text-right font-black text-slate-700">
+                        Montant
+                      </th>
+                      <th className="border border-slate-300 px-3 py-3 text-center font-black text-slate-700">
+                        Emargement
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {selectedRunLines.map((row) => (
+                      <tr key={row.id}>
+                        <td className="border border-slate-300 px-3 py-4 align-top">
+                          <div className="font-bold text-slate-900">
+                            {row.teacher_name_snapshot || "Enseignant"}
+                          </div>
+                          {row.notes ? (
+                            <div className="mt-1 text-xs text-slate-500">{row.notes}</div>
+                          ) : null}
+                        </td>
+                        <td className="border border-slate-300 px-3 py-4 text-slate-700">
+                          {row.employment_type === "vacataire" ? "Vacataire" : "Permanent"}
+                        </td>
+                        <td className="border border-slate-300 px-3 py-4 text-right text-slate-700">
+                          {row.expected_sessions}
+                        </td>
+                        <td className="border border-slate-300 px-3 py-4 text-right font-semibold text-slate-900">
+                          {row.actual_sessions}
+                        </td>
+                        <td className="border border-slate-300 px-3 py-4 text-right text-slate-700">
+                          {minutesToHourLabel(row.expected_minutes)}
+                        </td>
+                        <td className="border border-slate-300 px-3 py-4 text-right font-semibold text-slate-900">
+                          {minutesToHourLabel(row.actual_minutes)}
+                        </td>
+                        <td className="border border-slate-300 px-3 py-4 text-right text-slate-700">
+                          {row.sessions_first_cycle}
+                        </td>
+                        <td className="border border-slate-300 px-3 py-4 text-right text-slate-700">
+                          {row.sessions_second_cycle}
+                        </td>
+                        <td className="border border-slate-300 px-3 py-4 text-right font-black text-emerald-700">
+                          {formatMoney(row.gross_amount)}
+                        </td>
+                        <td className="border border-slate-300 px-3 py-4">
+                          <div className="h-10 w-full rounded-md border border-dashed border-slate-300" />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    <tr className="bg-slate-50">
+                      <td className="border border-slate-300 px-3 py-3 font-black text-slate-900" colSpan={2}>
+                        Total
+                      </td>
+                      <td className="border border-slate-300 px-3 py-3 text-right font-bold text-slate-900">
+                        {totals.expectedSessions}
+                      </td>
+                      <td className="border border-slate-300 px-3 py-3 text-right font-bold text-slate-900">
+                        {totals.actualSessions}
+                      </td>
+                      <td className="border border-slate-300 px-3 py-3 text-right font-bold text-slate-900">
+                        {minutesToHourLabel(totals.expectedMinutes)}
+                      </td>
+                      <td className="border border-slate-300 px-3 py-3 text-right font-bold text-slate-900">
+                        {minutesToHourLabel(totals.actualMinutes)}
+                      </td>
+                      <td className="border border-slate-300 px-3 py-3 text-right font-bold text-slate-900">
+                        {totals.firstCycle}
+                      </td>
+                      <td className="border border-slate-300 px-3 py-3 text-right font-bold text-slate-900">
+                        {totals.secondCycle}
+                      </td>
+                      <td className="border border-slate-300 px-3 py-3 text-right font-black text-emerald-700">
+                        {formatMoney(totals.gross)}
+                      </td>
+                      <td className="border border-slate-300 px-3 py-3" />
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            )}
+
+            <div className="mt-12 flex justify-end">
+              <div className="w-[360px] text-center text-sm text-slate-800">
+                <div>
+                  Fait à {place}, le {printDateLabel}
+                </div>
+                <div className="mt-3 font-bold">{headTitle}</div>
+                <div className="h-24" />
+                <div className="font-bold underline underline-offset-2">{headName}</div>
+              </div>
+            </div>
           </div>
         </section>
       ) : (
@@ -1166,203 +1429,401 @@ export default async function FinancePayrollPage({
         </section>
       )}
 
-      {selectedRun ? (
-        <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-          <StatCard
-            icon={<FileSpreadsheet className="h-6 w-6" />}
-            label="Lignes"
-            value={selectedRunLines.length}
-            hint="Enseignants dans la fiche"
-            tone="slate"
-          />
-          <StatCard
-            icon={<CalendarClock className="h-6 w-6" />}
-            label="Séances attendues"
-            value={totals.expectedSessions}
-            hint={minutesToHourLabel(totals.expectedMinutes)}
-            tone="emerald"
-          />
-          <StatCard
-            icon={<CalendarClock className="h-6 w-6" />}
-            label="Séances accomplies"
-            value={totals.actualSessions}
-            hint={minutesToHourLabel(totals.actualMinutes)}
-            tone="amber"
-          />
-          <StatCard
-            icon={<Wallet className="h-6 w-6" />}
-            label="Montant brut"
-            value={formatMoney(totals.gross)}
-            hint={`${totals.firstCycle} séances 1er cycle • ${totals.secondCycle} séances 2nd cycle`}
-            tone="violet"
-          />
-        </section>
-      ) : null}
+      {!printMode ? (
+        <>
+          <section className="no-print grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            <StatCard
+              icon={<Users className="h-6 w-6" />}
+              label="Profils paie"
+              value={activePayrollTeachers.length}
+              hint={`${vacataires.length} vacataire(s)`}
+              tone="slate"
+            />
+            <StatCard
+              icon={<Receipt className="h-6 w-6" />}
+              label="Lignes calculées"
+              value={selectedRunLines.length}
+              hint={selectedRun ? "Run chargé" : "Aucun run chargé"}
+              tone="emerald"
+            />
+            <StatCard
+              icon={<CalendarClock className="h-6 w-6" />}
+              label="Séances"
+              value={totals.actualSessions}
+              hint={`${minutesToHourLabel(totals.actualMinutes)} réalisées`}
+              tone="amber"
+            />
+            <StatCard
+              icon={<Wallet className="h-6 w-6" />}
+              label="Montant brut"
+              value={formatMoney(totals.gross)}
+              hint={
+                selectedRun
+                  ? selectedRun.status === "validated"
+                    ? "Run validé"
+                    : "Run brouillon"
+                  : "Aucun brouillon"
+              }
+              tone="violet"
+            />
+          </section>
 
-      {selectedRun ? (
-        <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="mb-4 flex items-center gap-2 text-sm font-black uppercase tracking-[0.16em] text-slate-700">
-            <BadgeDollarSign className="h-4 w-4 text-emerald-600" />
-            Fiche globale de paie
-          </div>
+          <section className="no-print grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
+            <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
+              <div className="mb-4 text-sm font-black uppercase tracking-[0.16em] text-slate-700">
+                Générer ou actualiser le brouillon
+              </div>
 
-          {selectedRunLines.length === 0 ? (
-            <div className="rounded-3xl border border-dashed border-slate-300 bg-slate-50 px-5 py-10 text-center text-sm text-slate-600">
-              Ce run ne contient encore aucune ligne.
+              <form action={generatePayrollDraftAction} className="grid gap-4 md:grid-cols-2">
+                <div>
+                  <div className="mb-1 text-xs font-bold uppercase tracking-wide text-slate-500">
+                    Mois
+                  </div>
+                  <input
+                    type="month"
+                    name="month"
+                    defaultValue={month}
+                    className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-semibold text-slate-800 outline-none"
+                  />
+                </div>
+
+                <div>
+                  <div className="mb-1 text-xs font-bold uppercase tracking-wide text-slate-500">
+                    Périmètre
+                  </div>
+                  <select
+                    name="scope"
+                    defaultValue={scope}
+                    className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-semibold text-slate-800 outline-none"
+                  >
+                    <option value="vacataires_only">Vacataires seulement</option>
+                    <option value="all_teachers">Tous les enseignants</option>
+                  </select>
+                </div>
+
+                <div>
+                  <div className="mb-1 text-xs font-bold uppercase tracking-wide text-slate-500">
+                    Tarif 1er cycle
+                  </div>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    name="rate_first"
+                    defaultValue={rateFirst}
+                    className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-semibold text-slate-800 outline-none"
+                  />
+                </div>
+
+                <div>
+                  <div className="mb-1 text-xs font-bold uppercase tracking-wide text-slate-500">
+                    Tarif 2nd cycle
+                  </div>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    name="rate_second"
+                    defaultValue={rateSecond}
+                    className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-semibold text-slate-800 outline-none"
+                  />
+                </div>
+
+                <div className="md:col-span-2">
+                  <div className="mb-1 text-xs font-bold uppercase tracking-wide text-slate-500">
+                    Notes
+                  </div>
+                  <textarea
+                    name="notes"
+                    rows={3}
+                    placeholder="Ex. Paie mars 2026 calculée sur les séances attendues de l’emploi du temps"
+                    className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-medium text-slate-800 outline-none"
+                  />
+                </div>
+
+                <div className="md:col-span-2 flex flex-wrap gap-3">
+                  <button className="inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-4 py-3 text-sm font-bold text-white hover:bg-emerald-700">
+                    <RefreshCcw className="h-4 w-4" />
+                    Générer / actualiser le brouillon
+                  </button>
+
+                  <Link
+                    href="/admin/finance"
+                    className="inline-flex items-center justify-center rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-bold text-slate-700 hover:bg-slate-50"
+                  >
+                    Retour Finance
+                  </Link>
+                </div>
+              </form>
             </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="min-w-full text-sm">
-                <thead className="bg-slate-50">
-                  <tr>
-                    <th className="px-3 py-3 text-left font-bold text-slate-600">Enseignant</th>
-                    <th className="px-3 py-3 text-left font-bold text-slate-600">Statut</th>
-                    <th className="px-3 py-3 text-right font-bold text-slate-600">Séances prévues</th>
-                    <th className="px-3 py-3 text-right font-bold text-slate-600">Séances accomplies</th>
-                    <th className="px-3 py-3 text-right font-bold text-slate-600">Heures prévues</th>
-                    <th className="px-3 py-3 text-right font-bold text-slate-600">Heures accomplies</th>
-                    <th className="px-3 py-3 text-right font-bold text-slate-600">1er cycle</th>
-                    <th className="px-3 py-3 text-right font-bold text-slate-600">2nd cycle</th>
-                    <th className="px-3 py-3 text-right font-bold text-slate-600">Tarif 1er cycle</th>
-                    <th className="px-3 py-3 text-right font-bold text-slate-600">Tarif 2nd cycle</th>
-                    <th className="px-3 py-3 text-right font-bold text-slate-600">Montant</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {selectedRunLines.map((row) => (
-                    <tr key={row.id} className="border-t border-slate-100">
-                      <td className="px-3 py-3">
-                        <div className="font-bold text-slate-900">
-                          {row.teacher_name_snapshot || "Enseignant"}
+
+            <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
+              <div className="mb-4 text-sm font-black uppercase tracking-[0.16em] text-slate-700">
+                Runs enregistrés
+              </div>
+
+              {runRows.length === 0 ? (
+                <div className="rounded-3xl border border-dashed border-slate-300 bg-slate-50 px-5 py-10 text-center text-sm text-slate-600">
+                  Aucun brouillon de paie enregistré.
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {runRows.map((run) => {
+                    const href = `/admin/finance/payroll?month=${encodeURIComponent(
+                      run.period_month.slice(0, 7)
+                    )}&scope=${encodeURIComponent(run.scope)}&rate_first=${encodeURIComponent(
+                      String(run.default_rate_first_cycle)
+                    )}&rate_second=${encodeURIComponent(
+                      String(run.default_rate_second_cycle)
+                    )}&run_id=${encodeURIComponent(run.id)}`;
+
+                    return (
+                      <Link
+                        key={run.id}
+                        href={href}
+                        className={`block rounded-2xl border p-4 transition hover:bg-slate-50 ${
+                          selectedRun?.id === run.id
+                            ? "border-emerald-300 bg-emerald-50/40"
+                            : "border-slate-200 bg-white"
+                        }`}
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <div className="text-base font-black text-slate-900">
+                              {formatMonthLabel(run.period_month.slice(0, 7))}
+                            </div>
+                            <div className="mt-1 text-sm text-slate-600">
+                              {run.scope === "vacataires_only"
+                                ? "Vacataires seulement"
+                                : "Tous les enseignants"}
+                            </div>
+                            <div className="mt-1 text-xs text-slate-500">
+                              Généré le {formatDate(run.generated_at)}
+                            </div>
+                          </div>
+
+                          <StatusPill status={run.status} />
                         </div>
-                        {row.notes ? (
-                          <div className="mt-1 text-xs text-slate-500">{row.notes}</div>
-                        ) : null}
-                      </td>
-                      <td className="px-3 py-3 text-slate-700">
-                        {row.employment_type === "vacataire" ? "Vacataire" : "Permanent"}
-                      </td>
-                      <td className="px-3 py-3 text-right text-slate-700">
-                        {row.expected_sessions}
-                      </td>
-                      <td className="px-3 py-3 text-right font-semibold text-slate-900">
-                        {row.actual_sessions}
-                      </td>
-                      <td className="px-3 py-3 text-right text-slate-700">
-                        {minutesToHourLabel(row.expected_minutes)}
-                      </td>
-                      <td className="px-3 py-3 text-right font-semibold text-slate-900">
-                        {minutesToHourLabel(row.actual_minutes)}
-                      </td>
-                      <td className="px-3 py-3 text-right text-slate-700">
-                        {row.sessions_first_cycle}
-                      </td>
-                      <td className="px-3 py-3 text-right text-slate-700">
-                        {row.sessions_second_cycle}
-                      </td>
-                      <td className="px-3 py-3 text-right text-slate-700">
-                        {formatMoney(row.rate_first_cycle)}
-                      </td>
-                      <td className="px-3 py-3 text-right text-slate-700">
-                        {formatMoney(row.rate_second_cycle)}
-                      </td>
-                      <td className="px-3 py-3 text-right font-black text-emerald-700">
-                        {formatMoney(row.gross_amount)}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-                <tfoot>
-                  <tr className="border-t-2 border-slate-200 bg-slate-50">
-                    <td className="px-3 py-3 font-black text-slate-900" colSpan={2}>
-                      Total
-                    </td>
-                    <td className="px-3 py-3 text-right font-bold text-slate-900">
-                      {totals.expectedSessions}
-                    </td>
-                    <td className="px-3 py-3 text-right font-bold text-slate-900">
-                      {totals.actualSessions}
-                    </td>
-                    <td className="px-3 py-3 text-right font-bold text-slate-900">
-                      {minutesToHourLabel(totals.expectedMinutes)}
-                    </td>
-                    <td className="px-3 py-3 text-right font-bold text-slate-900">
-                      {minutesToHourLabel(totals.actualMinutes)}
-                    </td>
-                    <td className="px-3 py-3 text-right font-bold text-slate-900">
-                      {totals.firstCycle}
-                    </td>
-                    <td className="px-3 py-3 text-right font-bold text-slate-900">
-                      {totals.secondCycle}
-                    </td>
-                    <td className="px-3 py-3"></td>
-                    <td className="px-3 py-3"></td>
-                    <td className="px-3 py-3 text-right font-black text-emerald-700">
-                      {formatMoney(totals.gross)}
-                    </td>
-                  </tr>
-                </tfoot>
-              </table>
+                      </Link>
+                    );
+                  })}
+                </div>
+              )}
             </div>
-          )}
-        </section>
-      ) : null}
+          </section>
 
-      {selectedRun && !printMode ? (
-        <section className="no-print rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="mb-4 flex items-center gap-2 text-sm font-black uppercase tracking-[0.16em] text-slate-700">
-            <UserRound className="h-4 w-4 text-emerald-600" />
-            Détail rapide
-          </div>
+          {selectedRun ? (
+            <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                <div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h2 className="text-2xl font-black text-slate-900">
+                      {formatMonthLabel(selectedRun.period_month.slice(0, 7))}
+                    </h2>
+                    <StatusPill status={selectedRun.status} />
+                  </div>
 
-          {selectedRunLines.length === 0 ? (
-            <div className="rounded-3xl border border-dashed border-slate-300 bg-slate-50 px-5 py-10 text-center text-sm text-slate-600">
-              Aucun détail disponible.
-            </div>
+                  <div className="mt-2 grid gap-2 text-sm text-slate-600 sm:grid-cols-2 lg:grid-cols-4">
+                    <div>
+                      <span className="font-semibold text-slate-800">Période :</span>{" "}
+                      {formatDate(selectedRun.period_start)} → {formatDate(selectedRun.period_end)}
+                    </div>
+                    <div>
+                      <span className="font-semibold text-slate-800">Périmètre :</span>{" "}
+                      {selectedRun.scope === "vacataires_only"
+                        ? "Vacataires seulement"
+                        : "Tous les enseignants"}
+                    </div>
+                    <div>
+                      <span className="font-semibold text-slate-800">Tarif 1er cycle :</span>{" "}
+                      {formatMoney(selectedRun.default_rate_first_cycle)}
+                    </div>
+                    <div>
+                      <span className="font-semibold text-slate-800">Tarif 2nd cycle :</span>{" "}
+                      {formatMoney(selectedRun.default_rate_second_cycle)}
+                    </div>
+                  </div>
+
+                  {selectedRun.notes ? (
+                    <p className="mt-3 text-sm leading-6 text-slate-600">{selectedRun.notes}</p>
+                  ) : null}
+                </div>
+
+                <div className="flex flex-wrap gap-3">
+                  {selectedRun.status === "draft" ? (
+                    <form action={validatePayrollRunAction}>
+                      <input type="hidden" name="run_id" value={selectedRun.id} />
+                      <button className="inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-4 py-3 text-sm font-bold text-white hover:bg-emerald-700">
+                        <BadgeCheck className="h-4 w-4" />
+                        Valider ce brouillon
+                      </button>
+                    </form>
+                  ) : null}
+
+                  <Link
+                    href={`/admin/finance/payroll?month=${encodeURIComponent(
+                      selectedRun.period_month.slice(0, 7)
+                    )}&scope=${encodeURIComponent(selectedRun.scope)}&rate_first=${encodeURIComponent(
+                      String(selectedRun.default_rate_first_cycle)
+                    )}&rate_second=${encodeURIComponent(
+                      String(selectedRun.default_rate_second_cycle)
+                    )}&run_id=${encodeURIComponent(selectedRun.id)}&print=1`}
+                    className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-bold text-slate-700 hover:bg-slate-50"
+                  >
+                    <Printer className="h-4 w-4" />
+                    Vue impression
+                  </Link>
+                </div>
+              </div>
+            </section>
           ) : (
-            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-              {selectedRunLines.slice(0, 9).map((row) => (
-                <article
-                  key={row.id}
-                  className="rounded-3xl border border-slate-200 bg-slate-50/60 p-4"
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <h3 className="text-lg font-black text-slate-900">
-                        {row.teacher_name_snapshot || "Enseignant"}
-                      </h3>
-                      <div className="mt-1 text-sm text-slate-600">
-                        {row.employment_type === "vacataire" ? "Vacataire" : "Permanent"}
-                      </div>
-                    </div>
-                    <div className="rounded-full bg-emerald-50 px-3 py-1.5 text-sm font-bold text-emerald-700 ring-1 ring-emerald-200">
-                      {formatMoney(row.gross_amount)}
-                    </div>
-                  </div>
-
-                  <div className="mt-4 grid gap-2 text-sm text-slate-600 sm:grid-cols-2">
-                    <div>
-                      <span className="font-semibold text-slate-800">Séances :</span>{" "}
-                      {row.actual_sessions}
-                    </div>
-                    <div>
-                      <span className="font-semibold text-slate-800">Heures :</span>{" "}
-                      {minutesToHourLabel(row.actual_minutes)}
-                    </div>
-                    <div>
-                      <span className="font-semibold text-slate-800">1er cycle :</span>{" "}
-                      {row.sessions_first_cycle}
-                    </div>
-                    <div>
-                      <span className="font-semibold text-slate-800">2nd cycle :</span>{" "}
-                      {row.sessions_second_cycle}
-                    </div>
-                  </div>
-                </article>
-              ))}
-            </div>
+            <section className="rounded-[28px] border border-dashed border-slate-300 bg-slate-50 px-5 py-12 text-center text-sm text-slate-600 shadow-sm">
+              Aucun run de paie chargé pour le moment. Génère un brouillon pour ce mois.
+            </section>
           )}
-        </section>
+
+          {selectedRun ? (
+            <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+              <StatCard
+                icon={<FileSpreadsheet className="h-6 w-6" />}
+                label="Lignes"
+                value={selectedRunLines.length}
+                hint="Enseignants dans la fiche"
+                tone="slate"
+              />
+              <StatCard
+                icon={<CalendarClock className="h-6 w-6" />}
+                label="Séances attendues"
+                value={totals.expectedSessions}
+                hint={minutesToHourLabel(totals.expectedMinutes)}
+                tone="emerald"
+              />
+              <StatCard
+                icon={<CalendarClock className="h-6 w-6" />}
+                label="Séances accomplies"
+                value={totals.actualSessions}
+                hint={minutesToHourLabel(totals.actualMinutes)}
+                tone="amber"
+              />
+              <StatCard
+                icon={<Wallet className="h-6 w-6" />}
+                label="Montant brut"
+                value={formatMoney(totals.gross)}
+                hint={`${totals.firstCycle} séances 1er cycle • ${totals.secondCycle} séances 2nd cycle`}
+                tone="violet"
+              />
+            </section>
+          ) : null}
+
+          {selectedRun ? (
+            <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
+              <div className="mb-4 flex items-center gap-2 text-sm font-black uppercase tracking-[0.16em] text-slate-700">
+                <BadgeDollarSign className="h-4 w-4 text-emerald-600" />
+                Fiche globale de paie
+              </div>
+
+              {selectedRunLines.length === 0 ? (
+                <div className="rounded-3xl border border-dashed border-slate-300 bg-slate-50 px-5 py-10 text-center text-sm text-slate-600">
+                  Ce run ne contient encore aucune ligne.
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="min-w-full text-sm">
+                    <thead className="bg-slate-50">
+                      <tr>
+                        <th className="px-3 py-3 text-left font-bold text-slate-600">Enseignant</th>
+                        <th className="px-3 py-3 text-left font-bold text-slate-600">Statut</th>
+                        <th className="px-3 py-3 text-right font-bold text-slate-600">Séances prévues</th>
+                        <th className="px-3 py-3 text-right font-bold text-slate-600">Séances accomplies</th>
+                        <th className="px-3 py-3 text-right font-bold text-slate-600">Heures prévues</th>
+                        <th className="px-3 py-3 text-right font-bold text-slate-600">Heures accomplies</th>
+                        <th className="px-3 py-3 text-right font-bold text-slate-600">1er cycle</th>
+                        <th className="px-3 py-3 text-right font-bold text-slate-600">2nd cycle</th>
+                        <th className="px-3 py-3 text-right font-bold text-slate-600">Tarif 1er cycle</th>
+                        <th className="px-3 py-3 text-right font-bold text-slate-600">Tarif 2nd cycle</th>
+                        <th className="px-3 py-3 text-right font-bold text-slate-600">Montant</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {selectedRunLines.map((row) => (
+                        <tr key={row.id} className="border-t border-slate-100">
+                          <td className="px-3 py-3">
+                            <div className="font-bold text-slate-900">
+                              {row.teacher_name_snapshot || "Enseignant"}
+                            </div>
+                            {row.notes ? (
+                              <div className="mt-1 text-xs text-slate-500">{row.notes}</div>
+                            ) : null}
+                          </td>
+                          <td className="px-3 py-3 text-slate-700">
+                            {row.employment_type === "vacataire" ? "Vacataire" : "Permanent"}
+                          </td>
+                          <td className="px-3 py-3 text-right text-slate-700">
+                            {row.expected_sessions}
+                          </td>
+                          <td className="px-3 py-3 text-right font-semibold text-slate-900">
+                            {row.actual_sessions}
+                          </td>
+                          <td className="px-3 py-3 text-right text-slate-700">
+                            {minutesToHourLabel(row.expected_minutes)}
+                          </td>
+                          <td className="px-3 py-3 text-right font-semibold text-slate-900">
+                            {minutesToHourLabel(row.actual_minutes)}
+                          </td>
+                          <td className="px-3 py-3 text-right text-slate-700">
+                            {row.sessions_first_cycle}
+                          </td>
+                          <td className="px-3 py-3 text-right text-slate-700">
+                            {row.sessions_second_cycle}
+                          </td>
+                          <td className="px-3 py-3 text-right text-slate-700">
+                            {formatMoney(row.rate_first_cycle)}
+                          </td>
+                          <td className="px-3 py-3 text-right text-slate-700">
+                            {formatMoney(row.rate_second_cycle)}
+                          </td>
+                          <td className="px-3 py-3 text-right font-black text-emerald-700">
+                            {formatMoney(row.gross_amount)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot>
+                      <tr className="border-t-2 border-slate-200 bg-slate-50">
+                        <td className="px-3 py-3 font-black text-slate-900" colSpan={2}>
+                          Total
+                        </td>
+                        <td className="px-3 py-3 text-right font-bold text-slate-900">
+                          {totals.expectedSessions}
+                        </td>
+                        <td className="px-3 py-3 text-right font-bold text-slate-900">
+                          {totals.actualSessions}
+                        </td>
+                        <td className="px-3 py-3 text-right font-bold text-slate-900">
+                          {minutesToHourLabel(totals.expectedMinutes)}
+                        </td>
+                        <td className="px-3 py-3 text-right font-bold text-slate-900">
+                          {minutesToHourLabel(totals.actualMinutes)}
+                        </td>
+                        <td className="px-3 py-3 text-right font-bold text-slate-900">
+                          {totals.firstCycle}
+                        </td>
+                        <td className="px-3 py-3 text-right font-bold text-slate-900">
+                          {totals.secondCycle}
+                        </td>
+                        <td className="px-3 py-3"></td>
+                        <td className="px-3 py-3"></td>
+                        <td className="px-3 py-3 text-right font-black text-emerald-700">
+                          {formatMoney(totals.gross)}
+                        </td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              )}
+            </section>
+          ) : null}
+        </>
       ) : null}
     </div>
   );
