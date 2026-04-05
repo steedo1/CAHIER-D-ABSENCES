@@ -15,6 +15,39 @@ import {
 
 type RequestStatus = "pending" | "approved" | "rejected" | "cancelled";
 
+type ImpactSlot = {
+  date: string;
+  class_id: string;
+  class_label: string;
+  subject_id: string | null;
+  subject_name: string;
+  period_id: string;
+  period_label: string;
+  start_time: string | null;
+  end_time: string | null;
+  lost_hours: number;
+};
+
+type ImpactedClassSummary = {
+  class_id: string;
+  class_label: string;
+  lost_hours: number;
+  lost_sessions: number;
+  slots: ImpactSlot[];
+};
+
+type AbsenceImpactSummary = {
+  total_lost_hours: number;
+  total_lost_sessions: number;
+  impacted_classes: ImpactedClassSummary[];
+};
+
+type MakeupPlan = {
+  proposed_start_date: string | null;
+  proposed_end_date: string | null;
+  notes: string;
+};
+
 type AbsenceRequestItem = {
   id: string;
   institution_id: string;
@@ -36,7 +69,11 @@ type AbsenceRequestItem = {
   rejected_at: string | null;
   rejected_by: string | null;
   created_at: string;
-  updated_at: string;
+  updated_at: string | null;
+  lost_hours_total?: number;
+  lost_sessions_total?: number;
+  impact_summary?: AbsenceImpactSummary | null;
+  makeup_plan?: MakeupPlan | null;
 };
 
 type ApiListResponse =
@@ -128,7 +165,6 @@ export default function AdminAssiduitePage() {
 
       const qs = new URLSearchParams();
       if (statusFilter !== "all") qs.set("status", statusFilter);
-      if (teacherQuery.trim()) qs.set("teacher", teacherQuery.trim());
 
       const res = await fetch(`/api/admin/absence-requests?${qs.toString()}`, {
         cache: "no-store",
@@ -153,8 +189,7 @@ export default function AdminAssiduitePage() {
   }
 
   useEffect(() => {
-    load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    void load();
   }, [statusFilter]);
 
   const filteredItems = useMemo(() => {
@@ -241,14 +276,14 @@ export default function AdminAssiduitePage() {
               Validation des autorisations d’absence
             </h1>
             <p className="mt-2 max-w-3xl text-sm leading-6 text-white/85">
-              Consultez les demandes soumises par les enseignants, relisez les motifs,
-              puis approuvez ou rejetez chaque demande avec un commentaire administratif.
+              Consultez les demandes soumises par les enseignants, voyez les classes
+              touchées, le nombre d’heures perdues et leur proposition de rattrapage.
             </p>
           </div>
 
           <button
             type="button"
-            onClick={load}
+            onClick={() => void load()}
             disabled={refreshing}
             className="inline-flex items-center justify-center gap-2 rounded-2xl bg-white px-4 py-3 text-sm font-semibold text-emerald-800 shadow-sm transition hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-70"
           >
@@ -376,6 +411,12 @@ export default function AdminAssiduitePage() {
                           Signée
                         </span>
                       ) : null}
+
+                      {typeof item.lost_hours_total === "number" ? (
+                        <span className="inline-flex items-center rounded-full bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-800 ring-1 ring-amber-200">
+                          {item.lost_hours_total} h perdues
+                        </span>
+                      ) : null}
                     </div>
 
                     <div>
@@ -431,7 +472,7 @@ export default function AdminAssiduitePage() {
                         <button
                           type="button"
                           disabled={currentBusy}
-                          onClick={() => handleAction(item.id, "approve")}
+                          onClick={() => void handleAction(item.id, "approve")}
                           className="inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-700 px-4 py-3 text-sm font-bold text-white shadow-sm transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-70"
                         >
                           {currentBusy ? (
@@ -445,7 +486,7 @@ export default function AdminAssiduitePage() {
                         <button
                           type="button"
                           disabled={currentBusy}
-                          onClick={() => handleAction(item.id, "reject")}
+                          onClick={() => void handleAction(item.id, "reject")}
                           className="inline-flex items-center justify-center gap-2 rounded-2xl bg-red-700 px-4 py-3 text-sm font-bold text-white shadow-sm transition hover:bg-red-800 disabled:cursor-not-allowed disabled:opacity-70"
                         >
                           {currentBusy ? (
@@ -461,24 +502,111 @@ export default function AdminAssiduitePage() {
                 </div>
 
                 {isOpen ? (
-                  <div className="grid grid-cols-1 gap-5 px-5 py-5 lg:grid-cols-[1.2fr_0.8fr]">
-                    <div className="space-y-5">
-                      <div>
-                        <div className="mb-2 text-sm font-bold text-slate-900">
-                          Détails fournis par l’enseignant
+                  <div className="grid gap-4 px-5 py-5 lg:grid-cols-[1.2fr_0.8fr]">
+                    <div className="space-y-4">
+                      <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                        <div className="text-sm font-bold text-slate-900">
+                          Motif détaillé
                         </div>
-                        <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4 text-sm leading-7 text-slate-700">
+                        <div className="mt-2 whitespace-pre-wrap text-sm leading-6 text-slate-700">
                           {item.details}
                         </div>
                       </div>
 
-                      <div>
-                        <div className="mb-2 flex items-center gap-2 text-sm font-bold text-slate-900">
-                          <MessageSquareText className="h-4 w-4" />
+                      <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
+                        <div className="text-sm font-bold text-amber-900">
+                          Classes et heures qui seront perdues
+                        </div>
+
+                        {!item.impact_summary?.impacted_classes?.length ? (
+                          <p className="mt-2 text-sm text-amber-900/80">
+                            Aucun impact détaillé enregistré pour cette demande.
+                          </p>
+                        ) : (
+                          <>
+                            <div className="mt-3 rounded-xl bg-white/70 px-4 py-3 text-sm text-slate-800">
+                              Total estimé :{" "}
+                              <strong>{item.impact_summary.total_lost_hours} h</strong>{" "}
+                              sur{" "}
+                              <strong>{item.impact_summary.total_lost_sessions}</strong>{" "}
+                              créneau(x).
+                            </div>
+
+                            <div className="mt-3 space-y-3">
+                              {item.impact_summary.impacted_classes.map((cls) => (
+                                <div
+                                  key={cls.class_id}
+                                  className="rounded-xl bg-white px-4 py-3"
+                                >
+                                  <div className="flex flex-wrap items-center justify-between gap-2">
+                                    <div className="font-semibold text-slate-900">
+                                      {cls.class_label}
+                                    </div>
+                                    <div className="text-sm text-slate-600">
+                                      {cls.lost_hours} h • {cls.lost_sessions} créneau(x)
+                                    </div>
+                                  </div>
+
+                                  <div className="mt-2 space-y-2 text-sm text-slate-600">
+                                    {cls.slots.map((slot, index) => (
+                                      <div
+                                        key={`${cls.class_id}_${slot.date}_${slot.period_id}_${index}`}
+                                        className="rounded-lg bg-slate-50 px-3 py-2"
+                                      >
+                                        {formatDate(slot.date)} • {slot.subject_name} •{" "}
+                                        {slot.period_label} • {slot.lost_hours} h
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </>
+                        )}
+                      </div>
+
+                      <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
+                        <div className="text-sm font-bold text-emerald-900">
+                          Proposition de rattrapage de l’enseignant
+                        </div>
+
+                        {!item.makeup_plan ? (
+                          <p className="mt-2 text-sm text-emerald-900/80">
+                            Aucun rattrapage proposé pour le moment.
+                          </p>
+                        ) : (
+                          <div className="mt-3 space-y-3 text-sm">
+                            <div className="rounded-xl bg-white px-4 py-3">
+                              <div className="text-xs font-bold uppercase tracking-wide text-slate-500">
+                                Période proposée
+                              </div>
+                              <div className="mt-1 font-semibold text-slate-900">
+                                {formatDate(item.makeup_plan.proposed_start_date)} →{" "}
+                                {formatDate(item.makeup_plan.proposed_end_date)}
+                              </div>
+                            </div>
+
+                            <div className="rounded-xl bg-white px-4 py-3">
+                              <div className="text-xs font-bold uppercase tracking-wide text-slate-500">
+                                Détails
+                              </div>
+                              <div className="mt-1 whitespace-pre-wrap text-slate-700">
+                                {item.makeup_plan.notes || "—"}
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="space-y-4">
+                      <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                        <div className="flex items-center gap-2 text-sm font-bold text-slate-900">
+                          <MessageSquareText className="h-4 w-4 text-emerald-600" />
                           Commentaire administratif
                         </div>
                         <textarea
-                          rows={4}
+                          rows={5}
                           value={commentDraft[item.id] ?? item.admin_comment ?? ""}
                           onChange={(e) =>
                             setCommentDraft((prev) => ({
@@ -486,13 +614,11 @@ export default function AdminAssiduitePage() {
                               [item.id]: e.target.value,
                             }))
                           }
-                          placeholder="Ajouter une observation administrative..."
-                          className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none focus:border-emerald-400 focus:ring-4 focus:ring-emerald-500/15"
+                          placeholder="Ajoutez un commentaire administratif..."
+                          className="mt-3 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none focus:border-emerald-400 focus:ring-4 focus:ring-emerald-500/15"
                         />
                       </div>
-                    </div>
 
-                    <aside className="space-y-4">
                       <div className="rounded-2xl border border-slate-200 bg-white p-4">
                         <div className="text-sm font-bold text-slate-900">Suivi décisionnel</div>
                         <div className="mt-3 space-y-3 text-sm">
@@ -527,18 +653,16 @@ export default function AdminAssiduitePage() {
 
                       {item.status === "approved" ? (
                         <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
-                          Cette demande a été validée. Elle pourra ensuite être exploitée
-                          dans la vue par créneau comme absence justifiée.
+                          Cette demande a été validée.
                         </div>
                       ) : null}
 
                       {item.status === "rejected" ? (
                         <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900">
-                          Cette demande a été rejetée. Elle ne doit pas être traitée comme
-                          absence autorisée.
+                          Cette demande a été rejetée.
                         </div>
                       ) : null}
-                    </aside>
+                    </div>
                   </div>
                 ) : null}
               </article>

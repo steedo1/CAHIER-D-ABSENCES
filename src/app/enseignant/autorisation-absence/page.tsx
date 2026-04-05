@@ -15,6 +15,39 @@ import {
 
 type RequestStatus = "pending" | "approved" | "rejected" | "cancelled";
 
+type ImpactSlot = {
+  date: string;
+  class_id: string;
+  class_label: string;
+  subject_id: string | null;
+  subject_name: string;
+  period_id: string;
+  period_label: string;
+  start_time: string | null;
+  end_time: string | null;
+  lost_hours: number;
+};
+
+type ImpactedClassSummary = {
+  class_id: string;
+  class_label: string;
+  lost_hours: number;
+  lost_sessions: number;
+  slots: ImpactSlot[];
+};
+
+type AbsenceImpactSummary = {
+  total_lost_hours: number;
+  total_lost_sessions: number;
+  impacted_classes: ImpactedClassSummary[];
+};
+
+type MakeupPlan = {
+  proposed_start_date: string | null;
+  proposed_end_date: string | null;
+  notes: string;
+};
+
 type TeacherAbsenceRequestItem = {
   id: string;
   institution_id: string;
@@ -35,7 +68,11 @@ type TeacherAbsenceRequestItem = {
   rejected_at: string | null;
   rejected_by: string | null;
   created_at: string;
-  updated_at?: string;
+  updated_at?: string | null;
+  lost_hours_total?: number;
+  lost_sessions_total?: number;
+  impact_summary?: AbsenceImpactSummary | null;
+  makeup_plan?: MakeupPlan | null;
 };
 
 type ApiListResponse =
@@ -44,6 +81,10 @@ type ApiListResponse =
 
 type ApiCreateResponse =
   | { ok: true; item: TeacherAbsenceRequestItem; message?: string }
+  | { ok: false; error: string };
+
+type ImpactResponse =
+  | { ok: true; impact: AbsenceImpactSummary }
   | { ok: false; error: string };
 
 function classNames(...arr: Array<string | false | null | undefined>) {
@@ -122,6 +163,8 @@ export default function EnseignantAutorisationAbsencePage() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [impactLoading, setImpactLoading] = useState(false);
+  const [impactPreview, setImpactPreview] = useState<AbsenceImpactSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
@@ -131,6 +174,9 @@ export default function EnseignantAutorisationAbsencePage() {
     reason_code: "maladie",
     details: "",
     signed: true,
+    makeup_start_date: "",
+    makeup_end_date: "",
+    makeup_notes: "",
   });
 
   async function load() {
@@ -165,6 +211,50 @@ export default function EnseignantAutorisationAbsencePage() {
   useEffect(() => {
     void load();
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadImpact() {
+      if (!form.start_date || !form.end_date) {
+        setImpactPreview(null);
+        return;
+      }
+
+      try {
+        setImpactLoading(true);
+
+        const qs = new URLSearchParams({
+          start_date: form.start_date,
+          end_date: form.end_date,
+        });
+
+        const res = await fetch(
+          `/api/teacher/absence-requests/impact?${qs.toString()}`,
+          { cache: "no-store" }
+        );
+
+        const json = (await res.json().catch(() => null)) as ImpactResponse | null;
+
+        if (!res.ok || !json?.ok) {
+          if (!cancelled) setImpactPreview(null);
+          return;
+        }
+
+        if (!cancelled) {
+          setImpactPreview(json.impact ?? null);
+        }
+      } finally {
+        if (!cancelled) setImpactLoading(false);
+      }
+    }
+
+    void loadImpact();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [form.start_date, form.end_date]);
 
   const counts = useMemo(() => {
     return items.reduce(
@@ -220,6 +310,11 @@ export default function EnseignantAutorisationAbsencePage() {
           details: form.details.trim(),
           signed: form.signed,
           source: "teacher_portal",
+          makeup_plan: {
+            proposed_start_date: form.makeup_start_date || null,
+            proposed_end_date: form.makeup_end_date || null,
+            notes: form.makeup_notes.trim(),
+          },
         }),
       });
 
@@ -239,7 +334,11 @@ export default function EnseignantAutorisationAbsencePage() {
         reason_code: "maladie",
         details: "",
         signed: true,
+        makeup_start_date: "",
+        makeup_end_date: "",
+        makeup_notes: "",
       });
+      setImpactPreview(null);
 
       setSuccess("Votre demande d’autorisation d’absence a bien été soumise.");
       await load();
@@ -271,8 +370,8 @@ export default function EnseignantAutorisationAbsencePage() {
               Autorisation d’absence
             </h1>
             <p className="mt-2 max-w-3xl text-sm leading-6 text-white/85">
-              Soumettez une demande d’absence, suivez son traitement et consultez
-              les décisions administratives associées.
+              Soumettez une demande d’absence, visualisez les classes impactées,
+              puis indiquez quand vous comptez rattraper les heures perdues.
             </p>
           </div>
 
@@ -328,7 +427,7 @@ export default function EnseignantAutorisationAbsencePage() {
         </div>
       </section>
 
-      <section className="grid grid-cols-1 gap-6 xl:grid-cols-[1.05fr_0.95fr]">
+      <section className="grid grid-cols-1 gap-6 xl:grid-cols-[1.1fr_0.9fr]">
         <form
           onSubmit={(e) => void handleSubmit(e)}
           className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm"
@@ -368,6 +467,65 @@ export default function EnseignantAutorisationAbsencePage() {
             </div>
           </div>
 
+          <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+            <div className="text-sm font-bold text-slate-900">
+              Impact prévisionnel de l’absence
+            </div>
+
+            {impactLoading ? (
+              <div className="mt-3 flex items-center gap-2 text-sm text-slate-600">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Calcul des heures perdues...
+              </div>
+            ) : !form.start_date || !form.end_date ? (
+              <p className="mt-2 text-sm text-slate-500">
+                Sélectionnez la plage d’absence pour voir les classes impactées.
+              </p>
+            ) : !impactPreview || impactPreview.impacted_classes.length === 0 ? (
+              <p className="mt-2 text-sm text-slate-500">
+                Aucun cours impacté trouvé sur cette période.
+              </p>
+            ) : (
+              <>
+                <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                  Vous perdrez des heures dans les classes suivantes :{" "}
+                  <strong>{impactPreview.total_lost_hours} h</strong> sur{" "}
+                  <strong>{impactPreview.total_lost_sessions}</strong> créneau(x).
+                </div>
+
+                <div className="mt-3 space-y-3">
+                  {impactPreview.impacted_classes.map((cls) => (
+                    <div
+                      key={cls.class_id}
+                      className="rounded-2xl border border-slate-200 bg-white px-4 py-3"
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="font-semibold text-slate-900">
+                          {cls.class_label}
+                        </div>
+                        <div className="text-sm text-slate-600">
+                          {cls.lost_hours} h perdues • {cls.lost_sessions} créneau(x)
+                        </div>
+                      </div>
+
+                      <div className="mt-2 space-y-2 text-sm text-slate-600">
+                        {cls.slots.map((slot, index) => (
+                          <div
+                            key={`${cls.class_id}_${slot.date}_${slot.period_id}_${index}`}
+                            className="rounded-xl bg-slate-50 px-3 py-2"
+                          >
+                            {formatDate(slot.date)} • {slot.subject_name} •{" "}
+                            {slot.period_label} • {slot.lost_hours} h
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+
           <div className="mt-4">
             <label className="mb-2 block text-sm font-semibold text-slate-800">
               Motif
@@ -400,6 +558,63 @@ export default function EnseignantAutorisationAbsencePage() {
               placeholder="Expliquez brièvement le motif de la demande..."
               className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none focus:border-emerald-400 focus:ring-4 focus:ring-emerald-500/15"
             />
+          </div>
+
+          <div className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
+            <div className="text-sm font-bold text-emerald-900">
+              Quand comptez-vous rattraper ces heures ?
+            </div>
+
+            <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
+              <div>
+                <label className="mb-2 block text-sm font-semibold text-slate-800">
+                  Début proposé
+                </label>
+                <input
+                  type="date"
+                  value={form.makeup_start_date}
+                  onChange={(e) =>
+                    setForm((prev) => ({
+                      ...prev,
+                      makeup_start_date: e.target.value,
+                    }))
+                  }
+                  className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none focus:border-emerald-400 focus:ring-4 focus:ring-emerald-500/15"
+                />
+              </div>
+
+              <div>
+                <label className="mb-2 block text-sm font-semibold text-slate-800">
+                  Fin proposée
+                </label>
+                <input
+                  type="date"
+                  value={form.makeup_end_date}
+                  onChange={(e) =>
+                    setForm((prev) => ({
+                      ...prev,
+                      makeup_end_date: e.target.value,
+                    }))
+                  }
+                  className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none focus:border-emerald-400 focus:ring-4 focus:ring-emerald-500/15"
+                />
+              </div>
+            </div>
+
+            <div className="mt-4">
+              <label className="mb-2 block text-sm font-semibold text-slate-800">
+                Précisions sur le rattrapage
+              </label>
+              <textarea
+                rows={4}
+                value={form.makeup_notes}
+                onChange={(e) =>
+                  setForm((prev) => ({ ...prev, makeup_notes: e.target.value }))
+                }
+                placeholder="Ex. Je propose de rattraper ces heures le mercredi après-midi ou selon le créneau validé par l’administration."
+                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none focus:border-emerald-400 focus:ring-4 focus:ring-emerald-500/15"
+              />
+            </div>
           </div>
 
           <label className="mt-4 flex items-start gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
@@ -495,6 +710,12 @@ export default function EnseignantAutorisationAbsencePage() {
                         Signée
                       </span>
                     ) : null}
+
+                    {typeof item.lost_hours_total === "number" ? (
+                      <span className="inline-flex items-center rounded-full bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-800 ring-1 ring-amber-200">
+                        {item.lost_hours_total} h à rattraper
+                      </span>
+                    ) : null}
                   </div>
 
                   <div className="mt-4 grid gap-3 text-sm text-slate-700 sm:grid-cols-2">
@@ -547,6 +768,59 @@ export default function EnseignantAutorisationAbsencePage() {
                       </div>
                     </div>
                   </div>
+
+                  {item.impact_summary?.impacted_classes?.length ? (
+                    <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3">
+                      <div className="text-sm font-bold text-amber-900">
+                        Classes impactées
+                      </div>
+                      <div className="mt-2 space-y-3">
+                        {item.impact_summary.impacted_classes.map((cls) => (
+                          <div
+                            key={cls.class_id}
+                            className="rounded-2xl bg-white px-4 py-3 text-sm text-slate-700"
+                          >
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <div className="font-semibold text-slate-900">
+                                {cls.class_label}
+                              </div>
+                              <div className="text-slate-600">
+                                {cls.lost_hours} h • {cls.lost_sessions} créneau(x)
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {item.makeup_plan ? (
+                    <div className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-slate-700">
+                      <div className="font-bold text-emerald-900">
+                        Proposition de rattrapage
+                      </div>
+                      <div className="mt-2 grid gap-3 md:grid-cols-2">
+                        <div className="rounded-2xl bg-white px-4 py-3">
+                          <div className="text-xs font-bold uppercase tracking-wide text-slate-500">
+                            Période proposée
+                          </div>
+                          <div className="mt-1 font-semibold text-slate-900">
+                            {formatDate(item.makeup_plan.proposed_start_date)} →{" "}
+                            {formatDate(item.makeup_plan.proposed_end_date)}
+                          </div>
+                        </div>
+
+                        <div className="rounded-2xl bg-white px-4 py-3">
+                          <div className="text-xs font-bold uppercase tracking-wide text-slate-500">
+                            Notes
+                          </div>
+                          <div className="mt-1 leading-6 text-slate-700">
+                            {item.makeup_plan.notes || "—"}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
 
                   {item.admin_comment ? (
                     <div className="mt-4 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700">

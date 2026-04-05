@@ -88,7 +88,7 @@ function statusScore(s: MonitorStatus): number {
 function statusLabel(s: MonitorStatus): string {
   if (s === "missing") return "Appel manquant";
   if (s === "late") return "Appel en retard";
-  if (s === "pending_absence") return "Demande en attente";
+  if (s === "pending_absence") return "En attente de justification";
   if (s === "justified_absence") return "Absence justifiée";
   return "Appel conforme";
 }
@@ -105,7 +105,7 @@ function statusHint(
     return "Appel effectué mais en retard par rapport à l’horaire prévu.";
   }
   if (s === "pending_absence") {
-    return `Une demande d’absence enseignant est en attente de validation${
+    return `Une justification d’absence enseignant est en attente de validation${
       reason ? ` (${reason})` : ""
     }.`;
   }
@@ -125,7 +125,7 @@ function cellColorClasses(s: MonitorStatus): string {
     return "bg-amber-500 text-slate-900 border-amber-300 shadow-lg shadow-amber-300/40";
   }
   if (s === "pending_absence") {
-    return "bg-sky-500 text-white border-sky-300 shadow-lg shadow-sky-300/40";
+    return "bg-yellow-400 text-slate-900 border-yellow-300 shadow-lg shadow-yellow-200/50";
   }
   if (s === "justified_absence") {
     return "bg-blue-600 text-white border-blue-400 shadow-lg shadow-blue-300/40";
@@ -363,7 +363,7 @@ export default function AppelsMatricePage() {
             </h1>
             <p className="mt-1 text-sm text-slate-500 max-w-2xl">
               Surveillez en temps réel quelles classes ont un enseignant présent,
-              quelles classes sont sans appel, quelles demandes sont en attente et
+              quelles classes sont sans appel, quelles demandes sont en attente de justification et
               quelles absences sont déjà justifiées.
             </p>
           </div>
@@ -429,16 +429,16 @@ export default function AppelsMatricePage() {
             </p>
           </div>
 
-          <div className="rounded-2xl border border-sky-100 bg-sky-50/80 p-4 shadow-sm flex flex-col gap-2">
+          <div className="rounded-2xl border border-yellow-100 bg-yellow-50/80 p-4 shadow-sm flex flex-col gap-2">
             <div className="flex items-center justify-between">
-              <span className="text-xs font-medium text-sky-900 uppercase tracking-wide">
-                En attente
+              <span className="text-xs font-medium text-yellow-900 uppercase tracking-wide">
+                En attente de justification
               </span>
-              <Hourglass className="h-5 w-5 text-sky-600" />
+              <Hourglass className="h-5 w-5 text-yellow-600" />
             </div>
-            <div className="text-2xl font-semibold text-sky-900">{totalPending}</div>
-            <p className="text-[11px] text-sky-900/80">
-              Demandes d’absence soumises, non encore validées.
+            <div className="text-2xl font-semibold text-yellow-900">{totalPending}</div>
+            <p className="text-[11px] text-yellow-900/80">
+              Justifications d’absence soumises, non encore validées.
             </p>
           </div>
 
@@ -488,8 +488,8 @@ export default function AppelsMatricePage() {
                   Retard
                 </span>
                 <span className="inline-flex items-center gap-1">
-                  <span className="inline-block h-3 w-3 rounded-sm bg-sky-500 mc-blink" />
-                  En attente
+                  <span className="inline-block h-3 w-3 rounded-sm bg-yellow-400 mc-blink" />
+                  En attente de justification
                 </span>
                 <span className="inline-flex items-center gap-1">
                   <span className="inline-block h-3 w-3 rounded-sm bg-blue-600 mc-blink" />
@@ -609,7 +609,7 @@ export default function AppelsMatricePage() {
 
           <p className="mt-3 text-[11px] text-slate-500">
             Cette vue temps réel réutilise la surveillance des appels et est prête à
-            afficher aussi les demandes d'autoristation d'absence enseignants en attente ou validées.
+            afficher aussi les demandes d&apos;autorisation d&apos;absence enseignants en attente ou validées.
           </p>
         </section>
       </div>
