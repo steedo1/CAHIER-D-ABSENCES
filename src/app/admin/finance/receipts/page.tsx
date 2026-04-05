@@ -1,8 +1,11 @@
+// src/app/admin/finance/receipts/page.tsx
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import {
   BadgeCheck,
   CalendarClock,
+  FileText,
+  Printer,
   Receipt,
   Search,
   UserRound,
@@ -77,6 +80,16 @@ function normalize(input: string) {
     .toLowerCase()
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "");
+}
+
+function formatDateTime(value: string | null | undefined) {
+  if (!value) return "—";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return "—";
+  return d.toLocaleString("fr-FR", {
+    dateStyle: "short",
+    timeStyle: "short",
+  });
 }
 
 async function getCurrentInstitutionIdOrThrow() {
@@ -478,10 +491,7 @@ export default async function FinanceReceiptsPage({
                         {formatMoney(row.total_amount)}
                       </div>
                       <div className="text-xs text-slate-500">
-                        {new Date(row.payment_date).toLocaleString("fr-FR", {
-                          dateStyle: "short",
-                          timeStyle: "short",
-                        })}
+                        {formatDateTime(row.payment_date)}
                       </div>
                     </div>
                   </div>
@@ -540,17 +550,11 @@ export default async function FinanceReceiptsPage({
                       <div className="grid gap-3">
                         <div>
                           <span className="font-semibold text-slate-800">Date de paiement :</span>{" "}
-                          {new Date(row.payment_date).toLocaleString("fr-FR", {
-                            dateStyle: "short",
-                            timeStyle: "short",
-                          })}
+                          {formatDateTime(row.payment_date)}
                         </div>
                         <div>
                           <span className="font-semibold text-slate-800">Créé le :</span>{" "}
-                          {new Date(row.created_at).toLocaleString("fr-FR", {
-                            dateStyle: "short",
-                            timeStyle: "short",
-                          })}
+                          {formatDateTime(row.created_at)}
                         </div>
                         <div>
                           <span className="font-semibold text-slate-800">Année :</span>{" "}
@@ -563,7 +567,23 @@ export default async function FinanceReceiptsPage({
                       </div>
                     </div>
 
-                    <div className="mt-4">
+                    <div className="mt-4 flex flex-wrap gap-3">
+                      <Link
+                        href={`/admin/finance/receipts/${row.id}`}
+                        className="inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-4 py-3 text-sm font-bold text-white hover:bg-emerald-700"
+                      >
+                        <FileText className="h-4 w-4" />
+                        Ouvrir le reçu
+                      </Link>
+
+                      <Link
+                        href={`/admin/finance/receipts/${row.id}?autoprint=1`}
+                        className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-bold text-slate-700 hover:bg-slate-50"
+                      >
+                        <Printer className="h-4 w-4" />
+                        Imprimer
+                      </Link>
+
                       <Link
                         href="/admin/finance/payments"
                         className="inline-flex items-center justify-center rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-bold text-slate-700 hover:bg-slate-50"

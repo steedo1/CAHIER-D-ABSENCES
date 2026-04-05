@@ -1,3 +1,5 @@
+// src/app/admin/finance/payments/page.tsx
+import Link from "next/link";
 import type { ReactNode } from "react";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
@@ -5,6 +7,8 @@ import {
   BadgeCheck,
   CalendarClock,
   CreditCard,
+  FileText,
+  Printer,
   Receipt,
   UserRound,
   Wallet,
@@ -226,13 +230,15 @@ async function createPaymentAction(formData: FormData) {
 
   if (allocErr) {
     await admin.schema("finance").from("receipts").delete().eq("id", receipt.id);
-
     throw new Error(allocErr.message);
   }
 
   revalidatePath("/admin/finance/payments");
   revalidatePath("/admin/finance/receipts");
+  revalidatePath(`/admin/finance/receipts/${receipt.id}`);
   revalidatePath("/admin/finance");
+
+  redirect(`/admin/finance/receipts/${receipt.id}?autoprint=1`);
 }
 
 function StatCard({
@@ -698,6 +704,24 @@ export default async function FinancePaymentsPage() {
                               {row.notes}
                             </p>
                           ) : null}
+
+                          <div className="mt-4 flex flex-wrap gap-3">
+                            <Link
+                              href={`/admin/finance/receipts/${row.id}`}
+                              className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 hover:bg-slate-50"
+                            >
+                              <FileText className="h-4 w-4" />
+                              Voir
+                            </Link>
+
+                            <Link
+                              href={`/admin/finance/receipts/${row.id}?autoprint=1`}
+                              className="inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-emerald-700"
+                            >
+                              <Printer className="h-4 w-4" />
+                              Imprimer
+                            </Link>
+                          </div>
                         </div>
 
                         <div className="rounded-full bg-emerald-50 px-3 py-1.5 text-sm font-bold text-emerald-700 ring-1 ring-emerald-200">

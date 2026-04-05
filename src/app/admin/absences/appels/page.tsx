@@ -1,4 +1,3 @@
-//src/app/admin/absences/appels/page.tsx
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
@@ -13,9 +12,16 @@ import {
   BellOff,
   Loader2,
   FileText,
+  ShieldCheck,
+  Hourglass,
 } from "lucide-react";
 
-type MonitorStatus = "missing" | "late" | "ok";
+type MonitorStatus =
+  | "missing"
+  | "late"
+  | "ok"
+  | "pending_absence"
+  | "justified_absence";
 
 type MonitorRow = {
   id: string;
@@ -30,6 +36,11 @@ type MonitorRow = {
   status: MonitorStatus;
   late_minutes?: number | null;
   opened_from?: "teacher" | "class_device" | null;
+
+  // 🔥 nouveaux champs éventuels renvoyés par l’API monitor
+  absence_request_status?: "pending" | "approved" | "rejected" | null;
+  absence_reason_label?: string | null;
+  absence_admin_comment?: string | null;
 };
 
 type FetchState<T> = { loading: boolean; error: string | null; data: T | null };
@@ -73,7 +84,6 @@ function urlBase64ToUint8Array(base64String: string) {
   return outputArray;
 }
 
-/** Fenêtre imprimable (comme sur la page Statistiques) */
 function openPrintWindow(title: string, subtitle: string, tableHtml: string) {
   if (typeof window === "undefined") return;
 
@@ -81,8 +91,7 @@ function openPrintWindow(title: string, subtitle: string, tableHtml: string) {
 
   if (!w) {
     alert(
-      "Votre navigateur a bloqué la fenêtre d'impression. " +
-        "Autorisez les fenêtres pop-up pour ce site."
+      "Votre navigateur a bloqué la fenêtre d'impression. Autorisez les fenêtres pop-up pour ce site."
     );
     return;
   }
@@ -192,8 +201,6 @@ function Button(p: React.ButtonHTMLAttributes<HTMLButtonElement>) {
   );
 }
 
-/* ───────── Page ───────── */
-
 export default function SurveillanceAppelsPage() {
   const [from, setFrom] = useState<string>(() => {
     const d = new Date();
@@ -210,12 +217,10 @@ export default function SurveillanceAppelsPage() {
     data: null,
   });
 
-  // ───────── Etat push admin ─────────
   const [pushSupported, setPushSupported] = useState(false);
   const [pushStatus, setPushStatus] = useState<PushStatus>("idle");
   const [pushError, setPushError] = useState<string | null>(null);
 
-  // Vérifier support + subscription existante
   useEffect(() => {
     if (typeof window === "undefined") return;
 
@@ -234,7 +239,6 @@ export default function SurveillanceAppelsPage() {
 
     setPushSupported(true);
 
-    // Si le site est déjà bloqué dans le navigateur, on le signale tout de suite
     if (Notification.permission === "denied") {
       setPushStatus("denied");
       setPushError(
@@ -243,16 +247,13 @@ export default function SurveillanceAppelsPage() {
       return;
     }
 
-    // Tenter de détecter une subscription existante
     (async () => {
       try {
         const reg =
           (await navigator.serviceWorker.getRegistration()) ||
           (await navigator.serviceWorker.register("/sw.js"));
         const sub = await reg.pushManager.getSubscription();
-        if (sub) {
-          setPushStatus("enabled");
-        }
+        if (sub) setPushStatus("enabled");
       } catch (e) {
         console.warn("[SurveillanceAppels] push init error", e);
       }
@@ -290,8 +291,7 @@ export default function SurveillanceAppelsPage() {
     try {
       setPushStatus("subscribing");
 
-      // 1️⃣ Gestion des permissions
-      let permission = Notification.permission; // "default" | "granted" | "denied"
+      let permission = Notification.permission;
 
       if (permission === "denied") {
         setPushStatus("denied");
@@ -313,18 +313,14 @@ export default function SurveillanceAppelsPage() {
         return;
       }
 
-      // 2️⃣ Récupération / enregistrement du service worker
       let reg = await navigator.serviceWorker.getRegistration();
       if (!reg) {
         reg = await navigator.serviceWorker.register("/sw.js");
       }
       if (!reg) {
-        throw new Error(
-          "Impossible de récupérer le service worker (aucun enregistrement trouvé)."
-        );
+        throw new Error("Impossible de récupérer le service worker.");
       }
 
-      // 3️⃣ Subscription push
       let sub = await reg.pushManager.getSubscription();
       if (!sub) {
         sub = await reg.pushManager.subscribe({
@@ -336,7 +332,7 @@ export default function SurveillanceAppelsPage() {
       const res = await fetch("/api/push/subscribe", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        credentials: "include", // important pour associer au profil connecté
+        credentials: "include",
         body: JSON.stringify({
           platform: "web",
           device_id: sub.endpoint,
@@ -347,9 +343,7 @@ export default function SurveillanceAppelsPage() {
       if (!res.ok) {
         const txt = await res.text().catch(() => "");
         throw new Error(
-          `Échec d'enregistrement du device push (HTTP ${res.status}) ${
-            txt || ""
-          }`
+          `Échec d'enregistrement du device push (HTTP ${res.status}) ${txt || ""}`
         );
       }
 
@@ -363,7 +357,6 @@ export default function SurveillanceAppelsPage() {
           "Erreur lors de l’activation des notifications. Vérifiez le HTTPS et le service worker."
       );
     } finally {
-      // Filet de sécurité : on ne laisse jamais "subscribing" bloqué
       setPushStatus((prev) => (prev === "subscribing" ? "idle" : prev));
     }
   }
@@ -373,7 +366,6 @@ export default function SurveillanceAppelsPage() {
     setRowsState({ loading: true, error: null, data: null });
     try {
       const qs = new URLSearchParams({ from, to });
-      // on laisse le filtre de statut côté front pour l’instant
       const res = await fetch(`/api/admin/attendance/monitor?${qs.toString()}`, {
         cache: "no-store",
       });
@@ -407,9 +399,7 @@ export default function SurveillanceAppelsPage() {
       if (statusFilter !== "all" && r.status !== statusFilter) return false;
       if (
         teacherQuery.trim() &&
-        !r.teacher_name
-          .toLowerCase()
-          .includes(teacherQuery.trim().toLowerCase())
+        !r.teacher_name.toLowerCase().includes(teacherQuery.trim().toLowerCase())
       ) {
         return false;
       }
@@ -420,6 +410,8 @@ export default function SurveillanceAppelsPage() {
   const totalMissing = rows.filter((r) => r.status === "missing").length;
   const totalLate = rows.filter((r) => r.status === "late").length;
   const totalOk = rows.filter((r) => r.status === "ok").length;
+  const totalPendingAbsence = rows.filter((r) => r.status === "pending_absence").length;
+  const totalJustified = rows.filter((r) => r.status === "justified_absence").length;
 
   function setToday() {
     const today = toLocalDateInputValue(new Date());
@@ -429,7 +421,7 @@ export default function SurveillanceAppelsPage() {
 
   function setThisWeek() {
     const today = new Date();
-    const day = today.getDay(); // 0=dim
+    const day = today.getDay();
     const diff = day === 0 ? -6 : 1 - day;
     const monday = new Date(today);
     monday.setDate(today.getDate() + diff);
@@ -455,6 +447,22 @@ export default function SurveillanceAppelsPage() {
         </span>
       );
     }
+    if (r.status === "pending_absence") {
+      return (
+        <span className="inline-flex items-center gap-1 rounded-full bg-sky-50 px-2 py-0.5 text-xs font-medium text-sky-800 border border-sky-200">
+          <Hourglass className="h-3 w-3" />
+          Demande en attente
+        </span>
+      );
+    }
+    if (r.status === "justified_absence") {
+      return (
+        <span className="inline-flex items-center gap-1 rounded-full bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-800 border border-blue-200">
+          <ShieldCheck className="h-3 w-3" />
+          Absence justifiée
+        </span>
+      );
+    }
     return (
       <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-800 border border-emerald-200">
         <CheckCircle2 className="h-3 w-3" />
@@ -469,7 +477,6 @@ export default function SurveillanceAppelsPage() {
     return "";
   }
 
-  /* ───────── Export "PDF" via fenêtre d’impression (comme Statistiques) ───────── */
   function exportPdf() {
     if (!filteredRows.length) return;
 
@@ -480,6 +487,10 @@ export default function SurveillanceAppelsPage() {
         ? "Appels manquants"
         : statusFilter === "late"
         ? "Appels en retard"
+        : statusFilter === "pending_absence"
+        ? "Demandes en attente"
+        : statusFilter === "justified_absence"
+        ? "Absences justifiées"
         : "Appels conformes";
 
     const teacherLabelText = teacherQuery.trim()
@@ -503,8 +514,6 @@ export default function SurveillanceAppelsPage() {
     const bodyHtml = filteredRows
       .map((r, idx) => {
         const date = dateHumanFR(r.date);
-
-        // 🔁 NOUVEAU : on PREFERE toujours l'horaire, puis on retombe sur period_label
         const period =
           (r.planned_start && r.planned_end
             ? `${r.planned_start} → ${r.planned_end}`
@@ -517,29 +526,30 @@ export default function SurveillanceAppelsPage() {
             ? "Appel manquant"
             : r.status === "late"
             ? `Appel en retard${
-                typeof r.late_minutes === "number"
-                  ? ` (+${r.late_minutes} min)`
-                  : ""
+                typeof r.late_minutes === "number" ? ` (+${r.late_minutes} min)` : ""
               }`
+            : r.status === "pending_absence"
+            ? "Demande en attente"
+            : r.status === "justified_absence"
+            ? "Absence justifiée"
             : "Appel conforme";
-
-        const origin =
-          r.opened_from === "class_device"
-            ? "appareil classe"
-            : r.opened_from === "teacher"
-            ? "compte enseignant"
-            : "";
 
         const detailText =
           r.status === "missing"
-            ? `Aucun appel détecté${origin ? ` (${origin})` : ""}.`
+            ? "Aucun appel détecté pour ce créneau."
             : r.status === "late"
             ? `Appel réalisé avec retard${
-                typeof r.late_minutes === "number"
-                  ? ` (+${r.late_minutes} min)`
-                  : ""
-              }${origin ? ` (${origin})` : ""}.`
-            : `Appel dans les délais${origin ? ` (${origin})` : ""}.`;
+                typeof r.late_minutes === "number" ? ` (+${r.late_minutes} min)` : ""
+              }.`
+            : r.status === "pending_absence"
+            ? `Demande d'absence déposée, en attente de validation${
+                r.absence_reason_label ? ` (${r.absence_reason_label})` : ""
+              }.`
+            : r.status === "justified_absence"
+            ? `Absence validée par l'administration${
+                r.absence_reason_label ? ` (${r.absence_reason_label})` : ""
+              }.`
+            : "Appel dans les délais.";
 
         return `
           <tr>
@@ -564,12 +574,9 @@ export default function SurveillanceAppelsPage() {
     );
   }
 
-  /* ───────── UI ───────── */
-
   return (
     <main className="min-h-screen bg-slate-50/80 p-4 md:p-6">
       <div className="mx-auto max-w-6xl space-y-6">
-        {/* Header */}
         <header className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div>
             <p className="text-xs font-semibold uppercase tracking-wide text-emerald-600">
@@ -579,20 +586,12 @@ export default function SurveillanceAppelsPage() {
               Surveillance des appels
             </h1>
             <p className="mt-1 text-sm text-slate-500 max-w-2xl">
-              Repérez en temps réel les{" "}
-              <span className="font-medium text-red-600">
-                appels manquants
-              </span>{" "}
-              et les{" "}
-              <span className="font-medium text-amber-600">
-                appels réalisés en retard
-              </span>{" "}
-              par rapport aux emplois du temps officiels.
+              Repérez en temps réel les appels manquants, les appels en retard, les
+              demandes d’absence en attente et les absences justifiées.
             </p>
           </div>
         </header>
 
-        {/* Bloc activation notifications admin */}
         <section className="rounded-2xl border border-sky-200 bg-gradient-to-r from-sky-50 to-emerald-50 shadow-sm p-4 md:p-5 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div className="flex items-start gap-3">
             {pushStatus === "enabled" ? (
@@ -606,23 +605,17 @@ export default function SurveillanceAppelsPage() {
             )}
             <div className="space-y-1">
               <h2 className="text-sm font-semibold text-slate-900">
-                Notifications instantanées pour les appels manquants
+                Notifications instantanées pour les anomalies
               </h2>
               <p className="text-xs text-slate-700">
-                Activez les notifications push pour être alerté(e) automatiquement{" "}
-                dès qu&apos;un appel est <strong>manquant</strong> ou réalisé{" "}
-                <strong>hors délai</strong>, selon la fenêtre de contrôle définie.
+                Activez les notifications push pour être alerté(e) automatiquement.
               </p>
               {!pushSupported && (
                 <p className="text-[11px] text-red-700">
                   Les notifications ne sont pas supportées sur ce navigateur.
-                  Essayez depuis un navigateur récent (Chrome, Edge, Firefox) sur
-                  ordinateur ou mobile.
                 </p>
               )}
-              {pushError && (
-                <p className="text-[11px] text-red-700">{pushError}</p>
-              )}
+              {pushError && <p className="text-[11px] text-red-700">{pushError}</p>}
             </div>
           </div>
           <div className="flex flex-col items-end gap-2 text-right">
@@ -649,69 +642,72 @@ export default function SurveillanceAppelsPage() {
                   <Loader2 className="h-4 w-4 animate-spin" />
                 )}
                 {pushStatus === "enabled"
-                  ? "Notifications activées sur cet appareil"
+                  ? "Notifications activées"
                   : "Activer les notifications"}
               </Button>
             </div>
           </div>
         </section>
 
-        {/* Résumé / KPIs */}
-        <section className="grid gap-3 md:grid-cols-3">
-          <div className="rounded-2xl border border-red-100 bg-red-50/80 p-4 shadow-sm flex flex-col gap-2">
+        <section className="grid gap-3 md:grid-cols-5">
+          <div className="rounded-2xl border border-red-100 bg-red-50/80 p-4 shadow-sm">
             <div className="flex items-center justify-between">
               <span className="text-xs font-medium text-red-800 uppercase tracking-wide">
                 Appels manquants
               </span>
               <AlertTriangle className="h-5 w-5 text-red-500" />
             </div>
-            <div className="text-2xl font-semibold text-red-900">
-              {totalMissing}
-            </div>
-            <p className="text-[11px] text-red-800/80">
-              Créneaux où un cours était prévu mais aucun appel n&apos;a été
-              détecté dans la fenêtre de contrôle.
-            </p>
+            <div className="mt-2 text-2xl font-semibold text-red-900">{totalMissing}</div>
           </div>
 
-          <div className="rounded-2xl border border-amber-100 bg-amber-50/80 p-4 shadow-sm flex flex-col gap-2">
+          <div className="rounded-2xl border border-amber-100 bg-amber-50/80 p-4 shadow-sm">
             <div className="flex items-center justify-between">
               <span className="text-xs font-medium text-amber-900 uppercase tracking-wide">
                 Appels en retard
               </span>
               <Clock className="h-5 w-5 text-amber-500" />
             </div>
-            <div className="text-2xl font-semibold text-amber-900">
-              {totalLate}
-            </div>
-            <p className="text-[11px] text-amber-900/80">
-              Appels effectués, mais avec un retard supérieur au seuil paramétré
-              (ex. 15 minutes).
-            </p>
+            <div className="mt-2 text-2xl font-semibold text-amber-900">{totalLate}</div>
           </div>
 
-          <div className="rounded-2xl border border-emerald-100 bg-emerald-50/80 p-4 shadow-sm flex flex-col gap-2">
+          <div className="rounded-2xl border border-sky-100 bg-sky-50/80 p-4 shadow-sm">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium text-sky-900 uppercase tracking-wide">
+                En attente
+              </span>
+              <Hourglass className="h-5 w-5 text-sky-600" />
+            </div>
+            <div className="mt-2 text-2xl font-semibold text-sky-900">
+              {totalPendingAbsence}
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-blue-100 bg-blue-50/80 p-4 shadow-sm">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium text-blue-900 uppercase tracking-wide">
+                Justifiées
+              </span>
+              <ShieldCheck className="h-5 w-5 text-blue-600" />
+            </div>
+            <div className="mt-2 text-2xl font-semibold text-blue-900">{totalJustified}</div>
+          </div>
+
+          <div className="rounded-2xl border border-emerald-100 bg-emerald-50/80 p-4 shadow-sm">
             <div className="flex items-center justify-between">
               <span className="text-xs font-medium text-emerald-900 uppercase tracking-wide">
                 Appels conformes
               </span>
               <CheckCircle2 className="h-5 w-5 text-emerald-600" />
             </div>
-            <div className="text-2xl font-semibold text-emerald-900">
-              {totalOk}
-            </div>
-            <p className="text-[11px] text-emerald-900/80">
-              Créneaux où l’appel a été réalisé dans les délais prévus.
-            </p>
+            <div className="mt-2 text-2xl font-semibold text-emerald-900">{totalOk}</div>
           </div>
         </section>
 
-        {/* Filtres */}
         <section className="rounded-2xl border border-slate-200 bg-white/90 shadow-sm p-4 md:p-5 space-y-4">
           <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
             <div className="flex items-center gap-2 text-sm font-semibold text-slate-800">
               <Filter className="h-4 w-4 text-slate-500" />
-              <span>Filtres de période et de statut</span>
+              <span>Filtres</span>
             </div>
             <div className="flex items-center gap-2 text-xs">
               <Button
@@ -719,7 +715,7 @@ export default function SurveillanceAppelsPage() {
                 className="!px-3 !py-1.5 bg-slate-800 hover:bg-slate-900"
                 onClick={setToday}
               >
-                Aujourd&apos;hui
+                Aujourd'hui
               </Button>
               <Button
                 type="button"
@@ -733,29 +729,15 @@ export default function SurveillanceAppelsPage() {
 
           <div className="grid gap-3 md:grid-cols-4">
             <div className="space-y-1">
-              <label className="text-sm font-medium text-slate-700">
-                Date de début
-              </label>
-              <Input
-                type="date"
-                value={from}
-                onChange={(e) => setFrom(e.target.value)}
-              />
+              <label className="text-sm font-medium text-slate-700">Date de début</label>
+              <Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
             </div>
             <div className="space-y-1">
-              <label className="text-sm font-medium text-slate-700">
-                Date de fin
-              </label>
-              <Input
-                type="date"
-                value={to}
-                onChange={(e) => setTo(e.target.value)}
-              />
+              <label className="text-sm font-medium text-slate-700">Date de fin</label>
+              <Input type="date" value={to} onChange={(e) => setTo(e.target.value)} />
             </div>
             <div className="space-y-1">
-              <label className="text-sm font-medium text-slate-700">
-                Statut
-              </label>
+              <label className="text-sm font-medium text-slate-700">Statut</label>
               <Select
                 value={statusFilter}
                 onChange={(e) =>
@@ -765,6 +747,8 @@ export default function SurveillanceAppelsPage() {
                 <option value="all">Tous les statuts</option>
                 <option value="missing">Appels manquants</option>
                 <option value="late">Appels en retard</option>
+                <option value="pending_absence">Demandes en attente</option>
+                <option value="justified_absence">Absences justifiées</option>
                 <option value="ok">Appels conformes</option>
               </Select>
             </div>
@@ -785,32 +769,6 @@ export default function SurveillanceAppelsPage() {
             </div>
           </div>
 
-          <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between text-xs text-slate-500">
-            <span>
-              Période active : <strong>{from}</strong> → <strong>{to}</strong>
-            </span>
-            <div className="flex flex-wrap items-center gap-2">
-              <button
-                type="button"
-                onClick={loadRows}
-                className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100"
-              >
-                <RefreshCw className="h-3 w-3" />
-                Actualiser
-              </button>
-              <button
-                type="button"
-                onClick={exportPdf}
-                disabled={!filteredRows.length}
-                className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-800 hover:bg-emerald-100 disabled:opacity-60 disabled:cursor-not-allowed"
-              >
-                <FileText className="h-3 w-3" />
-                Export PDF
-              </button>
-            </div>
-          </div>
-
-          {/* Légende statuts */}
           <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
             <span className="mr-1">Légende :</span>
             <span className="inline-flex items-center gap-1 rounded-full bg-red-50 px-2 py-0.5 border border-red-100 text-red-700">
@@ -819,21 +777,23 @@ export default function SurveillanceAppelsPage() {
             <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 border border-amber-100 text-amber-800">
               <Clock className="h-3 w-3" /> Appel en retard
             </span>
+            <span className="inline-flex items-center gap-1 rounded-full bg-sky-50 px-2 py-0.5 border border-sky-100 text-sky-800">
+              <Hourglass className="h-3 w-3" /> Demande en attente
+            </span>
+            <span className="inline-flex items-center gap-1 rounded-full bg-blue-50 px-2 py-0.5 border border-blue-100 text-blue-800">
+              <ShieldCheck className="h-3 w-3" /> Absence justifiée
+            </span>
             <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 border border-emerald-100 text-emerald-800">
               <CheckCircle2 className="h-3 w-3" /> Appel conforme
             </span>
           </div>
         </section>
 
-        {/* Tableau principal */}
         <section className="rounded-2xl border border-slate-200 bg-white shadow-sm p-4 md:p-5">
           {rowsState.loading ? (
             <div className="space-y-2">
               {Array.from({ length: 5 }).map((_, i) => (
-                <div
-                  key={i}
-                  className="h-9 w-full animate-pulse rounded-xl bg-slate-100"
-                />
+                <div key={i} className="h-9 w-full animate-pulse rounded-xl bg-slate-100" />
               ))}
             </div>
           ) : rowsState.error ? (
@@ -865,19 +825,19 @@ export default function SurveillanceAppelsPage() {
                         ? "border-l-4 border-red-400 bg-red-50/40 hover:bg-red-50"
                         : r.status === "late"
                         ? "border-l-4 border-amber-400 bg-amber-50/30 hover:bg-amber-50"
+                        : r.status === "pending_absence"
+                        ? "border-l-4 border-sky-400 bg-sky-50/30 hover:bg-sky-50"
+                        : r.status === "justified_absence"
+                        ? "border-l-4 border-blue-400 bg-blue-50/30 hover:bg-blue-50"
                         : "border-l-4 border-emerald-400 bg-white hover:bg-emerald-50/60";
 
-                    // 🔁 NOUVEAU : on préfère l'horaire, puis on retombe sur period_label
                     const timeRange =
                       r.planned_start && r.planned_end
                         ? `${r.planned_start} – ${r.planned_end}`
                         : null;
 
                     return (
-                      <tr
-                        key={r.id}
-                        className={`transition-colors ${statusColor}`}
-                      >
+                      <tr key={r.id} className={`transition-colors ${statusColor}`}>
                         <td className="px-3 py-2 text-slate-800 whitespace-nowrap">
                           {dateHumanFR(r.date)}
                         </td>
@@ -898,24 +858,33 @@ export default function SurveillanceAppelsPage() {
                         </td>
                         <td className="px-3 py-2 text-xs text-slate-600">
                           {r.status === "missing" && (
-                            <span>
-                              Aucun appel détecté pour ce créneau.{" "}
-                              {originEmoji(r.opened_from)}{" "}
-                            </span>
+                            <span>Aucun appel détecté pour ce créneau. {originEmoji(r.opened_from)}</span>
                           )}
                           {r.status === "late" && (
                             <span>
-                              Appel réalisé avec retard.{" "}
-                              {originEmoji(r.opened_from)}{" "}
+                              Appel réalisé avec retard. {originEmoji(r.opened_from)}{" "}
                               {typeof r.late_minutes === "number"
                                 ? `Retard estimé : ${r.late_minutes} min.`
                                 : ""}
                             </span>
                           )}
-                          {r.status === "ok" && (
+                          {r.status === "pending_absence" && (
                             <span>
-                              Appel dans les délais. {originEmoji(r.opened_from)}
+                              Demande d’absence soumise et en attente de validation.
+                              {r.absence_reason_label ? ` Motif : ${r.absence_reason_label}.` : ""}
                             </span>
+                          )}
+                          {r.status === "justified_absence" && (
+                            <span>
+                              Absence approuvée par l’administration.
+                              {r.absence_reason_label ? ` Motif : ${r.absence_reason_label}.` : ""}
+                              {r.absence_admin_comment
+                                ? ` Commentaire admin : ${r.absence_admin_comment}.`
+                                : ""}
+                            </span>
+                          )}
+                          {r.status === "ok" && (
+                            <span>Appel dans les délais. {originEmoji(r.opened_from)}</span>
                           )}
                         </td>
                       </tr>
@@ -927,15 +896,8 @@ export default function SurveillanceAppelsPage() {
           )}
 
           <p className="mt-3 text-[11px] text-slate-500">
-            Cette vue repose sur trois éléments :{" "}
-            <strong>emplois du temps importés</strong>,{" "}
-            <strong>séances (teacher_sessions)</strong> et{" "}
-            <strong>heure réelle d’appel (actual_call_at)</strong>. La route
-            back-end utilisée est{" "}
-            <code className="rounded bg-slate-100 px-1 py-0.5 text-[10px]">
-              /api/admin/attendance/monitor
-            </code>
-            .
+            Cette vue repose sur les emplois du temps, les séances, l’heure réelle
+            d’appel et désormais les autorisations d’absence enseignants validées ou en attente.
           </p>
         </section>
       </div>

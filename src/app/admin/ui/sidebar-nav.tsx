@@ -1,4 +1,3 @@
-// src/app/admin/ui/sidebar-nav.tsx
 "use client";
 
 import Link from "next/link";
@@ -38,7 +37,6 @@ function useIsActive(pathname: string | null, href: string) {
 const BASE_NAV: NavItem[] = [
   { href: "/admin/dashboard", label: "Tableau de bord", Icon: LayoutDashboard },
 
-  // ⭐️ Onglet prédictions IA, très visible et distinctif
   {
     href: "/admin/notes/predictions",
     label: "Prédictions de réussite",
@@ -64,7 +62,13 @@ const BASE_NAV: NavItem[] = [
   { href: "/admin/regles-conduite", label: "Règles de conduite", Icon: ShieldCheck },
   { href: "/admin/parametres", label: "Paramètres", Icon: Settings },
 
-  // ✅ Déplacé ici : juste sous Paramètres et au-dessus du groupe Cahier des absences
+  // ✅ NOUVEAU : juste au-dessus de Gestion financière
+  {
+    href: "/admin/autorisations",
+    label: "Autorisation absences",
+    Icon: FileText,
+  },
+
   {
     href: "/admin/finance",
     label: "Gestion financière",

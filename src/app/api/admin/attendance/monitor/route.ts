@@ -1,4 +1,3 @@
-// src/app/api/admin/attendance/monitor/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
@@ -6,7 +5,12 @@ import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-type MonitorStatus = "missing" | "late" | "ok";
+type MonitorStatus =
+  | "missing"
+  | "late"
+  | "ok"
+  | "pending_absence"
+  | "justified_absence";
 
 type MonitorRow = {
   id: string;
@@ -21,6 +25,10 @@ type MonitorRow = {
   status: MonitorStatus;
   late_minutes?: number | null;
   opened_from?: "teacher" | "class_device" | null;
+
+  absence_request_status?: "pending" | "approved" | "rejected" | "cancelled" | null;
+  absence_reason_label?: string | null;
+  absence_admin_comment?: string | null;
 };
 
 /* ───────── helpers dates / heures (UTC ~= Africa/Abidjan) ───────── */
@@ -84,19 +92,8 @@ function parseWeekday(raw: any): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-/**
- * Détecte l'encodage weekday réellement utilisé par l'établissement, à partir de institution_periods.weekday.
- * Objectif: éviter les variantes ambiguës (vendredi=5 vs samedi=5 selon convention).
- */
 type WeekdayMode = "iso" | "js" | "mon0";
 
-/**
- * Heuristique sûre:
- * - si on voit 7 -> ISO (lun=1..dim=7)
- * - sinon si max==5 -> mon0 (lun=0..sam=5) [cas le plus courant quand on a 6 jours école]
- * - sinon si on voit 0 et max==6 -> JS (dim=0..sam=6)
- * - sinon -> ISO (lun=1..sam=6)
- */
 function detectWeekdayMode(periods: any[]): WeekdayMode {
   const vals = Array.from(
     new Set(
@@ -110,36 +107,30 @@ function detectWeekdayMode(periods: any[]): WeekdayMode {
 
   const max = vals.length ? Math.max(...vals) : 6;
 
-  // Mon..Sat encodé 0..5 (pas de dimanche)
   if (max === 5) return "mon0";
-
-  // Dim..Sat 0..6
   if (vals.includes(0) && max === 6) return "js";
 
-  // Par défaut: lun=1..sam=6 (ISO-like sans dimanche)
   return "iso";
 }
 
 function jsDayToDbWeekday(jsDay0to6: number, mode: WeekdayMode): number {
-  if (mode === "js") return jsDay0to6; // 0=dim..6=sam
-  if (mode === "iso") return jsDay0to6 === 0 ? 7 : jsDay0to6; // 1=lun..7=dim
-  // mon0: 0=lun..6=dim
+  if (mode === "js") return jsDay0to6;
+  if (mode === "iso") return jsDay0to6 === 0 ? 7 : jsDay0to6;
   return (jsDay0to6 + 6) % 7;
 }
 
-/* Seuil en minutes au-delà duquel on considère l’appel « en retard » (pur affichage) */
+/* Seuil en minutes au-delà duquel on considère l’appel « en retard » */
 const LATE_THRESHOLD_MIN =
   Number.isFinite(Number(process.env.ATTENDANCE_LATE_THRESHOLD_MIN))
     ? Math.max(1, Math.floor(Number(process.env.ATTENDANCE_LATE_THRESHOLD_MIN)))
     : 15;
 
-/* Fenêtre (en minutes) avant de considérer un appel comme « manquant ». */
+/* Fenêtre avant de considérer un appel comme « manquant ». */
 const MISSING_CONTROL_WINDOW_MIN =
   Number.isFinite(Number(process.env.ATTENDANCE_MISSING_CONTROL_WINDOW_MIN))
     ? Math.max(1, Math.floor(Number(process.env.ATTENDANCE_MISSING_CONTROL_WINDOW_MIN)))
     : LATE_THRESHOLD_MIN;
 
-// ✅ Tolérance maximale après la fin d’un créneau pour accepter un appel (si tu veux garder ce comportement)
 const MAX_CARRY_AFTER_END_MIN = 120;
 
 export async function GET(req: NextRequest) {
@@ -151,7 +142,6 @@ export async function GET(req: NextRequest) {
   const toParam = url.searchParams.get("to");
   const debug = url.searchParams.get("debug") === "1";
 
-  // Auth + institution + rôle admin
   const {
     data: { user },
     error: userErr,
@@ -202,7 +192,6 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  // Fenêtre de dates
   const now = new Date();
   const todayYmd = toYMD(now);
   const nowMinutes = now.getUTCHours() * 60 + now.getUTCMinutes();
@@ -221,18 +210,16 @@ export async function GET(req: NextRequest) {
     toDate = tmp;
   }
 
-  // liste des dates inclusives
   const dates: { ymd: string; weekdayJs: number }[] = [];
   const cursor = new Date(fromDate.getTime());
   while (cursor.getTime() <= toDate.getTime()) {
     dates.push({
       ymd: toYMD(cursor),
-      weekdayJs: cursor.getUTCDay(), // 0=dim, 1=lun...
+      weekdayJs: cursor.getUTCDay(),
     });
     cursor.setUTCDate(cursor.getUTCDate() + 1);
   }
 
-  // Pré-chargement des données de l’établissement
   const [
     { data: periods, error: pErr },
     { data: tts, error: ttErr },
@@ -286,7 +273,6 @@ export async function GET(req: NextRequest) {
   }
   if (tsErr) {
     console.error("[attendance/monitor] teacher_subjects_err", { error: tsErr.message });
-    // On ne bloque pas
   }
 
   const dateMinIso = new Date(fromDate.getTime());
@@ -295,19 +281,36 @@ export async function GET(req: NextRequest) {
   dateMaxIso.setUTCDate(dateMaxIso.getUTCDate() + 1);
   dateMaxIso.setUTCHours(0, 0, 0, 0);
 
-  const { data: sessions, error: sessErr } = await srv
-    .from("teacher_sessions")
-    .select("id,institution_id,class_id,subject_id,teacher_id,started_at,actual_call_at,origin")
-    .eq("institution_id", institution_id)
-    .gte("started_at", dateMinIso.toISOString())
-    .lt("started_at", dateMaxIso.toISOString());
+  const [
+    { data: sessions, error: sessErr },
+    { data: absenceRequests, error: absErr },
+  ] = await Promise.all([
+    srv
+      .from("teacher_sessions")
+      .select("id,institution_id,class_id,subject_id,teacher_id,started_at,actual_call_at,origin")
+      .eq("institution_id", institution_id)
+      .gte("started_at", dateMinIso.toISOString())
+      .lt("started_at", dateMaxIso.toISOString()),
+    srv
+      .from("teacher_absence_requests")
+      .select(
+        "id,institution_id,teacher_profile_id,start_date,end_date,reason_label,status,admin_comment"
+      )
+      .eq("institution_id", institution_id)
+      .in("status", ["pending", "approved"])
+      .lte("start_date", toYMD(toDate))
+      .gte("end_date", toYMD(fromDate)),
+  ]);
 
   if (sessErr) {
     console.error("[attendance/monitor] sessions_err", { error: sessErr.message });
     return NextResponse.json({ error: sessErr.message }, { status: 400 });
   }
+  if (absErr) {
+    console.error("[attendance/monitor] absence_requests_err", { error: absErr.message });
+    return NextResponse.json({ error: absErr.message }, { status: 400 });
+  }
 
-  // Index / maps
   type PeriodRow = {
     id: string;
     weekday: number;
@@ -337,10 +340,8 @@ export async function GET(req: NextRequest) {
     });
   });
 
-  // ✅ Détecte UNE convention weekday (source de vérité: institution_periods)
   const weekdayMode = detectWeekdayMode(periods || []);
 
-  // ✅ Map weekday(db) -> dates (UNE seule convention, pas de variantes ambiguës)
   const datesByWeekday = new Map<number, string[]>();
   for (const d of dates) {
     const wdDb = jsDayToDbWeekday(d.weekdayJs, weekdayMode);
@@ -354,8 +355,8 @@ export async function GET(req: NextRequest) {
     classLabelById.set(String(c.id), String(c.label || ""));
   });
 
-  const subjectNameById = new Map<string, string>(); // institution_subject_id -> name
-  const instSubjectIdsByBaseId = new Map<string, string[]>(); // base_subject_id -> [instIds]
+  const subjectNameById = new Map<string, string>();
+  const instSubjectIdsByBaseId = new Map<string, string[]>();
 
   (subjects || []).forEach((row: any) => {
     const instId = String(row.id);
@@ -394,14 +395,8 @@ export async function GET(req: NextRequest) {
     teacherNameById.set(id, name);
   });
 
-  /**
-   * Affectations officielles :
-   * - teacher_subjects.subject_id peut être :
-   *   A) base_subject_id
-   *   B) institution_subject_id
-   */
   const teacherHasSubjects = new Set<string>();
-  const allowedByTeacher = new Map<string, Set<string>>(); // teacherId -> Set(institution_subject_id)
+  const allowedByTeacher = new Map<string, Set<string>>();
 
   (teacherSubjects || []).forEach((ts: any) => {
     const teacherId = String(ts.profile_id);
@@ -410,12 +405,10 @@ export async function GET(req: NextRequest) {
 
     teacherHasSubjects.add(teacherId);
 
-    // cas B : déjà institution_subject_id
     let instIds: string[] = [];
     if (subjectNameById.has(rawSubjId)) {
       instIds = [rawSubjId];
     } else {
-      // cas A : base_subject_id
       instIds = instSubjectIdsByBaseId.get(rawSubjId) || [];
     }
 
@@ -429,7 +422,6 @@ export async function GET(req: NextRequest) {
     instIds.forEach((id) => set!.add(id));
   });
 
-  // Index des séances par (date|class|subject|teacher)
   type SessIndexItem = {
     callMin: number;
     opened_from: "teacher" | "class_device" | null;
@@ -462,11 +454,50 @@ export async function GET(req: NextRequest) {
     sessionsIndex.set(key, arr);
   });
 
-  // ✅ Empêche qu’un appel du créneau suivant "contamine" les créneaux précédents
+  type AbsenceInfo = {
+    status: "pending" | "approved";
+    reason_label: string | null;
+    admin_comment: string | null;
+  };
+
+  const absenceIndex = new Map<string, AbsenceInfo>();
+
+  (absenceRequests || []).forEach((r: any) => {
+    const teacherId = String(r.teacher_profile_id || "");
+    const start = String(r.start_date || "");
+    const end = String(r.end_date || "");
+    const status = String(r.status || "") as "pending" | "approved";
+    if (!teacherId || !start || !end || !status) return;
+
+    let c = parseYMD(start);
+    const e = parseYMD(end);
+    if (!c || !e) return;
+
+    while (c.getTime() <= e.getTime()) {
+      const ymd = toYMD(c);
+      const key = `${ymd}|${teacherId}`;
+      const existing = absenceIndex.get(key);
+
+      const nextInfo: AbsenceInfo = {
+        status,
+        reason_label: (r.reason_label as string | null) ?? null,
+        admin_comment: (r.admin_comment as string | null) ?? null,
+      };
+
+      // priorité approved > pending
+      if (!existing) {
+        absenceIndex.set(key, nextInfo);
+      } else if (existing.status !== "approved" && status === "approved") {
+        absenceIndex.set(key, nextInfo);
+      }
+
+      c.setUTCDate(c.getUTCDate() + 1);
+    }
+  });
+
   type SlotLite = { period_id: string; startMin: number };
   const nextStartMinBySlot = new Map<string, number | null>();
   const slotsByGroup = new Map<string, Map<string, SlotLite>>();
-  // group = `${weekday}|${classId}|${subjectId}|${teacherId}`
 
   (tts || []).forEach((tt: any) => {
     const period = periodById.get(String(tt.period_id));
@@ -499,14 +530,12 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  // Calcul final des lignes
   const rows: MonitorRow[] = [];
 
   (tts || []).forEach((tt: any) => {
     const period = periodById.get(String(tt.period_id));
     if (!period) return;
 
-    // ✅ Source de vérité pour le jour : institution_periods.weekday
     const weekday = period.weekday;
     const datesForDay = datesByWeekday.get(weekday);
     if (!datesForDay || !datesForDay.length) return;
@@ -518,15 +547,12 @@ export async function GET(req: NextRequest) {
     const subjectId = String(tt.subject_id || "");
     const teacherId = String(tt.teacher_id);
 
-    // Filtre affectations : seulement si le prof a des affectations ET qu'on a quelque chose de fiable
     if (subjectId && teacherHasSubjects.has(teacherId)) {
       const allowed = allowedByTeacher.get(teacherId);
 
-      // si on a un set non vide, on vérifie
       if (allowed && allowed.size > 0) {
         let ok = allowed.has(subjectId);
 
-        // si subjectId est potentiellement un base_subject_id, on tente le mapping
         if (!ok) {
           const mappedInst = instSubjectIdsByBaseId.get(subjectId) || [];
           ok = mappedInst.some((instId) => allowed.has(instId));
@@ -540,7 +566,6 @@ export async function GET(req: NextRequest) {
 
     const classLabel = classLabelById.get(classId) || "";
 
-    // subject_name : si subjectId est base id, on map vers 1 inst id
     let subjName = subjectNameById.get(subjectId) || "";
     if (!subjName) {
       const mappedInst = instSubjectIdsByBaseId.get(subjectId) || [];
@@ -556,7 +581,6 @@ export async function GET(req: NextRequest) {
       const key = [ymd, classId, subjectId, teacherId].join("|");
       const sessList = sessionsIndex.get(key) || [];
 
-      // ✅ Séance la plus ancienne DANS LE CRENEAU (sans “déborder” sur le créneau suivant)
       let best: SessIndexItem | null = null;
 
       const group = `${weekday}|${classId}|${subjectId}|${teacherId}`;
@@ -566,16 +590,18 @@ export async function GET(req: NextRequest) {
       for (const s of sessList) {
         if (s.callMin < startMin) continue;
         if (s.callMin > endMin + MAX_CARRY_AFTER_END_MIN) continue;
-
-        // ✅ si l’appel est à partir du début du créneau suivant, il appartient au suivant
         if (nextStartMin !== null && s.callMin >= nextStartMin) continue;
-
         if (!best || s.callMin < best.callMin) best = s;
       }
 
       let status: MonitorStatus;
       let lateMinutes: number | null = null;
       let opened_from: "teacher" | "class_device" | null = null;
+
+      let absence_request_status: "pending" | "approved" | "rejected" | "cancelled" | null =
+        null;
+      let absence_reason_label: string | null = null;
+      let absence_admin_comment: string | null = null;
 
       if (best) {
         const delta = best.callMin - startMin;
@@ -602,11 +628,28 @@ export async function GET(req: NextRequest) {
         } else {
           continue;
         }
+
+        // 🔥 si c'était missing, on vérifie s'il existe une demande d'absence
+        const absence = absenceIndex.get(`${ymd}|${teacherId}`);
+        if (absence) {
+          absence_request_status = absence.status;
+          absence_reason_label = absence.reason_label;
+          absence_admin_comment = absence.admin_comment;
+
+          if (absence.status === "approved") {
+            status = "justified_absence";
+          } else if (absence.status === "pending") {
+            status = "pending_absence";
+          }
+        }
       }
 
       const periodLabel =
         period.label ||
-        [normalizeTimeFromDb(period.start_time) || "", normalizeTimeFromDb(period.end_time) || ""]
+        [
+          normalizeTimeFromDb(period.start_time) || "",
+          normalizeTimeFromDb(period.end_time) || "",
+        ]
           .filter(Boolean)
           .join(" – ");
 
@@ -623,11 +666,13 @@ export async function GET(req: NextRequest) {
         status,
         late_minutes: lateMinutes,
         opened_from,
+        absence_request_status,
+        absence_reason_label,
+        absence_admin_comment,
       });
     }
   });
 
-  // tri : date, puis heure de début, puis classe
   rows.sort((a, b) => {
     if (a.date !== b.date) return a.date < b.date ? -1 : 1;
     const sa = (a.planned_start || "00:00") as string;
@@ -664,6 +709,7 @@ export async function GET(req: NextRequest) {
           tts: (tts || []).length,
           sessions: (sessions || []).length,
           teacherSubjects: (teacherSubjects || []).length,
+          absenceRequests: (absenceRequests || []).length,
           rows: rows.length,
         },
         weekdayMode,
