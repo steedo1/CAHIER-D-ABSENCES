@@ -112,6 +112,20 @@ function formatDateTime(v?: string | null) {
   });
 }
 
+function formatTimeRange(
+  start?: string | null,
+  end?: string | null,
+  fallback?: string | null
+) {
+  const s = String(start || "").trim();
+  const e = String(end || "").trim();
+
+  if (s && e) return `${s}-${e}`;
+  if (s) return s;
+  if (e) return e;
+  return fallback || "Créneau non défini";
+}
+
 function statusLabel(status: RequestStatus) {
   switch (status) {
     case "pending":
@@ -554,7 +568,11 @@ export default function AdminAssiduitePage() {
                                         className="rounded-lg bg-slate-50 px-3 py-2"
                                       >
                                         {formatDate(slot.date)} • {slot.subject_name} •{" "}
-                                        {slot.period_label} • {slot.lost_hours} h
+                                        {formatTimeRange(
+                                          slot.start_time,
+                                          slot.end_time,
+                                          slot.period_label
+                                        )}
                                       </div>
                                     ))}
                                   </div>
@@ -576,16 +594,6 @@ export default function AdminAssiduitePage() {
                           </p>
                         ) : (
                           <div className="mt-3 space-y-3 text-sm">
-                            <div className="rounded-xl bg-white px-4 py-3">
-                              <div className="text-xs font-bold uppercase tracking-wide text-slate-500">
-                                Période proposée
-                              </div>
-                              <div className="mt-1 font-semibold text-slate-900">
-                                {formatDate(item.makeup_plan.proposed_start_date)} →{" "}
-                                {formatDate(item.makeup_plan.proposed_end_date)}
-                              </div>
-                            </div>
-
                             <div className="rounded-xl bg-white px-4 py-3">
                               <div className="text-xs font-bold uppercase tracking-wide text-slate-500">
                                 Détails
