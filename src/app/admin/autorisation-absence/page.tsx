@@ -1,22 +1,22 @@
-//src/app/admin/autorisations/page.tsx
+// src/app/enseignant/autorisation-absence/page.tsx
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
 import {
+  CalendarDays,
   CheckCircle2,
   Clock3,
   FileText,
   Loader2,
-  MessageSquareText,
   RefreshCw,
-  Search,
+  Send,
   ShieldCheck,
   XCircle,
 } from "lucide-react";
 
 type RequestStatus = "pending" | "approved" | "rejected" | "cancelled";
 
-type AbsenceRequestItem = {
+type TeacherAbsenceRequestItem = {
   id: string;
   institution_id: string;
   teacher_user_id: string;
@@ -41,11 +41,7 @@ type AbsenceRequestItem = {
 };
 
 type ApiListResponse =
-  | { ok: true; items: AbsenceRequestItem[] }
-  | { ok: false; error: string };
-
-type ApiActionResponse =
-  | { ok: true; item: AbsenceRequestItem; message?: string }
+  | { ok: true; items: TeacherAbsenceRequestItem[] }
   | { ok: false; error: string };
 
 function classNames(...arr: Array<string | false | null | undefined>) {
@@ -110,28 +106,37 @@ function daysLabel(n: number) {
   return n <= 1 ? "1 jour" : `${n} jours`;
 }
 
-export default function AdminAssiduitePage() {
-  const [items, setItems] = useState<AbsenceRequestItem[]>([]);
+const REASON_OPTIONS = [
+  { value: "medical", label: "Raison médicale" },
+  { value: "family", label: "Motif familial" },
+  { value: "administrative", label: "Convocation / démarche administrative" },
+  { value: "transport", label: "Déplacement / transport" },
+  { value: "other", label: "Autre motif" },
+];
+
+export default function EnseignantAutorisationAbsencePage() {
+  const [items, setItems] = useState<TeacherAbsenceRequestItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
 
-  const [statusFilter, setStatusFilter] = useState<RequestStatus | "all">("pending");
-  const [teacherQuery, setTeacherQuery] = useState("");
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [commentDraft, setCommentDraft] = useState<Record<string, string>>({});
-  const [busyId, setBusyId] = useState<string | null>(null);
+  const [form, setForm] = useState({
+    start_date: "",
+    end_date: "",
+    reason_code: "medical",
+    details: "",
+    signed: true,
+  });
 
   async function load() {
     try {
       setError(null);
       setRefreshing(true);
 
-      const qs = new URLSearchParams();
-      if (statusFilter !== "all") qs.set("status", statusFilter);
-      if (teacherQuery.trim()) qs.set("teacher", teacherQuery.trim());
-
-      const res = await fetch(`/api/admin/absence-requests?${qs.toString()}`, {
+      const res = await fetch("/api/teacher/absence-requests", {
+        method: "GET",
         cache: "no-store",
       });
 
@@ -140,11 +145,11 @@ export default function AdminAssiduitePage() {
       if (!res.ok || !json?.ok) {
         throw new Error(
           (json && "error" in json && json.error) ||
-            "Impossible de charger les demandes d’absence."
+            "Impossible de charger vos demandes d’absence."
         );
       }
 
-      setItems(json.items ?? []);
+      setItems(Array.isArray(json.items) ? json.items : []);
     } catch (e: any) {
       setError(e?.message || "Erreur de chargement.");
     } finally {
@@ -155,16 +160,7 @@ export default function AdminAssiduitePage() {
 
   useEffect(() => {
     load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [statusFilter]);
-
-  const filteredItems = useMemo(() => {
-    const q = teacherQuery.trim().toLowerCase();
-    if (!q) return items;
-    return items.filter((item) =>
-      String(item.teacher_name ?? "").toLowerCase().includes(q)
-    );
-  }, [items, teacherQuery]);
+  }, []);
 
   const counts = useMemo(() => {
     return items.reduce(
@@ -183,42 +179,63 @@ export default function AdminAssiduitePage() {
     );
   }, [items]);
 
-  async function handleAction(id: string, action: "approve" | "reject") {
+  async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+
+    if (!form.start_date || !form.end_date) {
+      setError("Veuillez renseigner la date de début et la date de fin.");
+      setSuccess(null);
+      return;
+    }
+
+    if (!form.details.trim()) {
+      setError("Veuillez préciser le motif de votre demande.");
+      setSuccess(null);
+      return;
+    }
+
     try {
-      setBusyId(id);
+      setSubmitting(true);
       setError(null);
+      setSuccess(null);
 
-      const admin_comment = (commentDraft[id] || "").trim();
-
-      const res = await fetch("/api/admin/absence-requests", {
-        method: "PATCH",
+      const res = await fetch("/api/teacher/absence-requests", {
+        method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          id,
-          action,
-          admin_comment,
+          start_date: form.start_date,
+          end_date: form.end_date,
+          reason_code: form.reason_code,
+          details: form.details.trim(),
+          signed: form.signed,
         }),
       });
 
-      const json = (await res.json().catch(() => null)) as ApiActionResponse | null;
+      const json = await res.json().catch(() => null);
 
       if (!res.ok || !json?.ok) {
         throw new Error(
-          (json && "error" in json && json.error) ||
-            "L’action n’a pas pu être exécutée."
+          json?.error || "La demande n’a pas pu être enregistrée."
         );
       }
 
-      setItems((prev) =>
-        prev.map((item) => (item.id === id ? json.item : item))
-      );
-      setSelectedId(id);
+      setForm({
+        start_date: "",
+        end_date: "",
+        reason_code: "medical",
+        details: "",
+        signed: true,
+      });
+
+      setSuccess("Votre demande d’autorisation d’absence a bien été soumise.");
+      await load();
     } catch (e: any) {
-      setError(e?.message || "Erreur lors de la validation.");
+      setError(e?.message || "Erreur lors de l’envoi.");
+      setSuccess(null);
     } finally {
-      setBusyId(null);
+      setSubmitting(false);
     }
   }
 
@@ -236,14 +253,14 @@ export default function AdminAssiduitePage() {
           <div>
             <div className="inline-flex items-center gap-2 rounded-full bg-white/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-white/80 ring-1 ring-white/10">
               <ShieldCheck className="h-3.5 w-3.5" />
-              Assiduité & justifications
+              Espace enseignant
             </div>
             <h1 className="mt-3 text-2xl font-extrabold tracking-tight">
-              Validation des autorisations d’absence
+              Autorisation d’absence
             </h1>
             <p className="mt-2 max-w-3xl text-sm leading-6 text-white/85">
-              Consultez les demandes soumises par les enseignants, relisez les motifs,
-              puis approuvez ou rejetez chaque demande avec un commentaire administratif.
+              Soumettez une demande d’absence, suivez son traitement et consultez
+              les décisions administratives associées.
             </p>
           </div>
 
@@ -259,293 +276,290 @@ export default function AdminAssiduitePage() {
         </div>
       </section>
 
-      <section className="grid grid-cols-2 gap-4 lg:grid-cols-5">
+      <section className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Total</div>
-          <div className="mt-2 text-3xl font-extrabold text-slate-950">{counts.total}</div>
+          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+            Total
+          </div>
+          <div className="mt-2 text-3xl font-extrabold text-slate-950">
+            {counts.total}
+          </div>
         </div>
+
         <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 shadow-sm">
-          <div className="text-xs font-semibold uppercase tracking-wide text-amber-700">En attente</div>
-          <div className="mt-2 text-3xl font-extrabold text-amber-900">{counts.pending}</div>
+          <div className="text-xs font-semibold uppercase tracking-wide text-amber-700">
+            En attente
+          </div>
+          <div className="mt-2 text-3xl font-extrabold text-amber-900">
+            {counts.pending}
+          </div>
         </div>
+
         <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 shadow-sm">
-          <div className="text-xs font-semibold uppercase tracking-wide text-emerald-700">Approuvées</div>
-          <div className="mt-2 text-3xl font-extrabold text-emerald-900">{counts.approved}</div>
+          <div className="text-xs font-semibold uppercase tracking-wide text-emerald-700">
+            Approuvées
+          </div>
+          <div className="mt-2 text-3xl font-extrabold text-emerald-900">
+            {counts.approved}
+          </div>
         </div>
+
         <div className="rounded-2xl border border-red-200 bg-red-50 p-4 shadow-sm">
-          <div className="text-xs font-semibold uppercase tracking-wide text-red-700">Rejetées</div>
-          <div className="mt-2 text-3xl font-extrabold text-red-900">{counts.rejected}</div>
-        </div>
-        <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 shadow-sm">
-          <div className="text-xs font-semibold uppercase tracking-wide text-slate-600">Annulées</div>
-          <div className="mt-2 text-3xl font-extrabold text-slate-800">{counts.cancelled}</div>
+          <div className="text-xs font-semibold uppercase tracking-wide text-red-700">
+            Rejetées
+          </div>
+          <div className="mt-2 text-3xl font-extrabold text-red-900">
+            {counts.rejected}
+          </div>
         </div>
       </section>
 
-      <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-[220px_minmax(0,1fr)]">
-          <div>
-            <label className="mb-2 block text-sm font-semibold text-slate-800">
-              Statut
-            </label>
-            <select
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value as RequestStatus | "all")}
-              className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none focus:border-emerald-400 focus:ring-4 focus:ring-emerald-500/15"
-            >
-              <option value="all">Tous</option>
-              <option value="pending">En attente</option>
-              <option value="approved">Approuvées</option>
-              <option value="rejected">Rejetées</option>
-              <option value="cancelled">Annulées</option>
-            </select>
+      <section className="grid grid-cols-1 gap-6 xl:grid-cols-[1.05fr_0.95fr]">
+        <form
+          onSubmit={handleSubmit}
+          className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm"
+        >
+          <div className="flex items-center gap-2 text-sm font-black uppercase tracking-[0.16em] text-slate-700">
+            <FileText className="h-4 w-4 text-emerald-600" />
+            Nouvelle demande
           </div>
 
-          <div>
-            <label className="mb-2 block text-sm font-semibold text-slate-800">
-              Recherche enseignant
-            </label>
-            <div className="relative">
-              <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+          <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-2">
+            <div>
+              <label className="mb-2 block text-sm font-semibold text-slate-800">
+                Date de début
+              </label>
               <input
-                value={teacherQuery}
-                onChange={(e) => setTeacherQuery(e.target.value)}
-                placeholder="Nom de l’enseignant..."
-                className="w-full rounded-2xl border border-slate-200 bg-white py-3 pl-11 pr-4 text-sm text-slate-900 shadow-sm outline-none focus:border-emerald-400 focus:ring-4 focus:ring-emerald-500/15"
+                type="date"
+                value={form.start_date}
+                onChange={(e) =>
+                  setForm((prev) => ({ ...prev, start_date: e.target.value }))
+                }
+                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none focus:border-emerald-400 focus:ring-4 focus:ring-emerald-500/15"
+              />
+            </div>
+
+            <div>
+              <label className="mb-2 block text-sm font-semibold text-slate-800">
+                Date de fin
+              </label>
+              <input
+                type="date"
+                value={form.end_date}
+                onChange={(e) =>
+                  setForm((prev) => ({ ...prev, end_date: e.target.value }))
+                }
+                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none focus:border-emerald-400 focus:ring-4 focus:ring-emerald-500/15"
               />
             </div>
           </div>
-        </div>
-      </section>
 
-      {error ? (
-        <section className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900 shadow-sm">
-          {error}
-        </section>
-      ) : null}
-
-      <section className="space-y-4">
-        {loading ? (
-          <div className="rounded-3xl border border-slate-200 bg-white px-5 py-12 shadow-sm">
-            <div className="flex items-center justify-center gap-3 text-slate-600">
-              <Loader2 className="h-5 w-5 animate-spin" />
-              Chargement des demandes...
-            </div>
+          <div className="mt-4">
+            <label className="mb-2 block text-sm font-semibold text-slate-800">
+              Motif
+            </label>
+            <select
+              value={form.reason_code}
+              onChange={(e) =>
+                setForm((prev) => ({ ...prev, reason_code: e.target.value }))
+              }
+              className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none focus:border-emerald-400 focus:ring-4 focus:ring-emerald-500/15"
+            >
+              {REASON_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
           </div>
-        ) : filteredItems.length === 0 ? (
-          <div className="rounded-3xl border border-slate-200 bg-white px-5 py-12 shadow-sm">
-            <div className="flex flex-col items-center justify-center text-center">
-              <FileText className="h-10 w-10 text-slate-300" />
-              <div className="mt-3 text-lg font-bold text-slate-900">
-                Aucune demande trouvée
+
+          <div className="mt-4">
+            <label className="mb-2 block text-sm font-semibold text-slate-800">
+              Détails
+            </label>
+            <textarea
+              rows={5}
+              value={form.details}
+              onChange={(e) =>
+                setForm((prev) => ({ ...prev, details: e.target.value }))
+              }
+              placeholder="Expliquez brièvement le motif de la demande..."
+              className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none focus:border-emerald-400 focus:ring-4 focus:ring-emerald-500/15"
+            />
+          </div>
+
+          <label className="mt-4 flex items-start gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+            <input
+              type="checkbox"
+              checked={form.signed}
+              onChange={(e) =>
+                setForm((prev) => ({ ...prev, signed: e.target.checked }))
+              }
+              className="mt-1 h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+            />
+            <span className="text-sm text-slate-700">
+              Je confirme l’exactitude des informations fournies dans cette demande.
+            </span>
+          </label>
+
+          <div className="mt-5">
+            <button
+              type="submit"
+              disabled={submitting}
+              className="inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-700 px-5 py-3 text-sm font-bold text-white shadow-sm transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-70"
+            >
+              {submitting ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Send className="h-4 w-4" />
+              )}
+              Soumettre la demande
+            </button>
+          </div>
+        </form>
+
+        <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="flex items-center gap-2 text-sm font-black uppercase tracking-[0.16em] text-slate-700">
+            <CalendarDays className="h-4 w-4 text-emerald-600" />
+            Historique
+          </div>
+
+          {error ? (
+            <div className="mt-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900">
+              {error}
+            </div>
+          ) : null}
+
+          {success ? (
+            <div className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
+              {success}
+            </div>
+          ) : null}
+
+          <div className="mt-4 space-y-4">
+            {loading ? (
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-5 py-10">
+                <div className="flex items-center justify-center gap-3 text-slate-600">
+                  <Loader2 className="h-5 w-5 animate-spin" />
+                  Chargement des demandes...
+                </div>
               </div>
-              <p className="mt-1 text-sm text-slate-500">
-                Ajuste les filtres ou attends la soumission d’une nouvelle demande.
-              </p>
-            </div>
-          </div>
-        ) : (
-          filteredItems.map((item) => {
-            const isOpen = selectedId === item.id;
-            const canAct = item.status === "pending";
-            const currentBusy = busyId === item.id;
-
-            return (
-              <article
-                key={item.id}
-                className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm"
-              >
-                <div className="flex flex-col gap-4 border-b border-slate-100 px-5 py-5 lg:flex-row lg:items-start lg:justify-between">
-                  <div className="space-y-3">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span
-                        className={classNames(
-                          "inline-flex items-center rounded-full px-3 py-1 text-xs font-bold ring-1",
-                          statusClasses(item.status)
-                        )}
-                      >
-                        {statusLabel(item.status)}
-                      </span>
-
-                      <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700 ring-1 ring-slate-200">
-                        <Clock3 className="h-3.5 w-3.5" />
-                        {daysLabel(item.requested_days)}
-                      </span>
-
-                      {item.signed ? (
-                        <span className="inline-flex items-center rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-800 ring-1 ring-emerald-200">
-                          Signée
-                        </span>
-                      ) : null}
-                    </div>
-
-                    <div>
-                      <h2 className="text-xl font-extrabold tracking-tight text-slate-950">
-                        {item.teacher_name || "Enseignant non identifié"}
-                      </h2>
-                      <p className="mt-1 text-sm text-slate-500">
-                        Demande créée le {formatDateTime(item.created_at)}
-                      </p>
-                    </div>
-
-                    <div className="grid grid-cols-1 gap-3 text-sm text-slate-700 md:grid-cols-3">
-                      <div className="rounded-2xl bg-slate-50 px-4 py-3">
-                        <div className="text-xs font-bold uppercase tracking-wide text-slate-500">
-                          Période
-                        </div>
-                        <div className="mt-1 font-semibold text-slate-900">
-                          {formatDate(item.start_date)} → {formatDate(item.end_date)}
-                        </div>
-                      </div>
-
-                      <div className="rounded-2xl bg-slate-50 px-4 py-3">
-                        <div className="text-xs font-bold uppercase tracking-wide text-slate-500">
-                          Motif
-                        </div>
-                        <div className="mt-1 font-semibold text-slate-900">
-                          {item.reason_label}
-                        </div>
-                      </div>
-
-                      <div className="rounded-2xl bg-slate-50 px-4 py-3">
-                        <div className="text-xs font-bold uppercase tracking-wide text-slate-500">
-                          Source
-                        </div>
-                        <div className="mt-1 font-semibold text-slate-900">
-                          {item.source || "teacher_portal"}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="flex flex-col gap-2 lg:min-w-[220px]">
-                    <button
-                      type="button"
-                      onClick={() => setSelectedId(isOpen ? null : item.id)}
-                      className="inline-flex items-center justify-center rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+            ) : items.length === 0 ? (
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-5 py-10 text-center">
+                <FileText className="mx-auto h-10 w-10 text-slate-300" />
+                <div className="mt-3 text-lg font-bold text-slate-900">
+                  Aucune demande pour le moment
+                </div>
+                <p className="mt-1 text-sm text-slate-500">
+                  Vos prochaines demandes apparaîtront ici.
+                </p>
+              </div>
+            ) : (
+              items.map((item) => (
+                <article
+                  key={item.id}
+                  className="rounded-3xl border border-slate-200 bg-slate-50/60 p-4"
+                >
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span
+                      className={classNames(
+                        "inline-flex items-center rounded-full px-3 py-1 text-xs font-bold ring-1",
+                        statusClasses(item.status)
+                      )}
                     >
-                      {isOpen ? "Masquer les détails" : "Voir les détails"}
-                    </button>
+                      {statusLabel(item.status)}
+                    </span>
 
-                    {canAct ? (
-                      <>
-                        <button
-                          type="button"
-                          disabled={currentBusy}
-                          onClick={() => handleAction(item.id, "approve")}
-                          className="inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-700 px-4 py-3 text-sm font-bold text-white shadow-sm transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-70"
-                        >
-                          {currentBusy ? (
-                            <Loader2 className="h-4 w-4 animate-spin" />
-                          ) : (
-                            <CheckCircle2 className="h-4 w-4" />
-                          )}
-                          Approuver
-                        </button>
+                    <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700 ring-1 ring-slate-200">
+                      <Clock3 className="h-3.5 w-3.5" />
+                      {daysLabel(item.requested_days)}
+                    </span>
 
-                        <button
-                          type="button"
-                          disabled={currentBusy}
-                          onClick={() => handleAction(item.id, "reject")}
-                          className="inline-flex items-center justify-center gap-2 rounded-2xl bg-red-700 px-4 py-3 text-sm font-bold text-white shadow-sm transition hover:bg-red-800 disabled:cursor-not-allowed disabled:opacity-70"
-                        >
-                          {currentBusy ? (
-                            <Loader2 className="h-4 w-4 animate-spin" />
-                          ) : (
-                            <XCircle className="h-4 w-4" />
-                          )}
-                          Rejeter
-                        </button>
-                      </>
+                    {item.signed ? (
+                      <span className="inline-flex items-center rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-800 ring-1 ring-emerald-200">
+                        Signée
+                      </span>
                     ) : null}
                   </div>
-                </div>
 
-                {isOpen ? (
-                  <div className="grid grid-cols-1 gap-5 px-5 py-5 lg:grid-cols-[1.2fr_0.8fr]">
-                    <div className="space-y-5">
-                      <div>
-                        <div className="mb-2 text-sm font-bold text-slate-900">
-                          Détails fournis par l’enseignant
-                        </div>
-                        <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4 text-sm leading-7 text-slate-700">
-                          {item.details}
-                        </div>
+                  <div className="mt-4 grid gap-3 text-sm text-slate-700 sm:grid-cols-2">
+                    <div className="rounded-2xl bg-white px-4 py-3">
+                      <div className="text-xs font-bold uppercase tracking-wide text-slate-500">
+                        Période
                       </div>
-
-                      <div>
-                        <div className="mb-2 flex items-center gap-2 text-sm font-bold text-slate-900">
-                          <MessageSquareText className="h-4 w-4" />
-                          Commentaire administratif
-                        </div>
-                        <textarea
-                          rows={4}
-                          value={commentDraft[item.id] ?? item.admin_comment ?? ""}
-                          onChange={(e) =>
-                            setCommentDraft((prev) => ({
-                              ...prev,
-                              [item.id]: e.target.value,
-                            }))
-                          }
-                          placeholder="Ajouter une observation administrative..."
-                          className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none focus:border-emerald-400 focus:ring-4 focus:ring-emerald-500/15"
-                        />
+                      <div className="mt-1 font-semibold text-slate-900">
+                        {formatDate(item.start_date)} → {formatDate(item.end_date)}
                       </div>
                     </div>
 
-                    <aside className="space-y-4">
-                      <div className="rounded-2xl border border-slate-200 bg-white p-4">
-                        <div className="text-sm font-bold text-slate-900">Suivi décisionnel</div>
-                        <div className="mt-3 space-y-3 text-sm">
-                          <div className="rounded-2xl bg-slate-50 px-4 py-3">
-                            <div className="text-xs font-bold uppercase tracking-wide text-slate-500">
-                              Statut actuel
-                            </div>
-                            <div className="mt-1 font-semibold text-slate-900">
-                              {statusLabel(item.status)}
-                            </div>
-                          </div>
-
-                          <div className="rounded-2xl bg-slate-50 px-4 py-3">
-                            <div className="text-xs font-bold uppercase tracking-wide text-slate-500">
-                              Approuvée le
-                            </div>
-                            <div className="mt-1 font-semibold text-slate-900">
-                              {formatDateTime(item.approved_at)}
-                            </div>
-                          </div>
-
-                          <div className="rounded-2xl bg-slate-50 px-4 py-3">
-                            <div className="text-xs font-bold uppercase tracking-wide text-slate-500">
-                              Rejetée le
-                            </div>
-                            <div className="mt-1 font-semibold text-slate-900">
-                              {formatDateTime(item.rejected_at)}
-                            </div>
-                          </div>
-                        </div>
+                    <div className="rounded-2xl bg-white px-4 py-3">
+                      <div className="text-xs font-bold uppercase tracking-wide text-slate-500">
+                        Motif
                       </div>
+                      <div className="mt-1 font-semibold text-slate-900">
+                        {item.reason_label}
+                      </div>
+                    </div>
 
-                      {item.status === "approved" ? (
-                        <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
-                          Cette demande a été validée. Elle pourra ensuite être exploitée
-                          dans la vue par créneau comme absence justifiée.
-                        </div>
-                      ) : null}
+                    <div className="rounded-2xl bg-white px-4 py-3 sm:col-span-2">
+                      <div className="text-xs font-bold uppercase tracking-wide text-slate-500">
+                        Détails
+                      </div>
+                      <div className="mt-1 leading-6 text-slate-700">
+                        {item.details}
+                      </div>
+                    </div>
 
-                      {item.status === "rejected" ? (
-                        <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900">
-                          Cette demande a été rejetée. Elle ne doit pas être traitée comme
-                          absence autorisée.
-                        </div>
-                      ) : null}
-                    </aside>
+                    <div className="rounded-2xl bg-white px-4 py-3">
+                      <div className="text-xs font-bold uppercase tracking-wide text-slate-500">
+                        Créée le
+                      </div>
+                      <div className="mt-1 font-semibold text-slate-900">
+                        {formatDateTime(item.created_at)}
+                      </div>
+                    </div>
+
+                    <div className="rounded-2xl bg-white px-4 py-3">
+                      <div className="text-xs font-bold uppercase tracking-wide text-slate-500">
+                        Décision
+                      </div>
+                      <div className="mt-1 font-semibold text-slate-900">
+                        {item.status === "approved"
+                          ? formatDateTime(item.approved_at)
+                          : item.status === "rejected"
+                          ? formatDateTime(item.rejected_at)
+                          : "—"}
+                      </div>
+                    </div>
                   </div>
-                ) : null}
-              </article>
-            );
-          })
-        )}
+
+                  {item.admin_comment ? (
+                    <div className="mt-4 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700">
+                      <div className="font-bold text-slate-900">
+                        Commentaire administratif
+                      </div>
+                      <div className="mt-1 leading-6">{item.admin_comment}</div>
+                    </div>
+                  ) : null}
+
+                  {item.status === "approved" ? (
+                    <div className="mt-4 inline-flex items-center gap-2 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
+                      <CheckCircle2 className="h-4 w-4" />
+                      Votre demande a été approuvée.
+                    </div>
+                  ) : null}
+
+                  {item.status === "rejected" ? (
+                    <div className="mt-4 inline-flex items-center gap-2 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900">
+                      <XCircle className="h-4 w-4" />
+                      Votre demande a été rejetée.
+                    </div>
+                  ) : null}
+                </article>
+              ))
+            )}
+          </div>
+        </section>
       </section>
     </main>
   );
