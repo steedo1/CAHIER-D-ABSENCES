@@ -238,21 +238,23 @@ export default async function FinanceReceiptPrintPage({
 
   const typedReceipt = receipt as ReceiptRow;
 
-  const [{ data: allocations, error: allocErr }, { data: classes, error: clsErr }] =
-    await Promise.all([
-      supabase
-        .schema("finance")
-        .from("receipt_allocations")
-        .select("id,receipt_id,student_charge_id,amount,created_at")
-        .eq("receipt_id", typedReceipt.id)
-        .order("created_at", { ascending: true }),
+  const [
+    { data: allocations, error: allocErr },
+    { data: classes, error: clsErr },
+  ] = await Promise.all([
+    supabase
+      .schema("finance")
+      .from("receipt_allocations")
+      .select("id,receipt_id,student_charge_id,amount,created_at")
+      .eq("receipt_id", typedReceipt.id)
+      .order("created_at", { ascending: true }),
 
-      supabase
-        .from("classes")
-        .select("id,label,level,academic_year")
-        .eq("institution_id", institutionId)
-        .order("label", { ascending: true }),
-    ]);
+    supabase
+      .from("classes")
+      .select("id,label,level,academic_year")
+      .eq("institution_id", institutionId)
+      .order("label", { ascending: true }),
+  ]);
 
   if (allocErr) throw new Error(allocErr.message);
   if (clsErr) throw new Error(clsErr.message);
@@ -261,7 +263,9 @@ export default async function FinanceReceiptPrintPage({
   const classRows = (classes ?? []) as ClassRow[];
   const classMap = new Map(classRows.map((c) => [c.id, c]));
 
-  const chargeIds = Array.from(new Set(allocationRows.map((a) => a.student_charge_id)));
+  const chargeIds = Array.from(
+    new Set(allocationRows.map((a) => a.student_charge_id))
+  );
 
   const { data: charges, error: chErr } = chargeIds.length
     ? await supabase
@@ -271,7 +275,7 @@ export default async function FinanceReceiptPrintPage({
           "id,student_id,class_id,label,due_date,net_amount,paid_amount,balance_due"
         )
         .in("id", chargeIds)
-    : { data: [], error: null as any };
+    : { data: [], error: null as null | { message?: string } };
 
   if (chErr) throw new Error(chErr.message);
 
@@ -293,10 +297,13 @@ export default async function FinanceReceiptPrintPage({
   );
 
   const schoolName = institutionDisplayName(institutionSettings);
+  const printHref = `/admin/finance/receipts/${encodeURIComponent(
+    receiptId
+  )}?autoprint=1`;
 
   return (
     <div className="receipt-page-shell mx-auto max-w-5xl space-y-6 px-4 py-6 sm:px-6 print:px-0 print:py-0">
-      <style jsx global>{`
+      <style>{`
         @page {
           size: A4;
           margin: 12mm;
@@ -331,7 +338,9 @@ export default async function FinanceReceiptPrintPage({
             __html: `
               window.addEventListener('load', function () {
                 setTimeout(function () {
-                  window.print();
+                  try {
+                    window.print();
+                  } catch (e) {}
                 }, 350);
               });
             `,
@@ -358,25 +367,13 @@ export default async function FinanceReceiptPrintPage({
             Retour aux reçus
           </Link>
 
-          <button
-            type="button"
-            onClick={() => {
-              "use client";
-            }}
-            className="hidden"
-          />
-
-          <a
-            href="#"
-            onClick={(e) => {
-              e.preventDefault();
-              if (typeof window !== "undefined") window.print();
-            }}
+          <Link
+            href={printHref}
             className="inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-4 py-3 text-sm font-bold text-white hover:bg-emerald-700"
           >
             <Printer className="h-4 w-4" />
             Imprimer / PDF
-          </a>
+          </Link>
         </div>
       </div>
 
@@ -445,7 +442,9 @@ export default async function FinanceReceiptPrintPage({
                 </div>
                 {institutionSettings.institution_code ? (
                   <div>
-                    <span className="font-semibold text-slate-900">Code établissement :</span>{" "}
+                    <span className="font-semibold text-slate-900">
+                      Code établissement :
+                    </span>{" "}
                     {institutionSettings.institution_code}
                   </div>
                 ) : null}
@@ -480,7 +479,9 @@ export default async function FinanceReceiptPrintPage({
                   {currentClass?.level || "—"}
                 </div>
                 <div>
-                  <span className="font-semibold text-slate-900">Année scolaire :</span>{" "}
+                  <span className="font-semibold text-slate-900">
+                    Année scolaire :
+                  </span>{" "}
                   {typedReceipt.academic_year || currentClass?.academic_year || "—"}
                 </div>
                 <div>
@@ -500,7 +501,8 @@ export default async function FinanceReceiptPrintPage({
                 </div>
               ) : null}
 
-              {typedReceipt.receipt_status === "cancelled" && typedReceipt.cancel_reason ? (
+              {typedReceipt.receipt_status === "cancelled" &&
+              typedReceipt.cancel_reason ? (
                 <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
                   <span className="font-semibold">Motif d’annulation :</span>{" "}
                   {typedReceipt.cancel_reason}
@@ -537,7 +539,7 @@ export default async function FinanceReceiptPrintPage({
                             {charge?.label || "Dette introuvable"}
                           </td>
                           <td className="px-5 py-4 text-slate-600">
-                            {charge?.due_date || "—"}
+                            {formatDate(charge?.due_date)}
                           </td>
                           <td className="px-5 py-4 font-bold text-slate-900">
                             {formatMoney(alloc.amount)}
@@ -547,7 +549,10 @@ export default async function FinanceReceiptPrintPage({
                     </tbody>
                     <tfoot>
                       <tr className="border-t border-slate-200 bg-slate-50">
-                        <td className="px-5 py-4 font-black text-slate-900" colSpan={2}>
+                        <td
+                          className="px-5 py-4 font-black text-slate-900"
+                          colSpan={2}
+                        >
                           Total ventilé
                         </td>
                         <td className="px-5 py-4 font-black text-emerald-700">
@@ -617,16 +622,22 @@ export default async function FinanceReceiptPrintPage({
 
               <div className="mt-8 grid gap-10 text-sm text-slate-700">
                 <div>
-                  <div className="font-semibold text-slate-900">Le caissier / l’administration</div>
+                  <div className="font-semibold text-slate-900">
+                    Le caissier / l’administration
+                  </div>
                   <div className="mt-8 border-b border-slate-300" />
                 </div>
 
                 <div>
                   <div className="font-semibold text-slate-900">Le responsable</div>
                   <div className="mt-8 border-b border-slate-300" />
-                  {institutionSettings.institution_head_title || institutionSettings.institution_head_name ? (
+                  {institutionSettings.institution_head_title ||
+                  institutionSettings.institution_head_name ? (
                     <div className="mt-2 text-slate-500">
-                      {[institutionSettings.institution_head_title, institutionSettings.institution_head_name]
+                      {[
+                        institutionSettings.institution_head_title,
+                        institutionSettings.institution_head_name,
+                      ]
                         .filter(Boolean)
                         .join(" — ")}
                     </div>
@@ -636,15 +647,16 @@ export default async function FinanceReceiptPrintPage({
             </section>
 
             <section className="rounded-3xl border border-dashed border-slate-300 bg-slate-50 p-5 text-sm leading-6 text-slate-600">
-              Ce reçu peut être imprimé sur papier ou enregistré en PDF depuis le navigateur.
-              Il constitue une preuve d’enregistrement du paiement effectué dans le module
-              financier de l’établissement.
+              Ce reçu peut être imprimé sur papier ou enregistré en PDF depuis le
+              navigateur. Il constitue une preuve d’enregistrement du paiement
+              effectué dans le module financier de l’établissement.
             </section>
           </div>
         </div>
 
         <div className="border-t border-slate-200 px-6 py-4 text-xs text-slate-500">
-          Document généré le {formatDateTime(new Date().toISOString())} — {schoolName}
+          Document généré le {formatDateTime(new Date().toISOString())} —{" "}
+          {schoolName}
         </div>
       </article>
     </div>
