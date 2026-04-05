@@ -27,6 +27,16 @@ type NavItem = {
   badge?: string;
 };
 
+type PendingAbsenceCountResponse =
+  | {
+      ok: true;
+      items?: Array<{ id: string }>;
+    }
+  | {
+      ok: false;
+      error?: string;
+    };
+
 function useIsActive(pathname: string | null, href: string) {
   return pathname === href || pathname?.startsWith(href + "/");
 }
@@ -62,7 +72,6 @@ const BASE_NAV: NavItem[] = [
   { href: "/admin/regles-conduite", label: "Règles de conduite", Icon: ShieldCheck },
   { href: "/admin/parametres", label: "Paramètres", Icon: Settings },
 
-  // ✅ NOUVEAU : juste au-dessus de Gestion financière
   {
     href: "/admin/autorisations",
     label: "Autorisation absences",
@@ -108,6 +117,7 @@ export default function SidebarNav() {
   const pathname = usePathname();
 
   const [role, setRole] = React.useState<AppRole | null>(null);
+  const [pendingAbsenceCount, setPendingAbsenceCount] = React.useState<number>(0);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -127,6 +137,50 @@ export default function SidebarNav() {
 
     return () => {
       cancelled = true;
+    };
+  }, []);
+
+  React.useEffect(() => {
+    let cancelled = false;
+
+    async function loadPendingAbsenceCount() {
+      try {
+        const res = await fetch("/api/admin/absence-requests?status=pending", {
+          cache: "no-store",
+        });
+
+        if (!res.ok) {
+          if (!cancelled) setPendingAbsenceCount(0);
+          return;
+        }
+
+        const json = (await res.json().catch(() => null)) as
+          | PendingAbsenceCountResponse
+          | null;
+
+        if (!json || !json.ok) {
+          if (!cancelled) setPendingAbsenceCount(0);
+          return;
+        }
+
+        const count = Array.isArray(json.items) ? json.items.length : 0;
+        if (!cancelled) {
+          setPendingAbsenceCount(count);
+        }
+      } catch {
+        if (!cancelled) setPendingAbsenceCount(0);
+      }
+    }
+
+    void loadPendingAbsenceCount();
+
+    const timer = window.setInterval(() => {
+      void loadPendingAbsenceCount();
+    }, 60000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
     };
   }, []);
 
@@ -154,7 +208,6 @@ export default function SidebarNav() {
 
   const notesHeaderActive = pathname?.startsWith("/admin/notes");
 
-  // Pour un éducateur, on retire les entrées "notes" et "finance"
   const topNavItems = React.useMemo(
     () =>
       BASE_NAV.filter(({ href }) => {
@@ -172,6 +225,8 @@ export default function SidebarNav() {
       <ul className="mt-2 flex-1 space-y-1 px-2">
         {topNavItems.map(({ href, label, Icon, badge }) => {
           const active = useIsActive(pathname, href);
+          const isAbsenceAuthorization = href === "/admin/autorisations";
+          const showPendingBadge = isAbsenceAuthorization && pendingAbsenceCount > 0;
 
           return (
             <li key={href}>
@@ -191,13 +246,19 @@ export default function SidebarNav() {
                     active ? "bg-emerald-500" : "bg-transparent",
                   ].join(" ")}
                 />
+
                 <Icon className="h-5 w-5 shrink-0 opacity-90" />
                 <span className="truncate">{label}</span>
-                {badge && (
+
+                {showPendingBadge ? (
+                  <span className="ml-auto inline-flex min-w-[22px] items-center justify-center rounded-full bg-red-600 px-2 py-0.5 text-[11px] font-bold text-white shadow-sm ring-1 ring-red-400/40">
+                    {pendingAbsenceCount > 99 ? "99+" : pendingAbsenceCount}
+                  </span>
+                ) : badge ? (
                   <span className="ml-auto rounded-full bg-emerald-600/20 px-2 py-0.5 text-[10px] font-semibold uppercase text-emerald-300 ring-1 ring-emerald-700/40">
                     {badge}
                   </span>
-                )}
+                ) : null}
               </Link>
             </li>
           );

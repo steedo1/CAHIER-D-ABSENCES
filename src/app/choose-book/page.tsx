@@ -13,7 +13,6 @@ import {
   ShieldCheck,
   Wifi,
   WifiOff,
-  Sparkles,
 } from "lucide-react";
 
 type SigEligibility = "checking" | "eligible" | "ineligible";
@@ -43,9 +42,6 @@ function LoadingOverlay({ label }: { label: string }) {
               Chargement
             </div>
             <div className="mt-1 text-lg font-black text-white">{label}</div>
-            <div className="mt-1 text-sm text-slate-300">
-              Préparation de votre espace…
-            </div>
           </div>
         </div>
 
@@ -104,11 +100,9 @@ function PremiumActionCard({
   onClick,
   icon,
   title,
-  description,
   badge,
   accent = "emerald",
   disabled = false,
-  hint,
   loading = false,
   colSpan = false,
 }: {
@@ -116,11 +110,9 @@ function PremiumActionCard({
   onClick?: (e: React.MouseEvent<HTMLAnchorElement>) => void;
   icon: ReactNode;
   title: string;
-  description: string;
   badge?: string;
   accent?: "emerald" | "violet" | "amber" | "slate";
   disabled?: boolean;
-  hint?: string | null;
   loading?: boolean;
   colSpan?: boolean;
 }) {
@@ -161,73 +153,6 @@ function PremiumActionCard({
 
   const t = tones[accent];
 
-  const content = (
-    <>
-      <div
-        aria-hidden
-        className={`pointer-events-none absolute inset-0 bg-gradient-to-br ${t.glow}`}
-      />
-      <div className="relative flex h-full flex-col justify-between">
-        <div>
-          <div className="flex items-start justify-between gap-3">
-            <div className={`grid h-14 w-14 place-items-center rounded-2xl shadow-sm ${t.iconWrap}`}>
-              {icon}
-            </div>
-
-            <div className="flex flex-col items-end gap-2">
-              {badge ? (
-                <span
-                  className={`rounded-full px-2.5 py-1 text-[11px] font-black uppercase tracking-[0.12em] ring-1 ${t.badge}`}
-                >
-                  {badge}
-                </span>
-              ) : null}
-
-              <div
-                className={`grid h-10 w-10 place-items-center rounded-2xl bg-white shadow-sm ring-1 ring-slate-200 ${t.arrow}`}
-              >
-                {loading ? (
-                  <MiniSpinner className={t.arrow} />
-                ) : (
-                  <ArrowRight className="h-5 w-5 transition group-hover:translate-x-0.5" />
-                )}
-              </div>
-            </div>
-          </div>
-
-          <div className="mt-5">
-            <h2 className="text-xl font-black tracking-tight text-slate-900">
-              {title}
-            </h2>
-            <p className="mt-2 text-sm leading-6 text-slate-600">
-              {description}
-            </p>
-
-            {hint ? (
-              <div className="mt-3 rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-3 py-2 text-xs font-medium text-slate-500">
-                {hint}
-              </div>
-            ) : null}
-          </div>
-        </div>
-
-        <div className="mt-6 flex items-center gap-2 text-sm font-black text-slate-700">
-          {loading ? (
-            <>
-              <MiniSpinner />
-              <span>Ouverture…</span>
-            </>
-          ) : (
-            <>
-              <span>Ouvrir</span>
-              <ArrowRight className="h-4 w-4" />
-            </>
-          )}
-        </div>
-      </div>
-    </>
-  );
-
   return (
     <ThreeDCard className={colSpan ? "md:col-span-2" : ""}>
       <Link
@@ -242,7 +167,62 @@ function PremiumActionCard({
           disabled ? "cursor-not-allowed opacity-75" : "",
         ].join(" ")}
       >
-        {content}
+        <div
+          aria-hidden
+          className={`pointer-events-none absolute inset-0 bg-gradient-to-br ${t.glow}`}
+        />
+
+        <div className="relative flex h-full flex-col justify-between">
+          <div>
+            <div className="flex items-start justify-between gap-3">
+              <div
+                className={`grid h-14 w-14 place-items-center rounded-2xl shadow-sm ${t.iconWrap}`}
+              >
+                {icon}
+              </div>
+
+              <div className="flex flex-col items-end gap-2">
+                {badge ? (
+                  <span
+                    className={`rounded-full px-2.5 py-1 text-[11px] font-black uppercase tracking-[0.12em] ring-1 ${t.badge}`}
+                  >
+                    {badge}
+                  </span>
+                ) : null}
+
+                <div
+                  className={`grid h-10 w-10 place-items-center rounded-2xl bg-white shadow-sm ring-1 ring-slate-200 ${t.arrow}`}
+                >
+                  {loading ? (
+                    <MiniSpinner className={t.arrow} />
+                  ) : (
+                    <ArrowRight className="h-5 w-5 transition group-hover:translate-x-0.5" />
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-5">
+              <h2 className="text-xl font-black tracking-tight text-slate-900">
+                {title}
+              </h2>
+            </div>
+          </div>
+
+          <div className="mt-6 flex items-center gap-2 text-sm font-black text-slate-700">
+            {loading ? (
+              <>
+                <MiniSpinner />
+                <span>Ouverture…</span>
+              </>
+            ) : (
+              <>
+                <span>Ouvrir</span>
+                <ArrowRight className="h-4 w-4" />
+              </>
+            )}
+          </div>
+        </div>
       </Link>
     </ThreeDCard>
   );
@@ -300,7 +280,7 @@ export default function ChooseBookPage() {
 
         if (typeof navigator !== "undefined" && !navigator.onLine) {
           setSigHint(
-            "Hors ligne : vérification indisponible. Reconnectez-vous une fois pour activer la vérification."
+            "Hors ligne : vérification indisponible. Reconnectez-vous une fois."
           );
         } else {
           setSigHint(null);
@@ -394,156 +374,97 @@ export default function ChooseBookPage() {
               </div>
             </div>
 
-            <Link
-              href="/redirect"
-              onClick={handleReturnClick}
-              className="inline-flex items-center gap-2 rounded-full border border-slate-300 bg-white px-4 py-2 text-sm font-bold text-slate-700 shadow-sm hover:bg-slate-50"
-            >
-              Retour
-            </Link>
+            <div className="flex items-center gap-3">
+              <div
+                className={`hidden items-center gap-2 rounded-full px-3 py-2 text-xs font-bold ring-1 sm:inline-flex ${
+                  isOnline
+                    ? "bg-white text-slate-700 ring-slate-200"
+                    : "bg-amber-50 text-amber-700 ring-amber-200"
+                }`}
+              >
+                {isOnline ? (
+                  <Wifi className="h-3.5 w-3.5" />
+                ) : (
+                  <WifiOff className="h-3.5 w-3.5" />
+                )}
+                {isOnline ? "En ligne" : "Hors ligne"}
+              </div>
+
+              <Link
+                href="/redirect"
+                onClick={handleReturnClick}
+                className="inline-flex items-center gap-2 rounded-full border border-slate-300 bg-white px-4 py-2 text-sm font-bold text-slate-700 shadow-sm hover:bg-slate-50"
+              >
+                Retour
+              </Link>
+            </div>
           </div>
         </header>
 
         <section className="mx-auto max-w-6xl px-4 py-8 md:py-10">
-          <div className="overflow-hidden rounded-[32px] border border-slate-200 bg-gradient-to-br from-slate-950 via-slate-900 to-emerald-950 px-6 py-7 text-white shadow-xl">
-            <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
-              <div className="max-w-3xl">
-                <div className="inline-flex items-center gap-2 rounded-full bg-white/10 px-3 py-1 text-xs font-black uppercase tracking-[0.18em] text-emerald-100 ring-1 ring-white/15">
-                  <Sparkles className="h-3.5 w-3.5" />
-                  Accès rapide aux outils enseignants
-                </div>
+          <div className="grid gap-5 md:grid-cols-2">
+            <PremiumActionCard
+              href="/redirect?book=attendance"
+              onClick={handleBookClick(
+                "attendance",
+                "Ouverture du cahier des absences"
+              )}
+              icon={<Notebook className="h-7 w-7" />}
+              title="Cahier des absences"
+              badge="Présences"
+              accent="emerald"
+              loading={routeLoading && routeLabel.includes("absences")}
+            />
 
-                <h1 className="mt-4 text-3xl font-black tracking-tight sm:text-4xl">
-                  Ouvrez le bon cahier en un clic
-                </h1>
+            <PremiumActionCard
+              href="/redirect?book=grades"
+              onClick={handleBookClick(
+                "grades",
+                "Ouverture du cahier de notes"
+              )}
+              icon={<NotebookPen className="h-7 w-7" />}
+              title="Cahier de notes"
+              badge="Évaluations"
+              accent="violet"
+              loading={routeLoading && routeLabel.includes("notes")}
+            />
 
-                <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-200 sm:text-[15px]">
-                  Retrouvez vos deux cahiers principaux, votre espace de
-                  signature pour les bulletins et votre module
-                  d’autorisation d’absence, dans une présentation plus claire,
-                  plus moderne et plus professionnelle.
-                </p>
+            <PremiumActionCard
+              href="/enseignant/autorisation-absence"
+              onClick={handleSimplePush(
+                "/enseignant/autorisation-absence",
+                "Ouverture des autorisations d’absence"
+              )}
+              icon={<FileText className="h-7 w-7" />}
+              title="Autorisation d’absence"
+              badge="Demande"
+              accent="amber"
+              loading={
+                routeLoading &&
+                routeLabel.includes("autorisations d’absence")
+              }
+            />
 
-                <div className="mt-4 flex flex-wrap items-center gap-2 text-xs font-semibold text-slate-200">
-                  <span className="rounded-full bg-emerald-500/15 px-3 py-1 ring-1 ring-emerald-400/25">
-                    Navigation premium
-                  </span>
-
-                  <span
-                    className={`inline-flex items-center gap-2 rounded-full px-3 py-1 ring-1 ${
-                      isOnline
-                        ? "bg-white/10 ring-white/15"
-                        : "bg-amber-500/15 ring-amber-400/25"
-                    }`}
-                  >
-                    {isOnline ? (
-                      <Wifi className="h-3.5 w-3.5" />
-                    ) : (
-                      <WifiOff className="h-3.5 w-3.5" />
-                    )}
-                    {isOnline ? "En ligne" : "Mode hors ligne"}
-                  </span>
-                </div>
-              </div>
-
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div className="rounded-3xl border border-white/10 bg-white/10 p-4 backdrop-blur">
-                  <div className="text-xs font-black uppercase tracking-[0.16em] text-emerald-100">
-                    Cahiers disponibles
-                  </div>
-                  <div className="mt-2 text-3xl font-black text-white">2</div>
-                  <div className="mt-1 text-sm text-slate-200">
-                    Absences et notes
-                  </div>
-                </div>
-
-                <div className="rounded-3xl border border-white/10 bg-white/10 p-4 backdrop-blur">
-                  <div className="text-xs font-black uppercase tracking-[0.16em] text-emerald-100">
-                    Signature
-                  </div>
-                  <div className="mt-2 text-lg font-black text-white">
-                    {sigEligibility === "checking"
-                      ? "Vérification…"
-                      : sigEligibility === "eligible"
-                      ? "Disponible"
-                      : "À vérifier"}
-                  </div>
-                  <div className="mt-1 text-sm text-slate-200">
-                    Bulletins enseignants
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <section className="mt-8">
-            <div className="grid gap-5 md:grid-cols-2">
+            {sigEligibility === "eligible" ? (
               <PremiumActionCard
-                href="/redirect?book=attendance"
-                onClick={handleBookClick(
-                  "attendance",
-                  "Ouverture du cahier des absences"
-                )}
-                icon={<Notebook className="h-7 w-7" />}
-                title="Cahier des absences"
-                description="Lancez l’appel, gérez les absences et retards, puis accédez rapidement à votre dernier écran même hors ligne."
-                badge="Présences"
-                accent="emerald"
-                loading={routeLoading && routeLabel.includes("absences")}
-              />
-
-              <PremiumActionCard
-                href="/redirect?book=grades"
-                onClick={handleBookClick(
-                  "grades",
-                  "Ouverture du cahier de notes"
-                )}
-                icon={<NotebookPen className="h-7 w-7" />}
-                title="Cahier de notes"
-                description="Saisissez vos évaluations, notes et moyennes dans une interface claire, rapide et prête pour la classe."
-                badge="Évaluations"
-                accent="violet"
-                loading={routeLoading && routeLabel.includes("notes")}
-              />
-
-              <PremiumActionCard
-                href="/enseignant/autorisation-absence"
+                href="/enseignant/signature"
                 onClick={handleSimplePush(
-                  "/enseignant/autorisation-absence",
-                  "Ouverture des autorisations d’absence"
+                  "/enseignant/signature",
+                  "Ouverture de votre signature"
                 )}
-                icon={<FileText className="h-7 w-7" />}
-                title="Autorisation d’absence"
-                description="Déclarez une absence sur une ou plusieurs journées et transmettez votre demande à l’administration."
-                badge="Demande"
-                accent="amber"
-                loading={
-                  routeLoading &&
-                  routeLabel.includes("autorisations d’absence")
-                }
+                icon={<PenTool className="h-7 w-7" />}
+                title="Ma signature"
+                badge="Bulletins"
+                accent="slate"
+                loading={routeLoading && routeLabel.includes("votre signature")}
               />
+            ) : (
+              <ThreeDCard>
+                <div className="relative h-full overflow-hidden rounded-[32px] border border-slate-200 bg-white p-6 shadow-sm ring-1 ring-slate-200">
+                  <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-slate-500/10 via-slate-200/5 to-transparent" />
 
-              {sigEligibility === "eligible" ? (
-                <PremiumActionCard
-                  href="/enseignant/signature"
-                  onClick={handleSimplePush(
-                    "/enseignant/signature",
-                    "Ouverture de votre signature"
-                  )}
-                  icon={<PenTool className="h-7 w-7" />}
-                  title="Ma signature (bulletins)"
-                  description="Enregistrez votre signature une seule fois pour l’utiliser ensuite dans les documents et bulletins."
-                  badge="Bulletins"
-                  accent="slate"
-                  loading={
-                    routeLoading && routeLabel.includes("votre signature")
-                  }
-                />
-              ) : (
-                <ThreeDCard>
-                  <div className="relative h-full overflow-hidden rounded-[32px] border border-slate-200 bg-white p-6 shadow-sm ring-1 ring-slate-200">
-                    <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-slate-500/10 via-slate-200/5 to-transparent" />
-                    <div className="relative">
+                  <div className="relative flex h-full flex-col justify-between">
+                    <div>
                       <div className="flex items-start justify-between gap-3">
                         <div className="grid h-14 w-14 place-items-center rounded-2xl bg-slate-900 text-white shadow-sm">
                           {sigEligibility === "checking" ? (
@@ -561,22 +482,18 @@ export default function ChooseBookPage() {
                       </div>
 
                       <h2 className="mt-5 text-xl font-black tracking-tight text-slate-900">
-                        Ma signature (bulletins)
+                        Ma signature
                       </h2>
+                    </div>
 
-                      <p className="mt-2 text-sm leading-6 text-slate-600">
-                        {sigEligibility === "checking"
-                          ? "Nous vérifions votre éligibilité pour l’enregistrement de la signature."
-                          : "Cette fonctionnalité n’est pas disponible pour le moment sur votre compte."}
-                      </p>
-
+                    <div className="mt-6 space-y-2">
                       {sigHint ? (
-                        <div className="mt-3 rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-3 py-2 text-xs font-medium text-slate-500">
+                        <div className="text-xs font-medium text-slate-500">
                           {sigHint}
                         </div>
                       ) : null}
 
-                      <div className="mt-6 flex items-center gap-2 text-sm font-black text-slate-500">
+                      <div className="flex items-center gap-2 text-sm font-black text-slate-500">
                         {sigEligibility === "checking" ? (
                           <>
                             <MiniSpinner />
@@ -588,10 +505,10 @@ export default function ChooseBookPage() {
                       </div>
                     </div>
                   </div>
-                </ThreeDCard>
-              )}
-            </div>
-          </section>
+                </div>
+              </ThreeDCard>
+            )}
+          </div>
         </section>
       </main>
     </>
