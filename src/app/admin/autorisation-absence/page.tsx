@@ -1,4 +1,3 @@
-// src/app/enseignant/autorisation-absence/page.tsx
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
@@ -44,8 +43,17 @@ type ApiListResponse =
   | { ok: true; items: TeacherAbsenceRequestItem[] }
   | { ok: false; error: string };
 
+type ApiCreateResponse =
+  | { ok: true; item: TeacherAbsenceRequestItem; message?: string }
+  | { ok: false; error: string };
+
 function classNames(...arr: Array<string | false | null | undefined>) {
   return arr.filter(Boolean).join(" ");
+}
+
+function getErrorMessage(error: unknown, fallback: string) {
+  if (error instanceof Error && error.message) return error.message;
+  return fallback;
 }
 
 function formatDate(ymd?: string | null) {
@@ -140,7 +148,8 @@ export default function EnseignantAutorisationAbsencePage() {
         cache: "no-store",
       });
 
-      const json = (await res.json().catch(() => null)) as ApiListResponse | null;
+      const json =
+        (await res.json().catch(() => null)) as ApiListResponse | null;
 
       if (!res.ok || !json?.ok) {
         throw new Error(
@@ -150,8 +159,8 @@ export default function EnseignantAutorisationAbsencePage() {
       }
 
       setItems(Array.isArray(json.items) ? json.items : []);
-    } catch (e: any) {
-      setError(e?.message || "Erreur de chargement.");
+    } catch (error: unknown) {
+      setError(getErrorMessage(error, "Erreur de chargement."));
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -159,7 +168,7 @@ export default function EnseignantAutorisationAbsencePage() {
   }
 
   useEffect(() => {
-    load();
+    void load();
   }, []);
 
   const counts = useMemo(() => {
@@ -199,6 +208,10 @@ export default function EnseignantAutorisationAbsencePage() {
       setError(null);
       setSuccess(null);
 
+      const selectedReason =
+        REASON_OPTIONS.find((option) => option.value === form.reason_code)
+          ?.label ?? form.reason_code;
+
       const res = await fetch("/api/teacher/absence-requests", {
         method: "POST",
         headers: {
@@ -208,16 +221,19 @@ export default function EnseignantAutorisationAbsencePage() {
           start_date: form.start_date,
           end_date: form.end_date,
           reason_code: form.reason_code,
+          reason_label: selectedReason,
           details: form.details.trim(),
           signed: form.signed,
         }),
       });
 
-      const json = await res.json().catch(() => null);
+      const json =
+        (await res.json().catch(() => null)) as ApiCreateResponse | null;
 
       if (!res.ok || !json?.ok) {
         throw new Error(
-          json?.error || "La demande n’a pas pu être enregistrée."
+          (json && "error" in json && json.error) ||
+            "La demande n’a pas pu être enregistrée."
         );
       }
 
@@ -231,8 +247,8 @@ export default function EnseignantAutorisationAbsencePage() {
 
       setSuccess("Votre demande d’autorisation d’absence a bien été soumise.");
       await load();
-    } catch (e: any) {
-      setError(e?.message || "Erreur lors de l’envoi.");
+    } catch (error: unknown) {
+      setError(getErrorMessage(error, "Erreur lors de l’envoi."));
       setSuccess(null);
     } finally {
       setSubmitting(false);
@@ -266,11 +282,13 @@ export default function EnseignantAutorisationAbsencePage() {
 
           <button
             type="button"
-            onClick={load}
+            onClick={() => void load()}
             disabled={refreshing}
             className="inline-flex items-center justify-center gap-2 rounded-2xl bg-white px-4 py-3 text-sm font-semibold text-emerald-800 shadow-sm transition hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-70"
           >
-            <RefreshCw className={classNames("h-4 w-4", refreshing && "animate-spin")} />
+            <RefreshCw
+              className={classNames("h-4 w-4", refreshing && "animate-spin")}
+            />
             Actualiser
           </button>
         </div>
@@ -316,7 +334,7 @@ export default function EnseignantAutorisationAbsencePage() {
 
       <section className="grid grid-cols-1 gap-6 xl:grid-cols-[1.05fr_0.95fr]">
         <form
-          onSubmit={handleSubmit}
+          onSubmit={(e) => void handleSubmit(e)}
           className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm"
         >
           <div className="flex items-center gap-2 text-sm font-black uppercase tracking-[0.16em] text-slate-700">
@@ -398,7 +416,8 @@ export default function EnseignantAutorisationAbsencePage() {
               className="mt-1 h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
             />
             <span className="text-sm text-slate-700">
-              Je confirme l’exactitude des informations fournies dans cette demande.
+              Je confirme l’exactitude des informations fournies dans cette
+              demande.
             </span>
           </label>
 
@@ -527,8 +546,8 @@ export default function EnseignantAutorisationAbsencePage() {
                         {item.status === "approved"
                           ? formatDateTime(item.approved_at)
                           : item.status === "rejected"
-                          ? formatDateTime(item.rejected_at)
-                          : "—"}
+                            ? formatDateTime(item.rejected_at)
+                            : "—"}
                       </div>
                     </div>
                   </div>
