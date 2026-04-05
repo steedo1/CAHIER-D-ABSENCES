@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   CalendarDays,
   CheckCircle2,
@@ -13,6 +13,7 @@ import {
   RefreshCw,
   Send,
   ShieldCheck,
+  X,
   XCircle,
 } from "lucide-react";
 
@@ -212,6 +213,526 @@ const REASON_OPTIONS = [
   { value: "autre", label: "Autre" },
 ];
 
+
+const SIGNATURE_BLUE = "#1d4ed8";
+const ABSENCE_PREVIEW_ZOOM = 0.72;
+
+const __SIG_INK_CACHE = new Map<string, string>();
+const __SIG_INK_PROMISES = new Map<string, Promise<string | null>>();
+const __SIG_TINT_CACHE = new Map<string, string>();
+const __SIG_TINT_PROMISES = new Map<string, Promise<string | null>>();
+
+function buildPrintMeta(item: TeacherAbsenceRequestItem, institution: InstitutionSettings | null) {
+  const instName = item.institution_name || institution?.institution_name || "Établissement";
+  const instLogo = item.institution_logo_url || institution?.institution_logo_url || "";
+  const instPhone = institution?.institution_phone || "";
+  const instEmail = institution?.institution_email || "";
+  const instAddress = institution?.institution_postal_address || "";
+  const instRegion = institution?.institution_region || "";
+  const instStatus = institution?.institution_status || "";
+
+  const teacherName = item.teacher_name?.trim() || "Enseignant concerné";
+  const teacherSignature =
+    item.teacher_signature_png ||
+    item.teacher_signature_url ||
+    item.teacher_profile_signature_url ||
+    "";
+
+  const adminName =
+    item.approved_by_name?.trim() ||
+    institution?.institution_head_name?.trim() ||
+    "Administration";
+  const adminTitle = institution?.institution_head_title?.trim() || "Administration";
+  const adminSignature =
+    item.administration_signature_png || item.administration_signature_url || "";
+
+  return {
+    instName,
+    instLogo,
+    instPhone,
+    instEmail,
+    instAddress,
+    instRegion,
+    instStatus,
+    teacherName,
+    teacherSignature,
+    adminName,
+    adminTitle,
+    adminSignature,
+  };
+}
+
+function loadHtmlImage(src: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error("IMG_LOAD_FAILED"));
+    img.src = src;
+  });
+}
+
+async function tryFetchAsDataUrl(src: string): Promise<string> {
+  if (!src) return src;
+  if (src.startsWith("data:") || src.startsWith("blob:")) return src;
+
+  try {
+    const res = await fetch(src, { mode: "cors", cache: "force-cache" });
+    if (!res.ok) return src;
+    const blob = await res.blob();
+
+    const dataUrl: string = await new Promise((resolve, reject) => {
+      const fr = new FileReader();
+      fr.onload = () => resolve(String(fr.result || ""));
+      fr.onerror = () => reject(new Error("FILE_READER_FAILED"));
+      fr.readAsDataURL(blob);
+    });
+
+    return dataUrl || src;
+  } catch {
+    return src;
+  }
+}
+
+function hexToRgb(hex: string): { r: number; g: number; b: number } | null {
+  const h = (hex || "").trim().replace("#", "");
+  if (h.length === 3) {
+    const r = parseInt(h[0] + h[0], 16);
+    const g = parseInt(h[1] + h[1], 16);
+    const b = parseInt(h[2] + h[2], 16);
+    if ([r, g, b].some((n) => Number.isNaN(n))) return null;
+    return { r, g, b };
+  }
+  if (h.length === 6) {
+    const r = parseInt(h.slice(0, 2), 16);
+    const g = parseInt(h.slice(2, 4), 16);
+    const b = parseInt(h.slice(4, 6), 16);
+    if ([r, g, b].some((n) => Number.isNaN(n))) return null;
+    return { r, g, b };
+  }
+  return null;
+}
+
+async function inkifySignaturePng(src: string): Promise<string | null> {
+  if (!src) return null;
+
+  const cached = __SIG_INK_CACHE.get(src);
+  if (cached) return cached;
+
+  const pending = __SIG_INK_PROMISES.get(src);
+  if (pending) return pending;
+
+  const job = (async () => {
+    try {
+      if (typeof window === "undefined") return src;
+
+      const safeSrc = await tryFetchAsDataUrl(src);
+      const img = await loadHtmlImage(safeSrc);
+
+      const w = img.naturalWidth || (img as any).width || 0;
+      const h = img.naturalHeight || (img as any).height || 0;
+      if (!w || !h) return src;
+
+      const canvas = document.createElement("canvas");
+      canvas.width = w;
+      canvas.height = h;
+
+      const ctx = canvas.getContext("2d", { willReadFrequently: true });
+      if (!ctx) return src;
+
+      ctx.clearRect(0, 0, w, h);
+      ctx.drawImage(img, 0, 0);
+
+      const imgData = ctx.getImageData(0, 0, w, h);
+      const d = imgData.data;
+
+      for (let i = 0; i < d.length; i += 4) {
+        const r = d[i];
+        const g = d[i + 1];
+        const b = d[i + 2];
+        const a = d[i + 3];
+
+        if (a < 8) {
+          d[i + 3] = 0;
+          continue;
+        }
+
+        if (r > 240 && g > 240 && b > 240) {
+          d[i + 3] = 0;
+          continue;
+        }
+
+        const lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+        let boostedA = (255 - lum) * 3.4;
+        if (!Number.isFinite(boostedA)) boostedA = a;
+
+        const newA = Math.min(255, Math.max(170, Math.max(a, Math.round(boostedA))));
+
+        d[i] = 0;
+        d[i + 1] = 0;
+        d[i + 2] = 0;
+        d[i + 3] = newA;
+      }
+
+      const orig = new Uint8ClampedArray(d);
+      const W = w;
+
+      for (let y = 2; y < h - 2; y++) {
+        for (let x = 2; x < w - 2; x++) {
+          const idx = (y * W + x) * 4;
+          const a = orig[idx + 3];
+          if (a === 0) continue;
+
+          const spread = Math.min(255, Math.round(a * 0.7));
+
+          for (let dy = -2; dy <= 2; dy++) {
+            for (let dx = -2; dx <= 2; dx++) {
+              if (dx === 0 && dy === 0) continue;
+              const j = ((y + dy) * W + (x + dx)) * 4;
+              if (d[j + 3] < spread) {
+                d[j] = 0;
+                d[j + 1] = 0;
+                d[j + 2] = 0;
+                d[j + 3] = spread;
+              }
+            }
+          }
+        }
+      }
+
+      ctx.putImageData(imgData, 0, 0);
+
+      const out = canvas.toDataURL("image/png");
+      if (out) __SIG_INK_CACHE.set(src, out);
+      return out || src;
+    } catch (e) {
+      console.warn("[Autorisations] inkifySignaturePng fallback", e);
+      return src;
+    } finally {
+      __SIG_INK_PROMISES.delete(src);
+    }
+  })();
+
+  __SIG_INK_PROMISES.set(src, job);
+  return job;
+}
+
+async function tintSignaturePng(src: string, hexColor: string): Promise<string | null> {
+  if (!src) return null;
+
+  const rgb = hexToRgb(hexColor) || hexToRgb(SIGNATURE_BLUE);
+  if (!rgb) return src;
+
+  const cacheKey = `${hexColor}|${src}`;
+  const cached = __SIG_TINT_CACHE.get(cacheKey);
+  if (cached) return cached;
+
+  const pending = __SIG_TINT_PROMISES.get(cacheKey);
+  if (pending) return pending;
+
+  const job = (async () => {
+    try {
+      if (typeof window === "undefined") return src;
+
+      const safeSrc = await tryFetchAsDataUrl(src);
+      const img = await loadHtmlImage(safeSrc);
+
+      const w = img.naturalWidth || (img as any).width || 0;
+      const h = img.naturalHeight || (img as any).height || 0;
+      if (!w || !h) return src;
+
+      const canvas = document.createElement("canvas");
+      canvas.width = w;
+      canvas.height = h;
+
+      const ctx = canvas.getContext("2d", { willReadFrequently: true });
+      if (!ctx) return src;
+
+      ctx.clearRect(0, 0, w, h);
+      ctx.drawImage(img, 0, 0);
+
+      const imgData = ctx.getImageData(0, 0, w, h);
+      const d = imgData.data;
+
+      for (let i = 0; i < d.length; i += 4) {
+        const a = d[i + 3];
+        if (a === 0) continue;
+        d[i] = rgb.r;
+        d[i + 1] = rgb.g;
+        d[i + 2] = rgb.b;
+      }
+
+      ctx.putImageData(imgData, 0, 0);
+      const out = canvas.toDataURL("image/png");
+      if (out) __SIG_TINT_CACHE.set(cacheKey, out);
+      return out || src;
+    } catch (e) {
+      console.warn("[Autorisations] tintSignaturePng fallback", e);
+      return src;
+    } finally {
+      __SIG_TINT_PROMISES.delete(cacheKey);
+    }
+  })();
+
+  __SIG_TINT_PROMISES.set(cacheKey, job);
+  return job;
+}
+
+function SignatureInk({ src, alt, className }: { src: string; alt: string; className?: string }) {
+  const [displaySrc, setDisplaySrc] = useState<string>(src);
+
+  useEffect(() => {
+    let cancelled = false;
+    setDisplaySrc(src);
+
+    (async () => {
+      const inked = await inkifySignaturePng(src);
+      const tinted = inked ? await tintSignaturePng(inked, SIGNATURE_BLUE) : null;
+      const out = tinted || inked || src;
+      if (!cancelled && out) setDisplaySrc(out);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [src]);
+
+  // eslint-disable-next-line @next/next/no-img-element
+  return <img src={displaySrc || src} alt={alt} className={classNames("sig-img", className)} />;
+}
+
+function ApprovedRequestPrintSheet({
+  item,
+  institution,
+  previewZoomForMeasure,
+}: {
+  item: TeacherAbsenceRequestItem;
+  institution: InstitutionSettings | null;
+  previewZoomForMeasure: number;
+}) {
+  const pageRef = useRef<HTMLDivElement | null>(null);
+  const [printFitScale, setPrintFitScale] = useState(1);
+
+  const {
+    instName,
+    instLogo,
+    instPhone,
+    instEmail,
+    instAddress,
+    instRegion,
+    instStatus,
+    teacherName,
+    teacherSignature,
+    adminName,
+    adminTitle,
+    adminSignature,
+  } = useMemo(() => buildPrintMeta(item, institution), [item, institution]);
+
+  const setScale = (s: number) => {
+    const v = Number.isFinite(s) ? s : 1;
+    setPrintFitScale(v);
+    if (pageRef.current) {
+      pageRef.current.style.setProperty("--print-fit-scale", String(v));
+    }
+  };
+
+  const computePrintFit = () => {
+    const el = pageRef.current;
+    if (!el || typeof window === "undefined") return;
+
+    const zoom = Math.max(0.1, Number(previewZoomForMeasure || 1));
+    const rect = el.getBoundingClientRect();
+    const naturalH = rect.height / zoom;
+    const cs = window.getComputedStyle(el);
+    const minHPx = parseFloat(cs.minHeight || "0");
+
+    if (!Number.isFinite(naturalH) || naturalH <= 0) return;
+    if (!Number.isFinite(minHPx) || minHPx <= 0) {
+      setScale(1);
+      return;
+    }
+
+    if (naturalH <= minHPx + 0.5) {
+      setScale(1);
+      return;
+    }
+
+    const cushion = Math.max(10, Math.round(minHPx * 0.012));
+    const usable = Math.max(1, minHPx - cushion);
+    const raw = Math.min(1, usable / naturalH);
+    const safe = Math.min(1, raw * 0.99);
+    const clamped = Math.max(0.45, safe);
+    setScale(clamped);
+  };
+
+  useLayoutEffect(() => {
+    computePrintFit();
+
+    const t1 = window.setTimeout(computePrintFit, 120);
+    const t2 = window.setTimeout(computePrintFit, 550);
+    const t3 = window.setTimeout(computePrintFit, 1200);
+
+    const onResize = () => computePrintFit();
+    const onBeforePrint = () => computePrintFit();
+
+    window.addEventListener("resize", onResize);
+    window.addEventListener("beforeprint", onBeforePrint);
+    window.addEventListener("absence-print:recalc-fit" as any, onBeforePrint as any);
+
+    let ro: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== "undefined" && pageRef.current) {
+      ro = new ResizeObserver(() => computePrintFit());
+      ro.observe(pageRef.current);
+    }
+
+    return () => {
+      window.clearTimeout(t1);
+      window.clearTimeout(t2);
+      window.clearTimeout(t3);
+      window.removeEventListener("resize", onResize);
+      window.removeEventListener("beforeprint", onBeforePrint);
+      window.removeEventListener("absence-print:recalc-fit" as any, onBeforePrint as any);
+      if (ro) ro.disconnect();
+    };
+  }, [item.id, previewZoomForMeasure, teacherSignature, adminSignature]);
+
+  const metaLine = [instRegion, instAddress, instPhone, instEmail, instStatus].filter(Boolean).join(" • ");
+
+  return (
+    <div className="absence-print-sheet-wrap">
+      <div ref={pageRef} className="absence-print-page" style={{ ["--print-fit-scale" as any]: printFitScale }}>
+        <div className="absence-print-topbar" />
+
+        <div className="absence-print-header">
+          <div className="absence-logo-box">
+            {instLogo ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={instLogo} alt="Logo établissement" className="absence-logo-img" />
+            ) : (
+              <div className="absence-logo-fallback">Logo<br />établissement</div>
+            )}
+          </div>
+
+          <div className="min-w-0">
+            <div className="absence-inst-name">{instName}</div>
+            <div className="absence-inst-meta">{metaLine || ""}</div>
+          </div>
+        </div>
+
+        <div className="absence-approved-banner">
+          <div className="absence-approved-big">DEMANDE APPROUVÉE</div>
+          <div className="absence-approved-small">
+            Validation administrative enregistrée le {formatDateTime(item.approved_at)}
+          </div>
+        </div>
+
+        <div className="absence-doc-title">Autorisation d’absence validée</div>
+
+        <div className="absence-grid">
+          <div className="absence-card">
+            <div className="absence-label">Enseignant</div>
+            <div className="absence-value">{teacherName}</div>
+          </div>
+
+          <div className="absence-card">
+            <div className="absence-label">Durée</div>
+            <div className="absence-value">{daysLabel(item.requested_days)}</div>
+          </div>
+
+          <div className="absence-card">
+            <div className="absence-label">Période</div>
+            <div className="absence-value">{formatDate(item.start_date)} au {formatDate(item.end_date)}</div>
+          </div>
+
+          <div className="absence-card">
+            <div className="absence-label">Motif</div>
+            <div className="absence-value">{item.reason_label}</div>
+          </div>
+
+          <div className="absence-card absence-card-full">
+            <div className="absence-label">Détails fournis par l’enseignant</div>
+            <div className="absence-value absence-value-normal whitespace-pre-line">{item.details || "—"}</div>
+          </div>
+
+          <div className="absence-card absence-card-full">
+            <div className="absence-label">Plan de rattrapage</div>
+            <div className="absence-value absence-value-normal whitespace-pre-line">{item.makeup_plan?.notes || "—"}</div>
+          </div>
+
+          {item.admin_comment ? (
+            <div className="absence-card absence-card-full">
+              <div className="absence-label">Commentaire de l’administration</div>
+              <div className="absence-value absence-value-normal whitespace-pre-line">{item.admin_comment}</div>
+            </div>
+          ) : null}
+        </div>
+
+        <div className="absence-impact-section">
+          <div className="absence-impact-title">Classes impactées et heures à rattraper</div>
+
+          {item.impact_summary?.impacted_classes?.length ? (
+            <div className="space-y-2.5">
+              {item.impact_summary.impacted_classes.map((cls) => (
+                <div key={cls.class_id} className="absence-impact-card">
+                  <div className="absence-impact-head">
+                    <strong>{cls.class_label}</strong>
+                    <span>{cls.lost_hours} h • {cls.lost_sessions} créneau(x)</span>
+                  </div>
+
+                  {cls.slots?.length ? (
+                    <div className="absence-impact-slots">
+                      {cls.slots.map((slot, index) => (
+                        <div key={`${cls.class_id}_${slot.date}_${slot.period_id}_${index}`} className="absence-impact-slot">
+                          {formatDate(slot.date)} • {slot.subject_name} • {formatTimeRange(slot.start_time, slot.end_time, slot.period_label)}
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="absence-empty-box">Aucune classe impactée indiquée.</div>
+          )}
+        </div>
+
+        <div className="absence-signature-grid">
+          <div className="absence-signature-card">
+            <div className="absence-signature-head">Signature de l’enseignant</div>
+            <div className="absence-signature-role">Nom</div>
+            <div className="absence-signature-name">{teacherName}</div>
+            <div className="absence-signature-box">
+              {teacherSignature ? (
+                <SignatureInk src={teacherSignature} alt="Signature enseignant" className="absence-signature-img" />
+              ) : (
+                <div className="absence-signature-placeholder">Signature de l’enseignant</div>
+              )}
+            </div>
+          </div>
+
+          <div className="absence-signature-card">
+            <div className="absence-signature-head">Visa de l’administration</div>
+            <div className="absence-signature-role">{adminTitle}</div>
+            <div className="absence-signature-name">{adminName}</div>
+            <div className="absence-signature-box">
+              {adminSignature ? (
+                <SignatureInk src={adminSignature} alt="Signature administration" className="absence-signature-img" />
+              ) : (
+                <div className="absence-signature-placeholder">Signature et cachet</div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <div className="absence-foot">
+          <div><strong>Statut :</strong> Demande approuvée</div>
+          <div><strong>Document généré le :</strong> {formatDateTime(new Date().toISOString())}</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function EnseignantAutorisationAbsencePage() {
   const [items, setItems] = useState<TeacherAbsenceRequestItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -225,6 +746,7 @@ export default function EnseignantAutorisationAbsencePage() {
   const [institution, setInstitution] = useState<InstitutionSettings | null>(null);
   const [institutionLoading, setInstitutionLoading] = useState(false);
   const [printingId, setPrintingId] = useState<string | null>(null);
+  const [printPreviewItem, setPrintPreviewItem] = useState<TeacherAbsenceRequestItem | null>(null);
 
   const [form, setForm] = useState({
     start_date: "",
@@ -343,6 +865,26 @@ export default function EnseignantAutorisationAbsencePage() {
     };
   }, []);
 
+
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+
+    const open = !!printPreviewItem;
+    document.body.classList.toggle("absence-print-open", open);
+    if (open) {
+      const previousOverflow = document.body.style.overflow;
+      document.body.style.overflow = "hidden";
+      return () => {
+        document.body.classList.remove("absence-print-open");
+        document.body.style.overflow = previousOverflow;
+      };
+    }
+
+    return () => {
+      document.body.classList.remove("absence-print-open");
+    };
+  }, [printPreviewItem]);
+
   const counts = useMemo(() => {
     return items.reduce(
       (acc, item) => {
@@ -436,525 +978,35 @@ export default function EnseignantAutorisationAbsencePage() {
     }
   }
 
-  async function handlePrintApprovedRequest(item: TeacherAbsenceRequestItem) {
+  function handlePrintApprovedRequest(item: TeacherAbsenceRequestItem) {
     if (item.status !== "approved") return;
 
-    try {
-      setPrintingId(item.id);
+    setError(null);
+    setSuccess(null);
+    setPrintingId(item.id);
+    setPrintPreviewItem(item);
 
-      const instName =
-        item.institution_name ||
-        institution?.institution_name ||
-        "Établissement";
-      const instLogo =
-        item.institution_logo_url ||
-        institution?.institution_logo_url ||
-        "";
-      const instPhone = institution?.institution_phone || "";
-      const instEmail = institution?.institution_email || "";
-      const instAddress = institution?.institution_postal_address || "";
-      const instRegion = institution?.institution_region || "";
-      const instStatus = institution?.institution_status || "";
-
-      const teacherName =
-        item.teacher_name?.trim() || "Enseignant concerné";
-      const teacherSignature =
-        item.teacher_signature_png ||
-        item.teacher_signature_url ||
-        item.teacher_profile_signature_url ||
-        "";
-      const adminName =
-        item.approved_by_name?.trim() ||
-        institution?.institution_head_name?.trim() ||
-        "Administration";
-      const adminTitle =
-        institution?.institution_head_title?.trim() || "Administration";
-      const adminSignature =
-        item.administration_signature_png ||
-        item.administration_signature_url ||
-        "";
-
-      const impactedHtml =
-        item.impact_summary?.impacted_classes?.length
-          ? item.impact_summary.impacted_classes
-              .map(
-                (cls) => `
-                  <div class="impact-card">
-                    <div class="impact-head">
-                      <strong>${escapeHtml(cls.class_label)}</strong>
-                      <span>${escapeHtml(
-                        `${cls.lost_hours} h • ${cls.lost_sessions} créneau(x)`
-                      )}</span>
-                    </div>
-                    ${
-                      cls.slots?.length
-                        ? `<div class="impact-slots">
-                            ${cls.slots
-                              .map(
-                                (slot) => `
-                                  <div class="impact-slot">
-                                    ${escapeHtml(formatDate(slot.date))} • ${escapeHtml(
-                                      slot.subject_name
-                                    )} • ${escapeHtml(
-                                      formatTimeRange(
-                                        slot.start_time,
-                                        slot.end_time,
-                                        slot.period_label
-                                      )
-                                    )}
-                                  </div>
-                                `
-                              )
-                              .join("")}
-                          </div>`
-                        : ""
-                    }
-                  </div>
-                `
-              )
-              .join("")
-          : `<div class="empty-box">Aucune classe impactée indiquée.</div>`;
-
-      const popup = window.open("", "_blank", "noopener,noreferrer,width=980,height=900");
-
-      if (!popup) {
-        throw new Error("La fenêtre d’impression a été bloquée par le navigateur.");
-      }
-
-      popup.document.open();
-      popup.document.write(`<!doctype html>
-<html lang="fr">
-  <head>
-    <meta charset="utf-8" />
-    <title>Demande approuvée - ${escapeHtml(teacherName)}</title>
-    <style>
-      @page {
-        size: A4;
-        margin: 12mm;
-      }
-
-      * { box-sizing: border-box; }
-      html, body {
-        margin: 0;
-        padding: 0;
-        background: #f8fafc;
-        color: #0f172a;
-        font-family: Arial, Helvetica, sans-serif;
-      }
-
-      body { padding: 18px; }
-      .sheet {
-        max-width: 210mm;
-        margin: 0 auto;
-        background: #ffffff;
-        border: 1px solid #dbeafe;
-        border-radius: 20px;
-        overflow: hidden;
-      }
-
-      .topbar {
-        height: 8px;
-        background: linear-gradient(90deg, #0f172a, #065f46);
-      }
-
-      .content { padding: 22px 24px 26px; }
-
-      .header {
-        display: grid;
-        grid-template-columns: 88px 1fr;
-        gap: 16px;
-        align-items: center;
-        border-bottom: 2px solid #e2e8f0;
-        padding-bottom: 16px;
-      }
-
-      .logo-box {
-        width: 88px;
-        height: 88px;
-        border: 1px solid #cbd5e1;
-        border-radius: 18px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        overflow: hidden;
-        background: #ffffff;
-      }
-
-      .logo-box img {
-        width: 100%;
-        height: 100%;
-        object-fit: contain;
-      }
-
-      .logo-fallback {
-        font-size: 11px;
-        color: #64748b;
-        text-align: center;
-        padding: 8px;
-      }
-
-      .inst-name {
-        font-size: 24px;
-        font-weight: 800;
-        color: #0f172a;
-        line-height: 1.15;
-      }
-
-      .inst-meta {
-        margin-top: 6px;
-        font-size: 12px;
-        color: #475569;
-        line-height: 1.6;
-      }
-
-      .approved-banner {
-        margin-top: 18px;
-        border: 2px solid #22c55e;
-        background: #f0fdf4;
-        color: #166534;
-        border-radius: 18px;
-        text-align: center;
-        padding: 14px 16px;
-      }
-
-      .approved-banner .big {
-        font-size: 22px;
-        font-weight: 900;
-        letter-spacing: 0.04em;
-      }
-
-      .approved-banner .small {
-        margin-top: 4px;
-        font-size: 12px;
-        font-weight: 700;
-      }
-
-      .title {
-        margin-top: 20px;
-        font-size: 18px;
-        font-weight: 800;
-        color: #0f172a;
-      }
-
-      .grid {
-        margin-top: 14px;
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 12px;
-      }
-
-      .card {
-        border: 1px solid #e2e8f0;
-        border-radius: 16px;
-        padding: 12px 14px;
-        background: #ffffff;
-      }
-
-      .card.full { grid-column: 1 / -1; }
-
-      .label {
-        font-size: 11px;
-        font-weight: 800;
-        letter-spacing: 0.06em;
-        color: #64748b;
-        text-transform: uppercase;
-      }
-
-      .value {
-        margin-top: 6px;
-        font-size: 14px;
-        font-weight: 700;
-        color: #0f172a;
-        line-height: 1.55;
-      }
-
-      .value.normal {
-        font-weight: 500;
-      }
-
-      .impact-section {
-        margin-top: 18px;
-        border: 1px solid #fde68a;
-        background: #fffbeb;
-        border-radius: 18px;
-        padding: 14px;
-      }
-
-      .impact-title {
-        font-size: 14px;
-        font-weight: 800;
-        color: #92400e;
-        margin-bottom: 10px;
-      }
-
-      .impact-card {
-        border: 1px solid #e2e8f0;
-        background: #ffffff;
-        border-radius: 14px;
-        padding: 10px 12px;
-        margin-top: 10px;
-      }
-
-      .impact-head {
-        display: flex;
-        justify-content: space-between;
-        gap: 10px;
-        align-items: center;
-        font-size: 13px;
-        color: #0f172a;
-      }
-
-      .impact-slots { margin-top: 8px; }
-      .impact-slot {
-        font-size: 12px;
-        color: #334155;
-        background: #f8fafc;
-        border-radius: 10px;
-        padding: 7px 9px;
-        margin-top: 6px;
-      }
-
-      .empty-box {
-        border: 1px dashed #cbd5e1;
-        border-radius: 12px;
-        padding: 12px;
-        font-size: 12px;
-        color: #64748b;
-        background: #ffffff;
-      }
-
-      .signature-grid {
-        margin-top: 22px;
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 18px;
-      }
-
-      .signature-card {
-        border: 1px solid #dbeafe;
-        border-radius: 18px;
-        background: #f8fafc;
-        padding: 14px;
-        min-height: 190px;
-      }
-
-      .signature-head {
-        font-size: 13px;
-        font-weight: 800;
-        color: #0f172a;
-        margin-bottom: 10px;
-      }
-
-      .signature-role {
-        font-size: 11px;
-        color: #64748b;
-        text-transform: uppercase;
-        letter-spacing: 0.06em;
-        font-weight: 800;
-      }
-
-      .signature-name {
-        margin-top: 4px;
-        font-size: 15px;
-        font-weight: 800;
-        color: #0f172a;
-      }
-
-      .signature-box {
-        height: 86px;
-        margin-top: 14px;
-        border-bottom: 2px solid #94a3b8;
-        display: flex;
-        align-items: end;
-        justify-content: center;
-        overflow: hidden;
-        padding-bottom: 8px;
-      }
-
-      .signature-box img {
-        max-height: 74px;
-        max-width: 100%;
-        object-fit: contain;
-      }
-
-      .signature-placeholder {
-        font-size: 13px;
-        color: #64748b;
-        font-style: italic;
-      }
-
-      .foot {
-        margin-top: 22px;
-        display: flex;
-        justify-content: space-between;
-        gap: 12px;
-        align-items: end;
-        border-top: 1px solid #e2e8f0;
-        padding-top: 12px;
-        font-size: 12px;
-        color: #475569;
-      }
-
-      .foot strong { color: #0f172a; }
-
-      @media print {
-        body { background: #ffffff; padding: 0; }
-        .sheet {
-          border: none;
-          border-radius: 0;
-          box-shadow: none;
-          max-width: none;
-        }
-      }
-    </style>
-  </head>
-  <body>
-    <div class="sheet">
-      <div class="topbar"></div>
-      <div class="content">
-        <div class="header">
-          <div class="logo-box">
-            ${
-              instLogo
-                ? `<img src="${escapeHtml(instLogo)}" alt="Logo établissement" />`
-                : `<div class="logo-fallback">Logo<br/>établissement</div>`
-            }
-          </div>
-
-          <div>
-            <div class="inst-name">${escapeHtml(instName)}</div>
-            <div class="inst-meta">
-              ${escapeHtml(instRegion)}
-              ${instRegion && instAddress ? " • " : ""}
-              ${escapeHtml(instAddress)}
-              ${(instRegion || instAddress) && instPhone ? " • " : ""}
-              ${escapeHtml(instPhone)}
-              ${(instRegion || instAddress || instPhone) && instEmail ? " • " : ""}
-              ${escapeHtml(instEmail)}
-              ${(instRegion || instAddress || instPhone || instEmail) && instStatus ? " • " : ""}
-              ${escapeHtml(instStatus)}
-            </div>
-          </div>
-        </div>
-
-        <div class="approved-banner">
-          <div class="big">DEMANDE APPROUVÉE</div>
-          <div class="small">Validation administrative enregistrée le ${escapeHtml(
-            formatDateTime(item.approved_at)
-          )}</div>
-        </div>
-
-        <div class="title">Autorisation d’absence validée</div>
-
-        <div class="grid">
-          <div class="card">
-            <div class="label">Enseignant</div>
-            <div class="value">${escapeHtml(teacherName)}</div>
-          </div>
-
-          <div class="card">
-            <div class="label">Durée</div>
-            <div class="value">${escapeHtml(daysLabel(item.requested_days))}</div>
-          </div>
-
-          <div class="card">
-            <div class="label">Période</div>
-            <div class="value">${escapeHtml(
-              `${formatDate(item.start_date)} au ${formatDate(item.end_date)}`
-            )}</div>
-          </div>
-
-          <div class="card">
-            <div class="label">Motif</div>
-            <div class="value">${escapeHtml(item.reason_label)}</div>
-          </div>
-
-          <div class="card full">
-            <div class="label">Détails fournis par l’enseignant</div>
-            <div class="value normal">${nl2br(item.details || "—")}</div>
-          </div>
-
-          <div class="card full">
-            <div class="label">Plan de rattrapage</div>
-            <div class="value normal">${nl2br(item.makeup_plan?.notes || "—")}</div>
-          </div>
-
-          ${
-            item.admin_comment
-              ? `
-                <div class="card full">
-                  <div class="label">Commentaire de l’administration</div>
-                  <div class="value normal">${nl2br(item.admin_comment)}</div>
-                </div>
-              `
-              : ""
-          }
-        </div>
-
-        <div class="impact-section">
-          <div class="impact-title">Classes impactées et heures à rattraper</div>
-          ${impactedHtml}
-        </div>
-
-        <div class="signature-grid">
-          <div class="signature-card">
-            <div class="signature-head">Signature de l’enseignant</div>
-            <div class="signature-role">Nom</div>
-            <div class="signature-name">${escapeHtml(teacherName)}</div>
-            <div class="signature-box">
-              ${
-                teacherSignature
-                  ? `<img src="${escapeHtml(teacherSignature)}" alt="Signature enseignant" />`
-                  : `<div class="signature-placeholder">Signature de l’enseignant</div>`
-              }
-            </div>
-          </div>
-
-          <div class="signature-card">
-            <div class="signature-head">Visa de l’administration</div>
-            <div class="signature-role">${escapeHtml(adminTitle)}</div>
-            <div class="signature-name">${escapeHtml(adminName)}</div>
-            <div class="signature-box">
-              ${
-                adminSignature
-                  ? `<img src="${escapeHtml(adminSignature)}" alt="Signature administration" />`
-                  : `<div class="signature-placeholder">Signature et cachet</div>`
-              }
-            </div>
-          </div>
-        </div>
-
-        <div class="foot">
-          <div><strong>Statut :</strong> Demande approuvée</div>
-          <div><strong>Document généré le :</strong> ${escapeHtml(
-            formatDateTime(new Date().toISOString())
-          )}</div>
-        </div>
-      </div>
-    </div>
-
-    <script>
-      window.addEventListener("load", function () {
-        setTimeout(function () {
-          window.focus();
-          window.print();
-        }, 250);
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        setPrintingId(null);
       });
-    </script>
-  </body>
-</html>`);
-      popup.document.close();
-    } catch (e) {
-      setError(
-        e instanceof Error
-          ? e.message
-          : "Impossible d’ouvrir l’aperçu d’impression."
-      );
-      setSuccess(null);
-    } finally {
-      setPrintingId(null);
-    }
+    });
   }
+
+  function handleClosePrintPreview() {
+    setPrintPreviewItem(null);
+  }
+
+  function handleConfirmPrint() {
+    if (!printPreviewItem || typeof window === "undefined") return;
+    window.dispatchEvent(new Event("absence-print:recalc-fit"));
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        window.print();
+      });
+    });
+  }
+
 
   return (
     <main className="space-y-6">
@@ -1429,7 +1481,7 @@ export default function EnseignantAutorisationAbsencePage() {
 
                         <button
                           type="button"
-                          onClick={() => void handlePrintApprovedRequest(item)}
+                          onClick={() => handlePrintApprovedRequest(item)}
                           disabled={printingId === item.id}
                           className="inline-flex items-center justify-center gap-2 rounded-2xl bg-slate-950 px-4 py-3 text-sm font-bold text-white shadow-sm transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-70"
                         >
@@ -1460,6 +1512,493 @@ export default function EnseignantAutorisationAbsencePage() {
           )}
         </section>
       </section>
+
+      {printPreviewItem ? (
+        <div className="absence-print-overlay screen-only">
+          <div className="absence-print-toolbar">
+            <div>
+              <div className="text-sm font-black uppercase tracking-[0.18em] text-slate-500">
+                Demande approuvée
+              </div>
+              <div className="mt-1 text-lg font-extrabold text-slate-950">
+                Aperçu avant impression
+              </div>
+              <div className="mt-1 text-sm text-slate-600">
+                Vérifiez les signatures, le logo et la mise en page A4 avant d’imprimer.
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-3">
+              <button
+                type="button"
+                onClick={handleClosePrintPreview}
+                className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-bold text-slate-700 shadow-sm transition hover:bg-slate-50"
+              >
+                <X className="h-4 w-4" />
+                Fermer
+              </button>
+
+              <button
+                type="button"
+                onClick={handleConfirmPrint}
+                className="inline-flex items-center justify-center gap-2 rounded-2xl bg-slate-950 px-4 py-3 text-sm font-bold text-white shadow-sm transition hover:bg-slate-800"
+              >
+                <Printer className="h-4 w-4" />
+                Imprimer
+              </button>
+            </div>
+          </div>
+
+          <div className="absence-print-preview-shell">
+            <div className="absence-preview-overlay" style={{ ["--preview-zoom" as any]: ABSENCE_PREVIEW_ZOOM }}>
+              <ApprovedRequestPrintSheet
+                item={printPreviewItem}
+                institution={institution}
+                previewZoomForMeasure={ABSENCE_PREVIEW_ZOOM}
+              />
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      <style jsx global>{`
+        .sig-img {
+          display: block;
+          background: transparent !important;
+          opacity: 1 !important;
+        }
+
+        .absence-print-overlay {
+          position: fixed;
+          inset: 0;
+          z-index: 120;
+          background: rgba(15, 23, 42, 0.72);
+          backdrop-filter: blur(10px);
+          display: flex;
+          flex-direction: column;
+          padding: 16px;
+        }
+
+        .absence-print-toolbar {
+          width: min(1200px, 100%);
+          margin: 0 auto 14px;
+          border-radius: 26px;
+          background: rgba(255, 255, 255, 0.96);
+          border: 1px solid rgba(226, 232, 240, 0.9);
+          padding: 16px 18px;
+          box-shadow: 0 24px 80px rgba(15, 23, 42, 0.22);
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 14px;
+        }
+
+        .absence-print-preview-shell {
+          flex: 1;
+          min-height: 0;
+          overflow: auto;
+          border-radius: 28px;
+          background: linear-gradient(180deg, #e2e8f0 0%, #cbd5e1 100%);
+          padding: 18px;
+          box-shadow: inset 0 1px 0 rgba(255,255,255,0.55);
+        }
+
+        .absence-preview-overlay {
+          width: max-content;
+          min-width: 100%;
+          margin: 0 auto;
+          padding: 18px 0 24px;
+        }
+
+        .absence-print-sheet-wrap {
+          width: 210mm;
+          margin: 0 auto;
+        }
+
+        .absence-print-page {
+          width: 210mm;
+          min-height: 297mm;
+          margin: 0 auto;
+          padding: 8mm;
+          box-sizing: border-box;
+          font-family: Arial, Helvetica, sans-serif;
+          background: #fff;
+          color: #0f172a;
+          box-shadow: 0 18px 60px rgba(15, 23, 42, 0.18);
+          border-radius: 22px;
+          overflow: hidden;
+          transform-origin: top center;
+        }
+
+        .absence-preview-overlay .absence-print-page {
+          width: 202mm;
+          min-height: 289mm;
+          padding: 2mm 6mm;
+        }
+
+        @supports (zoom: 1) {
+          .absence-preview-overlay .absence-print-page {
+            zoom: var(--preview-zoom, 1);
+          }
+        }
+
+        @supports not (zoom: 1) {
+          .absence-preview-overlay .absence-print-page {
+            transform: scale(var(--preview-zoom, 1));
+            transform-origin: top center;
+          }
+        }
+
+        .absence-print-topbar {
+          height: 8px;
+          margin: -8mm -8mm 0;
+          background: linear-gradient(90deg, #0f172a, #065f46);
+        }
+
+        .absence-print-header {
+          display: grid;
+          grid-template-columns: 88px 1fr;
+          gap: 16px;
+          align-items: center;
+          border-bottom: 2px solid #e2e8f0;
+          padding: 18px 0 16px;
+        }
+
+        .absence-logo-box {
+          width: 88px;
+          height: 88px;
+          border: 1px solid #cbd5e1;
+          border-radius: 18px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          overflow: hidden;
+          background: #fff;
+        }
+
+        .absence-logo-img {
+          width: 100%;
+          height: 100%;
+          object-fit: contain;
+        }
+
+        .absence-logo-fallback {
+          font-size: 11px;
+          color: #64748b;
+          text-align: center;
+          padding: 8px;
+          line-height: 1.4;
+        }
+
+        .absence-inst-name {
+          font-size: 24px;
+          line-height: 1.15;
+          font-weight: 800;
+          color: #0f172a;
+        }
+
+        .absence-inst-meta {
+          margin-top: 6px;
+          font-size: 12px;
+          color: #475569;
+          line-height: 1.6;
+        }
+
+        .absence-approved-banner {
+          margin-top: 18px;
+          border: 2px solid #22c55e;
+          background: #f0fdf4;
+          color: #166534;
+          border-radius: 18px;
+          text-align: center;
+          padding: 14px 16px;
+        }
+
+        .absence-approved-big {
+          font-size: 22px;
+          font-weight: 900;
+          letter-spacing: 0.04em;
+        }
+
+        .absence-approved-small {
+          margin-top: 4px;
+          font-size: 12px;
+          font-weight: 700;
+        }
+
+        .absence-doc-title {
+          margin-top: 20px;
+          font-size: 18px;
+          font-weight: 800;
+          color: #0f172a;
+        }
+
+        .absence-grid {
+          margin-top: 14px;
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 12px;
+        }
+
+        .absence-card {
+          border: 1px solid #e2e8f0;
+          border-radius: 16px;
+          padding: 12px 14px;
+          background: #ffffff;
+        }
+
+        .absence-card-full {
+          grid-column: 1 / -1;
+        }
+
+        .absence-label {
+          font-size: 11px;
+          font-weight: 800;
+          letter-spacing: 0.06em;
+          color: #64748b;
+          text-transform: uppercase;
+        }
+
+        .absence-value {
+          margin-top: 6px;
+          font-size: 14px;
+          font-weight: 700;
+          color: #0f172a;
+          line-height: 1.55;
+        }
+
+        .absence-value-normal {
+          font-weight: 500;
+        }
+
+        .absence-impact-section {
+          margin-top: 18px;
+          border: 1px solid #fde68a;
+          background: #fffbeb;
+          border-radius: 18px;
+          padding: 14px;
+        }
+
+        .absence-impact-title {
+          font-size: 14px;
+          font-weight: 800;
+          color: #92400e;
+          margin-bottom: 10px;
+        }
+
+        .absence-impact-card {
+          border: 1px solid #e2e8f0;
+          background: #ffffff;
+          border-radius: 14px;
+          padding: 10px 12px;
+        }
+
+        .absence-impact-head {
+          display: flex;
+          justify-content: space-between;
+          gap: 10px;
+          align-items: center;
+          font-size: 13px;
+          color: #0f172a;
+        }
+
+        .absence-impact-slots {
+          margin-top: 8px;
+        }
+
+        .absence-impact-slot {
+          font-size: 12px;
+          color: #334155;
+          background: #f8fafc;
+          border-radius: 10px;
+          padding: 7px 9px;
+          margin-top: 6px;
+        }
+
+        .absence-empty-box {
+          border: 1px dashed #cbd5e1;
+          border-radius: 12px;
+          padding: 12px;
+          font-size: 12px;
+          color: #64748b;
+          background: #ffffff;
+        }
+
+        .absence-signature-grid {
+          margin-top: 22px;
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 18px;
+        }
+
+        .absence-signature-card {
+          border: 1px solid #dbeafe;
+          border-radius: 18px;
+          background: #f8fafc;
+          padding: 14px;
+          min-height: 190px;
+        }
+
+        .absence-signature-head {
+          font-size: 13px;
+          font-weight: 800;
+          color: #0f172a;
+          margin-bottom: 10px;
+        }
+
+        .absence-signature-role {
+          font-size: 11px;
+          color: #64748b;
+          text-transform: uppercase;
+          letter-spacing: 0.06em;
+          font-weight: 800;
+        }
+
+        .absence-signature-name {
+          margin-top: 4px;
+          font-size: 15px;
+          font-weight: 800;
+          color: #0f172a;
+        }
+
+        .absence-signature-box {
+          height: 86px;
+          margin-top: 14px;
+          border-bottom: 2px solid #94a3b8;
+          display: flex;
+          align-items: flex-end;
+          justify-content: center;
+          overflow: hidden;
+          padding-bottom: 8px;
+        }
+
+        .absence-signature-img {
+          max-height: 74px !important;
+          max-width: 100% !important;
+          object-fit: contain !important;
+        }
+
+        .absence-signature-placeholder {
+          font-size: 13px;
+          color: #64748b;
+          font-style: italic;
+        }
+
+        .absence-foot {
+          margin-top: 22px;
+          display: flex;
+          justify-content: space-between;
+          gap: 12px;
+          align-items: flex-end;
+          border-top: 1px solid #e2e8f0;
+          padding-top: 12px;
+          font-size: 12px;
+          color: #475569;
+        }
+
+        .absence-foot strong {
+          color: #0f172a;
+        }
+
+        @media (max-width: 920px) {
+          .absence-print-overlay {
+            padding: 10px;
+          }
+
+          .absence-print-toolbar {
+            flex-direction: column;
+            align-items: stretch;
+          }
+        }
+
+        @media (max-width: 760px) {
+          .absence-signature-grid,
+          .absence-grid {
+            grid-template-columns: 1fr;
+          }
+
+          .absence-card-full {
+            grid-column: auto;
+          }
+
+          .absence-impact-head,
+          .absence-foot,
+          .absence-print-header {
+            grid-template-columns: 1fr;
+            display: grid;
+          }
+
+          .absence-foot {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-start;
+          }
+        }
+
+        @media print {
+          @page {
+            size: A4 portrait;
+            margin: 4mm;
+          }
+
+          html,
+          body {
+            background: #fff !important;
+            -webkit-print-color-adjust: exact;
+            print-color-adjust: exact;
+          }
+
+          body.absence-print-open * {
+            visibility: hidden !important;
+          }
+
+          body.absence-print-open .absence-print-sheet-wrap,
+          body.absence-print-open .absence-print-sheet-wrap * {
+            visibility: visible !important;
+          }
+
+          body.absence-print-open .absence-print-overlay {
+            position: static !important;
+            inset: auto !important;
+            display: block !important;
+            background: #fff !important;
+            padding: 0 !important;
+            backdrop-filter: none !important;
+          }
+
+          body.absence-print-open .absence-print-toolbar {
+            display: none !important;
+          }
+
+          body.absence-print-open .absence-print-preview-shell,
+          body.absence-print-open .absence-preview-overlay {
+            overflow: visible !important;
+            background: #fff !important;
+            padding: 0 !important;
+            box-shadow: none !important;
+            min-height: auto !important;
+          }
+
+          body.absence-print-open .absence-print-sheet-wrap {
+            position: absolute !important;
+            left: 0 !important;
+            top: 0 !important;
+            width: 100% !important;
+            margin: 0 !important;
+          }
+
+          body.absence-print-open .absence-print-page {
+            width: 202mm !important;
+            min-height: 289mm !important;
+            padding: 2mm 6mm !important;
+            margin: 0 auto !important;
+            border-radius: 0 !important;
+            box-shadow: none !important;
+            zoom: 1 !important;
+            transform: none !important;
+          }
+        }
+      `}</style>
     </main>
   );
 }
