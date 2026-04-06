@@ -225,8 +225,7 @@ function firstObject<T = any>(obj: any, paths: string[]): T | null {
 
 function normalizeInstitutionPayload(payload: any): InstitutionSettings | null {
   if (!payload || typeof payload !== "object") return null;
-  const data =
-    firstObject<any>(payload, ["institution", "settings", "data", "item"]) || payload;
+  const data = firstObject<any>(payload, ["institution", "settings", "data", "item"]) || payload;
 
   const institution_name = firstString(data, [
     "institution_name",
@@ -299,8 +298,7 @@ function normalizeInstitutionPayload(payload: any): InstitutionSettings | null {
 
 function normalizeViewerProfile(payload: any): ViewerProfile | null {
   if (!payload || typeof payload !== "object") return null;
-  const data =
-    firstObject<any>(payload, ["profile", "teacher", "user", "data", "item"]) || payload;
+  const data = firstObject<any>(payload, ["profile", "teacher", "user", "data", "item"]) || payload;
 
   const full_name = firstString(data, [
     "full_name",
@@ -313,8 +311,7 @@ function normalizeViewerProfile(payload: any): ViewerProfile | null {
   ]);
   const first_name = firstString(data, ["first_name", "firstname"]);
   const last_name = firstString(data, ["last_name", "lastname"]);
-  const display_name =
-    full_name || [first_name, last_name].filter(Boolean).join(" ").trim() || "";
+  const display_name = full_name || [first_name, last_name].filter(Boolean).join(" ").trim() || "";
 
   const signature_url = firstString(data, [
     "signature_url",
@@ -390,19 +387,6 @@ function normalizeImpactSummary(payload: any): AbsenceImpactSummary | null {
   };
 }
 
-function escapeHtml(value?: string | null) {
-  return String(value ?? "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
-
-function nl2br(value?: string | null) {
-  return escapeHtml(value).replace(/\n/g, "<br />");
-}
-
 const REASON_OPTIONS = [
   { value: "maladie", label: "Maladie" },
   { value: "formation", label: "Formation" },
@@ -412,7 +396,6 @@ const REASON_OPTIONS = [
   { value: "autre", label: "Autre" },
 ];
 
-
 const SIGNATURE_BLUE = "#1d4ed8";
 const ABSENCE_PREVIEW_ZOOM = 0.86;
 
@@ -420,6 +403,46 @@ const __SIG_INK_CACHE = new Map<string, string>();
 const __SIG_INK_PROMISES = new Map<string, Promise<string | null>>();
 const __SIG_TINT_CACHE = new Map<string, string>();
 const __SIG_TINT_PROMISES = new Map<string, Promise<string | null>>();
+
+function resolveTeacherDisplayName(
+  item: TeacherAbsenceRequestItem,
+  viewerProfile: ViewerProfile | null
+) {
+  return (
+    String(item.teacher_name ?? "").trim() ||
+    String(viewerProfile?.display_name ?? "").trim() ||
+    String(viewerProfile?.full_name ?? "").trim() ||
+    "Enseignant"
+  );
+}
+
+function resolveTeacherSignatureSrc(
+  item: TeacherAbsenceRequestItem,
+  viewerProfile: ViewerProfile | null
+) {
+  return (
+    String(item.teacher_signature_png ?? "").trim() ||
+    String(item.teacher_signature_url ?? "").trim() ||
+    String(item.teacher_profile_signature_url ?? "").trim() ||
+    String(viewerProfile?.signature_png ?? "").trim() ||
+    String(viewerProfile?.signature_url ?? "").trim() ||
+    ""
+  );
+}
+
+function initialsFromName(value?: string | null) {
+  const parts = String(value ?? "")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+
+  const letters = parts
+    .slice(0, 2)
+    .map((part) => part.charAt(0).toUpperCase())
+    .join("");
+
+  return letters || "EN";
+}
 
 function buildPrintMeta(
   item: TeacherAbsenceRequestItem,
@@ -722,7 +745,6 @@ async function inkifySignaturePng(src: string): Promise<string | null> {
       }
 
       ctx.putImageData(imgData, 0, 0);
-
       const out = canvas.toDataURL("image/png");
       if (out) __SIG_INK_CACHE.set(src, out);
       return out || src;
@@ -1114,8 +1136,7 @@ export default function EnseignantAutorisationAbsencePage() {
         cache: "no-store",
       });
 
-      const json =
-        (await res.json().catch(() => null)) as ApiListResponse | null;
+      const json = (await res.json().catch(() => null)) as ApiListResponse | null;
 
       if (!res.ok || !json?.ok) {
         throw new Error(
@@ -1318,8 +1339,7 @@ export default function EnseignantAutorisationAbsencePage() {
       setSuccess(null);
 
       const selectedReason =
-        REASON_OPTIONS.find((option) => option.value === form.reason_code)
-          ?.label ?? form.reason_code;
+        REASON_OPTIONS.find((option) => option.value === form.reason_code)?.label ?? form.reason_code;
 
       const res = await fetch("/api/teacher/absence-requests", {
         method: "POST",
@@ -1342,8 +1362,7 @@ export default function EnseignantAutorisationAbsencePage() {
         }),
       });
 
-      const json =
-        (await res.json().catch(() => null)) as ApiCreateResponse | null;
+      const json = (await res.json().catch(() => null)) as ApiCreateResponse | null;
 
       if (!res.ok || !json?.ok) {
         throw new Error(
@@ -1432,511 +1451,514 @@ export default function EnseignantAutorisationAbsencePage() {
     });
   }
 
-
   return (
-    <main className="space-y-6">
-      <section className="relative overflow-hidden rounded-3xl bg-gradient-to-r from-slate-950 via-slate-900 to-emerald-950 p-5 text-white shadow-sm sm:p-6">
-        <div
-          className="pointer-events-none absolute inset-0 opacity-20"
-          style={{
-            background:
-              "radial-gradient(500px 200px at 10% -10%, rgba(255,255,255,0.45), transparent 60%), radial-gradient(320px 140px at 90% 120%, rgba(255,255,255,0.22), transparent 60%)",
-          }}
-        />
-        <div className="relative z-10 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-          <div>
-            <div className="inline-flex items-center gap-2 rounded-full bg-white/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-white/80 ring-1 ring-white/10">
-              <ShieldCheck className="h-3.5 w-3.5" />
-              Espace enseignant
-            </div>
-            <h1 className="mt-3 text-2xl font-extrabold tracking-tight">
-              Autorisation d’absence
-            </h1>
-            <p className="mt-2 max-w-3xl text-sm leading-6 text-white/85">
-              Soumettez une demande d’absence, visualisez les classes impactées,
-              puis indiquez quand vous comptez rattraper les heures perdues.
-            </p>
-            {institutionLoading ? (
-              <div className="mt-2 text-xs font-semibold text-white/70">
-                Chargement des informations de l’établissement…
-              </div>
-            ) : null}
-          </div>
-
-          <button
-            type="button"
-            onClick={() => void load()}
-            disabled={refreshing}
-            className="inline-flex items-center justify-center gap-2 rounded-2xl bg-white px-4 py-3 text-sm font-semibold text-emerald-800 shadow-sm transition hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-70"
-          >
-            <RefreshCw
-              className={classNames("h-4 w-4", refreshing && "animate-spin")}
-            />
-            Actualiser
-          </button>
-        </div>
-      </section>
-
-      <section className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-            Total
-          </div>
-          <div className="mt-2 text-3xl font-extrabold text-slate-950">
-            {counts.total}
-          </div>
-        </div>
-
-        <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 shadow-sm">
-          <div className="text-xs font-semibold uppercase tracking-wide text-amber-700">
-            En attente
-          </div>
-          <div className="mt-2 text-3xl font-extrabold text-amber-900">
-            {counts.pending}
-          </div>
-        </div>
-
-        <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 shadow-sm">
-          <div className="text-xs font-semibold uppercase tracking-wide text-emerald-700">
-            Approuvées
-          </div>
-          <div className="mt-2 text-3xl font-extrabold text-emerald-900">
-            {counts.approved}
-          </div>
-        </div>
-
-        <div className="rounded-2xl border border-red-200 bg-red-50 p-4 shadow-sm">
-          <div className="text-xs font-semibold uppercase tracking-wide text-red-700">
-            Rejetées
-          </div>
-          <div className="mt-2 text-3xl font-extrabold text-red-900">
-            {counts.rejected}
-          </div>
-        </div>
-      </section>
-
-      <section className="grid grid-cols-1 gap-6 xl:grid-cols-[1.1fr_0.9fr]">
-        <form
-          onSubmit={(e) => void handleSubmit(e)}
-          className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm"
-        >
-          <div className="flex items-center gap-2 text-sm font-black uppercase tracking-[0.16em] text-slate-700">
-            <FileText className="h-4 w-4 text-emerald-600" />
-            Nouvelle demande
-          </div>
-
-          <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-2">
+    <>
+      <main className="space-y-6">
+        <section className="relative overflow-hidden rounded-3xl bg-gradient-to-r from-slate-950 via-slate-900 to-emerald-950 p-5 text-white shadow-sm sm:p-6">
+          <div
+            className="pointer-events-none absolute inset-0 opacity-20"
+            style={{
+              background:
+                "radial-gradient(500px 200px at 10% -10%, rgba(255,255,255,0.45), transparent 60%), radial-gradient(320px 140px at 90% 120%, rgba(255,255,255,0.22), transparent 60%)",
+            }}
+          />
+          <div className="relative z-10 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
             <div>
-              <label className="mb-2 block text-sm font-semibold text-slate-800">
-                Date de début
-              </label>
-              <input
-                type="date"
-                value={form.start_date}
-                onChange={(e) =>
-                  setForm((prev) => ({ ...prev, start_date: e.target.value }))
-                }
-                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none focus:border-emerald-400 focus:ring-4 focus:ring-emerald-500/15"
-              />
-            </div>
-
-            <div>
-              <label className="mb-2 block text-sm font-semibold text-slate-800">
-                Date de fin
-              </label>
-              <input
-                type="date"
-                value={form.end_date}
-                onChange={(e) =>
-                  setForm((prev) => ({ ...prev, end_date: e.target.value }))
-                }
-                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none focus:border-emerald-400 focus:ring-4 focus:ring-emerald-500/15"
-              />
-            </div>
-          </div>
-
-          <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4">
-            <div className="text-sm font-bold text-slate-900">
-              Impact prévisionnel de l’absence
-            </div>
-
-            {impactLoading ? (
-              <div className="mt-3 flex items-center gap-2 text-sm text-slate-600">
-                <Loader2 className="h-4 w-4 animate-spin" />
-                Calcul des heures perdues...
+              <div className="inline-flex items-center gap-2 rounded-full bg-white/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-white/80 ring-1 ring-white/10">
+                <ShieldCheck className="h-3.5 w-3.5" />
+                Espace enseignant
               </div>
-            ) : !form.start_date || !form.end_date ? (
-              <p className="mt-2 text-sm text-slate-500">
-                Sélectionnez la plage d’absence pour voir les classes impactées.
+              <h1 className="mt-3 text-2xl font-extrabold tracking-tight">
+                Autorisation d’absence
+              </h1>
+              <p className="mt-2 max-w-3xl text-sm leading-6 text-white/85">
+                Soumettez une demande d’absence, visualisez les classes impactées,
+                puis indiquez quand vous comptez rattraper les heures perdues.
               </p>
-            ) : !impactPreview || impactPreview.impacted_classes.length === 0 ? (
-              <p className="mt-2 text-sm text-slate-500">
-                Aucun cours impacté trouvé sur cette période.
-              </p>
-            ) : (
-              <>
-                <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-                  Vous perdrez des heures dans les classes suivantes :{" "}
-                  <strong>{impactPreview.total_lost_hours} h</strong> sur{" "}
-                  <strong>{impactPreview.total_lost_sessions}</strong> créneau(x).
+              {institutionLoading ? (
+                <div className="mt-2 text-xs font-semibold text-white/70">
+                  Chargement des informations de l’établissement…
                 </div>
-
-                <div className="mt-3 space-y-3">
-                  {impactPreview.impacted_classes.map((cls) => (
-                    <div
-                      key={cls.class_id}
-                      className="rounded-2xl border border-slate-200 bg-white px-4 py-3"
-                    >
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <div className="font-semibold text-slate-900">
-                          {cls.class_label}
-                        </div>
-                        <div className="text-sm text-slate-600">
-                          {cls.lost_hours} h perdues • {cls.lost_sessions} créneau(x)
-                        </div>
-                      </div>
-
-                      <div className="mt-2 space-y-2 text-sm text-slate-600">
-                        {cls.slots.map((slot, index) => (
-                          <div
-                            key={`${cls.class_id}_${slot.date}_${slot.period_id}_${index}`}
-                            className="rounded-xl bg-slate-50 px-3 py-2"
-                          >
-                            {formatDate(slot.date)} • {slot.subject_name} •{" "}
-                            {formatTimeRange(
-                              slot.start_time,
-                              slot.end_time,
-                              slot.period_label
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </>
-            )}
-          </div>
-
-          <div className="mt-4">
-            <label className="mb-2 block text-sm font-semibold text-slate-800">
-              Motif
-            </label>
-            <select
-              value={form.reason_code}
-              onChange={(e) =>
-                setForm((prev) => ({ ...prev, reason_code: e.target.value }))
-              }
-              className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none focus:border-emerald-400 focus:ring-4 focus:ring-emerald-500/15"
-            >
-              {REASON_OPTIONS.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div className="mt-4">
-            <label className="mb-2 block text-sm font-semibold text-slate-800">
-              Détails
-            </label>
-            <textarea
-              rows={5}
-              value={form.details}
-              onChange={(e) =>
-                setForm((prev) => ({ ...prev, details: e.target.value }))
-              }
-              placeholder="Expliquez brièvement le motif de la demande..."
-              className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none focus:border-emerald-400 focus:ring-4 focus:ring-emerald-500/15"
-            />
-          </div>
-
-          <div className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
-            <div className="text-sm font-bold text-emerald-900">
-              Quand comptez-vous rattraper ces heures ?
-            </div>
-
-            <div className="mt-4">
-              <label className="mb-2 block text-sm font-semibold text-slate-800">
-                Jours, heures et classes de rattrapage
-              </label>
-              <textarea
-                rows={5}
-                value={form.makeup_notes}
-                onChange={(e) =>
-                  setForm((prev) => ({ ...prev, makeup_notes: e.target.value }))
-                }
-                placeholder="Ex. 6e1 : mardi 28/04 de 07:10 à 08:05 ; 6e2 : jeudi 30/04 de 10:15 à 11:10 ; 5e3 : vendredi 01/05 de 08:05 à 09:00."
-                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none focus:border-emerald-400 focus:ring-4 focus:ring-emerald-500/15"
-              />
-            </div>
-          </div>
-
-          <label className="mt-4 flex items-start gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-            <input
-              type="checkbox"
-              checked={form.signed}
-              onChange={(e) =>
-                setForm((prev) => ({ ...prev, signed: e.target.checked }))
-              }
-              className="mt-1 h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
-            />
-            <span className="text-sm text-slate-700">
-              Je confirme l’exactitude des informations fournies dans cette
-              demande.
-            </span>
-          </label>
-
-          <div className="mt-5">
-            <button
-              type="submit"
-              disabled={submitting}
-              className="inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-700 px-5 py-3 text-sm font-bold text-white shadow-sm transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-70"
-            >
-              {submitting ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Send className="h-4 w-4" />
-              )}
-              Soumettre la demande
-            </button>
-          </div>
-        </form>
-
-        <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="flex items-center justify-between gap-3">
-            <div className="flex items-center gap-2 text-sm font-black uppercase tracking-[0.16em] text-slate-700">
-              <CalendarDays className="h-4 w-4 text-emerald-600" />
-              Historique
+              ) : null}
             </div>
 
             <button
               type="button"
-              onClick={() => setHistoryOpen((v) => !v)}
-              className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
-              aria-expanded={historyOpen}
+              onClick={() => void load()}
+              disabled={refreshing}
+              className="inline-flex items-center justify-center gap-2 rounded-2xl bg-white px-4 py-3 text-sm font-semibold text-emerald-800 shadow-sm transition hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-70"
             >
-              {historyOpen ? (
-                <>
-                  <ChevronDown className="h-4 w-4" />
-                  Masquer
-                </>
-              ) : (
-                <>
-                  <ChevronRight className="h-4 w-4" />
-                  Déplier
-                </>
-              )}
+              <RefreshCw className={classNames("h-4 w-4", refreshing && "animate-spin")} />
+              Actualiser
             </button>
           </div>
+        </section>
 
-          {error ? (
-            <div className="mt-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900">
-              {error}
+        <section className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Total</div>
+            <div className="mt-2 text-3xl font-extrabold text-slate-950">{counts.total}</div>
+          </div>
+
+          <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 shadow-sm">
+            <div className="text-xs font-semibold uppercase tracking-wide text-amber-700">En attente</div>
+            <div className="mt-2 text-3xl font-extrabold text-amber-900">{counts.pending}</div>
+          </div>
+
+          <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 shadow-sm">
+            <div className="text-xs font-semibold uppercase tracking-wide text-emerald-700">Approuvées</div>
+            <div className="mt-2 text-3xl font-extrabold text-emerald-900">{counts.approved}</div>
+          </div>
+
+          <div className="rounded-2xl border border-red-200 bg-red-50 p-4 shadow-sm">
+            <div className="text-xs font-semibold uppercase tracking-wide text-red-700">Rejetées</div>
+            <div className="mt-2 text-3xl font-extrabold text-red-900">{counts.rejected}</div>
+          </div>
+        </section>
+
+        <section className="grid grid-cols-1 gap-6 xl:grid-cols-[1.1fr_0.9fr]">
+          <form
+            onSubmit={(e) => void handleSubmit(e)}
+            className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm"
+          >
+            <div className="flex items-center gap-2 text-sm font-black uppercase tracking-[0.16em] text-slate-700">
+              <FileText className="h-4 w-4 text-emerald-600" />
+              Nouvelle demande
             </div>
-          ) : null}
 
-          {success ? (
-            <div className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
-              {success}
+            <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-2">
+              <div>
+                <label className="mb-2 block text-sm font-semibold text-slate-800">Date de début</label>
+                <input
+                  type="date"
+                  value={form.start_date}
+                  onChange={(e) => setForm((prev) => ({ ...prev, start_date: e.target.value }))}
+                  className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none focus:border-emerald-400 focus:ring-4 focus:ring-emerald-500/15"
+                />
+              </div>
+
+              <div>
+                <label className="mb-2 block text-sm font-semibold text-slate-800">Date de fin</label>
+                <input
+                  type="date"
+                  value={form.end_date}
+                  onChange={(e) => setForm((prev) => ({ ...prev, end_date: e.target.value }))}
+                  className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none focus:border-emerald-400 focus:ring-4 focus:ring-emerald-500/15"
+                />
+              </div>
             </div>
-          ) : null}
 
-          {historyOpen ? (
-            <div className="mt-4 space-y-4">
-              {loading ? (
-                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-5 py-10">
-                  <div className="flex items-center justify-center gap-3 text-slate-600">
-                    <Loader2 className="h-5 w-5 animate-spin" />
-                    Chargement des demandes...
-                  </div>
+            <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+              <div className="text-sm font-bold text-slate-900">Impact prévisionnel de l’absence</div>
+
+              {impactLoading ? (
+                <div className="mt-3 flex items-center gap-2 text-sm text-slate-600">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Calcul des heures perdues...
                 </div>
-              ) : items.length === 0 ? (
-                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-5 py-10 text-center">
-                  <FileText className="mx-auto h-10 w-10 text-slate-300" />
-                  <div className="mt-3 text-lg font-bold text-slate-900">
-                    Aucune demande pour le moment
-                  </div>
-                  <p className="mt-1 text-sm text-slate-500">
-                    Vos prochaines demandes apparaîtront ici.
-                  </p>
-                </div>
+              ) : !form.start_date || !form.end_date ? (
+                <p className="mt-2 text-sm text-slate-500">
+                  Sélectionnez la plage d’absence pour voir les classes impactées.
+                </p>
+              ) : !impactPreview || impactPreview.impacted_classes.length === 0 ? (
+                <p className="mt-2 text-sm text-slate-500">
+                  Aucun cours impacté trouvé sur cette période.
+                </p>
               ) : (
-                items.map((item) => (
-                  <article
-                    key={item.id}
-                    className="rounded-3xl border border-slate-200 bg-slate-50/60 p-4"
-                  >
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span
-                        className={classNames(
-                          "inline-flex items-center rounded-full px-3 py-1 text-xs font-bold ring-1",
-                          statusClasses(item.status)
-                        )}
-                      >
-                        {statusLabel(item.status)}
-                      </span>
+                <>
+                  <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                    Vous perdrez des heures dans les classes suivantes : <strong>{impactPreview.total_lost_hours} h</strong> sur <strong>{impactPreview.total_lost_sessions}</strong> créneau(x).
+                  </div>
 
-                      <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700 ring-1 ring-slate-200">
-                        <Clock3 className="h-3.5 w-3.5" />
-                        {daysLabel(item.requested_days)}
-                      </span>
+                  <div className="mt-3 space-y-3">
+                    {impactPreview.impacted_classes.map((cls) => (
+                      <div key={cls.class_id} className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div className="font-semibold text-slate-900">{cls.class_label}</div>
+                          <div className="text-sm text-slate-600">{cls.lost_hours} h perdues • {cls.lost_sessions} créneau(x)</div>
+                        </div>
 
-                      {item.signed ? (
-                        <span className="inline-flex items-center rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-800 ring-1 ring-emerald-200">
-                          Signée
-                        </span>
-                      ) : null}
-
-                      {typeof item.lost_hours_total === "number" ? (
-                        <span className="inline-flex items-center rounded-full bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-800 ring-1 ring-amber-200">
-                          {item.lost_hours_total} h à rattraper
-                        </span>
-                      ) : null}
-                    </div>
-
-                    <div className="mt-4 grid gap-3 text-sm text-slate-700 sm:grid-cols-2">
-                      <div className="rounded-2xl bg-white px-4 py-3">
-                        <div className="text-xs font-bold uppercase tracking-wide text-slate-500">
-                          Période
-                        </div>
-                        <div className="mt-1 font-semibold text-slate-900">
-                          {formatDate(item.start_date)} → {formatDate(item.end_date)}
-                        </div>
-                      </div>
-
-                      <div className="rounded-2xl bg-white px-4 py-3">
-                        <div className="text-xs font-bold uppercase tracking-wide text-slate-500">
-                          Motif
-                        </div>
-                        <div className="mt-1 font-semibold text-slate-900">
-                          {item.reason_label}
-                        </div>
-                      </div>
-
-                      <div className="rounded-2xl bg-white px-4 py-3 sm:col-span-2">
-                        <div className="text-xs font-bold uppercase tracking-wide text-slate-500">
-                          Détails
-                        </div>
-                        <div className="mt-1 leading-6 text-slate-700">
-                          {item.details}
-                        </div>
-                      </div>
-
-                      <div className="rounded-2xl bg-white px-4 py-3">
-                        <div className="text-xs font-bold uppercase tracking-wide text-slate-500">
-                          Créée le
-                        </div>
-                        <div className="mt-1 font-semibold text-slate-900">
-                          {formatDateTime(item.created_at)}
-                        </div>
-                      </div>
-
-                      <div className="rounded-2xl bg-white px-4 py-3">
-                        <div className="text-xs font-bold uppercase tracking-wide text-slate-500">
-                          Décision
-                        </div>
-                        <div className="mt-1 font-semibold text-slate-900">
-                          {item.status === "approved"
-                            ? formatDateTime(item.approved_at)
-                            : item.status === "rejected"
-                              ? formatDateTime(item.rejected_at)
-                              : "—"}
-                        </div>
-                      </div>
-                    </div>
-
-                    {item.impact_summary?.impacted_classes?.length ? (
-                      <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3">
-                        <div className="text-sm font-bold text-amber-900">
-                          Classes impactées
-                        </div>
-                        <div className="mt-2 space-y-3">
-                          {item.impact_summary.impacted_classes.map((cls) => (
+                        <div className="mt-2 space-y-2 text-sm text-slate-600">
+                          {cls.slots.map((slot, index) => (
                             <div
-                              key={cls.class_id}
-                              className="rounded-2xl bg-white px-4 py-3 text-sm text-slate-700"
+                              key={`${cls.class_id}_${slot.date}_${slot.period_id}_${index}`}
+                              className="rounded-xl bg-slate-50 px-3 py-2"
                             >
-                              <div className="flex flex-wrap items-center justify-between gap-2">
-                                <div className="font-semibold text-slate-900">
-                                  {cls.class_label}
-                                </div>
-                                <div className="text-slate-600">
-                                  {cls.lost_hours} h • {cls.lost_sessions} créneau(x)
-                                </div>
-                              </div>
+                              {formatDate(slot.date)} • {slot.subject_name} • {formatTimeRange(slot.start_time, slot.end_time, slot.period_label)}
                             </div>
                           ))}
                         </div>
                       </div>
-                    ) : null}
-
-                    {item.makeup_plan ? (
-                      <div className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-slate-700">
-                        <div className="font-bold text-emerald-900">
-                          Proposition de rattrapage
-                        </div>
-                        <div className="mt-2 rounded-2xl bg-white px-4 py-3">
-                          <div className="text-xs font-bold uppercase tracking-wide text-slate-500">
-                            Notes
-                          </div>
-                          <div className="mt-1 leading-6 text-slate-700">
-                            {item.makeup_plan.notes || "—"}
-                          </div>
-                        </div>
-                      </div>
-                    ) : null}
-
-                    {item.admin_comment ? (
-                      <div className="mt-4 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700">
-                        <div className="font-bold text-slate-900">
-                          Commentaire administratif
-                        </div>
-                        <div className="mt-1 leading-6">{item.admin_comment}</div>
-                      </div>
-                    ) : null}
-
-                    {item.status === "approved" ? (
-                      <div className="mt-4 flex flex-wrap items-center gap-3">
-                        <div className="inline-flex items-center gap-2 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
-                          <CheckCircle2 className="h-4 w-4" />
-                          Votre demande a été approuvée.
-                        </div>
-
-                        <button
-                          type="button"
-                          onClick={() => void handlePrintApprovedRequest(item)}
-                          disabled={printingId === item.id}
-                          className="inline-flex items-center justify-center gap-2 rounded-2xl bg-slate-950 px-4 py-3 text-sm font-bold text-white shadow-sm transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-70"
-                        >
-                          {printingId === item.id ? (
-                            <Loader2 className="h-4 w-4 animate-spin" />
-                          ) : (
-                            <Printer className="h-4 w-4" />
-                          )}
-                          Imprimer la demande approuvée
-                        </button>
-                      </div>
-                    ) : null}
-
-                    {item.status === "rejected" ? (
-                      <div className="mt-4 inline-flex items-center gap-2 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900">
-                        <XCircle className="h-4 w-4" />
-                        Votre demande a été rejetée.
-                      </div>
-                    ) : null}
-                  </article>
-                ))
+                    ))}
+                  </div>
+                </>
               )}
             </div>
-          ) : (
-            <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4 text-sm text-slate-500">
-              Historique masqué.
+
+            <div className="mt-4">
+              <label className="mb-2 block text-sm font-semibold text-slate-800">Motif</label>
+              <select
+                value={form.reason_code}
+                onChange={(e) => setForm((prev) => ({ ...prev, reason_code: e.target.value }))}
+                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none focus:border-emerald-400 focus:ring-4 focus:ring-emerald-500/15"
+              >
+                {REASON_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
             </div>
-          )}
+
+            <div className="mt-4">
+              <label className="mb-2 block text-sm font-semibold text-slate-800">Détails</label>
+              <textarea
+                rows={5}
+                value={form.details}
+                onChange={(e) => setForm((prev) => ({ ...prev, details: e.target.value }))}
+                placeholder="Expliquez brièvement le motif de la demande..."
+                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none focus:border-emerald-400 focus:ring-4 focus:ring-emerald-500/15"
+              />
+            </div>
+
+            <div className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
+              <div className="text-sm font-bold text-emerald-900">Quand comptez-vous rattraper ces heures ?</div>
+
+              <div className="mt-4">
+                <label className="mb-2 block text-sm font-semibold text-slate-800">
+                  Jours, heures et classes de rattrapage
+                </label>
+                <textarea
+                  rows={5}
+                  value={form.makeup_notes}
+                  onChange={(e) => setForm((prev) => ({ ...prev, makeup_notes: e.target.value }))}
+                  placeholder="Ex. 6e1 : mardi 28/04 de 07:10 à 08:05 ; 6e2 : jeudi 30/04 de 10:15 à 11:10 ; 5e3 : vendredi 01/05 de 08:05 à 09:00."
+                  className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none focus:border-emerald-400 focus:ring-4 focus:ring-emerald-500/15"
+                />
+              </div>
+            </div>
+
+            <label className="mt-4 flex items-start gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+              <input
+                type="checkbox"
+                checked={form.signed}
+                onChange={(e) => setForm((prev) => ({ ...prev, signed: e.target.checked }))}
+                className="mt-1 h-4 w-4 rounded border-slate-300 text-emerald-700 focus:ring-emerald-500"
+              />
+              <span className="text-sm text-slate-700">
+                J’atteste cette demande et j’autorise l’utilisation de ma signature électronique si elle est enregistrée.
+              </span>
+            </label>
+
+            <div className="mt-5">
+              <button
+                type="submit"
+                disabled={submitting}
+                className="inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-700 px-5 py-3 text-sm font-bold text-white shadow-sm transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-70"
+              >
+                {submitting ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Send className="h-4 w-4" />
+                )}
+                Soumettre la demande
+              </button>
+            </div>
+          </form>
+
+          <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2 text-sm font-black uppercase tracking-[0.16em] text-slate-700">
+                <CalendarDays className="h-4 w-4 text-emerald-600" />
+                Historique
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setHistoryOpen((v) => !v)}
+                className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                aria-expanded={historyOpen}
+              >
+                {historyOpen ? (
+                  <>
+                    <ChevronDown className="h-4 w-4" />
+                    Masquer
+                  </>
+                ) : (
+                  <>
+                    <ChevronRight className="h-4 w-4" />
+                    Déplier
+                  </>
+                )}
+              </button>
+            </div>
+
+            {error ? (
+              <div className="mt-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900">
+                {error}
+              </div>
+            ) : null}
+
+            {success ? (
+              <div className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
+                {success}
+              </div>
+            ) : null}
+
+            {historyOpen ? (
+              <div className="mt-4 space-y-4">
+                {loading ? (
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 px-5 py-10">
+                    <div className="flex items-center justify-center gap-3 text-slate-600">
+                      <Loader2 className="h-5 w-5 animate-spin" />
+                      Chargement des demandes...
+                    </div>
+                  </div>
+                ) : items.length === 0 ? (
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 px-5 py-10 text-center">
+                    <FileText className="mx-auto h-10 w-10 text-slate-300" />
+                    <div className="mt-3 text-lg font-bold text-slate-900">Aucune demande pour le moment</div>
+                    <p className="mt-1 text-sm text-slate-500">Vos prochaines demandes apparaîtront ici.</p>
+                  </div>
+                ) : (
+                  items.map((item) => {
+                    const teacherDisplayName = resolveTeacherDisplayName(item, viewerProfile);
+                    const teacherSignatureSrc = resolveTeacherSignatureSrc(item, viewerProfile);
+                    const teacherInitials = initialsFromName(teacherDisplayName);
+
+                    return (
+                      <article
+                        key={item.id}
+                        className="rounded-3xl border border-slate-200 bg-slate-50 p-5 shadow-sm"
+                      >
+                        <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-start gap-4">
+                              <div className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+                                {teacherSignatureSrc ? (
+                                  <SignatureInk
+                                    src={teacherSignatureSrc}
+                                    alt={`Signature de ${teacherDisplayName}`}
+                                    className="h-full w-full object-contain p-2"
+                                  />
+                                ) : (
+                                  <span className="text-sm font-black uppercase text-slate-500">
+                                    {teacherInitials}
+                                  </span>
+                                )}
+                              </div>
+
+                              <div className="min-w-0 flex-1">
+                                <div className="text-xs font-bold uppercase tracking-[0.18em] text-slate-500">
+                                  Demande de l’enseignant
+                                </div>
+
+                                <div className="mt-1 text-lg font-extrabold text-slate-950">
+                                  {teacherDisplayName}
+                                </div>
+
+                                <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-slate-600">
+                                  <span>
+                                    {formatDate(item.start_date)} → {formatDate(item.end_date)}
+                                  </span>
+                                  <span className="text-slate-300">•</span>
+                                  <span>{item.reason_label}</span>
+                                </div>
+
+                                <div className="mt-3 flex flex-wrap items-center gap-2">
+                                  {teacherSignatureSrc ? (
+                                    <span className="inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-800">
+                                      <CheckCircle2 className="h-3.5 w-3.5" />
+                                      Signature de l’enseignant disponible
+                                    </span>
+                                  ) : (
+                                    <span className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-600">
+                                      <XCircle className="h-3.5 w-3.5" />
+                                      Signature non disponible
+                                    </span>
+                                  )}
+
+                                  {item.signed ? (
+                                    <span className="inline-flex items-center rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-800 ring-1 ring-emerald-200">
+                                      Demande signée
+                                    </span>
+                                  ) : null}
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span
+                              className={classNames(
+                                "inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold ring-1",
+                                statusClasses(item.status)
+                              )}
+                            >
+                              {statusLabel(item.status)}
+                            </span>
+
+                            <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700 ring-1 ring-slate-200">
+                              <Clock3 className="h-3.5 w-3.5" />
+                              {daysLabel(item.requested_days)}
+                            </span>
+
+                            {typeof item.lost_hours_total === "number" ? (
+                              <span className="inline-flex items-center rounded-full bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-800 ring-1 ring-amber-200">
+                                {item.lost_hours_total} h à rattraper
+                              </span>
+                            ) : null}
+                          </div>
+                        </div>
+
+                        <div className="mt-4 grid gap-3 text-sm text-slate-700 sm:grid-cols-2">
+                          <div className="rounded-2xl bg-white px-4 py-3">
+                            <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Enseignant</div>
+                            <div className="mt-1 font-semibold text-slate-900">{teacherDisplayName}</div>
+                          </div>
+
+                          <div className="rounded-2xl bg-white px-4 py-3">
+                            <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Signature</div>
+                            <div className="mt-1 font-semibold text-slate-900">
+                              {teacherSignatureSrc
+                                ? "Disponible"
+                                : item.signed
+                                  ? "Demandée mais indisponible"
+                                  : "Non jointe"}
+                            </div>
+                          </div>
+
+                          <div className="rounded-2xl bg-white px-4 py-3">
+                            <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Période</div>
+                            <div className="mt-1 font-semibold text-slate-900">
+                              {formatDate(item.start_date)} → {formatDate(item.end_date)}
+                            </div>
+                          </div>
+
+                          <div className="rounded-2xl bg-white px-4 py-3">
+                            <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Motif</div>
+                            <div className="mt-1 font-semibold text-slate-900">{item.reason_label}</div>
+                          </div>
+
+                          <div className="rounded-2xl bg-white px-4 py-3 sm:col-span-2">
+                            <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Détails</div>
+                            <div className="mt-1 leading-6 text-slate-700">{item.details}</div>
+                          </div>
+
+                          <div className="rounded-2xl bg-white px-4 py-3">
+                            <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Créée le</div>
+                            <div className="mt-1 font-semibold text-slate-900">{formatDateTime(item.created_at)}</div>
+                          </div>
+
+                          <div className="rounded-2xl bg-white px-4 py-3">
+                            <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Décision</div>
+                            <div className="mt-1 font-semibold text-slate-900">
+                              {item.status === "approved"
+                                ? formatDateTime(item.approved_at)
+                                : item.status === "rejected"
+                                  ? formatDateTime(item.rejected_at)
+                                  : "—"}
+                            </div>
+                          </div>
+                        </div>
+
+                        {item.impact_summary?.impacted_classes?.length ? (
+                          <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3">
+                            <div className="text-sm font-bold text-amber-900">Classes impactées</div>
+                            <div className="mt-2 space-y-3">
+                              {item.impact_summary.impacted_classes.map((cls) => (
+                                <div
+                                  key={cls.class_id}
+                                  className="rounded-2xl bg-white px-4 py-3 text-sm text-slate-700"
+                                >
+                                  <div className="flex flex-wrap items-center justify-between gap-2">
+                                    <div className="font-semibold text-slate-900">{cls.class_label}</div>
+                                    <div className="text-slate-600">
+                                      {cls.lost_hours} h • {cls.lost_sessions} créneau(x)
+                                    </div>
+                                  </div>
+
+                                  {cls.slots?.length ? (
+                                    <div className="mt-2 space-y-2">
+                                      {cls.slots.map((slot, index) => (
+                                        <div
+                                          key={`${cls.class_id}_${slot.date}_${slot.period_id}_${index}`}
+                                          className="rounded-xl bg-slate-50 px-3 py-2"
+                                        >
+                                          {formatDate(slot.date)} • {slot.subject_name} • {formatTimeRange(
+                                            slot.start_time,
+                                            slot.end_time,
+                                            slot.period_label
+                                          )}
+                                        </div>
+                                      ))}
+                                    </div>
+                                  ) : null}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        ) : null}
+
+                        {item.makeup_plan ? (
+                          <div className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-slate-700">
+                            <div className="font-bold text-emerald-900">Proposition de rattrapage</div>
+                            <div className="mt-2 rounded-2xl bg-white px-4 py-3">
+                              <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Notes</div>
+                              <div className="mt-1 leading-6 text-slate-700">{item.makeup_plan.notes || "—"}</div>
+                            </div>
+                          </div>
+                        ) : null}
+
+                        {item.admin_comment ? (
+                          <div className="mt-4 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700">
+                            <div className="font-bold text-slate-900">Commentaire administratif</div>
+                            <div className="mt-1 leading-6">{item.admin_comment}</div>
+                          </div>
+                        ) : null}
+
+                        {item.status === "approved" ? (
+                          <div className="mt-4 flex flex-wrap items-center gap-3">
+                            <div className="inline-flex items-center gap-2 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
+                              <CheckCircle2 className="h-4 w-4" />
+                              Votre demande a été approuvée.
+                            </div>
+
+                            <button
+                              type="button"
+                              onClick={() => void handlePrintApprovedRequest(item)}
+                              disabled={printingId === item.id}
+                              className="inline-flex items-center justify-center gap-2 rounded-2xl bg-slate-950 px-4 py-3 text-sm font-bold text-white shadow-sm transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-70"
+                            >
+                              {printingId === item.id ? (
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                              ) : (
+                                <Printer className="h-4 w-4" />
+                              )}
+                              Imprimer la demande approuvée
+                            </button>
+                          </div>
+                        ) : null}
+
+                        {item.status === "rejected" ? (
+                          <div className="mt-4 inline-flex items-center gap-2 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900">
+                            <XCircle className="h-4 w-4" />
+                            Votre demande a été rejetée.
+                          </div>
+                        ) : null}
+                      </article>
+                    );
+                  })
+                )}
+              </div>
+            ) : (
+              <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 px-5 py-6 text-center text-sm text-slate-500">
+                Historique masqué.
+              </div>
+            )}
+          </section>
         </section>
-      </section>
+      </main>
 
       {printPreviewItem ? (
         <div className="absence-print-overlay screen-only">
@@ -1988,118 +2010,77 @@ export default function EnseignantAutorisationAbsencePage() {
       ) : null}
 
       <style jsx global>{`
-        .sig-img {
-          display: block;
-          background: transparent !important;
-          opacity: 1 !important;
-        }
-
         .absence-print-overlay {
           position: fixed;
           inset: 0;
-          z-index: 120;
-          background: rgba(15, 23, 42, 0.72);
-          backdrop-filter: blur(10px);
+          z-index: 70;
+          background: rgba(15, 23, 42, 0.56);
+          backdrop-filter: blur(8px);
           display: flex;
           flex-direction: column;
-          padding: 16px;
         }
 
         .absence-print-toolbar {
-          width: min(1200px, 100%);
-          margin: 0 auto 14px;
-          border-radius: 26px;
-          background: rgba(255, 255, 255, 0.96);
-          border: 1px solid rgba(226, 232, 240, 0.9);
-          padding: 16px 18px;
-          box-shadow: 0 24px 80px rgba(15, 23, 42, 0.22);
           display: flex;
-          align-items: center;
           justify-content: space-between;
-          gap: 14px;
+          align-items: flex-start;
+          gap: 16px;
+          padding: 16px 20px;
+          background: rgba(255, 255, 255, 0.96);
+          border-bottom: 1px solid rgba(148, 163, 184, 0.25);
         }
 
         .absence-print-preview-shell {
           flex: 1;
-          min-height: 0;
           overflow: auto;
-          border-radius: 28px;
-          background: linear-gradient(180deg, #e2e8f0 0%, #cbd5e1 100%);
-          padding: 18px;
-          box-shadow: inset 0 1px 0 rgba(255,255,255,0.55);
+          padding: 24px;
         }
 
         .absence-preview-overlay {
-          width: max-content;
-          min-width: 100%;
+          width: fit-content;
           margin: 0 auto;
-          padding: 18px 0 24px;
-        }
-
-        .absence-print-sheet-wrap {
-          width: 210mm;
-          margin: 0 auto;
-        }
-
-        .absence-print-page {
-          width: 210mm;
-          min-height: 297mm;
-          margin: 0 auto;
-          padding: 8mm;
-          box-sizing: border-box;
-          font-family: Arial, Helvetica, sans-serif;
-          background: #fff;
-          color: #0f172a;
-          box-shadow: 0 18px 60px rgba(15, 23, 42, 0.18);
-          border-radius: 22px;
-          overflow: hidden;
+          transform: scale(var(--preview-zoom, 1));
           transform-origin: top center;
         }
 
-        .absence-preview-overlay .absence-print-page {
-          width: 202mm;
-          min-height: 289mm;
-          padding: 2mm 6mm;
+        .absence-print-sheet-wrap {
+          width: 794px;
         }
 
-        @supports (zoom: 1) {
-          .absence-preview-overlay .absence-print-page {
-            zoom: var(--preview-zoom, 1);
-          }
-        }
-
-        @supports not (zoom: 1) {
-          .absence-preview-overlay .absence-print-page {
-            transform: scale(var(--preview-zoom, 1));
-            transform-origin: top center;
-          }
+        .absence-print-page {
+          width: 794px;
+          min-height: 1122px;
+          background: #ffffff;
+          color: #0f172a;
+          box-shadow: 0 20px 60px rgba(15, 23, 42, 0.18);
+          padding: 28px;
+          position: relative;
         }
 
         .absence-print-topbar {
           height: 8px;
-          margin: -8mm -8mm 0;
-          background: linear-gradient(90deg, #0f172a, #065f46);
+          border-radius: 999px;
+          background: linear-gradient(90deg, #0f172a 0%, #065f46 100%);
+          margin-bottom: 22px;
         }
 
         .absence-print-header {
           display: grid;
-          grid-template-columns: 78px 1fr;
-          gap: 14px;
+          grid-template-columns: 90px minmax(0, 1fr);
+          gap: 16px;
           align-items: center;
-          border-bottom: 2px solid #e2e8f0;
-          padding: 12px 0 12px;
         }
 
         .absence-logo-box {
-          width: 78px;
-          height: 78px;
+          width: 90px;
+          height: 90px;
           border: 1px solid #cbd5e1;
-          border-radius: 18px;
+          border-radius: 20px;
+          background: #fff;
           display: flex;
           align-items: center;
           justify-content: center;
           overflow: hidden;
-          background: #fff;
         }
 
         .absence-logo-img {
@@ -2111,75 +2092,76 @@ export default function EnseignantAutorisationAbsencePage() {
         .absence-logo-fallback {
           font-size: 11px;
           color: #64748b;
+          line-height: 1.25;
           text-align: center;
-          padding: 8px;
-          line-height: 1.4;
+          font-weight: 700;
         }
 
         .absence-doc-kicker {
-          font-size: 10px;
+          font-size: 11px;
           font-weight: 900;
+          letter-spacing: 0.2em;
           text-transform: uppercase;
-          letter-spacing: 0.14em;
           color: #64748b;
-          margin-bottom: 4px;
         }
 
         .absence-inst-name {
-          font-size: 20px;
-          line-height: 1.1;
+          margin-top: 6px;
+          font-size: 28px;
+          line-height: 1.05;
           font-weight: 900;
           color: #0f172a;
         }
 
         .absence-inst-meta {
-          margin-top: 4px;
-          font-size: 11px;
+          margin-top: 7px;
+          font-size: 12px;
+          line-height: 1.5;
           color: #475569;
-          line-height: 1.6;
         }
 
         .absence-approved-banner {
-          margin-top: 12px;
-          border: 2px solid #22c55e;
-          background: #f0fdf4;
-          color: #166534;
-          border-radius: 18px;
-          text-align: center;
-          padding: 14px 16px;
+          margin-top: 24px;
+          border: 1px solid #bbf7d0;
+          background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%);
+          border-radius: 24px;
+          padding: 18px 20px;
         }
 
         .absence-approved-big {
-          font-size: 18px;
+          font-size: 22px;
+          line-height: 1.1;
           font-weight: 900;
-          letter-spacing: 0.04em;
+          color: #14532d;
+          letter-spacing: 0.03em;
         }
 
         .absence-approved-small {
-          margin-top: 4px;
+          margin-top: 6px;
           font-size: 12px;
-          font-weight: 700;
+          color: #166534;
+          font-weight: 600;
         }
 
         .absence-doc-title {
-          margin-top: 12px;
-          font-size: 16px;
-          font-weight: 800;
+          margin-top: 20px;
+          font-size: 20px;
+          font-weight: 900;
           color: #0f172a;
         }
 
         .absence-grid {
-          margin-top: 10px;
+          margin-top: 16px;
           display: grid;
-          grid-template-columns: 1fr 1fr;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
           gap: 12px;
         }
 
         .absence-card {
           border: 1px solid #e2e8f0;
-          border-radius: 14px;
-          padding: 10px 12px;
-          background: #ffffff;
+          border-radius: 18px;
+          background: #fff;
+          padding: 14px 16px;
         }
 
         .absence-card-full {
@@ -2187,19 +2169,19 @@ export default function EnseignantAutorisationAbsencePage() {
         }
 
         .absence-label {
-          font-size: 11px;
-          font-weight: 800;
-          letter-spacing: 0.06em;
-          color: #64748b;
+          font-size: 10px;
+          font-weight: 900;
+          letter-spacing: 0.16em;
           text-transform: uppercase;
+          color: #64748b;
         }
 
         .absence-value {
-          margin-top: 4px;
-          font-size: 13px;
-          font-weight: 700;
+          margin-top: 7px;
+          font-size: 15px;
+          line-height: 1.4;
+          font-weight: 800;
           color: #0f172a;
-          line-height: 1.55;
         }
 
         .absence-value-normal {
@@ -2207,242 +2189,223 @@ export default function EnseignantAutorisationAbsencePage() {
         }
 
         .absence-impact-section {
-          margin-top: 12px;
+          margin-top: 18px;
           border: 1px solid #fde68a;
+          border-radius: 22px;
           background: #fffbeb;
-          border-radius: 18px;
-          padding: 14px;
+          padding: 16px;
         }
 
         .absence-impact-title {
           font-size: 13px;
-          font-weight: 800;
+          font-weight: 900;
           color: #92400e;
-          margin-bottom: 10px;
+          text-transform: uppercase;
+          letter-spacing: 0.12em;
         }
 
         .absence-impact-card {
-          border: 1px solid #e2e8f0;
-          background: #ffffff;
-          border-radius: 12px;
-          padding: 8px 10px;
+          border: 1px solid #fcd34d;
+          background: #fff;
+          border-radius: 16px;
+          padding: 12px 14px;
         }
 
         .absence-impact-head {
           display: flex;
           justify-content: space-between;
-          gap: 10px;
           align-items: center;
+          gap: 12px;
           font-size: 13px;
-          color: #0f172a;
+          color: #78350f;
         }
 
         .absence-impact-slots {
           margin-top: 8px;
+          display: grid;
+          gap: 8px;
         }
 
         .absence-impact-slot {
-          font-size: 11px;
-          color: #334155;
+          border-radius: 12px;
           background: #f8fafc;
-          border-radius: 10px;
-          padding: 7px 9px;
-          margin-top: 6px;
+          padding: 8px 10px;
+          font-size: 12px;
+          color: #334155;
         }
 
         .absence-empty-box {
-          border: 1px dashed #cbd5e1;
-          border-radius: 12px;
-          padding: 12px;
+          border-radius: 14px;
+          background: rgba(255, 255, 255, 0.85);
+          padding: 12px 14px;
+          color: #6b7280;
           font-size: 12px;
-          color: #64748b;
-          background: #ffffff;
         }
 
         .absence-signature-grid {
-          margin-top: 14px;
+          margin-top: 18px;
           display: grid;
-          grid-template-columns: 1fr 1fr;
-          gap: 12px;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 14px;
         }
 
         .absence-signature-card {
           border: 1px solid #dbeafe;
-          border-radius: 16px;
-          background: #f8fafc;
-          padding: 12px;
-          min-height: 154px;
+          border-radius: 22px;
+          background: #eff6ff;
+          padding: 16px;
+          position: relative;
+          overflow: hidden;
         }
 
         .absence-signature-card-admin {
-          border-color: #cbd5e1;
-          background: linear-gradient(180deg, #f8fafc 0%, #eef2ff 100%);
+          border-color: #c7d2fe;
+          background: #eef2ff;
         }
 
         .absence-signature-head {
-          font-size: 12px;
-          font-weight: 800;
-          color: #0f172a;
-          margin-bottom: 10px;
+          font-size: 11px;
+          font-weight: 900;
+          color: #1e3a8a;
+          letter-spacing: 0.14em;
+          text-transform: uppercase;
         }
 
         .absence-signature-role {
+          margin-top: 10px;
           font-size: 11px;
-          color: #64748b;
-          text-transform: uppercase;
-          letter-spacing: 0.06em;
-          font-weight: 800;
+          color: #475569;
+          font-weight: 700;
         }
 
         .absence-signature-name {
-          margin-top: 3px;
-          font-size: 14px;
-          font-weight: 800;
-          color: #0f172a;
-        }
-
-        .absence-approval-stamp {
-          display: inline-flex;
-          align-items: center;
-          justify-content: center;
-          margin: 2px 0 8px;
-          padding: 6px 10px;
-          border-radius: 12px;
-          background: #0f172a;
-          color: #ffffff;
-          font-size: 15px;
+          margin-top: 4px;
+          font-size: 18px;
           font-weight: 900;
-          letter-spacing: 0.08em;
-          text-transform: uppercase;
+          color: #0f172a;
+          line-height: 1.2;
         }
 
         .absence-signature-box {
-          height: 62px;
-          margin-top: 10px;
-          border-bottom: 2px solid #94a3b8;
+          margin-top: 14px;
+          min-height: 120px;
+          border: 1px dashed #94a3b8;
+          border-radius: 18px;
+          background: rgba(255, 255, 255, 0.9);
           display: flex;
-          align-items: flex-end;
+          align-items: center;
           justify-content: center;
-          overflow: hidden;
-          padding-bottom: 8px;
+          padding: 10px;
         }
 
-        .absence-signature-img {
-          max-height: 52px !important;
-          max-width: 100% !important;
-          object-fit: contain !important;
+        .absence-signature-box-admin {
+          min-height: 140px;
+        }
+
+        .absence-signature-img,
+        .sig-img {
+          max-width: 100%;
+          max-height: 100px;
+          object-fit: contain;
         }
 
         .absence-signature-placeholder {
-          font-size: 13px;
+          font-size: 12px;
+          line-height: 1.5;
+          text-align: center;
           color: #64748b;
-          font-style: italic;
+          font-weight: 600;
+        }
+
+        .absence-approval-stamp {
+          position: absolute;
+          right: 14px;
+          top: 14px;
+          border: 2px solid rgba(22, 101, 52, 0.25);
+          color: #166534;
+          background: rgba(255, 255, 255, 0.8);
+          border-radius: 999px;
+          padding: 5px 10px;
+          font-size: 10px;
+          font-weight: 900;
+          letter-spacing: 0.12em;
+          text-transform: uppercase;
+          transform: rotate(-6deg);
         }
 
         .absence-foot {
-          margin-top: 12px;
+          margin-top: 18px;
+          padding-top: 14px;
+          border-top: 1px solid #e2e8f0;
           display: flex;
           justify-content: space-between;
-          gap: 12px;
-          align-items: flex-end;
-          border-top: 1px solid #e2e8f0;
-          padding-top: 12px;
+          gap: 16px;
           font-size: 12px;
           color: #475569;
         }
 
-        .absence-foot strong {
-          color: #0f172a;
-        }
-
-        @media (max-width: 920px) {
-          .absence-print-overlay {
-            padding: 10px;
-          }
-
+        @media (max-width: 900px) {
           .absence-print-toolbar {
             flex-direction: column;
-            align-items: stretch;
           }
         }
 
-        @media (max-width: 760px) {
-          .absence-print-overlay {
-            padding: 8px;
+        @media (max-width: 768px) {
+          .absence-grid,
+          .absence-signature-grid {
+            grid-template-columns: 1fr;
           }
 
-          .absence-print-toolbar {
-            border-radius: 22px;
-            padding: 14px;
+          .absence-print-preview-shell {
+            padding: 12px;
           }
         }
 
         @media print {
-          @page {
-            size: A4 portrait;
-            margin: 4mm;
-          }
-
-          html,
-          body {
-            background: #fff !important;
-            -webkit-print-color-adjust: exact;
-            print-color-adjust: exact;
-          }
-
-          body.absence-print-open * {
-            visibility: hidden !important;
-          }
-
-          body.absence-print-open .absence-print-sheet-wrap,
-          body.absence-print-open .absence-print-sheet-wrap * {
-            visibility: visible !important;
+          body.absence-print-open main,
+          body.absence-print-open .screen-only:not(.absence-print-overlay) {
+            display: none !important;
           }
 
           body.absence-print-open .absence-print-overlay {
             position: static !important;
             inset: auto !important;
-            display: block !important;
-            background: #fff !important;
-            padding: 0 !important;
+            background: transparent !important;
             backdrop-filter: none !important;
+            display: block !important;
           }
 
           body.absence-print-open .absence-print-toolbar {
             display: none !important;
           }
 
-          body.absence-print-open .absence-print-preview-shell,
-          body.absence-print-open .absence-preview-overlay {
-            overflow: visible !important;
-            background: #fff !important;
+          body.absence-print-open .absence-print-preview-shell {
             padding: 0 !important;
-            box-shadow: none !important;
-            min-height: auto !important;
+            overflow: visible !important;
           }
 
-          body.absence-print-open .absence-print-sheet-wrap {
-            position: absolute !important;
-            left: 0 !important;
-            top: 0 !important;
-            width: 100% !important;
+          body.absence-print-open .absence-preview-overlay {
+            transform: none !important;
             margin: 0 !important;
           }
 
+          body.absence-print-open .absence-print-sheet-wrap {
+            width: auto !important;
+          }
+
           body.absence-print-open .absence-print-page {
-            width: 202mm !important;
-            min-height: 289mm !important;
-            max-height: 289mm !important;
-            overflow: hidden !important;
-            padding: 2mm 6mm !important;
-            margin: 0 auto !important;
-            border-radius: 0 !important;
+            width: 210mm !important;
+            min-height: 297mm !important;
             box-shadow: none !important;
-            zoom: var(--print-fit-scale, 1) !important;
-            transform: none !important;
+            margin: 0 !important;
+            padding: 10mm 10mm 12mm 10mm !important;
+            transform: scale(var(--print-fit-scale, 1));
+            transform-origin: top center;
+            page-break-after: avoid;
+            break-after: avoid-page;
           }
         }
       `}</style>
-    </main>
+    </>
   );
 }

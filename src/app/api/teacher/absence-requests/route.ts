@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
+import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 type AbsenceReasonCode =
   | "maladie"
@@ -20,8 +25,46 @@ type BodyPayload = {
   source?: string;
 };
 
+type ActorContext = {
+  userId: string;
+  profileId: string;
+  institutionId: string;
+  displayName: string | null;
+};
+
+type AbsenceRequestRow = {
+  id: string;
+  institution_id: string;
+  teacher_user_id: string;
+  teacher_profile_id: string;
+  start_date: string;
+  end_date: string;
+  reason_code: string;
+  reason_label: string;
+  details: string;
+  requested_days: number;
+  signed: boolean;
+  source: string;
+  status: "pending" | "approved" | "rejected" | "cancelled" | string;
+  admin_comment: string | null;
+  approved_at: string | null;
+  approved_by: string | null;
+  rejected_at: string | null;
+  rejected_by: string | null;
+  created_at: string;
+  updated_at?: string | null;
+  lost_hours_total?: number | null;
+  lost_sessions_total?: number | null;
+  impact_summary?: unknown;
+  makeup_plan?: unknown;
+};
+
 function isValidDateOnly(v: string) {
   return /^\d{4}-\d{2}-\d{2}$/.test(v);
+}
+
+function isUuid(v: string | null | undefined) {
+  return !!v && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
 }
 
 function normalizeText(v: unknown) {
@@ -54,12 +97,16 @@ function safeReasonLabel(code: string) {
   }
 }
 
-type ActorContext = {
-  userId: string;
-  profileId: string;
-  institutionId: string;
-  displayName: string | null;
-};
+async function blobToPngDataUrl(blob: Blob | null | undefined): Promise<string | null> {
+  try {
+    if (!blob || typeof blob.arrayBuffer !== "function") return null;
+    const ab = await blob.arrayBuffer();
+    const b64 = Buffer.from(ab).toString("base64");
+    return b64 ? `data:image/png;base64,${b64}` : null;
+  } catch {
+    return null;
+  }
+}
 
 async function resolveTeacherContext() {
   const supabase = await getSupabaseServerClient();
@@ -115,9 +162,7 @@ async function resolveTeacherContext() {
   }
 
   const roleValues = (roles ?? []).map((r) => String(r.role ?? "").toLowerCase());
-  const allowed = roleValues.includes("teacher");
-
-  if (!allowed) {
+  if (!roleValues.includes("teacher")) {
     return {
       ok: false as const,
       status: 403,
@@ -141,13 +186,11 @@ export async function GET() {
   const ctx = await resolveTeacherContext();
 
   if (!ctx.ok) {
-    return NextResponse.json(
-      { ok: false, error: ctx.error },
-      { status: ctx.status }
-    );
+    return NextResponse.json({ ok: false, error: ctx.error }, { status: ctx.status });
   }
 
   const { supabase, actor } = ctx;
+  const srv = getSupabaseServiceClient() as unknown as SupabaseClient;
 
   const { data, error } = await supabase
     .from("teacher_absence_requests")
@@ -171,7 +214,11 @@ export async function GET() {
       rejected_at,
       rejected_by,
       created_at,
-      updated_at
+      updated_at,
+      lost_hours_total,
+      lost_sessions_total,
+      impact_summary,
+      makeup_plan
     `)
     .eq("institution_id", actor.institutionId)
     .eq("teacher_profile_id", actor.profileId)
@@ -184,24 +231,70 @@ export async function GET() {
     );
   }
 
-  return NextResponse.json({
-    ok: true,
-    items: data ?? [],
-  });
+  const rows = ((data ?? []) as AbsenceRequestRow[]).map((row) => ({ ...row }));
+
+  const relatedProfileIds = Array.from(
+    new Set(
+      rows
+        .flatMap((row) => [row.approved_by, row.rejected_by])
+        .filter((id): id is string => isUuid(id))
+    )
+  );
+
+  const profileNameById = new Map<string, string>();
+  if (relatedProfileIds.length) {
+    const { data: profiles } = await supabase
+      .from("profiles")
+      .select("id, display_name")
+      .in("id", relatedProfileIds);
+
+    for (const p of (profiles ?? []) as Array<{ id: string; display_name?: string | null }>) {
+      if (p?.id) profileNameById.set(String(p.id), String(p.display_name ?? "").trim());
+    }
+  }
+
+  let teacherSignatureStoragePath: string | null = null;
+  let teacherSignaturePng: string | null = null;
+
+  const { data: teacherSignatureRow } = await srv
+    .from("teacher_signatures")
+    .select("storage_path")
+    .eq("institution_id", actor.institutionId)
+    .eq("teacher_id", actor.profileId)
+    .maybeSingle();
+
+  teacherSignatureStoragePath = String((teacherSignatureRow as any)?.storage_path ?? "") || null;
+
+  if (teacherSignatureStoragePath) {
+    const { data: sigBlob, error: sigError } = await srv.storage
+      .from("signatures")
+      .download(teacherSignatureStoragePath);
+
+    if (!sigError && sigBlob) {
+      teacherSignaturePng = await blobToPngDataUrl(sigBlob as Blob);
+    }
+  }
+
+  const items = rows.map((row) => ({
+    ...row,
+    teacher_name: actor.displayName ?? null,
+    teacher_signature_storage_path: teacherSignatureStoragePath,
+    teacher_signature_png: teacherSignaturePng,
+    approved_by_name: row.approved_by ? profileNameById.get(row.approved_by) ?? null : null,
+    rejected_by_name: row.rejected_by ? profileNameById.get(row.rejected_by) ?? null : null,
+  }));
+
+  return NextResponse.json({ ok: true, items });
 }
 
 export async function POST(req: NextRequest) {
   const ctx = await resolveTeacherContext();
 
   if (!ctx.ok) {
-    return NextResponse.json(
-      { ok: false, error: ctx.error },
-      { status: ctx.status }
-    );
+    return NextResponse.json({ ok: false, error: ctx.error }, { status: ctx.status });
   }
 
   const { supabase, actor } = ctx;
-
   const body = (await req.json().catch(() => null)) as BodyPayload | null;
 
   if (!body) {
