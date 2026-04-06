@@ -64,6 +64,17 @@ type InstitutionSettings = {
   institution_head_title?: string | null;
 };
 
+type ViewerProfile = {
+  full_name?: string | null;
+  display_name?: string | null;
+  first_name?: string | null;
+  last_name?: string | null;
+  signature_url?: string | null;
+  signature_png?: string | null;
+  institution_name?: string | null;
+  institution_logo_url?: string | null;
+};
+
 type TeacherAbsenceRequestItem = {
   id: string;
   institution_id: string;
@@ -191,6 +202,194 @@ function daysLabel(n: number) {
   return n <= 1 ? "1 jour" : `${n} jours`;
 }
 
+function getDeep(obj: any, path: string) {
+  if (!obj || !path) return undefined;
+  return path.split(".").reduce<any>((acc, key) => (acc == null ? undefined : acc[key]), obj);
+}
+
+function firstString(obj: any, paths: string[], fallback = "") {
+  for (const path of paths) {
+    const raw = getDeep(obj, path);
+    if (typeof raw === "string" && raw.trim()) return raw.trim();
+  }
+  return fallback;
+}
+
+function firstObject<T = any>(obj: any, paths: string[]): T | null {
+  for (const path of paths) {
+    const raw = getDeep(obj, path);
+    if (raw && typeof raw === "object") return raw as T;
+  }
+  return null;
+}
+
+function normalizeInstitutionPayload(payload: any): InstitutionSettings | null {
+  if (!payload || typeof payload !== "object") return null;
+  const data =
+    firstObject<any>(payload, ["institution", "settings", "data", "item"]) || payload;
+
+  const institution_name = firstString(data, [
+    "institution_name",
+    "institutionName",
+    "name",
+    "institution.name",
+    "school_name",
+    "school.name",
+  ]);
+
+  const institution_logo_url = firstString(data, [
+    "institution_logo_url",
+    "institutionLogoUrl",
+    "logo_url",
+    "logoUrl",
+    "institution.logo_url",
+    "institution.logoUrl",
+    "school.logo_url",
+    "school.logoUrl",
+  ]);
+
+  const institution_phone = firstString(data, ["institution_phone", "phone", "phone_number"]);
+  const institution_email = firstString(data, ["institution_email", "email"]);
+  const institution_region = firstString(data, ["institution_region", "region", "city"]);
+  const institution_postal_address = firstString(data, [
+    "institution_postal_address",
+    "postal_address",
+    "address",
+  ]);
+  const institution_status = firstString(data, ["institution_status", "status"]);
+  const institution_head_name = firstString(data, [
+    "institution_head_name",
+    "institutionHeadName",
+    "head_name",
+    "headName",
+    "principal_name",
+    "director_name",
+  ]);
+  const institution_head_title = firstString(data, [
+    "institution_head_title",
+    "institutionHeadTitle",
+    "head_title",
+    "principal_title",
+    "director_title",
+  ]);
+
+  if (
+    !institution_name &&
+    !institution_logo_url &&
+    !institution_phone &&
+    !institution_email &&
+    !institution_postal_address &&
+    !institution_region
+  ) {
+    return null;
+  }
+
+  return {
+    institution_name: institution_name || null,
+    institution_logo_url: institution_logo_url || null,
+    institution_phone: institution_phone || null,
+    institution_email: institution_email || null,
+    institution_region: institution_region || null,
+    institution_postal_address: institution_postal_address || null,
+    institution_status: institution_status || null,
+    institution_head_name: institution_head_name || null,
+    institution_head_title: institution_head_title || null,
+  };
+}
+
+function normalizeViewerProfile(payload: any): ViewerProfile | null {
+  if (!payload || typeof payload !== "object") return null;
+  const data =
+    firstObject<any>(payload, ["profile", "teacher", "user", "data", "item"]) || payload;
+
+  const full_name = firstString(data, [
+    "full_name",
+    "display_name",
+    "name",
+    "teacher_name",
+    "teacher_display_name",
+    "profile.full_name",
+    "profile.display_name",
+  ]);
+  const first_name = firstString(data, ["first_name", "firstname"]);
+  const last_name = firstString(data, ["last_name", "lastname"]);
+  const display_name =
+    full_name || [first_name, last_name].filter(Boolean).join(" ").trim() || "";
+
+  const signature_url = firstString(data, [
+    "signature_url",
+    "signature_png",
+    "teacher_signature_url",
+    "teacher_signature_png",
+    "signature",
+    "profile.signature_url",
+    "profile.signature_png",
+  ]);
+
+  const institution_name = firstString(data, [
+    "institution_name",
+    "institution.name",
+    "school.name",
+  ]);
+  const institution_logo_url = firstString(data, [
+    "institution_logo_url",
+    "institution.logo_url",
+    "school.logo_url",
+  ]);
+
+  if (!display_name && !signature_url && !institution_name && !institution_logo_url) {
+    return null;
+  }
+
+  return {
+    full_name: full_name || display_name || null,
+    display_name: display_name || null,
+    first_name: first_name || null,
+    last_name: last_name || null,
+    signature_url: signature_url || null,
+    signature_png: signature_url || null,
+    institution_name: institution_name || null,
+    institution_logo_url: institution_logo_url || null,
+  };
+}
+
+function normalizeImpactSummary(payload: any): AbsenceImpactSummary | null {
+  if (!payload || typeof payload !== "object") return null;
+  const impact =
+    firstObject<any>(payload, ["impact_summary", "impactSummary", "impact", "summary"]) || payload;
+
+  if (!impact || typeof impact !== "object") return null;
+
+  const impacted_classes = Array.isArray(impact.impacted_classes)
+    ? impact.impacted_classes
+    : Array.isArray(impact.impactedClasses)
+      ? impact.impactedClasses
+      : [];
+
+  return {
+    total_lost_hours: Number(impact.total_lost_hours ?? impact.totalLostHours ?? 0) || 0,
+    total_lost_sessions: Number(impact.total_lost_sessions ?? impact.totalLostSessions ?? 0) || 0,
+    impacted_classes: impacted_classes.map((cls: any) => ({
+      class_id: String(cls.class_id ?? cls.classId ?? ""),
+      class_label: String(cls.class_label ?? cls.classLabel ?? "Classe"),
+      lost_hours: Number(cls.lost_hours ?? cls.lostHours ?? 0) || 0,
+      lost_sessions: Number(cls.lost_sessions ?? cls.lostSessions ?? 0) || 0,
+      slots: (Array.isArray(cls.slots) ? cls.slots : []).map((slot: any) => ({
+        date: String(slot.date ?? ""),
+        class_id: String(slot.class_id ?? slot.classId ?? cls.class_id ?? ""),
+        class_label: String(slot.class_label ?? slot.classLabel ?? cls.class_label ?? ""),
+        subject_id: slot.subject_id ?? slot.subjectId ?? null,
+        subject_name: String(slot.subject_name ?? slot.subjectName ?? "Cours"),
+        period_id: String(slot.period_id ?? slot.periodId ?? ""),
+        period_label: String(slot.period_label ?? slot.periodLabel ?? ""),
+        start_time: slot.start_time ?? slot.startTime ?? null,
+        end_time: slot.end_time ?? slot.endTime ?? null,
+        lost_hours: Number(slot.lost_hours ?? slot.lostHours ?? 0) || 0,
+      })),
+    })),
+  };
+}
+
 function escapeHtml(value?: string | null) {
   return String(value ?? "")
     .replace(/&/g, "&amp;")
@@ -215,36 +414,158 @@ const REASON_OPTIONS = [
 
 
 const SIGNATURE_BLUE = "#1d4ed8";
-const ABSENCE_PREVIEW_ZOOM = 0.72;
+const ABSENCE_PREVIEW_ZOOM = 0.86;
 
 const __SIG_INK_CACHE = new Map<string, string>();
 const __SIG_INK_PROMISES = new Map<string, Promise<string | null>>();
 const __SIG_TINT_CACHE = new Map<string, string>();
 const __SIG_TINT_PROMISES = new Map<string, Promise<string | null>>();
 
-function buildPrintMeta(item: TeacherAbsenceRequestItem, institution: InstitutionSettings | null) {
-  const instName = item.institution_name || institution?.institution_name || "Établissement";
-  const instLogo = item.institution_logo_url || institution?.institution_logo_url || "";
-  const instPhone = institution?.institution_phone || "";
-  const instEmail = institution?.institution_email || "";
-  const instAddress = institution?.institution_postal_address || "";
-  const instRegion = institution?.institution_region || "";
-  const instStatus = institution?.institution_status || "";
+function buildPrintMeta(
+  item: TeacherAbsenceRequestItem,
+  institution: InstitutionSettings | null,
+  viewerProfile: ViewerProfile | null
+) {
+  const itemInstitution = firstObject<any>(item, ["institution", "school", "settings"]);
+  const itemTeacher = firstObject<any>(item, [
+    "teacher",
+    "teacher_profile",
+    "teacherProfile",
+    "profile",
+    "requester",
+    "employee",
+  ]);
+  const itemApprover = firstObject<any>(item, ["approved_by_user", "approver", "approvedBy", "administrator"]);
 
-  const teacherName = item.teacher_name?.trim() || "Enseignant concerné";
+  const instName =
+    firstString(item, [
+      "institution_name",
+      "institution.name",
+      "school.name",
+      "settings.institution_name",
+    ]) ||
+    firstString(itemInstitution, ["institution_name", "name", "school_name"]) ||
+    viewerProfile?.institution_name?.trim() ||
+    institution?.institution_name?.trim() ||
+    "Établissement";
+
+  const instLogo =
+    firstString(item, [
+      "institution_logo_url",
+      "institution.logo_url",
+      "institution.logoUrl",
+      "school.logo_url",
+      "school.logoUrl",
+      "settings.institution_logo_url",
+    ]) ||
+    firstString(itemInstitution, ["institution_logo_url", "logo_url", "logoUrl"]) ||
+    viewerProfile?.institution_logo_url?.trim() ||
+    institution?.institution_logo_url?.trim() ||
+    "";
+
+  const instPhone =
+    firstString(itemInstitution, ["institution_phone", "phone"]) ||
+    institution?.institution_phone?.trim() ||
+    "";
+  const instEmail =
+    firstString(itemInstitution, ["institution_email", "email"]) ||
+    institution?.institution_email?.trim() ||
+    "";
+  const instAddress =
+    firstString(itemInstitution, ["institution_postal_address", "postal_address", "address"]) ||
+    institution?.institution_postal_address?.trim() ||
+    "";
+  const instRegion =
+    firstString(itemInstitution, ["institution_region", "region", "city"]) ||
+    institution?.institution_region?.trim() ||
+    "";
+  const instStatus =
+    firstString(itemInstitution, ["institution_status", "status"]) ||
+    institution?.institution_status?.trim() ||
+    "";
+
+  const teacherName =
+    firstString(item, [
+      "teacher_name",
+      "teacherName",
+      "teacher_display_name",
+      "teacherDisplayName",
+      "teacher_full_name",
+      "teacherFullName",
+      "teacher.full_name",
+      "teacher.display_name",
+      "teacher.name",
+      "teacher_profile.full_name",
+      "teacher_profile.display_name",
+      "teacher_profile.name",
+      "teacherProfile.full_name",
+      "teacherProfile.display_name",
+      "teacherProfile.name",
+      "profile.full_name",
+      "profile.display_name",
+      "requester.full_name",
+      "requester.display_name",
+      "employee.full_name",
+      "employee.display_name",
+    ]) ||
+    firstString(itemTeacher, ["full_name", "display_name", "name"]) ||
+    viewerProfile?.display_name?.trim() ||
+    viewerProfile?.full_name?.trim() ||
+    "Enseignant concerné";
+
   const teacherSignature =
-    item.teacher_signature_png ||
-    item.teacher_signature_url ||
-    item.teacher_profile_signature_url ||
+    firstString(item, [
+      "teacher_signature_png",
+      "teacher_signature_url",
+      "teacher_profile_signature_url",
+      "teacher.signature_png",
+      "teacher.signature_url",
+      "teacher_profile.signature_png",
+      "teacher_profile.signature_url",
+      "teacherProfile.signature_png",
+      "teacherProfile.signature_url",
+      "profile.signature_png",
+      "profile.signature_url",
+    ]) ||
+    firstString(itemTeacher, ["signature_png", "signature_url", "signature"]) ||
+    viewerProfile?.signature_png?.trim() ||
+    viewerProfile?.signature_url?.trim() ||
     "";
 
   const adminName =
-    item.approved_by_name?.trim() ||
+    firstString(item, [
+      "approved_by_name",
+      "approvedByName",
+      "approved_by_display_name",
+      "approvedBy.display_name",
+      "approvedBy.full_name",
+      "approver.full_name",
+      "approver.display_name",
+      "administrator.full_name",
+      "administrator.display_name",
+    ]) ||
+    firstString(itemApprover, ["full_name", "display_name", "name"]) ||
     institution?.institution_head_name?.trim() ||
     "Administration";
-  const adminTitle = institution?.institution_head_title?.trim() || "Administration";
+
+  const adminTitle =
+    institution?.institution_head_title?.trim() ||
+    firstString(itemApprover, ["title", "role", "job_title"]) ||
+    "Administration";
+
   const adminSignature =
-    item.administration_signature_png || item.administration_signature_url || "";
+    firstString(item, [
+      "administration_signature_png",
+      "administration_signature_url",
+      "approved_by_signature_png",
+      "approved_by_signature_url",
+      "approver.signature_png",
+      "approver.signature_url",
+      "administrator.signature_png",
+      "administrator.signature_url",
+    ]) ||
+    firstString(itemApprover, ["signature_png", "signature_url", "signature"]) ||
+    "";
 
   return {
     instName,
@@ -501,13 +822,36 @@ function SignatureInk({ src, alt, className }: { src: string; alt: string; class
   return <img src={displaySrc || src} alt={alt} className={classNames("sig-img", className)} />;
 }
 
+function SafeImage({ src, alt, className }: { src: string; alt: string; className?: string }) {
+  const [displaySrc, setDisplaySrc] = useState<string>(src);
+
+  useEffect(() => {
+    let cancelled = false;
+    setDisplaySrc(src);
+
+    (async () => {
+      const safeSrc = await tryFetchAsDataUrl(src);
+      if (!cancelled && safeSrc) setDisplaySrc(safeSrc);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [src]);
+
+  // eslint-disable-next-line @next/next/no-img-element
+  return <img src={displaySrc || src} alt={alt} className={className} />;
+}
+
 function ApprovedRequestPrintSheet({
   item,
   institution,
+  viewerProfile,
   previewZoomForMeasure,
 }: {
   item: TeacherAbsenceRequestItem;
   institution: InstitutionSettings | null;
+  viewerProfile: ViewerProfile | null;
   previewZoomForMeasure: number;
 }) {
   const pageRef = useRef<HTMLDivElement | null>(null);
@@ -526,7 +870,7 @@ function ApprovedRequestPrintSheet({
     adminName,
     adminTitle,
     adminSignature,
-  } = useMemo(() => buildPrintMeta(item, institution), [item, institution]);
+  } = useMemo(() => buildPrintMeta(item, institution, viewerProfile), [item, institution, viewerProfile]);
 
   const setScale = (s: number) => {
     const v = Number.isFinite(s) ? s : 1;
@@ -606,27 +950,27 @@ function ApprovedRequestPrintSheet({
         <div className="absence-print-header">
           <div className="absence-logo-box">
             {instLogo ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img src={instLogo} alt="Logo établissement" className="absence-logo-img" />
+              <SafeImage src={instLogo} alt="Logo établissement" className="absence-logo-img" />
             ) : (
               <div className="absence-logo-fallback">Logo<br />établissement</div>
             )}
           </div>
 
           <div className="min-w-0">
+            <div className="absence-doc-kicker">Document administratif</div>
             <div className="absence-inst-name">{instName}</div>
-            <div className="absence-inst-meta">{metaLine || ""}</div>
+            <div className="absence-inst-meta">{metaLine || "Établissement scolaire"}</div>
           </div>
         </div>
 
         <div className="absence-approved-banner">
-          <div className="absence-approved-big">DEMANDE APPROUVÉE</div>
+          <div className="absence-approved-big">AUTORISATION D’ABSENCE VALIDÉE</div>
           <div className="absence-approved-small">
             Validation administrative enregistrée le {formatDateTime(item.approved_at)}
           </div>
         </div>
 
-        <div className="absence-doc-title">Autorisation d’absence validée</div>
+        <div className="absence-doc-title">Fiche d’autorisation d’absence</div>
 
         <div className="absence-grid">
           <div className="absence-card">
@@ -699,26 +1043,27 @@ function ApprovedRequestPrintSheet({
         <div className="absence-signature-grid">
           <div className="absence-signature-card">
             <div className="absence-signature-head">Signature de l’enseignant</div>
-            <div className="absence-signature-role">Nom</div>
+            <div className="absence-signature-role">Nom de l’enseignant</div>
             <div className="absence-signature-name">{teacherName}</div>
             <div className="absence-signature-box">
               {teacherSignature ? (
                 <SignatureInk src={teacherSignature} alt="Signature enseignant" className="absence-signature-img" />
               ) : (
-                <div className="absence-signature-placeholder">Signature de l’enseignant</div>
+                <div className="absence-signature-placeholder">Signature électronique non disponible</div>
               )}
             </div>
           </div>
 
-          <div className="absence-signature-card">
+          <div className="absence-signature-card absence-signature-card-admin">
             <div className="absence-signature-head">Visa de l’administration</div>
+            <div className="absence-approval-stamp">DEMANDE APPROUVÉE</div>
             <div className="absence-signature-role">{adminTitle}</div>
             <div className="absence-signature-name">{adminName}</div>
-            <div className="absence-signature-box">
+            <div className="absence-signature-box absence-signature-box-admin">
               {adminSignature ? (
                 <SignatureInk src={adminSignature} alt="Signature administration" className="absence-signature-img" />
               ) : (
-                <div className="absence-signature-placeholder">Signature et cachet</div>
+                <div className="absence-signature-placeholder">Signature et cachet de l’administration</div>
               )}
             </div>
           </div>
@@ -745,6 +1090,8 @@ export default function EnseignantAutorisationAbsencePage() {
   const [success, setSuccess] = useState<string | null>(null);
   const [institution, setInstitution] = useState<InstitutionSettings | null>(null);
   const [institutionLoading, setInstitutionLoading] = useState(false);
+  const [viewerProfile, setViewerProfile] = useState<ViewerProfile | null>(null);
+  const [previewZoom, setPreviewZoom] = useState<number>(ABSENCE_PREVIEW_ZOOM);
   const [printingId, setPrintingId] = useState<string | null>(null);
   const [printPreviewItem, setPrintPreviewItem] = useState<TeacherAbsenceRequestItem | null>(null);
 
@@ -834,37 +1181,85 @@ export default function EnseignantAutorisationAbsencePage() {
     };
   }, [form.start_date, form.end_date]);
 
+  async function fetchFirstWorkingJson(urls: string[]) {
+    for (const url of urls) {
+      try {
+        const res = await fetch(url, { method: "GET", cache: "no-store" });
+        if (!res.ok) continue;
+        const json = await res.json().catch(() => null);
+        if (json) return json;
+      } catch {
+        // ignore
+      }
+    }
+    return null;
+  }
+
+  async function loadInstitutionData() {
+    const payload = await fetchFirstWorkingJson([
+      "/api/teacher/institution/settings",
+      "/api/admin/institution/settings",
+      "/api/institution/settings",
+      "/api/settings/institution",
+    ]);
+    return normalizeInstitutionPayload(payload);
+  }
+
+  async function loadViewerProfileData() {
+    const payload = await fetchFirstWorkingJson([
+      "/api/teacher/profile",
+      "/api/teacher/me",
+      "/api/profile/me",
+      "/api/me",
+    ]);
+    return normalizeViewerProfile(payload);
+  }
+
   useEffect(() => {
     let cancelled = false;
 
     async function loadInstitution() {
       try {
         setInstitutionLoading(true);
-        const res = await fetch("/api/admin/institution/settings", {
-          method: "GET",
-          cache: "no-store",
-        });
-
-        if (!res.ok) return;
-
-        const json = (await res.json().catch(() => null)) as InstitutionSettings | null;
-        if (!cancelled && json) {
-          setInstitution(json);
+        const nextInstitution = await loadInstitutionData();
+        if (!cancelled && nextInstitution) {
+          setInstitution(nextInstitution);
         }
-      } catch {
-        // on garde des valeurs de secours si cette route n’est pas accessible côté enseignant
       } finally {
         if (!cancelled) setInstitutionLoading(false);
       }
     }
 
-    void loadInstitution();
+    async function loadViewer() {
+      const nextViewer = await loadViewerProfileData();
+      if (!cancelled && nextViewer) {
+        setViewerProfile(nextViewer);
+      }
+    }
+
+    void Promise.all([loadInstitution(), loadViewer()]);
 
     return () => {
       cancelled = true;
     };
   }, []);
 
+  useEffect(() => {
+    const computePreviewZoom = () => {
+      if (typeof window === "undefined") return ABSENCE_PREVIEW_ZOOM;
+      const A4_PX = (202 / 25.4) * 96;
+      const vw = window.innerWidth || 0;
+      const padding = vw < 768 ? 20 : 88;
+      const avail = Math.max(250, vw - padding);
+      const z = Math.min(1, avail / A4_PX);
+      return Math.max(0.34, Number.isFinite(z) ? z : ABSENCE_PREVIEW_ZOOM);
+    };
+
+    const apply = () => setPreviewZoom(computePreviewZoom());
+    apply();
+    window.addEventListener("resize", apply);
+    return () => window.removeEventListener("resize", apply);
+  }, []);
 
   useEffect(() => {
     if (typeof document === "undefined") return;
@@ -978,19 +1373,49 @@ export default function EnseignantAutorisationAbsencePage() {
     }
   }
 
-  function handlePrintApprovedRequest(item: TeacherAbsenceRequestItem) {
+  async function handlePrintApprovedRequest(item: TeacherAbsenceRequestItem) {
     if (item.status !== "approved") return;
 
     setError(null);
     setSuccess(null);
     setPrintingId(item.id);
-    setPrintPreviewItem(item);
 
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        setPrintingId(null);
-      });
-    });
+    try {
+      let nextItem: TeacherAbsenceRequestItem = { ...item };
+
+      if (!nextItem.impact_summary?.impacted_classes?.length && nextItem.start_date && nextItem.end_date) {
+        const qs = new URLSearchParams({
+          start_date: nextItem.start_date,
+          end_date: nextItem.end_date,
+        });
+        try {
+          const res = await fetch(`/api/teacher/absence-requests/impact?${qs.toString()}`, {
+            cache: "no-store",
+          });
+          const json = await res.json().catch(() => null);
+          const fallbackImpact = normalizeImpactSummary(json);
+          if (res.ok && fallbackImpact) {
+            nextItem = { ...nextItem, impact_summary: fallbackImpact };
+          }
+        } catch {
+          // keep original item
+        }
+      }
+
+      if (!institution) {
+        const nextInstitution = await loadInstitutionData();
+        if (nextInstitution) setInstitution(nextInstitution);
+      }
+
+      if (!viewerProfile) {
+        const nextViewer = await loadViewerProfileData();
+        if (nextViewer) setViewerProfile(nextViewer);
+      }
+
+      setPrintPreviewItem(nextItem);
+    } finally {
+      setPrintingId(null);
+    }
   }
 
   function handleClosePrintPreview() {
@@ -1481,7 +1906,7 @@ export default function EnseignantAutorisationAbsencePage() {
 
                         <button
                           type="button"
-                          onClick={() => handlePrintApprovedRequest(item)}
+                          onClick={() => void handlePrintApprovedRequest(item)}
                           disabled={printingId === item.id}
                           className="inline-flex items-center justify-center gap-2 rounded-2xl bg-slate-950 px-4 py-3 text-sm font-bold text-white shadow-sm transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-70"
                         >
@@ -1550,11 +1975,12 @@ export default function EnseignantAutorisationAbsencePage() {
           </div>
 
           <div className="absence-print-preview-shell">
-            <div className="absence-preview-overlay" style={{ ["--preview-zoom" as any]: ABSENCE_PREVIEW_ZOOM }}>
+            <div className="absence-preview-overlay" style={{ ["--preview-zoom" as any]: previewZoom }}>
               <ApprovedRequestPrintSheet
                 item={printPreviewItem}
                 institution={institution}
-                previewZoomForMeasure={ABSENCE_PREVIEW_ZOOM}
+                viewerProfile={viewerProfile}
+                previewZoomForMeasure={previewZoom}
               />
             </div>
           </div>
@@ -1657,16 +2083,16 @@ export default function EnseignantAutorisationAbsencePage() {
 
         .absence-print-header {
           display: grid;
-          grid-template-columns: 88px 1fr;
-          gap: 16px;
+          grid-template-columns: 78px 1fr;
+          gap: 14px;
           align-items: center;
           border-bottom: 2px solid #e2e8f0;
-          padding: 18px 0 16px;
+          padding: 12px 0 12px;
         }
 
         .absence-logo-box {
-          width: 88px;
-          height: 88px;
+          width: 78px;
+          height: 78px;
           border: 1px solid #cbd5e1;
           border-radius: 18px;
           display: flex;
@@ -1690,22 +2116,31 @@ export default function EnseignantAutorisationAbsencePage() {
           line-height: 1.4;
         }
 
+        .absence-doc-kicker {
+          font-size: 10px;
+          font-weight: 900;
+          text-transform: uppercase;
+          letter-spacing: 0.14em;
+          color: #64748b;
+          margin-bottom: 4px;
+        }
+
         .absence-inst-name {
-          font-size: 24px;
-          line-height: 1.15;
-          font-weight: 800;
+          font-size: 20px;
+          line-height: 1.1;
+          font-weight: 900;
           color: #0f172a;
         }
 
         .absence-inst-meta {
-          margin-top: 6px;
-          font-size: 12px;
+          margin-top: 4px;
+          font-size: 11px;
           color: #475569;
           line-height: 1.6;
         }
 
         .absence-approved-banner {
-          margin-top: 18px;
+          margin-top: 12px;
           border: 2px solid #22c55e;
           background: #f0fdf4;
           color: #166534;
@@ -1715,7 +2150,7 @@ export default function EnseignantAutorisationAbsencePage() {
         }
 
         .absence-approved-big {
-          font-size: 22px;
+          font-size: 18px;
           font-weight: 900;
           letter-spacing: 0.04em;
         }
@@ -1727,14 +2162,14 @@ export default function EnseignantAutorisationAbsencePage() {
         }
 
         .absence-doc-title {
-          margin-top: 20px;
-          font-size: 18px;
+          margin-top: 12px;
+          font-size: 16px;
           font-weight: 800;
           color: #0f172a;
         }
 
         .absence-grid {
-          margin-top: 14px;
+          margin-top: 10px;
           display: grid;
           grid-template-columns: 1fr 1fr;
           gap: 12px;
@@ -1742,8 +2177,8 @@ export default function EnseignantAutorisationAbsencePage() {
 
         .absence-card {
           border: 1px solid #e2e8f0;
-          border-radius: 16px;
-          padding: 12px 14px;
+          border-radius: 14px;
+          padding: 10px 12px;
           background: #ffffff;
         }
 
@@ -1760,8 +2195,8 @@ export default function EnseignantAutorisationAbsencePage() {
         }
 
         .absence-value {
-          margin-top: 6px;
-          font-size: 14px;
+          margin-top: 4px;
+          font-size: 13px;
           font-weight: 700;
           color: #0f172a;
           line-height: 1.55;
@@ -1772,7 +2207,7 @@ export default function EnseignantAutorisationAbsencePage() {
         }
 
         .absence-impact-section {
-          margin-top: 18px;
+          margin-top: 12px;
           border: 1px solid #fde68a;
           background: #fffbeb;
           border-radius: 18px;
@@ -1780,7 +2215,7 @@ export default function EnseignantAutorisationAbsencePage() {
         }
 
         .absence-impact-title {
-          font-size: 14px;
+          font-size: 13px;
           font-weight: 800;
           color: #92400e;
           margin-bottom: 10px;
@@ -1789,8 +2224,8 @@ export default function EnseignantAutorisationAbsencePage() {
         .absence-impact-card {
           border: 1px solid #e2e8f0;
           background: #ffffff;
-          border-radius: 14px;
-          padding: 10px 12px;
+          border-radius: 12px;
+          padding: 8px 10px;
         }
 
         .absence-impact-head {
@@ -1807,7 +2242,7 @@ export default function EnseignantAutorisationAbsencePage() {
         }
 
         .absence-impact-slot {
-          font-size: 12px;
+          font-size: 11px;
           color: #334155;
           background: #f8fafc;
           border-radius: 10px;
@@ -1825,22 +2260,27 @@ export default function EnseignantAutorisationAbsencePage() {
         }
 
         .absence-signature-grid {
-          margin-top: 22px;
+          margin-top: 14px;
           display: grid;
           grid-template-columns: 1fr 1fr;
-          gap: 18px;
+          gap: 12px;
         }
 
         .absence-signature-card {
           border: 1px solid #dbeafe;
-          border-radius: 18px;
+          border-radius: 16px;
           background: #f8fafc;
-          padding: 14px;
-          min-height: 190px;
+          padding: 12px;
+          min-height: 154px;
+        }
+
+        .absence-signature-card-admin {
+          border-color: #cbd5e1;
+          background: linear-gradient(180deg, #f8fafc 0%, #eef2ff 100%);
         }
 
         .absence-signature-head {
-          font-size: 13px;
+          font-size: 12px;
           font-weight: 800;
           color: #0f172a;
           margin-bottom: 10px;
@@ -1855,15 +2295,30 @@ export default function EnseignantAutorisationAbsencePage() {
         }
 
         .absence-signature-name {
-          margin-top: 4px;
-          font-size: 15px;
+          margin-top: 3px;
+          font-size: 14px;
           font-weight: 800;
           color: #0f172a;
         }
 
+        .absence-approval-stamp {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          margin: 2px 0 8px;
+          padding: 6px 10px;
+          border-radius: 12px;
+          background: #0f172a;
+          color: #ffffff;
+          font-size: 15px;
+          font-weight: 900;
+          letter-spacing: 0.08em;
+          text-transform: uppercase;
+        }
+
         .absence-signature-box {
-          height: 86px;
-          margin-top: 14px;
+          height: 62px;
+          margin-top: 10px;
           border-bottom: 2px solid #94a3b8;
           display: flex;
           align-items: flex-end;
@@ -1873,7 +2328,7 @@ export default function EnseignantAutorisationAbsencePage() {
         }
 
         .absence-signature-img {
-          max-height: 74px !important;
+          max-height: 52px !important;
           max-width: 100% !important;
           object-fit: contain !important;
         }
@@ -1885,7 +2340,7 @@ export default function EnseignantAutorisationAbsencePage() {
         }
 
         .absence-foot {
-          margin-top: 22px;
+          margin-top: 12px;
           display: flex;
           justify-content: space-between;
           gap: 12px;
@@ -1912,26 +2367,13 @@ export default function EnseignantAutorisationAbsencePage() {
         }
 
         @media (max-width: 760px) {
-          .absence-signature-grid,
-          .absence-grid {
-            grid-template-columns: 1fr;
+          .absence-print-overlay {
+            padding: 8px;
           }
 
-          .absence-card-full {
-            grid-column: auto;
-          }
-
-          .absence-impact-head,
-          .absence-foot,
-          .absence-print-header {
-            grid-template-columns: 1fr;
-            display: grid;
-          }
-
-          .absence-foot {
-            display: flex;
-            flex-direction: column;
-            align-items: flex-start;
+          .absence-print-toolbar {
+            border-radius: 22px;
+            padding: 14px;
           }
         }
 
@@ -1990,11 +2432,13 @@ export default function EnseignantAutorisationAbsencePage() {
           body.absence-print-open .absence-print-page {
             width: 202mm !important;
             min-height: 289mm !important;
+            max-height: 289mm !important;
+            overflow: hidden !important;
             padding: 2mm 6mm !important;
             margin: 0 auto !important;
             border-radius: 0 !important;
             box-shadow: none !important;
-            zoom: 1 !important;
+            zoom: var(--print-fit-scale, 1) !important;
             transform: none !important;
           }
         }
