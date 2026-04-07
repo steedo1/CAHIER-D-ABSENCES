@@ -126,6 +126,19 @@ function formatTimeRange(
   return fallback || "Créneau non défini";
 }
 
+function formatDurationFromHours(value?: number | string | null) {
+  const hours = Number(value ?? 0);
+  if (!Number.isFinite(hours) || hours <= 0) return "0 min";
+
+  const totalMinutes = Math.max(0, Math.round(hours * 60));
+  const h = Math.floor(totalMinutes / 60);
+  const m = totalMinutes % 60;
+
+  if (h <= 0) return `${m} min`;
+  if (m === 0) return `${h} h`;
+  return `${h} h ${m} min`;
+}
+
 function statusLabel(status: RequestStatus) {
   switch (status) {
     case "pending":
@@ -158,6 +171,155 @@ function statusClasses(status: RequestStatus) {
 
 function daysLabel(n: number) {
   return n <= 1 ? "1 jour" : `${n} jours`;
+}
+
+function normalizeImpactSummary(raw: unknown): AbsenceImpactSummary | null {
+  if (!raw || typeof raw !== "object") return null;
+
+  const source = raw as Record<string, unknown>;
+  const impactCandidate =
+    (source.impact_summary as Record<string, unknown> | undefined) ||
+    (source.impactSummary as Record<string, unknown> | undefined) ||
+    (source.impact as Record<string, unknown> | undefined) ||
+    (source.summary as Record<string, unknown> | undefined) ||
+    source;
+
+  if (!impactCandidate || typeof impactCandidate !== "object") return null;
+
+  const impactedRaw = Array.isArray(impactCandidate.impacted_classes)
+    ? impactCandidate.impacted_classes
+    : Array.isArray(impactCandidate.impactedClasses)
+      ? impactCandidate.impactedClasses
+      : [];
+
+  const impacted_classes: ImpactedClassSummary[] = impactedRaw.map((cls: any) => {
+    const slotsRaw = Array.isArray(cls?.slots) ? cls.slots : [];
+
+    const slots: ImpactSlot[] = slotsRaw.map((slot: any) => ({
+      date: String(slot?.date ?? ""),
+      class_id: String(slot?.class_id ?? slot?.classId ?? cls?.class_id ?? cls?.classId ?? ""),
+      class_label: String(
+        slot?.class_label ?? slot?.classLabel ?? cls?.class_label ?? cls?.classLabel ?? "Classe"
+      ),
+      subject_id: (slot?.subject_id ?? slot?.subjectId ?? null) as string | null,
+      subject_name: String(slot?.subject_name ?? slot?.subjectName ?? "Cours"),
+      period_id: String(slot?.period_id ?? slot?.periodId ?? ""),
+      period_label: String(slot?.period_label ?? slot?.periodLabel ?? ""),
+      start_time: (slot?.start_time ?? slot?.startTime ?? null) as string | null,
+      end_time: (slot?.end_time ?? slot?.endTime ?? null) as string | null,
+      lost_hours: Number(slot?.lost_hours ?? slot?.lostHours ?? 0) || 0,
+    }));
+
+    return {
+      class_id: String(cls?.class_id ?? cls?.classId ?? ""),
+      class_label: String(cls?.class_label ?? cls?.classLabel ?? "Classe"),
+      lost_hours: Number(cls?.lost_hours ?? cls?.lostHours ?? 0) || 0,
+      lost_sessions: Number(cls?.lost_sessions ?? cls?.lostSessions ?? 0) || 0,
+      slots,
+    };
+  });
+
+  return {
+    total_lost_hours:
+      Number(impactCandidate.total_lost_hours ?? impactCandidate.totalLostHours ?? 0) || 0,
+    total_lost_sessions:
+      Number(impactCandidate.total_lost_sessions ?? impactCandidate.totalLostSessions ?? 0) || 0,
+    impacted_classes,
+  };
+}
+
+function normalizeMakeupPlan(raw: unknown): MakeupPlan | null {
+  if (!raw || typeof raw !== "object") return null;
+
+  const source = raw as Record<string, unknown>;
+  return {
+    proposed_start_date:
+      (source.proposed_start_date as string | null | undefined) ??
+      (source.proposedStartDate as string | null | undefined) ??
+      null,
+    proposed_end_date:
+      (source.proposed_end_date as string | null | undefined) ??
+      (source.proposedEndDate as string | null | undefined) ??
+      null,
+    notes: String(source.notes ?? source.text ?? "").trim(),
+  };
+}
+
+function normalizeAbsenceItem(raw: unknown): AbsenceRequestItem {
+  const item = (raw ?? {}) as Record<string, any>;
+  const impact_summary = normalizeImpactSummary(
+    item.impact_summary ?? item.impactSummary ?? item.impact ?? null
+  );
+
+  const lost_hours_total = Number(
+    item.lost_hours_total ?? item.lostHoursTotal ?? impact_summary?.total_lost_hours ?? 0
+  );
+  const lost_sessions_total = Number(
+    item.lost_sessions_total ?? item.lostSessionsTotal ?? impact_summary?.total_lost_sessions ?? 0
+  );
+
+  return {
+    id: String(item.id ?? ""),
+    institution_id: String(item.institution_id ?? item.institutionId ?? ""),
+    teacher_user_id: String(item.teacher_user_id ?? item.teacherUserId ?? ""),
+    teacher_profile_id: String(item.teacher_profile_id ?? item.teacherProfileId ?? ""),
+    teacher_name:
+      item.teacher_name != null
+        ? String(item.teacher_name)
+        : item.teacherName != null
+          ? String(item.teacherName)
+          : null,
+    start_date: String(item.start_date ?? item.startDate ?? ""),
+    end_date: String(item.end_date ?? item.endDate ?? ""),
+    reason_code: String(item.reason_code ?? item.reasonCode ?? ""),
+    reason_label: String(item.reason_label ?? item.reasonLabel ?? ""),
+    details: String(item.details ?? ""),
+    requested_days: Number(item.requested_days ?? item.requestedDays ?? 0) || 0,
+    signed: Boolean(item.signed),
+    source: String(item.source ?? "teacher_portal"),
+    status: (item.status ?? "pending") as RequestStatus,
+    admin_comment:
+      item.admin_comment != null
+        ? String(item.admin_comment)
+        : item.adminComment != null
+          ? String(item.adminComment)
+          : null,
+    approved_at:
+      item.approved_at != null
+        ? String(item.approved_at)
+        : item.approvedAt != null
+          ? String(item.approvedAt)
+          : null,
+    approved_by:
+      item.approved_by != null
+        ? String(item.approved_by)
+        : item.approvedBy != null
+          ? String(item.approvedBy)
+          : null,
+    rejected_at:
+      item.rejected_at != null
+        ? String(item.rejected_at)
+        : item.rejectedAt != null
+          ? String(item.rejectedAt)
+          : null,
+    rejected_by:
+      item.rejected_by != null
+        ? String(item.rejected_by)
+        : item.rejectedBy != null
+          ? String(item.rejectedBy)
+          : null,
+    created_at: String(item.created_at ?? item.createdAt ?? ""),
+    updated_at:
+      item.updated_at != null
+        ? String(item.updated_at)
+        : item.updatedAt != null
+          ? String(item.updatedAt)
+          : null,
+    lost_hours_total: Number.isFinite(lost_hours_total) ? lost_hours_total : 0,
+    lost_sessions_total: Number.isFinite(lost_sessions_total) ? lost_sessions_total : 0,
+    impact_summary,
+    makeup_plan: normalizeMakeupPlan(item.makeup_plan ?? item.makeupPlan ?? null),
+  };
 }
 
 export default function AdminAssiduitePage() {
@@ -193,7 +355,11 @@ export default function AdminAssiduitePage() {
         );
       }
 
-      setItems(json.items ?? []);
+      setItems(
+        (Array.isArray(json.items) ? json.items : []).map((item) =>
+          normalizeAbsenceItem(item)
+        )
+      );
     } catch (e: any) {
       setError(e?.message || "Erreur de chargement.");
     } finally {
@@ -259,8 +425,10 @@ export default function AdminAssiduitePage() {
         );
       }
 
+      const normalizedItem = normalizeAbsenceItem(json.item);
+
       setItems((prev) =>
-        prev.map((item) => (item.id === id ? json.item : item))
+        prev.map((item) => (item.id === id ? normalizedItem : item))
       );
       setSelectedId(id);
     } catch (e: any) {
@@ -426,9 +594,9 @@ export default function AdminAssiduitePage() {
                         </span>
                       ) : null}
 
-                      {typeof item.lost_hours_total === "number" ? (
+                      {Number(item.lost_hours_total ?? 0) > 0 ? (
                         <span className="inline-flex items-center rounded-full bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-800 ring-1 ring-amber-200">
-                          {item.lost_hours_total} h perdues
+                          {formatDurationFromHours(item.lost_hours_total)} perdues
                         </span>
                       ) : null}
                     </div>
@@ -540,7 +708,9 @@ export default function AdminAssiduitePage() {
                           <>
                             <div className="mt-3 rounded-xl bg-white/70 px-4 py-3 text-sm text-slate-800">
                               Total estimé :{" "}
-                              <strong>{item.impact_summary.total_lost_hours} h</strong>{" "}
+                              <strong>
+                                {formatDurationFromHours(item.impact_summary.total_lost_hours)}
+                              </strong>{" "}
                               sur{" "}
                               <strong>{item.impact_summary.total_lost_sessions}</strong>{" "}
                               créneau(x).
@@ -557,7 +727,7 @@ export default function AdminAssiduitePage() {
                                       {cls.class_label}
                                     </div>
                                     <div className="text-sm text-slate-600">
-                                      {cls.lost_hours} h • {cls.lost_sessions} créneau(x)
+                                      {formatDurationFromHours(cls.lost_hours)} • {cls.lost_sessions} créneau(x)
                                     </div>
                                   </div>
 

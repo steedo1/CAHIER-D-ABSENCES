@@ -387,6 +387,106 @@ function normalizeImpactSummary(payload: any): AbsenceImpactSummary | null {
   };
 }
 
+function normalizeMakeupPlan(payload: any): MakeupPlan | null {
+  if (!payload || typeof payload !== "object") return null;
+
+  return {
+    proposed_start_date:
+      typeof (payload.proposed_start_date ?? payload.proposedStartDate) === "string"
+        ? String(payload.proposed_start_date ?? payload.proposedStartDate)
+        : null,
+    proposed_end_date:
+      typeof (payload.proposed_end_date ?? payload.proposedEndDate) === "string"
+        ? String(payload.proposed_end_date ?? payload.proposedEndDate)
+        : null,
+    notes: String(payload.notes ?? payload.text ?? "").trim(),
+  };
+}
+
+function formatDurationFromHours(value?: number | string | null) {
+  const hours = Number(value ?? 0);
+  if (!Number.isFinite(hours) || hours <= 0) return "0 min";
+
+  const totalMinutes = Math.max(0, Math.round(hours * 60));
+  const h = Math.floor(totalMinutes / 60);
+  const m = totalMinutes % 60;
+
+  if (h <= 0) return `${m} min`;
+  if (m === 0) return `${h} h`;
+  return `${h} h ${m} min`;
+}
+
+function normalizeAbsenceItem(raw: any): TeacherAbsenceRequestItem {
+  const impact_summary = normalizeImpactSummary(
+    raw?.impact_summary ?? raw?.impactSummary ?? raw?.impact ?? raw?.summary ?? null
+  );
+
+  const lost_hours_total = Number(
+    raw?.lost_hours_total ??
+      raw?.lostHoursTotal ??
+      impact_summary?.total_lost_hours ??
+      0
+  );
+
+  const lost_sessions_total = Number(
+    raw?.lost_sessions_total ??
+      raw?.lostSessionsTotal ??
+      impact_summary?.total_lost_sessions ??
+      0
+  );
+
+  return {
+    ...raw,
+    lost_hours_total: Number.isFinite(lost_hours_total) ? lost_hours_total : 0,
+    lost_sessions_total: Number.isFinite(lost_sessions_total) ? lost_sessions_total : 0,
+    impact_summary,
+    makeup_plan: normalizeMakeupPlan(raw?.makeup_plan ?? raw?.makeupPlan),
+  };
+}
+
+async function fetchImpactSummaryForDates(start_date?: string | null, end_date?: string | null) {
+  if (!start_date || !end_date) return null;
+
+  try {
+    const qs = new URLSearchParams({ start_date, end_date });
+    const res = await fetch(`/api/teacher/absence-requests/impact?${qs.toString()}`, {
+      cache: "no-store",
+    });
+
+    const json = await res.json().catch(() => null);
+    if (!res.ok) return null;
+
+    return normalizeImpactSummary(json?.impact ?? json);
+  } catch {
+    return null;
+  }
+}
+
+async function hydrateTeacherItems(rawItems: any[]): Promise<TeacherAbsenceRequestItem[]> {
+  const baseItems = (Array.isArray(rawItems) ? rawItems : []).map(normalizeAbsenceItem);
+
+  return Promise.all(
+    baseItems.map(async (item) => {
+      const hasImpact =
+        !!item.impact_summary?.impacted_classes?.length ||
+        Number(item.lost_hours_total ?? 0) > 0 ||
+        Number(item.lost_sessions_total ?? 0) > 0;
+
+      if (hasImpact) return item;
+
+      const fallbackImpact = await fetchImpactSummaryForDates(item.start_date, item.end_date);
+      if (!fallbackImpact) return item;
+
+      return {
+        ...item,
+        impact_summary: fallbackImpact,
+        lost_hours_total: fallbackImpact.total_lost_hours,
+        lost_sessions_total: fallbackImpact.total_lost_sessions,
+      };
+    })
+  );
+}
+
 const REASON_OPTIONS = [
   { value: "maladie", label: "Maladie" },
   { value: "formation", label: "Formation" },
@@ -1042,7 +1142,7 @@ function ApprovedRequestPrintSheet({
                 <div key={cls.class_id} className="absence-impact-card">
                   <div className="absence-impact-head">
                     <strong>{cls.class_label}</strong>
-                    <span>{cls.lost_hours} h • {cls.lost_sessions} créneau(x)</span>
+                    <span>{formatDurationFromHours(cls.lost_hours)} • {cls.lost_sessions} créneau(x)</span>
                   </div>
 
                   {cls.slots?.length ? (
@@ -1145,7 +1245,8 @@ export default function EnseignantAutorisationAbsencePage() {
         );
       }
 
-      setItems(Array.isArray(json.items) ? json.items : []);
+      const hydrated = await hydrateTeacherItems(Array.isArray(json.items) ? json.items : []);
+      setItems(hydrated);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Erreur de chargement.");
     } finally {
@@ -1181,14 +1282,17 @@ export default function EnseignantAutorisationAbsencePage() {
         );
 
         const json = (await res.json().catch(() => null)) as ImpactResponse | null;
+        const normalizedImpact = json && json.ok
+          ? normalizeImpactSummary(json.impact ?? json)
+          : null;
 
-        if (!res.ok || !json?.ok) {
+        if (!res.ok || !json || !json.ok || !normalizedImpact) {
           if (!cancelled) setImpactPreview(null);
           return;
         }
 
         if (!cancelled) {
-          setImpactPreview(json.impact ?? null);
+          setImpactPreview(normalizedImpact);
         }
       } finally {
         if (!cancelled) setImpactLoading(false);
@@ -1400,24 +1504,17 @@ export default function EnseignantAutorisationAbsencePage() {
     setPrintingId(item.id);
 
     try {
-      let nextItem: TeacherAbsenceRequestItem = { ...item };
+      let nextItem: TeacherAbsenceRequestItem = normalizeAbsenceItem(item);
 
       if (!nextItem.impact_summary?.impacted_classes?.length && nextItem.start_date && nextItem.end_date) {
-        const qs = new URLSearchParams({
-          start_date: nextItem.start_date,
-          end_date: nextItem.end_date,
-        });
-        try {
-          const res = await fetch(`/api/teacher/absence-requests/impact?${qs.toString()}`, {
-            cache: "no-store",
-          });
-          const json = await res.json().catch(() => null);
-          const fallbackImpact = normalizeImpactSummary(json);
-          if (res.ok && fallbackImpact) {
-            nextItem = { ...nextItem, impact_summary: fallbackImpact };
-          }
-        } catch {
-          // keep original item
+        const fallbackImpact = await fetchImpactSummaryForDates(nextItem.start_date, nextItem.end_date);
+        if (fallbackImpact) {
+          nextItem = {
+            ...nextItem,
+            impact_summary: fallbackImpact,
+            lost_hours_total: fallbackImpact.total_lost_hours,
+            lost_sessions_total: fallbackImpact.total_lost_sessions,
+          };
         }
       }
 
@@ -1567,7 +1664,7 @@ export default function EnseignantAutorisationAbsencePage() {
               ) : (
                 <>
                   <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-                    Vous perdrez des heures dans les classes suivantes : <strong>{impactPreview.total_lost_hours} h</strong> sur <strong>{impactPreview.total_lost_sessions}</strong> créneau(x).
+                    Vous perdrez des heures dans les classes suivantes : <strong>{formatDurationFromHours(impactPreview.total_lost_hours)}</strong> sur <strong>{impactPreview.total_lost_sessions}</strong> créneau(x).
                   </div>
 
                   <div className="mt-3 space-y-3">
@@ -1575,7 +1672,7 @@ export default function EnseignantAutorisationAbsencePage() {
                       <div key={cls.class_id} className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
                         <div className="flex flex-wrap items-center justify-between gap-2">
                           <div className="font-semibold text-slate-900">{cls.class_label}</div>
-                          <div className="text-sm text-slate-600">{cls.lost_hours} h perdues • {cls.lost_sessions} créneau(x)</div>
+                          <div className="text-sm text-slate-600">{formatDurationFromHours(cls.lost_hours)} perdues • {cls.lost_sessions} créneau(x)</div>
                         </div>
 
                         <div className="mt-2 space-y-2 text-sm text-slate-600">
@@ -1803,9 +1900,9 @@ export default function EnseignantAutorisationAbsencePage() {
                               {daysLabel(item.requested_days)}
                             </span>
 
-                            {typeof item.lost_hours_total === "number" ? (
+                            {Number(item.lost_hours_total ?? 0) > 0 ? (
                               <span className="inline-flex items-center rounded-full bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-800 ring-1 ring-amber-200">
-                                {item.lost_hours_total} h à rattraper
+                                {formatDurationFromHours(item.lost_hours_total)} à rattraper
                               </span>
                             ) : null}
                           </div>
@@ -1874,7 +1971,7 @@ export default function EnseignantAutorisationAbsencePage() {
                                   <div className="flex flex-wrap items-center justify-between gap-2">
                                     <div className="font-semibold text-slate-900">{cls.class_label}</div>
                                     <div className="text-slate-600">
-                                      {cls.lost_hours} h • {cls.lost_sessions} créneau(x)
+                                      {formatDurationFromHours(cls.lost_hours)} • {cls.lost_sessions} créneau(x)
                                     </div>
                                   </div>
 
