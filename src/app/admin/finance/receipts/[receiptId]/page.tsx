@@ -302,16 +302,40 @@ export default async function FinanceReceiptPrintPage({
   )}?autoprint=1`;
 
   return (
-    <div className="receipt-page-shell mx-auto max-w-5xl space-y-6 px-4 py-6 sm:px-6 print:px-0 print:py-0">
+    <div className="receipt-print-root receipt-page-shell mx-auto max-w-5xl space-y-6 px-4 py-6 sm:px-6 print:px-0 print:py-0">
       <style>{`
         @page {
-          size: A4;
-          margin: 12mm;
+          size: A4 portrait;
+          margin: 4mm;
         }
 
         @media print {
           html,
           body {
+            margin: 0 !important;
+            padding: 0 !important;
+            background: #ffffff !important;
+            -webkit-print-color-adjust: exact;
+            print-color-adjust: exact;
+          }
+
+          body * {
+            visibility: hidden !important;
+          }
+
+          .receipt-print-root,
+          .receipt-print-root * {
+            visibility: visible !important;
+          }
+
+          .receipt-print-root {
+            position: absolute !important;
+            inset: 0 !important;
+            width: 100% !important;
+            max-width: none !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            overflow: visible !important;
             background: #ffffff !important;
           }
 
@@ -319,15 +343,187 @@ export default async function FinanceReceiptPrintPage({
             display: none !important;
           }
 
-          .receipt-page-shell {
-            max-width: none !important;
-            margin: 0 !important;
-            padding: 0 !important;
-          }
-
           .receipt-card {
+            width: 202mm !important;
+            min-height: 289mm !important;
+            height: 289mm !important;
+            max-height: 289mm !important;
+            margin: 0 auto !important;
+            overflow: hidden !important;
             border-radius: 0 !important;
             box-shadow: none !important;
+            border: 1px solid #cbd5e1 !important;
+          }
+
+          .receipt-header {
+            padding: 3.5mm 5mm !important;
+          }
+
+          .receipt-main-grid {
+            display: grid !important;
+            grid-template-columns: 1.15fr 0.85fr !important;
+            gap: 3.5mm !important;
+            padding: 3.5mm 5mm !important;
+          }
+
+          .receipt-col {
+            display: flex !important;
+            flex-direction: column !important;
+            gap: 3.5mm !important;
+          }
+          .receipt-col > * + * {
+            margin-top: 0 !important;
+          }
+
+          .receipt-header .gap-4 {
+            gap: 3mm !important;
+          }
+
+          .receipt-header .gap-6 {
+            gap: 3.5mm !important;
+          }
+
+          .receipt-logo {
+            width: 14mm !important;
+            height: 14mm !important;
+            border-radius: 10px !important;
+            padding: 1.2mm !important;
+          }
+
+          .receipt-box {
+            break-inside: avoid-page;
+            page-break-inside: avoid;
+          }
+
+          .receipt-box,
+          .receipt-summary-card,
+          .receipt-signature-card,
+          .receipt-proof-note {
+            border-radius: 12px !important;
+          }
+
+          .receipt-box {
+            padding: 3.5mm !important;
+          }
+
+          .receipt-table-wrap {
+            overflow: hidden !important;
+          }
+
+          .receipt-lines-table th,
+          .receipt-lines-table td {
+            padding: 2.2mm 2.5mm !important;
+            font-size: 11px !important;
+          }
+
+          .receipt-lines-table,
+          .receipt-lines-table tr,
+          .receipt-lines-table td,
+          .receipt-lines-table th {
+            page-break-inside: avoid !important;
+            break-inside: avoid !important;
+          }
+
+          .receipt-school-title {
+            margin-top: 1.5mm !important;
+            font-size: 20px !important;
+            line-height: 1.05 !important;
+          }
+
+          .receipt-top-meta {
+            margin-top: 1.5mm !important;
+            font-size: 11px !important;
+            line-height: 1.25 !important;
+          }
+
+          .receipt-side-card {
+            min-width: 0 !important;
+            padding: 3.5mm !important;
+            border-radius: 12px !important;
+          }
+
+          .receipt-side-lines {
+            margin-top: 2.2mm !important;
+            gap: 1.2mm !important;
+            font-size: 11px !important;
+          }
+
+          .receipt-section-title {
+            font-size: 11px !important;
+            letter-spacing: 0.12em !important;
+          }
+
+          .receipt-student-grid {
+            margin-top: 2.5mm !important;
+            gap: 2mm 3mm !important;
+            font-size: 11px !important;
+          }
+
+          .receipt-note-box,
+          .receipt-cancel-box {
+            margin-top: 2.4mm !important;
+            padding: 2.4mm 2.8mm !important;
+            font-size: 11px !important;
+            line-height: 1.3 !important;
+          }
+
+          .receipt-summary-shell {
+            padding: 3.5mm !important;
+          }
+
+          .receipt-summary-card {
+            margin-top: 2.5mm !important;
+            padding: 3mm !important;
+          }
+
+          .receipt-amount-label {
+            font-size: 11px !important;
+          }
+
+          .receipt-amount-value {
+            margin-top: 1mm !important;
+            font-size: 22px !important;
+            line-height: 1.05 !important;
+          }
+
+          .receipt-summary-grid {
+            margin-top: 2.4mm !important;
+            gap: 1.6mm !important;
+            font-size: 11px !important;
+          }
+
+          .receipt-status-wrap {
+            margin-top: 2.4mm !important;
+          }
+
+          .receipt-signature-card {
+            padding: 3.5mm !important;
+          }
+
+          .receipt-signature-grid {
+            margin-top: 3mm !important;
+            gap: 4mm !important;
+            font-size: 11px !important;
+          }
+
+          .receipt-signature-line {
+            margin-top: 5mm !important;
+          }
+
+          .receipt-signature-name {
+            margin-top: 1.6mm !important;
+            font-size: 10.5px !important;
+          }
+
+          .receipt-proof-note {
+            padding: 3mm !important;
+            font-size: 10.5px !important;
+            line-height: 1.35 !important;
+          }
+
+          .receipt-footer {
+            padding: 2.5mm 5mm !important;
+            font-size: 10px !important;
           }
         }
       `}</style>
@@ -378,7 +574,7 @@ export default async function FinanceReceiptPrintPage({
       </div>
 
       <article className="receipt-card overflow-hidden rounded-[32px] border border-slate-200 bg-white shadow-sm">
-        <div className="border-b border-slate-200 bg-gradient-to-r from-slate-50 via-white to-slate-50 px-6 py-6">
+        <div className="receipt-header border-b border-slate-200 bg-gradient-to-r from-slate-50 via-white to-slate-50 px-6 py-6">
           <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
             <div className="flex items-start gap-4">
               {institutionSettings.institution_logo_url ? (
@@ -386,10 +582,10 @@ export default async function FinanceReceiptPrintPage({
                 <img
                   src={institutionSettings.institution_logo_url}
                   alt={schoolName}
-                  className="h-16 w-16 rounded-2xl border border-slate-200 object-contain p-2"
+                  className="receipt-logo h-16 w-16 rounded-2xl border border-slate-200 object-contain p-2"
                 />
               ) : (
-                <div className="grid h-16 w-16 place-items-center rounded-2xl border border-slate-200 bg-emerald-50 text-emerald-700">
+                <div className="receipt-logo grid h-16 w-16 place-items-center rounded-2xl border border-slate-200 bg-emerald-50 text-emerald-700">
                   <School2 className="h-8 w-8" />
                 </div>
               )}
@@ -398,11 +594,11 @@ export default async function FinanceReceiptPrintPage({
                 <div className="text-xs font-bold uppercase tracking-[0.18em] text-emerald-700">
                   Mon Cahier — Gestion financière
                 </div>
-                <h2 className="mt-2 text-2xl font-black tracking-tight text-slate-900">
+                <h2 className="receipt-school-title mt-2 text-2xl font-black tracking-tight text-slate-900">
                   {schoolName}
                 </h2>
 
-                <div className="mt-2 space-y-1 text-sm text-slate-600">
+                <div className="receipt-top-meta mt-2 space-y-1 text-sm text-slate-600">
                   {institutionSettings.institution_postal_address ? (
                     <div>{institutionSettings.institution_postal_address}</div>
                   ) : null}
@@ -421,13 +617,13 @@ export default async function FinanceReceiptPrintPage({
               </div>
             </div>
 
-            <div className="rounded-3xl border border-slate-200 bg-white px-5 py-4 lg:min-w-[280px]">
+            <div className="receipt-side-card rounded-3xl border border-slate-200 bg-white px-5 py-4 lg:min-w-[280px]">
               <div className="inline-flex items-center gap-2 rounded-full bg-emerald-50 px-3 py-1 text-xs font-bold uppercase tracking-[0.16em] text-emerald-700 ring-1 ring-emerald-200">
                 <Receipt className="h-3.5 w-3.5" />
                 Reçu de paiement
               </div>
 
-              <div className="mt-4 grid gap-2 text-sm text-slate-700">
+              <div className="receipt-side-lines mt-4 grid gap-2 text-sm text-slate-700">
                 <div>
                   <span className="font-semibold text-slate-900">Numéro :</span>{" "}
                   {typedReceipt.receipt_no}
@@ -453,15 +649,15 @@ export default async function FinanceReceiptPrintPage({
           </div>
         </div>
 
-        <div className="grid gap-6 px-6 py-6 lg:grid-cols-[1.15fr_0.85fr]">
-          <div className="space-y-6">
-            <section className="rounded-3xl border border-slate-200 bg-slate-50/70 p-5">
-              <div className="flex items-center gap-2 text-sm font-black uppercase tracking-[0.16em] text-slate-700">
+        <div className="receipt-main-grid grid gap-6 px-6 py-6 lg:grid-cols-[1.15fr_0.85fr]">
+          <div className="receipt-col space-y-6">
+            <section className="receipt-box rounded-3xl border border-slate-200 bg-slate-50/70 p-5">
+              <div className="receipt-section-title flex items-center gap-2 text-sm font-black uppercase tracking-[0.16em] text-slate-700">
                 <GraduationCap className="h-4 w-4 text-emerald-600" />
                 Élève et payeur
               </div>
 
-              <div className="mt-4 grid gap-3 text-sm text-slate-700 sm:grid-cols-2">
+              <div className="receipt-student-grid mt-4 grid gap-3 text-sm text-slate-700 sm:grid-cols-2">
                 <div>
                   <span className="font-semibold text-slate-900">Élève :</span>{" "}
                   {fullName(student)}
@@ -495,7 +691,7 @@ export default async function FinanceReceiptPrintPage({
               </div>
 
               {typedReceipt.notes ? (
-                <div className="mt-4 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700">
+                <div className="receipt-note-box mt-4 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700">
                   <span className="font-semibold text-slate-900">Note :</span>{" "}
                   {typedReceipt.notes}
                 </div>
@@ -503,16 +699,16 @@ export default async function FinanceReceiptPrintPage({
 
               {typedReceipt.receipt_status === "cancelled" &&
               typedReceipt.cancel_reason ? (
-                <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                <div className="receipt-cancel-box mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
                   <span className="font-semibold">Motif d’annulation :</span>{" "}
                   {typedReceipt.cancel_reason}
                 </div>
               ) : null}
             </section>
 
-            <section className="rounded-3xl border border-slate-200 bg-white">
+            <section className="receipt-box rounded-3xl border border-slate-200 bg-white">
               <div className="border-b border-slate-200 px-5 py-4">
-                <div className="flex items-center gap-2 text-sm font-black uppercase tracking-[0.16em] text-slate-700">
+                <div className="receipt-section-title flex items-center gap-2 text-sm font-black uppercase tracking-[0.16em] text-slate-700">
                   <Wallet className="h-4 w-4 text-emerald-600" />
                   Détail du paiement
                 </div>
@@ -523,8 +719,8 @@ export default async function FinanceReceiptPrintPage({
                   Aucune ligne de ventilation trouvée pour ce reçu.
                 </div>
               ) : (
-                <div className="overflow-x-auto">
-                  <table className="min-w-full text-sm">
+                <div className="receipt-table-wrap overflow-x-auto">
+                  <table className="receipt-lines-table min-w-full text-sm">
                     <thead className="bg-slate-50 text-left text-slate-600">
                       <tr>
                         <th className="px-5 py-3 font-bold">Libellé</th>
@@ -566,19 +762,19 @@ export default async function FinanceReceiptPrintPage({
             </section>
           </div>
 
-          <div className="space-y-6">
-            <section className="rounded-3xl border border-slate-200 bg-emerald-50/60 p-5">
+          <div className="receipt-col space-y-6">
+            <section className="receipt-summary-shell rounded-3xl border border-slate-200 bg-emerald-50/60 p-5">
               <div className="text-xs font-bold uppercase tracking-[0.16em] text-emerald-700">
                 Synthèse
               </div>
 
-              <div className="mt-4 rounded-3xl bg-white px-5 py-5 shadow-sm">
-                <div className="text-sm text-slate-600">Montant du reçu</div>
-                <div className="mt-2 text-3xl font-black text-slate-900">
+              <div className="receipt-summary-card mt-4 rounded-3xl bg-white px-5 py-5 shadow-sm">
+                <div className="receipt-amount-label text-sm text-slate-600">Montant du reçu</div>
+                <div className="receipt-amount-value mt-2 text-3xl font-black text-slate-900">
                   {formatMoney(typedReceipt.total_amount)}
                 </div>
 
-                <div className="mt-4 grid gap-3 text-sm text-slate-700">
+                <div className="receipt-summary-grid mt-4 grid gap-3 text-sm text-slate-700">
                   <div className="flex items-center justify-between gap-3">
                     <span>Ventilation totale</span>
                     <span className="font-bold text-slate-900">
@@ -599,7 +795,7 @@ export default async function FinanceReceiptPrintPage({
                   </div>
                 </div>
 
-                <div className="mt-5">
+                <div className="receipt-status-wrap mt-5">
                   {typedReceipt.receipt_status === "posted" ? (
                     <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-3 py-1.5 text-xs font-bold text-emerald-700 ring-1 ring-emerald-200">
                       <BadgeCheck className="h-3.5 w-3.5" />
@@ -614,26 +810,26 @@ export default async function FinanceReceiptPrintPage({
               </div>
             </section>
 
-            <section className="rounded-3xl border border-slate-200 bg-white p-5">
-              <div className="flex items-center gap-2 text-sm font-black uppercase tracking-[0.16em] text-slate-700">
+            <section className="receipt-signature-card rounded-3xl border border-slate-200 bg-white p-5">
+              <div className="receipt-section-title flex items-center gap-2 text-sm font-black uppercase tracking-[0.16em] text-slate-700">
                 <UserRound className="h-4 w-4 text-emerald-600" />
                 Signature / cachet
               </div>
 
-              <div className="mt-8 grid gap-10 text-sm text-slate-700">
+              <div className="receipt-signature-grid mt-8 grid gap-10 text-sm text-slate-700">
                 <div>
                   <div className="font-semibold text-slate-900">
                     Le caissier / l’administration
                   </div>
-                  <div className="mt-8 border-b border-slate-300" />
+                  <div className="receipt-signature-line mt-8 border-b border-slate-300" />
                 </div>
 
                 <div>
                   <div className="font-semibold text-slate-900">Le responsable</div>
-                  <div className="mt-8 border-b border-slate-300" />
+                  <div className="receipt-signature-line mt-8 border-b border-slate-300" />
                   {institutionSettings.institution_head_title ||
                   institutionSettings.institution_head_name ? (
-                    <div className="mt-2 text-slate-500">
+                    <div className="receipt-signature-name mt-2 text-slate-500">
                       {[
                         institutionSettings.institution_head_title,
                         institutionSettings.institution_head_name,
@@ -646,15 +842,15 @@ export default async function FinanceReceiptPrintPage({
               </div>
             </section>
 
-            <section className="rounded-3xl border border-dashed border-slate-300 bg-slate-50 p-5 text-sm leading-6 text-slate-600">
-              Ce reçu peut être imprimé sur papier ou enregistré en PDF depuis le
-              navigateur. Il constitue une preuve d’enregistrement du paiement
-              effectué dans le module financier de l’établissement.
+            <section className="receipt-proof-note rounded-3xl border border-dashed border-slate-300 bg-slate-50 p-5 text-sm leading-6 text-slate-600">
+              Ce reçu constitue la preuve d’enregistrement du paiement effectué. Aucun duplicata ne pourra être émis.
+              
+              
             </section>
           </div>
         </div>
 
-        <div className="border-t border-slate-200 px-6 py-4 text-xs text-slate-500">
+        <div className="receipt-footer border-t border-slate-200 px-6 py-4 text-xs text-slate-500">
           Document généré le {formatDateTime(new Date().toISOString())} —{" "}
           {schoolName}
         </div>

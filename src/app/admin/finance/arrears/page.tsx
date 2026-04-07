@@ -1,5 +1,6 @@
 // src/app/admin/finance/arrears/page.tsx
 import Link from "next/link";
+import type { ReactNode } from "react";
 import { redirect } from "next/navigation";
 import {
   AlertTriangle,
@@ -11,6 +12,10 @@ import {
 } from "lucide-react";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getFinanceAccessForCurrentUser } from "@/lib/finance-access";
+import {
+  getAdminStudentsServer,
+  type AdminStudentRow,
+} from "@/lib/admin-students-server";
 
 export const dynamic = "force-dynamic";
 
@@ -19,14 +24,6 @@ type ClassRow = {
   label: string;
   level: string | null;
   academic_year: string | null;
-};
-
-type StudentRow = {
-  id: string;
-  first_name: string | null;
-  last_name: string | null;
-  matricule: string | null;
-  class_id: string | null;
 };
 
 type ChargeBalanceRow = {
@@ -54,12 +51,9 @@ function formatMoney(value: number | string) {
   return `${Number(value || 0).toLocaleString("fr-FR")} F`;
 }
 
-function fullName(student: StudentRow | undefined | null) {
+function fullName(student: AdminStudentRow | undefined | null) {
   if (!student) return "Élève inconnu";
-  const parts = [student.first_name || "", student.last_name || ""]
-    .map((x) => x.trim())
-    .filter(Boolean);
-  return parts.join(" ") || student.matricule || "Élève sans nom";
+  return student.full_name || student.matricule || "Élève sans nom";
 }
 
 function normalize(input: string) {
@@ -101,7 +95,7 @@ function StatCard({
   value,
   hint,
 }: {
-  icon: React.ReactNode;
+  icon: ReactNode;
   label: string;
   value: string | number;
   hint: string;
@@ -161,11 +155,13 @@ export default async function FinanceArrearsPage({
 
   const institutionId = await getCurrentInstitutionIdOrThrow();
   const supabase = await getSupabaseServerClient();
+  const adminStudents = await getAdminStudentsServer();
 
   const { data: classes, error: clsErr } = await supabase
     .from("classes")
     .select("id,label,level,academic_year")
     .eq("institution_id", institutionId)
+    .order("level", { ascending: true })
     .order("label", { ascending: true });
 
   if (clsErr) throw new Error(clsErr.message);
@@ -193,25 +189,21 @@ export default async function FinanceArrearsPage({
   if (balErr) throw new Error(balErr.message);
 
   const balanceRows = (balances ?? []) as ChargeBalanceRow[];
-  const studentIds = Array.from(new Set(balanceRows.map((b) => b.student_id)));
+  const relevantStudentIds = new Set(balanceRows.map((b) => b.student_id));
 
-  const { data: students, error: stuErr } = studentIds.length
-    ? await supabase
-        .from("students")
-        .select("id,first_name,last_name,matricule,class_id")
-        .in("id", studentIds)
-    : { data: [], error: null as any };
-
-  if (stuErr) throw new Error(stuErr.message);
-
-  const studentRows = (students ?? []) as StudentRow[];
+  const studentRows = adminStudents.filter((s) => relevantStudentIds.has(s.id));
   const studentMap = new Map(studentRows.map((s) => [s.id, s]));
 
   const qn = normalize(q);
 
   const filteredRows = balanceRows.filter((row) => {
     const student = studentMap.get(row.student_id);
-    const cls = row.class_id ? classMap.get(row.class_id) : null;
+    const cls =
+      row.class_id
+        ? classMap.get(row.class_id)
+        : student?.class_id
+        ? classMap.get(student.class_id)
+        : null;
 
     if (!qn) return true;
 
@@ -219,6 +211,7 @@ export default async function FinanceArrearsPage({
       [
         fullName(student),
         student?.matricule || "",
+        student?.class_label || "",
         cls?.label || "",
         cls?.level || "",
         cls?.academic_year || "",
@@ -250,7 +243,7 @@ export default async function FinanceArrearsPage({
     Record<
       string,
       {
-        student: StudentRow | undefined;
+        student: AdminStudentRow | undefined;
         classRow: ClassRow | undefined;
         totalDue: number;
         overdueDue: number;
@@ -259,7 +252,12 @@ export default async function FinanceArrearsPage({
     >
   >((acc, row) => {
     const student = studentMap.get(row.student_id);
-    const classRow = row.class_id ? classMap.get(row.class_id) : undefined;
+    const classRow =
+      row.class_id
+        ? classMap.get(row.class_id)
+        : student?.class_id
+        ? classMap.get(student.class_id)
+        : undefined;
 
     if (!acc[row.student_id]) {
       acc[row.student_id] = {
@@ -422,7 +420,7 @@ export default async function FinanceArrearsPage({
                       <div className="mt-3 grid gap-2 text-sm text-slate-600 sm:grid-cols-3">
                         <div>
                           <span className="font-semibold text-slate-800">Classe :</span>{" "}
-                          {cls?.label || "—"}
+                          {student?.class_label || cls?.label || "—"}
                           {cls?.level ? ` (${cls.level})` : ""}
                         </div>
                         <div>
@@ -430,7 +428,9 @@ export default async function FinanceArrearsPage({
                           {cls?.academic_year || "—"}
                         </div>
                         <div>
-                          <span className="font-semibold text-slate-800">Nombre de dettes :</span>{" "}
+                          <span className="font-semibold text-slate-800">
+                            Nombre de dettes :
+                          </span>{" "}
                           {group.charges.length}
                         </div>
                       </div>
@@ -454,8 +454,12 @@ export default async function FinanceArrearsPage({
                 <div className="space-y-4 px-5 py-5">
                   {group.charges
                     .sort((a, b) => {
-                      const ad = a.due_date ? new Date(a.due_date).getTime() : Number.MAX_SAFE_INTEGER;
-                      const bd = b.due_date ? new Date(b.due_date).getTime() : Number.MAX_SAFE_INTEGER;
+                      const ad = a.due_date
+                        ? new Date(a.due_date).getTime()
+                        : Number.MAX_SAFE_INTEGER;
+                      const bd = b.due_date
+                        ? new Date(b.due_date).getTime()
+                        : Number.MAX_SAFE_INTEGER;
                       return ad - bd;
                     })
                     .map((row) => {
@@ -488,15 +492,21 @@ export default async function FinanceArrearsPage({
                                   {formatMoney(row.net_amount)}
                                 </div>
                                 <div>
-                                  <span className="font-semibold text-slate-800">Déjà payé :</span>{" "}
+                                  <span className="font-semibold text-slate-800">
+                                    Déjà payé :
+                                  </span>{" "}
                                   {formatMoney(row.paid_amount)}
                                 </div>
                                 <div>
-                                  <span className="font-semibold text-slate-800">Reste dû :</span>{" "}
+                                  <span className="font-semibold text-slate-800">
+                                    Reste dû :
+                                  </span>{" "}
                                   {formatMoney(row.balance_due)}
                                 </div>
                                 <div>
-                                  <span className="font-semibold text-slate-800">Échéance :</span>{" "}
+                                  <span className="font-semibold text-slate-800">
+                                    Échéance :
+                                  </span>{" "}
                                   {row.due_date || "—"}
                                 </div>
                               </div>
