@@ -6,6 +6,7 @@ import { buildSmsMessageFromQueue } from "@/lib/sms/messages";
 import {
   getInstitutionSmsPolicy,
   resolveSmsProvider,
+  resolveSmsSenderName,
   shouldSendSmsForEvent,
   type InstitutionSmsPolicy,
   type SmsEventKind,
@@ -550,6 +551,7 @@ async function run(req: Request) {
     let lastError = "";
     let provider: string | null = null;
     let smsEvent: SmsEventKind | null = null;
+    let senderName: string | null = null;
     let message = "";
 
     const successTargets: any[] = [];
@@ -566,6 +568,7 @@ async function run(req: Request) {
         const policy = await getPolicyCached(institutionId);
         provider = resolveSmsProvider(policy);
         smsEvent = resolveSmsEventFromPayload(core);
+        senderName = resolveSmsSenderName(policy);
 
         console.info("[sms/dispatch] policy_check", {
           id,
@@ -577,7 +580,7 @@ async function run(req: Request) {
           smsAbsenceEnabled: policy.smsAbsenceEnabled,
           smsLateEnabled: policy.smsLateEnabled,
           smsNotesDigestEnabled: policy.smsNotesDigestEnabled,
-          smsSenderName: policy.smsSenderName,
+          smsSenderName: senderName,
         });
 
         if (!policy.smsPremiumEnabled) {
@@ -605,6 +608,7 @@ async function run(req: Request) {
             institution_id: institutionId,
             event: smsEvent,
             provider,
+            senderName,
             attempts,
             target_profiles_count: targetProfiles.length,
             message_length: message.length,
@@ -659,6 +663,7 @@ async function run(req: Request) {
               const orangeResult = await sendOrangeSms({
                 to: best.phone_e164,
                 message,
+                senderAddress: senderName || undefined,
               });
 
               usedContactIds.add(best.id);
@@ -676,6 +681,7 @@ async function run(req: Request) {
                 contact_id: best.id,
                 phone_e164: best.phone_e164,
                 at: acceptedAtIso,
+                requested_sender_name: senderName || null,
                 orange: {
                   ...orangeDebug,
                   resourceId: orangeResourceId,
@@ -703,6 +709,7 @@ async function run(req: Request) {
                           httpStatus: orangeDebug.httpStatus,
                           locationHeader: orangeDebug.locationHeader,
                           requestId: orangeDebug.requestId,
+                          requestedSenderName: senderName || null,
                         },
                       }),
                       updated_at: acceptedAtIso,
@@ -731,6 +738,8 @@ async function run(req: Request) {
                     contact: shortId(best.id),
                     resourceId: orangeResourceId,
                     requestId: orangeDebug.requestId,
+                    requestedSenderName: senderName || null,
+                    providerSenderAddress: orangeResult.senderAddress,
                   });
                 }
               } else {
@@ -744,8 +753,15 @@ async function run(req: Request) {
                   resourceURL: orangeDebug.resourceURL,
                   resourceId: orangeResourceId,
                   locationHeader: orangeDebug.locationHeader,
+                  requestedSenderName: senderName || null,
+                  providerSenderAddress: orangeDebug.senderAddress || null,
                 });
               }
+
+              const providerQueueStatus =
+                failedTargets.length > 0
+                  ? PROVIDER_ACCEPTED_PARTIAL_STATUS
+                  : PROVIDER_ACCEPTED_STATUS;
 
               console.info("[sms/dispatch] sms_provider_accept_ok", {
                 id,
@@ -754,14 +770,14 @@ async function run(req: Request) {
                 contact: shortId(best.id),
                 to: shortId(best.phone_e164, 18),
                 event: smsEvent,
+                requestedSenderName: senderName || null,
+                providerSenderAddress: orangeDebug.senderAddress || null,
                 httpStatus: orangeDebug.httpStatus,
                 requestId: orangeDebug.requestId,
                 locationHeader: orangeDebug.locationHeader,
                 resourceId: orangeResourceId,
-                queueStatusWillBe:
-                  failedTargets.length > 0
-                    ? PROVIDER_ACCEPTED_PARTIAL_STATUS
-                    : PROVIDER_ACCEPTED_STATUS,
+                queueStatusWillBe: "sent",
+                providerStatusWillBe: providerQueueStatus,
               });
             } catch (e: any) {
               lastError = String(e?.message || e);
@@ -771,6 +787,7 @@ async function run(req: Request) {
                 contact_id: best.id,
                 phone_e164: best.phone_e164,
                 error: lastError,
+                requested_sender_name: senderName || null,
                 at: new Date().toISOString(),
               });
 
@@ -782,6 +799,7 @@ async function run(req: Request) {
                 to: shortId(best.phone_e164, 18),
                 event: smsEvent,
                 attempts,
+                requestedSenderName: senderName || null,
                 message_length: message.length,
                 error: lastError.slice(0, 300),
               });
@@ -796,6 +814,7 @@ async function run(req: Request) {
             institution_id: institutionId,
             event: smsEvent,
             provider,
+            requestedSenderName: senderName || null,
             target_profiles_count: targetProfiles.length,
             attempts,
             reason: lastError,
@@ -820,7 +839,9 @@ async function run(req: Request) {
     const latestOrange = latestAccepted?.orange || null;
     const partialFailure = successes > 0 && failedTargets.length > 0;
 
-    const successQueueStatus = partialFailure
+    const successQueueStatus = "sent";
+
+    const providerQueueStatus = partialFailure
       ? PROVIDER_ACCEPTED_PARTIAL_STATUS
       : PROVIDER_ACCEPTED_STATUS;
 
@@ -840,8 +861,10 @@ async function run(req: Request) {
         institution_id: institutionId || null,
         sms_event: smsEvent ?? null,
         provider,
+        requested_sender_name: senderName || null,
         attempts,
         final_status: computedFinalStatus,
+        provider_accept_status: successes > 0 ? providerQueueStatus : null,
         target_profiles: cloneJson(targetProfiles),
         target_profile_count: targetProfiles.length,
         message_preview: message ? message.slice(0, 200) : null,
@@ -856,8 +879,10 @@ async function run(req: Request) {
       sms_delivery: latestOrange
         ? {
             provider: "orange_ci",
+            provider_status: providerQueueStatus,
             accepted_by_provider: true,
             accepted_at: latestAccepted?.at || nowIso,
+            requested_sender_name: senderName || null,
             to: latestAccepted?.phone_e164 || null,
             sender_address: latestOrange.senderAddress || null,
             orange_resource_id: latestOrange.resourceId || null,
@@ -878,7 +903,7 @@ async function run(req: Request) {
         .from("notifications_queue")
         .update({
           status: successQueueStatus,
-          sent_at: null,
+          sent_at: nowIso,
           attempts,
           last_error: null,
           meta: nextMeta,
@@ -891,6 +916,7 @@ async function run(req: Request) {
           qid: n.id,
           error: updErr.message,
           queueStatus: successQueueStatus,
+          providerStatus: providerQueueStatus,
         });
       } else {
         console.info("[sms/dispatch] queue_update_provider_accept_ok", {
@@ -900,6 +926,8 @@ async function run(req: Request) {
           successes,
           partialFailure,
           queueStatus: successQueueStatus,
+          providerStatus: providerQueueStatus,
+          requestedSenderName: senderName || null,
         });
       }
     } else {

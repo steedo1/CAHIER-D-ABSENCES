@@ -140,18 +140,55 @@ function normalizePhoneToE164(raw: string): string {
   throw new Error(`Impossible de normaliser le numéro "${raw}" au format E.164.`);
 }
 
-function toOrangeTelAddress(input: string): string {
-  const s = String(input || "").trim();
+function isPhoneLikeValue(input: string): boolean {
+  const value = String(input || "").trim();
+  if (!value) return false;
 
-  if (s.startsWith("tel:+")) {
-    return s;
+  if (value.startsWith("tel:+")) return true;
+  if (value.startsWith("+")) return true;
+
+  const digits = value.replace(/\D/g, "");
+  return digits.length >= 8;
+}
+
+function toOrangeRecipientAddress(input: string): string {
+  const value = String(input || "").trim();
+
+  if (value.startsWith("tel:+")) {
+    return value;
   }
 
-  if (s.startsWith("+")) {
-    return `tel:${s}`;
+  if (value.startsWith("+")) {
+    return `tel:${normalizePhoneToE164(value)}`;
   }
 
-  return `tel:${normalizePhoneToE164(s)}`;
+  return `tel:${normalizePhoneToE164(value)}`;
+}
+
+/**
+ * Pour le sender Orange :
+ * - si on reçoit un MSISDN / tel:+..., on envoie un sender technique tel:+...
+ * - si on reçoit un sender alphanumérique autorisé (ex: MonCahier), on le garde tel quel
+ */
+function normalizeOrangeSenderAddress(input: string): string {
+  const value = String(input || "").trim();
+  if (!value) {
+    throw new Error("Sender SMS vide.");
+  }
+
+  if (value.startsWith("tel:+")) {
+    return value;
+  }
+
+  if (value.startsWith("+")) {
+    return `tel:${normalizePhoneToE164(value)}`;
+  }
+
+  if (isPhoneLikeValue(value)) {
+    return `tel:${normalizePhoneToE164(value)}`;
+  }
+
+  return value;
 }
 
 function safeJsonParse(text: string): unknown {
@@ -368,10 +405,10 @@ export async function sendOrangeSms(
 
   warnIfMessageLooksRisky(message);
 
-  const senderAddress = toOrangeTelAddress(
+  const senderAddress = normalizeOrangeSenderAddress(
     input.senderAddress?.trim() || DEFAULT_SENDER
   );
-  const to = toOrangeTelAddress(input.to);
+  const to = toOrangeRecipientAddress(input.to);
 
   const encodedSender = encodeURIComponent(senderAddress);
   const url = `${ORANGE_SMS_BASE_URL}/smsmessaging/v1/outbound/${encodedSender}/requests`;
@@ -381,10 +418,11 @@ export async function sendOrangeSms(
     url,
     to: short(to, 18),
     senderAddress,
+    senderKind: senderAddress.startsWith("tel:+") ? "msisdn" : "alphanumeric",
     messageLength: message.length,
     usedDefaultSender:
       !input.senderAddress?.trim() &&
-      senderAddress === toOrangeTelAddress(DEFAULT_SENDER),
+      senderAddress === normalizeOrangeSenderAddress(DEFAULT_SENDER),
     hasConfiguredSender: !!process.env.ORANGE_SMS_SENDER?.trim(),
   });
 
@@ -466,6 +504,7 @@ export async function sendOrangeSms(
     url,
     to: short(to, 18),
     senderAddress,
+    senderKind: senderAddress.startsWith("tel:+") ? "msisdn" : "alphanumeric",
     status: response.status,
     messageLength: message.length,
     locationHeader: debugHeaders.location,
