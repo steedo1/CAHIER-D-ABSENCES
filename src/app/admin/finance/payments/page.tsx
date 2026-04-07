@@ -20,6 +20,7 @@ import {
   getAdminStudentsServer,
   type AdminStudentRow,
 } from "@/lib/admin-students-server";
+import PaymentsComposer from "./PaymentsComposer";
 
 export const dynamic = "force-dynamic";
 
@@ -65,6 +66,22 @@ type ReceiptRow = {
   total_amount: number;
   notes: string | null;
   created_at: string;
+};
+
+export type PaymentSelectionRow = {
+  charge_id: string;
+  student_id: string;
+  student_name: string;
+  matricule: string | null;
+  class_id: string | null;
+  class_label: string;
+  level: string | null;
+  academic_year: string | null;
+  fee_label: string;
+  due_date: string | null;
+  net_amount: number;
+  paid_amount: number;
+  balance_due: number;
 };
 
 function fullName(student: AdminStudentRow | undefined | null) {
@@ -308,6 +325,7 @@ export default async function FinancePaymentsPage() {
     .from("classes")
     .select("id,label,level,academic_year")
     .eq("institution_id", institutionId)
+    .order("level", { ascending: true })
     .order("label", { ascending: true });
 
   if (clsErr) throw new Error(clsErr.message);
@@ -353,6 +371,32 @@ export default async function FinancePaymentsPage() {
   const studentRows = adminStudents.filter((s) => relevantStudentIds.has(s.id));
   const studentMap = new Map(studentRows.map((s) => [s.id, s]));
 
+  const paymentSelectionRows: PaymentSelectionRow[] = balanceRows.map((row) => {
+    const student = studentMap.get(row.student_id);
+    const cls =
+      row.class_id
+        ? classMap.get(row.class_id)
+        : student?.class_id
+        ? classMap.get(student.class_id)
+        : null;
+
+    return {
+      charge_id: row.id,
+      student_id: row.student_id,
+      student_name: fullName(student),
+      matricule: student?.matricule ?? null,
+      class_id: row.class_id ?? student?.class_id ?? null,
+      class_label: student?.class_label || cls?.label || "Sans classe",
+      level: cls?.level ?? null,
+      academic_year: cls?.academic_year ?? null,
+      fee_label: row.label,
+      due_date: row.due_date,
+      net_amount: Number(row.net_amount || 0),
+      paid_amount: Number(row.paid_amount || 0),
+      balance_due: Number(row.balance_due || 0),
+    };
+  });
+
   const totalDue = balanceRows.reduce(
     (sum, row) => sum + Number(row.balance_due || 0),
     0
@@ -377,8 +421,8 @@ export default async function FinancePaymentsPage() {
             </h1>
 
             <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-200 sm:text-[15px]">
-              Cette page sert à enregistrer manuellement les paiements reçus par
-              l’établissement. Aucun paiement en ligne n’est déclenché ici.
+              Sélectionnez d’abord le niveau, puis la classe, recherchez l’élève
+              concerné, vérifiez sa dette à droite et enregistrez le règlement.
             </p>
           </div>
 
@@ -423,317 +467,221 @@ export default async function FinancePaymentsPage() {
         />
       </section>
 
-      <section className="grid gap-6 xl:grid-cols-[430px_1fr]">
-        <form
-          action={createPaymentAction}
-          className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm"
-        >
+      <PaymentsComposer
+        action={createPaymentAction}
+        classes={classRows}
+        rows={paymentSelectionRows}
+      />
+
+      <section className="grid gap-6 xl:grid-cols-2">
+        <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="flex items-center gap-2 text-sm font-black uppercase tracking-[0.16em] text-slate-700">
+            <Wallet className="h-4 w-4 text-emerald-600" />
+            Dettes ouvertes
+          </div>
+
+          {balanceRows.length === 0 ? (
+            <div className="mt-5 rounded-3xl border border-dashed border-slate-300 bg-slate-50 px-5 py-10 text-center text-sm text-slate-600">
+              Aucune dette ouverte pour le moment.
+            </div>
+          ) : (
+            <div className="mt-5 space-y-4">
+              {balanceRows.map((row) => {
+                const student = studentMap.get(row.student_id);
+                const cls =
+                  row.class_id
+                    ? classMap.get(row.class_id)
+                    : student?.class_id
+                    ? classMap.get(student.class_id)
+                    : null;
+
+                const overdue =
+                  row.due_date &&
+                  new Date(`${row.due_date}T23:59:59`).getTime() < Date.now();
+
+                return (
+                  <article
+                    key={row.id}
+                    className="rounded-3xl border border-slate-200 bg-slate-50/60 p-4"
+                  >
+                    <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <h2 className="text-lg font-black text-slate-900">
+                            {fullName(student)}
+                          </h2>
+                          {student?.matricule ? (
+                            <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-bold text-slate-700 ring-1 ring-slate-200">
+                              {student.matricule}
+                            </span>
+                          ) : null}
+                          <StatusPill
+                            label={overdue ? "Échu" : "Ouvert"}
+                            tone={overdue ? "amber" : "emerald"}
+                          />
+                        </div>
+
+                        <div className="mt-3 grid gap-2 text-sm text-slate-600 sm:grid-cols-2">
+                          <div>
+                            <span className="font-semibold text-slate-800">
+                              Classe :
+                            </span>{" "}
+                            {student?.class_label || cls?.label || "—"}
+                            {cls?.level ? ` (${cls.level})` : ""}
+                          </div>
+                          <div>
+                            <span className="font-semibold text-slate-800">
+                              Année :
+                            </span>{" "}
+                            {cls?.academic_year || "—"}
+                          </div>
+                          <div>
+                            <span className="font-semibold text-slate-800">
+                              Frais :
+                            </span>{" "}
+                            {row.label}
+                          </div>
+                          <div>
+                            <span className="font-semibold text-slate-800">
+                              Échéance :
+                            </span>{" "}
+                            {row.due_date || "—"}
+                          </div>
+                        </div>
+
+                        <div className="mt-4 flex flex-wrap items-center gap-2">
+                          <span className="rounded-full bg-slate-100 px-3 py-1.5 text-sm font-bold text-slate-700 ring-1 ring-slate-200">
+                            Brut : {formatMoney(row.net_amount)}
+                          </span>
+                          <span className="rounded-full bg-emerald-50 px-3 py-1.5 text-sm font-bold text-emerald-700 ring-1 ring-emerald-200">
+                            Payé : {formatMoney(row.paid_amount)}
+                          </span>
+                          <span className="rounded-full bg-rose-50 px-3 py-1.5 text-sm font-bold text-rose-700 ring-1 ring-rose-200">
+                            Reste : {formatMoney(row.balance_due)}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
           <div className="flex items-center gap-2 text-sm font-black uppercase tracking-[0.16em] text-slate-700">
             <Receipt className="h-4 w-4 text-emerald-600" />
-            Nouveau règlement
+            Reçus récents
           </div>
 
-          <div className="mt-5 space-y-4">
-            <div>
-              <label className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-slate-500">
-                Dette à régler
-              </label>
-              <select
-                name="student_charge_id"
-                required
-                className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-semibold text-slate-800 outline-none"
-              >
-                <option value="">— Choisir une dette élève —</option>
-                {balanceRows.map((row) => {
-                  const student = studentMap.get(row.student_id);
-                  const cls =
-                    row.class_id
-                      ? classMap.get(row.class_id)
-                      : student?.class_id
-                      ? classMap.get(student.class_id)
-                      : null;
-
-                  const name = fullName(student);
-                  const classLabel =
-                    student?.class_label || cls?.label || "Sans classe";
-                  const matricule = student?.matricule ? ` — ${student.matricule}` : "";
-
-                  return (
-                    <option key={row.id} value={row.id}>
-                      {name}
-                      {matricule}
-                      {" — "}
-                      {classLabel}
-                      {" — "}
-                      {row.label}
-                      {" — "}
-                      {formatMoney(row.balance_due)}
-                    </option>
-                  );
-                })}
-              </select>
+          {receiptRows.length === 0 ? (
+            <div className="mt-5 rounded-3xl border border-dashed border-slate-300 bg-slate-50 px-5 py-10 text-center text-sm text-slate-600">
+              Aucun reçu enregistré pour le moment.
             </div>
+          ) : (
+            <div className="mt-5 space-y-4">
+              {receiptRows.map((row) => {
+                const student = studentMap.get(row.student_id);
+                const cls = student?.class_id ? classMap.get(student.class_id) : null;
 
-            <div>
-              <label className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-slate-500">
-                Montant encaissé
-              </label>
-              <input
-                type="number"
-                name="amount"
-                min="1"
-                step="0.01"
-                required
-                placeholder="Ex. 25000"
-                className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-semibold text-slate-800 outline-none placeholder:text-slate-400"
-              />
-              <p className="mt-1 text-xs text-slate-500">
-                Le montant ne doit pas dépasser le reste dû de la dette choisie.
-              </p>
-            </div>
+                return (
+                  <article
+                    key={row.id}
+                    className="rounded-3xl border border-slate-200 bg-slate-50/60 p-4"
+                  >
+                    <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <h2 className="text-lg font-black text-slate-900">
+                            {row.receipt_no}
+                          </h2>
+                          <StatusPill
+                            label={
+                              row.receipt_status === "posted" ? "Validé" : "Annulé"
+                            }
+                            tone={
+                              row.receipt_status === "posted" ? "emerald" : "slate"
+                            }
+                          />
+                        </div>
 
-            <div>
-              <label className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-slate-500">
-                Nom du payeur
-              </label>
-              <input
-                type="text"
-                name="payer_name"
-                placeholder="Ex. Parent / Tuteur"
-                className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-semibold text-slate-800 outline-none placeholder:text-slate-400"
-              />
-            </div>
-
-            <div>
-              <label className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-slate-500">
-                Référence
-              </label>
-              <input
-                type="text"
-                name="reference_no"
-                placeholder="Ex. Versement caisse 001"
-                className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-semibold text-slate-800 outline-none placeholder:text-slate-400"
-              />
-            </div>
-
-            <div>
-              <label className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-slate-500">
-                Date d’encaissement
-              </label>
-              <input
-                type="date"
-                name="payment_date"
-                defaultValue={new Date().toISOString().slice(0, 10)}
-                className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-semibold text-slate-800 outline-none"
-              />
-            </div>
-
-            <div>
-              <label className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-slate-500">
-                Notes
-              </label>
-              <textarea
-                name="notes"
-                rows={4}
-                placeholder="Commentaire interne"
-                className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-semibold text-slate-800 outline-none placeholder:text-slate-400"
-              />
-            </div>
-
-            <button className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-4 py-3 text-sm font-bold text-white transition hover:bg-emerald-700">
-              <Receipt className="h-4 w-4" />
-              Enregistrer le paiement
-            </button>
-          </div>
-        </form>
-
-        <div className="space-y-6">
-          <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
-            <div className="flex items-center gap-2 text-sm font-black uppercase tracking-[0.16em] text-slate-700">
-              <Wallet className="h-4 w-4 text-emerald-600" />
-              Dettes ouvertes
-            </div>
-
-            {balanceRows.length === 0 ? (
-              <div className="mt-5 rounded-3xl border border-dashed border-slate-300 bg-slate-50 px-5 py-10 text-center text-sm text-slate-600">
-                Aucune dette ouverte pour le moment.
-              </div>
-            ) : (
-              <div className="mt-5 space-y-4">
-                {balanceRows.map((row) => {
-                  const student = studentMap.get(row.student_id);
-                  const cls =
-                    row.class_id
-                      ? classMap.get(row.class_id)
-                      : student?.class_id
-                      ? classMap.get(student.class_id)
-                      : null;
-
-                  const overdue =
-                    row.due_date &&
-                    new Date(`${row.due_date}T23:59:59`).getTime() < Date.now();
-
-                  return (
-                    <article
-                      key={row.id}
-                      className="rounded-3xl border border-slate-200 bg-slate-50/60 p-4"
-                    >
-                      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                        <div className="min-w-0">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <h2 className="text-lg font-black text-slate-900">
-                              {fullName(student)}
-                            </h2>
-                            {student?.matricule ? (
-                              <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-bold text-slate-700 ring-1 ring-slate-200">
-                                {student.matricule}
-                              </span>
-                            ) : null}
-                            <StatusPill
-                              label={overdue ? "Échu" : "Ouvert"}
-                              tone={overdue ? "amber" : "emerald"}
-                            />
+                        <div className="mt-3 grid gap-2 text-sm text-slate-600 sm:grid-cols-2">
+                          <div>
+                            <span className="font-semibold text-slate-800">
+                              Élève :
+                            </span>{" "}
+                            {fullName(student)}
                           </div>
-
-                          <div className="mt-3 grid gap-2 text-sm text-slate-600 sm:grid-cols-2">
-                            <div>
-                              <span className="font-semibold text-slate-800">Classe :</span>{" "}
-                              {student?.class_label || cls?.label || "—"}
-                              {cls?.level ? ` (${cls.level})` : ""}
-                            </div>
-                            <div>
-                              <span className="font-semibold text-slate-800">Année :</span>{" "}
-                              {cls?.academic_year || "—"}
-                            </div>
-                            <div>
-                              <span className="font-semibold text-slate-800">Frais :</span>{" "}
-                              {row.label}
-                            </div>
-                            <div>
-                              <span className="font-semibold text-slate-800">Échéance :</span>{" "}
-                              {row.due_date || "—"}
-                            </div>
+                          <div>
+                            <span className="font-semibold text-slate-800">
+                              Classe :
+                            </span>{" "}
+                            {student?.class_label || cls?.label || "—"}
                           </div>
-
-                          <div className="mt-4 flex flex-wrap items-center gap-2">
-                            <span className="rounded-full bg-slate-100 px-3 py-1.5 text-sm font-bold text-slate-700 ring-1 ring-slate-200">
-                              Brut : {formatMoney(row.net_amount)}
-                            </span>
-                            <span className="rounded-full bg-emerald-50 px-3 py-1.5 text-sm font-bold text-emerald-700 ring-1 ring-emerald-200">
-                              Payé : {formatMoney(row.paid_amount)}
-                            </span>
-                            <span className="rounded-full bg-rose-50 px-3 py-1.5 text-sm font-bold text-rose-700 ring-1 ring-rose-200">
-                              Reste : {formatMoney(row.balance_due)}
-                            </span>
+                          <div>
+                            <span className="font-semibold text-slate-800">
+                              Payeur :
+                            </span>{" "}
+                            {row.payer_name || "—"}
                           </div>
+                          <div>
+                            <span className="font-semibold text-slate-800">
+                              Référence :
+                            </span>{" "}
+                            {row.reference_no || "—"}
+                          </div>
+                          <div>
+                            <span className="font-semibold text-slate-800">
+                              Date :
+                            </span>{" "}
+                            {new Date(row.payment_date).toLocaleString("fr-FR", {
+                              dateStyle: "short",
+                              timeStyle: "short",
+                            })}
+                          </div>
+                          <div>
+                            <span className="font-semibold text-slate-800">
+                              Année :
+                            </span>{" "}
+                            {row.academic_year || cls?.academic_year || "—"}
+                          </div>
+                        </div>
+
+                        {row.notes ? (
+                          <p className="mt-3 text-sm leading-6 text-slate-600">
+                            {row.notes}
+                          </p>
+                        ) : null}
+
+                        <div className="mt-4 flex flex-wrap gap-3">
+                          <Link
+                            href={`/admin/finance/receipts/${row.id}`}
+                            className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 hover:bg-slate-50"
+                          >
+                            <FileText className="h-4 w-4" />
+                            Voir
+                          </Link>
+
+                          <Link
+                            href={`/admin/finance/receipts/${row.id}?autoprint=1`}
+                            className="inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-emerald-700"
+                          >
+                            <Printer className="h-4 w-4" />
+                            Imprimer
+                          </Link>
                         </div>
                       </div>
-                    </article>
-                  );
-                })}
-              </div>
-            )}
-          </div>
 
-          <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
-            <div className="flex items-center gap-2 text-sm font-black uppercase tracking-[0.16em] text-slate-700">
-              <Receipt className="h-4 w-4 text-emerald-600" />
-              Reçus récents
-            </div>
-
-            {receiptRows.length === 0 ? (
-              <div className="mt-5 rounded-3xl border border-dashed border-slate-300 bg-slate-50 px-5 py-10 text-center text-sm text-slate-600">
-                Aucun reçu enregistré pour le moment.
-              </div>
-            ) : (
-              <div className="mt-5 space-y-4">
-                {receiptRows.map((row) => {
-                  const student = studentMap.get(row.student_id);
-                  const cls =
-                    student?.class_id ? classMap.get(student.class_id) : null;
-
-                  return (
-                    <article
-                      key={row.id}
-                      className="rounded-3xl border border-slate-200 bg-slate-50/60 p-4"
-                    >
-                      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                        <div className="min-w-0">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <h2 className="text-lg font-black text-slate-900">
-                              {row.receipt_no}
-                            </h2>
-                            <StatusPill
-                              label={row.receipt_status === "posted" ? "Validé" : "Annulé"}
-                              tone={row.receipt_status === "posted" ? "emerald" : "slate"}
-                            />
-                          </div>
-
-                          <div className="mt-3 grid gap-2 text-sm text-slate-600 sm:grid-cols-2">
-                            <div>
-                              <span className="font-semibold text-slate-800">Élève :</span>{" "}
-                              {fullName(student)}
-                            </div>
-                            <div>
-                              <span className="font-semibold text-slate-800">Classe :</span>{" "}
-                              {student?.class_label || cls?.label || "—"}
-                            </div>
-                            <div>
-                              <span className="font-semibold text-slate-800">Payeur :</span>{" "}
-                              {row.payer_name || "—"}
-                            </div>
-                            <div>
-                              <span className="font-semibold text-slate-800">Référence :</span>{" "}
-                              {row.reference_no || "—"}
-                            </div>
-                            <div>
-                              <span className="font-semibold text-slate-800">Date :</span>{" "}
-                              {new Date(row.payment_date).toLocaleString("fr-FR", {
-                                dateStyle: "short",
-                                timeStyle: "short",
-                              })}
-                            </div>
-                            <div>
-                              <span className="font-semibold text-slate-800">Année :</span>{" "}
-                              {row.academic_year || cls?.academic_year || "—"}
-                            </div>
-                          </div>
-
-                          {row.notes ? (
-                            <p className="mt-3 text-sm leading-6 text-slate-600">
-                              {row.notes}
-                            </p>
-                          ) : null}
-
-                          <div className="mt-4 flex flex-wrap gap-3">
-                            <Link
-                              href={`/admin/finance/receipts/${row.id}`}
-                              className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 hover:bg-slate-50"
-                            >
-                              <FileText className="h-4 w-4" />
-                              Voir
-                            </Link>
-
-                            <Link
-                              href={`/admin/finance/receipts/${row.id}?autoprint=1`}
-                              className="inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-emerald-700"
-                            >
-                              <Printer className="h-4 w-4" />
-                              Imprimer
-                            </Link>
-                          </div>
-                        </div>
-
-                        <div className="rounded-full bg-emerald-50 px-3 py-1.5 text-sm font-bold text-emerald-700 ring-1 ring-emerald-200">
-                          {formatMoney(row.total_amount)}
-                        </div>
+                      <div className="rounded-full bg-emerald-50 px-3 py-1.5 text-sm font-bold text-emerald-700 ring-1 ring-emerald-200">
+                        {formatMoney(row.total_amount)}
                       </div>
-                    </article>
-                  );
-                })}
-              </div>
-            )}
-          </div>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          )}
         </div>
       </section>
     </div>

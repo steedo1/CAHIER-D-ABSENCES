@@ -7,7 +7,6 @@ import {
   CircleOff,
   FolderPlus,
   Layers3,
-  Wallet,
 } from "lucide-react";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
@@ -44,6 +43,19 @@ type FeeScheduleRow = {
   created_at: string;
   updated_at: string;
 };
+
+function normalizeText(value: unknown) {
+  return String(value ?? "").trim();
+}
+
+function buildLevelScheduleLabel(
+  labelInput: string,
+  categoryName: string,
+  classLabel: string
+) {
+  const base = labelInput || categoryName;
+  return `${base} - ${classLabel}`;
+}
 
 async function getCurrentInstitutionIdOrThrow() {
   const supabase = await getSupabaseServerClient();
@@ -82,33 +94,28 @@ async function createFeeScheduleAction(formData: FormData) {
   const institutionId = await getCurrentInstitutionIdOrThrow();
   const admin = getSupabaseServiceClient();
 
-  const classId = String(formData.get("class_id") || "").trim();
-  const feeCategoryId = String(formData.get("fee_category_id") || "").trim();
-  const academicYear = String(formData.get("academic_year") || "").trim();
-  const labelInput = String(formData.get("label") || "").trim();
-  const amountRaw = String(formData.get("amount") || "").trim();
-  const dueDate = String(formData.get("due_date") || "").trim();
-  const notes = String(formData.get("notes") || "").trim();
+  const targetScope = normalizeText(formData.get("target_scope")) || "class";
+  const classId = normalizeText(formData.get("class_id"));
+  const level = normalizeText(formData.get("level"));
+  const feeCategoryId = normalizeText(formData.get("fee_category_id"));
+  const academicYear = normalizeText(formData.get("academic_year"));
+  const labelInput = normalizeText(formData.get("label"));
+  const amountRaw = normalizeText(formData.get("amount"));
+  const dueDate = normalizeText(formData.get("due_date"));
+  const notes = normalizeText(formData.get("notes"));
   const allowPartial = formData.get("allow_partial") === "on";
 
-  if (!classId) throw new Error("La classe est obligatoire.");
-  if (!feeCategoryId) throw new Error("La catégorie de frais est obligatoire.");
-  if (!academicYear) throw new Error("L’année scolaire est obligatoire.");
+  if (!feeCategoryId) {
+    throw new Error("La catégorie de frais est obligatoire.");
+  }
+  if (!academicYear) {
+    throw new Error("L’année scolaire est obligatoire.");
+  }
 
   const amount = Number(amountRaw);
   if (!Number.isFinite(amount) || amount <= 0) {
     throw new Error("Le montant doit être supérieur à 0.");
   }
-
-  const { data: classRow, error: classErr } = await admin
-    .from("classes")
-    .select("id,label,level,academic_year,institution_id")
-    .eq("id", classId)
-    .eq("institution_id", institutionId)
-    .maybeSingle();
-
-  if (classErr) throw new Error(classErr.message);
-  if (!classRow) throw new Error("Classe introuvable.");
 
   const { data: categoryRow, error: catErr } = await admin
     .schema("finance")
@@ -121,7 +128,101 @@ async function createFeeScheduleAction(formData: FormData) {
   if (catErr) throw new Error(catErr.message);
   if (!categoryRow) throw new Error("Catégorie introuvable.");
 
-  const finalLabel = labelInput || `${categoryRow.name} - ${classRow.label}`;
+  if (targetScope === "level") {
+    if (!level) {
+      throw new Error("Le niveau est obligatoire pour une création par niveau.");
+    }
+
+    const { data: levelClasses, error: classesErr } = await admin
+      .from("classes")
+      .select("id,label,level,academic_year,institution_id")
+      .eq("institution_id", institutionId)
+      .eq("level", level)
+      .order("label", { ascending: true });
+
+    if (classesErr) throw new Error(classesErr.message);
+
+    const targetClasses = ((levelClasses ?? []) as ClassRow[]).filter((c) => {
+      if (!c.academic_year) return true;
+      return c.academic_year === academicYear;
+    });
+
+    if (targetClasses.length === 0) {
+      throw new Error(
+        `Aucune classe trouvée pour le niveau ${level} sur l’année ${academicYear}.`
+      );
+    }
+
+    const targetClassIds = targetClasses.map((c) => c.id);
+
+    const { data: existingSchedules, error: existingErr } = await admin
+      .schema("finance")
+      .from("fee_schedules")
+      .select("id,class_id")
+      .eq("school_id", institutionId)
+      .eq("fee_category_id", feeCategoryId)
+      .eq("academic_year", academicYear)
+      .in("class_id", targetClassIds);
+
+    if (existingErr) throw new Error(existingErr.message);
+
+    const existingClassIds = new Set(
+      ((existingSchedules ?? []) as Array<{ id: string; class_id: string | null }>)
+        .map((row) => row.class_id)
+        .filter(Boolean) as string[]
+    );
+
+    if (existingClassIds.size > 0) {
+      const conflicts = targetClasses
+        .filter((c) => existingClassIds.has(c.id))
+        .map((c) => c.label);
+
+      const preview = conflicts.slice(0, 5).join(", ");
+      const suffix = conflicts.length > 5 ? " ..." : "";
+
+      throw new Error(
+        `Un barème de cette catégorie existe déjà sur l’année ${academicYear} pour : ${preview}${suffix}`
+      );
+    }
+
+    const rowsToInsert = targetClasses.map((c) => ({
+      school_id: institutionId,
+      academic_year: academicYear,
+      class_id: c.id,
+      fee_category_id: feeCategoryId,
+      label: buildLevelScheduleLabel(labelInput, categoryRow.name, c.label),
+      amount,
+      due_date: dueDate || null,
+      allow_partial: allowPartial,
+      is_active: true,
+      notes: notes || null,
+    }));
+
+    const { error } = await admin
+      .schema("finance")
+      .from("fee_schedules")
+      .insert(rowsToInsert as any[]);
+
+    if (error) throw new Error(error.message);
+
+    revalidatePath("/admin/finance/fees/schedules");
+    revalidatePath("/admin/finance");
+    return;
+  }
+
+  if (!classId) {
+    throw new Error("La classe est obligatoire.");
+  }
+
+  const { data: classRow, error: classErr } = await admin
+    .from("classes")
+    .select("id,label,level,academic_year,institution_id")
+    .eq("id", classId)
+    .eq("institution_id", institutionId)
+    .maybeSingle();
+
+  if (classErr) throw new Error(classErr.message);
+  if (!classRow) throw new Error("Classe introuvable.");
 
   const { error } = await admin
     .schema("finance")
@@ -131,7 +232,7 @@ async function createFeeScheduleAction(formData: FormData) {
       academic_year: academicYear,
       class_id: classId,
       fee_category_id: feeCategoryId,
-      label: finalLabel,
+      label: labelInput || `${categoryRow.name} - ${classRow.label}`,
       amount,
       due_date: dueDate || null,
       allow_partial: allowPartial,
@@ -156,7 +257,7 @@ async function toggleFeeScheduleAction(formData: FormData) {
   const institutionId = await getCurrentInstitutionIdOrThrow();
   const admin = getSupabaseServiceClient();
 
-  const id = String(formData.get("id") || "").trim();
+  const id = normalizeText(formData.get("id"));
   const nextActive = formData.get("next_active") === "true";
 
   if (!id) throw new Error("Barème introuvable.");
@@ -209,31 +310,35 @@ export default async function FinanceFeeSchedulesPage() {
   const institutionId = await getCurrentInstitutionIdOrThrow();
   const supabase = await getSupabaseServerClient();
 
-  const [{ data: categories, error: catErr }, { data: classes, error: clsErr }, { data: schedules, error: schErr }] =
-    await Promise.all([
-      supabase
-        .schema("finance")
-        .from("fee_categories")
-        .select("id,code,name,is_active")
-        .eq("school_id", institutionId)
-        .eq("is_active", true)
-        .order("name", { ascending: true }),
+  const [
+    { data: categories, error: catErr },
+    { data: classes, error: clsErr },
+    { data: schedules, error: schErr },
+  ] = await Promise.all([
+    supabase
+      .schema("finance")
+      .from("fee_categories")
+      .select("id,code,name,is_active")
+      .eq("school_id", institutionId)
+      .eq("is_active", true)
+      .order("name", { ascending: true }),
 
-      supabase
-        .from("classes")
-        .select("id,label,level,academic_year")
-        .eq("institution_id", institutionId)
-        .order("label", { ascending: true }),
+    supabase
+      .from("classes")
+      .select("id,label,level,academic_year")
+      .eq("institution_id", institutionId)
+      .order("level", { ascending: true })
+      .order("label", { ascending: true }),
 
-      supabase
-        .schema("finance")
-        .from("fee_schedules")
-        .select(
-          "id,school_id,academic_year,class_id,fee_category_id,label,amount,due_date,allow_partial,is_active,notes,created_at,updated_at"
-        )
-        .eq("school_id", institutionId)
-        .order("created_at", { ascending: false }),
-    ]);
+    supabase
+      .schema("finance")
+      .from("fee_schedules")
+      .select(
+        "id,school_id,academic_year,class_id,fee_category_id,label,amount,due_date,allow_partial,is_active,notes,created_at,updated_at"
+      )
+      .eq("school_id", institutionId)
+      .order("created_at", { ascending: false }),
+  ]);
 
   if (catErr) throw new Error(catErr.message);
   if (clsErr) throw new Error(clsErr.message);
@@ -247,6 +352,16 @@ export default async function FinanceFeeSchedulesPage() {
   const categoryMap = new Map(categoryRows.map((c) => [c.id, c]));
 
   const activeCount = scheduleRows.filter((r) => r.is_active).length;
+
+  const levels = Array.from(
+    new Map(
+      classRows
+        .filter((row) => normalizeText(row.level))
+        .map((row) => [normalizeText(row.level), normalizeText(row.level)])
+    ).values()
+  ).sort((a, b) =>
+    a.localeCompare(b, "fr", { numeric: true, sensitivity: "base" })
+  );
 
   return (
     <div className="space-y-6">
@@ -263,7 +378,9 @@ export default async function FinanceFeeSchedulesPage() {
             </h1>
 
             <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-200 sm:text-[15px]">
-              Définis le montant réel d’un frais pour une classe donnée, avec son année scolaire, sa date limite et l’option de paiement partiel.
+              Définis le montant réel d’un frais pour une classe donnée ou pour
+              tout un niveau, avec son année scolaire, sa date limite et
+              l’option de paiement partiel.
             </p>
           </div>
 
@@ -305,14 +422,54 @@ export default async function FinanceFeeSchedulesPage() {
             Nouveau barème
           </div>
 
+          <div className="mt-4 rounded-2xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-slate-700">
+            Tu peux créer un barème pour une seule classe ou pour tout un
+            niveau. En mode <span className="font-bold">tout le niveau</span>,
+            le système crée automatiquement un barème par classe du niveau
+            choisi afin de rester compatible avec les autres modules.
+          </div>
+
           <div className="mt-5 space-y-4">
+            <div>
+              <label className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-slate-500">
+                Portée
+              </label>
+              <select
+                name="target_scope"
+                defaultValue="class"
+                className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-semibold text-slate-800 outline-none"
+              >
+                <option value="class">Classe précise</option>
+                <option value="level">Tout le niveau</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-slate-500">
+                Niveau concerné
+              </label>
+              <select
+                name="level"
+                className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-semibold text-slate-800 outline-none"
+              >
+                <option value="">— Choisir un niveau —</option>
+                {levels.map((lvl) => (
+                  <option key={lvl} value={lvl}>
+                    {lvl}
+                  </option>
+                ))}
+              </select>
+              <p className="mt-1 text-xs text-slate-500">
+                Utilisé uniquement si la portée choisie est “Tout le niveau”.
+              </p>
+            </div>
+
             <div>
               <label className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-slate-500">
                 Classe
               </label>
               <select
                 name="class_id"
-                required
                 className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-semibold text-slate-800 outline-none"
               >
                 <option value="">— Choisir une classe —</option>
@@ -324,6 +481,9 @@ export default async function FinanceFeeSchedulesPage() {
                   </option>
                 ))}
               </select>
+              <p className="mt-1 text-xs text-slate-500">
+                Obligatoire seulement si la portée choisie est “Classe précise”.
+              </p>
             </div>
 
             <div>
@@ -364,11 +524,12 @@ export default async function FinanceFeeSchedulesPage() {
               <input
                 type="text"
                 name="label"
-                placeholder="Ex. Scolarité - 6e A"
+                placeholder="Ex. Scolarité - 6e"
                 className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-semibold text-slate-800 outline-none placeholder:text-slate-400"
               />
               <p className="mt-1 text-xs text-slate-500">
-                Laisse vide pour génération automatique.
+                Laisse vide pour génération automatique. En mode niveau, le nom
+                de chaque classe sera ajouté automatiquement.
               </p>
             </div>
 
@@ -422,7 +583,8 @@ export default async function FinanceFeeSchedulesPage() {
                   Paiement partiel autorisé
                 </span>
                 <span className="block text-sm text-slate-600">
-                  Active cette option si le parent peut payer ce frais en plusieurs fois.
+                  Active cette option si le parent peut payer ce frais en
+                  plusieurs fois.
                 </span>
               </span>
             </label>
@@ -466,26 +628,36 @@ export default async function FinanceFeeSchedulesPage() {
                             {Number(row.amount).toLocaleString("fr-FR")} FCFA
                           </span>
                           <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-bold text-slate-700 ring-1 ring-slate-200">
-                            {row.allow_partial ? "Partiel autorisé" : "Paiement unique"}
+                            {row.allow_partial
+                              ? "Partiel autorisé"
+                              : "Paiement unique"}
                           </span>
                         </div>
 
                         <div className="mt-3 grid gap-2 text-sm text-slate-600 sm:grid-cols-2">
                           <div>
-                            <span className="font-semibold text-slate-800">Classe :</span>{" "}
+                            <span className="font-semibold text-slate-800">
+                              Classe :
+                            </span>{" "}
                             {classRow?.label || "—"}
                             {classRow?.level ? ` (${classRow.level})` : ""}
                           </div>
                           <div>
-                            <span className="font-semibold text-slate-800">Catégorie :</span>{" "}
+                            <span className="font-semibold text-slate-800">
+                              Catégorie :
+                            </span>{" "}
                             {categoryRow?.name || "—"}
                           </div>
                           <div>
-                            <span className="font-semibold text-slate-800">Année :</span>{" "}
+                            <span className="font-semibold text-slate-800">
+                              Année :
+                            </span>{" "}
                             {row.academic_year || "—"}
                           </div>
                           <div>
-                            <span className="font-semibold text-slate-800">Échéance :</span>{" "}
+                            <span className="font-semibold text-slate-800">
+                              Échéance :
+                            </span>{" "}
                             {row.due_date || "—"}
                           </div>
                         </div>
