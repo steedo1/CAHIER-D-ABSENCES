@@ -95,20 +95,39 @@ function buildPeriodLabel(startIso: string, endIso: string) {
   return `Semaine ${formatDateShort(startIso)}-${formatDateShort(endIso)}`;
 }
 
+function cleanText(value: unknown) {
+  return String(value ?? "").replace(/\s+/g, " ").trim();
+}
+
+function looksLikeStudentCode(value: unknown) {
+  const v = cleanText(value);
+  if (!v) return false;
+  if (v.includes(" ")) return false;
+
+  return (
+    /^\d{4,}[A-Za-z0-9-]*$/.test(v) ||
+    /^[A-Z]{1,6}\d{2,}[A-Z0-9-]*$/i.test(v)
+  );
+}
+
+function safeHumanName(value: unknown) {
+  const v = cleanText(value);
+  if (!v) return "";
+  if (looksLikeStudentCode(v)) return "";
+  return v;
+}
+
 function pickStudentName(row: any, fallback: string) {
-  const full =
-    String(row?.full_name || row?.display_name || "").trim() ||
+  const full = safeHumanName(row?.full_name || row?.display_name);
+
+  const combined = safeHumanName(
     [row?.first_name, row?.last_name]
       .map((x) => String(x || "").trim())
       .filter(Boolean)
       .join(" ")
-      .trim();
-
-  return (
-    full ||
-    String(row?.matricule || "").trim() ||
-    `Eleve ${fallback.slice(0, 8)}`
   );
+
+  return full || combined || `Eleve`;
 }
 
 function pickClassLabel(row: any, fallback: string) {
@@ -664,7 +683,7 @@ export async function POST(req: NextRequest) {
     for (const group of grouped.values()) {
       const studentName =
         studentNameById.get(group.studentId) ||
-        `Eleve ${group.studentId.slice(0, 8)}`;
+        "Eleve";
       const classLabel = classLabelById.get(group.classId) || group.classId;
 
       await enqueueNotesDigestSms({

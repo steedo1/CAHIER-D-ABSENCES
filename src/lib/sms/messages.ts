@@ -179,15 +179,35 @@ function limitSmsText(value: string, maxLength = DEFAULT_MAX_SMS_LENGTH): string
   return `${trimmed}...`;
 }
 
+function isProbablyStudentCode(value: string): boolean {
+  const x = sanitizeSmsText(value).trim();
+  if (!x) return false;
+  if (x.includes(" ")) return false;
+
+  return (
+    /^\d{4,}[A-Za-z0-9-]*$/.test(x) ||
+    /^[A-Z]{1,5}\d{3,}[A-Z0-9-]*$/i.test(x)
+  );
+}
+
+function normalizeStudentDisplayName(...values: Array<Maybe<unknown>>): string {
+  for (const value of values) {
+    const x = sanitizeSmsText(s(value));
+    if (!x) continue;
+    if (isProbablyStudentCode(x)) continue;
+    return x;
+  }
+  return "Eleve";
+}
+
 function studentNameFromPayload(
   payload: AttendanceSmsPayload | NotesDigestSmsPayload | null | undefined
 ): string {
-  return firstNonEmpty(
+  return normalizeStudentDisplayName(
     payload?.student?.name,
     payload?.student?.full_name,
     payload?.student?.display_name,
-    payload?.student?.matricule,
-    "Eleve"
+    payload?.student?.matricule
   );
 }
 
@@ -273,15 +293,45 @@ function resolveAttendanceEvent(payload: AttendanceSmsPayload): AttendanceEventK
   return "absent";
 }
 
+function isGenericSubjectLabel(value: string): boolean {
+  const x = sanitizeSmsText(value).toLowerCase();
+  return !x || ["matiere", "matieres", "subject", "cours", "course"].includes(x);
+}
+
+function formatGradeItemForSms(it: GradeDigestSmsItem): string {
+  const subject = sanitizeSmsText(s(it.subject));
+  const score = sanitizeSmsText(s(it.score));
+  const scale = sanitizeSmsText(s(it.scale));
+
+  if (!score) return "";
+
+  if (subject && !isGenericSubjectLabel(subject)) {
+    if (scale) return `${subject} ${score}/${scale}`;
+    return `${subject} ${score}`;
+  }
+
+  if (scale) return `Note ${score}/${scale}`;
+  return `Note ${score}`;
+}
+
+function hasConcreteGradeSubjects(items: GradeDigestSmsItem[]): boolean {
+  return items.some((it) => {
+    const subject = sanitizeSmsText(s(it.subject));
+    const score = sanitizeSmsText(s(it.score));
+    return !!score && !!subject && !isGenericSubjectLabel(subject);
+  });
+}
+
 export function buildAttendanceSmsMessage(
   payload: AttendanceSmsPayload,
   options: BuildSmsOptions = {}
 ): string {
   const appName = normalizeAppName(options.appName);
+  const institutionName = sanitizeSmsText(s(options.institutionName));
   const maxLength = clampSmsMaxLength(options.maxLength);
 
   const event = resolveAttendanceEvent(payload);
-  const studentName = sanitizeSmsText(studentNameFromPayload(payload));
+  const studentName = studentNameFromPayload(payload);
   const subjectName = sanitizeSmsText(subjectNameFromPayload(payload));
   const when = formatDateTimeCompactFr(payload.session?.started_at);
   const minutesLate = Math.max(0, toSafeNumber(payload.minutes_late) ?? 0);
@@ -305,6 +355,7 @@ export function buildAttendanceSmsMessage(
     [
       subjectName ? `Matiere ${subjectName}` : "",
       when || "",
+      institutionName ? `Etab ${institutionName}` : "",
       reason ? `Motif ${reason}` : "",
     ],
     " - "
@@ -318,22 +369,13 @@ export function buildGradesDigestSmsMessage(
   options: BuildSmsOptions = {}
 ): string {
   const appName = normalizeAppName(input.appName || options.appName);
-  const studentName = sanitizeSmsText(firstNonEmpty(input.studentName, "Eleve"));
+  const studentName = normalizeStudentDisplayName(input.studentName);
   const periodLabel = sanitizeSmsText(s(input.periodLabel));
   const average = sanitizeSmsText(s(input.average));
   const maxLength = clampSmsMaxLength(options.maxLength);
 
   const items = (input.items || [])
-    .map((it) => {
-      const subject = sanitizeSmsText(s(it.subject));
-      const score = sanitizeSmsText(s(it.score));
-      const scale = sanitizeSmsText(s(it.scale));
-
-      if (!subject) return "";
-      if (score && scale) return `${subject} ${score}/${scale}`;
-      if (score) return `${subject} ${score}`;
-      return subject;
-    })
+    .map((it) => formatGradeItemForSms(it))
     .filter(Boolean);
 
   const head = `${appName}: Notes ${studentName}`;
@@ -345,7 +387,7 @@ export function buildGradesDigestSmsMessage(
     " - "
   );
 
-  const body = items.length ? items.join(", ") : "Nouvelles notes disponibles.";
+  const body = items.length ? items.join(", ") : "Nouvelle note disponible.";
 
   const full = joinParts([head, meta, body], " - ");
   return limitSmsText(`${full}.`, maxLength);
@@ -385,6 +427,11 @@ export function buildSmsMessageFromQueue(input: NotificationQueueSmsInput): stri
 
   if (isNotesDigestPayload(payload)) {
     const p = payload as NotesDigestSmsPayload;
+    const items = Array.isArray(p.items) ? p.items : [];
+
+    if (!hasConcreteGradeSubjects(items) && s(input.body)) {
+      return limitSmsText(s(input.body), clampSmsMaxLength(input.maxLength));
+    }
 
     return buildGradesDigestSmsMessage(
       {
@@ -394,7 +441,7 @@ export function buildSmsMessageFromQueue(input: NotificationQueueSmsInput): stri
         classLabel: classLabelFromPayload(p),
         periodLabel: p.period_label,
         average: p.average,
-        items: Array.isArray(p.items) ? p.items : [],
+        items,
       },
       {
         appName: input.appName,

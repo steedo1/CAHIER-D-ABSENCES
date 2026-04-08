@@ -119,6 +119,43 @@ function extractOrangeDebug(result: any) {
   };
 }
 
+async function fetchInstitutionName(
+  srv: ReturnType<typeof getSupabaseServiceClient>,
+  institutionId: string
+): Promise<string | null> {
+  const id = s(institutionId);
+  if (!id) return null;
+
+  const { data, error } = await srv
+    .from("institutions")
+    .select("id,name")
+    .eq("id", id)
+    .maybeSingle();
+
+  if (error) {
+    console.warn("[sms/dispatch] institutions_lookup_warn", {
+      institution_id: id,
+      error: error.message,
+    });
+    return null;
+  }
+
+  return s((data as any)?.name) || null;
+}
+
+function resolveInstitutionNameForSms(
+  payload: any,
+  fallbackInstitutionName?: string | null
+): string | undefined {
+  const fromPayload =
+    s(payload?.institution?.name) ||
+    s(payload?.institution_name) ||
+    s(payload?.school?.name) ||
+    s(payload?.etablissement?.name);
+
+  return fromPayload || s(fallbackInstitutionName) || undefined;
+}
+
 const WAIT_STATUS = (
   process.env.SMS_WAIT_STATUS ||
   process.env.PUSH_WAIT_STATUS ||
@@ -527,6 +564,7 @@ async function run(req: Request) {
   }
 
   const policyCache = new Map<string, InstitutionSmsPolicy>();
+  const institutionNameCache = new Map<string, string | null>();
 
   async function getPolicyCached(institutionId: string) {
     if (policyCache.has(institutionId)) {
@@ -535,6 +573,15 @@ async function run(req: Request) {
     const policy = await getInstitutionSmsPolicy(srv, institutionId);
     policyCache.set(institutionId, policy);
     return policy;
+  }
+
+  async function getInstitutionNameCached(institutionId: string) {
+    if (institutionNameCache.has(institutionId)) {
+      return institutionNameCache.get(institutionId) ?? null;
+    }
+    const name = await fetchInstitutionName(srv, institutionId);
+    institutionNameCache.set(institutionId, name);
+    return name;
   }
 
   let acceptedSmsSends = 0;
@@ -595,12 +642,17 @@ async function run(req: Request) {
         } else if (!targetProfiles.length) {
           lastError = "no_target_profiles";
         } else {
+          const institutionNameForSms = resolveInstitutionNameForSms(
+            core,
+            await getInstitutionNameCached(institutionId)
+          );
+
           message = buildSmsMessageFromQueue({
             title: n.title,
             body: n.body,
             payload: core,
             appName: "Mon Cahier",
-            institutionName: undefined,
+            institutionName: institutionNameForSms,
           });
 
           console.info("[sms/dispatch] row_ready", {
@@ -612,6 +664,7 @@ async function run(req: Request) {
             senderName,
             attempts,
             target_profiles_count: targetProfiles.length,
+            institution_name_for_sms: institutionNameForSms || null,
             message_length: message.length,
             message_preview: previewText(message, 180),
           });
