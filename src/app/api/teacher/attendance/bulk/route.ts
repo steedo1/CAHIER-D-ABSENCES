@@ -4,6 +4,7 @@ import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 // ✨ temps réel
 import { triggerPushDispatch } from "@/lib/push-dispatch";
+import { triggerSmsDispatch } from "@/lib/sms-dispatch";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -59,11 +60,13 @@ function hmsToMin(hms: string | null | undefined) {
   const [h, m] = s.split(":").map((n) => parseInt(n, 10));
   return (isNaN(h) ? 0 : h) * 60 + (isNaN(m) ? 0 : m);
 }
+
 /** "HH:MM" -> minutes depuis minuit */
 function hmToMin(hm: string) {
   const [h, m] = hm.split(":").map((n) => parseInt(n, 10));
   return (isNaN(h) ? 0 : h) * 60 + (isNaN(m) ? 0 : m);
 }
+
 /** Donne l’heure locale HH:MM et weekday (0=dimanche..6=samedi) dans un tz donné */
 function localHMAndWeekday(iso: string, tz: string) {
   const d = new Date(iso);
@@ -99,15 +102,19 @@ export async function POST(req: NextRequest) {
   const {
     data: { user },
   } = await supa.auth.getUser();
-  if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+
+  if (!user) {
+    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  }
 
   const body = await req.json().catch(() => ({} as any));
   const session_id = String(body?.session_id || "");
 
   // 🔹 payload marks brut
   const rawMarks: Mark[] = Array.isArray(body?.marks) ? body.marks : [];
-  if (!session_id)
+  if (!session_id) {
     return NextResponse.json({ error: "missing_session" }, { status: 400 });
+  }
 
   // 🔹 de-duplication : un seul Mark par student_id (on garde le DERNIER dans le tableau)
   const marksByStudent = new Map<string, Mark>();
@@ -123,8 +130,13 @@ export async function POST(req: NextRequest) {
     .select("id, class_id, teacher_id, expected_minutes, actual_call_at, started_at")
     .eq("id", session_id)
     .maybeSingle();
-  if (sErr) return NextResponse.json({ error: sErr.message }, { status: 400 });
-  if (!sess) return NextResponse.json({ error: "session_not_found" }, { status: 404 });
+
+  if (sErr) {
+    return NextResponse.json({ error: sErr.message }, { status: 400 });
+  }
+  if (!sess) {
+    return NextResponse.json({ error: "session_not_found" }, { status: 404 });
+  }
 
   const session = sess as {
     id: string;
@@ -137,8 +149,10 @@ export async function POST(req: NextRequest) {
 
   // 2) Autorisation (prof de la séance ou téléphone de classe)
   let allowed = session.teacher_id === user.id;
+
   if (!allowed) {
     let phone = String((user as any).phone || "").trim();
+
     if (!phone) {
       const { data: au } = await srv
         .schema("auth")
@@ -146,8 +160,10 @@ export async function POST(req: NextRequest) {
         .select("phone")
         .eq("id", user.id)
         .maybeSingle();
+
       phone = String(au?.phone || "").trim();
     }
+
     if (phone) {
       const { variants } = buildPhoneVariants(phone);
       const { data: cls } = await srv
@@ -156,10 +172,14 @@ export async function POST(req: NextRequest) {
         .eq("id", session.class_id)
         .in("class_phone_e164", variants.length ? variants : ["__no_match__"])
         .maybeSingle();
+
       allowed = !!cls;
     }
   }
-  if (!allowed) return NextResponse.json({ error: "forbidden" }, { status: 403 });
+
+  if (!allowed) {
+    return NextResponse.json({ error: "forbidden" }, { status: 403 });
+  }
 
   // 3) Charger classe -> établissement -> paramètres + créneaux du jour
   const { data: clsRow, error: cErr } = await srv
@@ -167,16 +187,26 @@ export async function POST(req: NextRequest) {
     .select("institution_id")
     .eq("id", session.class_id)
     .maybeSingle();
-  if (cErr) return NextResponse.json({ error: cErr.message }, { status: 400 });
-  if (!clsRow?.institution_id)
-    return NextResponse.json({ error: "class_institution_missing" }, { status: 400 });
+
+  if (cErr) {
+    return NextResponse.json({ error: cErr.message }, { status: 400 });
+  }
+  if (!clsRow?.institution_id) {
+    return NextResponse.json(
+      { error: "class_institution_missing" },
+      { status: 400 }
+    );
+  }
 
   const { data: inst, error: iErr } = await srv
     .from("institutions")
     .select("tz, auto_lateness, default_session_minutes")
     .eq("id", clsRow.institution_id)
     .maybeSingle();
-  if (iErr) return NextResponse.json({ error: iErr.message }, { status: 400 });
+
+  if (iErr) {
+    return NextResponse.json({ error: iErr.message }, { status: 400 });
+  }
 
   const tz = String(inst?.tz || "Africa/Abidjan");
   const autoLateness = inst?.auto_lateness ?? true;
@@ -244,7 +274,10 @@ export async function POST(req: NextRequest) {
     .eq("institution_id", clsRow.institution_id)
     .eq("weekday", weekday)
     .order("period_no", { ascending: true });
-  if (pErr) return NextResponse.json({ error: pErr.message }, { status: 400 });
+
+  if (pErr) {
+    return NextResponse.json({ error: pErr.message }, { status: 400 });
+  }
 
   let currentPeriod:
     | {
@@ -295,6 +328,7 @@ export async function POST(req: NextRequest) {
       }
       return 0;
     }
+
     const diff = callMin - currentPeriod.startMin;
     return Math.max(0, Math.floor(diff));
   }
@@ -341,8 +375,8 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  let upserted = 0,
-    deleted = 0;
+  let upserted = 0;
+  let deleted = 0;
 
   if (toUpsert.length) {
     const { error, count } = await srv
@@ -351,8 +385,11 @@ export async function POST(req: NextRequest) {
         onConflict: "session_id,student_id",
         count: "exact",
       });
-    if (error)
+
+    if (error) {
       return NextResponse.json({ error: error.message }, { status: 400 });
+    }
+
     upserted = count || toUpsert.length;
   }
 
@@ -362,8 +399,11 @@ export async function POST(req: NextRequest) {
       .delete({ count: "exact" })
       .eq("session_id", session_id)
       .in("student_id", toDelete);
-    if (error)
+
+    if (error) {
       return NextResponse.json({ error: error.message }, { status: 400 });
+    }
+
     deleted = count || toDelete.length;
   }
 
@@ -374,6 +414,7 @@ export async function POST(req: NextRequest) {
    */
   if (upserted > 0 || deleted > 0) {
     const patch: any = {};
+
     if (!existingCall) {
       patch.actual_call_at = callAtISO;
     } else if (effectiveCallAt.getTime() < existingCall.getTime() - 60_000) {
@@ -386,9 +427,12 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // ✨ temps réel — déclenche le dispatch si des changements ont eu lieu (non bloquant)
+  // ✨ temps réel — déclenche push + sms si des changements ont eu lieu (non bloquant)
   if (upserted > 0 || deleted > 0) {
-    await triggerPushDispatch({ req, reason: "teacher_attendance_bulk" });
+    await Promise.allSettled([
+      triggerPushDispatch({ req, reason: "teacher_attendance_bulk" }),
+      triggerSmsDispatch({ req, reason: "teacher_attendance_bulk" }),
+    ]);
   }
 
   return NextResponse.json({ ok: true, upserted, deleted });
