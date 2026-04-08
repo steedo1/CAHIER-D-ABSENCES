@@ -28,14 +28,40 @@ type OrangeApiErrorShape = {
 export type OrangeSmsSendInput = {
   to: string;
   message: string;
+
+  /**
+   * Sender technique Orange (ex: tel:+2250000).
+   * Optionnel. Si absent, on utilise ORANGE_SMS_SENDER / DEFAULT_SENDER.
+   *
+   * Compat rétro:
+   * si quelqu'un passe par erreur "MonCahier" ici, on le re-routage
+   * automatiquement comme senderName métier.
+   */
   senderAddress?: string;
+
+  /**
+   * Sender métier approuvé par Orange (ex: MonCahier).
+   * Ce champ NE DOIT PAS remplacer senderAddress technique.
+   */
+  senderName?: string;
 };
 
 export type OrangeSmsSendResult = {
   ok: true;
   provider: "orange_ci";
   to: string;
+
+  /**
+   * Sender technique réellement envoyé à Orange
+   * (ex: tel:+2250000)
+   */
   senderAddress: string;
+
+  /**
+   * SenderName métier demandé (ex: MonCahier), si présent
+   */
+  senderName: string | null;
+
   resourceURL: string | null;
   resourceId: string | null;
   response: unknown;
@@ -166,14 +192,13 @@ function toOrangeRecipientAddress(input: string): string {
 }
 
 /**
- * Pour le sender Orange :
- * - si on reçoit un MSISDN / tel:+..., on envoie un sender technique tel:+...
- * - si on reçoit un sender alphanumérique autorisé (ex: MonCahier), on le garde tel quel
+ * Sender technique pour Orange:
+ * doit rester de type tel:+...
  */
-function normalizeOrangeSenderAddress(input: string): string {
+function normalizeOrangeTechnicalSenderAddress(input: string): string {
   const value = String(input || "").trim();
   if (!value) {
-    throw new Error("Sender SMS vide.");
+    throw new Error("Sender technique SMS vide.");
   }
 
   if (value.startsWith("tel:+")) {
@@ -186,6 +211,34 @@ function normalizeOrangeSenderAddress(input: string): string {
 
   if (isPhoneLikeValue(value)) {
     return `tel:${normalizePhoneToE164(value)}`;
+  }
+
+  throw new Error(
+    `Sender technique Orange invalide: "${value}". Utiliser un format tel:+...`
+  );
+}
+
+/**
+ * SenderName métier approuvé par Orange.
+ * Orange documente une limite de 11 caractères, alphanumériques ou espaces. :contentReference[oaicite:2]{index=2}
+ */
+function normalizeOrangeSenderName(input: string | null | undefined): string | null {
+  const value = String(input || "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!value) return null;
+
+  if (value.length > 11) {
+    throw new Error(
+      `SenderName Orange invalide: "${value}" dépasse 11 caractères.`
+    );
+  }
+
+  if (!/^[A-Za-z0-9 ]+$/.test(value)) {
+    throw new Error(
+      `SenderName Orange invalide: "${value}" doit contenir uniquement lettres, chiffres ou espaces.`
+    );
   }
 
   return value;
@@ -392,6 +445,11 @@ export async function getOrangeAccessToken(forceRefresh = false): Promise<string
 
 /**
  * Envoie un SMS via Orange CI.
+ *
+ * Règle Orange:
+ * - l'URL doit utiliser le senderAddress technique tel:+{{country_sender_number}}
+ * - le body doit contenir senderAddress technique
+ * - et senderName séparément si un sender personnalisé a été approuvé. :contentReference[oaicite:3]{index=3}
  */
 export async function sendOrangeSms(
   input: OrangeSmsSendInput
@@ -405,37 +463,56 @@ export async function sendOrangeSms(
 
   warnIfMessageLooksRisky(message);
 
-  const senderAddress = normalizeOrangeSenderAddress(
-    input.senderAddress?.trim() || DEFAULT_SENDER
-  );
   const to = toOrangeRecipientAddress(input.to);
 
-  const encodedSender = encodeURIComponent(senderAddress);
+  let senderName = normalizeOrangeSenderName(input.senderName);
+  let technicalSenderRaw = String(input.senderAddress || "").trim();
+
+  // Compat rétro:
+  // si l'appelant passe "MonCahier" dans senderAddress au lieu de senderName,
+  // on le récupère ici automatiquement.
+  if (technicalSenderRaw && !isPhoneLikeValue(technicalSenderRaw)) {
+    senderName = senderName || normalizeOrangeSenderName(technicalSenderRaw);
+    technicalSenderRaw = "";
+  }
+
+  const technicalSenderAddress = normalizeOrangeTechnicalSenderAddress(
+    technicalSenderRaw || DEFAULT_SENDER
+  );
+
+  const encodedSender = encodeURIComponent(technicalSenderAddress);
   const url = `${ORANGE_SMS_BASE_URL}/smsmessaging/v1/outbound/${encodedSender}/requests`;
 
   console.info("[sms/orange] send_start", {
     smsBaseUrl: ORANGE_SMS_BASE_URL,
     url,
     to: short(to, 18),
-    senderAddress,
-    senderKind: senderAddress.startsWith("tel:+") ? "msisdn" : "alphanumeric",
+    senderAddress: technicalSenderAddress,
+    senderKind: "msisdn",
+    requestedSenderName: senderName,
     messageLength: message.length,
     usedDefaultSender:
-      !input.senderAddress?.trim() &&
-      senderAddress === normalizeOrangeSenderAddress(DEFAULT_SENDER),
+      !technicalSenderRaw &&
+      technicalSenderAddress === normalizeOrangeTechnicalSenderAddress(DEFAULT_SENDER),
     hasConfiguredSender: !!process.env.ORANGE_SMS_SENDER?.trim(),
   });
 
   let accessToken = await getOrangeAccessToken(false);
 
-  const payload = {
-    outboundSMSMessageRequest: {
-      address: to,
-      senderAddress,
-      outboundSMSTextMessage: {
-        message,
-      },
+  const outboundSMSMessageRequest: Record<string, unknown> = {
+    address: to,
+    senderAddress: technicalSenderAddress,
+    outboundSMSTextMessage: {
+      message,
     },
+  };
+
+  if (senderName) {
+    outboundSMSMessageRequest.senderName = senderName;
+  }
+
+  const payload = {
+    outboundSMSMessageRequest,
   };
 
   let response = await fetch(url, {
@@ -453,7 +530,8 @@ export async function sendOrangeSms(
     console.warn("[sms/orange] send_401_retry", {
       url,
       to: short(to, 18),
-      senderAddress,
+      senderAddress: technicalSenderAddress,
+      requestedSenderName: senderName,
     });
 
     accessToken = await getOrangeAccessToken(true);
@@ -477,7 +555,8 @@ export async function sendOrangeSms(
     console.error("[sms/orange] send_fail", {
       url,
       to: short(to, 18),
-      senderAddress,
+      senderAddress: technicalSenderAddress,
+      requestedSenderName: senderName,
       status: response.status,
       statusText: response.statusText,
       error: err,
@@ -503,8 +582,9 @@ export async function sendOrangeSms(
   console.info("[sms/orange] send_ok", {
     url,
     to: short(to, 18),
-    senderAddress,
-    senderKind: senderAddress.startsWith("tel:+") ? "msisdn" : "alphanumeric",
+    senderAddress: technicalSenderAddress,
+    senderKind: "msisdn",
+    requestedSenderName: senderName,
     status: response.status,
     messageLength: message.length,
     locationHeader: debugHeaders.location,
@@ -519,7 +599,8 @@ export async function sendOrangeSms(
     ok: true,
     provider: "orange_ci",
     to,
-    senderAddress,
+    senderAddress: technicalSenderAddress,
+    senderName,
     resourceURL,
     resourceId,
     response: parsed,

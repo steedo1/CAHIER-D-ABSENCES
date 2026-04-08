@@ -107,6 +107,7 @@ function extractOrangeDebug(result: any) {
     provider: result?.provider || "orange_ci",
     to: result?.to || null,
     senderAddress: result?.senderAddress || null,
+    senderName: result?.senderName || null,
     resourceURL,
     resourceId,
     response,
@@ -663,7 +664,7 @@ async function run(req: Request) {
               const orangeResult = await sendOrangeSms({
                 to: best.phone_e164,
                 message,
-                senderAddress: senderName || undefined,
+                senderName: senderName || undefined,
               });
 
               usedContactIds.add(best.id);
@@ -682,6 +683,7 @@ async function run(req: Request) {
                 phone_e164: best.phone_e164,
                 at: acceptedAtIso,
                 requested_sender_name: senderName || null,
+                provider_sender_name: orangeDebug.senderName || null,
                 orange: {
                   ...orangeDebug,
                   resourceId: orangeResourceId,
@@ -710,6 +712,7 @@ async function run(req: Request) {
                           locationHeader: orangeDebug.locationHeader,
                           requestId: orangeDebug.requestId,
                           requestedSenderName: senderName || null,
+                          providerSenderName: orangeDebug.senderName || null,
                         },
                       }),
                       updated_at: acceptedAtIso,
@@ -739,6 +742,7 @@ async function run(req: Request) {
                     resourceId: orangeResourceId,
                     requestId: orangeDebug.requestId,
                     requestedSenderName: senderName || null,
+                    providerSenderName: orangeDebug.senderName || null,
                     providerSenderAddress: orangeResult.senderAddress,
                   });
                 }
@@ -754,6 +758,7 @@ async function run(req: Request) {
                   resourceId: orangeResourceId,
                   locationHeader: orangeDebug.locationHeader,
                   requestedSenderName: senderName || null,
+                  providerSenderName: orangeDebug.senderName || null,
                   providerSenderAddress: orangeDebug.senderAddress || null,
                 });
               }
@@ -771,6 +776,7 @@ async function run(req: Request) {
                 to: shortId(best.phone_e164, 18),
                 event: smsEvent,
                 requestedSenderName: senderName || null,
+                providerSenderName: orangeDebug.senderName || null,
                 providerSenderAddress: orangeDebug.senderAddress || null,
                 httpStatus: orangeDebug.httpStatus,
                 requestId: orangeDebug.requestId,
@@ -883,6 +889,7 @@ async function run(req: Request) {
             accepted_by_provider: true,
             accepted_at: latestAccepted?.at || nowIso,
             requested_sender_name: senderName || null,
+            provider_sender_name: latestOrange.senderName || null,
             to: latestAccepted?.phone_e164 || null,
             sender_address: latestOrange.senderAddress || null,
             orange_resource_id: latestOrange.resourceId || null,
