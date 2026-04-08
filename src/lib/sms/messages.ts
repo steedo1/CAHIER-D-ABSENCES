@@ -306,6 +306,7 @@ export function buildAttendanceSmsMessage(
   const details = joinParts(
     [
       subjectName ? `Matiere ${subjectName}` : "",
+      classLabel ? `Classe ${classLabel}` : "",
       when || "",
       institutionName ? `Etab ${institutionName}` : "",
       reason ? `Motif ${reason}` : "",
