@@ -278,12 +278,10 @@ export function buildAttendanceSmsMessage(
   options: BuildSmsOptions = {}
 ): string {
   const appName = normalizeAppName(options.appName);
-  const institutionName = s(options.institutionName);
   const maxLength = clampSmsMaxLength(options.maxLength);
 
   const event = resolveAttendanceEvent(payload);
   const studentName = sanitizeSmsText(studentNameFromPayload(payload));
-  const classLabel = sanitizeSmsText(classLabelFromPayload(payload));
   const subjectName = sanitizeSmsText(subjectNameFromPayload(payload));
   const when = formatDateTimeCompactFr(payload.session?.started_at);
   const minutesLate = Math.max(0, toSafeNumber(payload.minutes_late) ?? 0);
@@ -299,16 +297,14 @@ export function buildAttendanceSmsMessage(
   } else {
     main =
       minutesLate > 0
-        ? `${appName}: correction assiduite ${studentName} retard ${minutesLate} min`
-        : `${appName}: correction assiduite ${studentName} absence`;
+        ? `${appName}: assiduite corrigee pour ${studentName} (${minutesLate} min)`
+        : `${appName}: assiduite corrigee pour ${studentName}`;
   }
 
   const details = joinParts(
     [
       subjectName ? `Matiere ${subjectName}` : "",
-      classLabel ? `Classe ${classLabel}` : "",
       when || "",
-      institutionName ? `Etab ${institutionName}` : "",
       reason ? `Motif ${reason}` : "",
     ],
     " - "
@@ -322,11 +318,7 @@ export function buildGradesDigestSmsMessage(
   options: BuildSmsOptions = {}
 ): string {
   const appName = normalizeAppName(input.appName || options.appName);
-  const institutionName = sanitizeSmsText(
-    s(input.institutionName || options.institutionName)
-  );
   const studentName = sanitizeSmsText(firstNonEmpty(input.studentName, "Eleve"));
-  const classLabel = sanitizeSmsText(s(input.classLabel));
   const periodLabel = sanitizeSmsText(s(input.periodLabel));
   const average = sanitizeSmsText(s(input.average));
   const maxLength = clampSmsMaxLength(options.maxLength);
@@ -347,7 +339,6 @@ export function buildGradesDigestSmsMessage(
   const head = `${appName}: Notes ${studentName}`;
   const meta = joinParts(
     [
-      classLabel ? `Classe ${classLabel}` : "",
       periodLabel ? periodLabel : "",
       average ? `Moy ${average}` : "",
     ],
@@ -355,10 +346,9 @@ export function buildGradesDigestSmsMessage(
   );
 
   const body = items.length ? items.join(", ") : "Nouvelles notes disponibles.";
-  const tail = institutionName ? ` Etab ${institutionName}.` : "";
 
   const full = joinParts([head, meta, body], " - ");
-  return limitSmsText(`${full}.${tail}`, maxLength);
+  return limitSmsText(`${full}.`, maxLength);
 }
 
 export function buildGenericSmsMessage(
