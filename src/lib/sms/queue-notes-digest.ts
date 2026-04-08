@@ -24,6 +24,44 @@ function toSmsSafeText(value: unknown) {
     .replace(/[–—]/g, "-");
 }
 
+function abbreviateInstitutionName(value: unknown, maxLength = 26) {
+  let name = toSmsSafeText(value);
+  if (!name) return "";
+
+  const replacements: Array<[RegExp, string]> = [
+    [/\bLYCEE\b/gi, "Lyc."],
+    [/\bCOLLEGE\b/gi, "Coll."],
+    [/\bECOLE\b/gi, "Ecol."],
+    [/\bGROUPE\b/gi, "Grp."],
+    [/\bSCOLAIRE\b/gi, "Scol."],
+    [/\bMODERNE\b/gi, "Mod."],
+    [/\bPRIMAIRE\b/gi, "Prim."],
+    [/\bSECONDAIRE\b/gi, "Sec."],
+    [/\bTECHNIQUE\b/gi, "Tech."],
+    [/\bPROFESSIONNELLE?\b/gi, "Prof."],
+    [/\bCATHOLIQUE\b/gi, "Cath."],
+    [/\bPROTESTANTE?\b/gi, "Prot."],
+    [/\bMUNICIPALE?\b/gi, "Mun."],
+    [/\bPRIVEE?\b/gi, "Priv."],
+    [/\bPUBLIQUE\b/gi, "Publ."],
+    [/\bINTERNATIONAL(E)?\b/gi, "Intl."],
+    [/\bEXCELLENCE\b/gi, "Exc."],
+    [/\bINSTITUT\b/gi, "Inst."],
+    [/\bACADEMIE\b/gi, "Acad."],
+    [/\bENSEIGNEMENT\b/gi, "Ens."],
+  ];
+
+  for (const [pattern, replacement] of replacements) {
+    name = name.replace(pattern, replacement);
+  }
+
+  name = cleanText(name);
+
+  if (name.length <= maxLength) return name;
+
+  return `${name.slice(0, maxLength - 1).trimEnd()}.`;
+}
+
 function abbreviateSubjectName(value: unknown, maxLength = 14) {
   let subject = toSmsSafeText(value);
   if (!subject) return "";
@@ -104,13 +142,15 @@ function buildSmsBody(opts: {
   maxLength?: number;
 }) {
   const student = toSmsSafeText(opts.studentName);
+  const institution = abbreviateInstitutionName(opts.institutionName);
   const maxLength = opts.maxLength ?? SMS_BODY_SOFT_LIMIT;
 
   const notes = opts.items.map(formatNote).filter(Boolean);
   const prefix = `Mon Cahier: ${student}`;
+  const suffix = institution ? `. Etab: ${institution}.` : ".";
 
   if (notes.length === 0) {
-    return `${prefix}.`.replace(/\s+/g, " ").trim();
+    return `${prefix}${suffix}`.replace(/\s+/g, " ").trim();
   }
 
   let kept: string[] = [];
@@ -119,7 +159,7 @@ function buildSmsBody(opts: {
     const nextKept = [...kept, notes[i]];
     const remaining = notes.length - nextKept.length;
     const extra = remaining > 0 ? `; +${remaining} autres` : "";
-    const candidate = `${prefix} - ${nextKept.join("; ")}${extra}.`;
+    const candidate = `${prefix} - ${nextKept.join("; ")}${extra}${suffix}`;
 
     if (candidate.length <= maxLength) {
       kept = nextKept;
@@ -130,12 +170,12 @@ function buildSmsBody(opts: {
   }
 
   if (kept.length === 0) {
-    const fallback = `${prefix} - +${notes.length} autres.`;
+    const fallback = `${prefix} - +${notes.length} autres${suffix}`;
     if (fallback.length <= maxLength) {
       return fallback.replace(/\s+/g, " ").trim();
     }
 
-    const minimal = `${prefix}.`;
+    const minimal = `${prefix}${suffix}`;
     if (minimal.length <= maxLength) {
       return minimal.replace(/\s+/g, " ").trim();
     }
@@ -148,7 +188,7 @@ function buildSmsBody(opts: {
   const remaining = notes.length - kept.length;
   const extra = remaining > 0 ? `; +${remaining} autres` : "";
 
-  return `${prefix} - ${kept.join("; ")}${extra}.`
+  return `${prefix} - ${kept.join("; ")}${extra}${suffix}`
     .replace(/\s+/g, " ")
     .trim();
 }

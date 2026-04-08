@@ -297,8 +297,8 @@ export function buildAttendanceSmsMessage(
   } else {
     main =
       minutesLate > 0
-        ? `${appName}: assiduite corrigee pour ${studentName} (${minutesLate} min)`
-        : `${appName}: assiduite corrigee pour ${studentName}`;
+        ? `${appName}: correction assiduite ${studentName} retard ${minutesLate} min`
+        : `${appName}: correction assiduite ${studentName} absence`;
   }
 
   const details = joinParts(
