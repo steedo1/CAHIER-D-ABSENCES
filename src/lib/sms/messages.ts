@@ -2,7 +2,7 @@
 
 const SMS_TIMEZONE = "Africa/Abidjan";
 const DEFAULT_APP_NAME = "Mon Cahier";
-const DEFAULT_MAX_SMS_LENGTH = 140;
+const DEFAULT_MAX_SMS_LENGTH = 280;
 
 type Maybe<T> = T | null | undefined;
 
@@ -76,7 +76,6 @@ export type NotesDigestSmsPayload = {
 
   period_label?: string | null;
   average?: number | string | null;
-
   items?: GradeDigestSmsItem[] | null;
 
   title?: string | null;
@@ -147,7 +146,7 @@ function sanitizeSmsText(value: string): string {
 
   const withoutDiacritics = replaced
     .normalize("NFD")
-    .replace(/\p{Diacritic}/gu, "");
+    .replace(/[\u0300-\u036f]/g, "");
 
   const asciiSafe = withoutDiacritics.replace(
     /[^A-Za-z0-9 @!"#$%&'()*+,\-./:;<=>?\n]/g,
@@ -155,14 +154,6 @@ function sanitizeSmsText(value: string): string {
   );
 
   return compactSpaces(asciiSafe).replace(/\s+([:;,.!?])/g, "$1");
-}
-
-function joinParts(parts: Array<Maybe<string>>, sep = " - "): string {
-  return parts
-    .map((x) => sanitizeSmsText(s(x)))
-    .filter(Boolean)
-    .join(sep)
-    .trim();
 }
 
 function clampSmsMaxLength(value: unknown): number {
@@ -191,19 +182,13 @@ function studentNameFromPayload(
   );
 }
 
-function classLabelFromPayload(
-  payload: AttendanceSmsPayload | NotesDigestSmsPayload | null | undefined
-): string {
-  return firstNonEmpty(payload?.class?.label, payload?.class?.name);
-}
-
 function subjectNameFromPayload(
   payload: AttendanceSmsPayload | null | undefined
 ): string {
   return firstNonEmpty(payload?.subject?.name, payload?.subject?.label);
 }
 
-function formatDateFr(iso: Maybe<string>): string {
+function formatDateShortFr(iso: Maybe<string>): string {
   const raw = s(iso);
   if (!raw) return "";
 
@@ -212,33 +197,137 @@ function formatDateFr(iso: Maybe<string>): string {
       timeZone: SMS_TIMEZONE,
       day: "2-digit",
       month: "2-digit",
-      year: "numeric",
-    });
-  } catch {
-    return raw;
-  }
-}
-
-function formatTimeFr(iso: Maybe<string>): string {
-  const raw = s(iso);
-  if (!raw) return "";
-
-  try {
-    return new Date(raw).toLocaleTimeString("fr-FR", {
-      timeZone: SMS_TIMEZONE,
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: false,
     });
   } catch {
     return "";
   }
 }
 
-function formatDateTimeCompactFr(iso: Maybe<string>): string {
-  const date = formatDateFr(iso);
-  const time = formatTimeFr(iso);
-  return joinParts([date, time], " ");
+function formatTimeShortFr(iso: Maybe<string>): string {
+  const raw = s(iso);
+  if (!raw) return "";
+
+  try {
+    const value = new Date(raw).toLocaleTimeString("fr-FR", {
+      timeZone: SMS_TIMEZONE,
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    });
+
+    return value.replace(":", "h");
+  } catch {
+    return "";
+  }
+}
+
+function abbreviateInstitutionName(value: Maybe<string>, maxLength = 26): string {
+  let name = sanitizeSmsText(s(value));
+  if (!name) return "";
+
+  const replacements: Array<[RegExp, string]> = [
+    [/\bLYCEE\b/gi, "Lyc."],
+    [/\bCOLLEGE\b/gi, "Coll."],
+    [/\bECOLE\b/gi, "Ecol."],
+    [/\bGROUPE\b/gi, "Grp."],
+    [/\bSCOLAIRE\b/gi, "Scol."],
+    [/\bMODERNE\b/gi, "Mod."],
+    [/\bPRIMAIRE\b/gi, "Prim."],
+    [/\bSECONDAIRE\b/gi, "Sec."],
+    [/\bTECHNIQUE\b/gi, "Tech."],
+    [/\bPROFESSIONNELLE?\b/gi, "Prof."],
+    [/\bCATHOLIQUE\b/gi, "Cath."],
+    [/\bPROTESTANTE?\b/gi, "Prot."],
+    [/\bMUNICIPALE?\b/gi, "Mun."],
+    [/\bPRIVEE?\b/gi, "Priv."],
+    [/\bPUBLIQUE\b/gi, "Publ."],
+    [/\bINTERNATIONAL(E)?\b/gi, "Intl."],
+    [/\bEXCELLENCE\b/gi, "Exc."],
+    [/\bINSTITUT\b/gi, "Inst."],
+    [/\bACADEMIE\b/gi, "Acad."],
+    [/\bENSEIGNEMENT\b/gi, "Ens."],
+  ];
+
+  for (const [pattern, replacement] of replacements) {
+    name = name.replace(pattern, replacement);
+  }
+
+  name = compactSpaces(name);
+
+  if (name.length <= maxLength) return name;
+  return `${name.slice(0, maxLength - 1).trimEnd()}.`;
+}
+
+function abbreviateSubjectName(value: Maybe<string>, maxLength = 14): string {
+  let subject = sanitizeSmsText(s(value));
+  if (!subject) return "";
+
+  const replacements: Array<[RegExp, string]> = [
+    [/^MATHEMATIQUES$/i, "Maths"],
+    [/^MATHEMATIQUE$/i, "Maths"],
+    [/^MATHS?$/i, "Maths"],
+
+    [/^PHYSIQUE\s*-\s*CHIMIE$/i, "PC"],
+    [/^PHYSIQUE\s+CHIMIE$/i, "PC"],
+    [/^PHYSIQUE\/CHIMIE$/i, "PC"],
+    [/^PC$/i, "PC"],
+
+    [/^SCIENCES?\s+DE\s+LA\s+VIE\s+ET\s+DE\s+LA\s+TERRE$/i, "SVT"],
+    [/^SCIENCES?\s+DE\s+LA\s+VIE\s+ET\s+TERRE$/i, "SVT"],
+    [/^SVT$/i, "SVT"],
+
+    [/^HISTOIRE\s*-\s*GEOGRAPHIE$/i, "HG"],
+    [/^HISTOIRE\s+GEOGRAPHIE$/i, "HG"],
+    [/^HISTOIRE\/GEOGRAPHIE$/i, "HG"],
+    [/^HG$/i, "HG"],
+
+    [/^FRANCAIS$/i, "Fr"],
+    [/^ANGLAIS$/i, "Angl"],
+    [/^ALLEMAND$/i, "All"],
+    [/^ESPAGNOL$/i, "Esp"],
+    [/^PHILOSOPHIE$/i, "Philo"],
+    [/^INFORMATIQUE$/i, "Info"],
+    [/^TIC$/i, "TIC"],
+    [/^EPS$/i, "EPS"],
+
+    [/^EDUCATION\s+CIVIQUE\s+ET\s+MORALE$/i, "ECM"],
+    [/^ECM$/i, "ECM"],
+
+    [/^SCIENCES?\s+ECONOMIQUES?\s+ET\s+SOCIALES?$/i, "SES"],
+    [/^SES$/i, "SES"],
+
+    [/^COMPTABILITE$/i, "Compta"],
+    [/^ECONOMIE$/i, "Eco"],
+    [/^DESSIN$/i, "Dess."],
+    [/^MUSIQUE$/i, "Mus."],
+    [/^ARTS?\s+PLASTIQUES?$/i, "Arts"],
+    [/^CONDUITE\s+DE\s+PROJET$/i, "Proj."],
+    [/^EDUCATION\s+PHYSIQUE\s+SPORTIVE$/i, "EPS"],
+  ];
+
+  for (const [pattern, replacement] of replacements) {
+    if (pattern.test(subject)) {
+      subject = replacement;
+      break;
+    }
+  }
+
+  subject = compactSpaces(subject);
+
+  if (subject.length <= maxLength) return subject;
+  return `${subject.slice(0, maxLength - 1).trimEnd()}.`;
+}
+
+function formatGradeItem(item: GradeDigestSmsItem): string {
+  const subject = abbreviateSubjectName(item.subject);
+  const score = sanitizeSmsText(s(item.score));
+  const scale =
+    item.scale === null || item.scale === undefined
+      ? ""
+      : sanitizeSmsText(s(item.scale));
+
+  if (!subject || !score) return "";
+  return scale ? `${subject} ${score}/${scale}` : `${subject} ${score}`;
 }
 
 function isAttendancePayload(payload: unknown): payload is AttendanceSmsPayload {
@@ -278,43 +367,43 @@ export function buildAttendanceSmsMessage(
   options: BuildSmsOptions = {}
 ): string {
   const appName = normalizeAppName(options.appName);
-  const institutionName = s(options.institutionName);
   const maxLength = clampSmsMaxLength(options.maxLength);
 
   const event = resolveAttendanceEvent(payload);
   const studentName = sanitizeSmsText(studentNameFromPayload(payload));
-  const classLabel = sanitizeSmsText(classLabelFromPayload(payload));
-  const subjectName = sanitizeSmsText(subjectNameFromPayload(payload));
-  const when = formatDateTimeCompactFr(payload.session?.started_at);
+  const subjectName = abbreviateSubjectName(subjectNameFromPayload(payload));
+  const date = formatDateShortFr(payload.session?.started_at);
+  const time = formatTimeShortFr(payload.session?.started_at);
   const minutesLate = Math.max(0, toSafeNumber(payload.minutes_late) ?? 0);
   const reason = sanitizeSmsText(s(payload.reason));
 
-  let main = "";
+  let text = `${appName}: ${studentName}`;
 
   if (event === "absent") {
-    main = `${appName}: ${studentName} absent`;
+    text += " absent";
   } else if (event === "late") {
-    main = `${appName}: ${studentName} en retard`;
-    if (minutesLate > 0) main += ` (${minutesLate} min)`;
+    text += " en retard";
+    if (minutesLate > 0) text += ` (${minutesLate} min)`;
   } else {
-    main =
-      minutesLate > 0
-        ? `${appName}: correction assiduite ${studentName} retard ${minutesLate} min`
-        : `${appName}: correction assiduite ${studentName} absence`;
+    text += minutesLate > 0 ? ` retard corrige (${minutesLate} min)` : " absence corrigee";
   }
 
-  const details = joinParts(
-    [
-      subjectName ? `Matiere ${subjectName}` : "",
-      classLabel ? `Classe ${classLabel}` : "",
-      when || "",
-      institutionName ? `Etab ${institutionName}` : "",
-      reason ? `Motif ${reason}` : "",
-    ],
-    " - "
-  );
+  if (subjectName) {
+    text += ` en ${subjectName}`;
+  }
 
-  return limitSmsText(details ? `${main}. ${details}.` : `${main}.`, maxLength);
+  if (date) {
+    text += ` le ${date}`;
+    if (time) text += ` a ${time}`;
+  } else if (time) {
+    text += ` a ${time}`;
+  }
+
+  if (reason) {
+    text += `. Motif: ${reason}`;
+  }
+
+  return limitSmsText(`${text}.`, maxLength);
 }
 
 export function buildGradesDigestSmsMessage(
@@ -322,43 +411,45 @@ export function buildGradesDigestSmsMessage(
   options: BuildSmsOptions = {}
 ): string {
   const appName = normalizeAppName(input.appName || options.appName);
-  const institutionName = sanitizeSmsText(
-    s(input.institutionName || options.institutionName)
-  );
   const studentName = sanitizeSmsText(firstNonEmpty(input.studentName, "Eleve"));
-  const classLabel = sanitizeSmsText(s(input.classLabel));
-  const periodLabel = sanitizeSmsText(s(input.periodLabel));
-  const average = sanitizeSmsText(s(input.average));
+  const institutionName = abbreviateInstitutionName(
+    input.institutionName || options.institutionName
+  );
   const maxLength = clampSmsMaxLength(options.maxLength);
 
-  const items = (input.items || [])
-    .map((it) => {
-      const subject = sanitizeSmsText(s(it.subject));
-      const score = sanitizeSmsText(s(it.score));
-      const scale = sanitizeSmsText(s(it.scale));
+  const notes = (input.items || []).map(formatGradeItem).filter(Boolean);
 
-      if (!subject) return "";
-      if (score && scale) return `${subject} ${score}/${scale}`;
-      if (score) return `${subject} ${score}`;
-      return subject;
-    })
-    .filter(Boolean);
+  const prefix = `${appName}: ${studentName}`;
+  const suffix = institutionName ? `. Etab: ${institutionName}.` : ".";
 
-  const head = `${appName}: Notes ${studentName}`;
-  const meta = joinParts(
-    [
-      classLabel ? `Classe ${classLabel}` : "",
-      periodLabel ? periodLabel : "",
-      average ? `Moy ${average}` : "",
-    ],
-    " - "
-  );
+  if (notes.length === 0) {
+    return limitSmsText(`${prefix}${suffix}`, maxLength);
+  }
 
-  const body = items.length ? items.join(", ") : "Nouvelles notes disponibles.";
-  const tail = institutionName ? ` Etab ${institutionName}.` : "";
+  let kept: string[] = [];
 
-  const full = joinParts([head, meta, body], " - ");
-  return limitSmsText(`${full}.${tail}`, maxLength);
+  for (let i = 0; i < notes.length; i += 1) {
+    const nextKept = [...kept, notes[i]];
+    const remaining = notes.length - nextKept.length;
+    const extra = remaining > 0 ? `; +${remaining} autres` : "";
+    const candidate = `${prefix} - ${nextKept.join("; ")}${extra}${suffix}`;
+
+    if (sanitizeSmsText(candidate).length <= maxLength) {
+      kept = nextKept;
+      continue;
+    }
+
+    break;
+  }
+
+  if (kept.length === 0) {
+    const fallback = `${prefix} - +${notes.length} autres${suffix}`;
+    return limitSmsText(fallback, maxLength);
+  }
+
+  const remaining = notes.length - kept.length;
+  const extra = remaining > 0 ? `; +${remaining} autres` : "";
+  return limitSmsText(`${prefix} - ${kept.join("; ")}${extra}${suffix}`, maxLength);
 }
 
 export function buildGenericSmsMessage(
@@ -374,10 +465,9 @@ export function buildGenericSmsMessage(
   const title = sanitizeSmsText(s(input.title));
   const body = sanitizeSmsText(s(input.body));
 
-  const text = joinParts(
-    [title ? `${appName}: ${title}` : `${appName}: Notification`, body || ""],
-    " - "
-  );
+  const text = [title ? `${appName}: ${title}` : `${appName}: Notification`, body]
+    .filter(Boolean)
+    .join(" - ");
 
   return limitSmsText(text, maxLength);
 }
@@ -401,9 +491,9 @@ export function buildSmsMessageFromQueue(input: NotificationQueueSmsInput): stri
         appName: input.appName,
         institutionName: p.institution?.name || input.institutionName,
         studentName: studentNameFromPayload(p),
-        classLabel: classLabelFromPayload(p),
-        periodLabel: p.period_label,
-        average: p.average,
+        classLabel: undefined,
+        periodLabel: undefined,
+        average: undefined,
         items: Array.isArray(p.items) ? p.items : [],
       },
       {
