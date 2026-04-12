@@ -173,6 +173,68 @@ function normalizeBulletinLevel(level?: string | null): string | null {
   return null;
 }
 
+function normalizeStoredLevel(level?: string | null): string | null {
+  const n = normalizeBulletinLevel(level);
+  if (n) return n;
+
+  const raw = String(level ?? "").trim().toLowerCase();
+  return raw || null;
+}
+
+function pickBestCoeffRow(
+  rows: SubjectCoeffRow[],
+  wantedLevel: string | null
+): SubjectCoeffRow | null {
+  if (!rows.length) return null;
+
+  const wanted = normalizeStoredLevel(wantedLevel);
+
+  const exact = rows.find((r) => normalizeStoredLevel(r.level) === wanted);
+  if (exact) return exact;
+
+  const globalRow = rows.find((r) => !normalizeStoredLevel(r.level));
+  if (globalRow) return globalRow;
+
+  return rows[0] ?? null;
+}
+
+function pickBestComponentRows<T extends { level?: string | null }>(
+  rows: T[],
+  wantedLevel: string | null
+): T[] {
+  if (!rows.length) return [];
+
+  const wanted = normalizeStoredLevel(wantedLevel);
+  const exact = rows.filter((r) => normalizeStoredLevel(r.level) === wanted);
+  if (exact.length) return exact;
+
+  const globalRows = rows.filter((r) => !normalizeStoredLevel(r.level));
+  if (globalRows.length) return globalRows;
+
+  return rows;
+}
+
+function computeGroupAnnualCoeff(
+  group: BulletinSubjectGroup,
+  coeffBySubject: Map<string, { coeff: number; include: boolean }>
+): number {
+  let sumCoeff = 0;
+
+  for (const item of group.items ?? []) {
+    const override = Number(item.subject_coeff_override ?? NaN);
+    if (Number.isFinite(override) && override > 0) {
+      sumCoeff += override;
+      continue;
+    }
+
+    const base = coeffBySubject.get(String(item.subject_id));
+    const c = Number(base?.coeff ?? 0);
+    if (Number.isFinite(c) && c > 0) sumCoeff += c;
+  }
+
+  return cleanCoeff(sumCoeff);
+}
+
 /* ───────── classification bilans (API) ───────── */
 
 function normText(s?: string | null) {
@@ -1344,29 +1406,38 @@ export async function GET(req: NextRequest) {
     return out;
   }
 
-  /* 3) Coefficients bulletin par matière (on les charge même s'il n'y a pas d'évals) */
-  let coeffAllQuery = supabase
+  /* 3) Coefficients bulletin par matière (tolérant sur le niveau) */
+  const { data: coeffAllData, error: coeffAllErr } = await supabase
     .from("institution_subject_coeffs")
     .select("subject_id, coeff, include_in_average, level")
     .eq("institution_id", institutionId);
 
-  if (bulletinLevel) coeffAllQuery = coeffAllQuery.eq("level", bulletinLevel);
-
-  const { data: coeffAllData, error: coeffAllErr } = await coeffAllQuery;
   if (coeffAllErr) {
     // ignore
   }
 
   const coeffBySubject = new Map<string, { coeff: number; include: boolean }>();
   const subjectIdsFromConfig = new Set<string>();
+  const coeffRowsBySubject = new Map<string, SubjectCoeffRow[]>();
 
   for (const row of (coeffAllData || []) as SubjectCoeffRow[]) {
     const sid = String(row.subject_id || "");
     if (!sid || !isUuid(sid)) continue;
+
     subjectIdsFromConfig.add(sid);
+
+    const arr = coeffRowsBySubject.get(sid) || [];
+    arr.push(row);
+    coeffRowsBySubject.set(sid, arr);
+  }
+
+  for (const [sid, rows] of coeffRowsBySubject.entries()) {
+    const best = pickBestCoeffRow(rows, bulletinLevel);
+    if (!best) continue;
+
     coeffBySubject.set(sid, {
-      coeff: cleanCoeff(row.coeff),
-      include: row.include_in_average !== false,
+      coeff: cleanCoeff(best.coeff),
+      include: best.include_in_average !== false,
     });
   }
 
@@ -1540,41 +1611,61 @@ export async function GET(req: NextRequest) {
 
   const { data: compData, error: compErr } = await srv
     .from("grade_subject_components")
-    .select("id, subject_id, label, short_label, coeff_in_subject, order_index, is_active")
+    .select("id, subject_id, label, short_label, coeff_in_subject, order_index, is_active, level")
     .eq("institution_id", institutionId)
     .in("subject_id", orderedSubjectIds);
 
   if (compErr) {
     // ignore
   } else {
-    const rows = (compData || [])
-      .filter((r: any) => r.is_active !== false)
-      .map((r: any) => {
-        const coeff =
+    const rawRows = ((compData || []) as any[])
+      .filter((r) => r.is_active !== false)
+      .map((r: any) => ({
+        id: String(r.id),
+        subject_id: String(r.subject_id),
+        label: (r.label as string) || "Sous-matière",
+        short_label: r.short_label ? String(r.short_label) : null,
+        coeff_in_subject: cleanCoeff(
           r.coeff_in_subject !== null && r.coeff_in_subject !== undefined
             ? Number(r.coeff_in_subject)
-            : 1;
-        const ord =
-          r.order_index !== null && r.order_index !== undefined ? Number(r.order_index) : 1;
+            : 1
+        ),
+        order_index:
+          r.order_index !== null && r.order_index !== undefined ? Number(r.order_index) : 1,
+        level: r.level ? String(r.level) : null,
+      }));
 
-        const obj: BulletinSubjectComponent = {
-          id: String(r.id),
-          subject_id: String(r.subject_id),
-          label: (r.label as string) || "Sous-matière",
-          short_label: r.short_label ? String(r.short_label) : null,
-          coeff_in_subject: cleanCoeff(coeff),
-          order_index: ord,
-        };
-        return obj;
-      }) as BulletinSubjectComponent[];
+    const rawBySubject = new Map<string, any[]>();
+    for (const row of rawRows) {
+      const arr = rawBySubject.get(row.subject_id) || [];
+      arr.push(row);
+      rawBySubject.set(row.subject_id, arr);
+    }
 
-    rows.sort((a, b) => {
-      if (a.subject_id !== b.subject_id) return a.subject_id.localeCompare(b.subject_id);
-      return a.order_index - b.order_index;
-    });
+    const finalRows: BulletinSubjectComponent[] = [];
 
-    subjectComponentsForReport = rows;
-    rows.forEach((c) => {
+    for (const sid of orderedSubjectIds) {
+      const chosen = pickBestComponentRows(rawBySubject.get(sid) || [], bulletinLevel);
+
+      chosen.sort((a, b) => {
+        return (a.order_index ?? 1) - (b.order_index ?? 1);
+      });
+
+      for (const row of chosen) {
+        finalRows.push({
+          id: row.id,
+          subject_id: row.subject_id,
+          label: row.label,
+          short_label: row.short_label,
+          coeff_in_subject: row.coeff_in_subject,
+          order_index: row.order_index,
+        });
+      }
+    }
+
+    subjectComponentsForReport = finalRows;
+
+    finalRows.forEach((c) => {
       subjectComponentById.set(c.id, c);
       const arr = compsBySubject.get(c.subject_id) || [];
       arr.push(c);
@@ -1659,24 +1750,26 @@ export async function GET(req: NextRequest) {
             ];
           });
 
-          const annualCoeffRaw =
-            g.annual_coeff !== null && g.annual_coeff !== undefined ? Number(g.annual_coeff) : 1;
-
           const groupCode =
             g.code && String(g.code).trim() !== "" ? String(g.code) : String(g.label);
 
           const shortLabel =
             g.short_label && String(g.short_label).trim() !== "" ? String(g.short_label) : null;
 
-          return {
+          const builtGroup: BulletinSubjectGroup = {
             id: String(g.id),
             code: groupCode,
             label: String(g.label),
             short_label: shortLabel,
             order_index: Number(g.order_index ?? 1),
             is_active: g.is_active !== false,
-            annual_coeff: cleanCoeff(annualCoeffRaw),
+            annual_coeff: 0,
             items,
+          };
+
+          return {
+            ...builtGroup,
+            annual_coeff: computeGroupAnnualCoeff(builtGroup, coeffBySubject),
           };
         });
 
@@ -1756,6 +1849,7 @@ export async function GET(req: NextRequest) {
         rebuilt.forEach((g) => {
           g.items.sort((a, b) => a.order_index - b.order_index);
           g.items = g.items.map((it, idx) => ({ ...it, order_index: idx + 1 }));
+          g.annual_coeff = computeGroupAnnualCoeff(g, coeffBySubject);
         });
 
         subjectGroups = rebuilt;
@@ -2176,33 +2270,51 @@ export async function GET(req: NextRequest) {
     if (annualOrderedSubjectIds.length) {
       const { data: addCompData, error: addCompErr } = await srv
         .from("grade_subject_components")
-        .select("id, subject_id, label, short_label, coeff_in_subject, order_index, is_active")
+        .select("id, subject_id, label, short_label, coeff_in_subject, order_index, is_active, level")
         .eq("institution_id", institutionId)
         .in("subject_id", annualOrderedSubjectIds);
 
       if (!addCompErr && addCompData?.length) {
+        const rawBySubject = new Map<string, any[]>();
+
         for (const r of addCompData as any[]) {
           if (r.is_active === false) continue;
 
-          const obj: BulletinSubjectComponent = {
-            id: String(r.id),
-            subject_id: String(r.subject_id),
-            label: (r.label ?? r.short_label ?? "Sous-matière") as any,
-            short_label: (r.short_label ?? null) as any,
-            coeff_in_subject:
-              r.coeff_in_subject !== null && r.coeff_in_subject !== undefined ? Number(r.coeff_in_subject) : 1,
-            order_index: r.order_index !== null && r.order_index !== undefined ? Number(r.order_index) : 1,
-          } as any;
+          const sid = String(r.subject_id || "");
+          if (!sid) continue;
 
-          annualSubjectComponentById.set(obj.id, obj);
-
-          const arr = annualCompsBySubject.get(obj.subject_id) || [];
-          // éviter doublons
-          if (!arr.find((x) => x.id === obj.id)) arr.push(obj);
-          annualCompsBySubject.set(obj.subject_id, arr);
+          const arr = rawBySubject.get(sid) || [];
+          arr.push(r);
+          rawBySubject.set(sid, arr);
         }
 
-        // tri interne
+        for (const sid of annualOrderedSubjectIds) {
+          const chosen = pickBestComponentRows(rawBySubject.get(sid) || [], bulletinLevel);
+
+          for (const r of chosen) {
+            const obj: BulletinSubjectComponent = {
+              id: String(r.id),
+              subject_id: String(r.subject_id),
+              label: (r.label ?? r.short_label ?? "Sous-matière") as any,
+              short_label: (r.short_label ?? null) as any,
+              coeff_in_subject:
+                r.coeff_in_subject !== null && r.coeff_in_subject !== undefined
+                  ? Number(r.coeff_in_subject)
+                  : 1,
+              order_index:
+                r.order_index !== null && r.order_index !== undefined
+                  ? Number(r.order_index)
+                  : 1,
+            } as any;
+
+            annualSubjectComponentById.set(obj.id, obj);
+
+            const arr = annualCompsBySubject.get(obj.subject_id) || [];
+            if (!arr.find((x) => x.id === obj.id)) arr.push(obj);
+            annualCompsBySubject.set(obj.subject_id, arr);
+          }
+        }
+
         annualCompsBySubject.forEach((arr) => {
           arr.sort((a, b) => (a.order_index ?? 1) - (b.order_index ?? 1));
         });
