@@ -20,11 +20,37 @@ function firstNonEmpty(...vals: (string | null | undefined)[]) {
 /** Construit un nom lisible à partir d’un enregistrement quelconque de “student” */
 function computeStudentName(r: any): string {
   // Variantes possibles courantes (FR/EN)
-  const full      = (r?.full_name ?? r?.fullname ?? r?.student_full_name ?? r?.display_name ?? r?.student_display_name ?? r?.name ?? r?.student_name) as string | undefined;
-  const first     = (r?.first_name ?? r?.firstname ?? r?.given_name ?? r?.prenom) as string | undefined;
-  const last      = (r?.last_name ?? r?.lastname ?? r?.family_name ?? r?.nom) as string | undefined;
-  const pair      = [first, last].filter(Boolean).join(" ").trim();
-  const matricule = (r?.matricule ?? r?.student_code ?? r?.code ?? r?.register_id) as string | undefined;
+  const full = (
+    r?.full_name ??
+    r?.fullname ??
+    r?.student_full_name ??
+    r?.display_name ??
+    r?.student_display_name ??
+    r?.name ??
+    r?.student_name
+  ) as string | undefined;
+
+  const first = (
+    r?.first_name ??
+    r?.firstname ??
+    r?.given_name ??
+    r?.prenom
+  ) as string | undefined;
+
+  const last = (
+    r?.last_name ??
+    r?.lastname ??
+    r?.family_name ??
+    r?.nom
+  ) as string | undefined;
+
+  const pair = [first, last].filter(Boolean).join(" ").trim();
+  const matricule = (
+    r?.matricule ??
+    r?.student_code ??
+    r?.code ??
+    r?.register_id
+  ) as string | undefined;
 
   return firstNonEmpty(full, pair, matricule, "Élève");
 }
@@ -50,8 +76,12 @@ export async function fetchStudentNames(
       .select("*")
       .in("id", wanted);
 
-    if (!error) for (const r of data || []) put(String(r.id), r);
-  } catch { /* ignore */ }
+    if (!error) {
+      for (const r of data || []) put(String(r.id), r);
+    }
+  } catch {
+    // ignore
+  }
 
   // 2) Fallback via class_enrollments → students!inner(*) (si certains manquent)
   const missing = wanted.filter((id) => !out[id]);
@@ -62,17 +92,22 @@ export async function fetchStudentNames(
         .select("student_id, students!inner(*)")
         .in("student_id", missing);
 
-    if (!error) {
+      if (!error) {
         for (const r of data || []) {
           const st = (r as any).students || {};
           put(String((r as any).student_id), st);
         }
       }
-    } catch { /* ignore */ }
+    } catch {
+      // ignore
+    }
   }
 
   // 3) Sécurisation finale
-  for (const id of wanted) if (!out[id]) out[id] = "Élève";
+  for (const id of wanted) {
+    if (!out[id]) out[id] = "Élève";
+  }
+
   return out;
 }
 
@@ -123,9 +158,11 @@ export async function queuePenaltyNotifications(opts: {
   const linksByStudent = new Map<string, string[]>();
   for (const row of sg || []) {
     if ("notifications_enabled" in row && row.notifications_enabled === false) continue;
+
     const sid = String(row.student_id);
     const pid = pickParentId(row);
     if (!pid) continue;
+
     const arr = linksByStudent.get(sid) || [];
     arr.push(String(pid));
     linksByStudent.set(sid, Array.from(new Set(arr)));
@@ -136,12 +173,16 @@ export async function queuePenaltyNotifications(opts: {
   const occurred_at = isoNoMsZ(whenIso);
   const seen = new Set<string>();
 
-  // Ligne "auteur" pour la lisibilité du body (fallback — le SW reconstruit aussi côté client)
-  const authorRole = (author?.role_label || "").toString().normalize("NFKC").toLowerCase();
-  const byline =
-    subject_name ? `Par le prof de ${subject_name}` :
-    authorRole === "administration" || authorRole === "admin" ? "Par l’administration" :
-    "Discipline";
+  const authorRole = (author?.role_label || "")
+    .toString()
+    .normalize("NFKC")
+    .toLowerCase();
+
+  const byline = subject_name
+    ? `Par le prof de ${subject_name}`
+    : authorRole === "administration" || authorRole === "admin"
+    ? "Par l’administration"
+    : "Discipline";
 
   for (const it of items) {
     const parents = linksByStudent.get(it.student_id) || [];
@@ -150,22 +191,24 @@ export async function queuePenaltyNotifications(opts: {
     const studentName = names[it.student_id] || "Élève";
     const title = `Sanction — ${studentName}`;
     const body = [
-      byline,                                   // ← “Par le prof de <matière>”
+      byline,
       class_label || "",
       new Date(occurred_at).toLocaleString("fr-FR", { hour12: false }),
       `−${it.points} pt${it.points > 1 ? "s" : ""}`,
-      it.reason ? `Motif : ${String(it.reason).trim()}` : "", // ← préfixe “Motif :”
-    ].filter(Boolean).join(" • ");
+      it.reason ? `Motif : ${String(it.reason).trim()}` : "",
+    ]
+      .filter(Boolean)
+      .join(" • ");
 
     const payload = {
       kind: "conduct_penalty",
       rubric,
       points: it.points,
       reason: it.reason ?? null,
-      class:   { label: class_label },
+      class: { label: class_label },
       subject: { name: subject_name, label: subject_name ?? undefined },
       student: { id: it.student_id, name: studentName },
-      author:  { role_label: author?.role_label ?? null },
+      author: { role_label: author?.role_label ?? null },
       occurred_at,
       severity: it.points >= 5 ? "high" : it.points >= 3 ? "medium" : "low",
       title,
@@ -173,7 +216,6 @@ export async function queuePenaltyNotifications(opts: {
     };
 
     for (const parent_id of parents) {
-      // Clé de dédoublonnage stable (on garde le même format qu’avant pour ne rien casser)
       const key = `${parent_id}|${it.student_id}|${occurred_at}|${rubric}|${it.points}|${it.reason ?? ""}`;
       if (seen.has(key)) continue;
       seen.add(key);
@@ -194,7 +236,182 @@ export async function queuePenaltyNotifications(opts: {
   }
 
   if (!rows.length) return { queued: 0 };
-  const { error, count } = await srv.from("notifications_queue").insert(rows, { count: "exact" });
+
+  const { error, count } = await srv
+    .from("notifications_queue")
+    .insert(rows, { count: "exact" });
+
   if (error) throw error;
   return { queued: count || rows.length };
+}
+
+export async function queueAdminAttendanceNotifications(opts: {
+  srv: SupabaseClient;
+  institution_id: string;
+  admin_call_id: string;
+  class_label: string | null;
+  items: Array<{
+    student_id: string;
+    status: "present" | "absent" | "late";
+    reason?: string | null;
+  }>;
+  whenIso: string;
+}) {
+  const {
+    srv,
+    institution_id,
+    admin_call_id,
+    class_label,
+    items,
+    whenIso,
+  } = opts;
+
+  const dedup = new Map<
+    string,
+    { student_id: string; status: "present" | "absent" | "late"; reason?: string | null }
+  >();
+
+  for (const it of items || []) {
+    const sid = String(it?.student_id || "").trim();
+    if (!sid) continue;
+
+    dedup.set(sid, {
+      student_id: sid,
+      status: it.status,
+      reason: it.reason ?? null,
+    });
+  }
+
+  const normalizedItems = Array.from(dedup.values());
+  if (!normalizedItems.length) return { queued: 0, cleared: 0 };
+
+  const studentIds = normalizedItems.map((i) => i.student_id);
+  const names = await fetchStudentNames(srv, studentIds);
+
+  const { data: sg } = await srv
+    .from("student_guardians")
+    .select("*")
+    .in("student_id", studentIds);
+
+  const linksByStudent = new Map<string, string[]>();
+  for (const row of sg || []) {
+    if ("notifications_enabled" in row && row.notifications_enabled === false) continue;
+
+    const sid = String((row as any).student_id || "");
+    const pid = pickParentId(row);
+    if (!sid || !pid) continue;
+
+    const arr = linksByStudent.get(sid) || [];
+    arr.push(String(pid));
+    linksByStudent.set(sid, Array.from(new Set(arr)));
+  }
+
+  const WAIT = (process.env.PUSH_WAIT_STATUS || "pending").trim();
+  const occurred_at = isoNoMsZ(whenIso);
+
+  let cleared = 0;
+
+  try {
+    const { count } = await srv
+      .from("notifications_queue")
+      .delete({ count: "exact" })
+      .eq("institution_id", institution_id)
+      .eq("status", WAIT)
+      .in("student_id", studentIds)
+      .contains("meta", {
+        src: "api:queueAdminAttendanceNotifications",
+        admin_call_id,
+      });
+
+    cleared = count || 0;
+  } catch {
+    // ne bloque pas le flux
+  }
+
+  const rows: any[] = [];
+  const seen = new Set<string>();
+
+  for (const it of normalizedItems) {
+    if (it.status !== "absent" && it.status !== "late") continue;
+
+    const parents = linksByStudent.get(it.student_id) || [];
+    if (!parents.length) continue;
+
+    const studentName = names[it.student_id] || "Élève";
+    const isLate = it.status === "late";
+
+    const title = `${isLate ? "Retard" : "Absence"} — ${studentName}`;
+    const body = [
+      "Appel administratif",
+      class_label || "",
+      new Date(occurred_at).toLocaleString("fr-FR", { hour12: false }),
+      it.reason ? `Motif : ${String(it.reason).trim()}` : "",
+    ]
+      .filter(Boolean)
+      .join(" • ");
+
+    const payload = {
+      kind: "attendance",
+      event: it.status,
+      source: {
+        kind: "admin_student_call",
+        label: "Appel administratif",
+        admin_call_id,
+      },
+      class: { label: class_label },
+      subject: {
+        name: null,
+        label: "Appel administratif",
+      },
+      student: {
+        id: it.student_id,
+        name: studentName,
+      },
+      reason: it.reason ?? null,
+      occurred_at,
+      title,
+      body,
+    };
+
+    for (const parent_id of parents) {
+      const key = [
+        parent_id,
+        it.student_id,
+        admin_call_id,
+        occurred_at,
+        it.status,
+        it.reason ?? "",
+      ].join("|");
+
+      if (seen.has(key)) continue;
+      seen.add(key);
+
+      rows.push({
+        institution_id,
+        student_id: it.student_id,
+        parent_id,
+        channels: ["inapp", "push", "sms"],
+        payload,
+        title,
+        body,
+        status: WAIT,
+        send_after: occurred_at,
+        meta: {
+          src: "api:queueAdminAttendanceNotifications",
+          v: "1",
+          admin_call_id,
+        },
+      });
+    }
+  }
+
+  if (!rows.length) return { queued: 0, cleared };
+
+  const { error, count } = await srv
+    .from("notifications_queue")
+    .insert(rows, { count: "exact" });
+
+  if (error) throw error;
+
+  return { queued: count || rows.length, cleared };
 }
