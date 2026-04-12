@@ -99,6 +99,11 @@ const ABS_ITEMS: NavItem[] = [
     label: "Vue par créneau",
     Icon: BarChart3,
   },
+  {
+    href: "/admin/absences/appel-administratif",
+    label: "Appel administratif",
+    Icon: Users,
+  },
   { href: "/admin/conduite", label: "Moyenne de Conduite", Icon: ShieldCheck },
 ];
 
