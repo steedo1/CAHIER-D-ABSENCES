@@ -47,8 +47,11 @@ type AbsenceImpactSummary = {
 };
 
 type MakeupPlan = {
-  proposed_start_date: string | null;
-  proposed_end_date: string | null;
+  class_id: string | null;
+  class_label: string | null;
+  makeup_date: string | null;
+  start_time: string | null;
+  end_time: string | null;
   notes: string;
 };
 
@@ -390,16 +393,54 @@ function normalizeImpactSummary(payload: any): AbsenceImpactSummary | null {
 function normalizeMakeupPlan(payload: any): MakeupPlan | null {
   if (!payload || typeof payload !== "object") return null;
 
+  const class_id =
+    typeof (payload.class_id ?? payload.classId) === "string"
+      ? String(payload.class_id ?? payload.classId)
+      : null;
+
+  const class_label =
+    typeof (payload.class_label ?? payload.classLabel) === "string"
+      ? String(payload.class_label ?? payload.classLabel)
+      : null;
+
+  const makeup_date =
+    typeof (
+      payload.makeup_date ??
+      payload.makeupDate ??
+      payload.proposed_start_date ??
+      payload.proposedStartDate
+    ) === "string"
+      ? String(
+          payload.makeup_date ??
+            payload.makeupDate ??
+            payload.proposed_start_date ??
+            payload.proposedStartDate
+        )
+      : null;
+
+  const start_time =
+    typeof (payload.start_time ?? payload.startTime) === "string"
+      ? String(payload.start_time ?? payload.startTime)
+      : null;
+
+  const end_time =
+    typeof (payload.end_time ?? payload.endTime) === "string"
+      ? String(payload.end_time ?? payload.endTime)
+      : null;
+
+  const notes = String(payload.notes ?? payload.text ?? "").trim();
+
+  if (!class_id && !class_label && !makeup_date && !start_time && !end_time && !notes) {
+    return null;
+  }
+
   return {
-    proposed_start_date:
-      typeof (payload.proposed_start_date ?? payload.proposedStartDate) === "string"
-        ? String(payload.proposed_start_date ?? payload.proposedStartDate)
-        : null,
-    proposed_end_date:
-      typeof (payload.proposed_end_date ?? payload.proposedEndDate) === "string"
-        ? String(payload.proposed_end_date ?? payload.proposedEndDate)
-        : null,
-    notes: String(payload.notes ?? payload.text ?? "").trim(),
+    class_id,
+    class_label,
+    makeup_date,
+    start_time,
+    end_time,
+    notes,
   };
 }
 
@@ -414,6 +455,21 @@ function formatDurationFromHours(value?: number | string | null) {
   if (h <= 0) return `${m} min`;
   if (m === 0) return `${h} h`;
   return `${h} h ${m} min`;
+}
+
+function formatMakeupPlanSummary(plan?: MakeupPlan | null) {
+  if (!plan) return "—";
+
+  const parts = [
+    plan.class_label ? `Classe : ${plan.class_label}` : "",
+    plan.makeup_date ? `Jour : ${formatDate(plan.makeup_date)}` : "",
+    plan.start_time || plan.end_time
+      ? `Horaire : ${formatTimeRange(plan.start_time, plan.end_time, null)}`
+      : "",
+    plan.notes ? `Détails : ${plan.notes}` : "",
+  ].filter(Boolean);
+
+  return parts.length ? parts.join("\n") : "—";
 }
 
 function normalizeAbsenceItem(raw: any): TeacherAbsenceRequestItem {
@@ -1122,7 +1178,7 @@ function ApprovedRequestPrintSheet({
 
           <div className="absence-card absence-card-full">
             <div className="absence-label">Plan de rattrapage</div>
-            <div className="absence-value absence-value-normal whitespace-pre-line">{item.makeup_plan?.notes || "—"}</div>
+            <div className="absence-value absence-value-normal whitespace-pre-line">{formatMakeupPlanSummary(item.makeup_plan)}</div>
           </div>
 
           {item.admin_comment ? (
@@ -1223,6 +1279,11 @@ export default function EnseignantAutorisationAbsencePage() {
     reason_code: "maladie",
     details: "",
     signed: true,
+    makeup_class_id: "",
+    makeup_class_label: "",
+    makeup_date: "",
+    makeup_start_time: "",
+    makeup_end_time: "",
     makeup_notes: "",
   });
 
@@ -1305,6 +1366,51 @@ export default function EnseignantAutorisationAbsencePage() {
       cancelled = true;
     };
   }, [form.start_date, form.end_date]);
+
+  useEffect(() => {
+    setForm((prev) => {
+      if (!impactPreview?.impacted_classes?.length) {
+        if (
+          !prev.makeup_class_id &&
+          !prev.makeup_class_label &&
+          !prev.makeup_date &&
+          !prev.makeup_start_time &&
+          !prev.makeup_end_time
+        ) {
+          return prev;
+        }
+
+        return {
+          ...prev,
+          makeup_class_id: "",
+          makeup_class_label: "",
+          makeup_date: "",
+          makeup_start_time: "",
+          makeup_end_time: "",
+        };
+      }
+
+      const selected = impactPreview.impacted_classes.find(
+        (cls) => cls.class_id === prev.makeup_class_id
+      );
+
+      if (selected) {
+        if (prev.makeup_class_label === selected.class_label) return prev;
+        return {
+          ...prev,
+          makeup_class_label: selected.class_label,
+        };
+      }
+
+      if (!prev.makeup_class_id && !prev.makeup_class_label) return prev;
+
+      return {
+        ...prev,
+        makeup_class_id: "",
+        makeup_class_label: "",
+      };
+    });
+  }, [impactPreview]);
 
   async function fetchFirstWorkingJson(urls: string[]) {
     for (const url of urls) {
@@ -1432,9 +1538,29 @@ export default function EnseignantAutorisationAbsencePage() {
     }
 
     if (!form.details.trim()) {
-      setError("Veuillez préciser le motif de votre demande.");
+      setError("Veuillez donner les détails de votre demande.");
       setSuccess(null);
       return;
+    }
+
+    if (impactPreview?.impacted_classes?.length) {
+      if (!form.makeup_class_id) {
+        setError("Veuillez sélectionner la classe concernée par le rattrapage.");
+        setSuccess(null);
+        return;
+      }
+
+      if (!form.makeup_date || !form.makeup_start_time || !form.makeup_end_time) {
+        setError("Veuillez renseigner le jour, l’heure de début et l’heure de fin du rattrapage.");
+        setSuccess(null);
+        return;
+      }
+
+      if (form.makeup_end_time <= form.makeup_start_time) {
+        setError("L’heure de fin du rattrapage doit être postérieure à l’heure de début.");
+        setSuccess(null);
+        return;
+      }
     }
 
     try {
@@ -1459,8 +1585,11 @@ export default function EnseignantAutorisationAbsencePage() {
           signed: form.signed,
           source: "teacher_portal",
           makeup_plan: {
-            proposed_start_date: null,
-            proposed_end_date: null,
+            class_id: form.makeup_class_id || null,
+            class_label: form.makeup_class_label || null,
+            makeup_date: form.makeup_date || null,
+            start_time: form.makeup_start_time || null,
+            end_time: form.makeup_end_time || null,
             notes: form.makeup_notes.trim(),
           },
         }),
@@ -1481,6 +1610,11 @@ export default function EnseignantAutorisationAbsencePage() {
         reason_code: "maladie",
         details: "",
         signed: true,
+        makeup_class_id: "",
+        makeup_class_label: "",
+        makeup_date: "",
+        makeup_start_time: "",
+        makeup_end_time: "",
         makeup_notes: "",
       });
       setImpactPreview(null);
@@ -1720,16 +1854,87 @@ export default function EnseignantAutorisationAbsencePage() {
 
             <div className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
               <div className="text-sm font-bold text-emerald-900">Quand comptez-vous rattraper ces heures ?</div>
+              <p className="mt-1 text-sm text-emerald-900/80">
+                Sélectionnez la classe impactée, puis indiquez le jour et le créneau prévus pour le rattrapage.
+              </p>
+
+              <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
+                <div className="md:col-span-2">
+                  <label className="mb-2 block text-sm font-semibold text-slate-800">
+                    Classe impactée à rattraper
+                  </label>
+                  <select
+                    value={form.makeup_class_id}
+                    onChange={(e) =>
+                      setForm((prev) => {
+                        const selected = impactPreview?.impacted_classes.find(
+                          (cls) => cls.class_id === e.target.value
+                        );
+                        return {
+                          ...prev,
+                          makeup_class_id: e.target.value,
+                          makeup_class_label: selected?.class_label ?? "",
+                        };
+                      })
+                    }
+                    disabled={!impactPreview?.impacted_classes?.length}
+                    className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none focus:border-emerald-400 focus:ring-4 focus:ring-emerald-500/15 disabled:cursor-not-allowed disabled:bg-slate-100"
+                  >
+                    <option value="">
+                      {impactPreview?.impacted_classes?.length
+                        ? "Sélectionnez une classe"
+                        : "Aucune classe impactée disponible"}
+                    </option>
+                    {(impactPreview?.impacted_classes ?? []).map((cls) => (
+                      <option key={cls.class_id} value={cls.class_id}>
+                        {cls.class_label} • {formatDurationFromHours(cls.lost_hours)} • {cls.lost_sessions} créneau(x)
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="mb-2 block text-sm font-semibold text-slate-800">Jour du rattrapage</label>
+                  <input
+                    type="date"
+                    value={form.makeup_date}
+                    onChange={(e) => setForm((prev) => ({ ...prev, makeup_date: e.target.value }))}
+                    className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none focus:border-emerald-400 focus:ring-4 focus:ring-emerald-500/15"
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="mb-2 block text-sm font-semibold text-slate-800">Heure début</label>
+                    <input
+                      type="time"
+                      value={form.makeup_start_time}
+                      onChange={(e) => setForm((prev) => ({ ...prev, makeup_start_time: e.target.value }))}
+                      className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none focus:border-emerald-400 focus:ring-4 focus:ring-emerald-500/15"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="mb-2 block text-sm font-semibold text-slate-800">Heure fin</label>
+                    <input
+                      type="time"
+                      value={form.makeup_end_time}
+                      onChange={(e) => setForm((prev) => ({ ...prev, makeup_end_time: e.target.value }))}
+                      className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none focus:border-emerald-400 focus:ring-4 focus:ring-emerald-500/15"
+                    />
+                  </div>
+                </div>
+              </div>
 
               <div className="mt-4">
                 <label className="mb-2 block text-sm font-semibold text-slate-800">
-                  Jours, heures et classes de rattrapage
+                  Détails complémentaires sur le rattrapage
                 </label>
                 <textarea
-                  rows={5}
+                  rows={4}
                   value={form.makeup_notes}
                   onChange={(e) => setForm((prev) => ({ ...prev, makeup_notes: e.target.value }))}
-                  placeholder="Ex. 6e1 : mardi 28/04 de 07:10 à 08:05 ; 6e2 : jeudi 30/04 de 10:15 à 11:10 ; 5e3 : vendredi 01/05 de 08:05 à 09:00."
+                  placeholder="Ex. Avec l’accord de la classe, le rattrapage se fera en une seule séance."
                   className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none focus:border-emerald-400 focus:ring-4 focus:ring-emerald-500/15"
                 />
               </div>
@@ -2001,8 +2206,33 @@ export default function EnseignantAutorisationAbsencePage() {
                           <div className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-slate-700">
                             <div className="font-bold text-emerald-900">Proposition de rattrapage</div>
                             <div className="mt-2 rounded-2xl bg-white px-4 py-3">
-                              <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Notes</div>
-                              <div className="mt-1 leading-6 text-slate-700">{item.makeup_plan.notes || "—"}</div>
+                              <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+                                <div>
+                                  <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Classe</div>
+                                  <div className="mt-1 leading-6 text-slate-700">{item.makeup_plan.class_label || "—"}</div>
+                                </div>
+                                <div>
+                                  <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Jour</div>
+                                  <div className="mt-1 leading-6 text-slate-700">
+                                    {item.makeup_plan.makeup_date ? formatDate(item.makeup_plan.makeup_date) : "—"}
+                                  </div>
+                                </div>
+                                <div>
+                                  <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Horaire</div>
+                                  <div className="mt-1 leading-6 text-slate-700">
+                                    {item.makeup_plan.start_time || item.makeup_plan.end_time
+                                      ? formatTimeRange(item.makeup_plan.start_time, item.makeup_plan.end_time, null)
+                                      : "—"}
+                                  </div>
+                                </div>
+                              </div>
+
+                              <div className="mt-3">
+                                <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Détails</div>
+                                <div className="mt-1 leading-6 text-slate-700 whitespace-pre-line">
+                                  {item.makeup_plan.notes || "—"}
+                                </div>
+                              </div>
                             </div>
                           </div>
                         ) : null}

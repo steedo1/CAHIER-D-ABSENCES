@@ -43,9 +43,14 @@ type AbsenceImpactSummary = {
 };
 
 type MakeupPlan = {
-  proposed_start_date: string | null;
-  proposed_end_date: string | null;
+  class_id: string | null;
+  class_label: string | null;
+  makeup_date: string | null;
+  start_time: string | null;
+  end_time: string | null;
   notes: string;
+  proposed_start_date?: string | null;
+  proposed_end_date?: string | null;
 };
 
 type AbsenceRequestItem = {
@@ -232,16 +237,67 @@ function normalizeMakeupPlan(raw: unknown): MakeupPlan | null {
   if (!raw || typeof raw !== "object") return null;
 
   const source = raw as Record<string, unknown>;
+
+  const class_id =
+    (source.class_id as string | null | undefined) ??
+    (source.classId as string | null | undefined) ??
+    null;
+
+  const class_label =
+    (source.class_label as string | null | undefined) ??
+    (source.classLabel as string | null | undefined) ??
+    null;
+
+  const proposed_start_date =
+    (source.proposed_start_date as string | null | undefined) ??
+    (source.proposedStartDate as string | null | undefined) ??
+    null;
+
+  const proposed_end_date =
+    (source.proposed_end_date as string | null | undefined) ??
+    (source.proposedEndDate as string | null | undefined) ??
+    null;
+
+  const makeup_date =
+    (source.makeup_date as string | null | undefined) ??
+    (source.makeupDate as string | null | undefined) ??
+    proposed_start_date ??
+    proposed_end_date ??
+    null;
+
+  const start_time =
+    (source.start_time as string | null | undefined) ??
+    (source.startTime as string | null | undefined) ??
+    null;
+
+  const end_time =
+    (source.end_time as string | null | undefined) ??
+    (source.endTime as string | null | undefined) ??
+    null;
+
+  const notes = String(source.notes ?? source.text ?? "").trim();
+
+  const hasAny =
+    !!class_id ||
+    !!class_label ||
+    !!makeup_date ||
+    !!start_time ||
+    !!end_time ||
+    !!notes ||
+    !!proposed_start_date ||
+    !!proposed_end_date;
+
+  if (!hasAny) return null;
+
   return {
-    proposed_start_date:
-      (source.proposed_start_date as string | null | undefined) ??
-      (source.proposedStartDate as string | null | undefined) ??
-      null,
-    proposed_end_date:
-      (source.proposed_end_date as string | null | undefined) ??
-      (source.proposedEndDate as string | null | undefined) ??
-      null,
-    notes: String(source.notes ?? source.text ?? "").trim(),
+    class_id,
+    class_label,
+    makeup_date,
+    start_time,
+    end_time,
+    notes,
+    proposed_start_date,
+    proposed_end_date,
   };
 }
 
@@ -610,7 +666,7 @@ export default function AdminAssiduitePage() {
                       </p>
                     </div>
 
-                    <div className="grid grid-cols-1 gap-3 text-sm text-slate-700 md:grid-cols-3">
+                    <div className="grid grid-cols-1 gap-3 text-sm text-slate-700 md:grid-cols-2">
                       <div className="rounded-2xl bg-slate-50 px-4 py-3">
                         <div className="text-xs font-bold uppercase tracking-wide text-slate-500">
                           Période
@@ -626,15 +682,6 @@ export default function AdminAssiduitePage() {
                         </div>
                         <div className="mt-1 font-semibold text-slate-900">
                           {item.reason_label}
-                        </div>
-                      </div>
-
-                      <div className="rounded-2xl bg-slate-50 px-4 py-3">
-                        <div className="text-xs font-bold uppercase tracking-wide text-slate-500">
-                          Source
-                        </div>
-                        <div className="mt-1 font-semibold text-slate-900">
-                          {item.source || "teacher_portal"}
                         </div>
                       </div>
                     </div>
@@ -688,7 +735,7 @@ export default function AdminAssiduitePage() {
                     <div className="space-y-4">
                       <div className="rounded-2xl border border-slate-200 bg-white p-4">
                         <div className="text-sm font-bold text-slate-900">
-                          Motif détaillé
+                          Détails donnés par l’enseignant
                         </div>
                         <div className="mt-2 whitespace-pre-wrap text-sm leading-6 text-slate-700">
                           {item.details}
@@ -764,6 +811,39 @@ export default function AdminAssiduitePage() {
                           </p>
                         ) : (
                           <div className="mt-3 space-y-3 text-sm">
+                            <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                              <div className="rounded-xl bg-white px-4 py-3">
+                                <div className="text-xs font-bold uppercase tracking-wide text-slate-500">
+                                  Classe concernée
+                                </div>
+                                <div className="mt-1 font-semibold text-slate-900">
+                                  {item.makeup_plan.class_label || "—"}
+                                </div>
+                              </div>
+
+                              <div className="rounded-xl bg-white px-4 py-3">
+                                <div className="text-xs font-bold uppercase tracking-wide text-slate-500">
+                                  Jour de rattrapage
+                                </div>
+                                <div className="mt-1 font-semibold text-slate-900">
+                                  {formatDate(item.makeup_plan.makeup_date)}
+                                </div>
+                              </div>
+
+                              <div className="rounded-xl bg-white px-4 py-3 md:col-span-2">
+                                <div className="text-xs font-bold uppercase tracking-wide text-slate-500">
+                                  Horaire proposé
+                                </div>
+                                <div className="mt-1 font-semibold text-slate-900">
+                                  {formatTimeRange(
+                                    item.makeup_plan.start_time,
+                                    item.makeup_plan.end_time,
+                                    "Horaire non précisé"
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+
                             <div className="rounded-xl bg-white px-4 py-3">
                               <div className="text-xs font-bold uppercase tracking-wide text-slate-500">
                                 Détails
