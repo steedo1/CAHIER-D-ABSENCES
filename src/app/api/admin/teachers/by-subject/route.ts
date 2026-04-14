@@ -18,66 +18,77 @@ async function trySelect<T>(
 
 export async function GET(req: NextRequest) {
   const supa = await getSupabaseServerClient();
-  const srv  = getSupabaseServiceClient();
+  const srv = getSupabaseServiceClient();
 
   // ── Auth requise
-  const { data: { user } } = await supa.auth.getUser();
-  if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  const {
+    data: { user },
+  } = await supa.auth.getUser();
+
+  if (!user) {
+    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  }
 
   const url = new URL(req.url);
   const subject_id_qs = (url.searchParams.get("subject_id") || "").trim();
-  const inst_qs       = (url.searchParams.get("institution_id") || "").trim();
 
-  // ── Déterminer l’établissement courant de façon explicite et sûre
-  // 1) Récupérer toutes les institutions où l’utilisateur est ADMIN (via client service → pas de RLS)
-  const adminInst = await srv
-    .from("user_roles")
+  // ── Établissement courant = celui du profil connecté
+  // On évite toute logique "intelligente" qui peut basculer sur un autre établissement.
+  const profCtx = await supa
+    .from("profiles")
     .select("institution_id")
-    .eq("profile_id", user.id)
-    .eq("role", "admin");
+    .eq("id", user.id)
+    .maybeSingle();
 
-  if (adminInst.error) {
-    return NextResponse.json({ error: adminInst.error.message }, { status: 400 });
+  if (profCtx.error) {
+    return NextResponse.json({ error: profCtx.error.message }, { status: 400 });
   }
-  const adminSet = new Set<string>((adminInst.data ?? []).map((r: any) => String(r.institution_id)));
 
-  // 2) Préférence à institution_id fourni en query s’il est autorisé
-  let institution_id: string | null = null;
-  if (inst_qs && adminSet.has(inst_qs)) {
-    institution_id = inst_qs;
-  } else {
-    // 3) Sinon, préférer l’active institution du profil si elle fait partie des droits admin
-    const profCtx = await srv
-      .from("profiles")
-      .select("institution_id")
-      .eq("id", user.id)
-      .maybeSingle();
-
-    const activeInst = (profCtx.data?.institution_id as string) ?? null;
-    if (activeInst && adminSet.has(activeInst)) {
-      institution_id = activeInst;
-    } else {
-      // 4) Sinon, prendre la première institution admin (comportement déterministe)
-      institution_id = adminInst.data?.[0]?.institution_id ?? null;
-    }
-  }
+  const institution_id = (profCtx.data?.institution_id as string) ?? null;
 
   if (!institution_id) {
-    // l’utilisateur n’est admin d’aucune institution
-    return NextResponse.json({ items: [] });
+    return NextResponse.json(
+      { error: "no_institution", items: [] },
+      { status: 400 }
+    );
   }
 
-  // ── 1) Tous les teachers rattachés à l’établissement (source de vérité : user_roles)
+  // ── Vérifier que l’utilisateur a bien le droit admin sur CET établissement
+  const adminCheck = await srv
+    .from("user_roles")
+    .select("institution_id, role")
+    .eq("profile_id", user.id)
+    .eq("institution_id", institution_id)
+    .in("role", ["admin", "super_admin"])
+    .limit(1)
+    .maybeSingle();
+
+  if (adminCheck.error) {
+    return NextResponse.json({ error: adminCheck.error.message }, { status: 400 });
+  }
+
+  if (!adminCheck.data) {
+    return NextResponse.json({ error: "forbidden", items: [] }, { status: 403 });
+  }
+
+  // ── 1) Tous les teachers rattachés à l’établissement
   const ur = await srv
     .from("user_roles")
     .select("profile_id")
     .eq("institution_id", institution_id)
     .eq("role", "teacher");
 
-  if (ur.error) return NextResponse.json({ error: ur.error.message }, { status: 400 });
+  if (ur.error) {
+    return NextResponse.json({ error: ur.error.message }, { status: 400 });
+  }
 
-  let teacherIds = new Set<string>((ur.data ?? []).map((r: any) => String(r.profile_id)));
-  if (teacherIds.size === 0) return NextResponse.json({ items: [] });
+  let teacherIds = new Set<string>(
+    (ur.data ?? []).map((r: any) => String(r.profile_id))
+  );
+
+  if (teacherIds.size === 0) {
+    return NextResponse.json({ items: [] });
+  }
 
   // ── 2) Filtre par matière (si demandé)
   if (subject_id_qs) {
@@ -91,6 +102,7 @@ export async function GET(req: NextRequest) {
         .eq("institution_id", institution_id)
         .eq("subject_id", subject_id_qs)
     );
+
     if (Array.isArray(ts)) {
       filtered = new Set(ts.map((x: any) => String(x.profile_id)));
     } else {
@@ -102,27 +114,36 @@ export async function GET(req: NextRequest) {
           .eq("institution_id", institution_id)
           .eq("subject_id", subject_id_qs)
       );
+
       if (Array.isArray(ct)) {
         filtered = new Set(ct.map((x: any) => String(x.teacher_id)));
       }
     }
 
-    // Si on a pu déterminer un ensemble filtré, on intersecte. Sinon, on conserve la liste (graceful).
     if (filtered) {
-      teacherIds = new Set([...teacherIds].filter((id) => filtered!.has(id)));
-      if (teacherIds.size === 0) return NextResponse.json({ items: [] });
+      teacherIds = new Set(
+        [...teacherIds].filter((id) => filtered!.has(id))
+      );
+
+      if (teacherIds.size === 0) {
+        return NextResponse.json({ items: [] });
+      }
     }
   }
 
   // ── 3) Profils
   const ids = Array.from(teacherIds);
+
   const pf = await srv
     .from("profiles")
     .select("id, display_name, email, phone")
+    .eq("institution_id", institution_id)
     .in("id", ids)
     .order("display_name", { ascending: true });
 
-  if (pf.error) return NextResponse.json({ error: pf.error.message }, { status: 400 });
+  if (pf.error) {
+    return NextResponse.json({ error: pf.error.message }, { status: 400 });
+  }
 
   return NextResponse.json({
     items: (pf.data ?? []).map((p: any) => ({
