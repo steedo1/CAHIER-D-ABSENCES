@@ -71,6 +71,32 @@ function isPhiloSubject(name?: string | null, code?: string | null): boolean {
   return /(philo|philosoph)/.test(n) || /(philo|philosoph)/.test(c);
 }
 
+function isLettersSubject(name?: string | null, code?: string | null): boolean {
+  if (isOtherSubject(name, code)) return false;
+
+  const n = normText(name);
+  const c = normText(code);
+
+  if (isPhiloSubject(name, code)) return true;
+
+  if (
+    /(^|\b)(fr|francais|français|ang|anglais|esp|espagnol|all|allemand|ar|arabe|hg|hist|histoire|geo|geographie|géographie|lit|litt|eco|economie|économie)(\b|$)/.test(
+      c
+    )
+  ) {
+    return true;
+  }
+
+  return (
+    /(fran[cç]ais|french|anglais|english|espagnol|spanish|allemand|german|arabe|arabic)/.test(n) ||
+    /(histoire|hist\.|g[eé]ographie|histoire\s*-?\s*g[eé]o|hg)/.test(n) ||
+    /(litt[eé]r|lettres|grammaire|orthograph|conjug|lecture|r[eé]daction|expression|compr[eé]hension)/.test(
+      n
+    ) ||
+    /(economie|gestion|comptabilit|droit)/.test(n)
+  );
+}
+
 function isScienceSubject(name?: string | null, code?: string | null): boolean {
   const n = normText(name);
   const c = normText(code);
@@ -89,6 +115,27 @@ function groupKey(s?: string | null) {
     .trim()
     .toUpperCase()
     .replace(/[^A-Z0-9]+/g, "");
+}
+
+function computeGroupAnnualCoeff(
+  group: BulletinSubjectGroup,
+  coeffBySubject: Map<string, { coeff: number; include: boolean }>
+): number {
+  let sumCoeff = 0;
+
+  for (const item of group.items ?? []) {
+    const override = Number(item.subject_coeff_override ?? NaN);
+    if (Number.isFinite(override) && override > 0) {
+      sumCoeff += override;
+      continue;
+    }
+
+    const base = coeffBySubject.get(String(item.subject_id));
+    const c = Number(base?.coeff ?? 0);
+    if (Number.isFinite(c) && c > 0) sumCoeff += c;
+  }
+
+  return cleanCoeff(sumCoeff);
 }
 
 /* ───────── Types ───────── */
@@ -423,7 +470,6 @@ async function computeStudentGeneralAvgForRange(opts: {
     subjectComponentById,
   } = opts;
 
-  // Toutes les évaluations publiées de la période
   let evalQuery = srv
     .from("grade_evaluations")
     .select(
@@ -490,7 +536,6 @@ async function computeStudentGeneralAvgForRange(opts: {
     }
   }
 
-  // Moyenne /20 par matière pour CETTE période
   const per_subject = subjectsForReport.map((s) => {
     const comps = subjectComponentsBySubject.get(s.subject_id) || [];
     let avg20: number | null = null;
@@ -531,7 +576,6 @@ async function computeStudentGeneralAvgForRange(opts: {
     };
   });
 
-  // Moyenne générale de la période
   let sumGen = 0;
   let sumCoeffGen = 0;
 
@@ -548,7 +592,6 @@ async function computeStudentGeneralAvgForRange(opts: {
     sumCoeffGen += coeffSub;
   }
 
-  // + Conduite (coef 1) si disponible
   if (conductAvg20 !== null && conductAvg20 !== undefined) {
     const c = Number(conductAvg20);
     if (Number.isFinite(c)) {
@@ -572,7 +615,6 @@ export async function GET(req: NextRequest) {
   let mode: "short" | "token" = "token";
   let payload: any = null;
 
-  // 1) Décodage QR
   if (shortCode) {
     mode = "short";
     const rec: any = await resolveBulletinByCode(srv, shortCode);
@@ -599,7 +641,6 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ ok: false, error: "invalid_payload" }, { status: 400 });
   }
 
-  // Dates de période depuis le payload (y compris i / o pour QR court)
   let dateFrom: string | null =
     payload?.i ??
     payload?.periodFrom ??
@@ -632,7 +673,6 @@ export async function GET(req: NextRequest) {
 
   const periodCodeToken: string | null = payload?.periodCode ?? payload?.period_code ?? null;
 
-  // 2) Institution, classe, élève
   const [
     { data: inst, error: instErr },
     { data: cls, error: clsErr },
@@ -673,7 +713,6 @@ export async function GET(req: NextRequest) {
 
   const bulletinLevel = normalizeBulletinLevel(classRow.level);
 
-  // 3) Résolution de la période (grade_periods)
   let periodMeta: {
     from: string | null;
     to: string | null;
@@ -825,7 +864,6 @@ export async function GET(req: NextRequest) {
     };
   }
 
-  // Prof principal
   let headTeacher: HeadTeacherRow | null = null;
   if (classRow.head_teacher_id) {
     const { data: ht, error: htErr } = await srv
@@ -836,7 +874,6 @@ export async function GET(req: NextRequest) {
     if (!htErr && ht) headTeacher = ht as HeadTeacherRow;
   }
 
-  // 4) Préparation calcul annuel (logique lycée : somme (Ti * coeff_i) / somme(coeff_i))
   let periodLooksAnnual = false;
   let yearForAnnual: string | null =
     periodMeta.academic_year ?? academicYearToken ?? classRow.academic_year ?? null;
@@ -870,9 +907,6 @@ export async function GET(req: NextRequest) {
         .sort();
       const maxEnd = ends.length ? ends[ends.length - 1] : null;
 
-      // On calcule la moyenne annuelle soit :
-      // - si la période est marquée "annuel"
-      // - soit si c'est la dernière période de l'année (T3)
       if (periodLooksAnnual) {
         shouldComputeAnnual = true;
       } else if (maxEnd && dateTo === maxEnd) {
@@ -881,7 +915,6 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  // 5) Élèves de la classe (pour calcul des rangs, etc.)
   const hasDateFilter = !!dateFrom || !!dateTo;
 
   let enrollQuery = srv
@@ -970,7 +1003,6 @@ export async function GET(req: NextRequest) {
     });
   }
 
-  // ───────── Conduite : moyenne /20 (coef 1) ─────────
   const studentIds = classStudents.map((cs) => cs.student_id).filter(Boolean);
   const classIdStr = String(classId);
 
@@ -981,14 +1013,11 @@ export async function GET(req: NextRequest) {
     const out = new Map<string, number | null>();
     studentIds.forEach((sid) => out.set(sid, null));
 
-    // Si on n'a pas de dates, on renvoie tout à null
     if (!from || !to) return out;
 
     try {
       const qs = new URLSearchParams({ class_id: classIdStr, from, to });
 
-      // NB: route publique (QR) -> pas de cookie admin ici.
-      // On tente quand même l'endpoint, et on reste tolérant si ça échoue.
       const r = await fetch(
         `${req.nextUrl.origin}/api/admin/conduite/averages?${qs.toString()}`,
         { method: "GET" }
@@ -1030,9 +1059,10 @@ export async function GET(req: NextRequest) {
   }
 
   const conductAvgMapCurrent =
-    dateFrom && dateTo ? await fetchConductAverageMap(dateFrom, dateTo) : new Map<string, number | null>();
+    dateFrom && dateTo
+      ? await fetchConductAverageMap(dateFrom, dateTo)
+      : new Map<string, number | null>();
 
-  // Préchargement conduite par période (utile pour annual_avg)
   const conductByPeriodKey = new Map<string, Map<string, number | null>>();
   if (shouldComputeAnnual && Array.isArray(yearPeriods) && yearPeriods.length) {
     for (const p of yearPeriods) {
@@ -1045,7 +1075,6 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  // 6) Coeffs bulletin par matière
   let coeffAllQuery = srv
     .from("institution_subject_coeffs")
     .select("subject_id, coeff, include_in_average, level")
@@ -1068,7 +1097,6 @@ export async function GET(req: NextRequest) {
     });
   }
 
-  // 7) Évaluations (période du bulletin)
   let evals: EvalRow[] = [];
   {
     let evalQuery = srv
@@ -1144,7 +1172,6 @@ export async function GET(req: NextRequest) {
     });
   }
 
-  // 8) Infos matières
   const { data: subjData, error: subjErr } = await srv
     .from("subjects")
     .select("id, name, code")
@@ -1176,7 +1203,6 @@ export async function GET(req: NextRequest) {
     };
   });
 
-  // 9) Sous-matières
   let subjectComponentsForReport: BulletinSubjectComponent[] = [];
   const subjectComponentById = new Map<string, BulletinSubjectComponent>();
   const compsBySubject = new Map<string, BulletinSubjectComponent[]>();
@@ -1223,7 +1249,6 @@ export async function GET(req: NextRequest) {
     });
   }
 
-  // 10) Groupes de bilan
   let subjectGroups: BulletinSubjectGroup[] = [];
   const subjectInfoById = new Map<string, { name: string; code: string }>();
   subjects.forEach((s) =>
@@ -1333,11 +1358,12 @@ export async function GET(req: NextRequest) {
           const name = meta.name;
           const code = meta.code;
 
-          if (isOtherSubject(name, code)) return gAutres?.id ?? null;
-          if (isPhiloSubject(name, code)) return gLetters?.id ?? null;
-          if (isScienceSubject(name, code)) return gSciences?.id ?? null;
+          if (isScienceSubject(name, code) && gSciences?.id) return gSciences.id;
+          if (isLettersSubject(name, code) && gLetters?.id) return gLetters.id;
 
-          return gLetters?.id ?? null;
+          if (gAutres?.id) return gAutres.id;
+
+          return gLetters?.id ?? gSciences?.id ?? null;
         }
 
         for (const gid of groupOrder) {
@@ -1384,6 +1410,7 @@ export async function GET(req: NextRequest) {
         rebuilt.forEach((g) => {
           g.items.sort((a, b) => a.order_index - b.order_index);
           g.items = g.items.map((it, idx) => ({ ...it, order_index: idx + 1 }));
+          g.annual_coeff = computeGroupAnnualCoeff(g, coeffBySubject);
         });
 
         subjectGroups = rebuilt;
@@ -1401,7 +1428,6 @@ export async function GET(req: NextRequest) {
 
   const hasGroupConfig = subjectGroups.length > 0;
 
-  // 11) Notes (période courante) pour tous les élèves
   const evalById = new Map<string, EvalRow>();
   for (const e of evals) evalById.set(e.id, e);
 
@@ -1478,7 +1504,6 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  // 12) Construire items de bulletin pour tous les élèves
   const items = classStudents.map((cs) => {
     const stuLocal = cs.students || {};
     const fullName =
@@ -1612,7 +1637,6 @@ export async function GET(req: NextRequest) {
         sumCoeffGen += coeffSub;
       }
 
-      // + Conduite (coef 1)
       const conductNote = conductAvgMapCurrent.get(cs.student_id) ?? null;
       if (conductNote !== null && conductNote !== undefined) {
         const c = Number(conductNote);
@@ -1645,11 +1669,9 @@ export async function GET(req: NextRequest) {
     };
   });
 
-  // Rangs
   applySubjectRanks(items);
   applySubjectComponentRanks(items);
 
-  // 13) Bulletin de l'élève du QR
   const bulletinForStudent = items.find((it) => it.student_id === studentId);
 
   if (!bulletinForStudent) {
@@ -1659,21 +1681,16 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  // ✅ Snapshot de moyennes embarqué dans le QR (utile en mode public sans cookie)
   const snap = (payload as any)?.s ?? null;
   const snapGeneral =
     snap && typeof snap.g === "number" ? cleanNumber(snap.g, 4) : null;
   const snapAnnual =
     snap && typeof snap.a === "number" ? cleanNumber(snap.a, 4) : null;
 
-  // ✅ Si on a la moyenne générale snapshot, on l’impose (inclut la conduite comme sur bulletin normal)
   if (snapGeneral !== null) {
     (bulletinForStudent as any).general_avg = snapGeneral;
   }
 
-
-  // 14) Calcul de la moyenne annuelle selon les trimestres
-  //     Moyenne annuelle = (T1*c1 + T2*c2 + T3*c3) / (c1 + c2 + c3)
   let annual_avg_for_student: number | null = null;
 
   if (shouldComputeAnnual && yearPeriods.length && dateFrom && dateTo) {
@@ -1691,7 +1708,6 @@ export async function GET(req: NextRequest) {
 
       let periodAvg: number | null = null;
 
-      // Si c'est la période courante, on réutilise GeneralAvg déjà calculée
       if (pStart === dateFrom && pEnd === dateTo) {
         periodAvg = bulletinForStudent.general_avg ?? null;
       } else {
@@ -1726,14 +1742,12 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  // ✅ Priorité au snapshot si présent (sinon fallback calcul)
   if (snapAnnual !== null) {
     (bulletinForStudent as any).annual_avg = snapAnnual;
   } else if (annual_avg_for_student !== null) {
     (bulletinForStudent as any).annual_avg = annual_avg_for_student;
   }
 
-  // 15) Réponse finale
   return NextResponse.json({
     ok: true,
     mode,
