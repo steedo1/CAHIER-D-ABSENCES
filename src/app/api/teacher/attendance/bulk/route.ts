@@ -17,6 +17,14 @@ type Mark = {
   reason?: string | null;
 };
 
+type ResolvedPeriod = {
+  id: string;
+  startMin: number;
+  endMin: number;
+  durationMin: number;
+  label?: string | null;
+};
+
 function uniq<T>(arr: T[]) {
   return Array.from(new Set((arr || []).filter(Boolean))) as T[];
 }
@@ -67,6 +75,23 @@ function hmToMin(hm: string) {
   return (isNaN(h) ? 0 : h) * 60 + (isNaN(m) ? 0 : m);
 }
 
+function minToHm(min: number) {
+  const safe = Math.max(0, Math.floor(min));
+  const h = Math.floor(safe / 60) % 24;
+  const m = safe % 60;
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+}
+
+function clamp(n: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, n));
+}
+
+function envInt(name: string, fallback: number, min = 0) {
+  const raw = Number(process.env[name]);
+  if (!Number.isFinite(raw)) return fallback;
+  return Math.max(min, Math.floor(raw));
+}
+
 /** Donne l’heure locale HH:MM et weekday (0=dimanche..6=samedi) dans un tz donné */
 function localHMAndWeekday(iso: string, tz: string) {
   const d = new Date(iso);
@@ -93,6 +118,32 @@ function localHMAndWeekday(iso: string, tz: string) {
   };
   return { hm, weekday: map[wd] ?? 0 };
 }
+
+function resolveCandidateClientCall(body: any) {
+  return (
+    parseIsoDate(body?.actual_call_at) ||
+    parseIsoDate(body?.client_call_at) ||
+    parseIsoDate(body?.click_at) ||
+    parseIsoDate(body?.clicked_at) ||
+    parseIsoDate(body?.call_at) ||
+    null
+  );
+}
+
+function normalizeReason(v: unknown): string | null {
+  const s = String(v ?? "").trim();
+  return s ? s : null;
+}
+
+/* Fenêtres métier */
+const CLIENT_CALL_MAX_FUTURE_MIN = envInt("ATTENDANCE_CLIENT_CALL_MAX_FUTURE_MIN", 5, 0);
+const CLIENT_CALL_DRIFT_HOURS = envInt("ATTENDANCE_CLIENT_CALL_DRIFT_HOURS", 12, 1);
+const ATTENDANCE_EARLY_ALLOWANCE_MIN = envInt("ATTENDANCE_EARLY_ALLOWANCE_MIN", 10, 0);
+const ATTENDANCE_AFTER_END_ALLOWANCE_MIN = envInt(
+  "ATTENDANCE_AFTER_END_ALLOWANCE_MIN",
+  5,
+  0
+);
 
 /* ───────────────── handler ───────────────── */
 export async function POST(req: NextRequest) {
@@ -181,7 +232,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "forbidden" }, { status: 403 });
   }
 
-  // 3) Charger classe -> établissement -> paramètres + créneaux du jour
+  // 3) Charger classe -> établissement -> paramètres
   const { data: clsRow, error: cErr } = await srv
     .from("classes")
     .select("institution_id")
@@ -192,16 +243,15 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: cErr.message }, { status: 400 });
   }
   if (!clsRow?.institution_id) {
-    return NextResponse.json(
-      { error: "class_institution_missing" },
-      { status: 400 }
-    );
+    return NextResponse.json({ error: "class_institution_missing" }, { status: 400 });
   }
+
+  const institution_id = String(clsRow.institution_id);
 
   const { data: inst, error: iErr } = await srv
     .from("institutions")
     .select("tz, auto_lateness, default_session_minutes")
-    .eq("id", clsRow.institution_id)
+    .eq("id", institution_id)
     .maybeSingle();
 
   if (iErr) {
@@ -217,92 +267,133 @@ export async function POST(req: NextRequest) {
       : 60;
 
   /**
-   * ✅ Heure effective à utiliser pour calculer weekday/retard :
-   * - priorité à session.actual_call_at si elle existe
-   * - sinon, si le client fournit actual_call_at (offline sync), on l'utilise
+   * 4) Déterminer l'heure effective de l'appel :
+   * - priorité à session.actual_call_at si déjà fixé
+   * - sinon tentative via l'heure client fournie
    * - sinon fallback serveur "maintenant"
    *
-   * Protection : on refuse une heure client trop dans le futur (> +5 min).
-   * Et on accepte la correction "plus tôt" seulement si c'est cohérent autour du créneau.
+   * Protection :
+   * - on refuse une heure client trop dans le futur
+   * - on n'accepte qu'une dérive raisonnable autour du créneau prévu
    */
   const serverNow = new Date();
   const existingCall = parseIsoDate(session.actual_call_at);
-
-  const candidateClientCall =
-    parseIsoDate(body?.actual_call_at) ||
-    parseIsoDate(body?.client_call_at) ||
-    parseIsoDate(body?.click_at) ||
-    parseIsoDate(body?.clicked_at) ||
-    parseIsoDate(body?.call_at) ||
-    null;
-
-  const refSlot = parseIsoDate(session.started_at) || existingCall || serverNow;
-  const windowMin = refSlot.getTime() - 8 * 60_000 * 60; // -8h
-  const windowMax = refSlot.getTime() + 12 * 60_000 * 60; // +12h
+  const plannedAt = parseIsoDate(session.started_at) || existingCall || serverNow;
+  const candidateClientCall = resolveCandidateClientCall(body);
 
   let effectiveCallAt: Date = existingCall || serverNow;
 
   if (candidateClientCall) {
-    const maxFutureMs = 5 * 60_000; // +5 min
+    const maxFutureMs = CLIENT_CALL_MAX_FUTURE_MIN * 60_000;
+    const maxDriftMs = CLIENT_CALL_DRIFT_HOURS * 60 * 60_000;
+
     const notTooFuture =
       candidateClientCall.getTime() <= serverNow.getTime() + maxFutureMs;
-    const inWindow =
-      candidateClientCall.getTime() >= windowMin &&
-      candidateClientCall.getTime() <= windowMax;
 
-    if (notTooFuture && inWindow) {
+    const nearPlannedSlot =
+      Math.abs(candidateClientCall.getTime() - plannedAt.getTime()) <= maxDriftMs;
+
+    if (notTooFuture && nearPlannedSlot) {
       if (!existingCall) {
         effectiveCallAt = candidateClientCall;
-      } else {
-        const diffMs = existingCall.getTime() - candidateClientCall.getTime();
-        if (diffMs > 60_000) {
-          // existingCall semble être une heure de sync plus tard → on calcule avec l'heure réelle
-          effectiveCallAt = candidateClientCall;
-        }
+      } else if (candidateClientCall.getTime() < existingCall.getTime() - 60_000) {
+        // on corrige seulement si l'heure client paraît réellement antérieure et plus précise
+        effectiveCallAt = candidateClientCall;
       }
     }
   }
 
   const callAtISO = effectiveCallAt.toISOString();
-  const { hm: callHM, weekday } = localHMAndWeekday(callAtISO, tz);
+  const { hm: callHM, weekday: callWeekday } = localHMAndWeekday(callAtISO, tz);
   const callMin = hmToMin(callHM);
 
-  // Périodes du jour (selon le weekday calculé sur l'heure effective)
+  const plannedAtISO = plannedAt.toISOString();
+  const { hm: plannedHM, weekday: plannedWeekday } = localHMAndWeekday(plannedAtISO, tz);
+  const plannedMin = hmToMin(plannedHM);
+
+  // 5) Charger les périodes du JOUR PRÉVU par la séance (pas du jour de clic)
   const { data: periods, error: pErr } = await srv
     .from("institution_periods")
     .select("id, weekday, period_no, label, start_time, end_time, duration_min")
-    .eq("institution_id", clsRow.institution_id)
-    .eq("weekday", weekday)
+    .eq("institution_id", institution_id)
+    .eq("weekday", plannedWeekday)
     .order("period_no", { ascending: true });
 
   if (pErr) {
     return NextResponse.json({ error: pErr.message }, { status: 400 });
   }
 
-  let currentPeriod:
-    | {
-        id: string;
-        startMin: number;
-        endMin: number;
-        durationMin: number;
-      }
-    | null = null;
+  const expandedPeriods: ResolvedPeriod[] = (Array.isArray(periods) ? periods : []).map((p: any) => {
+    const startMin = hmsToMin(p.start_time);
+    const endMin = hmsToMin(p.end_time);
+    const durationMin =
+      typeof p.duration_min === "number" && p.duration_min > 0
+        ? Math.floor(p.duration_min)
+        : Math.max(1, endMin - startMin);
 
-  if (Array.isArray(periods) && periods.length) {
-    const expanded = periods.map((p: any) => ({
-      id: p.id,
-      startMin: hmsToMin(p.start_time),
-      endMin: hmsToMin(p.end_time),
-      durationMin:
-        typeof p.duration_min === "number" && p.duration_min > 0
-          ? Math.floor(p.duration_min)
-          : Math.max(1, hmsToMin(p.end_time) - hmsToMin(p.start_time)),
-    }));
+    return {
+      id: String(p.id),
+      label: (p.label as string | null) ?? null,
+      startMin,
+      endMin,
+      durationMin,
+    };
+  });
 
-    currentPeriod =
-      expanded.find((p: any) => callMin >= p.startMin && callMin < p.endMin) ??
-      [...expanded].reverse().find((p: any) => callMin >= p.startMin) ??
-      null;
+  // Période attendue = celle dans laquelle tombe started_at
+  const targetPeriod =
+    expandedPeriods.find((p) => plannedMin >= p.startMin && plannedMin < p.endMin) || null;
+
+  /**
+   * 6) Verrou métier :
+   * - s'il existe des périodes configurées ce jour-là, la séance DOIT correspondre à un vrai créneau
+   * - et l'appel réel doit rester dans la fenêtre autorisée autour de ce créneau
+   *
+   * Si aucune période n'est configurée pour ce jour, on garde un fallback souple
+   * pour ne pas casser les établissements pas encore paramétrés.
+   */
+  if (expandedPeriods.length > 0 && !targetPeriod) {
+    return NextResponse.json(
+      {
+        error: "session_slot_not_resolved",
+        message:
+          "Cette séance ne correspond à aucun créneau configuré. L’appel ne peut pas être pris en compte.",
+      },
+      { status: 409 }
+    );
+  }
+
+  if (targetPeriod) {
+    const allowedStartMin = targetPeriod.startMin - ATTENDANCE_EARLY_ALLOWANCE_MIN;
+    const allowedEndMin = targetPeriod.endMin + ATTENDANCE_AFTER_END_ALLOWANCE_MIN;
+
+    const sameWeekday = callWeekday === plannedWeekday;
+    const withinWindow = sameWeekday && callMin >= allowedStartMin && callMin <= allowedEndMin;
+
+    if (!withinWindow) {
+      const periodLabel =
+        targetPeriod.label ||
+        `${minToHm(targetPeriod.startMin)}-${minToHm(targetPeriod.endMin)}`;
+
+      return NextResponse.json(
+        {
+          error: "attendance_outside_allowed_window",
+          message: `Appel hors fenêtre autorisée pour le créneau ${periodLabel}. Fenêtre admise : ${minToHm(
+            allowedStartMin
+          )} à ${minToHm(allowedEndMin)}.`,
+          details: {
+            planned_weekday: plannedWeekday,
+            actual_weekday: callWeekday,
+            planned_slot_start: minToHm(targetPeriod.startMin),
+            planned_slot_end: minToHm(targetPeriod.endMin),
+            allowed_start: minToHm(allowedStartMin),
+            allowed_end: minToHm(allowedEndMin),
+            actual_call_hm: callHM,
+          },
+        },
+        { status: 409 }
+      );
+    }
   }
 
   const expectedMin = Math.max(
@@ -310,46 +401,56 @@ export async function POST(req: NextRequest) {
     Math.floor(
       Number(
         session.expected_minutes ??
-          currentPeriod?.durationMin ??
+          targetPeriod?.durationMin ??
           defSessionMin ??
           60
       )
     )
   );
 
-  // minutes de retard calculées côté serveur (si auto_lateness)
+  // minutes de retard calculées côté serveur
   function computeLateMinutes(): number {
-    if (!currentPeriod) {
-      // fallback : si pas de période trouvée, essayer vs started_at ; sinon 0
-      if (session.started_at) {
-        const { hm: startedHM } = localHMAndWeekday(String(session.started_at), tz);
-        const diff = callMin - hmToMin(startedHM);
-        return Math.max(0, Math.floor(diff));
-      }
-      return 0;
+    if (targetPeriod) {
+      // retard borné entre 0 et la durée réelle du créneau
+      const diff = callMin - targetPeriod.startMin;
+      return clamp(Math.floor(diff), 0, targetPeriod.durationMin);
     }
 
-    const diff = callMin - currentPeriod.startMin;
-    return Math.max(0, Math.floor(diff));
+    // fallback établissements sans créneaux configurés
+    if (session.started_at) {
+      const { hm: startedHM } = localHMAndWeekday(String(session.started_at), tz);
+      const diff = callMin - hmToMin(startedHM);
+      return clamp(Math.floor(diff), 0, expectedMin);
+    }
+
+    return 0;
   }
 
-  const toUpsert: any[] = [];
+  const toUpsert: Array<{
+    session_id: string;
+    student_id: string;
+    status: "absent" | "late";
+    minutes_late: number;
+    hours_absent: number;
+    reason: string | null;
+  }> = [];
+
   const toDelete: string[] = [];
   const absentHours = Math.round((expectedMin / 60) * 100) / 100;
 
   for (const m of marks) {
     if (!m?.student_id) continue;
-    const reason = (m?.reason ?? null) ? String(m.reason).trim() : null;
+    const reason = normalizeReason(m?.reason);
 
     if (m.status === "present") {
-      toDelete.push(m.student_id);
+      toDelete.push(String(m.student_id));
       continue;
     }
 
     if (m.status === "absent") {
       toUpsert.push({
         session_id,
-        student_id: m.student_id,
+        student_id: String(m.student_id),
         status: "absent",
         minutes_late: 0,
         hours_absent: absentHours,
@@ -361,11 +462,11 @@ export async function POST(req: NextRequest) {
     if (m.status === "late") {
       const minLate = autoLateness
         ? computeLateMinutes()
-        : Math.max(0, Math.round(Number(m?.minutes_late || 0)));
+        : clamp(Math.round(Number(m?.minutes_late || 0)), 0, expectedMin);
 
       toUpsert.push({
         session_id,
-        student_id: m.student_id,
+        student_id: String(m.student_id),
         status: "late",
         minutes_late: minLate,
         hours_absent: 0,
@@ -408,17 +509,16 @@ export async function POST(req: NextRequest) {
   }
 
   /**
-   * ✅ Fixer/corriger actual_call_at au moment du 1er marquage :
-   * - si NULL -> on met l'heure effective (client si fournie, sinon serveur)
+   * 7) Fixer/corriger actual_call_at au moment du 1er marquage :
+   * - si NULL -> on met l'heure effective
    * - si non-NULL mais plus tard que l'heure effective cohérente -> on corrige vers la plus petite
    */
   if (upserted > 0 || deleted > 0) {
-    const patch: any = {};
+    const patch: { actual_call_at?: string } = {};
 
     if (!existingCall) {
       patch.actual_call_at = callAtISO;
     } else if (effectiveCallAt.getTime() < existingCall.getTime() - 60_000) {
-      // on ne corrige que si c'est vraiment plus tôt (>1 min)
       patch.actual_call_at = callAtISO;
     }
 
@@ -435,5 +535,16 @@ export async function POST(req: NextRequest) {
     ]);
   }
 
-  return NextResponse.json({ ok: true, upserted, deleted });
+  return NextResponse.json({
+    ok: true,
+    upserted,
+    deleted,
+    meta: {
+      planned_hm: plannedHM,
+      actual_call_hm: callHM,
+      expected_minutes: expectedMin,
+      strict_window_applied: !!targetPeriod,
+      target_period_id: targetPeriod?.id ?? null,
+    },
+  });
 }

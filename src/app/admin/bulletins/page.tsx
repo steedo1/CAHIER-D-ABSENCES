@@ -1678,13 +1678,10 @@ function StudentBulletinCard({
 
                 const baseGroupInfo = perGroupMap.get(g.id);
                 let groupAvg = baseGroupInfo?.group_avg ?? null;
-                let groupCoeff = g.annual_coeff ?? 0;
-                let groupTotal: number | null =
-                  groupAvg !== null && groupCoeff
-                    ? round2(groupAvg * groupCoeff)
-                    : null;
+                let groupCoeff = 0;
+                let groupTotal: number | null = null;
 
-                if (groupIsAutres) {
+                {
                   let sum = 0;
                   let sumCoeff = 0;
 
@@ -1713,9 +1710,18 @@ function StudentBulletinCard({
                   });
 
                   if (sumCoeff > 0) {
-                    groupAvg = sum / sumCoeff;
                     groupCoeff = sumCoeff;
-                    groupTotal = round2(groupAvg * groupCoeff);
+                    groupTotal = round2(sum);
+
+                    if (groupIsAutres || groupAvg === null || !Number.isFinite(Number(groupAvg))) {
+                      groupAvg = sum / sumCoeff;
+                    }
+                  } else {
+                    groupCoeff = Number(g.annual_coeff ?? 0) || 0;
+                    groupTotal =
+                      groupAvg !== null && groupCoeff
+                        ? round2(Number(groupAvg) * groupCoeff)
+                        : null;
                   }
                 }
 

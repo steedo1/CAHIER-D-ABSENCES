@@ -1,7 +1,7 @@
 // src/components/teacher/TeacherDashboard.tsx
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Users, Clock, Save, Play, Square, LogOut, WifiOff, RefreshCcw } from "lucide-react";
 import { getSupabaseBrowserClient } from "@/lib/supabase-browser";
 import {
@@ -270,6 +270,16 @@ function clientSessionIdFromOpen(open: OpenSession | null) {
   return open.id.slice("client:".length);
 }
 
+function formatReminderCountdown(ms: number): string | null {
+  if (!Number.isFinite(ms)) return null;
+  if (ms <= 0) return "Séance au-delà de l’heure prévue";
+  const totalSec = Math.max(0, Math.ceil(ms / 1000));
+  const min = Math.floor(totalSec / 60);
+  const sec = totalSec % 60;
+  if (min <= 0) return `${sec}s restantes avant la fin prévue`;
+  return `${min} min ${String(sec).padStart(2, "0")} restantes avant la fin prévue`;
+}
+
 /* ─────────────────────────────────────────
    Component (teacher only)
 ────────────────────────────────────────── */
@@ -278,6 +288,123 @@ export default function TeacherDashboard() {
   const [isOnline, setIsOnline] = useState<boolean>(true);
   const [pending, setPending] = useState<number>(0);
   const [syncing, setSyncing] = useState<boolean>(false);
+  const openRef = useRef<OpenSession | null>(null);
+
+  /* ───────── Rappel sonore de fin de séance ───────── */
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const reminderIntervalRef = useRef<number | null>(null);
+  const reminderBucketRef = useRef<string>("");
+  const alarmBusyRef = useRef(false);
+  const [reminderHint, setReminderHint] = useState<string | null>(null);
+
+  function clearReminderLoop() {
+    if (reminderIntervalRef.current != null && typeof window !== "undefined") {
+      window.clearInterval(reminderIntervalRef.current);
+      reminderIntervalRef.current = null;
+    }
+    reminderBucketRef.current = "";
+    setReminderHint(null);
+  }
+
+  async function ensureAlarmReady(): Promise<boolean> {
+    if (typeof window === "undefined") return false;
+
+    const W = window as typeof window & {
+      webkitAudioContext?: typeof AudioContext;
+    };
+
+    const Ctx = W.AudioContext || W.webkitAudioContext;
+    if (!Ctx) return false;
+
+    try {
+      if (!audioCtxRef.current) {
+        audioCtxRef.current = new Ctx();
+      }
+      if (audioCtxRef.current.state === "suspended") {
+        await audioCtxRef.current.resume();
+      }
+      return audioCtxRef.current.state === "running";
+    } catch {
+      return false;
+    }
+  }
+
+  function vibrateIfPossible(pattern: number | number[]) {
+    try {
+      if (typeof navigator !== "undefined" && typeof navigator.vibrate === "function") {
+        navigator.vibrate(pattern);
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  async function playAlarmPattern(kind: "gentle" | "medium" | "urgent" | "overdue") {
+    if (alarmBusyRef.current) return;
+    alarmBusyRef.current = true;
+
+    try {
+      const ready = await ensureAlarmReady();
+      const ctx = audioCtxRef.current;
+
+      const patterns: Record<
+        "gentle" | "medium" | "urgent" | "overdue",
+        Array<{ f: number; d: number; gap: number; g: number }>
+      > = {
+        gentle: [
+          { f: 880, d: 0.12, gap: 0.08, g: 0.03 },
+          { f: 988, d: 0.12, gap: 0.08, g: 0.03 },
+        ],
+        medium: [
+          { f: 880, d: 0.12, gap: 0.08, g: 0.04 },
+          { f: 988, d: 0.12, gap: 0.08, g: 0.04 },
+          { f: 1046, d: 0.14, gap: 0.1, g: 0.045 },
+        ],
+        urgent: [
+          { f: 988, d: 0.14, gap: 0.06, g: 0.05 },
+          { f: 1174, d: 0.14, gap: 0.06, g: 0.05 },
+          { f: 1318, d: 0.18, gap: 0.08, g: 0.055 },
+        ],
+        overdue: [
+          { f: 784, d: 0.12, gap: 0.05, g: 0.055 },
+          { f: 988, d: 0.12, gap: 0.05, g: 0.055 },
+          { f: 784, d: 0.12, gap: 0.05, g: 0.055 },
+          { f: 1318, d: 0.2, gap: 0.08, g: 0.06 },
+        ],
+      };
+
+      if (ready && ctx) {
+        let t = ctx.currentTime + 0.02;
+        for (const step of patterns[kind]) {
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.type = "sine";
+          osc.frequency.setValueAtTime(step.f, t);
+          gain.gain.setValueAtTime(0.0001, t);
+          gain.gain.exponentialRampToValueAtTime(step.g, t + 0.015);
+          gain.gain.exponentialRampToValueAtTime(0.0001, t + step.d);
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+          osc.start(t);
+          osc.stop(t + step.d + 0.02);
+          t += step.d + step.gap;
+        }
+      }
+
+      if (kind === "gentle") vibrateIfPossible([120, 80, 120]);
+      if (kind === "medium") vibrateIfPossible([160, 100, 160, 100, 160]);
+      if (kind === "urgent") vibrateIfPossible([220, 120, 220, 120, 220]);
+      if (kind === "overdue") vibrateIfPossible([260, 120, 260, 120, 260, 120, 260]);
+    } finally {
+      if (typeof window !== "undefined") {
+        window.setTimeout(() => {
+          alarmBusyRef.current = false;
+        }, 1600);
+      } else {
+        alarmBusyRef.current = false;
+      }
+    }
+  }
 
   async function refreshPending() {
     try {
@@ -343,6 +470,13 @@ export default function TeacherDashboard() {
     return () => {
       window.removeEventListener("online", onOnline);
       window.removeEventListener("offline", onOffline);
+      clearReminderLoop();
+      try {
+        void audioCtxRef.current?.close();
+      } catch {
+        // ignore
+      }
+      audioCtxRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -411,6 +545,9 @@ export default function TeacherDashboard() {
 
   // séance + liste élèves + marques
   const [open, setOpen] = useState<OpenSession | null>(null);
+  useEffect(() => {
+    openRef.current = open;
+  }, [open]);
   const [roster, setRoster] = useState<RosterItem[]>([]);
   const [loadingRoster, setLoadingRoster] = useState(false);
   type Row = { absent?: boolean; late?: boolean; reason?: string };
@@ -733,6 +870,71 @@ export default function TeacherDashboard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [JSON.stringify(periodsByDay), inst.default_session_minutes, inst.tz, selKey]);
 
+  useEffect(() => {
+    clearReminderLoop();
+    if (!open) return;
+
+    const computeEndMs = () => {
+      const base = new Date(
+        openRef.current?.actual_call_at || openRef.current?.started_at || open.started_at
+      ).getTime();
+      const minutes = Number(
+        openRef.current?.expected_minutes ??
+          open.expected_minutes ??
+          duration ??
+          inst.default_session_minutes ??
+          60
+      );
+      if (!Number.isFinite(base) || !Number.isFinite(minutes) || minutes <= 0) return null;
+      return base + minutes * 60_000;
+    };
+
+    const tick = () => {
+      const endMs = computeEndMs();
+      if (!endMs || !openRef.current) {
+        clearReminderLoop();
+        return;
+      }
+
+      const remainingMs = endMs - Date.now();
+      setReminderHint(formatReminderCountdown(remainingMs));
+
+      let nextBucket = "";
+      let nextKind: "gentle" | "medium" | "urgent" | "overdue" | null = null;
+
+      if (remainingMs <= 0) {
+        nextBucket = `overdue:${Math.floor(Math.abs(remainingMs) / 30_000)}`;
+        nextKind = "overdue";
+      } else if (remainingMs <= 120_000) {
+        nextBucket = `last2:${Math.floor((120_000 - remainingMs) / 30_000)}`;
+        nextKind = "urgent";
+      } else if (remainingMs <= 300_000) {
+        nextBucket = `last5:${Math.floor((300_000 - remainingMs) / 60_000)}`;
+        nextKind = remainingMs <= 180_000 ? "medium" : "gentle";
+      } else {
+        reminderBucketRef.current = "";
+        return;
+      }
+
+      if (nextBucket && nextBucket !== reminderBucketRef.current) {
+        reminderBucketRef.current = nextBucket;
+        if (nextKind) {
+          void playAlarmPattern(nextKind);
+        }
+      }
+    };
+
+    tick();
+    if (typeof window !== "undefined") {
+      reminderIntervalRef.current = window.setInterval(tick, 5_000);
+    }
+
+    return () => {
+      clearReminderLoop();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open?.id, open?.started_at, open?.actual_call_at, open?.expected_minutes, duration, inst.default_session_minutes]);
+
   /* Charger roster si séance ouverte — OFFLINE OK */
   useEffect(() => {
     if (!open) {
@@ -772,6 +974,7 @@ export default function TeacherDashboard() {
   /* Actions (séance) — OFFLINE OK */
   async function startSession() {
     if (!sel) return;
+    void ensureAlarmReady();
     setBusy(true);
     setMsg(null);
 
@@ -890,16 +1093,18 @@ export default function TeacherDashboard() {
       const openId = String(open.id || "");
       const clientId = clientSessionIdFromOpen(open);
       const isLocal = openId.startsWith("client:");
+      const actualEndAt = new Date().toISOString();
 
-      // ✅ si session serveur -> on envoie session_id (plus robuste)
-      // ✅ si session locale -> on peut envoyer client_session_id (si ton API le supporte), sinon rien
-      const body: any = {};
+      // ✅ On envoie toujours l'heure réelle de fin pour les stats.
+      // - session serveur : session_id
+      // - session locale : client_session_id (fallback offline déjà prévu côté backend)
+      const body: any = { actual_end_at: actualEndAt };
       if (!isLocal) body.session_id = open.id;
       else if (clientId) body.client_session_id = clientId;
 
       const r: any = await offlineMutateJson(
         "/api/teacher/sessions/end",
-        Object.keys(body).length ? { method: "PATCH", body } : { method: "PATCH" },
+        { method: "PATCH", body },
         { mergeKey: `teacher:end:${open.id}` }
       );
 
@@ -1465,7 +1670,8 @@ export default function TeacherDashboard() {
       {/* Liste élèves + marquage (Appel) */}
       {open && (
         <div className="rounded-2xl border bg-white p-5 shadow-sm">
-          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <div className="mb-3 space-y-2">
+            <div className="flex flex-wrap items-center justify-between gap-2">
             {(() => {
               const startIso = open.actual_call_at || open.started_at;
               const startMs = new Date(startIso).getTime();
@@ -1487,6 +1693,12 @@ export default function TeacherDashboard() {
             <Chip>
               {changedCount} modif{changedCount > 1 ? "s" : ""} en cours
             </Chip>
+            </div>
+            {reminderHint && (
+              <div className="text-xs font-medium text-amber-700">
+                Rappel sonore actif — {reminderHint}
+              </div>
+            )}
           </div>
 
           <div className="overflow-x-auto rounded-xl border">

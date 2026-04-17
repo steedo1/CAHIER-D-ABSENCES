@@ -14,6 +14,11 @@ import {
   cacheSet,
   clearOfflineAll,
 } from "@/lib/offline";
+import {
+  saveClassDeviceSnapshot,
+  loadClassDeviceSnapshot,
+  clearClassDeviceSnapshot,
+} from "@/lib/offlineClassDevice";
 
 /* ───────── UI helpers ───────── */
 function Input(p: React.InputHTMLAttributes<HTMLInputElement>) {
@@ -93,6 +98,7 @@ type OpenSession = {
   subject_id: string | null;
   subject_name: string | null;
   started_at: string;
+  actual_call_at?: string | null;
   expected_minutes?: number | null;
 };
 
@@ -113,6 +119,10 @@ type ConductMax = {
 
 /* Nom par défaut (fallback local / dev) */
 const DEFAULT_INSTITUTION_NAME = "NOM DE L'ETABLISSEMENT";
+
+type PendingEndPayload = {
+  actual_end_at: string;
+};
 
 /** Marqueur local : quand l’utilisateur termine une séance locale avant que la séance serveur existe. */
 const PENDING_END_KEY = "classDevice:pending-end";
@@ -241,6 +251,16 @@ function isClientSessionId(id: any): boolean {
   return typeof id === "string" && id.startsWith("client:");
 }
 
+function formatReminderCountdown(ms: number): string | null {
+  if (!Number.isFinite(ms)) return null;
+  if (ms <= 0) return "Séance au-delà de l’heure prévue";
+  const totalSec = Math.max(0, Math.ceil(ms / 1000));
+  const min = Math.floor(totalSec / 60);
+  const sec = totalSec % 60;
+  if (min <= 0) return `${sec}s restantes avant la fin prévue`;
+  return `${min} min ${String(sec).padStart(2, "0")} restantes avant la fin prévue`;
+}
+
 export default function ClassDevicePage() {
   /* état de base */
   const [classes, setClasses] = useState<MyClass[]>([]);
@@ -279,12 +299,24 @@ export default function ClassDevicePage() {
 
   const [open, setOpen] = useState<OpenSession | null>(null);
   const openRef = useRef<OpenSession | null>(null);
+  const pendingSnapshotSubjectRef = useRef<string>("");
   useEffect(() => {
     openRef.current = open;
   }, [open]);
 
   const [roster, setRoster] = useState<RosterItem[]>([]);
   type Row = { absent?: boolean; late?: boolean; reason?: string };
+  type PenaltyRow = { points: number; reason?: string };
+  type ClassPageSnapshotState = {
+    classId: string;
+    subjectId: string;
+    open: OpenSession | null;
+    rows: Record<string, Row>;
+    penaltyOpen: boolean;
+    penRubric: Rubric;
+    penRows: Record<string, PenaltyRow>;
+    msg: string | null;
+  };
   const [rows, setRows] = useState<Record<string, Row>>({});
   const [msg, setMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -301,6 +333,119 @@ export default function ClassDevicePage() {
   );
   const [pendingSync, setPendingSync] = useState(0);
   const [syncing, setSyncing] = useState(false);
+
+  /* ───────── Rappel sonore de fin de séance ───────── */
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const reminderIntervalRef = useRef<number | null>(null);
+  const reminderBucketRef = useRef<string>("");
+  const alarmBusyRef = useRef(false);
+  const [reminderHint, setReminderHint] = useState<string | null>(null);
+
+  function clearReminderLoop() {
+    if (reminderIntervalRef.current != null && typeof window !== "undefined") {
+      window.clearInterval(reminderIntervalRef.current);
+      reminderIntervalRef.current = null;
+    }
+    reminderBucketRef.current = "";
+    setReminderHint(null);
+  }
+
+  async function ensureAlarmReady(): Promise<boolean> {
+    if (typeof window === "undefined") return false;
+
+    const W = window as typeof window & {
+      webkitAudioContext?: typeof AudioContext;
+    };
+
+    const Ctx = W.AudioContext || W.webkitAudioContext;
+    if (!Ctx) return false;
+
+    try {
+      if (!audioCtxRef.current) {
+        audioCtxRef.current = new Ctx();
+      }
+      if (audioCtxRef.current.state === "suspended") {
+        await audioCtxRef.current.resume();
+      }
+      return audioCtxRef.current.state === "running";
+    } catch {
+      return false;
+    }
+  }
+
+  function vibrateIfPossible(pattern: number | number[]) {
+    try {
+      if (typeof navigator !== "undefined" && typeof navigator.vibrate === "function") {
+        navigator.vibrate(pattern);
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  async function playAlarmPattern(kind: "gentle" | "medium" | "urgent" | "overdue") {
+    if (alarmBusyRef.current) return;
+    alarmBusyRef.current = true;
+
+    try {
+      const ready = await ensureAlarmReady();
+      const ctx = audioCtxRef.current;
+
+      const patterns: Record<"gentle" | "medium" | "urgent" | "overdue", Array<{ f: number; d: number; gap: number; g: number }>> = {
+        gentle: [
+          { f: 880, d: 0.12, gap: 0.08, g: 0.03 },
+          { f: 988, d: 0.12, gap: 0.08, g: 0.03 },
+        ],
+        medium: [
+          { f: 880, d: 0.12, gap: 0.08, g: 0.04 },
+          { f: 988, d: 0.12, gap: 0.08, g: 0.04 },
+          { f: 1046, d: 0.14, gap: 0.1, g: 0.045 },
+        ],
+        urgent: [
+          { f: 988, d: 0.14, gap: 0.06, g: 0.05 },
+          { f: 1174, d: 0.14, gap: 0.06, g: 0.05 },
+          { f: 1318, d: 0.18, gap: 0.08, g: 0.055 },
+        ],
+        overdue: [
+          { f: 784, d: 0.12, gap: 0.05, g: 0.055 },
+          { f: 988, d: 0.12, gap: 0.05, g: 0.055 },
+          { f: 784, d: 0.12, gap: 0.05, g: 0.055 },
+          { f: 1318, d: 0.2, gap: 0.08, g: 0.06 },
+        ],
+      };
+
+      if (ready && ctx) {
+        let t = ctx.currentTime + 0.02;
+        for (const step of patterns[kind]) {
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.type = "sine";
+          osc.frequency.setValueAtTime(step.f, t);
+          gain.gain.setValueAtTime(0.0001, t);
+          gain.gain.exponentialRampToValueAtTime(step.g, t + 0.015);
+          gain.gain.exponentialRampToValueAtTime(0.0001, t + step.d);
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+          osc.start(t);
+          osc.stop(t + step.d + 0.02);
+          t += step.d + step.gap;
+        }
+      }
+
+      if (kind === "gentle") vibrateIfPossible([120, 80, 120]);
+      if (kind === "medium") vibrateIfPossible([160, 100, 160, 100, 160]);
+      if (kind === "urgent") vibrateIfPossible([220, 120, 220, 120, 220]);
+      if (kind === "overdue") vibrateIfPossible([260, 120, 260, 120, 260, 120, 260]);
+    } finally {
+      if (typeof window !== "undefined") {
+        window.setTimeout(() => {
+          alarmBusyRef.current = false;
+        }, 1600);
+      } else {
+        alarmBusyRef.current = false;
+      }
+    }
+  }
 
   async function refreshPending() {
     try {
@@ -331,7 +476,7 @@ export default function ClassDevicePage() {
   // 🔁 Si l'utilisateur a "terminé" une séance locale, on tente de fermer la séance serveur après sync
   async function processPendingEnd(): Promise<void> {
     try {
-      const pending = await cacheGet<any>(PENDING_END_KEY);
+      const pending = await cacheGet<PendingEndPayload | null>(PENDING_END_KEY);
       if (!pending) return;
 
       // si pas en ligne, on attend
@@ -343,10 +488,16 @@ export default function ClassDevicePage() {
 
       if (!srvId) return;
 
-      // tenter de fermer côté serveur
+      // tenter de fermer côté serveur avec l'heure réelle de fin capturée localement
       const r = await offlineMutateJson(
         "/api/class/sessions/end",
-        { method: "PATCH", body: { session_id: srvId } },
+        {
+          method: "PATCH",
+          body: {
+            session_id: srvId,
+            actual_end_at: pending.actual_end_at,
+          },
+        },
         { mergeKey: `end:${srvId}` }
       );
 
@@ -418,6 +569,57 @@ export default function ClassDevicePage() {
     return false;
   }
 
+  /* ───────── Sanctions (inline) ───────── */
+  const [penaltyOpen, setPenaltyOpen] = useState(false);
+  const [penRubric, setPenRubric] = useState<Rubric>("discipline");
+  const [penBusy, setPenBusy] = useState(false);
+  const [penRows, setPenRows] = useState<Record<string, PenaltyRow>>({});
+  const [penMsg, setPenMsg] = useState<string | null>(null);
+  const hasPenChanges = useMemo(
+    () => Object.values(penRows).some((v) => (v.points || 0) > 0),
+    [penRows]
+  );
+
+
+  function applySnapshotState(
+    snapState: ClassPageSnapshotState | null | undefined,
+    opts?: { restoreOpen?: boolean }
+  ) {
+    if (!snapState) return;
+
+    if (snapState.classId) setClassId(snapState.classId);
+    if (snapState.subjectId) pendingSnapshotSubjectRef.current = snapState.subjectId;
+
+    if (opts?.restoreOpen !== false && snapState.open) {
+      setOpen(snapState.open);
+    }
+
+    if (snapState.rows) setRows(snapState.rows);
+    setPenaltyOpen(!!snapState.penaltyOpen);
+    setPenRubric(coerceRubric(snapState.penRubric));
+    if (snapState.penRows) setPenRows(snapState.penRows);
+    if (typeof snapState.msg === "string") setMsg(snapState.msg);
+  }
+
+  const snapshotClassId = open?.class_id || classId;
+
+  useEffect(() => {
+    if (!snapshotClassId) return;
+
+    const snapshotState: ClassPageSnapshotState = {
+      classId: snapshotClassId,
+      subjectId,
+      open,
+      rows,
+      penaltyOpen,
+      penRubric,
+      penRows,
+      msg,
+    };
+
+    saveClassDeviceSnapshot(snapshotClassId, snapshotState);
+  }, [snapshotClassId, subjectId, open, rows, penaltyOpen, penRubric, penRows, msg]);
+
   // 🔒 Empêche d'envoyer un session_id "client:*" à une API serveur qui attend un UUID
   async function ensureServerSessionOrExplain(): Promise<OpenSession | null> {
     const cur = openRef.current;
@@ -440,17 +642,6 @@ export default function ClassDevicePage() {
     );
     return null;
   }
-
-  /* ───────── Sanctions (inline) ───────── */
-  const [penaltyOpen, setPenaltyOpen] = useState(false);
-  const [penRubric, setPenRubric] = useState<Rubric>("discipline");
-  const [penBusy, setPenBusy] = useState(false);
-  const [penRows, setPenRows] = useState<Record<string, { points: number; reason?: string }>>({});
-  const [penMsg, setPenMsg] = useState<string | null>(null);
-  const hasPenChanges = useMemo(
-    () => Object.values(penRows).some((v) => (v.points || 0) > 0),
-    [penRows]
-  );
 
   // options de rubriques basées sur la config de conduite
   const rubricOptions = useMemo(() => {
@@ -588,9 +779,10 @@ export default function ClassDevicePage() {
   useEffect(() => {
     (async () => {
       try {
-        const [cls, os] = await Promise.all([
+        const [cls, os, localOpenRaw] = await Promise.all([
           offlineGetJson("/api/class/my-classes", "classDevice:my-classes"),
           offlineGetJson("/api/teacher/sessions/open", "classDevice:open-session"),
+          cacheGet("classDevice:local-open"),
         ]);
 
         const items = (cls?.items || []) as Array<any>;
@@ -617,15 +809,25 @@ export default function ClassDevicePage() {
         });
 
         setClasses(mapped);
-        if (!classId && mapped.length) setClassId(mapped[0].id);
 
         const serverOpen = (os?.item as OpenSession) || null;
-        setOpen(serverOpen);
+        const localOpen = (localOpenRaw as OpenSession) || null;
+        const restoredOpen = serverOpen || localOpen || null;
 
-        // si hors-ligne et on avait une séance locale, on la restaure (sans casser le serveur)
-        if (!serverOpen) {
-          const local = await cacheGet("classDevice:local-open");
-          if (local) setOpen(local);
+        if (restoredOpen) {
+          setOpen(restoredOpen);
+        }
+
+        const initialClassId = restoredOpen?.class_id || mapped[0]?.id || "";
+        if (!classId && initialClassId) {
+          setClassId(initialClassId);
+        }
+
+        if (initialClassId) {
+          const snap = loadClassDeviceSnapshot<ClassPageSnapshotState>(initialClassId);
+          if (snap?.state) {
+            applySnapshotState(snap.state, { restoreOpen: !restoredOpen });
+          }
         }
 
         if (firstInstName) {
@@ -638,12 +840,21 @@ export default function ClassDevicePage() {
           }));
         }
       } catch {
-        // si vraiment rien en cache et offline => on laisse vide
         setClasses([]);
-        const local = await cacheGet("classDevice:local-open");
-        setOpen(local || null);
+        const localOpen = (await cacheGet("classDevice:local-open")) as OpenSession | null;
+        if (localOpen) {
+          setOpen(localOpen);
+          const snap = loadClassDeviceSnapshot<ClassPageSnapshotState>(localOpen.class_id);
+          if (snap?.state) {
+            applySnapshotState(snap.state, { restoreOpen: false });
+          }
+        } else if (classId) {
+          const snap = loadClassDeviceSnapshot<ClassPageSnapshotState>(classId);
+          if (snap?.state) {
+            applySnapshotState(snap.state, { restoreOpen: true });
+          }
+        }
       } finally {
-        // tente de rejouer une fin en attente si on revient en ligne
         void processPendingEnd();
       }
     })();
@@ -1006,10 +1217,28 @@ export default function ClassDevicePage() {
       return;
     }
     (async () => {
-      const j = await offlineGetJson(`/api/class/subjects?class_id=${classId}`, `classDevice:subjects:${classId}`);
+      const j = await offlineGetJson(
+        `/api/class/subjects?class_id=${classId}`,
+        `classDevice:subjects:${classId}`
+      );
       const list = (j?.items || []) as Subject[];
       setSubjects(list);
-      setSubjectId(list[0]?.id || "");
+
+      const snap = loadClassDeviceSnapshot<ClassPageSnapshotState>(classId);
+      const snapSubjectId =
+        pendingSnapshotSubjectRef.current || snap?.state?.subjectId || "";
+
+      setSubjectId((prev) => {
+        if (snapSubjectId && list.some((s) => s.id === snapSubjectId)) {
+          return snapSubjectId;
+        }
+        if (prev && list.some((s) => s.id === prev)) {
+          return prev;
+        }
+        return list[0]?.id || "";
+      });
+
+      pendingSnapshotSubjectRef.current = "";
     })();
   }, [classId]);
 
@@ -1027,7 +1256,9 @@ export default function ClassDevicePage() {
         `classDevice:roster:${open.class_id}`
       );
       setRoster((j?.items || []) as RosterItem[]);
-      setRows({});
+
+      const snap = loadClassDeviceSnapshot<ClassPageSnapshotState>(open.class_id);
+      setRows(snap?.state?.rows || {});
       setLoadingRoster(false);
     })();
   }, [open?.class_id]);
@@ -1050,8 +1281,74 @@ export default function ClassDevicePage() {
   }
 
   /* actions */
+  useEffect(() => {
+    void ensureAlarmReady();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    clearReminderLoop();
+    if (!open) return;
+
+    const computeEndMs = () => {
+      const base = new Date(openRef.current?.started_at || open.started_at).getTime();
+      const minutes = Number(
+        openRef.current?.expected_minutes ?? open.expected_minutes ?? duration ?? inst.default_session_minutes ?? 60
+      );
+      if (!Number.isFinite(base) || !Number.isFinite(minutes) || minutes <= 0) return null;
+      return base + minutes * 60_000;
+    };
+
+    const tick = () => {
+      const endMs = computeEndMs();
+      if (!endMs || !openRef.current) {
+        clearReminderLoop();
+        return;
+      }
+
+      const remainingMs = endMs - Date.now();
+      setReminderHint(formatReminderCountdown(remainingMs));
+
+      let nextBucket = "";
+      let nextKind: "gentle" | "medium" | "urgent" | "overdue" | null = null;
+
+      if (remainingMs <= 0) {
+        nextBucket = `overdue:${Math.floor(Math.abs(remainingMs) / 30_000)}`;
+        nextKind = "overdue";
+      } else if (remainingMs <= 120_000) {
+        nextBucket = `last2:${Math.floor((120_000 - remainingMs) / 30_000)}`;
+        nextKind = "urgent";
+      } else if (remainingMs <= 300_000) {
+        nextBucket = `last5:${Math.floor((300_000 - remainingMs) / 60_000)}`;
+        nextKind = remainingMs <= 180_000 ? "medium" : "gentle";
+      } else {
+        reminderBucketRef.current = "";
+        return;
+      }
+
+      if (nextBucket && nextBucket !== reminderBucketRef.current) {
+        reminderBucketRef.current = nextBucket;
+        if (nextKind) {
+          void playAlarmPattern(nextKind);
+        }
+      }
+    };
+
+    tick();
+    if (typeof window !== "undefined") {
+      reminderIntervalRef.current = window.setInterval(tick, 5_000);
+    }
+
+    return () => {
+      clearReminderLoop();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open?.id, open?.started_at, open?.expected_minutes, duration, inst.default_session_minutes]);
+
   async function startSession() {
     if (!classId) return;
+
+    void ensureAlarmReady();
 
     // ✅ backend exige subject_id : on évite un rejet serveur (400)
     if (!subjectId) {
@@ -1104,6 +1401,7 @@ export default function ClassDevicePage() {
           subject_id: subjectId || null,
           subject_name: subj?.label || null,
           started_at: started.toISOString(),
+          actual_call_at: actualCallAtISO,
           expected_minutes: duration,
         };
 
@@ -1176,6 +1474,7 @@ export default function ClassDevicePage() {
     setMsg(null);
 
     const finishLocal = async () => {
+      clearReminderLoop();
       setOpen(null);
       setRoster([]);
       setRows({});
@@ -1186,6 +1485,7 @@ export default function ClassDevicePage() {
     try {
       let openId = String(cur.id || "");
       const isClientLocal = isClientSessionId(openId);
+      const actualEndAt = new Date().toISOString();
 
       // ✅ Si séance locale et en ligne : essayer de sync + récupérer la vraie séance serveur
       if (isClientLocal && isOnline) {
@@ -1193,8 +1493,9 @@ export default function ClassDevicePage() {
         if (ensured) {
           openId = String(ensured.id);
         } else {
-          // On termine localement, et on garde un marqueur pour fermer la séance serveur dès qu'elle existera
-          await cacheSet(PENDING_END_KEY, { at: new Date().toISOString() });
+          // On termine localement, et on garde un marqueur avec l'heure réelle de fin
+          // pour fermer la séance serveur dès qu'elle existera.
+          await cacheSet(PENDING_END_KEY, { actual_end_at: actualEndAt } satisfies PendingEndPayload);
           await finishLocal();
           setMsg("Séance terminée localement. La fermeture serveur sera appliquée dès que la synchronisation sera possible.");
           await refreshPending();
@@ -1202,10 +1503,16 @@ export default function ClassDevicePage() {
         }
       }
 
-      // ✅ On envoie toujours session_id (UUID ou client:... si offline) — utile pour le mapping/évolutions API
+      // ✅ On envoie toujours session_id + actual_end_at pour garder l'heure réelle de fin.
       const r = await offlineMutateJson(
         "/api/class/sessions/end",
-        { method: "PATCH", body: { session_id: openId } },
+        {
+          method: "PATCH",
+          body: {
+            session_id: openId,
+            actual_end_at: actualEndAt,
+          },
+        },
         { mergeKey: `end:${openId}` }
       );
 
@@ -1229,6 +1536,7 @@ export default function ClassDevicePage() {
   }
 
   async function logout() {
+    clearReminderLoop();
     try {
       // 1) Déconnexion Supabase côté navigateur
       try {
@@ -1255,11 +1563,20 @@ export default function ClassDevicePage() {
         }
       }
     } finally {
-      // 4) Purge offline (important si téléphone partagé)
+      // 4) Purge snapshots locaux (important si téléphone partagé)
+      try {
+        const snapshotIds = new Set<string>(classes.map((c) => c.id));
+        const currentSnapshotId = openRef.current?.class_id || classId;
+        if (currentSnapshotId) snapshotIds.add(currentSnapshotId);
+        snapshotIds.forEach((id) => clearClassDeviceSnapshot(id));
+      } catch {}
+
+      // 5) Purge offline (important si téléphone partagé)
       try {
         await clearOfflineAll();
       } catch {}
-      // 5) Retour écran de connexion global
+
+      // 6) Retour écran de connexion global
       window.location.href = "/login";
     }
   }
@@ -1557,10 +1874,17 @@ export default function ClassDevicePage() {
       {/* Liste élèves (appel) */}
       {open && (
         <div className="rounded-2xl border bg-white p-5 shadow-sm">
-          <div className="mb-3 text-sm font-semibold text-slate-700">
-            Appel — {open.class_label} {open.subject_name ? `• ${open.subject_name}` : ""} •{" "}
-            {new Date(open.started_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-            {openIsClient ? " • (en attente de sync)" : ""}
+          <div className="mb-3 space-y-1">
+            <div className="text-sm font-semibold text-slate-700">
+              Appel — {open.class_label} {open.subject_name ? `• ${open.subject_name}` : ""} •{" "}
+              {new Date(open.started_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+              {openIsClient ? " • (en attente de sync)" : ""}
+            </div>
+            {reminderHint && (
+              <div className="text-xs font-medium text-amber-700">
+                Rappel sonore actif — {reminderHint}
+              </div>
+            )}
           </div>
 
           <div className="overflow-x-auto rounded-xl border">

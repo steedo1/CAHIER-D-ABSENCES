@@ -98,6 +98,23 @@ function effectiveMinutesFromSession(
   return eff;
 }
 
+function isEndedAtUsable(
+  startISO: string,
+  actualISO: string | null,
+  endedISO: string | null
+) {
+  if (!endedISO) return false;
+
+  const base = new Date(actualISO || startISO).getTime();
+  const ended = new Date(endedISO).getTime();
+
+  if (!Number.isFinite(base) || !Number.isFinite(ended)) return false;
+
+  const minAllowed = base - 60_000;
+  const maxAllowed = base + 24 * 60 * 60_000;
+  return ended >= minAllowed && ended <= maxAllowed;
+}
+
 /**
  * ✅ Séance réellement effectuée = clic "Démarrer" DANS le créneau prévu.
  * - si actual_call_at est null → FAUX
@@ -317,7 +334,7 @@ export async function GET(req: NextRequest) {
       let q1 = srv
         .from(sessionsTable)
         .select(
-          "id, teacher_id, class_id, subject_id, started_at, actual_call_at, expected_minutes, institution_id, created_by"
+          "id, teacher_id, class_id, subject_id, started_at, actual_call_at, ended_at, expected_minutes, institution_id, created_by"
         )
         .eq("teacher_id", teacher_id)
         .gte("started_at", fromISO)
@@ -334,7 +351,7 @@ export async function GET(req: NextRequest) {
         let q2 = srv
           .from(sessionsTable)
           .select(
-            "id, teacher_id, class_id, subject_id, started_at, actual_call_at, expected_minutes, institution_id, created_by"
+            "id, teacher_id, class_id, subject_id, started_at, actual_call_at, ended_at, expected_minutes, institution_id, created_by"
           )
           .in("class_id", classIdsForTeacher)
           .gte("started_at", fromISO)
@@ -625,7 +642,7 @@ export async function GET(req: NextRequest) {
       let q = srv
         .from(sessionsTable2)
         .select(
-          "id, teacher_id, subject_id, class_id, started_at, actual_call_at, expected_minutes, institution_id"
+          "id, teacher_id, subject_id, class_id, started_at, actual_call_at, ended_at, expected_minutes, institution_id"
         )
         .gte("started_at", fromISO)
         .lt("started_at", toISOExclusive);
@@ -680,6 +697,7 @@ export async function GET(req: NextRequest) {
       class_id: string | null;
       started_at: string;
       actual_call_at: string | null;
+      ended_at: string | null;
       expected_minutes: number;
     };
 
@@ -692,6 +710,7 @@ export async function GET(req: NextRequest) {
         class_id: s.class_id ? String(s.class_id) : null,
         started_at: String(s.started_at),
         actual_call_at: s.actual_call_at ? String(s.actual_call_at) : null,
+        ended_at: s.ended_at ? String(s.ended_at) : null,
         expected_minutes: Number(s.expected_minutes || 0),
       }));
 
@@ -743,6 +762,7 @@ export async function GET(req: NextRequest) {
 
     type SlotAgg = SessionRow & {
       _valid_call_at: string | null;
+      _usable_ended_at: string | null;
       class_ids: Set<string>;
       subject_ids: Set<string>;
     };
@@ -763,12 +783,16 @@ export async function GET(req: NextRequest) {
         s.actual_call_at && isCallWithinPlannedSlot(s.started_at, s.actual_call_at, s.expected_minutes)
           ? s.actual_call_at
           : null;
+      const usableEndedAt = isEndedAtUsable(s.started_at, validCall, s.ended_at)
+        ? s.ended_at
+        : null;
 
       const existing = sessionsBySlot.get(key);
       if (!existing) {
         const agg: SlotAgg = {
           ...s,
           _valid_call_at: validCall,
+          _usable_ended_at: usableEndedAt,
           class_ids: new Set<string>(),
           subject_ids: new Set<string>(),
         };
@@ -791,6 +815,12 @@ export async function GET(req: NextRequest) {
           }
         }
 
+        if (usableEndedAt) {
+          if (!existing._usable_ended_at || usableEndedAt > existing._usable_ended_at) {
+            existing._usable_ended_at = usableEndedAt;
+          }
+        }
+
         // garde un "représentant" pour compat
         if (!existing.class_id && s.class_id) existing.class_id = s.class_id;
         if (!existing.subject_id && s.subject_id) existing.subject_id = s.subject_id;
@@ -804,9 +834,10 @@ export async function GET(req: NextRequest) {
     // ✅ liste finale : 1 entrée par créneau + UNIQUEMENT si séance effectuée (clic valide)
     type SessionAggOut = SessionRow & { class_ids: string[]; subject_ids: string[] };
     const sessions: SessionAggOut[] = Array.from(sessionsBySlot.values())
-      .map(({ _valid_call_at, class_ids, subject_ids, ...rest }) => ({
+      .map(({ _valid_call_at, _usable_ended_at, class_ids, subject_ids, ...rest }) => ({
         ...rest,
         actual_call_at: _valid_call_at,
+        ended_at: _usable_ended_at,
         class_ids: Array.from(class_ids),
         subject_ids: Array.from(subject_ids),
       }))
@@ -949,6 +980,7 @@ export async function GET(req: NextRequest) {
           expected_minutes: r.expected_minutes || 0,
           real_minutes: real,
           actual_call_iso: r.actual_call_at || null,
+          ended_at_iso: r.ended_at || null,
         };
       });
 
