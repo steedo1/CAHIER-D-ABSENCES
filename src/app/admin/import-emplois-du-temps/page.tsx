@@ -373,21 +373,12 @@ export default function ImportEmploisDuTempsPage() {
     }
   }
 
+  // ✅ CORRECTION : on ne garde plus un label global par period_no
   const periodSlots = useMemo(() => {
-    if (!meta?.periods?.length) return [] as { period_no: number; label: string }[];
-    const byNo = new Map<number, { period_no: number; label: string }>();
-
-    for (const p of meta.periods) {
-      const existing = byNo.get(p.period_no);
-      const label = `${p.start_time?.slice(0, 5) || "??:??"}–${
-        p.end_time?.slice(0, 5) || "??:??"
-      }`;
-      if (!existing) {
-        byNo.set(p.period_no, { period_no: p.period_no, label });
-      }
-    }
-
-    return Array.from(byNo.values()).sort((a, b) => a.period_no - b.period_no);
+    if (!meta?.periods?.length) return [] as number[];
+    return Array.from(new Set(meta.periods.map((p) => p.period_no))).sort(
+      (a, b) => a - b
+    );
   }, [meta]);
 
   const availableWeekdays = useMemo(() => {
@@ -471,7 +462,6 @@ export default function ImportEmploisDuTempsPage() {
     });
   }
 
-  // Vider complètement un créneau (toutes les classes) pour la cellule active
   function clearActiveCell() {
     if (!activeCell) return;
     const key = keyForCell(activeCell.weekday, activeCell.period_id);
@@ -511,9 +501,6 @@ export default function ImportEmploisDuTempsPage() {
       })
       .filter((it) => it.class_ids && it.class_ids.length > 0);
 
-    // IMPORTANT: si un créneau est vidé puis enregistré, on doit supprimer l'ancien cours
-    // (au minimum pour ce même cours = même subject_id) sur ce même créneau et cette même classe.
-    // On calcule donc les "slots à supprimer" = existant en base - sélection actuelle.
     const selectedSet = new Set<string>();
     for (const [key, class_ids] of Object.entries(cellSelection)) {
       const [weekdayStr, period_id] = key.split("_");
@@ -536,7 +523,6 @@ export default function ImportEmploisDuTempsPage() {
             (ex) => !selectedSet.has(`${ex.weekday}_${ex.period_id}_${ex.class_id}`)
           );
 
-      // dédoublonnage (sécurité)
       const seen = new Set<string>();
       const out: { weekday: number; period_id: string; class_id: string }[] = [];
       for (const r of removed) {
@@ -576,7 +562,6 @@ export default function ImportEmploisDuTempsPage() {
         json?.message || "Emploi du temps enregistré avec succès."
       );
 
-      // Recharger l’existant pour être aligné avec la BDD
       await fetchManualMeta(selectedSubjectId, selectedTeacherId);
       setActiveCell(null);
     } catch (e: any) {
@@ -629,7 +614,6 @@ export default function ImportEmploisDuTempsPage() {
 
   const canEditManual = !!selectedSubjectId && !!selectedTeacherId;
 
-  // ---------- RENDU ----------
   return (
     <main className="min-h-screen bg-slate-50/80 p-4 md:p-6 space-y-6">
       <header className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
@@ -676,10 +660,8 @@ export default function ImportEmploisDuTempsPage() {
         </div>
       </header>
 
-      {/* ======================= MODE CSV ======================= */}
       {mode === "csv" && (
         <section className="grid gap-4 lg:grid-cols-3">
-          {/* Étapes / Instructions */}
           <div className="rounded-2xl border border-slate-200 bg-white/90 shadow-sm p-4 space-y-3">
             <div className="flex items-center gap-2">
               <Info className="h-5 w-5 text-emerald-600" />
@@ -723,7 +705,6 @@ export default function ImportEmploisDuTempsPage() {
               </p>
             </div>
 
-            {/* Aide dynamique pour l’admin */}
             <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50/80 px-3 py-3 text-xs text-slate-700 space-y-2">
               <div className="font-semibold text-slate-800 mb-1">
                 Aide : valeurs disponibles dans votre établissement
@@ -792,7 +773,6 @@ export default function ImportEmploisDuTempsPage() {
             </div>
           </div>
 
-          {/* Zone d’upload */}
           <div className="rounded-2xl border border-slate-200 bg-white/90 shadow-sm p-4 space-y-4">
             <div className="flex items-center gap-2">
               <Upload className="h-5 w-5 text-emerald-600" />
@@ -902,7 +882,6 @@ export default function ImportEmploisDuTempsPage() {
             )}
           </div>
 
-          {/* Aperçu des premières lignes */}
           <div className="rounded-2xl border border-slate-200 bg-white/90 shadow-sm p-4 space-y-3">
             <div className="flex items-center gap-2">
               <FileText className="h-5 w-5 text-slate-700" />
@@ -930,12 +909,9 @@ export default function ImportEmploisDuTempsPage() {
         </section>
       )}
 
-      {/* ======================= MODE MANUEL ======================= */}
       {mode === "manual" && (
         <section className="space-y-4">
-          {/* 3 colonnes sur desktop: filtres / tableau / classes */}
           <div className="grid gap-4 lg:grid-cols-[minmax(0,260px)_minmax(0,1fr)_minmax(0,320px)]">
-            {/* Filtres matière / prof */}
             <div className="rounded-2xl border border-slate-200 bg-white/90 shadow-sm p-4 space-y-4">
               <div className="flex items-center gap-2">
                 <CalendarDays className="h-5 w-5 text-emerald-600" />
@@ -1048,7 +1024,6 @@ export default function ImportEmploisDuTempsPage() {
               </div>
             </div>
 
-            {/* Tableau interactif */}
             <div className="rounded-2xl border border-slate-200 bg-white/90 shadow-sm p-4 space-y-3 overflow-x-auto">
               <div className="flex items-center justify-between gap-2">
                 <div className="flex items-center gap-2">
@@ -1095,28 +1070,34 @@ export default function ImportEmploisDuTempsPage() {
                       </tr>
                     </thead>
                     <tbody>
-                      {periodSlots.map((slot) => (
-                        <tr key={slot.period_no}>
+                      {periodSlots.map((periodNo) => (
+                        <tr key={periodNo}>
                           <th className="align-middle text-left text-[11px] font-medium text-slate-700">
-                            <div>{`Créneau ${slot.period_no}`}</div>
+                            <div>{`Créneau ${periodNo}`}</div>
                             <div className="text-[10px] text-slate-500">
-                              {slot.label}
+                              Horaires selon le jour
                             </div>
                           </th>
+
                           {availableWeekdays.map((wd) => {
-                            const period = findPeriod(wd, slot.period_no);
+                            const period = findPeriod(wd, periodNo);
                             const active = isCellActive(wd, period);
                             const selected = isCellSelected(wd, period);
                             const disabled = !period;
-                            const label = period ? `${slot.label}` : "Aucun créneau";
+
+                            const cellLabel = period
+                              ? `${period.start_time?.slice(0, 5) || "??:??"}–${
+                                  period.end_time?.slice(0, 5) || "??:??"
+                                }`
+                              : "Aucun créneau";
 
                             return (
-                              <td key={`${wd}_${slot.period_no}`}>
+                              <td key={`${wd}_${periodNo}`}>
                                 <button
                                   type="button"
                                   disabled={disabled || !selectedSubjectId || !selectedTeacherId}
                                   onClick={() => handleCellClick(wd, period)}
-                                  title={label}
+                                  title={cellLabel}
                                   className={[
                                     "w-full rounded-xl border px-2 py-3 text-[10px] md:text-[11px] leading-tight transition",
                                     disabled
@@ -1134,7 +1115,7 @@ export default function ImportEmploisDuTempsPage() {
                                         {WEEKDAY_LABELS[wd] ?? `Jour ${wd}`}
                                       </div>
                                       <div className="text-[10px] text-slate-500">
-                                        {slot.label}
+                                        {cellLabel}
                                       </div>
                                       <div className="mt-1 text-[10px]">
                                         {(() => {
@@ -1147,7 +1128,6 @@ export default function ImportEmploisDuTempsPage() {
                                             .map((c) => c.label);
 
                                           if (labels.length > 0) {
-                                            // évite d'afficher une phrase trop longue
                                             const joined = labels.join(", ");
                                             return joined.length > 24
                                               ? `${labels.length} classe(s)`
@@ -1183,7 +1163,6 @@ export default function ImportEmploisDuTempsPage() {
               )}
             </div>
 
-            {/* Sidebar classes (desktop) */}
             <div className="hidden lg:block">
               <div className="rounded-2xl border border-slate-200 bg-white/90 shadow-sm p-4 space-y-3 lg:sticky lg:top-6">
                 <div className="flex items-start justify-between gap-3">
@@ -1333,7 +1312,6 @@ export default function ImportEmploisDuTempsPage() {
             </div>
           </div>
 
-          {/* Panneau flottant mobile: évite de scroller */}
           {activeCell && (
             <div className="lg:hidden fixed inset-x-3 bottom-3 z-50">
               <div className="rounded-2xl border border-slate-200 bg-white shadow-lg p-3 space-y-3">
