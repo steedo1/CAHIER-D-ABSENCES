@@ -356,6 +356,7 @@ export default function ClassDevicePage() {
   );
   const [pendingSync, setPendingSync] = useState(0);
   const [syncing, setSyncing] = useState(false);
+  const [nowTick, setNowTick] = useState<number>(Date.now());
 
   /* ───────── Rappel sonore de fin de séance ───────── */
   const audioCtxRef = useRef<AudioContext | null>(null);
@@ -572,6 +573,12 @@ export default function ClassDevicePage() {
       window.removeEventListener("offline", onOff);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const id = window.setInterval(() => setNowTick(Date.now()), 30_000);
+    return () => window.clearInterval(id);
   }, []);
 
   // ✅ Helpers : distinguer offline / erreur serveur
@@ -1197,7 +1204,7 @@ export default function ClassDevicePage() {
   // Calcul du créneau par défaut « du moment » (timezone-aware)
   function computeDefaultsForNow() {
     const tz = inst?.tz || "Africa/Abidjan";
-    const now = new Date();
+    const now = new Date(nowTick);
     const nowHM = hmInTZ(now, tz);
     const wd = weekdayInTZ1to7(now, tz);
     const slots = periodsByDay[wd] || [];
@@ -1230,11 +1237,11 @@ export default function ClassDevicePage() {
   useEffect(() => {
     computeDefaultsForNow();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [JSON.stringify(periodsByDay), inst.default_session_minutes, inst.tz, classId]);
+  }, [JSON.stringify(periodsByDay), inst.default_session_minutes, inst.tz, classId, nowTick]);
 
   const activeConfiguredSlot = useMemo(() => {
     const tz = inst?.tz || "Africa/Abidjan";
-    const now = new Date();
+    const now = new Date(nowTick);
     const wd = weekdayInTZ1to7(now, tz);
     const slots = periodsByDay[wd] || [];
     if (!slots.length) return null;
@@ -1244,28 +1251,38 @@ export default function ClassDevicePage() {
       slots.find((s) => nowMin >= toMinutes(s.start_time) && nowMin < toMinutes(s.end_time)) ||
       null
     );
-  }, [periodsByDay, inst?.tz]);
+  }, [periodsByDay, inst?.tz, nowTick]);
 
   const hasConfiguredSlotsToday = useMemo(() => {
     const tz = inst?.tz || "Africa/Abidjan";
-    const wd = weekdayInTZ1to7(new Date(), tz);
+    const wd = weekdayInTZ1to7(new Date(nowTick), tz);
     return (periodsByDay[wd] || []).length > 0;
-  }, [periodsByDay, inst?.tz]);
+  }, [periodsByDay, inst?.tz, nowTick]);
 
   const canStartAttendanceNow = !!activeConfiguredSlot;
 
-  /* 2) charger les matières quand la classe change */
+  const activeSlotKey = useMemo(() => {
+    const tz = inst?.tz || "Africa/Abidjan";
+    const wd = weekdayInTZ1to7(new Date(nowTick), tz);
+    if (!hasConfiguredSlotsToday) return `no-config|${wd}`;
+    if (!activeConfiguredSlot) return `closed|${wd}`;
+    return `${wd}|${activeConfiguredSlot.start_time}|${activeConfiguredSlot.end_time}`;
+  }, [activeConfiguredSlot, hasConfiguredSlotsToday, inst?.tz, nowTick]);
+
+  /* 2) charger les matières quand la classe ou le créneau actif change */
   useEffect(() => {
     if (!classId) {
       setSubjects([]);
       setSubjectId("");
       return;
     }
+    if (open) return;
+
     (async () => {
       const j = await offlineGetJson(
         `/api/class/subjects?class_id=${classId}`,
         `classDevice:subjects:${classId}`
-      );
+      ).catch(() => ({ items: [] as Subject[] }));
       const list = (j?.items || []) as Subject[];
       setSubjects(list);
 
@@ -1285,7 +1302,7 @@ export default function ClassDevicePage() {
 
       pendingSnapshotSubjectRef.current = "";
     })();
-  }, [classId]);
+  }, [classId, activeSlotKey, open]);
 
   /* 3) charger roster si séance ouverte */
   useEffect(() => {
@@ -1330,6 +1347,8 @@ export default function ClassDevicePage() {
     void ensureAlarmReady();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const noScheduledSubjectNow = !!classId && !!activeConfiguredSlot && !open && subjects.length === 0;
 
   useEffect(() => {
     clearReminderLoop();
@@ -1723,8 +1742,8 @@ export default function ClassDevicePage() {
               <BookOpen className="h-3.5 w-3.5" />
               Discipline
             </div>
-            <Select value={subjectId} onChange={(e) => setSubjectId(e.target.value)}>
-              {subjects.length === 0 ? <option value="">— Choisir —</option> : null}
+            <Select value={subjectId} onChange={(e) => setSubjectId(e.target.value)} disabled={!!open || (!activeConfiguredSlot && !open) || subjects.length === 0}>
+              {subjects.length === 0 ? <option value="">— Aucune discipline prévue —</option> : null}
               {subjects.map((s) => (
                 <option key={s.id} value={s.id}>
                   {s.label}
@@ -1771,6 +1790,12 @@ export default function ClassDevicePage() {
         {!activeConfiguredSlot && !open && (
           <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800">
             Hors créneau : l’appel est bloqué tant qu’aucun créneau administratif n’est ouvert.
+          </div>
+        )}
+
+        {noScheduledSubjectNow && (
+          <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+            Aucune discipline n’est prévue pour cette classe dans le créneau en cours. L’appel est bloqué.
           </div>
         )}
 

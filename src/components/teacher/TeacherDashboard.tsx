@@ -928,7 +928,8 @@ export default function TeacherDashboard() {
     if (!open) return;
 
     const computeEndMs = () => {
-      const startIso = openRef.current?.actual_call_at || openRef.current?.started_at || open.actual_call_at || open.started_at;
+      // ✅ Le rappel doit rester calé sur le créneau officiel, pas sur l'heure réelle du clic.
+      const startIso = openRef.current?.started_at || open.started_at;
       const base = new Date(startIso).getTime();
       const minutes = Number(
         openRef.current?.expected_minutes ?? open.expected_minutes ?? duration ?? inst.default_session_minutes ?? 60
@@ -1752,20 +1753,31 @@ export default function TeacherDashboard() {
         <div className="rounded-2xl border bg-white p-5 shadow-sm">
           <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
             {(() => {
-              const startIso = open.actual_call_at || open.started_at;
-              const startMs = new Date(startIso).getTime();
-              const endMs = open.expected_minutes ? startMs + open.expected_minutes * 60000 : null;
+              // ✅ On affiche le créneau officiel de la séance.
+              const plannedStartIso = open.started_at;
+              const plannedStartMs = new Date(plannedStartIso).getTime();
+              const plannedEndMs = open.expected_minutes
+                ? plannedStartMs + open.expected_minutes * 60000
+                : null;
+              const actualCallAt = open.actual_call_at || null;
 
               return (
-                <div className="text-sm font-semibold text-slate-700">
-                  Appel — {open.class_label} {open.subject_name ? `• ${open.subject_name}` : ""} •{" "}
-                  {new Date(startIso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-                  {endMs
-                    ? ` → ${new Date(endMs).toLocaleTimeString([], {
-                        hour: "2-digit",
-                        minute: "2-digit",
-                      })}`
-                    : ""}
+                <div className="space-y-1">
+                  <div className="text-sm font-semibold text-slate-700">
+                    Appel — {open.class_label} {open.subject_name ? `• ${open.subject_name}` : ""} •{" "}
+                    {new Date(plannedStartIso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                    {plannedEndMs
+                      ? ` → ${new Date(plannedEndMs).toLocaleTimeString([], {
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        })}`
+                      : ""}
+                  </div>
+                  {actualCallAt && actualCallAt !== plannedStartIso && (
+                    <div className="text-xs text-slate-500">
+                      Appel lancé à {new Date(actualCallAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                    </div>
+                  )}
                 </div>
               );
             })()}

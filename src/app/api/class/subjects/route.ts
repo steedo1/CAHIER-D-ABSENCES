@@ -1,222 +1,231 @@
- // src/app/api/class/subjects/route.ts
+// src/app/api/class/subjects/route.ts
 import { NextRequest, NextResponse } from "next/server";
+import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 type SubjectItem = {
-  id: string;   // id à renvoyer au front (institution_subjects.id si possible, sinon subjects.id)
+  id: string; // institution_subjects.id
   label: string;
 };
 
+function uniq<T>(arr: T[]): T[] {
+  return Array.from(new Set((arr || []).filter(Boolean))) as T[];
+}
+
+type PhoneVariants = { variants: string[]; likePatterns: string[] };
+
+function buildPhoneVariants(raw: string): PhoneVariants {
+  const t = String(raw || "").trim();
+  const digits = t.replace(/\D/g, "");
+  const local10 = digits ? digits.slice(-10) : "";
+  const localNo0 = local10.replace(/^0/, "");
+  const cc = "225";
+
+  const variants = uniq<string>([
+    t,
+    t.replace(/\s+/g, ""),
+    digits,
+    `+${digits}`,
+    `+${cc}${local10}`,
+    `+${cc}${localNo0}`,
+    `00${cc}${local10}`,
+    `00${cc}${localNo0}`,
+    `${cc}${local10}`,
+    `${cc}${localNo0}`,
+    local10,
+    localNo0 ? `0${localNo0}` : "",
+  ]);
+
+  const likePatterns = uniq<string>([
+    local10 ? `%${local10}%` : "",
+    local10 ? `%${cc}${local10}%` : "",
+    local10 ? `%+${cc}${local10}%` : "",
+    local10 ? `%00${cc}${local10}%` : "",
+  ]);
+
+  return { variants, likePatterns };
+}
+
+function hmsToMin(hms: string | null | undefined) {
+  const s = String(hms || "00:00:00").slice(0, 8);
+  const [h, m] = s.split(":").map((n) => parseInt(n, 10));
+  return (Number.isFinite(h) ? h : 0) * 60 + (Number.isFinite(m) ? m : 0);
+}
+
+function hmInTZ(d: Date, tz: string): string {
+  return new Intl.DateTimeFormat("en-GB", {
+    timeZone: tz,
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(d);
+}
+
+function weekdayInTZ0to6(d: Date, tz: string): number {
+  const w = new Intl.DateTimeFormat("en-US", {
+    timeZone: tz,
+    weekday: "short",
+  })
+    .format(d)
+    .toLowerCase();
+
+  const map: Record<string, number> = {
+    sun: 0,
+    mon: 1,
+    tue: 2,
+    wed: 3,
+    thu: 4,
+    fri: 5,
+    sat: 6,
+  };
+
+  return map[w] ?? 0;
+}
+
 export async function GET(req: NextRequest) {
   try {
+    const supa = await getSupabaseServerClient();
     const srv = getSupabaseServiceClient();
-    const url = new URL(req.url);
 
-    const class_id = (url.searchParams.get("class_id") ?? "").trim();
+    const {
+      data: { user },
+    } = await supa.auth.getUser();
+
+    if (!user) {
+      return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+    }
+
+    const class_id = (new URL(req.url).searchParams.get("class_id") ?? "").trim();
     if (!class_id) {
       return NextResponse.json({ items: [] as SubjectItem[] });
     }
 
-    /* ───────── 1) Classe : établissement + année scolaire ───────── */
+    let phone = String((user as any).phone || "").trim();
+    if (!phone) {
+      const { data: au } = await srv
+        .schema("auth")
+        .from("users")
+        .select("phone")
+        .eq("id", user.id)
+        .maybeSingle();
+      phone = String(au?.phone || "").trim();
+    }
+
+    if (!phone) {
+      return NextResponse.json({ error: "no_phone" }, { status: 404 });
+    }
+
+    const { variants, likePatterns } = buildPhoneVariants(phone);
+
     const { data: cls, error: clsErr } = await srv
       .from("classes")
-      .select("id, institution_id, academic_year")
+      .select("id,label,institution_id,class_phone_e164")
       .eq("id", class_id)
       .maybeSingle();
 
     if (clsErr) {
-      console.error("[class.subjects] classes error", clsErr);
-      return NextResponse.json(
-        { error: clsErr.message ?? "classes error" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: clsErr.message }, { status: 400 });
     }
     if (!cls) {
       return NextResponse.json({ items: [] as SubjectItem[] });
     }
 
-    const institution_id = cls.institution_id as string | null;
-    const academic_year = (cls as any).academic_year as string | null;
+    let match = false;
+    if (cls.class_phone_e164 && variants.includes(String(cls.class_phone_e164))) match = true;
+    if (!match && likePatterns.length) {
+      const stored = String(cls.class_phone_e164 || "");
+      match = likePatterns.some((p) => {
+        const pat = String(p).replace(/%/g, ".*");
+        try {
+          return new RegExp(pat).test(stored);
+        } catch {
+          return false;
+        }
+      });
+    }
 
-    if (!institution_id) {
+    if (!match) {
+      return NextResponse.json({ error: "forbidden_not_class_device" }, { status: 403 });
+    }
+
+    const { data: inst, error: instErr } = await srv
+      .from("institutions")
+      .select("id,tz")
+      .eq("id", cls.institution_id)
+      .maybeSingle();
+
+    if (instErr) {
+      return NextResponse.json({ error: instErr.message }, { status: 400 });
+    }
+
+    const tz = String(inst?.tz || "Africa/Abidjan");
+    const now = new Date();
+    const weekday = weekdayInTZ0to6(now, tz);
+    const nowMin = hmsToMin(`${hmInTZ(now, tz)}:00`);
+
+    const { data: periods, error: pErr } = await srv
+      .from("institution_periods")
+      .select("id,start_time,end_time")
+      .eq("institution_id", cls.institution_id)
+      .eq("weekday", weekday)
+      .order("period_no", { ascending: true });
+
+    if (pErr) {
+      return NextResponse.json({ error: pErr.message }, { status: 400 });
+    }
+
+    const active = ((periods || []) as any[]).find((p) => {
+      const startMin = hmsToMin(p?.start_time);
+      const endMin = hmsToMin(p?.end_time);
+      return nowMin >= startMin && nowMin < endMin;
+    });
+
+    if (!active?.id) {
       return NextResponse.json({ items: [] as SubjectItem[] });
     }
 
-    /* ───────── 2) Récupérer tous les subject_id liés à la classe ───────── */
+    const { data: ttRows, error: ttErr } = await srv
+      .from("teacher_timetables")
+      .select("subject_id")
+      .eq("institution_id", cls.institution_id)
+      .eq("class_id", class_id)
+      .eq("period_id", String(active.id));
 
-    const subjectIdSet = new Set<string>();
-
-    // 2a) Matières affectées à la classe (class_teachers)
-    {
-      const { data, error } = await srv
-        .from("class_teachers")
-        .select("subject_id")
-        .eq("class_id", class_id)
-        .eq("institution_id", institution_id);
-
-      if (error) {
-        console.error("[class.subjects] class_teachers error", error);
-      } else {
-        for (const row of data ?? []) {
-          const sid = (row as any).subject_id as string | null;
-          if (sid) subjectIdSet.add(sid);
-        }
-      }
+    if (ttErr) {
+      return NextResponse.json({ error: ttErr.message }, { status: 400 });
     }
 
-    // 2b) Matières pour lesquelles il y a déjà des notes (grade_flat_marks)
-    {
-      let q = srv
-        .from("grade_flat_marks")
-        .select("subject_id")
-        .eq("class_id", class_id)
-        .eq("institution_id", institution_id);
-
-      if (academic_year) {
-        q = q.eq("academic_year", academic_year);
-      }
-
-      const { data, error } = await q;
-
-      if (error) {
-        console.error("[class.subjects] grade_flat_marks error", error);
-      } else {
-        for (const row of data ?? []) {
-          const sid = (row as any).subject_id as string | null;
-          if (sid) subjectIdSet.add(sid);
-        }
-      }
-    }
-
-    // Si aucune matière liée à la classe → on renvoie vide (et surtout pas toutes les matières de l’établissement)
-    if (subjectIdSet.size === 0) {
-      return NextResponse.json({ items: [] as SubjectItem[] });
-    }
-
-    const subjectIds = Array.from(subjectIdSet);
-
-    /* ───────── 3) Retrouver les lignes institution_subjects ─────────
-       On gère les deux cas possibles :
-       - subjectIds = institution_subjects.id
-       - subjectIds = subjects.id (stockés dans class_teachers / grade_flat_marks)
-    */
-
-    const instRows: any[] = [];
-    const instSeen = new Set<string>();
-
-    // 3a) institution_subjects où id ∈ subjectIds
-    if (subjectIds.length > 0) {
-      const { data, error } = await srv
-        .from("institution_subjects")
-        .select("id, subject_id, custom_name, subjects:subject_id(name)")
-        .eq("institution_id", institution_id)
-        .in("id", subjectIds);
-
-      if (error) {
-        console.error(
-          "[class.subjects] institution_subjects by id error",
-          error
-        );
-      } else {
-        for (const row of data ?? []) {
-          const r: any = row;
-          if (!instSeen.has(r.id)) {
-            instRows.push(r);
-            instSeen.add(r.id);
-          }
-        }
-      }
-    }
-
-    // 3b) institution_subjects où subject_id ∈ subjectIds
-    if (subjectIds.length > 0) {
-      const { data, error } = await srv
-        .from("institution_subjects")
-        .select("id, subject_id, custom_name, subjects:subject_id(name)")
-        .eq("institution_id", institution_id)
-        .in("subject_id", subjectIds);
-
-      if (error) {
-        console.error(
-          "[class.subjects] institution_subjects by subject_id error",
-          error
-        );
-      } else {
-        for (const row of data ?? []) {
-          const r: any = row;
-          if (!instSeen.has(r.id)) {
-            instRows.push(r);
-            instSeen.add(r.id);
-          }
-        }
-      }
-    }
-
-    // Ensemble des subjectIds déjà couverts par institution_subjects
-    const coveredSubjectIds = new Set<string>();
-    for (const r of instRows) {
-      const sid1 = r.id as string;
-      const sid2 = r.subject_id as string | null;
-      if (subjectIdSet.has(sid1)) coveredSubjectIds.add(sid1);
-      if (sid2 && subjectIdSet.has(sid2)) coveredSubjectIds.add(sid2);
-    }
-
-    /* ───────── 4) Fallback pour les subjectIds non couverts : table subjects ───────── */
-    const leftoverIds = subjectIds.filter((sid) => !coveredSubjectIds.has(sid));
-
-    const subjectFallbackRows: any[] = [];
-    if (leftoverIds.length > 0) {
-      const { data, error } = await srv
-        .from("subjects")
-        .select("id, name")
-        .in("id", leftoverIds);
-
-      if (error) {
-        console.error("[class.subjects] subjects fallback error", error);
-      } else {
-        subjectFallbackRows.push(...(data ?? []));
-      }
-    }
-
-    /* ───────── 5) Construction de la réponse finale ───────── */
-
-    const itemsMap = new Map<string, SubjectItem>();
-
-    // 5a) À partir de institution_subjects (prioritaire)
-    for (const r of instRows) {
-      const id = r.id as string;
-      const label =
-        (r.custom_name as string) ||
-        (r.subjects?.name as string) ||
-        "—";
-
-      if (!itemsMap.has(id)) {
-        itemsMap.set(id, { id, label });
-      }
-    }
-
-    // 5b) Compléter avec subjects pour les cas où aucun institution_subject n’existe
-    for (const r of subjectFallbackRows) {
-      const id = r.id as string;
-      const label = (r.name as string) || "—";
-      if (!itemsMap.has(id)) {
-        itemsMap.set(id, { id, label });
-      }
-    }
-
-    const items = Array.from(itemsMap.values()).sort((a, b) =>
-      a.label.localeCompare(b.label, "fr")
+    const subjectIds = uniq<string>(
+      ((ttRows || []) as any[]).map((r) => String(r.subject_id || "")).filter(Boolean)
     );
+
+    if (!subjectIds.length) {
+      return NextResponse.json({ items: [] as SubjectItem[] });
+    }
+
+    const { data: instSubs, error: subjErr } = await srv
+      .from("institution_subjects")
+      .select("id,custom_name,subjects:subject_id(name)")
+      .in("id", subjectIds);
+
+    if (subjErr) {
+      return NextResponse.json({ error: subjErr.message }, { status: 400 });
+    }
+
+    const items = ((instSubs || []) as any[])
+      .map((row) => ({
+        id: String(row.id),
+        label: String(row.custom_name || row.subjects?.name || "—").trim(),
+      }))
+      .filter((it) => it.id.length > 0)
+      .sort((a, b) => a.label.localeCompare(b.label, "fr"));
 
     return NextResponse.json({ items });
   } catch (err: any) {
     console.error("[class.subjects] unexpected error", err);
-    return NextResponse.json(
-      { error: "Internal server error" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: err?.message || "class_subjects_failed" }, { status: 500 });
   }
 }
