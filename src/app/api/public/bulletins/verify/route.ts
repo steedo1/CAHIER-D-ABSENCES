@@ -44,31 +44,6 @@ function normalizeBulletinLevel(level?: string | null): string | null {
   return null;
 }
 
-function normalizeStoredLevel(level?: string | null): string | null {
-  const n = normalizeBulletinLevel(level);
-  if (n) return n;
-
-  const raw = String(level ?? "").trim().toLowerCase();
-  return raw || null;
-}
-
-function pickBestCoeffRow(
-  rows: SubjectCoeffRow[],
-  wantedLevel: string | null
-): SubjectCoeffRow | null {
-  if (!rows.length) return null;
-
-  const wanted = normalizeStoredLevel(wantedLevel);
-
-  const exact = rows.find((r) => normalizeStoredLevel(r.level) === wanted);
-  if (exact) return exact;
-
-  const globalRow = rows.find((r) => !normalizeStoredLevel(r.level));
-  if (globalRow) return globalRow;
-
-  return rows[0] ?? null;
-}
-
 function normText(s?: string | null) {
   return (s ?? "").toString().trim().toLowerCase();
 }
@@ -393,10 +368,10 @@ function buildFallbackGroups(opts: {
     const name = meta.name;
     const code = meta.code;
 
-    // ✅ Règle blindée : AUTRES = tout ce qui n'est pas LETTRES et pas SCIENCES
-    if (isScienceSubject(name, code)) sciences.push(sid);
-    else if (isLettersSubject(name, code)) letters.push(sid);
-    else autres.push(sid);
+    if (isOtherSubject(name, code)) autres.push(sid);
+    else if (isPhiloSubject(name, code)) letters.push(sid);
+    else if (isScienceSubject(name, code)) sciences.push(sid);
+    else letters.push(sid);
   }
 
   const mkGroup = (p: {
@@ -1100,37 +1075,25 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  const { data: coeffAllData, error: coeffAllErr } = await srv
+  let coeffAllQuery = srv
     .from("institution_subject_coeffs")
     .select("subject_id, coeff, include_in_average, level")
     .eq("institution_id", instId);
 
-  if (coeffAllErr) {
-    // ignore
-  }
+  if (bulletinLevel) coeffAllQuery = coeffAllQuery.eq("level", bulletinLevel);
+
+  const { data: coeffAllData } = await coeffAllQuery;
 
   const coeffBySubject = new Map<string, { coeff: number; include: boolean }>();
   const subjectIdsFromConfig = new Set<string>();
-  const coeffRowsBySubject = new Map<string, SubjectCoeffRow[]>();
 
   for (const row of (coeffAllData || []) as SubjectCoeffRow[]) {
     const sid = String(row.subject_id || "");
     if (!sid || !isUuid(sid)) continue;
-
     subjectIdsFromConfig.add(sid);
-
-    const arr = coeffRowsBySubject.get(sid) || [];
-    arr.push(row);
-    coeffRowsBySubject.set(sid, arr);
-  }
-
-  for (const [sid, rows] of coeffRowsBySubject.entries()) {
-    const best = pickBestCoeffRow(rows, bulletinLevel);
-    if (!best) continue;
-
     coeffBySubject.set(sid, {
-      coeff: cleanCoeff(best.coeff),
-      include: best.include_in_average !== false,
+      coeff: cleanCoeff(row.coeff),
+      include: row.include_in_average !== false,
     });
   }
 

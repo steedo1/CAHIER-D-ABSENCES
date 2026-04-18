@@ -83,12 +83,10 @@ async function openDB(): Promise<IDBDatabase> {
       } else {
         const out = req.transaction?.objectStore("outbox");
         if (out) {
-          if (!out.indexNames.contains("mergeKey")) {
+          if (!out.indexNames.contains("mergeKey"))
             out.createIndex("mergeKey", "mergeKey", { unique: false });
-          }
-          if (!out.indexNames.contains("createdAt")) {
+          if (!out.indexNames.contains("createdAt"))
             out.createIndex("createdAt", "createdAt", { unique: false });
-          }
         }
       }
     };
@@ -168,6 +166,7 @@ function buildHeaders(extra?: Record<string, string>) {
     Accept: "application/json",
     ...extra,
   };
+  // Content-Type JSON si body object
   if (!h["Content-Type"]) h["Content-Type"] = "application/json";
   return h;
 }
@@ -220,6 +219,7 @@ export async function offlineGetJson<T = any>(url: string, cacheKey: string): Pr
 /* ───────────────────────── Outbox (mutations) ───────────────────────── */
 
 function uid() {
+  // id stable et unique
   return `${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`;
 }
 
@@ -228,6 +228,7 @@ async function outboxAdd(row: OutboxRow): Promise<void> {
   const tx = db.transaction(["outbox"], "readwrite");
   const store = tx.objectStore("outbox");
 
+  // MergeKey: on remplace l’ancienne action (ex: plusieurs "save" d'une même séance)
   if (row.mergeKey) {
     const idx = store.index("mergeKey");
     const existing = await reqToPromise<OutboxRow[]>(idx.getAll(row.mergeKey));
@@ -292,13 +293,16 @@ export async function offlineMutateJson<T = any>(
     const status = res.status;
     const j = await safeJson(res);
 
+    // ✅ HTTP error = PAS offline, PAS queued
     if (!res.ok) {
       const msg = j?.error || j?.message || `HTTP ${status}`;
       return { ok: false, queued: false, offline: false, status, error: msg, data: j };
     }
 
+    // ✅ OK
     return { ok: true, data: j as T, status };
   } catch {
+    // ✅ Network/offline uniquement -> outbox + queued
     const row: OutboxRow = {
       id: uid(),
       url,
@@ -316,66 +320,30 @@ export async function offlineMutateJson<T = any>(
 
 /* ───────────────────────── Flush outbox ───────────────────────── */
 
-function normalizeClientSessionKey(value: unknown): string | null {
-  const raw = String(value ?? "").trim();
-  if (!raw) return null;
-  return raw.startsWith("client:") ? raw : `client:${raw}`;
-}
-
-function resolveMappedServerSessionId(
-  body: any,
-  map: Record<string, string>
-): string | null {
-  if (!body || typeof body !== "object") return null;
-
-  if (typeof body.session_id === "string") {
-    const directKey = normalizeClientSessionKey(body.session_id);
-    if (directKey && map[directKey]) return map[directKey];
-    if (!body.session_id.startsWith("client:")) return body.session_id;
-  }
-
-  if (typeof body.client_session_id === "string") {
-    const clientKey = normalizeClientSessionKey(body.client_session_id);
-    if (clientKey && map[clientKey]) return map[clientKey];
-  }
-
-  return null;
-}
-
 function rewriteBodyWithSessionMap(body: any, map: Record<string, string>) {
   if (!body || typeof body !== "object") return body;
 
-  const next = { ...body };
-  const mappedServerId = resolveMappedServerSessionId(body, map);
-
-  if (mappedServerId) {
-    next.session_id = mappedServerId;
+  // attendance bulk: { session_id, marks }
+  if (typeof body.session_id === "string" && body.session_id.startsWith("client:")) {
+    const mapped = map[body.session_id];
+    if (mapped) return { ...body, session_id: mapped };
   }
 
-  return next;
-}
-
-function isSessionStartUrl(url: string) {
-  return (
-    url.includes("/api/class/sessions/start") ||
-    url.includes("/api/teacher/sessions/start")
-  );
+  return body;
 }
 
 async function maybeUpdateSessionMapFromStart(row: OutboxRow, responseJson: any) {
-  const clientSessionId =
-    row?.meta?.clientSessionId || row?.body?.client_session_id;
+  // start session returns { item: { id, ... } } (supposé)
+  const clientSessionId = row?.meta?.clientSessionId || row?.body?.client_session_id;
   const serverId = responseJson?.item?.id || responseJson?.data?.item?.id;
 
   if (!clientSessionId || !serverId) return;
 
-  const clientKey = normalizeClientSessionKey(clientSessionId);
-  if (!clientKey) return;
-
+  const clientKey = `client:${String(clientSessionId)}`;
   const map = await getSessionIdMap();
   if (map[clientKey] === serverId) return;
 
-  map[clientKey] = String(serverId);
+  map[clientKey] = serverId;
   await setSessionIdMap(map);
 }
 
@@ -393,6 +361,7 @@ export async function flushOutbox(): Promise<{ flushed: number; remaining: numbe
   const map = await getSessionIdMap();
 
   for (const row of rows) {
+    // Prépare body potentiellement réécrit (session_id)
     const body = rewriteBodyWithSessionMap(row.body, map);
 
     try {
@@ -405,14 +374,18 @@ export async function flushOutbox(): Promise<{ flushed: number; remaining: numbe
       });
 
       if (!res.ok) {
+        // si c'est un vrai HTTP error (validation/forbidden), on supprime l'item
+        // pour éviter une boucle infinie.
         await outboxDelete(row.id);
         continue;
       }
 
       const j = await safeJson(res);
 
-      if (isSessionStartUrl(row.url)) {
+      // Si c'était un startSession, on mémorise le mapping client -> server
+      if (row.url.includes("/api/class/sessions/start")) {
         await maybeUpdateSessionMapFromStart(row, j);
+        // refresh local map (au cas où)
         const next = await getSessionIdMap();
         Object.assign(map, next);
       }
@@ -420,6 +393,7 @@ export async function flushOutbox(): Promise<{ flushed: number; remaining: numbe
       await outboxDelete(row.id);
       flushed += 1;
     } catch {
+      // réseau encore instable : on stoppe et on garde le reste
       break;
     }
   }
@@ -433,6 +407,7 @@ export async function flushOutbox(): Promise<{ flushed: number; remaining: numbe
 export async function clearOfflineAll(): Promise<void> {
   if (!isBrowser()) return;
 
+  // 1) caches (Cache API)
   if ("caches" in window) {
     try {
       const keys = await caches.keys();
@@ -442,6 +417,7 @@ export async function clearOfflineAll(): Promise<void> {
     }
   }
 
+  // 2) IndexedDB stores
   try {
     const db = await openDB();
     db.close();
@@ -449,6 +425,7 @@ export async function clearOfflineAll(): Promise<void> {
     // ignore
   }
 
+  // delete database entirely
   await new Promise<void>((resolve) => {
     const req = indexedDB.deleteDatabase(DB_NAME);
     req.onsuccess = () => resolve();

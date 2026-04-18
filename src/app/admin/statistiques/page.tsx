@@ -22,7 +22,6 @@ type DetailRow = {
   expected_minutes: number;
   real_minutes: number;
   actual_call_iso?: string | null;
-  ended_at_iso?: string | null;
   class_id?: string | null; // ✅ récupéré par l’API
   class_label?: string | null; // ✅ récupéré par l’API
 };
@@ -84,14 +83,6 @@ function formatHHmm(iso: string) {
   const hh = String(d.getHours()).padStart(2, "0");
   const mm = String(d.getMinutes()).padStart(2, "0");
   return `${hh}:${mm}`;
-}
-function formatHHmmSafe(iso?: string | null) {
-  if (!iso) return "—";
-  try {
-    return formatHHmm(iso);
-  } catch {
-    return "—";
-  }
 }
 function formatDateFR(iso: string) {
   const d = new Date(iso);
@@ -550,8 +541,6 @@ export default function AdminStatistiquesPage() {
         <tr>
           <th>Date</th>
           <th>Plage horaire prévue</th>
-          <th>Début réel</th>
-          <th>Fin réelle</th>
           <th>Discipline</th>
           <th>Classe</th>
           <th>Minutes effectives</th>
@@ -565,14 +554,10 @@ export default function AdminStatistiquesPage() {
         const start = formatHHmm(r.dateISO);
         const end = formatHHmm(addMinutesISO(r.dateISO, r.expected_minutes || 0));
         const eff = r.real_minutes ?? r.expected_minutes ?? 0;
-        const actualStart = formatHHmmSafe(r.actual_call_iso);
-        const actualEnd = formatHHmmSafe(r.ended_at_iso);
         return `
           <tr>
             <td>${formatDateFR(r.dateISO)}</td>
             <td>${start} → ${end}</td>
-            <td>${actualStart}</td>
-            <td>${actualEnd}</td>
             <td>${r.subject_name || "Discipline non renseignée"}</td>
             <td>${r.class_label || ""}</td>
             <td style="text-align:right;">${eff}</td>
@@ -586,7 +571,7 @@ export default function AdminStatistiquesPage() {
     const footerHtml = `
       <tfoot>
         <tr>
-          <td colspan="6">Total</td>
+          <td colspan="4">Total</td>
           <td style="text-align:right;">${total}</td>
           <td style="text-align:right;">${minutesToHourLabel(total)}</td>
         </tr>
@@ -1146,9 +1131,7 @@ export default function AdminStatistiquesPage() {
                   <thead className="bg-slate-100/80 text-slate-700">
                     <tr>
                       <th className="text-left px-3 py-2">Date</th>
-                      <th className="text-left px-3 py-2">Plage horaire prévue</th>
-                      <th className="text-left px-3 py-2">Début réel</th>
-                      <th className="text-left px-3 py-2">Fin réelle</th>
+                      <th className="text-left px-3 py-2">Plage horaire</th>
                       <th className="text-left px-3 py-2">Discipline</th>
                       <th className="text-left px-3 py-2">Classe</th>
                       <th className="text-right px-3 py-2">Minutes effectives</th>
@@ -1174,12 +1157,6 @@ export default function AdminStatistiquesPage() {
                             {start} → {end}
                           </td>
                           <td className="px-3 py-2 text-slate-700">
-                            {formatHHmmSafe(r.actual_call_iso)}
-                          </td>
-                          <td className="px-3 py-2 text-slate-700">
-                            {formatHHmmSafe(r.ended_at_iso)}
-                          </td>
-                          <td className="px-3 py-2 text-slate-700">
                             {r.subject_name || "Discipline non renseignée"}
                           </td>
                           <td className="px-3 py-2 text-slate-700">
@@ -1197,7 +1174,7 @@ export default function AdminStatistiquesPage() {
                     {(!detail.data || detail.data.rows.length === 0) && (
                       <tr className="odd:bg-white">
                         <td
-                          colSpan={8}
+                          colSpan={6}
                           className="px-3 py-4 text-center text-gray-500"
                         >
                           Aucune donnée pour cet enseignant sur la période.

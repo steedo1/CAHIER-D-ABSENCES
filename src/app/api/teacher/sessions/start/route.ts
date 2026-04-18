@@ -8,10 +8,12 @@ export const dynamic = "force-dynamic";
 
 type Body = {
   class_id?: string;
-  subject_id?: string | null; // côté front = subjects.id (canonique) ou institution_subjects.id
+  subject_id?: string | null; // côté front = subjects.id (canonique) ou anciennement institution_subjects.id
   started_at?: string;
 
-  // Heure réelle du clic "Démarrer l'appel"
+  // ✅ IMPORTANT (offline-friendly) :
+  // - actual_call_at : heure réelle du clic "Démarrer l'appel" côté client
+  // - si non envoyé, on prendra started_at (mieux que "now serveur" en offline)
   actual_call_at?: string | null;
 
   expected_minutes?: number | null;
@@ -19,18 +21,6 @@ type Body = {
   // optionnels (debug / compat)
   client_session_id?: string | null;
 };
-
-type ResolvedPeriod = {
-  id?: string | null;
-  label?: string | null;
-  weekday: number;
-  period_no?: number | null;
-  startMin: number;
-  endMin: number;
-  durationMin: number;
-};
-
-type WeekdayMode = "iso" | "js" | "mon0";
 
 async function getAuthUser() {
   const supa = await getSupabaseServerClient();
@@ -41,47 +31,32 @@ async function getAuthUser() {
   return { user: data.user, error: null as string | null };
 }
 
-/* ───────── réglages robustesse client ───────── */
-function envInt(name: string, fallback: number, min = 0) {
-  const raw = Number(process.env[name]);
-  if (!Number.isFinite(raw)) return fallback;
-  return Math.max(min, Math.floor(raw));
-}
-
-const CLIENT_CALL_MAX_FUTURE_MIN = envInt("ATTENDANCE_CLIENT_CALL_MAX_FUTURE_MIN", 5, 0);
-const CLIENT_CALL_MAX_AGE_DAYS = envInt("ATTENDANCE_CLIENT_CALL_MAX_AGE_DAYS", 7, 1);
-
 /* ───────── helpers horaires ───────── */
 function pad2(n: number) {
   return String(n).padStart(2, "0");
 }
 
+/** HH:MM:SS -> minutes depuis minuit */
 function hmsToMin(hms: string | null | undefined) {
   const s = String(hms || "00:00:00").slice(0, 8);
   const [h, m] = s.split(":").map((n) => parseInt(n, 10));
   return (isNaN(h) ? 0 : h) * 60 + (isNaN(m) ? 0 : m);
 }
 
+/** "HH:MM" -> minutes depuis minuit */
 function hmToMin(hm: string) {
   const [h, m] = hm.split(":").map((n) => parseInt(n, 10));
   return (isNaN(h) ? 0 : h) * 60 + (isNaN(m) ? 0 : m);
 }
 
+/** minutes -> HH:MM */
 function minToHM(min: number) {
-  const safe = Math.max(0, Math.floor(min));
-  const h = Math.floor(safe / 60) % 24;
-  const m = safe % 60;
+  const h = Math.floor(min / 60);
+  const m = min % 60;
   return `${pad2(h)}:${pad2(m)}`;
 }
 
-function parseIsoDate(v: any): Date | null {
-  const s = String(v || "").trim();
-  if (!s) return null;
-  const d = new Date(s);
-  if (isNaN(d.getTime())) return null;
-  return d;
-}
-
+/** parts date/heure dans un timezone (utilisé pour convertir proprement local -> UTC) */
 function partsInTZ(d: Date, tz: string) {
   const fmt = new Intl.DateTimeFormat("en-CA", {
     timeZone: tz,
@@ -105,6 +80,10 @@ function partsInTZ(d: Date, tz: string) {
   };
 }
 
+/**
+ * Convertit une date/heure *locale* (dans tz) vers un Date UTC
+ * (petit algo d’ajustement d’offset, sans dépendance externe)
+ */
 function zonedToUTC(
   y: number,
   mo: number,
@@ -114,18 +93,13 @@ function zonedToUTC(
   ss: number,
   tz: string
 ) {
+  // 1) guess : on suppose que les composantes sont UTC
   let guess = new Date(Date.UTC(y, mo - 1, d, hh, mm, ss));
 
+  // 2) on regarde ce que ce "guess" donne en tz, puis on ajuste
   for (let i = 0; i < 2; i++) {
     const got = partsInTZ(guess, tz);
-    const gotUTC = Date.UTC(
-      got.year,
-      got.month - 1,
-      got.day,
-      got.hour,
-      got.minute,
-      got.second
-    );
+    const gotUTC = Date.UTC(got.year, got.month - 1, got.day, got.hour, got.minute, got.second);
     const wantUTC = Date.UTC(y, mo - 1, d, hh, mm, ss);
     const diffMs = gotUTC - wantUTC;
     if (diffMs === 0) break;
@@ -135,7 +109,8 @@ function zonedToUTC(
   return guess;
 }
 
-function localYMDHMAndJsDow(iso: string, tz: string) {
+/** Donne Y-M-D local + HH:MM local + ISO weekday (1=Mon..7=Sun) dans tz */
+function localYMDHMAndISODow(iso: string, tz: string) {
   const d = new Date(iso);
 
   const fmtYMD = new Intl.DateTimeFormat("en-CA", {
@@ -156,70 +131,28 @@ function localYMDHMAndJsDow(iso: string, tz: string) {
   });
 
   const ymdParts = fmtYMD.formatToParts(d);
-  const y = parseInt(
-    ymdParts.find((p) => p.type === "year")?.value || "1970",
-    10
-  );
-  const mo = parseInt(
-    ymdParts.find((p) => p.type === "month")?.value || "1",
-    10
-  );
-  const da = parseInt(
-    ymdParts.find((p) => p.type === "day")?.value || "1",
-    10
-  );
+  const y = parseInt(ymdParts.find((p) => p.type === "year")?.value || "1970", 10);
+  const mo = parseInt(ymdParts.find((p) => p.type === "month")?.value || "1", 10);
+  const da = parseInt(ymdParts.find((p) => p.type === "day")?.value || "1", 10);
 
-  const hm = fmtHM.format(d);
+  const hm = fmtHM.format(d); // "HH:MM"
 
-  const wdStr = fmtWD.format(d).toLowerCase();
-  const mapJs: Record<string, number> = {
-    sun: 0,
+  const wdStr = fmtWD.format(d).toLowerCase(); // "mon".."sun"
+  const mapISO: Record<string, number> = {
     mon: 1,
     tue: 2,
     wed: 3,
     thu: 4,
     fri: 5,
     sat: 6,
+    sun: 7,
   };
 
-  return { y, mo, da, hm, jsdow: mapJs[wdStr] ?? 0 };
-}
-
-function parseWeekday(raw: any): number | null {
-  if (typeof raw === "number" && Number.isFinite(raw)) return raw;
-  const n = parseInt(String(raw ?? ""), 10);
-  return Number.isFinite(n) ? n : null;
-}
-
-function detectWeekdayMode(periods: any[]): WeekdayMode {
-  const vals = Array.from(
-    new Set(
-      (periods || [])
-        .map((p) => parseWeekday(p?.weekday))
-        .filter((v): v is number => v !== null && v !== undefined)
-    )
-  );
-
-  if (vals.includes(7)) return "iso";
-
-  const max = vals.length ? Math.max(...vals) : 6;
-  if (max === 5) return "mon0";
-  if (vals.includes(0) && max === 6) return "js";
-
-  return "iso";
-}
-
-function jsDayToDbWeekday(jsDay0to6: number, mode: WeekdayMode): number {
-  if (mode === "js") return jsDay0to6;
-  if (mode === "iso") return jsDay0to6 === 0 ? 7 : jsDay0to6;
-  return (jsDay0to6 + 6) % 7;
-}
-
-function uniq<T>(arr: T[]) {
-  return Array.from(new Set((arr || []).filter(Boolean))) as T[];
+  return { y, mo, da, hm, isodow: mapISO[wdStr] ?? 1 };
 }
 
 function pickBestSession(rows: any[]) {
+  // meilleur = celui avec actual_call_at non-null le plus tôt, sinon created_at le plus tôt
   const toMs = (v: any) => {
     const t = v ? new Date(String(v)).getTime() : NaN;
     return Number.isFinite(t) ? t : Number.POSITIVE_INFINITY;
@@ -239,79 +172,29 @@ function pickBestSession(rows: any[]) {
   })[0];
 }
 
+/* ✅ OFFLINE: choisir une heure d'appel "effective" fiable */
 function pickEffectiveCallAt(body: Body, started_at_in: string, nowISO: string) {
   const now = new Date(nowISO).getTime();
-  const maxFutureMs = CLIENT_CALL_MAX_FUTURE_MIN * 60 * 1000;
-  const maxAgeMs = CLIENT_CALL_MAX_AGE_DAYS * 24 * 60 * 60 * 1000;
 
   const candidates = [
-    body.actual_call_at ?? null,
-    (body as any)?.client_call_at ?? null,
-    (body as any)?.click_at ?? null,
-    (body as any)?.clicked_at ?? null,
-    started_at_in ?? null,
+    body.actual_call_at ?? null, // priorité
+    started_at_in ?? null,       // fallback (utile si le front ne passe pas actual_call_at)
   ].filter(Boolean) as string[];
 
   for (const c of candidates) {
     const t = new Date(c).getTime();
     if (!Number.isFinite(t)) continue;
-    if (t > now + maxFutureMs) continue;
-    if (t < now - maxAgeMs) continue;
+
+    // anti-futur: max +10 minutes (horloge device un peu en avance)
+    if (t > now + 10 * 60 * 1000) continue;
+
+    // anti-très-ancien: max 7 jours (offline long)
+    if (t < now - 7 * 24 * 60 * 60 * 1000) continue;
+
     return new Date(t).toISOString();
   }
 
   return nowISO;
-}
-
-function buildResolvedPeriods(periods: any[]): ResolvedPeriod[] {
-  return (periods || []).map((p: any) => {
-    const startMin = hmsToMin(p.start_time);
-    const endMin = hmsToMin(p.end_time);
-    const durationMin =
-      typeof p.duration_min === "number" && p.duration_min > 0
-        ? Math.floor(p.duration_min)
-        : Math.max(1, endMin - startMin);
-
-    return {
-      id: p.id ? String(p.id) : null,
-      label: (p.label as string | null) ?? null,
-      weekday: Number(p.weekday),
-      period_no: typeof p.period_no === "number" ? p.period_no : null,
-      startMin,
-      endMin,
-      durationMin,
-    };
-  });
-}
-
-async function fetchTeacherSessionFull(
-  svc: ReturnType<typeof getSupabaseServiceClient>,
-  id: string
-) {
-  const { data, error } = await svc
-    .from("teacher_sessions")
-    .select(
-      `
-      id,
-      class_id,
-      subject_id,
-      started_at,
-      actual_call_at,
-      expected_minutes,
-      day_ci,
-      slot_ci,
-      classes!inner ( label ),
-      institution_subjects!teacher_sessions_subject_id_fkey (
-        id,
-        subject:subjects ( id, name )
-      )
-    `
-    )
-    .eq("id", id)
-    .maybeSingle();
-
-  if (error || !data) return null;
-  return data;
 }
 
 export async function POST(req: NextRequest) {
@@ -326,6 +209,7 @@ export async function POST(req: NextRequest) {
     const class_id = body.class_id ?? null;
     const raw_subject_id = body.subject_id ?? null;
     const raw_started_at = body.started_at ?? null;
+    const expected_minutes_body = body.expected_minutes ?? null;
 
     if (!class_id || !raw_subject_id || !raw_started_at) {
       return NextResponse.json(
@@ -334,13 +218,18 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Normalisation de started_at → ISO cohérent (sert à déterminer le créneau)
     let startedDate = new Date(raw_started_at);
-    if (isNaN(startedDate.getTime())) startedDate = new Date();
+    if (isNaN(startedDate.getTime())) {
+      startedDate = new Date();
+    }
     const started_at_in = startedDate.toISOString();
+    const nowISO = new Date().toISOString();
+    const effectiveCallAt = pickEffectiveCallAt(body, started_at_in, nowISO);
 
     const svc = getSupabaseServiceClient();
 
-    /* 1) classe */
+    /* 1) Récupérer la classe pour avoir institution_id + label */
     const { data: cls, error: clsErr } = await svc
       .from("classes")
       .select("id, label, institution_id")
@@ -354,9 +243,10 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    /* 2) matière -> institution_subjects.id */
+    /* 2) Résoudre subject_id → institution_subjects.id (instSubjectId) */
     let instSubjectId: string | null = null;
 
+    // 2.a) raw_subject_id est déjà un institution_subjects.id ?
     const { data: asInst, error: asInstErr } = await svc
       .from("institution_subjects")
       .select("id")
@@ -366,6 +256,7 @@ export async function POST(req: NextRequest) {
     if (asInst && !asInstErr) {
       instSubjectId = asInst.id;
     } else {
+      // 2.b) sinon raw_subject_id = subjects.id canonique
       const { data: viaCanonical, error: viaCanonicalErr } = await svc
         .from("institution_subjects")
         .select("id")
@@ -383,16 +274,19 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(
         {
           error:
-            "La matière sélectionnée n’est pas correctement affectée à cet établissement. Vérifiez les disciplines dans les paramètres de l’établissement.",
+            "La matière sélectionnée n’est pas correctement affectée à cet établissement. " +
+            "Vérifiez les disciplines dans les paramètres de l’établissement.",
         },
         { status: 400 }
       );
     }
 
-    /* 3) établissement */
+    /* 3) Déterminer le créneau (période) + rendre START idempotent (1 prof = 1 séance / créneau) */
+
+    // a) fuseau de l’établissement
     const { data: inst, error: instErr } = await svc
       .from("institutions")
-      .select("tz, default_session_minutes")
+      .select("tz")
       .eq("id", cls.institution_id)
       .maybeSingle();
 
@@ -401,149 +295,154 @@ export async function POST(req: NextRequest) {
     }
 
     const tz = String(inst?.tz || "Africa/Abidjan");
-    const defSessionMin =
-      Number.isFinite(Number(inst?.default_session_minutes)) &&
-      Number(inst?.default_session_minutes) > 0
-        ? Math.floor(Number(inst?.default_session_minutes))
-        : 60;
 
-    /* 4) heure réelle du clic */
-    const nowISO = new Date().toISOString();
-    const effectiveCallAtISO = pickEffectiveCallAt(body, started_at_in, nowISO);
+    // date locale + heure locale + weekday ISO (1..7) basées sur l'heure réelle du clic
+    const { y, mo, da, hm: callHM, isodow } = localYMDHMAndISODow(effectiveCallAt, tz);
+    const callMin = hmToMin(callHM);
 
-    /* 5) périodes du jour : ON RESOUT LE CRENEAU A PARTIR DU CLIC REEL */
-    const localCall = localYMDHMAndJsDow(effectiveCallAtISO, tz);
-    const callMin = hmToMin(localCall.hm);
-
-    const { data: allPeriods, error: pErr } = await svc
+    // b) périodes du jour
+    const { data: periods, error: pErr } = await svc
       .from("institution_periods")
-      .select("id, weekday, period_no, label, start_time, end_time, duration_min")
+      .select("weekday, period_no, label, start_time, end_time")
       .eq("institution_id", cls.institution_id)
-      .order("weekday", { ascending: true })
+      .eq("weekday", isodow)
       .order("period_no", { ascending: true });
 
     if (pErr) {
       return NextResponse.json({ error: pErr.message }, { status: 400 });
     }
 
-    const weekdayMode = detectWeekdayMode(allPeriods || []);
-    const dbWeekday = jsDayToDbWeekday(localCall.jsdow, weekdayMode);
-    const dayPeriods = buildResolvedPeriods(
-      (allPeriods || []).filter((p: any) => Number(p.weekday) === dbWeekday)
-    );
+    let currentPeriod: { startMin: number; endMin: number } | null = null;
 
-    // RÈGLE MÉTIER STRICTE :
-    // aucun appel hors créneau admin ; pas de tolérance avant/après
-    const targetPeriod =
-      dayPeriods.find((p) => callMin >= p.startMin && callMin < p.endMin) || null;
+    if (Array.isArray(periods) && periods.length) {
+      const expanded = periods.map((p: any) => ({
+        label: p.label || null,
+        startMin: hmsToMin(p.start_time),
+        endMin: hmsToMin(p.end_time),
+      }));
 
-    if (!targetPeriod) {
+      const cur = expanded.find((p) => callMin >= p.startMin && callMin < p.endMin) ?? null;
+
+      if (cur && cur.endMin > cur.startMin) {
+        currentPeriod = { startMin: cur.startMin, endMin: cur.endMin };
+      }
+
+      if (!currentPeriod) {
+        return NextResponse.json(
+          {
+            error: "attendance_outside_slot",
+            message:
+              "Démarrage refusé : l’appel doit être effectué strictement dans un créneau configuré par l’administration.",
+            details: {
+              actual_call_hm: callHM,
+              weekday: isodow,
+              configured_slots: expanded.map((p) => ({
+                label: p.label || `${minToHM(p.startMin)}-${minToHM(p.endMin)}`,
+                start: minToHM(p.startMin),
+                end: minToHM(p.endMin),
+              })),
+            },
+          },
+          { status: 409 }
+        );
+      }
+    } else {
       return NextResponse.json(
         {
           error: "attendance_outside_slot",
           message:
-            "Démarrage refusé : l’appel doit être effectué strictement dans un créneau configuré par l’administration.",
+            "Démarrage refusé : aucun créneau n’est configuré pour aujourd’hui par l’administration.",
           details: {
-            actual_call_hm: localCall.hm,
-            weekday: dbWeekday,
-            configured_slots: dayPeriods.map((p) => ({
-              label: p.label || `${minToHM(p.startMin)}-${minToHM(p.endMin)}`,
-              start: minToHM(p.startMin),
-              end: minToHM(p.endMin),
-            })),
+            actual_call_hm: callHM,
+            weekday: isodow,
+            configured_slots: [],
           },
         },
         { status: 409 }
       );
     }
 
-    const resolvedExpectedMinutes =
-      targetPeriod?.durationMin && targetPeriod.durationMin > 0
-        ? targetPeriod.durationMin
-        : Math.max(
-            1,
-            Math.floor(Number(body.expected_minutes ?? defSessionMin ?? 60))
-          );
+    // c) bornes du créneau (UTC) + started_at canonique = début du créneau
+    const slotStartMin = currentPeriod.startMin;
+    const slotEndMin = currentPeriod.endMin;
 
-    // créneau canonique verrouillé par l'admin
-    const slotStartUTC = zonedToUTC(
-      localCall.y,
-      localCall.mo,
-      localCall.da,
-      Math.floor(targetPeriod.startMin / 60),
-      targetPeriod.startMin % 60,
-      0,
-      tz
-    );
-    const slotEndUTC = zonedToUTC(
-      localCall.y,
-      localCall.mo,
-      localCall.da,
-      Math.floor(targetPeriod.endMin / 60),
-      targetPeriod.endMin % 60,
-      0,
-      tz
-    );
+    const slotStartHM = minToHM(slotStartMin);
+    const slotEndHM = minToHM(Math.min(slotEndMin, 24 * 60));
 
-    const started_at = slotStartUTC.toISOString();
-    const day_ci = `${localCall.y}-${pad2(localCall.mo)}-${pad2(localCall.da)}`;
-    const slot_ci = `${day_ci} ${pad2(Math.floor(targetPeriod.startMin / 60))}:${pad2(
-      targetPeriod.startMin % 60
-    )}:00`;
+    const [sH, sM] = slotStartHM.split(":").map((n) => parseInt(n, 10));
+    const [eH, eM] = slotEndHM.split(":").map((n) => parseInt(n, 10));
 
-    /* 6) autorisation : prof connecté */
-    const teacher_id = user.id;
+    const slotStartUTC = zonedToUTC(y, mo, da, sH, sM, 0, tz);
+    const slotEndUTC = zonedToUTC(y, mo, da, eH, eM, 0, tz);
 
-    /* 7) réutiliser une séance existante sur ce créneau canonique */
+    const started_at = slotStartUTC.toISOString(); // ✅ canonique (créneau)
+    const resolved_expected_minutes =
+      expected_minutes_body ??
+      (currentPeriod ? Math.max(1, currentPeriod.endMin - currentPeriod.startMin) : 60);
+
+    // ✅ OFFLINE-FRIENDLY: on conserve l'heure effective du clic (ou started_at_in)
+
+    // d) “UPSERT logique” : si une séance existe DÉJÀ dans ce créneau pour ce prof → on réutilise
+    // IMPORTANT: on ne filtre PLUS par class_id ni subject_id ici
     const { data: sameSlot, error: slotErr } = await svc
       .from("teacher_sessions")
-      .select(
-        "id, started_at, actual_call_at, created_at, ended_at, status, expected_minutes, day_ci, slot_ci"
-      )
+      .select("id, started_at, actual_call_at, created_at, ended_at, status, expected_minutes")
       .eq("institution_id", cls.institution_id)
-      .eq("teacher_id", teacher_id)
-      .eq("day_ci", day_ci)
-      .eq("slot_ci", slot_ci);
+      .eq("teacher_id", user.id)
+      .gte("started_at", slotStartUTC.toISOString())
+      .lt("started_at", slotEndUTC.toISOString());
 
     if (slotErr) {
       return NextResponse.json({ error: slotErr.message }, { status: 400 });
     }
 
+    const fetchOne = async (id: string) => {
+      const { data, error } = await svc
+        .from("teacher_sessions")
+        .select(
+          `
+          id,
+          class_id,
+          subject_id,
+          started_at,
+          actual_call_at,
+          expected_minutes,
+          classes!inner ( label ),
+          institution_subjects!teacher_sessions_subject_id_fkey (
+            id,
+            subject:subjects ( id, name )
+          )
+        `
+        )
+        .eq("id", id)
+        .maybeSingle();
+
+      if (error || !data) return null;
+      return data;
+    };
+
     if (sameSlot && sameSlot.length) {
       const best = pickBestSession(sameSlot as any[]);
       const reuseSessionId = String(best.id);
 
+      // On met à jour la ligne “canonique” pour refléter la demande courante
+      // (sans écraser actual_call_at si déjà défini — on garde le 1er clic / 1ère info)
       const patch: any = {
         class_id,
         subject_id: instSubjectId,
-        started_at,
-        expected_minutes: resolvedExpectedMinutes,
-        day_ci,
-        slot_ci,
+        started_at, // canonique (= début de créneau)
+        expected_minutes: resolved_expected_minutes,
       };
+      if (!best.actual_call_at) patch.actual_call_at = effectiveCallAt;
 
-      const existingCall = parseIsoDate(best.actual_call_at);
-      const candidate = new Date(effectiveCallAtISO);
-      const candidateOk =
-        candidate.getTime() >= slotStartUTC.getTime() &&
-        candidate.getTime() < slotEndUTC.getTime();
-
-      if (!existingCall) {
-        patch.actual_call_at = effectiveCallAtISO;
-      } else if (candidateOk && candidate.getTime() < existingCall.getTime() - 60_000) {
-        patch.actual_call_at = effectiveCallAtISO;
-      }
-
-      const { error: upErr } = await svc
-        .from("teacher_sessions")
-        .update(patch)
-        .eq("id", reuseSessionId);
+      const { error: upErr } = await svc.from("teacher_sessions").update(patch).eq("id", reuseSessionId);
 
       if (upErr) {
+        // même si update échoue, on tente de renvoyer la séance existante
         console.error("[teacher/sessions/start] reuse update error", upErr);
       }
 
-      const session = await fetchTeacherSessionFull(svc, reuseSessionId);
+      const session = await fetchOne(reuseSessionId);
       if (!session) {
         return NextResponse.json(
           { error: "Échec de la récupération de la séance existante." },
@@ -554,38 +453,33 @@ export async function POST(req: NextRequest) {
       const item = {
         id: session.id as string,
         class_id: session.class_id as string,
-        class_label:
-          (session.classes && (session.classes as any).label) || cls.label || "",
+        class_label: (session.classes && (session.classes as any).label) || cls.label || "",
         subject_id:
-          (session.institution_subjects &&
-            (session.institution_subjects as any).subject?.id) ||
+          (session.institution_subjects && (session.institution_subjects as any).subject?.id) ||
           raw_subject_id,
         subject_name:
-          (session.institution_subjects &&
-            (session.institution_subjects as any).subject?.name) ||
+          (session.institution_subjects && (session.institution_subjects as any).subject?.name) ||
           null,
-        started_at: session.started_at as string,
-        actual_call_at: (session as any).actual_call_at as string | null,
+        started_at: session.started_at as string, // début de créneau
+        actual_call_at: (session as any).actual_call_at as string | null, // ✅ heure effective
         expected_minutes: session.expected_minutes as number | null,
       };
 
       return NextResponse.json({ item }, { status: 200 });
     }
 
-    /* 8) créer la séance */
+    /* 4) Sinon: on crée la séance (started_at CANONIQUE, actual_call_at EFFECTIF) */
     const { data: session, error: insErr } = await svc
       .from("teacher_sessions")
       .insert({
         institution_id: cls.institution_id,
         class_id,
         subject_id: instSubjectId,
-        teacher_id,
+        teacher_id: user.id,
         created_by: user.id,
-        started_at,
-        expected_minutes: resolvedExpectedMinutes,
-        actual_call_at: effectiveCallAtISO,
-        day_ci,
-        slot_ci,
+        started_at, // début de créneau
+        expected_minutes: resolved_expected_minutes,
+        actual_call_at: effectiveCallAt, // ✅ heure effective (offline-friendly)
       })
       .select(
         `
@@ -595,8 +489,6 @@ export async function POST(req: NextRequest) {
         started_at,
         actual_call_at,
         expected_minutes,
-        day_ci,
-        slot_ci,
         classes!inner ( label ),
         institution_subjects!teacher_sessions_subject_id_fkey (
           id,
@@ -620,33 +512,29 @@ export async function POST(req: NextRequest) {
         );
       }
 
+      // En cas de race condition (unique future) : relire et renvoyer
       if (pgCode === "23505") {
         const { data: retry, error: rErr } = await svc
           .from("teacher_sessions")
-          .select(
-            "id, started_at, actual_call_at, created_at, ended_at, status, day_ci, slot_ci"
-          )
+          .select("id, started_at, actual_call_at, created_at, ended_at, status")
           .eq("institution_id", cls.institution_id)
-          .eq("teacher_id", teacher_id)
-          .eq("day_ci", day_ci)
-          .eq("slot_ci", slot_ci);
+          .eq("teacher_id", user.id)
+          .gte("started_at", slotStartUTC.toISOString())
+          .lt("started_at", slotEndUTC.toISOString());
 
         if (!rErr && retry && retry.length) {
           const best = pickBestSession(retry as any[]);
-          const s2 = await fetchTeacherSessionFull(svc, String(best.id));
+          const s2 = await fetchOne(String(best.id));
           if (s2) {
             const item = {
               id: s2.id as string,
               class_id: s2.class_id as string,
-              class_label:
-                (s2.classes && (s2.classes as any).label) || cls.label || "",
+              class_label: (s2.classes && (s2.classes as any).label) || cls.label || "",
               subject_id:
-                (s2.institution_subjects &&
-                  (s2.institution_subjects as any).subject?.id) ||
+                (s2.institution_subjects && (s2.institution_subjects as any).subject?.id) ||
                 raw_subject_id,
               subject_name:
-                (s2.institution_subjects &&
-                  (s2.institution_subjects as any).subject?.name) ||
+                (s2.institution_subjects && (s2.institution_subjects as any).subject?.name) ||
                 null,
               started_at: s2.started_at as string,
               actual_call_at: (s2 as any).actual_call_at as string | null,
@@ -658,27 +546,21 @@ export async function POST(req: NextRequest) {
       }
 
       console.error("[teacher/sessions/start] insert error", insErr);
-      return NextResponse.json(
-        { error: "Échec du démarrage de la séance." },
-        { status: 500 }
-      );
+      return NextResponse.json({ error: "Échec du démarrage de la séance." }, { status: 500 });
     }
 
     const item = {
       id: session.id as string,
       class_id: session.class_id as string,
-      class_label:
-        (session.classes && (session.classes as any).label) || cls.label || "",
+      class_label: (session.classes && (session.classes as any).label) || cls.label || "",
       subject_id:
-        (session.institution_subjects &&
-          (session.institution_subjects as any).subject?.id) ||
+        (session.institution_subjects && (session.institution_subjects as any).subject?.id) ||
         raw_subject_id,
       subject_name:
-        (session.institution_subjects &&
-          (session.institution_subjects as any).subject?.name) ||
+        (session.institution_subjects && (session.institution_subjects as any).subject?.name) ||
         null,
-      started_at: session.started_at as string,
-      actual_call_at: (session as any).actual_call_at as string | null,
+      started_at: session.started_at as string, // créneau
+      actual_call_at: (session as any).actual_call_at as string | null, // ✅ heure effective
       expected_minutes: session.expected_minutes as number | null,
     };
 

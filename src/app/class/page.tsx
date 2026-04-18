@@ -1252,7 +1252,7 @@ export default function ClassDevicePage() {
     return (periodsByDay[wd] || []).length > 0;
   }, [periodsByDay, inst?.tz]);
 
-  const canStartAttendanceNow = !hasConfiguredSlotsToday || !!activeConfiguredSlot;
+  const canStartAttendanceNow = !!activeConfiguredSlot;
 
   /* 2) charger les matières quand la classe change */
   useEffect(() => {
@@ -1401,7 +1401,7 @@ export default function ClassDevicePage() {
       return;
     }
 
-    if (hasConfiguredSlotsToday && !activeConfiguredSlot) {
+    if (!activeConfiguredSlot) {
       setMsg("L’appel n’est autorisé que pendant un créneau ouvert par l’administration.");
       return;
     }
@@ -1768,7 +1768,7 @@ export default function ClassDevicePage() {
           </div>
         </div>
 
-        {hasConfiguredSlotsToday && !activeConfiguredSlot && !open && (
+        {!activeConfiguredSlot && !open && (
           <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800">
             Hors créneau : l’appel est bloqué tant qu’aucun créneau administratif n’est ouvert.
           </div>

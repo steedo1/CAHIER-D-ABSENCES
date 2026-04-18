@@ -214,6 +214,127 @@ function ToastHost({
   );
 }
 
+
+function OverviewCard({
+  label,
+  value,
+  hint,
+  tone = "slate",
+}: {
+  label: string;
+  value: string | number;
+  hint: string;
+  tone?: "slate" | "sky" | "emerald" | "violet" | "amber";
+}) {
+  const tones: Record<
+    NonNullable<typeof tone>,
+    { wrap: string; value: string; badge: string }
+  > = {
+    slate: {
+      wrap: "border-slate-200 bg-white",
+      value: "text-slate-900",
+      badge: "bg-slate-100 text-slate-700",
+    },
+    sky: {
+      wrap: "border-sky-200 bg-sky-50/70",
+      value: "text-sky-900",
+      badge: "bg-sky-100 text-sky-700",
+    },
+    emerald: {
+      wrap: "border-emerald-200 bg-emerald-50/70",
+      value: "text-emerald-900",
+      badge: "bg-emerald-100 text-emerald-700",
+    },
+    violet: {
+      wrap: "border-violet-200 bg-violet-50/70",
+      value: "text-violet-900",
+      badge: "bg-violet-100 text-violet-700",
+    },
+    amber: {
+      wrap: "border-amber-200 bg-amber-50/80",
+      value: "text-amber-900",
+      badge: "bg-amber-100 text-amber-700",
+    },
+  };
+
+  const t = tones[tone];
+
+  return (
+    <div className={`rounded-3xl border p-4 shadow-sm ${t.wrap}`}>
+      <div className={`inline-flex rounded-full px-2.5 py-1 text-[11px] font-bold ${t.badge}`}>
+        {label}
+      </div>
+      <div className={`mt-3 text-3xl font-black tracking-tight ${t.value}`}>
+        {value}
+      </div>
+      <div className="mt-1 text-sm text-slate-600">{hint}</div>
+    </div>
+  );
+}
+
+function SectionCard({
+  id,
+  eyebrow,
+  title,
+  description,
+  actions,
+  children,
+}: {
+  id?: string;
+  eyebrow: string;
+  title: string;
+  description?: string;
+  actions?: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <section
+      id={id}
+      className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-sm"
+    >
+      <div className="border-b border-slate-100 px-5 py-5 md:px-6">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div className="max-w-3xl">
+            <div className="text-[11px] font-black uppercase tracking-[0.2em] text-slate-500">
+              {eyebrow}
+            </div>
+            <h2 className="mt-2 text-xl font-black tracking-tight text-slate-900 md:text-2xl">
+              {title}
+            </h2>
+            {description ? (
+              <p className="mt-2 text-sm leading-6 text-slate-600">{description}</p>
+            ) : null}
+          </div>
+          {actions ? <div className="flex shrink-0 flex-wrap items-center gap-2">{actions}</div> : null}
+        </div>
+      </div>
+      <div className="px-5 py-5 md:px-6 md:py-6">{children}</div>
+    </section>
+  );
+}
+
+function SubSection({
+  title,
+  description,
+  children,
+}: {
+  title: string;
+  description?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="rounded-3xl border border-slate-200 bg-slate-50/70 p-4 md:p-5">
+      <div className="mb-4">
+        <div className="text-sm font-black uppercase tracking-[0.16em] text-slate-700">
+          {title}
+        </div>
+        {description ? <p className="mt-1 text-xs leading-5 text-slate-500">{description}</p> : null}
+      </div>
+      {children}
+    </div>
+  );
+}
+
 /* =========================
    Ligne utilisateur
 ========================= */
@@ -1616,7 +1737,7 @@ export default function AdminSettingsPage() {
       // 4) Appels API : PUT /subject-components par matière + niveau
       let totalInserted = 0;
 
-      for (const [, group] of bySubjectLevel) {
+      for (const group of Array.from(bySubjectLevel.values())) {
         const res = await fetch(
           "/api/admin/institution/subject-components",
           {
@@ -1715,28 +1836,148 @@ export default function AdminSettingsPage() {
   const disableCoeffsSaveAll =
     savingCoeffs || loadingCoeffs || subjectCoeffs.length === 0;
 
+  const currentDayRows: Period[] = byDay[curDay] || [];
+  const allDayRows = Object.values(byDay) as Period[][];
+  const configuredDaysCount = allDayRows.filter((rows) => rows.length > 0).length;
+  const totalConfiguredPeriods = allDayRows.reduce(
+    (sum, rows) => sum + rows.length,
+    0
+  );
+  const activeEvalPeriods = evalPeriods.filter((row) => row.is_active).length;
+  const currentAcademicYearRow = academicYears.find(
+    (row) => row.code === selectedAcademicYear
+  );
+  const currentAcademicYearText =
+    currentAcademicYearRow?.code || selectedAcademicYear || "Automatique";
+  const currentLevelRows = coeffRowsForSelectedLevel.length;
+
   return (
     <>
       <ToastHost toasts={toasts} onClose={closeToast} />
 
-      <main className="mx-auto max-w-6xl space-y-6 p-4 md:p-6">
-        <header className="mb-2">
-          <h1 className="text-2xl font-semibold text-slate-900">
-            Paramètres
-          </h1>
-          <p className="text-sm text-slate-600">
-            Mot de passe, utilisateurs, horaires, années scolaires, périodes
-            d&apos;évaluation et coefficients des disciplines par niveau.
-          </p>
+      <main className="mx-auto max-w-7xl space-y-6 p-4 md:p-6">
+        <header className="overflow-hidden rounded-[32px] border border-slate-200 bg-gradient-to-br from-slate-950 via-slate-900 to-sky-950 px-5 py-6 text-white shadow-xl md:px-7 md:py-7">
+          <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
+            <div className="max-w-3xl">
+              <div className="inline-flex items-center rounded-full bg-white/10 px-3 py-1 text-[11px] font-black uppercase tracking-[0.2em] text-sky-100 ring-1 ring-white/15">
+                Centre de configuration
+              </div>
+              <h1 className="mt-4 text-3xl font-black tracking-tight text-white md:text-4xl">
+                Paramètres de l&apos;établissement
+              </h1>
+              <p className="mt-3 text-sm leading-6 text-slate-200 md:text-[15px]">
+                Un espace plus lisible pour gérer la sécurité, les utilisateurs,
+                les horaires, les années scolaires, les périodes d&apos;évaluation
+                et les coefficients de disciplines, sans changer la logique
+                existante.
+              </p>
+              <div className="mt-4 flex flex-wrap gap-2 text-xs font-semibold text-slate-200">
+                <span className="rounded-full bg-white/10 px-3 py-1 ring-1 ring-white/15">
+                  {users.length} utilisateur(s) chargé(s)
+                </span>
+                <span className="rounded-full bg-white/10 px-3 py-1 ring-1 ring-white/15">
+                  {configuredDaysCount} jour(s) configuré(s)
+                </span>
+                <span className="rounded-full bg-white/10 px-3 py-1 ring-1 ring-white/15">
+                  Année active : {currentAcademicYearText}
+                </span>
+              </div>
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="rounded-3xl border border-white/10 bg-white/10 p-4 backdrop-blur">
+                <div className="text-xs font-black uppercase tracking-[0.16em] text-sky-100">
+                  Horaires enregistrés
+                </div>
+                <div className="mt-2 text-3xl font-black text-white">
+                  {totalConfiguredPeriods}
+                </div>
+                <div className="mt-1 text-sm text-slate-200">
+                  Créneau(x) sur {configuredDaysCount} jour(s)
+                </div>
+              </div>
+              <div className="rounded-3xl border border-white/10 bg-white/10 p-4 backdrop-blur">
+                <div className="text-xs font-black uppercase tracking-[0.16em] text-sky-100">
+                  Périodes de bulletin
+                </div>
+                <div className="mt-2 text-3xl font-black text-white">
+                  {activeEvalPeriods}
+                </div>
+                <div className="mt-1 text-sm text-slate-200">
+                  Période(s) active(s)
+                </div>
+              </div>
+            </div>
+          </div>
         </header>
+
+        <section className="rounded-[28px] border border-slate-200 bg-white p-4 shadow-sm md:p-5">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <div className="text-[11px] font-black uppercase tracking-[0.2em] text-slate-500">
+                Navigation rapide
+              </div>
+              <p className="mt-1 text-sm text-slate-600">
+                Allez directement au bloc que vous voulez modifier.
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {[
+                ["#password", "Mon mot de passe"],
+                ["#users", "Utilisateurs"],
+                ["#schedule", "Horaires"],
+                ["#academic-years", "Années"],
+                ["#grading-periods", "Périodes"],
+                ["#subject-coeffs", "Coefficients"],
+              ].map(([href, label]) => (
+                <a
+                  key={href}
+                  href={href}
+                  className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-sm font-medium text-slate-700 transition hover:bg-slate-100"
+                >
+                  {label}
+                </a>
+              ))}
+            </div>
+          </div>
+        </section>
+
+        <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <OverviewCard
+            label="Sécurité"
+            value={busyMine || busyCustom ? "En cours" : "Prêt"}
+            hint="Gestion des mots de passe"
+            tone="sky"
+          />
+          <OverviewCard
+            label="Utilisateurs"
+            value={users.length}
+            hint={userListOpen ? "Liste ouverte" : "Liste repliée"}
+            tone="violet"
+          />
+          <OverviewCard
+            label="Horaires"
+            value={currentDayRows.length}
+            hint={`Créneau(x) pour le jour ${curDay}`}
+            tone="emerald"
+          />
+          <OverviewCard
+            label="Discipline(s)"
+            value={currentLevelRows}
+            hint={selectedCoeffLevel ? `Niveau ${selectedCoeffLevel}` : "Aucun niveau sélectionné"}
+            tone="amber"
+          />
+        </section>
 
         {/* =======================
             1) Mon mot de passe
         ======================== */}
-        <section className="rounded-2xl border bg-white p-5">
-          <div className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-700">
-            Mon mot de passe
-          </div>
+        <SectionCard
+          id="password"
+          eyebrow="Sécurité"
+          title="Mon mot de passe"
+          description="Modifiez votre mot de passe administrateur sans toucher aux autres réglages de la page."
+        >
 
           <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
             <div>
@@ -1803,25 +2044,29 @@ export default function AdminSettingsPage() {
           </div>
 
           {msgMine && (
-            <div className="mt-2 text-sm text-slate-700">{msgMine}</div>
+            <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
+              {msgMine}
+            </div>
           )}
-        </section>
+        </SectionCard>
 
         {/* ==========================================
             2) Réinitialiser le mot de passe d'un user
         =========================================== */}
-        <section className="rounded-2xl border bg-white p-5">
-          <div className="mb-2 flex items-center justify-between">
-            <div className="text-sm font-semibold uppercase tracking-wide text-slate-700">
-              Réinitialiser le mot de passe d’un utilisateur
-            </div>
+        <SectionCard
+          id="users"
+          eyebrow="Administration"
+          title="Réinitialiser le mot de passe d’un utilisateur"
+          description="Affichez la liste quand vous en avez besoin, puis lancez une réinitialisation temporaire ou un mot de passe personnalisé."
+          actions={
             <button
               onClick={() => setUserListOpen((v) => !v)}
-              className="rounded-lg border px-3 py-1.5 text-sm hover:bg-slate-50"
+              className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
             >
               {userListOpen ? "Masquer la liste" : "Afficher la liste"}
             </button>
-          </div>
+          }
+        >
 
           {userListOpen && (
             <>
@@ -1904,34 +2149,32 @@ export default function AdminSettingsPage() {
               )}
             </>
           )}
-        </section>
+        </SectionCard>
 
         {/* =======================
             3) Horaires & séances + infos établissement
         ======================== */}
-        <section className="rounded-2xl border bg-white p-5">
-          <div className="mb-3 flex items-center justify-between">
-            <div>
-              <div className="text-sm font-semibold uppercase tracking-wide text-slate-700">
-                Horaires & séances de l’établissement
-              </div>
-              <p className="text-xs text-slate-500">
-                Fuseau horaire, durée de séance, créneaux journaliers et infos
-                administratives (logo, ministère, téléphone…). Ces paramètres
-                pilotent les retards et certains documents (bulletins, exports).
-              </p>
-            </div>
+        <SectionCard
+          id="schedule"
+          eyebrow="Organisation"
+          title="Horaires, séances et identité de l’établissement"
+          description="Regroupez ici les informations administratives, les créneaux officiels et le générateur rapide de séances pour offrir une lecture plus simple aux utilisateurs."
+          actions={
             <button
               onClick={loadInstitutionConfig}
-              className="rounded-lg border px-3 py-1.5 text-sm hover:bg-slate-50"
+              className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
               title="Rafraîchir"
             >
               Rafraîchir
             </button>
-          </div>
+          }
+        >
 
-          {/* Paramètres d’établissement (horaires) */}
-          <div className="mb-4 grid grid-cols-1 gap-3 md:grid-cols-3">
+          <SubSection
+            title="Paramètres généraux"
+            description="Fuseau horaire, durée par défaut et informations administratives affichées dans certains documents."
+          >
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
             <div>
               <div className="mb-1 text-xs text-slate-500">
                 Fuseau horaire
@@ -2396,9 +2639,13 @@ export default function AdminSettingsPage() {
               </div>
             )}
           </div>
+          </SubSection>
 
-          {/* Onglets jours */}
-          <div className="mb-2 flex flex-wrap gap-2">
+          <SubSection
+            title="Créneaux par jour"
+            description="Sélectionnez un jour, modifiez chaque horaire si nécessaire, puis enregistrez l’ensemble."
+          >
+            <div className="mb-3 flex flex-wrap gap-2">
             {[
               { d: 1, n: "Lun" },
               { d: 2, n: "Mar" },
@@ -2528,37 +2775,32 @@ export default function AdminSettingsPage() {
             </button>
           </div>
 
-          <div className="mt-2 text-[12px] text-slate-500">
+          <div className="mt-4 text-[12px] text-slate-500">
             Astuce : si vous laissez des jours vides, ils ne seront pas pris en
             compte. Le calcul de retard se base sur le créneau du jour le plus
             proche de l’heure de début de séance.
           </div>
-        </section>
+          </SubSection>
+        </SectionCard>
 
         {/* =======================
             4) Années scolaires
         ======================== */}
-        <section className="rounded-2xl border bg-white p-5">
-          <div className="mb-3 flex items-center justify-between">
-            <div>
-              <div className="text-sm font-semibold uppercase tracking-wide text-slate-700">
-                Années scolaires (archives & bulletins)
-              </div>
-              <p className="text-xs text-slate-500">
-                Permet d&apos;archiver absences et notes et de filtrer les
-                bulletins par année.
-              </p>
-            </div>
+        <SectionCard
+          id="academic-years"
+          eyebrow="Archivage"
+          title="Années scolaires"
+          description="Définissez l’année courante, préparez les archives et choisissez l’année utilisée pour les périodes et les bulletins."
+          actions={
             <button
               onClick={loadAcademicYears}
               disabled={loadingAcademicYears}
-              className="rounded-lg border px-3 py-1.5 text-sm hover:bg-slate-50 disabled:opacity-60"
+              className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-60"
             >
-              {loadingAcademicYears
-                ? "Chargement…"
-                : "Rafraîchir"}
+              {loadingAcademicYears ? "Chargement…" : "Rafraîchir"}
             </button>
-          </div>
+          }
+        >
 
           {msgAcademicYears && (
             <div className="mb-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
@@ -2745,32 +2987,26 @@ export default function AdminSettingsPage() {
               </button>
             </div>
           </div>
-        </section>
+        </SectionCard>
 
         {/* =======================
             5) Périodes d'évaluation (bulletins)
         ======================== */}
-        <section className="rounded-2xl border bg-white p-5">
-          <div className="mb-3 flex items-center justify-between">
-            <div>
-              <div className="text-sm font-semibold uppercase tracking-wide text-slate-700">
-                Périodes d&apos;évaluation (bulletins)
-              </div>
-              <p className="text-xs text-slate-500">
-                Trimestres, semestres, compositions… Chaque période a un
-                coefficient utilisé pour la moyenne annuelle.
-              </p>
-            </div>
+        <SectionCard
+          id="grading-periods"
+          eyebrow="Bulletins"
+          title="Périodes d&apos;évaluation"
+          description="Trimestres, semestres, compositions : chaque période garde son ordre, son coefficient et sa plage de dates."
+          actions={
             <button
               onClick={() => loadEvalPeriods()}
               disabled={loadingEvalPeriods}
-              className="rounded-lg border px-3 py-1.5 text-sm hover:bg-slate-50 disabled:opacity-60"
+              className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-60"
             >
-              {loadingEvalPeriods
-                ? "Chargement…"
-                : "Rafraîchir"}
+              {loadingEvalPeriods ? "Chargement…" : "Rafraîchir"}
             </button>
-          </div>
+          }
+        >
 
           {msgEvalPeriods && (
             <div className="mb-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
@@ -2992,37 +3228,29 @@ export default function AdminSettingsPage() {
             « Semestre 1 » et « Semestre 2 ». Pour le primaire, vous pouvez
             définir « Composition de mars », « Composition de juin », etc.
           </div>
-        </section>
+        </SectionCard>
 
         {/* =======================
             6) Coefficients des disciplines + sous-matières
         ======================== */}
-        <section className="rounded-2xl border bg-white p-5">
-          <div className="mb-3 flex items-center justify-between">
-            <div>
-              <div className="text-sm font-semibold uppercase tracking-wide text-slate-700">
-                Coefficients des disciplines par niveau (bulletins)
-              </div>
-              <p className="text-xs text-slate-500">
-                Coefficient par discipline et par niveau pour la moyenne
-                générale. Certaines matières peuvent être détaillées en
-                sous-matières (dictée, lecture, expression écrite, TP, etc.)
-                dont la somme doit respecter le coefficient de la matière.
-              </p>
-            </div>
+        <SectionCard
+          id="subject-coeffs"
+          eyebrow="Notation"
+          title="Coefficients des disciplines par niveau"
+          description="Ajustez les coefficients du bulletin et, si besoin, détaillez chaque matière en sous-matières tout en respectant la somme attendue."
+          actions={
             <button
               onClick={() => {
                 loadSubjectCoeffs();
                 loadSubjectComponents();
               }}
               disabled={loadingCoeffs || loadingComponents}
-              className="rounded-lg border px-3 py-1.5 text-sm hover:bg-slate-50 disabled:opacity-60"
+              className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-60"
             >
-              {loadingCoeffs || loadingComponents
-                ? "Chargement…"
-                : "Rafraîchir"}
+              {loadingCoeffs || loadingComponents ? "Chargement…" : "Rafraîchir"}
             </button>
-          </div>
+          }
+        >
 
           {msgCoeffs && (
             <div className="mb-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
@@ -3222,7 +3450,7 @@ export default function AdminSettingsPage() {
               </button>
             </div>
           </div>
-        </section>
+        </SectionCard>
       </main>
 
       {/* Modal mot de passe personnalisé */}
