@@ -577,7 +577,7 @@ export default function ClassDevicePage() {
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const id = window.setInterval(() => setNowTick(Date.now()), 30_000);
+    const id = window.setInterval(() => setNowTick(Date.now()), 5_000);
     return () => window.clearInterval(id);
   }, []);
 
@@ -1280,8 +1280,8 @@ export default function ClassDevicePage() {
 
     (async () => {
       const j = await offlineGetJson(
-        `/api/class/subjects?class_id=${classId}`,
-        `classDevice:subjects:${classId}`
+        `/api/class/subjects?class_id=${classId}&slot=${encodeURIComponent(activeSlotKey)}`,
+        `classDevice:subjects:${classId}:${activeSlotKey}`
       ).catch(() => ({ items: [] as Subject[] }));
       const list = (j?.items || []) as Subject[];
       setSubjects(list);

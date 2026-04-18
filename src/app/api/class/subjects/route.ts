@@ -229,3 +229,4 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: err?.message || "class_subjects_failed" }, { status: 500 });
   }
 }
+
