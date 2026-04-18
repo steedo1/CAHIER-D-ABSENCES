@@ -1122,16 +1122,17 @@ export default function TeacherDashboard() {
       const openId = String(open.id || "");
       const clientId = clientSessionIdFromOpen(open);
       const isLocal = openId.startsWith("client:");
+      const actualEndAt = new Date().toISOString();
 
-      // ✅ si session serveur -> on envoie session_id (plus robuste)
-      // ✅ si session locale -> on peut envoyer client_session_id (si ton API le supporte), sinon rien
-      const body: any = {};
+      const body: any = {
+        actual_end_at: actualEndAt,
+      };
       if (!isLocal) body.session_id = open.id;
       else if (clientId) body.client_session_id = clientId;
 
       const r: any = await offlineMutateJson(
         "/api/teacher/sessions/end",
-        Object.keys(body).length ? { method: "PATCH", body } : { method: "PATCH" },
+        { method: "PATCH", body },
         { mergeKey: `teacher:end:${open.id}` }
       );
 
@@ -1145,7 +1146,6 @@ export default function TeacherDashboard() {
       } else {
         const err = extractRespError(r);
         setMsg(err ? `Erreur serveur : ${err}` : "Erreur serveur : impossible de terminer la séance.");
-        // ❗ ne pas terminer localement si c'est une erreur serveur
       }
     } catch (e: any) {
       setMsg(e?.message || "Échec fin de séance");
