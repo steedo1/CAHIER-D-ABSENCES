@@ -303,7 +303,7 @@ export async function POST(req: NextRequest) {
     // b) périodes du jour
     const { data: periods, error: pErr } = await svc
       .from("institution_periods")
-      .select("weekday, period_no, label, start_time, end_time")
+      .select("id, weekday, period_no, label, start_time, end_time")
       .eq("institution_id", cls.institution_id)
       .eq("weekday", isodow)
       .order("period_no", { ascending: true });
@@ -312,10 +312,11 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: pErr.message }, { status: 400 });
     }
 
-    let currentPeriod: { startMin: number; endMin: number } | null = null;
+    let currentPeriod: { periodId: string; startMin: number; endMin: number } | null = null;
 
     if (Array.isArray(periods) && periods.length) {
       const expanded = periods.map((p: any) => ({
+        periodId: String(p.id || ""),
         label: p.label || null,
         startMin: hmsToMin(p.start_time),
         endMin: hmsToMin(p.end_time),
@@ -324,7 +325,7 @@ export async function POST(req: NextRequest) {
       const cur = expanded.find((p) => callMin >= p.startMin && callMin < p.endMin) ?? null;
 
       if (cur && cur.endMin > cur.startMin) {
-        currentPeriod = { startMin: cur.startMin, endMin: cur.endMin };
+        currentPeriod = { periodId: cur.periodId, startMin: cur.startMin, endMin: cur.endMin };
       }
 
       if (!currentPeriod) {
@@ -365,6 +366,33 @@ export async function POST(req: NextRequest) {
     // c) bornes du créneau (UTC) + started_at canonique = début du créneau
     const slotStartMin = currentPeriod.startMin;
     const slotEndMin = currentPeriod.endMin;
+
+    // d) Vérifier que le prof est bien prévu sur CETTE classe + CETTE matière + CE créneau
+    const { data: scheduledRows, error: scheduledErr } = await svc
+      .from("teacher_timetables")
+      .select("id")
+      .eq("institution_id", cls.institution_id)
+      .eq("teacher_id", user.id)
+      .eq("class_id", class_id)
+      .eq("subject_id", instSubjectId)
+      .eq("weekday", isodow)
+      .eq("period_id", currentPeriod.periodId)
+      .limit(1);
+
+    if (scheduledErr) {
+      return NextResponse.json({ error: scheduledErr.message }, { status: 400 });
+    }
+
+    if (!scheduledRows || scheduledRows.length === 0) {
+      return NextResponse.json(
+        {
+          error: "teacher_not_scheduled_for_slot",
+          message:
+            "Démarrage refusé : vous n’êtes pas affecté à cette classe pour ce créneau selon votre emploi du temps.",
+        },
+        { status: 403 }
+      );
+    }
 
     const slotStartHM = minToHM(slotStartMin);
     const slotEndHM = minToHM(Math.min(slotEndMin, 24 * 60));

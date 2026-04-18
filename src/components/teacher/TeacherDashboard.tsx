@@ -278,6 +278,7 @@ export default function TeacherDashboard() {
   const [isOnline, setIsOnline] = useState<boolean>(true);
   const [pending, setPending] = useState<number>(0);
   const [syncing, setSyncing] = useState<boolean>(false);
+  const [nowTick, setNowTick] = useState<number>(Date.now());
 
 
   /* ───────── Rappel sonore / vibration fin de séance ───────── */
@@ -472,6 +473,12 @@ export default function TeacherDashboard() {
       window.removeEventListener("offline", onOffline);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const id = window.setInterval(() => setNowTick(Date.now()), 30_000);
+    return () => window.clearInterval(id);
   }, []);
 
   // ✅ Helpers : distinguer "offline/queue" vs "erreur serveur"
@@ -828,7 +835,7 @@ export default function TeacherDashboard() {
   // Calcul du créneau « du moment » + verrouillage heure/durée
   function computeDefaultsForNow() {
     const tz = inst?.tz || "Africa/Abidjan";
-    const now = new Date();
+    const now = new Date(nowTick);
     const nowHM = hmInTZ(now, tz);
     const wd = weekdayInTZ1to7(now, tz); // 1..6, 7 = dimanche (hors créneau)
     const slots = periodsByDay[wd] || [];
@@ -862,7 +869,7 @@ export default function TeacherDashboard() {
   useEffect(() => {
     computeDefaultsForNow();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [JSON.stringify(periodsByDay), inst.default_session_minutes, inst.tz, selKey]);
+  }, [JSON.stringify(periodsByDay), inst.default_session_minutes, inst.tz, selKey, nowTick]);
 
 
   useEffect(() => {
@@ -872,22 +879,49 @@ export default function TeacherDashboard() {
 
   const activeConfiguredSlot = useMemo(() => {
     const tz = inst?.tz || "Africa/Abidjan";
-    const now = new Date();
+    const now = new Date(nowTick);
     const wd = weekdayInTZ1to7(now, tz);
     const slots = periodsByDay[wd] || [];
     if (!slots.length) return null;
 
     const nowMin = toMinutes(hmInTZ(now, tz));
     return slots.find((s) => nowMin >= toMinutes(s.start_time) && nowMin < toMinutes(s.end_time)) || null;
-  }, [periodsByDay, inst?.tz]);
+  }, [periodsByDay, inst?.tz, nowTick]);
 
   const hasConfiguredSlotsToday = useMemo(() => {
     const tz = inst?.tz || "Africa/Abidjan";
-    const wd = weekdayInTZ1to7(new Date(), tz);
+    const wd = weekdayInTZ1to7(new Date(nowTick), tz);
     return (periodsByDay[wd] || []).length > 0;
-  }, [periodsByDay, inst?.tz]);
+  }, [periodsByDay, inst?.tz, nowTick]);
 
   const canStartAttendanceNow = !!activeConfiguredSlot;
+
+  const activeSlotKey = useMemo(() => {
+    const tz = inst?.tz || "Africa/Abidjan";
+    const wd = weekdayInTZ1to7(new Date(nowTick), tz);
+    if (!hasConfiguredSlotsToday) return `no-config|${wd}`;
+    if (!activeConfiguredSlot) return `closed|${wd}`;
+    return `${wd}|${activeConfiguredSlot.start_time}|${activeConfiguredSlot.end_time}`;
+  }, [activeConfiguredSlot, hasConfiguredSlotsToday, inst?.tz, nowTick]);
+
+  useEffect(() => {
+    if (openRef.current) return;
+    (async () => {
+      try {
+        const cl = await offlineGetJson("/api/teacher/classes", "teacher:classes").catch(() => ({ items: [] }));
+        setTeachClasses((((cl as any)?.items) || []) as TeachClass[]);
+      } catch {
+        // ignore
+      }
+    })();
+  }, [activeSlotKey]);
+
+  useEffect(() => {
+    if (open) return;
+    if (selKey && !options.some((o) => o.key === selKey)) {
+      setSelKey(options[0]?.key || "");
+    }
+  }, [options, selKey, open]);
 
   useEffect(() => {
     clearReminderLoop();
@@ -985,7 +1019,14 @@ export default function TeacherDashboard() {
 
   /* Actions (séance) — OFFLINE OK */
   async function startSession() {
-    if (!sel) return;
+    if (!sel) {
+      setMsg(
+        canStartAttendanceNow
+          ? "Aucune classe ne vous est attribuée dans votre emploi du temps pour ce créneau."
+          : "L’appel n’est pas autorisé pour le moment."
+      );
+      return;
+    }
 
     void ensureAlarmReady();
 
@@ -1520,6 +1561,12 @@ export default function TeacherDashboard() {
         {!canStartAttendanceNow && (
           <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-800">
             L’appel n’est autorisé que pendant un créneau ouvert par l’administration.
+          </div>
+        )}
+
+        {canStartAttendanceNow && !open && options.length === 0 && (
+          <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+            Aucune classe ne vous est attribuée dans votre emploi du temps pour ce créneau.
           </div>
         )}
 
