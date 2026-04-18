@@ -6,15 +6,6 @@ import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-type RoleRow = {
-  role: string | null;
-};
-
-type ProfileRow = {
-  institution_id: string | null;
-  role?: string | null;
-};
-
 export async function GET() {
   try {
     const supa = await getSupabaseServerClient();
@@ -23,14 +14,13 @@ export async function GET() {
     const {
       data: { user },
     } = await supa.auth.getUser();
-
     if (!user) {
       return NextResponse.json({ error: "unauthorized" }, { status: 401 });
     }
 
     const { data: me, error: meErr } = await supa
       .from("profiles")
-      .select("institution_id, role")
+      .select("institution_id")
       .eq("id", user.id)
       .maybeSingle();
 
@@ -38,147 +28,87 @@ export async function GET() {
       return NextResponse.json({ error: meErr.message }, { status: 400 });
     }
 
-    const profile = (me ?? null) as ProfileRow | null;
-    const institution_id = profile?.institution_id ?? null;
-
+    const institution_id = me?.institution_id as string | null;
     if (!institution_id) {
       return NextResponse.json(
-        {
-          error: "no_institution",
-          message: "Aucune institution associée à ce compte.",
-        },
+        { error: "no_institution", message: "Aucune institution associée à ce compte." },
         { status: 400 }
       );
     }
 
-    const { data: roleRows, error: roleErr } = await supa
+    const { data: roleRow } = await supa
       .from("user_roles")
       .select("role")
       .eq("profile_id", user.id)
-      .eq("institution_id", institution_id);
+      .eq("institution_id", institution_id)
+      .maybeSingle();
 
-    if (roleErr) {
-      return NextResponse.json({ error: roleErr.message }, { status: 400 });
-    }
-
-    const roles = ((roleRows ?? []) as RoleRow[])
-      .map((r) => String(r.role || "").trim())
-      .filter(Boolean);
-
-    const profileRole = String(profile?.role || "").trim();
-    const isAdmin =
-      ["admin", "super_admin"].includes(profileRole) ||
-      roles.some((r) => ["admin", "super_admin"].includes(r));
-
-    if (!isAdmin) {
+    const role = (roleRow?.role as string | undefined) || "";
+    if (!["admin", "super_admin"].includes(role)) {
       return NextResponse.json(
-        {
-          error: "forbidden",
-          message: "Droits insuffisants pour consulter ces données.",
-        },
+        { error: "forbidden", message: "Droits insuffisants pour consulter ces données." },
         { status: 403 }
       );
     }
 
-    const [
-      { data: classes, error: classesErr },
-      { data: subjects, error: subjectsErr },
-      { data: teachers, error: teachersErr },
-      { data: periods, error: periodsErr },
-    ] = await Promise.all([
-      srv
-        .from("classes")
-        .select("id,label")
-        .eq("institution_id", institution_id)
-        .order("label", { ascending: true }),
-
-      srv
-        .from("institution_subjects")
-        .select("id,custom_name,subjects:subject_id(name)")
-        .eq("institution_id", institution_id)
-        .order("custom_name", { ascending: true }),
-
-      // On garde la logique actuelle, mais on filtre au moins les noms vides
-      srv
-        .from("profiles")
-        .select("id,display_name,phone")
-        .eq("institution_id", institution_id)
-        .order("display_name", { ascending: true }),
-
-      srv
-        .from("institution_periods")
-        .select("id,weekday,period_no,start_time,end_time")
-        .eq("institution_id", institution_id)
-        .order("weekday", { ascending: true })
-        .order("period_no", { ascending: true }),
-    ]);
-
-    if (classesErr) {
-      return NextResponse.json(
-        { error: "classes_failed", message: classesErr.message },
-        { status: 400 }
-      );
-    }
-
-    if (subjectsErr) {
-      return NextResponse.json(
-        { error: "subjects_failed", message: subjectsErr.message },
-        { status: 400 }
-      );
-    }
-
-    if (teachersErr) {
-      return NextResponse.json(
-        { error: "teachers_failed", message: teachersErr.message },
-        { status: 400 }
-      );
-    }
-
-    if (periodsErr) {
-      return NextResponse.json(
-        { error: "periods_failed", message: periodsErr.message },
-        { status: 400 }
-      );
-    }
+    const [{ data: classes }, { data: subjects }, { data: teachers }, { data: periods }] =
+      await Promise.all([
+        srv
+          .from("classes")
+          .select("id,label")
+          .eq("institution_id", institution_id)
+          .order("label", { ascending: true }),
+        srv
+          .from("institution_subjects")
+          .select("id,custom_name,subjects:subject_id(name)")
+          .eq("institution_id", institution_id)
+          .order("custom_name", { ascending: true }),
+        srv
+          .from("profiles")
+          .select("id,display_name,phone")
+          .eq("institution_id", institution_id)
+          .order("display_name", { ascending: true }),
+        srv
+          .from("institution_periods")
+          .select("id,weekday,period_no,start_time,end_time")
+          .eq("institution_id", institution_id)
+          .order("weekday", { ascending: true })
+          .order("period_no", { ascending: true }),
+      ]);
 
     const outClasses =
-      (classes ?? []).map((c: any) => ({
-        id: String(c.id),
+      (classes || []).map((c: any) => ({
+        id: c.id as string,
         label: String(c.label || "").trim(),
       })) ?? [];
 
     const outSubjects =
-      (subjects ?? []).map((s: any) => {
+      (subjects || []).map((s: any) => {
         let baseName = "";
         if (Array.isArray(s.subjects)) {
           baseName = s.subjects[0]?.name || "";
         } else if (s.subjects && typeof s.subjects === "object") {
           baseName = (s.subjects as any).name || "";
         }
-
+        const label = String(s.custom_name || baseName || "").trim();
         return {
-          id: String(s.id),
-          label: String(s.custom_name || baseName || "").trim(),
+          id: s.id as string,
+          label,
         };
       }) ?? [];
 
     const outTeachers =
-      (teachers ?? [])
-        .map((t: any) => ({
-          id: String(t.id),
-          display_name: String(t.display_name || "").trim(),
-          phone: t.phone ? String(t.phone) : null,
-        }))
-        .filter((t) => t.display_name.length > 0) ?? [];
+      (teachers || []).map((t: any) => ({
+        id: t.id as string,
+        display_name: String(t.display_name || "").trim(),
+        phone: t.phone ? String(t.phone) : null,
+      })) ?? [];
 
     const outPeriods =
-      (periods ?? []).map((p: any) => ({
-        id: String(p.id),
-        weekday: typeof p.weekday === "number" ? p.weekday : Number(p.weekday ?? 0) || 0,
-        period_no:
-          typeof p.period_no === "number"
-            ? p.period_no
-            : Number(p.period_no ?? 0) || 0,
+      (periods || []).map((p: any) => ({
+        id: p.id as string,
+        weekday: typeof p.weekday === "number" ? p.weekday : 0,
+        period_no: typeof p.period_no === "number" ? p.period_no : 0,
         start_time: p.start_time ? String(p.start_time) : null,
         end_time: p.end_time ? String(p.end_time) : null,
       })) ?? [];
