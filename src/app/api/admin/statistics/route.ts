@@ -70,7 +70,6 @@ function minToHM(min: number) {
   return `${pad2(h)}:${pad2(m)}`;
 }
 
-/** Différence (en minutes) entre startISO et actualISO (si null → 0) */
 function diffMinutes(startISO: string, actualISO: string | null) {
   try {
     const start = new Date(startISO);
@@ -116,7 +115,7 @@ function isEndedAtUsable(
 }
 
 /**
- * ✅ Séance réellement effectuée = clic "Démarrer" DANS le créneau prévu.
+ * Séance réellement effectuée = clic "Démarrer" DANS le créneau prévu.
  * - si actual_call_at est null → FAUX
  * - si clic >= fin du créneau → FAUX
  * - si expected_minutes manquant/0 → on prend 60 min par défaut
@@ -198,7 +197,6 @@ async function buildInstitutionSlots(
     .order("period_no", { ascending: true });
   if (error) throw new Error(error.message);
 
-  // Unifie par heure de début (HH:MM) — on conserve le premier end rencontré
   const firstForStart = new Map<string, { start: string; end: string }>();
   for (const p of per || []) {
     const s = String(p.start_time || "08:00:00").slice(0, 5);
@@ -208,6 +206,78 @@ async function buildInstitutionSlots(
   return Array.from(firstForStart.values()).sort((a, b) =>
     a.start.localeCompare(b.start)
   );
+}
+
+/* ───────── helpers day_ci / slot_ci ───────── */
+
+const TZ = "Africa/Abidjan";
+
+function ymdInAbidjan(iso: string) {
+  try {
+    return new Intl.DateTimeFormat("en-CA", {
+      timeZone: TZ,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(new Date(iso));
+  } catch {
+    return String(iso).slice(0, 10);
+  }
+}
+
+function hmInAbidjan(iso: string) {
+  try {
+    const parts = new Intl.DateTimeFormat("fr-FR", {
+      timeZone: TZ,
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    }).formatToParts(new Date(iso));
+    const hh = parts.find((p) => p.type === "hour")?.value ?? "00";
+    const mm = parts.find((p) => p.type === "minute")?.value ?? "00";
+    const hNum = Number.parseInt(hh, 10);
+    const mNum = Number.parseInt(mm, 10);
+    return `${pad2(Number.isFinite(hNum) ? hNum : 0)}:${pad2(
+      Number.isFinite(mNum) ? mNum : 0
+    )}`;
+  } catch {
+    return "00:00";
+  }
+}
+
+function normalizeDayCi(dayCi: string | null | undefined, startedAt: string) {
+  const raw = String(dayCi || "").trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+  return ymdInAbidjan(startedAt);
+}
+
+function normalizeSlotCi(slotCi: string | null | undefined, startedAt: string) {
+  const raw = String(slotCi || "").trim();
+  if (!raw) return `${normalizeDayCi(null, startedAt)} ${hmInAbidjan(startedAt)}:00`;
+
+  // "YYYY-MM-DD HH:MM:SS" ou "YYYY-MM-DDTHH:MM:SS"
+  const m = raw.match(
+    /^(\d{4}-\d{2}-\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?$/
+  );
+  if (m) {
+    return `${m[1]} ${m[2]}:${m[3]}:${m[4] || "00"}`;
+  }
+
+  // "HH:MM" ou "HH:MM:SS"
+  const hm = raw.match(/^(\d{2}):(\d{2})(?::(\d{2}))?$/);
+  if (hm) {
+    const day = normalizeDayCi(null, startedAt);
+    return `${day} ${hm[1]}:${hm[2]}:${hm[3] || "00"}`;
+  }
+
+  return `${normalizeDayCi(null, startedAt)} ${hmInAbidjan(startedAt)}:00`;
+}
+
+function extractHMFromSlotCi(slotCi: string | null | undefined, startedAt: string) {
+  const norm = normalizeSlotCi(slotCi, startedAt);
+  const m = norm.match(/(\d{2}):(\d{2})(?::\d{2})?$/);
+  if (!m) return hmInAbidjan(startedAt);
+  return `${m[1]}:${m[2]}`;
 }
 
 /* ───────────────────────────────────── */
@@ -235,7 +305,6 @@ export async function GET(req: NextRequest) {
 
     const { fromISO, toISOExclusive } = toDayRange(from, to);
 
-    // Établissement de l’utilisateur courant (RLS)
     const {
       data: { user },
     } = await rls.auth.getUser();
@@ -330,11 +399,10 @@ export async function GET(req: NextRequest) {
         )
       );
 
-      // Sessions créées côté prof
       let q1 = srv
         .from(sessionsTable)
         .select(
-          "id, teacher_id, class_id, subject_id, started_at, actual_call_at, ended_at, expected_minutes, institution_id, created_by"
+          "id, teacher_id, class_id, subject_id, started_at, actual_call_at, ended_at, expected_minutes, institution_id, created_by, day_ci, slot_ci"
         )
         .eq("teacher_id", teacher_id)
         .gte("started_at", fromISO)
@@ -342,7 +410,6 @@ export async function GET(req: NextRequest) {
       if (inst) q1 = q1.eq("institution_id", inst);
       const { data: sOwn } = await q1;
 
-      // Sessions créées côté compte-classe (mêmes classes du prof)
       const classIdsForTeacher = Array.from(
         new Set((ctPairs || []).map((r) => String(r.class_id)))
       );
@@ -351,7 +418,7 @@ export async function GET(req: NextRequest) {
         let q2 = srv
           .from(sessionsTable)
           .select(
-            "id, teacher_id, class_id, subject_id, started_at, actual_call_at, ended_at, expected_minutes, institution_id, created_by"
+            "id, teacher_id, class_id, subject_id, started_at, actual_call_at, ended_at, expected_minutes, institution_id, created_by, day_ci, slot_ci"
           )
           .in("class_id", classIdsForTeacher)
           .gte("started_at", fromISO)
@@ -368,7 +435,6 @@ export async function GET(req: NextRequest) {
         );
       }
 
-      // Dédupe par ID seulement (on dédoublonnera ensuite PAR CELLULE)
       const byId = new Map<string, any>();
       for (const s of sOwn || []) byId.set(String(s.id), s);
       for (const s of sFromClass || []) byId.set(String(s.id), s);
@@ -382,6 +448,8 @@ export async function GET(req: NextRequest) {
         expected_minutes: Number(s.expected_minutes || 0),
         teacher_id: s.teacher_id ? String(s.teacher_id) : null,
         created_by: s.created_by ? String(s.created_by) : null,
+        day_ci: s.day_ci ? String(s.day_ci) : null,
+        slot_ci: s.slot_ci ? String(s.slot_ci) : null,
       }));
 
       const classIdsFromSessions = Array.from(
@@ -423,34 +491,9 @@ export async function GET(req: NextRequest) {
         slots = buildUniformSlots(startHour, endHour, slotMin);
       }
 
-      const TZ = "Africa/Abidjan";
-      const fmtYMD = new Intl.DateTimeFormat("en-CA", {
-        timeZone: TZ,
-        year: "numeric",
-        month: "2-digit",
-        day: "2-digit",
-      });
-      const fmtHM = new Intl.DateTimeFormat("fr-FR", {
-        timeZone: TZ,
-        hour: "2-digit",
-        minute: "2-digit",
-        hour12: false,
-      });
-
-      const getHM = (d: Date) => {
-        const parts = fmtHM.formatToParts(d);
-        const h = parseInt(parts.find((p) => p.type === "hour")?.value || "0", 10);
-        const m = parseInt(
-          parts.find((p) => p.type === "minute")?.value || "0",
-          10
-        );
-        return { h, m };
-      };
-
       const classIdSet = new Set(classes.map((c) => c.id));
       const datesSet = new Set(dates);
 
-      // key = `${date}|${slotStart}|${classId}` -> ["HH:MM"] (UNIQUE : 1 seul clic)
       const cells: Record<string, string[]> = {};
       const cellsMeta: Record<
         string,
@@ -478,20 +521,14 @@ export async function GET(req: NextRequest) {
         return bucketToSlotStartAligned(h, m, slotMin, startHour, endHour);
       }
 
-      // Remplit les cellules : 1 cellule = 1 classe, 1 créneau
       for (const s of sessions) {
         if (!s.class_id || !classIdSet.has(s.class_id)) continue;
         if (!s.actual_call_at) continue;
 
-        const sched = new Date(s.started_at);
-        const dateKey = fmtYMD.format(sched);
+        const dateKey = normalizeDayCi(s.day_ci, s.started_at);
         if (!datesSet.has(dateKey)) continue;
 
-        const schedHM = (() => {
-          const { h, m } = getHM(sched);
-          return `${pad2(h)}:${pad2(m)}`;
-        })();
-
+        const schedHM = extractHMFromSlotCi(s.slot_ci, s.started_at);
         const slotKey = slotStartForHM(schedHM);
         if (!slotKey) continue;
 
@@ -501,19 +538,12 @@ export async function GET(req: NextRequest) {
         const slotLen = Math.max(0, hmToMin(slotObj.end) - hmToMin(slotObj.start));
         if (slotLen <= 0) continue;
 
-        // clic doit être DANS le créneau (slotLen)
         const delta = diffMinutes(s.started_at, s.actual_call_at);
         if (delta < 0 || delta >= slotLen) continue;
 
-        const click = new Date(s.actual_call_at);
-        const clickHM = (() => {
-          const { h, m } = getHM(click);
-          return `${pad2(h)}:${pad2(m)}`;
-        })();
-
+        const clickHM = hmInAbidjan(s.actual_call_at);
         const key = `${dateKey}|${slotKey}|${s.class_id}`;
 
-        // Garder uniquement le clic le plus tôt par cellule (évite double comptage prof + compte-classe)
         const prev = cells[key]?.[0];
         if (!prev || clickHM < prev) {
           cells[key] = [clickHM];
@@ -526,10 +556,8 @@ export async function GET(req: NextRequest) {
         }
       }
 
-      // ✅ Total minutes effectives = 1 fois par CRÉNEAU (date + slotStart), pas par classe
       const slotByStart = new Map(slots.map((s) => [s.start, s]));
 
-      // key = `${date}|${slotStart}` -> earliest clickHM across classes
       const slotClicks: Record<string, string> = {};
       for (const k of Object.keys(cells)) {
         const [dateKey, slotStart] = k.split("|");
@@ -575,7 +603,6 @@ export async function GET(req: NextRequest) {
 
     /* ====================== SUMMARY / DETAIL ====================== */
 
-    // 1) Base enseignants (de l’établissement)
     let qUR = srv.from("user_roles").select("profile_id").eq("role", "teacher");
     if (inst) qUR = qUR.eq("institution_id", inst);
     const { data: ur } = await qUR;
@@ -584,7 +611,6 @@ export async function GET(req: NextRequest) {
       new Set((ur || []).map((r: any) => String(r.profile_id)))
     );
 
-    // 2) Noms & disciplines depuis teacher_subjects
     let qTS = srv
       .from("teacher_subjects")
       .select("profile_id, subject_id, teacher_name, subject_name, institution_id");
@@ -630,7 +656,6 @@ export async function GET(req: NextRequest) {
       teacherScope = teacherScope.filter((id) => allowed.has(id));
     }
 
-    // 3) Séances
     const sessionsTable2 =
       (await tableExists(srv, "teacher_sessions"))
         ? "teacher_sessions"
@@ -642,7 +667,7 @@ export async function GET(req: NextRequest) {
       let q = srv
         .from(sessionsTable2)
         .select(
-          "id, teacher_id, subject_id, class_id, started_at, actual_call_at, ended_at, expected_minutes, institution_id"
+          "id, teacher_id, subject_id, class_id, started_at, actual_call_at, ended_at, expected_minutes, institution_id, day_ci, slot_ci"
         )
         .gte("started_at", fromISO)
         .lt("started_at", toISOExclusive);
@@ -688,7 +713,6 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    // 3.a dédoublonne par ID (au cas où)
     const seen = new Set<string>();
     type SessionRow = {
       id: string;
@@ -699,6 +723,8 @@ export async function GET(req: NextRequest) {
       actual_call_at: string | null;
       ended_at: string | null;
       expected_minutes: number;
+      day_ci: string | null;
+      slot_ci: string | null;
     };
 
     const sessionsRaw: SessionRow[] = (sessRows || [])
@@ -712,54 +738,14 @@ export async function GET(req: NextRequest) {
         actual_call_at: s.actual_call_at ? String(s.actual_call_at) : null,
         ended_at: s.ended_at ? String(s.ended_at) : null,
         expected_minutes: Number(s.expected_minutes || 0),
+        day_ci: s.day_ci ? String(s.day_ci) : null,
+        slot_ci: s.slot_ci ? String(s.slot_ci) : null,
       }));
 
     /**
-     * ✅ DÉDOUBLONNAGE "NORMAL" : 1 séance = 1 PROF + 1 JOUR + 1 CRÉNEAU (HH:MM)
-     * -> On IGNORE class_id dans la clé de comptage.
-     * -> On conserve :
-     *    - la 1ère heure started_at (la plus tôt)
-     *    - expected_minutes max
-     *    - le 1er clic VALIDE (le plus tôt)
-     *    - la liste des classes/subjects rencontrés sur ce créneau (pour l’affichage)
+     * Dédoublonnage réel par créneau métier :
+     * 1 séance = 1 PROF + 1 JOUR LOCAL + 1 SLOT_CANONIQUE
      */
-    const TZ2 = "Africa/Abidjan";
-    const fmtYMD2 = new Intl.DateTimeFormat("en-CA", {
-      timeZone: TZ2,
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-    });
-    const fmtHM2 = new Intl.DateTimeFormat("fr-FR", {
-      timeZone: TZ2,
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: false,
-    });
-
-    const getDateKeyFromISO = (iso: string) => {
-      try {
-        return fmtYMD2.format(new Date(iso)); // YYYY-MM-DD
-      } catch {
-        return String(iso).slice(0, 10);
-      }
-    };
-
-    const getHMKeyFromISO = (iso: string) => {
-      try {
-        const parts = fmtHM2.formatToParts(new Date(iso));
-        const hh = parts.find((p) => p.type === "hour")?.value ?? "00";
-        const mm = parts.find((p) => p.type === "minute")?.value ?? "00";
-        const hNum = Number.parseInt(hh, 10);
-        const mNum = Number.parseInt(mm, 10);
-        return `${pad2(Number.isFinite(hNum) ? hNum : 0)}:${pad2(
-          Number.isFinite(mNum) ? mNum : 0
-        )}`;
-      } catch {
-        return "00:00";
-      }
-    };
-
     type SlotAgg = SessionRow & {
       _valid_call_at: string | null;
       _usable_ended_at: string | null;
@@ -773,14 +759,13 @@ export async function GET(req: NextRequest) {
       const tid = s.teacher_id || "";
       if (!tid) continue;
 
-      const day = getDateKeyFromISO(s.started_at);
-      const hm = getHMKeyFromISO(s.started_at);
-
-      // ✅ clé "normale" (pas de class_id)
-      const key = `${tid}|${day}|${hm}`;
+      const dayKey = normalizeDayCi(s.day_ci, s.started_at);
+      const slotKeyNorm = normalizeSlotCi(s.slot_ci, s.started_at);
+      const key = `${tid}|${dayKey}|${slotKeyNorm}`;
 
       const validCall =
-        s.actual_call_at && isCallWithinPlannedSlot(s.started_at, s.actual_call_at, s.expected_minutes)
+        s.actual_call_at &&
+        isCallWithinPlannedSlot(s.started_at, s.actual_call_at, s.expected_minutes)
           ? s.actual_call_at
           : null;
       const usableEndedAt = isEndedAtUsable(s.started_at, validCall, s.ended_at)
@@ -791,6 +776,8 @@ export async function GET(req: NextRequest) {
       if (!existing) {
         const agg: SlotAgg = {
           ...s,
+          day_ci: dayKey,
+          slot_ci: slotKeyNorm,
           _valid_call_at: validCall,
           _usable_ended_at: usableEndedAt,
           class_ids: new Set<string>(),
@@ -800,15 +787,12 @@ export async function GET(req: NextRequest) {
         if (s.subject_id) agg.subject_ids.add(String(s.subject_id));
         sessionsBySlot.set(key, agg);
       } else {
-        // started_at le plus tôt
         if (s.started_at < existing.started_at) existing.started_at = s.started_at;
 
-        // expected_minutes max
         if ((s.expected_minutes || 0) > (existing.expected_minutes || 0)) {
           existing.expected_minutes = s.expected_minutes;
         }
 
-        // 1er clic VALIDE (le plus tôt)
         if (validCall) {
           if (!existing._valid_call_at || validCall < existing._valid_call_at) {
             existing._valid_call_at = validCall;
@@ -821,17 +805,14 @@ export async function GET(req: NextRequest) {
           }
         }
 
-        // garde un "représentant" pour compat
         if (!existing.class_id && s.class_id) existing.class_id = s.class_id;
         if (!existing.subject_id && s.subject_id) existing.subject_id = s.subject_id;
 
-        // listes (pour affichage)
         if (s.class_id) existing.class_ids.add(String(s.class_id));
         if (s.subject_id) existing.subject_ids.add(String(s.subject_id));
       }
     }
 
-    // ✅ liste finale : 1 entrée par créneau + UNIQUEMENT si séance effectuée (clic valide)
     type SessionAggOut = SessionRow & { class_ids: string[]; subject_ids: string[] };
     const sessions: SessionAggOut[] = Array.from(sessionsBySlot.values())
       .map(({ _valid_call_at, _usable_ended_at, class_ids, subject_ids, ...rest }) => ({
@@ -843,7 +824,6 @@ export async function GET(req: NextRequest) {
       }))
       .filter((s: any) => !!s.actual_call_at);
 
-    /* ======================== SUMMARY ======================== */
     if (mode === "summary") {
       const minutesByTeacher = new Map<string, number>();
       const sessionsByTeacher = new Map<string, number>();
@@ -884,9 +864,6 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ items });
     }
 
-    /* ======================== DETAIL ======================== */
-
-    // Subjects à résoudre (tous les subject_ids rencontrés sur les créneaux)
     const subIds = Array.from(
       new Set(sessions.flatMap((s) => (s.subject_ids || []).filter(Boolean)))
     ) as string[];
@@ -901,7 +878,6 @@ export async function GET(req: NextRequest) {
         subjectNameById[String(s.id)] = String(s.name ?? "");
       }
 
-      // résout aussi les institution_subjects.id
       const unresolved = subIds.filter((id) => !subjectNameById[id]);
       if (unresolved.length) {
         const { data: links } = await srv
@@ -928,7 +904,6 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    // Classes à résoudre (tous les class_ids rencontrés sur les créneaux)
     const classIds = Array.from(
       new Set(sessions.flatMap((s) => (s.class_ids || []).filter(Boolean)))
     ) as string[];
@@ -956,25 +931,26 @@ export async function GET(req: NextRequest) {
         );
 
         const classLabels = unique(
-          (r.class_ids || [])
-            .map((id) => classLabelById[id])
-            .filter((x) => !!x)
+          (r.class_ids || []).map((id) => classLabelById[id]).filter((x) => !!x)
         );
         const classLabelJoined = classLabels.length ? classLabels.join(" + ") : null;
 
         const subjNames = unique(
-          (r.subject_ids || [])
-            .map((id) => subjectNameById[id])
-            .filter((x) => !!x)
+          (r.subject_ids || []).map((id) => subjectNameById[id]).filter((x) => !!x)
         );
-        const subjJoined = subjNames.length ? subjNames.join(" / ") : "Discipline non renseignée";
+        const subjJoined =
+          subjNames.length ? subjNames.join(" / ") : "Discipline non renseignée";
 
         return {
           id: r.id,
           dateISO: r.started_at,
+          day_ci: normalizeDayCi(r.day_ci, r.started_at),
+          slot_ci: normalizeSlotCi(r.slot_ci, r.started_at),
           subject_name: subjJoined,
+          subject_id: (r.subject_ids && r.subject_ids[0]) || r.subject_id || null,
           subject_ids: r.subject_ids || [],
-          class_id: (r.class_ids && r.class_ids[0]) || r.class_id || null, // compat
+          period_id: normalizeSlotCi(r.slot_ci, r.started_at), // compat douce
+          class_id: (r.class_ids && r.class_ids[0]) || r.class_id || null,
           class_label: classLabelJoined,
           class_ids: r.class_ids || [],
           expected_minutes: r.expected_minutes || 0,

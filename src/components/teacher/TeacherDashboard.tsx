@@ -2,7 +2,16 @@
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Users, Clock, Save, Play, Square, LogOut, WifiOff, RefreshCcw } from "lucide-react";
+import {
+  Users,
+  Clock,
+  Save,
+  Play,
+  Square,
+  LogOut,
+  WifiOff,
+  RefreshCcw,
+} from "lucide-react";
 import { getSupabaseBrowserClient } from "@/lib/supabase-browser";
 import {
   registerServiceWorker,
@@ -15,9 +24,6 @@ import {
   clearOfflineAll,
 } from "@/lib/offline";
 
-/* ─────────────────────────────────────────
-   Types
-────────────────────────────────────────── */
 type TeachClass = {
   class_id: string;
   class_label: string;
@@ -34,8 +40,6 @@ type OpenSession = {
   subject_name: string | null;
   started_at: string;
   expected_minutes?: number | null;
-
-  // ✅ Heure effective du clic "Démarrer l’appel" (offline-friendly)
   actual_call_at?: string | null;
 };
 
@@ -47,18 +51,21 @@ type InstCfg = {
   academic_year_label?: string | null;
 };
 type Period = { weekday: number; label: string; start_time: string; end_time: string };
-
 type InstBasics = InstCfg & { periods: Period[] };
-
 type ConductMax = {
   discipline: number;
   tenue: number;
   moralite: number;
 };
 
-/* ─────────────────────────────────────────
-   UI helpers
-────────────────────────────────────────── */
+type SlotState = {
+  active: boolean;
+  current: Period | null;
+  label: string;
+  startTime: string;
+  duration: number;
+};
+
 function Input(p: React.InputHTMLAttributes<HTMLInputElement>) {
   return (
     <input
@@ -148,17 +155,12 @@ function Chip({
   );
 }
 
-/* ─────────────────────────────────────────
-   Utils (périodes)
-────────────────────────────────────────── */
 const hhmm = (d: Date) => d.toTimeString().slice(0, 5);
 const toMinutes = (hm: string) => {
   const [h, m] = (hm || "00:00").split(":").map((x) => +x);
   return (isFinite(h) ? h : 0) * 60 + (isFinite(m) ? m : 0);
 };
 const minutesDiff = (a: string, b: string) => Math.max(0, toMinutes(b) - toMinutes(a));
-
-/* Helpers fuseau établissement */
 const hmInTZ = (d: Date, tz: string): string =>
   new Intl.DateTimeFormat("en-GB", {
     timeZone: tz,
@@ -166,7 +168,6 @@ const hmInTZ = (d: Date, tz: string): string =>
     minute: "2-digit",
     hour12: false,
   }).format(d);
-
 const weekdayInTZ1to7 = (d: Date, tz: string): number => {
   const w = new Intl.DateTimeFormat("en-US", {
     timeZone: tz,
@@ -186,11 +187,7 @@ const weekdayInTZ1to7 = (d: Date, tz: string): number => {
   return map[w] ?? 7;
 };
 
-/* ─────────────────────────────────────────
-   Institution identity (même logique que la page offline qui marche)
-────────────────────────────────────────── */
 const DEFAULT_INSTITUTION_NAME = "NOM DE L'ETABLISSEMENT";
-
 const INSTITUTION_NAME_KEYS = [
   "institution_name",
   "institution_label",
@@ -199,7 +196,6 @@ const INSTITUTION_NAME_KEYS = [
   "header_title",
   "school_name",
 ] as const;
-
 const ACADEMIC_YEAR_KEYS = [
   "current_academic_year_label",
   "academic_year_label",
@@ -210,7 +206,6 @@ const ACADEMIC_YEAR_KEYS = [
   "school_year",
   "annee_scolaire",
 ] as const;
-
 function safeStr(x: any): string | null {
   const s = String(x ?? "").trim();
   return s.length ? s : null;
@@ -228,7 +223,6 @@ function pickFrom(obj: any, keys: readonly string[]): string | null {
 }
 function unwrapPayload(payload: any): { root: any; settings: any } {
   let root = payload;
-
   if (isPlainObject(root) && isPlainObject((root as any).item)) root = (root as any).item;
   else if (isPlainObject(root) && Array.isArray((root as any).items) && (root as any).items[0])
     root = (root as any).items[0];
@@ -251,16 +245,12 @@ function unwrapPayload(payload: any): { root: any; settings: any } {
 }
 function extractInstitutionIdentity(payload: any): { name: string | null; year: string | null } {
   const { root, settings } = unwrapPayload(payload);
-
   let name = pickFrom(settings, INSTITUTION_NAME_KEYS) || null;
   let year = pickFrom(settings, ACADEMIC_YEAR_KEYS) || null;
-
   if (!name) name = pickFrom(root, INSTITUTION_NAME_KEYS) || null;
   if (!year) year = pickFrom(root, ACADEMIC_YEAR_KEYS) || null;
-
   return { name, year };
 }
-
 function isClientSessionId(id: string | null | undefined) {
   return !!id && id.startsWith("client:");
 }
@@ -269,7 +259,6 @@ function clientSessionIdFromOpen(open: OpenSession | null) {
   if (!isClientSessionId(open.id)) return null;
   return open.id.slice("client:".length);
 }
-
 function formatReminderCountdown(ms: number): string | null {
   if (!Number.isFinite(ms)) return null;
   if (ms <= 0) return "Séance au-delà de l’heure prévue";
@@ -280,17 +269,12 @@ function formatReminderCountdown(ms: number): string | null {
   return `${min} min ${String(sec).padStart(2, "0")} restantes avant la fin prévue`;
 }
 
-/* ─────────────────────────────────────────
-   Component (teacher only)
-────────────────────────────────────────── */
 export default function TeacherDashboard() {
-  // offline / sync
   const [isOnline, setIsOnline] = useState<boolean>(true);
   const [pending, setPending] = useState<number>(0);
   const [syncing, setSyncing] = useState<boolean>(false);
   const openRef = useRef<OpenSession | null>(null);
 
-  /* ───────── Rappel sonore de fin de séance ───────── */
   const audioCtxRef = useRef<AudioContext | null>(null);
   const reminderIntervalRef = useRef<number | null>(null);
   const reminderBucketRef = useRef<string>("");
@@ -308,14 +292,9 @@ export default function TeacherDashboard() {
 
   async function ensureAlarmReady(): Promise<boolean> {
     if (typeof window === "undefined") return false;
-
-    const W = window as typeof window & {
-      webkitAudioContext?: typeof AudioContext;
-    };
-
+    const W = window as typeof window & { webkitAudioContext?: typeof AudioContext };
     const Ctx = W.AudioContext || W.webkitAudioContext;
     if (!Ctx) return false;
-
     try {
       if (!audioCtxRef.current) {
         audioCtxRef.current = new Ctx();
@@ -342,11 +321,9 @@ export default function TeacherDashboard() {
   async function playAlarmPattern(kind: "gentle" | "medium" | "urgent" | "overdue") {
     if (alarmBusyRef.current) return;
     alarmBusyRef.current = true;
-
     try {
       const ready = await ensureAlarmReady();
       const ctx = audioCtxRef.current;
-
       const patterns: Record<
         "gentle" | "medium" | "urgent" | "overdue",
         Array<{ f: number; d: number; gap: number; g: number }>
@@ -425,8 +402,6 @@ export default function TeacherDashboard() {
     try {
       await flushOutbox();
       await refreshPending();
-
-      // refresh open session depuis le serveur (si dispo)
       try {
         const os = (await offlineGetJson(
           "/api/teacher/sessions/open",
@@ -437,7 +412,6 @@ export default function TeacherDashboard() {
       } catch {
         /* ignore */
       }
-
       setMsg("Synchronisation terminée ✅");
     } catch (e: any) {
       setMsg(e?.message || "Synchronisation échouée");
@@ -448,12 +422,9 @@ export default function TeacherDashboard() {
 
   useEffect(() => {
     registerServiceWorker();
-
     const online = typeof navigator !== "undefined" ? navigator.onLine : true;
     setIsOnline(online);
-
     void refreshPending();
-
     const onOnline = () => {
       setIsOnline(true);
       void refreshPending();
@@ -463,10 +434,8 @@ export default function TeacherDashboard() {
       setIsOnline(false);
       void refreshPending();
     };
-
     window.addEventListener("online", onOnline);
     window.addEventListener("offline", onOffline);
-
     return () => {
       window.removeEventListener("online", onOnline);
       window.removeEventListener("offline", onOffline);
@@ -478,10 +447,8 @@ export default function TeacherDashboard() {
       }
       audioCtxRef.current = null;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ✅ Helpers : distinguer "offline/queue" vs "erreur serveur"
   function extractRespError(r: any): string | null {
     const cands = [r?.error, r?.message, r?.data?.error, r?.data?.message, r?.data?.details];
     for (const v of cands) {
@@ -490,17 +457,14 @@ export default function TeacherDashboard() {
     }
     return null;
   }
-
   function shouldTreatAsOffline(r: any): boolean {
-    // navigator.onLine peut mentir, mais on garde isOnline comme 1ère info.
     if (!isOnline) return true;
     if (r?.offline === true) return true;
     if (r?.queued === true) return true;
-    if (r?.status === 0) return true; // certains wrappers mettent 0 = network error
+    if (r?.status === 0) return true;
     return false;
   }
 
-  // données prof
   const [teachClasses, setTeachClasses] = useState<TeachClass[]>([]);
   const options = useMemo(
     () =>
@@ -512,11 +476,9 @@ export default function TeacherDashboard() {
     [teachClasses]
   );
 
-  // sélection classe
   const [selKey, setSelKey] = useState<string>("");
   const sel = useMemo(() => options.find((o) => o.key === selKey)?.value || null, [options, selKey]);
 
-  // paramètres établissement / périodes
   const [inst, setInst] = useState<InstCfg>({
     tz: "Africa/Abidjan",
     default_session_minutes: 60,
@@ -525,25 +487,21 @@ export default function TeacherDashboard() {
     academic_year_label: null,
   });
   const [periodsByDay, setPeriodsByDay] = useState<Record<number, Period[]>>({});
-  const [slotLabel, setSlotLabel] = useState<string>(
-    "Aucun créneau configuré (fallback automatique)"
-  );
+  const [slotLabel, setSlotLabel] = useState<string>("Appel indisponible hors créneau");
+  const [canStartNow, setCanStartNow] = useState<boolean>(false);
 
-  // maxima de conduite (discipline / tenue / moralité)
   const [conductMax, setConductMax] = useState<ConductMax>({
     discipline: 7,
     tenue: 3,
     moralite: 4,
   });
 
-  // horaire UI (verrouillé par l’établissement)
   const now = new Date();
   const defTime = hhmm(new Date(now.getFullYear(), now.getMonth(), now.getDate(), now.getHours(), 0));
   const [startTime, setStartTime] = useState<string>(defTime);
   const [duration, setDuration] = useState<number>(60);
-  const [locked, setLocked] = useState<boolean>(true); // verrouillage UI heure/durée
+  const [locked, setLocked] = useState<boolean>(true);
 
-  // séance + liste élèves + marques
   const [open, setOpen] = useState<OpenSession | null>(null);
   useEffect(() => {
     openRef.current = open;
@@ -560,7 +518,47 @@ export default function TeacherDashboard() {
     [rows]
   );
 
-  /* Chargement initial (classes + open) — OFFLINE OK */
+  function getCurrentSlotState(at = new Date()): SlotState {
+    const tz = inst?.tz || "Africa/Abidjan";
+    const nowHM = hmInTZ(at, tz);
+    const wd = weekdayInTZ1to7(at, tz);
+    const slots = periodsByDay[wd] || [];
+    const fallbackDuration = inst.default_session_minutes || 60;
+
+    if (wd === 7 || slots.length === 0) {
+      return {
+        active: false,
+        current: null,
+        label: "Appel indisponible hors créneau",
+        startTime: nowHM,
+        duration: fallbackDuration,
+      };
+    }
+
+    const nowMin = toMinutes(nowHM);
+    const current =
+      slots.find((s) => nowMin >= toMinutes(s.start_time) && nowMin < toMinutes(s.end_time)) ||
+      null;
+
+    if (!current) {
+      return {
+        active: false,
+        current: null,
+        label: "Appel indisponible hors créneau",
+        startTime: nowHM,
+        duration: fallbackDuration,
+      };
+    }
+
+    return {
+      active: true,
+      current,
+      label: `${current.label} • ${current.start_time} → ${current.end_time}`,
+      startTime: current.start_time,
+      duration: Math.max(1, minutesDiff(current.start_time, current.end_time) || fallbackDuration),
+    };
+  }
+
   useEffect(() => {
     (async () => {
       try {
@@ -569,12 +567,9 @@ export default function TeacherDashboard() {
           offlineGetJson("/api/teacher/sessions/open", "teacher:open").catch(() => ({ item: null })),
           cacheGet("teacher:local-open").catch(() => null),
         ]);
-
         setTeachClasses(((cl as any)?.items || []) as TeachClass[]);
-
         const openServer = ((os as any)?.item as OpenSession) || null;
         const openLocal = (localOpen as OpenSession) || null;
-
         setOpen(openServer || openLocal || null);
       } catch {
         setTeachClasses([]);
@@ -588,7 +583,6 @@ export default function TeacherDashboard() {
     })();
   }, []);
 
-  // Charger paramètres & périodes (lecture côté prof) + config conduite — OFFLINE OK
   async function loadInstitutionBasics() {
     async function getJson(url: string, key: string) {
       try {
@@ -598,13 +592,11 @@ export default function TeacherDashboard() {
       }
     }
 
-    // 1) route unifiée si présente
     let basics: InstBasics | null = (await getJson(
       "/api/teacher/institution/basics",
       "teacher:inst:basics"
     )) as InstBasics | null;
 
-    // 2) sinon, anciennes routes (settings + periods)
     if (!basics) {
       const c =
         (await getJson("/api/teacher/institution/settings", "teacher:inst:settings:teacher")) ||
@@ -623,7 +615,6 @@ export default function TeacherDashboard() {
         };
 
       const { name, year } = extractInstitutionIdentity(c);
-
       basics = {
         tz: safeStr((c as any)?.tz) || "Africa/Abidjan",
         default_session_minutes: Number((c as any)?.default_session_minutes || 60),
@@ -645,7 +636,6 @@ export default function TeacherDashboard() {
       };
     }
 
-    // 🔁 Complément : harmoniser le nom & l'année avec /api/admin/institution/settings
     const adminSettings = await getJson("/api/admin/institution/settings", "teacher:inst:adminSettings");
     if (adminSettings) {
       const { name: nameFromAdmin, year: yearFromAdmin } = extractInstitutionIdentity(adminSettings);
@@ -653,7 +643,6 @@ export default function TeacherDashboard() {
       if (yearFromAdmin && !basics.academic_year_label) basics.academic_year_label = yearFromAdmin;
     }
 
-    // Regrouper/trier par jour
     const grouped: Record<number, Period[]> = {};
     (basics.periods || []).forEach((row: any) => {
       const w = Number(row.weekday || 1);
@@ -683,9 +672,7 @@ export default function TeacherDashboard() {
     }));
     setPeriodsByDay(grouped);
 
-    // 3) Config conduite (maxima par rubrique) — loader ultra défensif (OFFLINE OK)
     const defaults: ConductMax = { discipline: 7, tenue: 3, moralite: 4 };
-
     try {
       const rawConf =
         ((await getJson("/api/teacher/conduct/settings", "teacher:conduct:teacher")) as any) ??
@@ -698,7 +685,6 @@ export default function TeacherDashboard() {
       }
 
       let src: any = rawConf;
-
       if (src && typeof src === "object" && src.item) {
         const it = src.item;
         src = it.settings_json || it.settings || it;
@@ -719,21 +705,13 @@ export default function TeacherDashboard() {
       }
 
       const d = Number(
-        src?.discipline_max ??
-          src?.discipline ??
-          src?.max_discipline ??
-          src?.discipline_points_max ??
-          defaults.discipline
+        src?.discipline_max ?? src?.discipline ?? src?.max_discipline ?? src?.discipline_points_max ?? defaults.discipline
       );
       const t = Number(
         src?.tenue_max ?? src?.tenue ?? src?.max_tenue ?? src?.tenue_points_max ?? defaults.tenue
       );
       const m = Number(
-        src?.moralite_max ??
-          src?.moralite ??
-          src?.max_moralite ??
-          src?.moralite_points_max ??
-          defaults.moralite
+        src?.moralite_max ?? src?.moralite ?? src?.max_moralite ?? src?.moralite_points_max ?? defaults.moralite
       );
 
       setConductMax({
@@ -749,23 +727,17 @@ export default function TeacherDashboard() {
 
   useEffect(() => {
     void loadInstitutionBasics();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /* ✅ Nom établissement + année : dataset/global puis fallback API (OFFLINE OK) */
   useEffect(() => {
     let cancelled = false;
-
     (async () => {
       if (typeof window === "undefined") return;
-
       try {
         const body: any = document.body;
-
         const fromDataName = safeStr(body?.dataset?.institutionName) || safeStr(body?.dataset?.institution);
         const fromGlobalName = safeStr((window as any).__MC_INSTITUTION_NAME__);
         const finalName = fromDataName || fromGlobalName;
-
         const fromDataYear =
           safeStr(body?.dataset?.academicYear) ||
           safeStr(body?.dataset?.schoolYear) ||
@@ -785,11 +757,8 @@ export default function TeacherDashboard() {
             academic_year_label: finalYear || prev.academic_year_label || null,
           }));
         }
-
-        // si les deux sont trouvés en local, on s'arrête
         if (finalName && finalYear) return;
 
-        // fallback API
         const endpoints = [
           { url: "/api/teacher/institution/settings", key: "teacher:identity:settings:teacher" },
           { url: "/api/institution/settings", key: "teacher:identity:settings:institution" },
@@ -804,10 +773,8 @@ export default function TeacherDashboard() {
             data = null;
           }
           const { name, year } = extractInstitutionIdentity(data);
-
           if (name || year) {
             if (cancelled) return;
-
             setInst((prev) => ({
               ...prev,
               institution_name:
@@ -822,52 +789,32 @@ export default function TeacherDashboard() {
           }
         }
       } catch {
-        /* ne casse rien */
+        /* no-op */
       }
     })();
-
     return () => {
       cancelled = true;
     };
   }, []);
 
-  // Calcul du créneau « du moment » + verrouillage heure/durée
   function computeDefaultsForNow() {
-    const tz = inst?.tz || "Africa/Abidjan";
-    const now = new Date();
-    const nowHM = hmInTZ(now, tz);
-    const wd = weekdayInTZ1to7(now, tz); // 1..6, 7 = dimanche (hors créneau)
-    const slots = periodsByDay[wd] || [];
-
-    if (wd === 7 || slots.length === 0) {
-      setStartTime(nowHM);
-      setDuration(inst.default_session_minutes || 60);
-      setSlotLabel("Hors créneau — utilisation de l’heure actuelle");
-      setLocked(true);
-      return;
-    }
-
-    const nowMin = toMinutes(nowHM);
-
-    let pick = slots.find((s) => nowMin >= toMinutes(s.start_time) && nowMin < toMinutes(s.end_time));
-    if (!pick) pick = slots.find((s) => nowMin <= toMinutes(s.start_time));
-    if (!pick) {
-      setStartTime(nowHM);
-      setDuration(inst.default_session_minutes || 60);
-      setSlotLabel("Hors créneau — utilisation de l’heure actuelle");
-      setLocked(true);
-      return;
-    }
-
-    setStartTime(pick.start_time);
-    setDuration(Math.max(1, minutesDiff(pick.start_time, pick.end_time) || inst.default_session_minutes || 60));
-    setSlotLabel(`${pick.label} • ${pick.start_time} → ${pick.end_time}`);
+    const state = getCurrentSlotState(new Date());
+    setStartTime(state.startTime);
+    setDuration(state.duration);
+    setSlotLabel(state.label);
+    setCanStartNow(state.active);
     setLocked(true);
   }
 
   useEffect(() => {
     computeDefaultsForNow();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [JSON.stringify(periodsByDay), inst.default_session_minutes, inst.tz, selKey]);
+
+  useEffect(() => {
+    const tickUi = () => computeDefaultsForNow();
+    tickUi();
+    const id = window.setInterval(tickUi, 15000);
+    return () => window.clearInterval(id);
   }, [JSON.stringify(periodsByDay), inst.default_session_minutes, inst.tz, selKey]);
 
   useEffect(() => {
@@ -875,18 +822,12 @@ export default function TeacherDashboard() {
     if (!open) return;
 
     const computeEndMs = () => {
-      const base = new Date(
-        openRef.current?.actual_call_at || openRef.current?.started_at || open.started_at
-      ).getTime();
+      const base = new Date(openRef.current?.started_at || open.started_at).getTime();
       const minutes = Number(
-        openRef.current?.expected_minutes ??
-          open.expected_minutes ??
-          duration ??
-          inst.default_session_minutes ??
-          60
+        openRef.current?.expected_minutes ?? open.expected_minutes ?? duration ?? inst.default_session_minutes ?? 60
       );
       if (!Number.isFinite(base) || !Number.isFinite(minutes) || minutes <= 0) return null;
-      return base + minutes * 60_000;
+      return base + minutes * 60000;
     };
 
     const tick = () => {
@@ -901,16 +842,15 @@ export default function TeacherDashboard() {
 
       let nextBucket = "";
       let nextKind: "gentle" | "medium" | "urgent" | "overdue" | null = null;
-
       if (remainingMs <= 0) {
-        nextBucket = `overdue:${Math.floor(Math.abs(remainingMs) / 30_000)}`;
+        nextBucket = `overdue:${Math.floor(Math.abs(remainingMs) / 30000)}`;
         nextKind = "overdue";
-      } else if (remainingMs <= 120_000) {
-        nextBucket = `last2:${Math.floor((120_000 - remainingMs) / 30_000)}`;
+      } else if (remainingMs <= 120000) {
+        nextBucket = `last2:${Math.floor((120000 - remainingMs) / 30000)}`;
         nextKind = "urgent";
-      } else if (remainingMs <= 300_000) {
-        nextBucket = `last5:${Math.floor((300_000 - remainingMs) / 60_000)}`;
-        nextKind = remainingMs <= 180_000 ? "medium" : "gentle";
+      } else if (remainingMs <= 300000) {
+        nextBucket = `last5:${Math.floor((300000 - remainingMs) / 60000)}`;
+        nextKind = remainingMs <= 180000 ? "medium" : "gentle";
       } else {
         reminderBucketRef.current = "";
         return;
@@ -918,24 +858,17 @@ export default function TeacherDashboard() {
 
       if (nextBucket && nextBucket !== reminderBucketRef.current) {
         reminderBucketRef.current = nextBucket;
-        if (nextKind) {
-          void playAlarmPattern(nextKind);
-        }
+        if (nextKind) void playAlarmPattern(nextKind);
       }
     };
 
     tick();
     if (typeof window !== "undefined") {
-      reminderIntervalRef.current = window.setInterval(tick, 5_000);
+      reminderIntervalRef.current = window.setInterval(tick, 5000);
     }
+    return () => clearReminderLoop();
+  }, [open?.id, open?.started_at, open?.expected_minutes, duration, inst.default_session_minutes]);
 
-    return () => {
-      clearReminderLoop();
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open?.id, open?.started_at, open?.actual_call_at, open?.expected_minutes, duration, inst.default_session_minutes]);
-
-  /* Charger roster si séance ouverte — OFFLINE OK */
   useEffect(() => {
     if (!open) {
       setRoster([]);
@@ -954,7 +887,6 @@ export default function TeacherDashboard() {
     })();
   }, [open?.class_id]);
 
-  /* Helpers marquage */
   function toggleAbsent(id: string, v: boolean) {
     setRows((prev) => {
       const cur = prev[id] || {};
@@ -971,29 +903,31 @@ export default function TeacherDashboard() {
     });
   }
 
-  /* Actions (séance) — OFFLINE OK */
   async function startSession() {
     if (!sel) return;
     void ensureAlarmReady();
+
+    const slotState = getCurrentSlotState(new Date());
+    if (!slotState.active || !slotState.current) {
+      setMsg("Appel interdit en dehors des créneaux définis par l’administration.");
+      return;
+    }
+
     setBusy(true);
     setMsg(null);
-
     try {
       const today = new Date();
-      const [hhS, mmS] = (startTime || "08:00").split(":").map((x) => +x);
+      const [hhS, mmS] = slotState.current.start_time.split(":").map((x) => +x);
       const started = new Date(today.getFullYear(), today.getMonth(), today.getDate(), hhS, mmS, 0, 0);
-
-      // ✅ Heure effective du clic (à envoyer au serveur, et à garder en offline)
       const actualCallAt = new Date().toISOString();
-
       const clientSessionId = `${sel.class_id}_${sel.subject_id || "none"}_${started.toISOString()}`;
 
       const body = {
         class_id: sel.class_id,
         subject_id: sel.subject_id,
-        started_at: started.toISOString(), // créneau (sera canonisé côté API)
-        actual_call_at: actualCallAt, // ✅ heure d'appel effectif
-        expected_minutes: duration,
+        started_at: started.toISOString(),
+        actual_call_at: actualCallAt,
+        expected_minutes: slotState.duration,
         client_session_id: clientSessionId,
       };
 
@@ -1008,7 +942,6 @@ export default function TeacherDashboard() {
         await cacheSet("teacher:local-open", null);
         setMsg("Séance démarrée ✅");
       } else if (shouldTreatAsOffline(r)) {
-        // ✅ uniquement si offline/queued : on crée une séance locale
         const localOpen: OpenSession = {
           id: `client:${clientSessionId}`,
           class_id: sel.class_id,
@@ -1017,14 +950,13 @@ export default function TeacherDashboard() {
           subject_name: sel.subject_name,
           started_at: started.toISOString(),
           actual_call_at: actualCallAt,
-          expected_minutes: duration,
+          expected_minutes: slotState.duration,
         };
         setOpen(localOpen);
         await cacheSet("teacher:local-open", localOpen);
         setMsg("Hors connexion : séance enregistrée (sync dès que le réseau revient).");
         await refreshPending();
       } else {
-        // ✅ online mais erreur serveur : PAS de séance locale fantôme
         const err = extractRespError(r);
         setMsg(err ? `Erreur serveur : ${err}` : "Erreur serveur : impossible de démarrer la séance.");
       }
@@ -1039,7 +971,6 @@ export default function TeacherDashboard() {
     if (!open) return;
     setBusy(true);
     setMsg(null);
-
     try {
       const marks = Object.entries(rows).map(([student_id, r]) => {
         if (r.absent) return { student_id, status: "absent" as const, reason: r.reason ?? null };
@@ -1059,9 +990,7 @@ export default function TeacherDashboard() {
 
       if (r?.ok) {
         const j = r.data || {};
-        setMsg(
-          `Enregistré ✅ : ${j.upserted ?? 0} abs./ret. — ${j.deleted ?? 0} suppressions (présent).`
-        );
+        setMsg(`Enregistré ✅ : ${j.upserted ?? 0} abs./ret. — ${j.deleted ?? 0} suppressions (présent).`);
       } else if (shouldTreatAsOffline(r)) {
         setMsg("Hors connexion : enregistrement mis en attente (sync auto).");
         await refreshPending();
@@ -1094,10 +1023,6 @@ export default function TeacherDashboard() {
       const clientId = clientSessionIdFromOpen(open);
       const isLocal = openId.startsWith("client:");
       const actualEndAt = new Date().toISOString();
-
-      // ✅ On envoie toujours l'heure réelle de fin pour les stats.
-      // - session serveur : session_id
-      // - session locale : client_session_id (fallback offline déjà prévu côté backend)
       const body: any = { actual_end_at: actualEndAt };
       if (!isLocal) body.session_id = open.id;
       else if (clientId) body.client_session_id = clientId;
@@ -1118,7 +1043,6 @@ export default function TeacherDashboard() {
       } else {
         const err = extractRespError(r);
         setMsg(err ? `Erreur serveur : ${err}` : "Erreur serveur : impossible de terminer la séance.");
-        // ❗ ne pas terminer localement si c'est une erreur serveur
       }
     } catch (e: any) {
       setMsg(e?.message || "Échec fin de séance");
@@ -1127,12 +1051,8 @@ export default function TeacherDashboard() {
     }
   }
 
-  /* ─────────────────────────────────────────
-     SANCTIONS libres (cohérentes avec la config) — OFFLINE OK
-  ────────────────────────────────────────── */
   const ALLOWED_RUBRICS = ["discipline", "tenue", "moralite"] as const;
   type Rubric = (typeof ALLOWED_RUBRICS)[number];
-
   function coerceRubric(x: unknown): Rubric {
     let s = String(x ?? "").normalize("NFKC").trim().toLowerCase();
     if (s === "" || s === "-" || s === "—" || s === "–") s = "discipline";
@@ -1147,10 +1067,11 @@ export default function TeacherDashboard() {
   const [penBusy, setPenBusy] = useState(false);
   const [penRows, setPenRows] = useState<Record<string, { points: number; reason?: string }>>({});
   const [penMsg, setPenMsg] = useState<string | null>(null);
+  const hasPenChanges = useMemo(
+    () => Object.values(penRows).some((v) => (v.points || 0) > 0),
+    [penRows]
+  );
 
-  const hasPenChanges = useMemo(() => Object.values(penRows).some((v) => (v.points || 0) > 0), [penRows]);
-
-  // Options de rubriques avec les maxima réels
   const rubricOptions = useMemo(() => {
     const defaults: ConductMax = { discipline: 7, tenue: 3, moralite: 4 };
     const base: ConductMax = {
@@ -1187,7 +1108,6 @@ export default function TeacherDashboard() {
     const opt = rubricOptions.find((o) => o.value === penRubric);
     return opt?.max ?? undefined;
   }, [rubricOptions, penRubric]);
-
   const rubricDisabled = currentRubricMax !== undefined && currentRubricMax <= 0;
 
   async function ensureRosterForPenalty() {
@@ -1219,10 +1139,7 @@ export default function TeacherDashboard() {
   function setPenPoint(student_id: string, n: number) {
     setPenRows((m) => {
       const cur = m[student_id] || { points: 0, reason: "" };
-      return {
-        ...m,
-        [student_id]: { ...cur, points: Math.max(0, Math.floor(n || 0)) },
-      };
+      return { ...m, [student_id]: { ...cur, points: Math.max(0, Math.floor(n || 0)) } };
     });
   }
   function setPenReason(student_id: string, s: string) {
@@ -1237,7 +1154,6 @@ export default function TeacherDashboard() {
 
   async function submitPenalties() {
     if (!sel) return;
-
     const items = Object.entries(penRows)
       .filter(([, v]) => (v.points || 0) > 0)
       .map(([student_id, v]) => ({
@@ -1253,10 +1169,8 @@ export default function TeacherDashboard() {
 
     setPenBusy(true);
     setPenMsg(null);
-
     try {
       const cleanRubric = coerceRubric(penRubric);
-
       const mergeKey = `teacher:penalties:${sel.class_id}:${sel.subject_id ?? "none"}:${cleanRubric}:${new Date()
         .toISOString()
         .slice(0, 10)}`;
@@ -1295,7 +1209,6 @@ export default function TeacherDashboard() {
     }
   }
 
-  /* Déconnexion (avec nettoyage offline) */
   async function logout() {
     try {
       try {
@@ -1304,13 +1217,11 @@ export default function TeacherDashboard() {
       } catch (e: any) {
         console.warn("[teacher/logout] supabase signOut:", e?.message || e);
       }
-
       try {
         await fetch("/api/auth/sync", { method: "DELETE" });
       } catch (e: any) {
         console.warn("[teacher/logout] /api/auth/sync DELETE:", e?.message || e);
       }
-
       const endpoints = ["/api/auth/signout", "/api/auth/logout", "/auth/signout"];
       for (const url of endpoints) {
         try {
@@ -1320,7 +1231,6 @@ export default function TeacherDashboard() {
         }
       }
     } finally {
-      // important : éviter de garder des queues offline d’un autre utilisateur
       try {
         await clearOfflineAll();
       } catch {
@@ -1330,7 +1240,6 @@ export default function TeacherDashboard() {
     }
   }
 
-  /* Barre d’actions collante (mobile) */
   const showSticky = true;
   const mobileBar = showSticky ? (
     <>
@@ -1338,7 +1247,7 @@ export default function TeacherDashboard() {
       <div className="fixed inset-x-0 bottom-0 z-40 border-t bg-white/95 backdrop-blur md:hidden px-4 py-3 pb-[calc(env(safe-area-inset-bottom,0)+12px)]">
         {!open ? (
           <div className="grid grid-cols-2 gap-2">
-            <Button onClick={startSession} disabled={!selKey || busy} aria-label="Démarrer l’appel">
+            <Button onClick={startSession} disabled={!selKey || busy || !canStartNow} aria-label="Démarrer l’appel">
               <Play className="h-4 w-4" />
               {busy ? "Démarrage…" : "Appel"}
             </Button>
@@ -1377,7 +1286,6 @@ export default function TeacherDashboard() {
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-6 space-y-6">
-      {/* Header premium */}
       <header className="overflow-hidden rounded-2xl border border-slate-800 bg-gradient-to-r from-slate-950 via-indigo-900 to-slate-950 px-4 py-4 sm:px-6 sm:py-5 shadow-sm">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="space-y-1">
@@ -1393,10 +1301,8 @@ export default function TeacherDashboard() {
               Espace enseignant — Appel
             </h1>
             <p className="mt-1 max-w-xl text-xs sm:text-sm text-indigo-100/85">
-              Sélectionnez une classe avant de faire l’appel. Les minutes de retard sont{" "}
-              <b>calculées automatiquement</b>.
+              Sélectionnez une classe avant de faire l’appel. Les minutes de retard sont <b>calculées automatiquement</b>.
             </p>
-
             <div className="mt-2 flex flex-wrap items-center gap-2">
               <Chip tone={isOnline ? "emerald" : "amber"}>{isOnline ? "En ligne" : "Hors ligne"}</Chip>
               {pending > 0 && <Chip tone="amber">{pending} en attente</Chip>}
@@ -1420,7 +1326,6 @@ export default function TeacherDashboard() {
             </div>
           </div>
 
-          {/* Bouton déconnexion */}
           <GhostButton
             tone="slate"
             onClick={logout}
@@ -1432,10 +1337,8 @@ export default function TeacherDashboard() {
         </div>
       </header>
 
-      {/* Sélection + paramètres horaire */}
       <div className="rounded-2xl border border-emerald-200 bg-gradient-to-b from-emerald-50/60 to-white p-5 space-y-4 ring-1 ring-emerald-100">
         <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-          {/* Classe — Discipline */}
           <div>
             <div className="mb-1 flex items-center gap-2 text-xs text-slate-500">
               <Users className="h-3.5 w-3.5" />
@@ -1454,32 +1357,21 @@ export default function TeacherDashboard() {
             </div>
           </div>
 
-          {/* Heure de début (verrouillé) */}
           <div>
             <div className="mb-1 flex items-center gap-2 text-xs text-slate-500">
               <Clock className="h-3.5 w-3.5" />
               Heure de début
             </div>
-            <Input
-              type="time"
-              value={startTime}
-              onChange={(e) => setStartTime(e.target.value)}
-              disabled={locked}
-            />
+            <Input type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} disabled={locked} />
             <div className="mt-1 text-[11px] text-slate-500">{slotLabel}</div>
           </div>
 
-          {/* Durée (verrouillée) */}
           <div>
             <div className="mb-1 flex items-center gap-2 text-xs text-slate-500">
               <Clock className="h-3.5 w-3.5" />
               Durée (minutes)
             </div>
-            <Select
-              value={String(duration)}
-              onChange={(e) => setDuration(parseInt(e.target.value, 10))}
-              disabled={locked}
-            >
+            <Select value={String(duration)} onChange={(e) => setDuration(parseInt(e.target.value, 10))} disabled={locked}>
               {[duration].map((m) => (
                 <option key={m} value={m}>
                   {m}
@@ -1490,10 +1382,9 @@ export default function TeacherDashboard() {
           </div>
         </div>
 
-        {/* Actions desktop */}
         {!open ? (
           <div className="hidden md:flex items-center gap-2">
-            <Button onClick={startSession} disabled={!selKey || busy} aria-label="Démarrer l’appel">
+            <Button onClick={startSession} disabled={!selKey || busy || !canStartNow} aria-label="Démarrer l’appel">
               <Play className="h-4 w-4" />
               {busy ? "Démarrage…" : "Démarrer l’appel"}
             </Button>
@@ -1533,7 +1424,6 @@ export default function TeacherDashboard() {
         )}
       </div>
 
-      {/* Sanctions inline */}
       {penaltyOpen && (
         <div className="rounded-2xl border bg-white p-5 shadow-sm">
           <div className="flex items-center justify-between mb-3">
@@ -1567,24 +1457,17 @@ export default function TeacherDashboard() {
                   </option>
                 ))}
               </Select>
-
               <div className="mt-2 flex flex-wrap items-center gap-2">
                 <Chip tone={penRubric === "discipline" ? "emerald" : "slate"}>Discipline</Chip>
                 <Chip tone={penRubric === "tenue" ? "emerald" : "slate"}>Tenue</Chip>
                 <Chip tone={penRubric === "moralite" ? "emerald" : "slate"}>Moralité</Chip>
               </div>
-
               <div className="mt-2 text-[11px] text-slate-500">
                 <b>Note :</b> l’assiduité est <u>calculée automatiquement</u> via les absences injustifiées.
               </div>
             </div>
-
             <div className="md:col-span-2 flex items-end justify-end">
-              <Button
-                onClick={submitPenalties}
-                disabled={penBusy || !hasPenChanges || rubricDisabled}
-                tone="emerald"
-              >
+              <Button onClick={submitPenalties} disabled={penBusy || !hasPenChanges || rubricDisabled} tone="emerald">
                 {penBusy ? "Enregistrement…" : "Enregistrer les sanctions"}
               </Button>
             </div>
@@ -1603,23 +1486,11 @@ export default function TeacherDashboard() {
               </thead>
               <tbody className="divide-y">
                 {loadingRoster ? (
-                  <tr>
-                    <td className="px-3 py-4 text-slate-500" colSpan={5}>
-                      Chargement de la liste…
-                    </td>
-                  </tr>
+                  <tr><td className="px-3 py-4 text-slate-500" colSpan={5}>Chargement de la liste…</td></tr>
                 ) : !sel ? (
-                  <tr>
-                    <td className="px-3 py-4 text-slate-500" colSpan={5}>
-                      Sélectionnez une classe/discipline pour saisir des sanctions.
-                    </td>
-                  </tr>
+                  <tr><td className="px-3 py-4 text-slate-500" colSpan={5}>Sélectionnez une classe/discipline pour saisir des sanctions.</td></tr>
                 ) : roster.length === 0 ? (
-                  <tr>
-                    <td className="px-3 py-4 text-slate-500" colSpan={5}>
-                      Aucun élève dans cette classe.
-                    </td>
-                  </tr>
+                  <tr><td className="px-3 py-4 text-slate-500" colSpan={5}>Aucun élève dans cette classe.</td></tr>
                 ) : (
                   roster.map((st, idx) => {
                     const pr = penRows[st.id] || { points: 0, reason: "" };
@@ -1632,9 +1503,7 @@ export default function TeacherDashboard() {
                           <Input
                             type="number"
                             min={0}
-                            max={
-                              currentRubricMax && currentRubricMax > 0 ? currentRubricMax : undefined
-                            }
+                            max={currentRubricMax && currentRubricMax > 0 ? currentRubricMax : undefined}
                             value={pr.points || 0}
                             onChange={(e) => setPenPoint(st.id, parseInt(e.target.value || "0", 10))}
                             className="w-24"
@@ -1658,47 +1527,49 @@ export default function TeacherDashboard() {
               </tbody>
             </table>
           </div>
-
-          {penMsg && (
-            <div className="mt-3 text-sm text-slate-700" aria-live="polite">
-              {penMsg}
-            </div>
-          )}
+          {penMsg && <div className="mt-3 text-sm text-slate-700" aria-live="polite">{penMsg}</div>}
         </div>
       )}
 
-      {/* Liste élèves + marquage (Appel) */}
       {open && (
         <div className="rounded-2xl border bg-white p-5 shadow-sm">
           <div className="mb-3 space-y-2">
-            <div className="flex flex-wrap items-center justify-between gap-2">
             {(() => {
-              const startIso = open.actual_call_at || open.started_at;
-              const startMs = new Date(startIso).getTime();
-              const endMs = open.expected_minutes ? startMs + open.expected_minutes * 60000 : null;
+              const plannedStartIso = open.started_at;
+              const plannedStartMs = new Date(plannedStartIso).getTime();
+              const plannedEndMs = open.expected_minutes ? plannedStartMs + open.expected_minutes * 60000 : null;
+              const plannedStart = new Date(plannedStartIso).toLocaleTimeString([], {
+                hour: "2-digit",
+                minute: "2-digit",
+              });
+              const plannedEnd = plannedEndMs
+                ? new Date(plannedEndMs).toLocaleTimeString([], {
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  })
+                : null;
+              const actualStart = open.actual_call_at
+                ? new Date(open.actual_call_at).toLocaleTimeString([], {
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  })
+                : null;
 
               return (
-                <div className="text-sm font-semibold text-slate-700">
-                  Appel — {open.class_label} {open.subject_name ? `• ${open.subject_name}` : ""} •{" "}
-                  {new Date(startIso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-                  {endMs
-                    ? ` → ${new Date(endMs).toLocaleTimeString([], {
-                        hour: "2-digit",
-                        minute: "2-digit",
-                      })}`
-                    : ""}
-                </div>
+                <>
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="text-sm font-semibold text-slate-700">
+                      Appel — {open.class_label}
+                      {open.subject_name ? ` • ${open.subject_name}` : ""} • {plannedStart}
+                      {plannedEnd ? ` → ${plannedEnd}` : ""}
+                    </div>
+                    <Chip>{changedCount} modif{changedCount > 1 ? "s" : ""} en cours</Chip>
+                  </div>
+                  {actualStart && <div className="text-xs text-slate-500">Début réel : {actualStart}</div>}
+                </>
               );
             })()}
-            <Chip>
-              {changedCount} modif{changedCount > 1 ? "s" : ""} en cours
-            </Chip>
-            </div>
-            {reminderHint && (
-              <div className="text-xs font-medium text-amber-700">
-                Rappel sonore actif — {reminderHint}
-              </div>
-            )}
+            {reminderHint && <div className="text-xs font-medium text-amber-700">Rappel sonore actif — {reminderHint}</div>}
           </div>
 
           <div className="overflow-x-auto rounded-xl border">
@@ -1714,17 +1585,9 @@ export default function TeacherDashboard() {
               </thead>
               <tbody className="divide-y">
                 {loadingRoster ? (
-                  <tr>
-                    <td className="px-3 py-4 text-slate-500" colSpan={5}>
-                      Chargement de la liste…
-                    </td>
-                  </tr>
+                  <tr><td className="px-3 py-4 text-slate-500" colSpan={5}>Chargement de la liste…</td></tr>
                 ) : roster.length === 0 ? (
-                  <tr>
-                    <td className="px-3 py-4 text-slate-500" colSpan={5}>
-                      Aucun élève dans cette classe.
-                    </td>
-                  </tr>
+                  <tr><td className="px-3 py-4 text-slate-500" colSpan={5}>Aucun élève dans cette classe.</td></tr>
                 ) : (
                   roster.map((st, idx) => {
                     const r = rows[st.id] || {};
@@ -1762,7 +1625,6 @@ export default function TeacherDashboard() {
         </div>
       )}
 
-      {/* Barre mobile sticky */}
       {mobileBar}
     </div>
   );

@@ -83,6 +83,8 @@ type TeacherPayrollLineRow = {
 type StatisticsDetailRow = {
   id: string;
   dateISO: string;
+  day_ci?: string | null;
+  slot_ci?: string | null;
   subject_name: string | null;
   expected_minutes: number;
   real_minutes: number;
@@ -143,6 +145,8 @@ type ExpectedSlot = {
   subject_id: string;
   period_id: string;
   session_date: string;
+  day_ci: string;
+  slot_ci: string;
   weekday: number;
   cycle: SchoolCycle;
   expected_minutes: number;
@@ -287,6 +291,48 @@ function ymd(d: Date) {
   const m = String(d.getMonth() + 1).padStart(2, "0");
   const day = String(d.getDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
+}
+
+function normalizeTimeToHms(value: string | null | undefined) {
+  const raw = String(value || "").trim();
+  const m = raw.match(/(\d{2}):(\d{2})(?::(\d{2}))?/);
+  if (!m) return "00:00:00";
+  return `${m[1]}:${m[2]}:${m[3] || "00"}`;
+}
+
+function makeSlotCi(day: string, timeLike: string | null | undefined) {
+  return `${day} ${normalizeTimeToHms(timeLike)}`;
+}
+
+function normalizeStatsDayCi(row: StatisticsDetailRow) {
+  const raw = String(row.day_ci || "").trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+  return String(row.dateISO || "").slice(0, 10);
+}
+
+function normalizeStatsSlotCi(row: StatisticsDetailRow) {
+  const day = normalizeStatsDayCi(row);
+  const slot = String(row.slot_ci || "").trim();
+  if (slot) {
+    if (/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(:\d{2})?$/.test(slot)) {
+      return slot.replace("T", " ").length === 16 ? `${slot.replace("T", " ")}:00` : slot.replace("T", " ");
+    }
+    if (/^\d{2}:\d{2}(:\d{2})?$/.test(slot)) {
+      return makeSlotCi(day, slot);
+    }
+  }
+
+  const legacyPeriod = String(row.period_id || "").trim();
+  if (legacyPeriod) {
+    if (/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(:\d{2})?$/.test(legacyPeriod)) {
+      return legacyPeriod.replace("T", " ").length === 16 ? `${legacyPeriod.replace("T", " ")}:00` : legacyPeriod.replace("T", " ");
+    }
+    if (/^\d{2}:\d{2}(:\d{2})?$/.test(legacyPeriod)) {
+      return makeSlotCi(day, legacyPeriod);
+    }
+  }
+
+  return makeSlotCi(day, row.dateISO ? new Date(row.dateISO).toTimeString().slice(0, 8) : "00:00:00");
 }
 
 function dbWeekdayToJs(dbWeekday: number) {
@@ -529,11 +575,16 @@ async function buildExpectedSlotsForTeacher(params: {
     for (let d = new Date(from); d <= to; d.setDate(d.getDate() + 1)) {
       if (d.getDay() !== dbWeekdayToJs(weekday)) continue;
 
+      const sessionDate = ymd(d);
+      const slot_ci = makeSlotCi(sessionDate, period.start_time || "00:00:00");
+
       out.push({
         class_id,
         subject_id,
         period_id,
-        session_date: ymd(d),
+        session_date: sessionDate,
+        day_ci: sessionDate,
+        slot_ci,
         weekday,
         cycle,
         expected_minutes,
@@ -542,8 +593,8 @@ async function buildExpectedSlotsForTeacher(params: {
   }
 
   out.sort((a, b) =>
-    `${a.session_date}|${a.class_id}|${a.subject_id}|${a.period_id}`.localeCompare(
-      `${b.session_date}|${b.class_id}|${b.subject_id}|${b.period_id}`
+    `${a.session_date}|${a.class_id}|${a.subject_id}|${a.slot_ci}|${a.period_id}`.localeCompare(
+      `${b.session_date}|${b.class_id}|${b.subject_id}|${b.slot_ci}|${b.period_id}`
     )
   );
 
@@ -726,22 +777,33 @@ async function generatePayrollDraftAction(formData: FormData) {
     const actualBuckets = new Map<string, StatisticsDetailRow[]>();
 
     for (const row of actualRows) {
-      const sessionDate = String(row.dateISO || "").slice(0, 10);
+      const dayCi = normalizeStatsDayCi(row);
+      const slotCi = normalizeStatsSlotCi(row);
       const classId = String(row.class_id || "");
-      const weekday = dayOfWeekFromIso(row.dateISO);
 
-      if (!sessionDate || !classId) continue;
+      if (!dayCi || !classId || !slotCi) continue;
 
-      const key = `${sessionDate}::${weekday}::${classId}`;
+      const key = `${dayCi}::${classId}::${slotCi}`;
       const arr = actualBuckets.get(key) || [];
       arr.push(row);
       actualBuckets.set(key, arr);
     }
 
     const sessionItems = expectedSlots.map((slot) => {
-      const key = `${slot.session_date}::${slot.weekday}::${slot.class_id}`;
+      const key = `${slot.day_ci}::${slot.class_id}::${slot.slot_ci}`;
       const bucket = actualBuckets.get(key) || [];
-      const matched = bucket.length ? bucket.shift()! : null;
+
+      let matched: StatisticsDetailRow | null = null;
+      if (bucket.length) {
+        const exactIdx = bucket.findIndex(
+          (row) => String(row.subject_id || "") === String(slot.subject_id || "")
+        );
+        const softIdx = bucket.findIndex(
+          (row) => !row.subject_id || !slot.subject_id
+        );
+        const idx = exactIdx >= 0 ? exactIdx : softIdx >= 0 ? softIdx : 0;
+        matched = bucket.splice(idx, 1)[0] || null;
+      }
 
       const effActual =
         matched && (!!matched.actual_call_iso || Number(matched.real_minutes || 0) > 0)

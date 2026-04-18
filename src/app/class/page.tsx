@@ -215,6 +215,29 @@ function minutesDiff(a: string, b: string) {
   return Math.max(0, toMinutes(b) - toMinutes(a));
 }
 
+function formatTimeLabel(iso: string | null | undefined) {
+  if (!iso) return "—";
+  try {
+    return new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  } catch {
+    return "—";
+  }
+}
+
+function buildPlannedRangeLabel(startIso: string, durationMin: number | null | undefined) {
+  try {
+    const start = new Date(startIso);
+    const mins = Math.max(1, Number(durationMin || 0));
+    const end = new Date(start.getTime() + mins * 60_000);
+    return `${start.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}–${end.toLocaleTimeString([], {
+      hour: "2-digit",
+      minute: "2-digit",
+    })}`;
+  } catch {
+    return "—";
+  }
+}
+
 /* Helpers fuseau établissement */
 const hmInTZ = (d: Date, tz: string): string =>
   new Intl.DateTimeFormat("en-GB", {
@@ -1209,6 +1232,28 @@ export default function ClassDevicePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [JSON.stringify(periodsByDay), inst.default_session_minutes, inst.tz, classId]);
 
+  const activeConfiguredSlot = useMemo(() => {
+    const tz = inst?.tz || "Africa/Abidjan";
+    const now = new Date();
+    const wd = weekdayInTZ1to7(now, tz);
+    const slots = periodsByDay[wd] || [];
+    if (!slots.length) return null;
+
+    const nowMin = toMinutes(hmInTZ(now, tz));
+    return (
+      slots.find((s) => nowMin >= toMinutes(s.start_time) && nowMin < toMinutes(s.end_time)) ||
+      null
+    );
+  }, [periodsByDay, inst?.tz]);
+
+  const hasConfiguredSlotsToday = useMemo(() => {
+    const tz = inst?.tz || "Africa/Abidjan";
+    const wd = weekdayInTZ1to7(new Date(), tz);
+    return (periodsByDay[wd] || []).length > 0;
+  }, [periodsByDay, inst?.tz]);
+
+  const canStartAttendanceNow = !hasConfiguredSlotsToday || !!activeConfiguredSlot;
+
   /* 2) charger les matières quand la classe change */
   useEffect(() => {
     if (!classId) {
@@ -1356,12 +1401,22 @@ export default function ClassDevicePage() {
       return;
     }
 
+    if (hasConfiguredSlotsToday && !activeConfiguredSlot) {
+      setMsg("L’appel n’est autorisé que pendant un créneau ouvert par l’administration.");
+      return;
+    }
+
     setBusy(true);
     setMsg(null);
 
     try {
       const today = new Date();
-      const [hh, mm] = (startTime || "08:00").split(":").map((x) => +x);
+      const effectiveStart = activeConfiguredSlot?.start_time || startTime || "08:00";
+      const effectiveDuration =
+        activeConfiguredSlot
+          ? Math.max(1, minutesDiff(activeConfiguredSlot.start_time, activeConfiguredSlot.end_time))
+          : duration;
+      const [hh, mm] = effectiveStart.split(":").map((x) => +x);
       const started = new Date(today.getFullYear(), today.getMonth(), today.getDate(), hh, mm, 0, 0);
 
       const clientSessionId = `${classId}_${subjectId || "none"}_${started.toISOString()}`;
@@ -1373,7 +1428,7 @@ export default function ClassDevicePage() {
         class_id: classId,
         subject_id: subjectId || null,
         started_at: started.toISOString(),
-        expected_minutes: duration,
+        expected_minutes: effectiveDuration,
         client_session_id: clientSessionId,
         actual_call_at: actualCallAtISO,
       };
@@ -1402,7 +1457,7 @@ export default function ClassDevicePage() {
           subject_name: subj?.label || null,
           started_at: started.toISOString(),
           actual_call_at: actualCallAtISO,
-          expected_minutes: duration,
+          expected_minutes: effectiveDuration,
         };
 
         setOpen(localOpen);
@@ -1582,6 +1637,13 @@ export default function ClassDevicePage() {
   }
 
   const openIsClient = !!open?.id && isClientSessionId(open.id);
+  const openPlannedRange = open
+    ? buildPlannedRangeLabel(
+        open.started_at,
+        open.expected_minutes ?? duration ?? inst.default_session_minutes ?? 60
+      )
+    : "—";
+  const openActualStart = open?.actual_call_at ? formatTimeLabel(open.actual_call_at) : null;
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-6 space-y-6">
@@ -1706,6 +1768,12 @@ export default function ClassDevicePage() {
           </div>
         </div>
 
+        {hasConfiguredSlotsToday && !activeConfiguredSlot && !open && (
+          <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800">
+            Hors créneau : l’appel est bloqué tant qu’aucun créneau administratif n’est ouvert.
+          </div>
+        )}
+
         {openIsClient && (
           <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
             Séance en attente de synchronisation (ID local). Appuyez sur <b>Sync</b> dès que le Wi-Fi est stable.
@@ -1715,7 +1783,7 @@ export default function ClassDevicePage() {
         {/* Actions */}
         {!open ? (
           <div className="flex items-center gap-2">
-            <Button onClick={startSession} disabled={!classId || !subjectId || busy}>
+            <Button onClick={startSession} disabled={!classId || !subjectId || busy || !canStartAttendanceNow}>
               <Play className="h-4 w-4" />
               {busy ? "Démarrage…" : "Démarrer l’appel"}
             </Button>
@@ -1877,8 +1945,11 @@ export default function ClassDevicePage() {
           <div className="mb-3 space-y-1">
             <div className="text-sm font-semibold text-slate-700">
               Appel — {open.class_label} {open.subject_name ? `• ${open.subject_name}` : ""} •{" "}
-              {new Date(open.started_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+              {openPlannedRange}
               {openIsClient ? " • (en attente de sync)" : ""}
+            </div>
+            <div className="text-xs text-slate-500">
+              Début réel : {openActualStart || "—"}
             </div>
             {reminderHint && (
               <div className="text-xs font-medium text-amber-700">

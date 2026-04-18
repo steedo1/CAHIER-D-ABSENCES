@@ -435,6 +435,7 @@ export default function AdminSettingsPage() {
   const [savingCfg, setSavingCfg] = useState(false);
 
   type Period = {
+    id?: string;
     weekday: number;
     label: string;
     start_time: string;
@@ -741,6 +742,7 @@ export default function AdminSettingsPage() {
       const st = cur;
       const en = cur + genDuration;
       out.push({
+        id: `temp_${rid()}`,
         weekday: day,
         label: `${genLabelBase} ${i}`,
         start_time: minToTimeStr(st),
@@ -765,7 +767,11 @@ export default function AdminSettingsPage() {
     setByDay((m) => {
       const next = { ...m };
       for (const d of days) {
-        const rows = genPreview.map((p) => ({ ...p, weekday: d }));
+        const rows = genPreview.map((p) => ({
+          ...p,
+          id: p.id || `temp_${rid()}`,
+          weekday: d,
+        }));
         if (genReplace) next[d] = rows;
         else next[d] = [...(next[d] || []), ...rows];
       }
@@ -853,6 +859,7 @@ export default function AdminSettingsPage() {
         const w = Number(row.weekday || 1);
         if (!grouped[w]) grouped[w] = [];
         grouped[w].push({
+          id: row.id ? String(row.id) : undefined,
           weekday: w,
           label: row.label || "Séance",
           start_time: String(row.start_time || "08:00").slice(0, 5),
@@ -1198,6 +1205,7 @@ export default function AdminSettingsPage() {
     setByDay((m) => {
       const list = (m[day] || []).slice();
       list.push({
+        id: `temp_${rid()}`,
         weekday: day,
         label: "Séance",
         start_time: "08:00",
@@ -1220,6 +1228,7 @@ export default function AdminSettingsPage() {
       const list = (m[day] || []).slice();
       const cur =
         list[idx] || {
+          id: `temp_${rid()}`,
           weekday: day,
           label: "Séance",
           start_time: "08:00",
@@ -1260,8 +1269,12 @@ export default function AdminSettingsPage() {
       Object.keys(byDay).forEach((k) => {
         const d = Number(k);
         (byDay[d] || []).forEach((p) => {
-          if (p.start_time && p.end_time)
-            all.push({ ...p, weekday: d });
+          if (p.start_time && p.end_time) {
+            all.push({
+              ...p,
+              weekday: d,
+            });
+          }
         });
       });
       const r = await fetch("/api/admin/institution/periods", {
@@ -1271,7 +1284,13 @@ export default function AdminSettingsPage() {
       });
       const j = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(j?.error || "Échec enregistrement créneaux");
-      const ok = `Créneaux enregistrés ✅ (${j?.inserted ?? all.length})`;
+
+      const changes =
+        [j?.inserted, j?.updated, j?.deleted]
+          .filter((v) => typeof v === "number")
+          .join(" / ") || `${all.length}`;
+
+      const ok = `Créneaux enregistrés ✅ (${changes})`;
       setMsgSched(ok);
       pushToast("success", ok);
       await loadInstitutionConfig();
@@ -2365,7 +2384,7 @@ export default function AdminSettingsPage() {
                   </thead>
                   <tbody className="divide-y">
                     {genPreview.map((p, i) => (
-                      <tr key={i}>
+                      <tr key={p.id ?? i}>
                         <td className="px-3 py-2">{i + 1}</td>
                         <td className="px-3 py-2">{p.start_time}</td>
                         <td className="px-3 py-2">{p.end_time}</td>
@@ -2437,7 +2456,7 @@ export default function AdminSettingsPage() {
                   </tr>
                 ) : (
                   (byDay[curDay] || []).map((row, i) => (
-                    <tr key={i}>
+                    <tr key={row.id ?? i}>
                       <td className="px-3 py-2">{i + 1}</td>
                       <td className="px-3 py-2">
                         <input
