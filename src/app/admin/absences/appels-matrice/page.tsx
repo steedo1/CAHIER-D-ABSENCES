@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -9,6 +9,7 @@ import {
   Users,
   ShieldCheck,
   Hourglass,
+  Loader2,
 } from "lucide-react";
 
 type MonitorStatus =
@@ -32,7 +33,6 @@ type MonitorRow = {
   late_minutes?: number | null;
   opened_from?: "teacher" | "class_device" | null;
 
-  // 🔥 nouveaux champs potentiels renvoyés par l'API
   absence_request_status?: "pending" | "approved" | "rejected" | null;
   absence_reason_label?: string | null;
   absence_admin_comment?: string | null;
@@ -56,6 +56,8 @@ type ClassCell = {
   absence_admin_comment?: string | null;
 };
 
+const POLL_INTERVAL_MS = 5_000;
+
 function toLocalDateInputValue(d: Date) {
   const yyyy = d.getFullYear();
   const mm = String(d.getMonth() + 1).padStart(2, "0");
@@ -77,20 +79,11 @@ function nowHHMM(d = new Date()): string {
 }
 
 function statusScore(s: MonitorStatus): number {
-  // priorité d'alerte : missing > pending > late > justified > ok
   if (s === "missing") return 4;
   if (s === "pending_absence") return 3;
   if (s === "late") return 2;
   if (s === "justified_absence") return 1;
   return 0;
-}
-
-function statusLabel(s: MonitorStatus): string {
-  if (s === "missing") return "Appel manquant";
-  if (s === "late") return "Appel en retard";
-  if (s === "pending_absence") return "En attente de validation";
-  if (s === "justified_absence") return "Absence justifiée";
-  return "Appel conforme";
 }
 
 function statusHint(
@@ -132,8 +125,6 @@ function cellColorClasses(s: MonitorStatus): string {
   }
   return "bg-emerald-600 text-white border-emerald-400 shadow-lg shadow-emerald-300/40";
 }
-
-/* ========= Helpers niveau ========= */
 
 const LEVEL_ORDER: string[] = [
   "6e",
@@ -180,15 +171,30 @@ export default function AppelsMatricePage() {
 
   const [now, setNow] = useState<Date>(() => new Date());
   const today = useMemo(() => toLocalDateInputValue(now), [now]);
-
   const [levelFilter, setLevelFilter] = useState<string>("all");
 
-  async function loadRows() {
-    setRowsState((prev) => ({ ...prev, loading: !prev.data, error: null }));
+  const inFlightRef = useRef(false);
+  const abortRef = useRef<AbortController | null>(null);
+
+  const loadRows = useCallback(async () => {
+    if (inFlightRef.current) return;
+    inFlightRef.current = true;
+
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+
+    setRowsState((prev) => ({
+      ...prev,
+      loading: true,
+      error: null,
+    }));
+
     try {
       const qs = new URLSearchParams({ from: today, to: today });
       const res = await fetch(`/api/admin/attendance/monitor?${qs.toString()}`, {
         cache: "no-store",
+        signal: controller.signal,
       });
 
       if (!res.ok) {
@@ -196,35 +202,82 @@ export default function AppelsMatricePage() {
           `API /api/admin/attendance/monitor non disponible (HTTP ${res.status}).`
         );
       }
+
       const json = await res.json().catch(() => null);
       const rows = (json?.rows || []) as MonitorRow[];
-      setRowsState({ loading: false, error: null, data: rows });
-    } catch (e: any) {
+
       setRowsState({
         loading: false,
-        error: e?.message || "Erreur lors du chargement des données.",
-        data: null,
+        error: null,
+        data: rows,
       });
-    }
-  }
+    } catch (e: any) {
+      if (e?.name === "AbortError") {
+        return;
+      }
 
-  useEffect(() => {
-    loadRows();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+      setRowsState((prev) => ({
+        loading: false,
+        error: e?.message || "Erreur lors du chargement des données.",
+        data: prev.data,
+      }));
+    } finally {
+      inFlightRef.current = false;
+    }
   }, [today]);
 
   useEffect(() => {
+    void loadRows();
+  }, [loadRows]);
+
+  useEffect(() => {
     if (typeof window === "undefined") return;
+
     const id = window.setInterval(() => {
       setNow(new Date());
-      loadRows();
-    }, 60_000);
+      void loadRows();
+    }, POLL_INTERVAL_MS);
+
     return () => window.clearInterval(id);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loadRows]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const refreshNow = () => {
+      setNow(new Date());
+      void loadRows();
+    };
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        refreshNow();
+      }
+    };
+
+    const onFocus = () => {
+      refreshNow();
+    };
+
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, [loadRows]);
+
+  useEffect(() => {
+    return () => {
+      abortRef.current?.abort();
+    };
   }, []);
 
   const rows = rowsState.data ?? [];
   const currentTime = nowHHMM(now);
+  const initialLoading = rowsState.loading && rows.length === 0;
+  const refreshing = rowsState.loading && rows.length > 0;
 
   const levelOptions = useMemo(() => {
     const s = new Set<string>();
@@ -261,6 +314,7 @@ export default function AppelsMatricePage() {
 
   const activeSlot: Slot | null = useMemo(() => {
     if (!slots.length) return null;
+
     const live = slots.find((s) => s.start <= currentTime && currentTime < s.end);
     if (live) return live;
 
@@ -268,6 +322,7 @@ export default function AppelsMatricePage() {
     if (before.length) {
       return before.sort((a, b) => a.end.localeCompare(b.end))[before.length - 1];
     }
+
     return slots[0];
   }, [slots, currentTime]);
 
@@ -297,7 +352,8 @@ export default function AppelsMatricePage() {
 
       if (statusScore(r.status) > statusScore(existing.status)) {
         existing.status = r.status;
-        existing.absence_reason_label = r.absence_reason_label ?? existing.absence_reason_label;
+        existing.absence_reason_label =
+          r.absence_reason_label ?? existing.absence_reason_label;
         existing.absence_admin_comment =
           r.absence_admin_comment ?? existing.absence_admin_comment;
       }
@@ -361,14 +417,14 @@ export default function AppelsMatricePage() {
             <h1 className="mt-1 text-2xl font-semibold text-slate-900">
               Appels par créneau — Tableau de classes
             </h1>
-            <p className="mt-1 text-sm text-slate-500 max-w-2xl">
+            <p className="mt-1 max-w-2xl text-sm text-slate-500">
               Surveillez en temps réel quelles classes ont un enseignant présent,
               quelles classes sont sans appel, quelles demandes sont en attente de validation et
               quelles absences sont déjà justifiées.
             </p>
           </div>
 
-          <div className="rounded-2xl border border-slate-200 bg-white/90 px-4 py-3 text-xs text-slate-700 shadow-sm flex flex-col gap-1">
+          <div className="flex flex-col gap-1 rounded-2xl border border-slate-200 bg-white/90 px-4 py-3 text-xs text-slate-700 shadow-sm">
             <div className="flex items-center justify-between gap-2">
               <span className="text-[11px] uppercase tracking-wide text-slate-500">
                 Heure actuelle
@@ -377,6 +433,7 @@ export default function AppelsMatricePage() {
                 {currentTime}
               </span>
             </div>
+
             <div className="flex items-center justify-between gap-2">
               <span className="text-[11px] uppercase tracking-wide text-slate-500">
                 Créneau suivi
@@ -391,21 +448,27 @@ export default function AppelsMatricePage() {
                 </span>
               )}
             </div>
+
             <button
               type="button"
-              onClick={loadRows}
-              className="mt-2 inline-flex items-center gap-1 self-end rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-[11px] font-medium text-slate-700 hover:bg-slate-100"
+              onClick={() => void loadRows()}
+              disabled={rowsState.loading}
+              className="mt-2 inline-flex items-center gap-1 self-end rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-[11px] font-medium text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-70"
             >
-              <RefreshCw className="h-3 w-3" />
-              Actualiser maintenant
+              {rowsState.loading ? (
+                <Loader2 className="h-3 w-3 animate-spin" />
+              ) : (
+                <RefreshCw className="h-3 w-3" />
+              )}
+              {rowsState.loading ? "Actualisation..." : "Actualiser maintenant"}
             </button>
           </div>
         </header>
 
         <section className="grid gap-3 md:grid-cols-5">
-          <div className="rounded-2xl border border-red-100 bg-red-50/80 p-4 shadow-sm flex flex-col gap-2">
+          <div className="flex flex-col gap-2 rounded-2xl border border-red-100 bg-red-50/80 p-4 shadow-sm">
             <div className="flex items-center justify-between">
-              <span className="text-xs font-medium text-red-800 uppercase tracking-wide">
+              <span className="text-xs font-medium uppercase tracking-wide text-red-800">
                 Sans appel
               </span>
               <AlertTriangle className="h-5 w-5 text-red-500" />
@@ -416,9 +479,9 @@ export default function AppelsMatricePage() {
             </p>
           </div>
 
-          <div className="rounded-2xl border border-amber-100 bg-amber-50/80 p-4 shadow-sm flex flex-col gap-2">
+          <div className="flex flex-col gap-2 rounded-2xl border border-amber-100 bg-amber-50/80 p-4 shadow-sm">
             <div className="flex items-center justify-between">
-              <span className="text-xs font-medium text-amber-900 uppercase tracking-wide">
+              <span className="text-xs font-medium uppercase tracking-wide text-amber-900">
                 En retard
               </span>
               <Clock className="h-5 w-5 text-amber-500" />
@@ -429,9 +492,9 @@ export default function AppelsMatricePage() {
             </p>
           </div>
 
-          <div className="rounded-2xl border border-yellow-100 bg-yellow-50/80 p-4 shadow-sm flex flex-col gap-2">
+          <div className="flex flex-col gap-2 rounded-2xl border border-yellow-100 bg-yellow-50/80 p-4 shadow-sm">
             <div className="flex items-center justify-between">
-              <span className="text-xs font-medium text-yellow-900 uppercase tracking-wide">
+              <span className="text-xs font-medium uppercase tracking-wide text-yellow-900">
                 En attente de validation
               </span>
               <Hourglass className="h-5 w-5 text-yellow-600" />
@@ -442,9 +505,9 @@ export default function AppelsMatricePage() {
             </p>
           </div>
 
-          <div className="rounded-2xl border border-blue-100 bg-blue-50/80 p-4 shadow-sm flex flex-col gap-2">
+          <div className="flex flex-col gap-2 rounded-2xl border border-blue-100 bg-blue-50/80 p-4 shadow-sm">
             <div className="flex items-center justify-between">
-              <span className="text-xs font-medium text-blue-900 uppercase tracking-wide">
+              <span className="text-xs font-medium uppercase tracking-wide text-blue-900">
                 Justifiées
               </span>
               <ShieldCheck className="h-5 w-5 text-blue-600" />
@@ -455,9 +518,9 @@ export default function AppelsMatricePage() {
             </p>
           </div>
 
-          <div className="rounded-2xl border border-emerald-100 bg-emerald-50/80 p-4 shadow-sm flex flex-col gap-2">
+          <div className="flex flex-col gap-2 rounded-2xl border border-emerald-100 bg-emerald-50/80 p-4 shadow-sm">
             <div className="flex items-center justify-between">
-              <span className="text-xs font-medium text-emerald-900 uppercase tracking-wide">
+              <span className="text-xs font-medium uppercase tracking-wide text-emerald-900">
                 Conformes
               </span>
               <CheckCircle2 className="h-5 w-5 text-emerald-600" />
@@ -471,35 +534,40 @@ export default function AppelsMatricePage() {
           </div>
         </section>
 
-        <section className="rounded-2xl border border-slate-200 bg-white shadow-sm p-4 md:p-5 space-y-4">
+        <section
+          aria-busy={rowsState.loading}
+          className="space-y-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm md:p-5"
+        >
           <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
             <div className="flex items-center gap-2 text-sm font-semibold text-slate-800">
               <Users className="h-4 w-4 text-slate-500" />
               <span>Grille des classes sur le créneau suivi</span>
             </div>
+
             <div className="flex flex-wrap items-center gap-3 text-[11px] text-slate-500">
               <div className="flex flex-wrap items-center gap-2">
                 <span className="inline-flex items-center gap-1">
-                  <span className="inline-block h-3 w-3 rounded-sm bg-emerald-500 mc-blink" />
+                  <span className="mc-blink inline-block h-3 w-3 rounded-sm bg-emerald-500" />
                   Conforme
                 </span>
                 <span className="inline-flex items-center gap-1">
-                  <span className="inline-block h-3 w-3 rounded-sm bg-amber-500 mc-blink" />
+                  <span className="mc-blink inline-block h-3 w-3 rounded-sm bg-amber-500" />
                   Retard
                 </span>
                 <span className="inline-flex items-center gap-1">
-                  <span className="inline-block h-3 w-3 rounded-sm bg-yellow-400 mc-blink" />
+                  <span className="mc-blink inline-block h-3 w-3 rounded-sm bg-yellow-400" />
                   En attente de validation
                 </span>
                 <span className="inline-flex items-center gap-1">
-                  <span className="inline-block h-3 w-3 rounded-sm bg-blue-600 mc-blink" />
+                  <span className="mc-blink inline-block h-3 w-3 rounded-sm bg-blue-600" />
                   Justifiée
                 </span>
                 <span className="inline-flex items-center gap-1">
-                  <span className="inline-block h-3 w-3 rounded-sm bg-red-600 mc-blink" />
+                  <span className="mc-blink inline-block h-3 w-3 rounded-sm bg-red-600" />
                   Sans appel
                 </span>
               </div>
+
               <div className="flex items-center gap-1">
                 <span className="text-slate-600">Niveau :</span>
                 <select
@@ -525,36 +593,44 @@ export default function AppelsMatricePage() {
             </div>
           </div>
 
-          {rowsState.loading && !rows.length ? (
-            <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
-              {Array.from({ length: 8 }).map((_, i) => (
-                <div
-                  key={i}
-                  className="h-20 w-full animate-pulse rounded-2xl bg-slate-100"
-                />
-              ))}
+          {refreshing && (
+            <div className="flex items-center gap-2 rounded-2xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Actualisation de la vue admin en cours...
+            </div>
+          )}
+
+          {initialLoading ? (
+            <div className="flex min-h-[240px] flex-col items-center justify-center rounded-2xl border border-slate-200 bg-slate-50 text-slate-600">
+              <Loader2 className="mb-3 h-8 w-8 animate-spin text-emerald-600" />
+              <p className="text-sm font-medium text-slate-800">
+                Chargement de la surveillance des appels...
+              </p>
+              <p className="mt-1 text-xs text-slate-500">
+                Veuillez patienter quelques instants.
+              </p>
             </div>
           ) : rowsState.error ? (
-            <div className="p-4 border border-red-200 rounded-2xl bg-red-50 text-red-700 text-sm">
+            <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
               {rowsState.error}
             </div>
           ) : !hasAnySlot ? (
-            <div className="p-4 border border-slate-200 rounded-2xl bg-slate-50 text-slate-600 text-sm">
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
               Aucun créneau horaire n&apos;a été trouvé pour aujourd&apos;hui.
             </div>
           ) : !activeSlot ? (
-            <div className="p-4 border border-amber-200 rounded-2xl bg-amber-50 text-amber-800 text-sm">
+            <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
               Aucun créneau ne correspond actuellement à l&apos;heure{" "}
               <span className="font-mono font-semibold">{currentTime}</span>.
             </div>
           ) : classCells.length === 0 ? (
-            <div className="p-4 border border-slate-200 rounded-2xl bg-slate-50 text-slate-600 text-sm">
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
               {levelFilter === "all"
                 ? "Aucun cours planifié sur ce créneau ou aucune donnée de surveillance n'a été générée pour l'instant."
                 : "Aucun cours planifié sur ce créneau pour ce niveau, ou aucune donnée de surveillance n'a été générée pour l'instant."}
             </div>
           ) : (
-            <div className="grid gap-3 grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
               {classCells.map((cell) => (
                 <div
                   key={cell.class_label}
@@ -565,7 +641,7 @@ export default function AppelsMatricePage() {
                   ].join(" ")}
                 >
                   <div className="flex items-center justify-between gap-2">
-                    <span className="text-sm font-semibold truncate">
+                    <span className="truncate text-sm font-semibold">
                       {cell.class_label}
                     </span>
                     <span className="rounded-full bg-black/10 px-2 py-0.5 text-[10px] font-semibold uppercase">
@@ -588,12 +664,14 @@ export default function AppelsMatricePage() {
                         {cell.subjects.join(", ")}
                       </div>
                     )}
+
                     {cell.teachers.length > 0 && (
                       <div className="truncate">
                         <span className="font-medium">Prof :</span>{" "}
                         {cell.teachers.join(", ")}
                       </div>
                     )}
+
                     <p className="mt-1 text-[10px] opacity-90">
                       {statusHint(
                         cell.status,
