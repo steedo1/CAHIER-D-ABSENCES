@@ -8,8 +8,6 @@ import {
   Filter,
   RefreshCw,
   Search,
-  Bell,
-  BellOff,
   Loader2,
   FileText,
   ShieldCheck,
@@ -44,8 +42,6 @@ type MonitorRow = {
 
 type FetchState<T> = { loading: boolean; error: string | null; data: T | null };
 
-type PushStatus = "idle" | "subscribing" | "enabled" | "denied" | "error";
-
 type InstitutionSettings = {
   institution_name?: string | null;
   institution_label?: string | null;
@@ -74,12 +70,19 @@ type TeacherSummaryRow = {
   ok: number;
 };
 
-const VAPID_PUBLIC_KEY =
-  (typeof process !== "undefined"
-    ? process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY
-    : "") || "";
-
-const POLL_INTERVAL_MS = 5_000;
+type SubjectGroup = {
+  subject_name: string;
+  rows: MonitorRow[];
+  teacher_summary: TeacherSummaryRow[];
+  totals: {
+    total: number;
+    missing: number;
+    late: number;
+    pending_absence: number;
+    justified_absence: number;
+    ok: number;
+  };
+};
 
 /* ───────── Helpers ───────── */
 
@@ -112,19 +115,6 @@ function dateLongFR(ymd: string) {
   });
 }
 
-function urlBase64ToUint8Array(base64String: string) {
-  const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
-  const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
-
-  const rawData = atob(base64);
-  const outputArray = new Uint8Array(rawData.length);
-
-  for (let i = 0; i < rawData.length; ++i) {
-    outputArray[i] = rawData.charCodeAt(i);
-  }
-  return outputArray;
-}
-
 function escapeHtml(input: string | number | null | undefined) {
   return String(input ?? "")
     .replace(/&/g, "&amp;")
@@ -154,14 +144,32 @@ function institutionMetaLine(cfg: InstitutionSettings) {
     .join(" • ");
 }
 
+function normalizeTeacherName(name?: string | null) {
+  return (name || "").trim() || "Enseignant non renseigné";
+}
+
+function normalizeSubjectName(name?: string | null) {
+  return (name || "").trim() || "Discipline non renseignée";
+}
+
+function countStatuses(rows: MonitorRow[]) {
+  return {
+    total: rows.length,
+    missing: rows.filter((r) => r.status === "missing").length,
+    late: rows.filter((r) => r.status === "late").length,
+    pending_absence: rows.filter((r) => r.status === "pending_absence").length,
+    justified_absence: rows.filter((r) => r.status === "justified_absence").length,
+    ok: rows.filter((r) => r.status === "ok").length,
+  };
+}
+
 function teacherSummary(rows: MonitorRow[]): TeacherSummaryRow[] {
   const map = new Map<string, TeacherSummaryRow>();
 
   for (const row of rows) {
-    const key = (row.teacher_name || "Enseignant non renseigné").trim() || "Enseignant non renseigné";
+    const key = normalizeTeacherName(row.teacher_name);
     const existing =
-      map.get(key) ||
-      {
+      map.get(key) || {
         teacher_name: key,
         total: 0,
         missing: 0,
@@ -172,13 +180,77 @@ function teacherSummary(rows: MonitorRow[]): TeacherSummaryRow[] {
       };
 
     existing.total += 1;
-    existing[row.status] += 1;
+
+    switch (row.status) {
+      case "missing":
+        existing.missing += 1;
+        break;
+      case "late":
+        existing.late += 1;
+        break;
+      case "pending_absence":
+        existing.pending_absence += 1;
+        break;
+      case "justified_absence":
+        existing.justified_absence += 1;
+        break;
+      case "ok":
+        existing.ok += 1;
+        break;
+    }
+
     map.set(key, existing);
   }
 
   return Array.from(map.values()).sort((a, b) =>
     a.teacher_name.localeCompare(b.teacher_name, "fr", { sensitivity: "base" })
   );
+}
+
+function sortRows(rows: MonitorRow[]) {
+  return [...rows].sort((a, b) => {
+    const byTeacher = normalizeTeacherName(a.teacher_name).localeCompare(
+      normalizeTeacherName(b.teacher_name),
+      "fr",
+      { sensitivity: "base" }
+    );
+    if (byTeacher !== 0) return byTeacher;
+
+    const byDate = (a.date || "").localeCompare(b.date || "");
+    if (byDate !== 0) return byDate;
+
+    const aTime = a.planned_start || a.period_label || "";
+    const bTime = b.planned_start || b.period_label || "";
+    const byTime = aTime.localeCompare(bTime, "fr", { sensitivity: "base" });
+    if (byTime !== 0) return byTime;
+
+    return (a.class_label || "").localeCompare(b.class_label || "", "fr", {
+      sensitivity: "base",
+    });
+  });
+}
+
+function groupRowsBySubject(rows: MonitorRow[]): SubjectGroup[] {
+  const map = new Map<string, MonitorRow[]>();
+
+  for (const row of rows) {
+    const subject = normalizeSubjectName(row.subject_name);
+    const existing = map.get(subject) || [];
+    existing.push(row);
+    map.set(subject, existing);
+  }
+
+  return Array.from(map.entries())
+    .sort(([a], [b]) => a.localeCompare(b, "fr", { sensitivity: "base" }))
+    .map(([subject_name, subjectRows]) => {
+      const sorted = sortRows(subjectRows);
+      return {
+        subject_name,
+        rows: sorted,
+        teacher_summary: teacherSummary(sorted),
+        totals: countStatuses(sorted),
+      };
+    });
 }
 
 function statusText(r: MonitorRow) {
@@ -251,50 +323,99 @@ function buildPrintHtml(args: {
   const headTitle =
     (cfg.institution_head_title || "").trim() || "Responsable administratif";
 
-  const totalMissing = rows.filter((r) => r.status === "missing").length;
-  const totalLate = rows.filter((r) => r.status === "late").length;
-  const totalPending = rows.filter((r) => r.status === "pending_absence").length;
-  const totalJustified = rows.filter((r) => r.status === "justified_absence").length;
-  const totalOk = rows.filter((r) => r.status === "ok").length;
+  const totals = countStatuses(rows);
+  const groups = groupRowsBySubject(rows);
 
-  const teacherRows = teacherSummary(rows);
+  const subjectSections = groups
+    .map((group) => {
+      const teacherTable = group.teacher_summary
+        .map(
+          (t) => `
+            <tr>
+              <td>${escapeHtml(t.teacher_name)}</td>
+              <td>${t.total}</td>
+              <td>${t.missing}</td>
+              <td>${t.late}</td>
+              <td>${t.pending_absence}</td>
+              <td>${t.justified_absence}</td>
+              <td>${t.ok}</td>
+            </tr>
+          `
+        )
+        .join("");
 
-  const teacherTable = teacherRows
-    .map(
-      (t) => `
-      <tr>
-        <td>${escapeHtml(t.teacher_name)}</td>
-        <td>${t.total}</td>
-        <td>${t.missing}</td>
-        <td>${t.late}</td>
-        <td>${t.pending_absence}</td>
-        <td>${t.justified_absence}</td>
-        <td>${t.ok}</td>
-      </tr>
-    `
-    )
-    .join("");
+      const detailsTable = group.rows
+        .map((r, idx) => {
+          const period =
+            (r.planned_start && r.planned_end
+              ? `${r.planned_start} – ${r.planned_end}`
+              : null) ??
+            r.period_label ??
+            "—";
 
-  const detailsTable = rows
-    .map((r, idx) => {
-      const period =
-        (r.planned_start && r.planned_end
-          ? `${r.planned_start} – ${r.planned_end}`
-          : null) ??
-        r.period_label ??
-        "—";
+          return `
+            <tr>
+              <td>${idx + 1}</td>
+              <td>${escapeHtml(dateHumanFR(r.date))}</td>
+              <td>${escapeHtml(period)}</td>
+              <td>${escapeHtml(r.class_label || "—")}</td>
+              <td>${escapeHtml(r.teacher_name || "—")}</td>
+              <td>${escapeHtml(statusText(r))}</td>
+              <td>${escapeHtml(detailsText(r))}</td>
+            </tr>
+          `;
+        })
+        .join("");
 
       return `
-        <tr>
-          <td>${idx + 1}</td>
-          <td>${escapeHtml(dateHumanFR(r.date))}</td>
-          <td>${escapeHtml(period)}</td>
-          <td>${escapeHtml(r.class_label || "—")}</td>
-          <td>${escapeHtml(r.subject_name || "Discipline non renseignée")}</td>
-          <td>${escapeHtml(r.teacher_name || "—")}</td>
-          <td>${escapeHtml(statusText(r))}</td>
-          <td>${escapeHtml(detailsText(r))}</td>
-        </tr>
+        <div class="subject-block">
+          <div class="subject-title">${escapeHtml(group.subject_name)}</div>
+
+          <div class="mini-summary">
+            <div class="mini-card"><span>Créneaux</span><strong>${group.totals.total}</strong></div>
+            <div class="mini-card"><span>Manquants</span><strong>${group.totals.missing}</strong></div>
+            <div class="mini-card"><span>Retards</span><strong>${group.totals.late}</strong></div>
+            <div class="mini-card"><span>En attente</span><strong>${group.totals.pending_absence}</strong></div>
+            <div class="mini-card"><span>Justifiées</span><strong>${group.totals.justified_absence}</strong></div>
+            <div class="mini-card"><span>Conformes</span><strong>${group.totals.ok}</strong></div>
+          </div>
+
+          <div class="section-subtitle">Synthèse des enseignants</div>
+          <table>
+            <thead>
+              <tr>
+                <th>Enseignant</th>
+                <th>Total</th>
+                <th>Manquants</th>
+                <th>Retards</th>
+                <th>En attente</th>
+                <th>Justifiées</th>
+                <th>Conformes</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${teacherTable || `<tr><td colspan="7">Aucune donnée</td></tr>`}
+            </tbody>
+          </table>
+
+          <div class="section-subtitle">Détail des créneaux</div>
+          <table>
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Date</th>
+                <th>Créneau</th>
+                <th>Classe</th>
+                <th>Enseignant</th>
+                <th>Statut</th>
+                <th>Détails</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${detailsTable || `<tr><td colspan="7">Aucune donnée</td></tr>`}
+            </tbody>
+          </table>
+        </div>
       `;
     })
     .join("");
@@ -371,10 +492,6 @@ function buildPrintHtml(args: {
       font-weight: 700;
     }
 
-    .establishment {
-      min-width: 0;
-    }
-
     .establishment-name {
       font-size: 20px;
       font-weight: 800;
@@ -435,15 +552,59 @@ function buildPrintHtml(args: {
       color: #0f172a;
     }
 
-    .section-title {
+    .subject-block {
       margin-top: 18px;
-      margin-bottom: 8px;
-      font-size: 13px;
+      border: 1px solid #e2e8f0;
+      border-radius: 14px;
+      padding: 12px;
+      page-break-inside: avoid;
+    }
+
+    .subject-title {
+      font-size: 14px;
       font-weight: 800;
       text-transform: uppercase;
       color: #0f172a;
       border-left: 4px solid #10b981;
       padding-left: 8px;
+      margin-bottom: 10px;
+    }
+
+    .mini-summary {
+      display: grid;
+      grid-template-columns: repeat(6, 1fr);
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+
+    .mini-card {
+      border: 1px solid #e2e8f0;
+      background: #f8fafc;
+      border-radius: 10px;
+      padding: 8px;
+      text-align: center;
+    }
+
+    .mini-card span {
+      display: block;
+      color: #64748b;
+      font-size: 10px;
+      text-transform: uppercase;
+      margin-bottom: 4px;
+      font-weight: 700;
+    }
+
+    .mini-card strong {
+      font-size: 15px;
+      color: #0f172a;
+    }
+
+    .section-subtitle {
+      margin-top: 12px;
+      margin-bottom: 8px;
+      font-size: 12px;
+      font-weight: 800;
+      color: #0f172a;
     }
 
     table {
@@ -464,20 +625,11 @@ function buildPrintHtml(args: {
       font-weight: 700;
     }
 
-    .obs-box {
-      margin-top: 10px;
-      border: 1px solid #cbd5e1;
-      border-radius: 12px;
-      min-height: 70px;
-      padding: 10px;
-      color: #64748b;
-    }
-
     .signatures {
       display: grid;
-      grid-template-columns: repeat(3, 1fr);
+      grid-template-columns: repeat(2, 1fr);
       gap: 16px;
-      margin-top: 24px;
+      margin-top: 26px;
     }
 
     .signature-box {
@@ -523,7 +675,7 @@ function buildPrintHtml(args: {
             : `<div class="logo-placeholder">LOGO</div>`
         }
       </div>
-      <div class="establishment">
+      <div>
         <div class="establishment-name">${escapeHtml(institutionName)}</div>
         ${
           institutionMeta
@@ -544,67 +696,23 @@ function buildPrintHtml(args: {
     </div>
 
     <div class="summary">
-      <div class="card"><div class="label">Manquants</div><div class="value">${totalMissing}</div></div>
-      <div class="card"><div class="label">Retards</div><div class="value">${totalLate}</div></div>
-      <div class="card"><div class="label">En attente</div><div class="value">${totalPending}</div></div>
-      <div class="card"><div class="label">Justifiées</div><div class="value">${totalJustified}</div></div>
-      <div class="card"><div class="label">Conformes</div><div class="value">${totalOk}</div></div>
+      <div class="card"><div class="label">Manquants</div><div class="value">${totals.missing}</div></div>
+      <div class="card"><div class="label">Retards</div><div class="value">${totals.late}</div></div>
+      <div class="card"><div class="label">En attente</div><div class="value">${totals.pending_absence}</div></div>
+      <div class="card"><div class="label">Justifiées</div><div class="value">${totals.justified_absence}</div></div>
+      <div class="card"><div class="label">Conformes</div><div class="value">${totals.ok}</div></div>
     </div>
 
-    <div class="section-title">Synthèse par enseignant</div>
-    <table>
-      <thead>
-        <tr>
-          <th>Enseignant</th>
-          <th>Total</th>
-          <th>Manquants</th>
-          <th>Retards</th>
-          <th>En attente</th>
-          <th>Justifiées</th>
-          <th>Conformes</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${teacherTable || `<tr><td colspan="7">Aucune donnée</td></tr>`}
-      </tbody>
-    </table>
-
-    <div class="section-title">Détail des créneaux</div>
-    <table>
-      <thead>
-        <tr>
-          <th>#</th>
-          <th>Date</th>
-          <th>Créneau</th>
-          <th>Classe</th>
-          <th>Discipline</th>
-          <th>Enseignant</th>
-          <th>Statut</th>
-          <th>Détails</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${detailsTable || `<tr><td colspan="8">Aucune donnée</td></tr>`}
-      </tbody>
-    </table>
-
-    <div class="section-title">Observations / Décisions de réunion</div>
-    <div class="obs-box">
-      ...............................................................................................................................<br />
-      ...............................................................................................................................<br />
-      ...............................................................................................................................<br />
-      ...............................................................................................................................
-    </div>
+    ${subjectSections || `<div class="subject-block">Aucune donnée</div>`}
 
     <div class="signatures">
       <div class="signature-box">
         <div class="signature-line">Administration</div>
       </div>
       <div class="signature-box">
-        <div class="signature-line">${escapeHtml(headName)}${headTitle ? ` — ${escapeHtml(headTitle)}` : ""}</div>
-      </div>
-      <div class="signature-box">
-        <div class="signature-line">Enseignant concerné</div>
+        <div class="signature-line">${escapeHtml(headName)}${
+          headTitle ? ` — ${escapeHtml(headTitle)}` : ""
+        }</div>
       </div>
     </div>
 
@@ -678,6 +786,36 @@ function Button(p: React.ButtonHTMLAttributes<HTMLButtonElement>) {
   );
 }
 
+function StatPill({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: number;
+  tone: "red" | "amber" | "sky" | "blue" | "emerald";
+}) {
+  const toneClasses =
+    tone === "red"
+      ? "border-red-100 bg-red-50 text-red-800"
+      : tone === "amber"
+      ? "border-amber-100 bg-amber-50 text-amber-800"
+      : tone === "sky"
+      ? "border-sky-100 bg-sky-50 text-sky-800"
+      : tone === "blue"
+      ? "border-blue-100 bg-blue-50 text-blue-800"
+      : "border-emerald-100 bg-emerald-50 text-emerald-800";
+
+  return (
+    <span
+      className={`inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[11px] font-medium ${toneClasses}`}
+    >
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </span>
+  );
+}
+
 export default function SurveillanceAppelsPage() {
   const [from, setFrom] = useState<string>(() => {
     const d = new Date();
@@ -695,9 +833,6 @@ export default function SurveillanceAppelsPage() {
   });
 
   const [cfg, setCfg] = useState<InstitutionSettings>({});
-  const [pushSupported, setPushSupported] = useState(false);
-  const [pushStatus, setPushStatus] = useState<PushStatus>("idle");
-  const [pushError, setPushError] = useState<string | null>(null);
 
   const inFlightRef = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
@@ -729,52 +864,13 @@ export default function SurveillanceAppelsPage() {
         institution_code: settingsJson?.institution_code ?? "",
       });
     } catch {
-      // pas bloquant pour la page
+      // non bloquant
     }
   }, []);
 
   useEffect(() => {
     void loadInstitutionSettings();
   }, [loadInstitutionSettings]);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-
-    const hasNotif = "Notification" in window;
-    const hasSW = "serviceWorker" in navigator;
-    const hasPush = "PushManager" in window;
-
-    if (!hasNotif || !hasSW || !hasPush) {
-      setPushSupported(false);
-      setPushStatus("error");
-      setPushError(
-        "Les notifications push ne sont pas supportées sur ce navigateur ou cet appareil."
-      );
-      return;
-    }
-
-    setPushSupported(true);
-
-    if (Notification.permission === "denied") {
-      setPushStatus("denied");
-      setPushError(
-        "Les notifications sont bloquées pour ce site dans votre navigateur. Utilisez l’icône cadenas à côté de l’adresse pour les réactiver."
-      );
-      return;
-    }
-
-    (async () => {
-      try {
-        const reg =
-          (await navigator.serviceWorker.getRegistration()) ||
-          (await navigator.serviceWorker.register("/sw.js"));
-        const sub = await reg.pushManager.getSubscription();
-        if (sub) setPushStatus("enabled");
-      } catch (e) {
-        console.warn("[SurveillanceAppels] push init error", e);
-      }
-    })();
-  }, []);
 
   const loadRows = useCallback(async () => {
     if (!from || !to) return;
@@ -840,144 +936,10 @@ export default function SurveillanceAppelsPage() {
   }, [loadRows]);
 
   useEffect(() => {
-    if (typeof window === "undefined") return;
-
-    const id = window.setInterval(() => {
-      void loadRows();
-    }, POLL_INTERVAL_MS);
-
-    return () => window.clearInterval(id);
-  }, [loadRows]);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-
-    const refreshNow = () => {
-      void loadRows();
-    };
-
-    const onFocus = () => refreshNow();
-    const onVisibilityChange = () => {
-      if (document.visibilityState === "visible") {
-        refreshNow();
-      }
-    };
-
-    window.addEventListener("focus", onFocus);
-    document.addEventListener("visibilitychange", onVisibilityChange);
-
-    return () => {
-      window.removeEventListener("focus", onFocus);
-      document.removeEventListener("visibilitychange", onVisibilityChange);
-    };
-  }, [loadRows]);
-
-  useEffect(() => {
     return () => {
       abortRef.current?.abort();
     };
   }, []);
-
-  async function enablePush() {
-    setPushError(null);
-
-    if (typeof window === "undefined") {
-      setPushStatus("error");
-      setPushError("Contexte navigateur requis pour activer les notifications.");
-      return;
-    }
-
-    const hasNotif = "Notification" in window;
-    const hasSW = "serviceWorker" in navigator;
-    const hasPush = "PushManager" in window;
-
-    if (!hasNotif || !hasSW || !hasPush) {
-      setPushSupported(false);
-      setPushStatus("error");
-      setPushError(
-        "Les notifications push ne sont pas supportées sur ce navigateur ou cet appareil."
-      );
-      return;
-    }
-
-    if (!VAPID_PUBLIC_KEY) {
-      setPushError("Clé VAPID non configurée côté client.");
-      setPushStatus("error");
-      return;
-    }
-
-    try {
-      setPushStatus("subscribing");
-
-      let permission = Notification.permission;
-
-      if (permission === "denied") {
-        setPushStatus("denied");
-        setPushError(
-          "Les notifications sont bloquées pour ce site dans votre navigateur. Utilisez l’icône cadenas à côté de l’adresse pour les réactiver."
-        );
-        return;
-      }
-
-      if (permission === "default") {
-        permission = await Notification.requestPermission();
-      }
-
-      if (permission !== "granted") {
-        setPushStatus("denied");
-        setPushError(
-          "Les notifications ont été refusées pour ce navigateur. Vous pouvez les réactiver dans les paramètres du navigateur."
-        );
-        return;
-      }
-
-      let reg = await navigator.serviceWorker.getRegistration();
-      if (!reg) {
-        reg = await navigator.serviceWorker.register("/sw.js");
-      }
-      if (!reg) {
-        throw new Error("Impossible de récupérer le service worker.");
-      }
-
-      let sub = await reg.pushManager.getSubscription();
-      if (!sub) {
-        sub = await reg.pushManager.subscribe({
-          userVisibleOnly: true,
-          applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
-        });
-      }
-
-      const res = await fetch("/api/push/subscribe", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({
-          platform: "web",
-          device_id: sub.endpoint,
-          subscription: sub,
-        }),
-      });
-
-      if (!res.ok) {
-        const txt = await res.text().catch(() => "");
-        throw new Error(
-          `Échec d'enregistrement du device push (HTTP ${res.status}) ${txt || ""}`
-        );
-      }
-
-      setPushStatus("enabled");
-      setPushError(null);
-    } catch (e: any) {
-      console.error("[SurveillanceAppels] enablePush error", e);
-      setPushStatus("error");
-      setPushError(
-        e?.message ||
-          "Erreur lors de l’activation des notifications. Vérifiez le HTTPS et le service worker."
-      );
-    } finally {
-      setPushStatus((prev) => (prev === "subscribing" ? "idle" : prev));
-    }
-  }
 
   const rows = rowsState.data || [];
   const initialLoading = rowsState.loading && rows.length === 0;
@@ -999,6 +961,8 @@ export default function SurveillanceAppelsPage() {
       return true;
     });
   }, [rows, statusFilter, teacherQuery]);
+
+  const groupedRows = useMemo(() => groupRowsBySubject(filteredRows), [filteredRows]);
 
   const totalMissing = rows.filter((r) => r.status === "missing").length;
   const totalLate = rows.filter((r) => r.status === "late").length;
@@ -1102,43 +1066,22 @@ export default function SurveillanceAppelsPage() {
     openPrintDocument(html);
   }
 
-  const establishmentName = institutionDisplayName(cfg);
-  const establishmentMeta = institutionMetaLine(cfg);
-
   return (
     <main className="min-h-screen bg-slate-50/80 p-4 md:p-6">
-      <div className="mx-auto max-w-6xl space-y-6">
-        <header className="overflow-hidden rounded-3xl border border-slate-800/10 bg-gradient-to-br from-slate-950 via-emerald-950 to-slate-900 p-5 text-white shadow-sm md:p-6">
+      <div className="mx-auto max-w-7xl space-y-6">
+        <header className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm md:p-6">
           <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-            <div className="flex items-start gap-4">
-              <div className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-2xl border border-white/15 bg-white">
-                {cfg.institution_logo_url ? (
-                  <img
-                    src={cfg.institution_logo_url}
-                    alt="Logo établissement"
-                    className="h-full w-full object-contain"
-                  />
-                ) : (
-                  <div className="text-xs font-bold text-slate-500">LOGO</div>
-                )}
-              </div>
-
-              <div className="min-w-0">
-                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-300">
-                  Tableau de contrôle
-                </p>
-                <h1 className="mt-1 text-2xl font-semibold tracking-tight">
-                  Surveillance des appels
-                </h1>
-                <p className="mt-1 text-sm text-white/80">{establishmentName}</p>
-                {establishmentMeta ? (
-                  <p className="mt-1 text-xs text-white/65">{establishmentMeta}</p>
-                ) : null}
-                <p className="mt-2 max-w-2xl text-sm text-white/75">
-                  Repérez en temps réel les appels manquants, les appels en retard,
-                  les demandes d’absence en attente et les absences justifiées.
-                </p>
-              </div>
+            <div className="min-w-0">
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-600">
+                Tableau de contrôle
+              </p>
+              <h1 className="mt-1 text-2xl font-semibold tracking-tight text-slate-900">
+                Surveillance des appels
+              </h1>
+              <p className="mt-2 max-w-2xl text-sm text-slate-600">
+                Vue simplifiée des appels manquants, retards et absences, avec
+                regroupement des enseignants par matière.
+              </p>
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
@@ -1146,7 +1089,7 @@ export default function SurveillanceAppelsPage() {
                 type="button"
                 onClick={() => void loadRows()}
                 disabled={rowsState.loading}
-                className="bg-white/10 hover:bg-white/15"
+                className="bg-slate-800 hover:bg-slate-900"
               >
                 {rowsState.loading ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
@@ -1168,63 +1111,6 @@ export default function SurveillanceAppelsPage() {
             </div>
           </div>
         </header>
-
-        <section className="flex flex-col gap-4 rounded-2xl border border-sky-200 bg-gradient-to-r from-sky-50 to-emerald-50 p-4 shadow-sm md:flex-row md:items-center md:justify-between md:p-5">
-          <div className="flex items-start gap-3">
-            {pushStatus === "enabled" ? (
-              <div className="mt-0.5 inline-flex h-10 w-10 items-center justify-center rounded-full bg-emerald-100 text-emerald-700 shadow-sm">
-                <Bell className="h-5 w-5" />
-              </div>
-            ) : (
-              <div className="mt-0.5 inline-flex h-10 w-10 items-center justify-center rounded-full bg-sky-100 text-sky-700 shadow-sm">
-                <BellOff className="h-5 w-5" />
-              </div>
-            )}
-
-            <div className="space-y-1">
-              <h2 className="text-sm font-semibold text-slate-900">
-                Notifications instantanées pour les anomalies
-              </h2>
-              <p className="text-xs text-slate-700">
-                Activez les notifications push pour être alerté(e) automatiquement.
-              </p>
-              {!pushSupported && (
-                <p className="text-[11px] text-red-700">
-                  Les notifications ne sont pas supportées sur ce navigateur.
-                </p>
-              )}
-              {pushError && <p className="text-[11px] text-red-700">{pushError}</p>}
-            </div>
-          </div>
-
-          <div className="flex flex-col items-end gap-2 text-right">
-            <span className="text-[11px] uppercase tracking-wide text-slate-500">
-              Statut
-            </span>
-            <Button
-              type="button"
-              onClick={enablePush}
-              disabled={
-                !pushSupported ||
-                pushStatus === "subscribing" ||
-                pushStatus === "enabled"
-              }
-              className={[
-                "!px-4",
-                pushStatus === "enabled"
-                  ? "bg-emerald-600 hover:bg-emerald-700"
-                  : "bg-slate-900 hover:bg-black",
-              ].join(" ")}
-            >
-              {pushStatus === "subscribing" && (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              )}
-              {pushStatus === "enabled"
-                ? "Notifications activées"
-                : "Activer les notifications"}
-            </Button>
-          </div>
-        </section>
 
         <section className="grid gap-3 md:grid-cols-5">
           <div className="rounded-2xl border border-red-100 bg-red-50/80 p-4 shadow-sm">
@@ -1370,7 +1256,7 @@ export default function SurveillanceAppelsPage() {
           {refreshing && (
             <div className="flex items-center gap-2 rounded-2xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
               <Loader2 className="h-4 w-4 animate-spin" />
-              Actualisation de la surveillance en cours...
+              Actualisation en cours...
             </div>
           )}
         </section>
@@ -1390,108 +1276,189 @@ export default function SurveillanceAppelsPage() {
             <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
               {rowsState.error}
             </div>
-          ) : filteredRows.length === 0 ? (
+          ) : groupedRows.length === 0 ? (
             <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
               Aucun créneau ne correspond aux filtres sélectionnés.
             </div>
           ) : (
-            <div className="overflow-auto rounded-xl border border-slate-200">
-              <table className="min-w-full text-sm">
-                <thead className="bg-slate-100/90 text-slate-700">
-                  <tr>
-                    <th className="px-3 py-2 text-left">Date</th>
-                    <th className="px-3 py-2 text-left">Créneau</th>
-                    <th className="px-3 py-2 text-left">Classe</th>
-                    <th className="px-3 py-2 text-left">Discipline</th>
-                    <th className="px-3 py-2 text-left">Enseignant</th>
-                    <th className="px-3 py-2 text-left">Statut</th>
-                    <th className="px-3 py-2 text-left">Détails</th>
-                  </tr>
-                </thead>
+            <div className="space-y-5">
+              {groupedRows.map((group) => (
+                <div
+                  key={group.subject_name}
+                  className="overflow-hidden rounded-2xl border border-slate-200"
+                >
+                  <div className="flex flex-col gap-3 border-b border-slate-200 bg-slate-50 px-4 py-4 md:flex-row md:items-center md:justify-between">
+                    <div className="min-w-0">
+                      <h2 className="text-lg font-semibold text-slate-900">
+                        {group.subject_name}
+                      </h2>
+                      <p className="text-sm text-slate-500">
+                        {group.totals.total} créneau(x) trouvé(s)
+                      </p>
+                    </div>
 
-                <tbody className="divide-y divide-slate-100">
-                  {filteredRows.map((r) => {
-                    const statusColor =
-                      r.status === "missing"
-                        ? "border-l-4 border-red-400 bg-red-50/40 hover:bg-red-50"
-                        : r.status === "late"
-                        ? "border-l-4 border-amber-400 bg-amber-50/30 hover:bg-amber-50"
-                        : r.status === "pending_absence"
-                        ? "border-l-4 border-sky-400 bg-sky-50/30 hover:bg-sky-50"
-                        : r.status === "justified_absence"
-                        ? "border-l-4 border-blue-400 bg-blue-50/30 hover:bg-blue-50"
-                        : "border-l-4 border-emerald-400 bg-white hover:bg-emerald-50/60";
+                    <div className="flex flex-wrap gap-2">
+                      <StatPill label="Manquants" value={group.totals.missing} tone="red" />
+                      <StatPill label="Retards" value={group.totals.late} tone="amber" />
+                      <StatPill
+                        label="En attente"
+                        value={group.totals.pending_absence}
+                        tone="sky"
+                      />
+                      <StatPill
+                        label="Justifiées"
+                        value={group.totals.justified_absence}
+                        tone="blue"
+                      />
+                      <StatPill label="Conformes" value={group.totals.ok} tone="emerald" />
+                    </div>
+                  </div>
 
-                    const timeRange =
-                      r.planned_start && r.planned_end
-                        ? `${r.planned_start} – ${r.planned_end}`
-                        : null;
+                  <div className="space-y-4 p-4">
+                    <div>
+                      <h3 className="mb-3 text-sm font-semibold text-slate-800">
+                        Synthèse des enseignants
+                      </h3>
+                      <div className="overflow-auto rounded-xl border border-slate-200">
+                        <table className="min-w-full text-sm">
+                          <thead className="bg-slate-100/90 text-slate-700">
+                            <tr>
+                              <th className="px-3 py-2 text-left">Enseignant</th>
+                              <th className="px-3 py-2 text-left">Total</th>
+                              <th className="px-3 py-2 text-left">Manquants</th>
+                              <th className="px-3 py-2 text-left">Retards</th>
+                              <th className="px-3 py-2 text-left">En attente</th>
+                              <th className="px-3 py-2 text-left">Justifiées</th>
+                              <th className="px-3 py-2 text-left">Conformes</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100">
+                            {group.teacher_summary.map((teacher) => (
+                              <tr key={`${group.subject_name}-${teacher.teacher_name}`}>
+                                <td className="px-3 py-2 font-medium text-slate-800">
+                                  {teacher.teacher_name}
+                                </td>
+                                <td className="px-3 py-2 text-slate-700">{teacher.total}</td>
+                                <td className="px-3 py-2 text-slate-700">{teacher.missing}</td>
+                                <td className="px-3 py-2 text-slate-700">{teacher.late}</td>
+                                <td className="px-3 py-2 text-slate-700">
+                                  {teacher.pending_absence}
+                                </td>
+                                <td className="px-3 py-2 text-slate-700">
+                                  {teacher.justified_absence}
+                                </td>
+                                <td className="px-3 py-2 text-slate-700">{teacher.ok}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
 
-                    return (
-                      <tr key={r.id} className={`transition-colors ${statusColor}`}>
-                        <td className="whitespace-nowrap px-3 py-2 text-slate-800">
-                          {dateHumanFR(r.date)}
-                        </td>
-                        <td className="whitespace-nowrap px-3 py-2 text-slate-700">
-                          {timeRange ?? r.period_label ?? "—"}
-                        </td>
-                        <td className="whitespace-nowrap px-3 py-2 text-slate-700">
-                          {r.class_label || "—"}
-                        </td>
-                        <td className="whitespace-nowrap px-3 py-2 text-slate-700">
-                          {r.subject_name || "Discipline non renseignée"}
-                        </td>
-                        <td className="whitespace-nowrap px-3 py-2 text-slate-700">
-                          {r.teacher_name}
-                        </td>
-                        <td className="whitespace-nowrap px-3 py-2 text-slate-700">
-                          {statusBadge(r)}
-                        </td>
-                        <td className="px-3 py-2 text-xs text-slate-600">
-                          {r.status === "missing" && (
-                            <span>
-                              Aucun appel détecté pour ce créneau. {originEmoji(r.opened_from)}
-                            </span>
-                          )}
-                          {r.status === "late" && (
-                            <span>
-                              Appel réalisé avec retard. {originEmoji(r.opened_from)}{" "}
-                              {typeof r.late_minutes === "number"
-                                ? `Retard estimé : ${r.late_minutes} min.`
-                                : ""}
-                            </span>
-                          )}
-                          {r.status === "pending_absence" && (
-                            <span>
-                              Demande d’absence soumise et en attente de validation.
-                              {r.absence_reason_label ? ` Motif : ${r.absence_reason_label}.` : ""}
-                            </span>
-                          )}
-                          {r.status === "justified_absence" && (
-                            <span>
-                              Absence approuvée par l’administration.
-                              {r.absence_reason_label ? ` Motif : ${r.absence_reason_label}.` : ""}
-                              {r.absence_admin_comment
-                                ? ` Commentaire admin : ${r.absence_admin_comment}.`
-                                : ""}
-                            </span>
-                          )}
-                          {r.status === "ok" && (
-                            <span>Appel dans les délais. {originEmoji(r.opened_from)}</span>
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+                    <div>
+                      <h3 className="mb-3 text-sm font-semibold text-slate-800">
+                        Détail des créneaux
+                      </h3>
+                      <div className="overflow-auto rounded-xl border border-slate-200">
+                        <table className="min-w-full text-sm">
+                          <thead className="bg-slate-100/90 text-slate-700">
+                            <tr>
+                              <th className="px-3 py-2 text-left">Date</th>
+                              <th className="px-3 py-2 text-left">Créneau</th>
+                              <th className="px-3 py-2 text-left">Classe</th>
+                              <th className="px-3 py-2 text-left">Enseignant</th>
+                              <th className="px-3 py-2 text-left">Statut</th>
+                              <th className="px-3 py-2 text-left">Détails</th>
+                            </tr>
+                          </thead>
+
+                          <tbody className="divide-y divide-slate-100">
+                            {group.rows.map((r) => {
+                              const statusColor =
+                                r.status === "missing"
+                                  ? "border-l-4 border-red-400 bg-red-50/40 hover:bg-red-50"
+                                  : r.status === "late"
+                                  ? "border-l-4 border-amber-400 bg-amber-50/30 hover:bg-amber-50"
+                                  : r.status === "pending_absence"
+                                  ? "border-l-4 border-sky-400 bg-sky-50/30 hover:bg-sky-50"
+                                  : r.status === "justified_absence"
+                                  ? "border-l-4 border-blue-400 bg-blue-50/30 hover:bg-blue-50"
+                                  : "border-l-4 border-emerald-400 bg-white hover:bg-emerald-50/60";
+
+                              const timeRange =
+                                r.planned_start && r.planned_end
+                                  ? `${r.planned_start} – ${r.planned_end}`
+                                  : null;
+
+                              return (
+                                <tr key={r.id} className={`transition-colors ${statusColor}`}>
+                                  <td className="whitespace-nowrap px-3 py-2 text-slate-800">
+                                    {dateHumanFR(r.date)}
+                                  </td>
+                                  <td className="whitespace-nowrap px-3 py-2 text-slate-700">
+                                    {timeRange ?? r.period_label ?? "—"}
+                                  </td>
+                                  <td className="whitespace-nowrap px-3 py-2 text-slate-700">
+                                    {r.class_label || "—"}
+                                  </td>
+                                  <td className="whitespace-nowrap px-3 py-2 text-slate-700">
+                                    {normalizeTeacherName(r.teacher_name)}
+                                  </td>
+                                  <td className="whitespace-nowrap px-3 py-2 text-slate-700">
+                                    {statusBadge(r)}
+                                  </td>
+                                  <td className="px-3 py-2 text-xs text-slate-600">
+                                    {r.status === "missing" && (
+                                      <span>
+                                        Aucun appel détecté pour ce créneau.{" "}
+                                        {originEmoji(r.opened_from)}
+                                      </span>
+                                    )}
+                                    {r.status === "late" && (
+                                      <span>
+                                        Appel réalisé avec retard. {originEmoji(r.opened_from)}{" "}
+                                        {typeof r.late_minutes === "number"
+                                          ? `Retard estimé : ${r.late_minutes} min.`
+                                          : ""}
+                                      </span>
+                                    )}
+                                    {r.status === "pending_absence" && (
+                                      <span>
+                                        Demande d’absence soumise et en attente de validation.
+                                        {r.absence_reason_label
+                                          ? ` Motif : ${r.absence_reason_label}.`
+                                          : ""}
+                                      </span>
+                                    )}
+                                    {r.status === "justified_absence" && (
+                                      <span>
+                                        Absence approuvée par l’administration.
+                                        {r.absence_reason_label
+                                          ? ` Motif : ${r.absence_reason_label}.`
+                                          : ""}
+                                        {r.absence_admin_comment
+                                          ? ` Commentaire admin : ${r.absence_admin_comment}.`
+                                          : ""}
+                                      </span>
+                                    )}
+                                    {r.status === "ok" && (
+                                      <span>
+                                        Appel dans les délais. {originEmoji(r.opened_from)}
+                                      </span>
+                                    )}
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ))}
             </div>
           )}
-
-          <p className="mt-3 text-[11px] text-slate-500">
-            Cette vue repose sur les emplois du temps, les séances, l’heure réelle
-            d’appel et les autorisations d’absence enseignants validées ou en attente.
-          </p>
         </section>
       </div>
     </main>
