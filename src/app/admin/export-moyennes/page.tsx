@@ -227,21 +227,6 @@ export default async function ExportMoyennesPage() {
                     ))}
                   </select>
                 </div>
-
-                <div>
-                  <label className="mb-2 flex items-center gap-2 text-sm font-semibold text-slate-700">
-                    <FileSpreadsheet className="h-4 w-4" />
-                    Modèle d’export
-                  </label>
-                  <select
-                    name="export_model"
-                    className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/15"
-                    defaultValue="standard"
-                  >
-                    <option value="standard">Standard</option>
-                    <option value="generic">Compatible import</option>
-                  </select>
-                </div>
               </div>
 
               <div className="mt-5 flex flex-col gap-3 sm:flex-row">

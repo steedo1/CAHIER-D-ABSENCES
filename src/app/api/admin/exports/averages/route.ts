@@ -80,25 +80,20 @@ type ConductResponse =
   | ConductAverageItem[];
 
 type ExportRow = {
-  institution: string;
-  academic_year: string;
-  periode: string;
-  periode_code: string;
-  classe: string;
-  niveau: string;
   matricule: string;
   nom: string;
   prenoms: string;
-  nom_prenoms: string;
+  classe: string;
+  annee_scolaire: string;
+  periode: string;
   moyenne_generale: number | null;
   rang: number | null;
+  conduite: number | null;
   moyenne_annuelle: number | null;
   rang_annuel: number | null;
-  conduite: number | null;
 };
 
 type ExportFormat = "xlsx" | "csv";
-type ExportModel = "standard" | "generic";
 
 type ResolvedPeriod = {
   academicYear: string;
@@ -236,39 +231,19 @@ function makeDownloadFilename(opts: {
   return `${base}.${opts.format}`;
 }
 
-function buildStandardRows(rows: ExportRow[]) {
+function buildExportRows(rows: ExportRow[]) {
   return rows.map((row) => ({
-    Institution: row.institution,
-    "Année scolaire": row.academic_year,
-    Période: row.periode,
-    "Code période": row.periode_code,
-    Classe: row.classe,
-    Niveau: row.niveau,
     Matricule: row.matricule,
     Nom: row.nom,
-    Prénoms: row.prenoms,
-    "Nom complet": row.nom_prenoms,
+    "Prénoms": row.prenoms,
+    Classe: row.classe,
+    "Année scolaire": row.annee_scolaire,
+    Période: row.periode,
     "Moyenne générale": row.moyenne_generale ?? "",
     Rang: row.rang ?? "",
+    Conduite: row.conduite ?? "",
     "Moyenne annuelle": row.moyenne_annuelle ?? "",
     "Rang annuel": row.rang_annuel ?? "",
-    Conduite: row.conduite ?? "",
-  }));
-}
-
-function buildGenericRows(rows: ExportRow[]) {
-  return rows.map((row) => ({
-    matricule: row.matricule,
-    nom: row.nom,
-    prenoms: row.prenoms,
-    classe: row.classe,
-    annee_scolaire: row.academic_year,
-    periode: row.periode,
-    moyenne: row.moyenne_generale ?? "",
-    rang: row.rang ?? "",
-    moyenne_annuelle: row.moyenne_annuelle ?? "",
-    rang_annuel: row.rang_annuel ?? "",
-    conduite: row.conduite ?? "",
   }));
 }
 
@@ -481,7 +456,6 @@ export async function GET(req: NextRequest) {
   const academicYear = String(searchParams.get("academic_year") || "").trim();
   const periodRef = String(searchParams.get("period_ref") || "").trim();
   const classId = String(searchParams.get("class_id") || "").trim();
-  const exportModel = String(searchParams.get("export_model") || "standard").trim() as ExportModel;
   const format = String(searchParams.get("format") || "xlsx").trim().toLowerCase() as ExportFormat;
 
   if (!academicYear) {
@@ -490,10 +464,6 @@ export async function GET(req: NextRequest) {
 
   if (!periodRef) {
     return NextResponse.json({ ok: false, error: "MISSING_PERIOD_REF" }, { status: 400 });
-  }
-
-  if (!["standard", "generic"].includes(exportModel)) {
-    return NextResponse.json({ ok: false, error: "INVALID_EXPORT_MODEL" }, { status: 400 });
   }
 
   if (!["xlsx", "csv"].includes(format)) {
@@ -539,7 +509,7 @@ export async function GET(req: NextRequest) {
   const targetClassIds = classes.map((c) => String(c.id));
   const classMap = new Map<string, ClassRow>(classes.map((c) => [String(c.id), c]));
 
-  let enrollQuery = supabase
+  const { data: enrollments, error: enrollErr } = await supabase
     .from("class_enrollments")
     .select(
       `
@@ -557,7 +527,6 @@ export async function GET(req: NextRequest) {
     .or(`end_date.gte.${resolvedPeriod.bulletinFrom},end_date.is.null`)
     .order("student_id", { ascending: true });
 
-  const { data: enrollments, error: enrollErr } = await enrollQuery;
   if (enrollErr) {
     return NextResponse.json({ ok: false, error: "ENROLLMENTS_ERROR" }, { status: 500 });
   }
@@ -640,21 +609,17 @@ export async function GET(req: NextRequest) {
           : item.rank ?? null;
 
       exportRows.push({
-        institution: institutionName,
-        academic_year: String(meta?.academic_year || resolvedPeriod.academicYear || ""),
-        periode: resolvedPeriod.requestedLabel,
-        periode_code: resolvedPeriod.requestedCode,
-        classe: String(meta?.class_label || cls.label || cls.code || "Classe"),
-        niveau: String(meta?.class_level || cls.level || ""),
         matricule: String(meta?.matricule || item.matricule || ""),
         nom: split.nom,
         prenoms: split.prenoms,
-        nom_prenoms: split.nom_prenoms || String(item.full_name || ""),
+        classe: String(meta?.class_label || cls.label || cls.code || "Classe"),
+        annee_scolaire: String(meta?.academic_year || resolvedPeriod.academicYear || ""),
+        periode: resolvedPeriod.requestedLabel,
         moyenne_generale: exportedAverage,
         rang: exportedRank,
+        conduite: currentConduct,
         moyenne_annuelle: currentAnnual,
         rang_annuel: item.annual_rank ?? null,
-        conduite: currentConduct,
       });
     }
   }
@@ -669,11 +634,10 @@ export async function GET(req: NextRequest) {
     const rankA = Number.isFinite(Number(a.rang)) ? Number(a.rang) : 999999;
     const rankB = Number.isFinite(Number(b.rang)) ? Number(b.rang) : 999999;
     if (rankA !== rankB) return rankA - rankB;
-    return a.nom_prenoms.localeCompare(b.nom_prenoms, "fr");
+    return `${a.nom} ${a.prenoms}`.trim().localeCompare(`${b.nom} ${b.prenoms}`.trim(), "fr");
   });
 
-  const preparedRows =
-    exportModel === "generic" ? buildGenericRows(exportRows) : buildStandardRows(exportRows);
+  const preparedRows = buildExportRows(exportRows);
 
   const filename = makeDownloadFilename({
     institutionName,
@@ -700,21 +664,15 @@ export async function GET(req: NextRequest) {
     const workbook = XLSX.utils.book_new();
 
     const summarySheet = XLSX.utils.json_to_sheet(preparedRows);
-    XLSX.utils.book_append_sheet(workbook, summarySheet, "Résumé");
+    XLSX.utils.book_append_sheet(workbook, summarySheet, "Moyennes");
 
     if (classes.length > 1) {
       for (const cls of classes) {
         const classLabel = String(cls.label || cls.code || "Classe");
-        const classRows = exportRows.filter(
-          (row) => row.classe === classLabel
-        );
+        const classRows = exportRows.filter((row) => row.classe === classLabel);
         if (!classRows.length) continue;
 
-        const rowsForSheet =
-          exportModel === "generic"
-            ? buildGenericRows(classRows)
-            : buildStandardRows(classRows);
-
+        const rowsForSheet = buildExportRows(classRows);
         const ws = XLSX.utils.json_to_sheet(rowsForSheet);
         const sheetName = classLabel.slice(0, 31) || "Classe";
         XLSX.utils.book_append_sheet(workbook, ws, sheetName);
