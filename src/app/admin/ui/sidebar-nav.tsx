@@ -37,24 +37,101 @@ type PendingAbsenceCountResponse =
       error?: string;
     };
 
-function useIsActive(pathname: string | null, href: string) {
-  return pathname === href || pathname?.startsWith(href + "/");
+type Accent = "emerald" | "violet" | "sky" | "amber" | "cyan";
+
+const SIDEBAR_WIDTH_KEY = "mc_admin_sidebar_width";
+const DEFAULT_SIDEBAR_WIDTH = 352;
+const MIN_SIDEBAR_WIDTH = 320;
+const MAX_SIDEBAR_WIDTH = 460;
+
+function clamp(value: number, min: number, max: number) {
+  return Math.min(Math.max(value, min), max);
+}
+
+function isPathActive(pathname: string | null, href: string): boolean {
+  return pathname === href || (pathname?.startsWith(href + "/") ?? false);
+}
+
+function groupHasActiveItem(pathname: string | null, items: NavItem[]): boolean {
+  return items.some((item) => isPathActive(pathname, item.href));
+}
+
+function getAccentClasses(accent: Accent, active: boolean) {
+  const base = {
+    emerald: {
+      bar: active ? "bg-emerald-400" : "bg-transparent",
+      dot: "bg-emerald-400/15 text-emerald-300 ring-1 ring-emerald-500/25",
+      activeBg:
+        "bg-gradient-to-r from-emerald-500/12 via-slate-800/95 to-slate-800/95 border-emerald-500/20",
+      activeRing: "shadow-[0_0_0_1px_rgba(16,185,129,0.10)]",
+    },
+    violet: {
+      bar: active ? "bg-violet-400" : "bg-transparent",
+      dot: "bg-violet-400/15 text-violet-300 ring-1 ring-violet-500/25",
+      activeBg:
+        "bg-gradient-to-r from-violet-500/12 via-slate-800/95 to-slate-800/95 border-violet-500/20",
+      activeRing: "shadow-[0_0_0_1px_rgba(139,92,246,0.10)]",
+    },
+    sky: {
+      bar: active ? "bg-sky-400" : "bg-transparent",
+      dot: "bg-sky-400/15 text-sky-300 ring-1 ring-sky-500/25",
+      activeBg:
+        "bg-gradient-to-r from-sky-500/12 via-slate-800/95 to-slate-800/95 border-sky-500/20",
+      activeRing: "shadow-[0_0_0_1px_rgba(14,165,233,0.10)]",
+    },
+    amber: {
+      bar: active ? "bg-amber-400" : "bg-transparent",
+      dot: "bg-amber-400/15 text-amber-300 ring-1 ring-amber-500/25",
+      activeBg:
+        "bg-gradient-to-r from-amber-500/12 via-slate-800/95 to-slate-800/95 border-amber-500/20",
+      activeRing: "shadow-[0_0_0_1px_rgba(245,158,11,0.10)]",
+    },
+    cyan: {
+      bar: active ? "bg-cyan-400" : "bg-transparent",
+      dot: "bg-cyan-400/15 text-cyan-300 ring-1 ring-cyan-500/25",
+      activeBg:
+        "bg-gradient-to-r from-cyan-500/12 via-slate-800/95 to-slate-800/95 border-cyan-500/20",
+      activeRing: "shadow-[0_0_0_1px_rgba(6,182,212,0.10)]",
+    },
+  } as const;
+
+  return base[accent];
+}
+
+function CountBadge({ count }: { count: number }) {
+  return (
+    <span className="ml-auto inline-flex min-w-[22px] shrink-0 items-center justify-center rounded-full bg-red-600 px-2 py-0.5 text-[11px] font-bold text-white shadow-sm ring-1 ring-red-400/40">
+      {count > 99 ? "99+" : count}
+    </span>
+  );
+}
+
+function TextBadge({ text }: { text: string }) {
+  return (
+    <span className="ml-auto shrink-0 rounded-full bg-white/8 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-200 ring-1 ring-white/10">
+      {text}
+    </span>
+  );
 }
 
 /* =========================
-   Top-level (hors groupes)
+   Hors groupes
 ========================= */
-const BASE_NAV: NavItem[] = [
+const TOP_LEVEL_ITEMS: NavItem[] = [
   { href: "/admin/dashboard", label: "Tableau de bord", Icon: LayoutDashboard },
-
   {
     href: "/admin/notes/predictions",
     label: "Prédictions de réussite",
     Icon: BarChart3,
     badge: "IA",
   },
+];
 
-  { href: "/admin/classes", label: "Créer vos Classes", Icon: School },
+/* =========================
+   Groupe : Organisation scolaire
+========================= */
+const ORGANISATION_ITEMS: NavItem[] = [
+  { href: "/admin/classes", label: "Créer vos classes", Icon: School },
   { href: "/admin/users", label: "Utilisateurs & rôles", Icon: Users },
   { href: "/admin/affectations", label: "Attribution des classes", Icon: Puzzle },
   { href: "/admin/parents", label: "Liste des classes", Icon: UserRoundCheck },
@@ -69,42 +146,52 @@ const BASE_NAV: NavItem[] = [
     label: "Import emplois du temps",
     Icon: Inbox,
   },
-  { href: "/admin/regles-conduite", label: "Règles de conduite", Icon: ShieldCheck },
-  { href: "/admin/parametres", label: "Paramètres", Icon: Settings },
+];
 
+/* =========================
+   Groupe : Administration & services
+========================= */
+const ADMIN_ITEMS: NavItem[] = [
+  { href: "/admin/regles-conduite", label: "Règles de conduite", Icon: ShieldCheck },
   {
     href: "/admin/autorisations",
     label: "Autorisation absences",
     Icon: FileText,
   },
-
   {
     href: "/admin/finance",
     label: "Gestion financière",
     Icon: FileSpreadsheet,
     badge: "PRO",
   },
+  { href: "/admin/parametres", label: "Paramètres", Icon: Settings },
 ];
 
 /* =========================
-   Groupe : Cahier des absences
+   Groupe : Contrôle des appels
 ========================= */
-const ABS_ITEMS: NavItem[] = [
-  { href: "/admin/absences", label: "Matrice des Absences", Icon: Ban },
-  { href: "/admin/assiduite", label: "Assiduité & justifications", Icon: UserRoundCheck },
-  { href: "/admin/statistiques", label: "Contrôle Enseignants", Icon: BarChart3 },
+const CALLS_CONTROL_ITEMS: NavItem[] = [
   { href: "/admin/absences/appels", label: "Surveillance des appels", Icon: BarChart3 },
   {
     href: "/admin/absences/appels-matrice",
     label: "Vue par créneau",
     Icon: BarChart3,
   },
+  { href: "/admin/statistiques", label: "Contrôle enseignants", Icon: BarChart3 },
+];
+
+/* =========================
+   Groupe : Cahier des absences
+========================= */
+const ABS_ITEMS: NavItem[] = [
+  { href: "/admin/absences", label: "Matrice des absences", Icon: Ban },
+  { href: "/admin/assiduite", label: "Assiduité & justifications", Icon: UserRoundCheck },
   {
     href: "/admin/absences/appel-administratif",
     label: "Appel administratif",
     Icon: Users,
   },
-  { href: "/admin/conduite", label: "Moyenne de Conduite", Icon: ShieldCheck },
+  { href: "/admin/conduite", label: "Moyenne de conduite", Icon: ShieldCheck },
 ];
 
 /* =========================
@@ -118,11 +205,252 @@ const NOTES_ITEMS: NavItem[] = [
   { href: "/admin/notes/conseil-classe", label: "Conseil de classe", Icon: FileText },
 ];
 
+function NavLinkItem({
+  item,
+  pathname,
+  accent,
+  pendingAbsenceCount = 0,
+  topLevel = false,
+}: {
+  item: NavItem;
+  pathname: string | null;
+  accent: Accent;
+  pendingAbsenceCount?: number;
+  topLevel?: boolean;
+}) {
+  const active = isPathActive(pathname, item.href);
+  const accentClasses = getAccentClasses(accent, active);
+  const isAbsenceAuthorization = item.href === "/admin/autorisations";
+  const showPendingBadge = isAbsenceAuthorization && pendingAbsenceCount > 0;
+
+  return (
+    <li key={item.href}>
+      <Link
+        href={item.href}
+        prefetch={false}
+        aria-current={active ? "page" : undefined}
+        className={[
+          "group relative flex items-center gap-3 overflow-hidden rounded-xl border px-3 py-2.5 text-sm",
+          "transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-emerald-500/30",
+          active
+            ? [
+                "border-white/10 text-white",
+                accentClasses.activeBg,
+                accentClasses.activeRing,
+              ].join(" ")
+            : [
+                "border-transparent text-slate-300",
+                "hover:border-white/8 hover:bg-white/[0.04] hover:text-white",
+              ].join(" "),
+          topLevel ? "min-h-[48px]" : "min-h-[44px]",
+        ].join(" ")}
+      >
+        <span
+          className={[
+            "absolute left-0 top-1/2 -translate-y-1/2 rounded-r-full transition-all",
+            topLevel ? "h-8 w-1.5" : "h-7 w-1",
+            accentClasses.bar,
+          ].join(" ")}
+        />
+
+        <span
+          className={[
+            "inline-flex shrink-0 items-center justify-center rounded-lg",
+            topLevel ? "h-9 w-9" : "h-8 w-8",
+            active ? accentClasses.dot : "bg-white/5 text-slate-300 ring-1 ring-white/8",
+            "transition-all duration-200 group-hover:bg-white/10 group-hover:text-white",
+          ].join(" ")}
+        >
+          <item.Icon className={topLevel ? "h-5 w-5" : "h-4 w-4"} />
+        </span>
+
+        <span
+          className={[
+            "min-w-0 flex-1 pr-2 whitespace-normal break-words leading-snug",
+            topLevel ? "font-medium" : "font-normal",
+          ].join(" ")}
+        >
+          {item.label}
+        </span>
+
+        {showPendingBadge ? (
+          <CountBadge count={pendingAbsenceCount} />
+        ) : item.badge ? (
+          <TextBadge text={item.badge} />
+        ) : null}
+      </Link>
+    </li>
+  );
+}
+
+function GroupSection({
+  title,
+  Icon,
+  items,
+  pathname,
+  open,
+  onToggle,
+  accent,
+  badgeCount = 0,
+  pendingAbsenceCount = 0,
+}: {
+  title: string;
+  Icon: React.ComponentType<React.SVGProps<SVGSVGElement>>;
+  items: NavItem[];
+  pathname: string | null;
+  open: boolean;
+  onToggle: () => void;
+  accent: Accent;
+  badgeCount?: number;
+  pendingAbsenceCount?: number;
+}) {
+  const active = groupHasActiveItem(pathname, items);
+  const accentClasses = getAccentClasses(accent, active);
+
+  return (
+    <li className="mt-3">
+      <div
+        className={[
+          "overflow-hidden rounded-2xl border backdrop-blur-sm",
+          active
+            ? "border-white/12 bg-white/[0.045] shadow-[0_10px_30px_rgba(0,0,0,0.20)]"
+            : "border-white/8 bg-white/[0.025]",
+        ].join(" ")}
+      >
+        <button
+          type="button"
+          onClick={onToggle}
+          aria-expanded={open}
+          className={[
+            "group flex w-full items-center gap-3 px-3 py-3 text-left text-sm",
+            "transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-emerald-500/30",
+            active ? "text-white" : "text-slate-200 hover:bg-white/[0.03]",
+          ].join(" ")}
+        >
+          <span
+            className={[
+              "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-xl transition-all",
+              active ? accentClasses.dot : "bg-white/5 text-slate-300 ring-1 ring-white/8",
+            ].join(" ")}
+          >
+            <Icon className="h-4 w-4" />
+          </span>
+
+          <span className="min-w-0 flex-1 pr-2">
+            <span className="block whitespace-normal break-words leading-snug font-semibold tracking-[0.01em]">
+              {title}
+            </span>
+          </span>
+
+          {badgeCount > 0 ? <CountBadge count={badgeCount} /> : null}
+
+          <span
+            className={[
+              "inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-slate-400 transition-all",
+              open ? "rotate-90 bg-white/8 text-slate-200" : "bg-white/5",
+            ].join(" ")}
+            aria-hidden
+          >
+            <svg
+              viewBox="0 0 24 24"
+              className="h-4 w-4"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth={2}
+            >
+              <path d="M9 6l6 6-6 6" />
+            </svg>
+          </span>
+        </button>
+
+        {open && (
+          <div className="border-t border-white/6 px-2 pb-2 pt-2">
+            <ul className="space-y-1.5">
+              {items.map((item) => (
+                <NavLinkItem
+                  key={item.href}
+                  item={item}
+                  pathname={pathname}
+                  accent={accent}
+                  pendingAbsenceCount={pendingAbsenceCount}
+                />
+              ))}
+            </ul>
+          </div>
+        )}
+      </div>
+    </li>
+  );
+}
+
 export default function SidebarNav() {
   const pathname = usePathname();
 
+  const wrapperRef = React.useRef<HTMLDivElement | null>(null);
+  const isResizingRef = React.useRef(false);
+
   const [role, setRole] = React.useState<AppRole | null>(null);
   const [pendingAbsenceCount, setPendingAbsenceCount] = React.useState<number>(0);
+  const [sidebarWidth, setSidebarWidth] = React.useState<number>(DEFAULT_SIDEBAR_WIDTH);
+
+  React.useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(SIDEBAR_WIDTH_KEY);
+      if (!raw) return;
+      const parsed = Number(raw);
+      if (Number.isFinite(parsed)) {
+        setSidebarWidth(clamp(parsed, MIN_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH));
+      }
+    } catch {
+      // no-op
+    }
+  }, []);
+
+  React.useEffect(() => {
+    try {
+      window.localStorage.setItem(SIDEBAR_WIDTH_KEY, String(sidebarWidth));
+    } catch {
+      // no-op
+    }
+  }, [sidebarWidth]);
+
+  React.useEffect(() => {
+    function handleMouseMove(event: MouseEvent) {
+      if (!isResizingRef.current || !wrapperRef.current) return;
+
+      const left = wrapperRef.current.getBoundingClientRect().left;
+      const nextWidth = clamp(event.clientX - left, MIN_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH);
+      setSidebarWidth(nextWidth);
+    }
+
+    function stopResize() {
+      if (!isResizingRef.current) return;
+      isResizingRef.current = false;
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    }
+
+    window.addEventListener("mousemove", handleMouseMove);
+    window.addEventListener("mouseup", stopResize);
+
+    return () => {
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("mouseup", stopResize);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    };
+  }, []);
+
+  const startResize = React.useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    isResizingRef.current = true;
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+  }, []);
+
+  const resetWidth = React.useCallback(() => {
+    setSidebarWidth(DEFAULT_SIDEBAR_WIDTH);
+  }, []);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -131,6 +459,7 @@ export default function SidebarNav() {
       try {
         const r = await fetch("/api/auth/role", { cache: "no-store" });
         if (!r.ok) return;
+
         const j = await r.json().catch(() => ({}));
         if (!cancelled) {
           setRole((j.role ?? null) as AppRole | null);
@@ -191,226 +520,174 @@ export default function SidebarNav() {
 
   const isEducator = role === "educator";
 
-  const [absOpen, setAbsOpen] = React.useState<boolean>(() =>
-    !!(
-      pathname &&
-      (pathname.startsWith("/admin/absences") ||
-        pathname.startsWith("/admin/statistiques") ||
-        pathname.startsWith("/admin/conduite") ||
-        pathname.startsWith("/admin/assiduite"))
-    )
-  );
-
-  const [notesOpen, setNotesOpen] = React.useState<boolean>(() =>
-    pathname?.startsWith("/admin/notes") ?? false
-  );
-
-  const absHeaderActive =
-    pathname?.startsWith("/admin/absences") ||
-    pathname?.startsWith("/admin/statistiques") ||
-    pathname?.startsWith("/admin/conduite") ||
-    pathname?.startsWith("/admin/assiduite");
-
-  const notesHeaderActive = pathname?.startsWith("/admin/notes");
-
-  const topNavItems = React.useMemo(
+  const topLevelItems = React.useMemo(
     () =>
-      BASE_NAV.filter(({ href }) => {
-        if (isEducator) {
-          if (href.startsWith("/admin/notes")) return false;
-          if (href.startsWith("/admin/finance")) return false;
-        }
+      TOP_LEVEL_ITEMS.filter((item) => {
+        if (isEducator && item.href.startsWith("/admin/notes")) return false;
         return true;
       }),
     [isEducator]
   );
 
+  const organisationItems = React.useMemo(() => ORGANISATION_ITEMS, []);
+  const adminItems = React.useMemo(
+    () =>
+      ADMIN_ITEMS.filter((item) => {
+        if (isEducator && item.href.startsWith("/admin/finance")) return false;
+        return true;
+      }),
+    [isEducator]
+  );
+  const callsControlItems = React.useMemo(() => CALLS_CONTROL_ITEMS, []);
+  const absItems = React.useMemo(() => ABS_ITEMS, []);
+  const notesItems = React.useMemo(() => NOTES_ITEMS, []);
+
+  const organisationActive = groupHasActiveItem(pathname, organisationItems);
+  const adminActive = groupHasActiveItem(pathname, adminItems);
+  const callsControlActive = groupHasActiveItem(pathname, callsControlItems);
+  const absActive = groupHasActiveItem(pathname, absItems);
+  const notesActive = !isEducator && groupHasActiveItem(pathname, notesItems);
+
+  const [organisationOpen, setOrganisationOpen] = React.useState<boolean>(organisationActive);
+  const [adminOpen, setAdminOpen] = React.useState<boolean>(adminActive);
+  const [callsControlOpen, setCallsControlOpen] = React.useState<boolean>(callsControlActive);
+  const [absOpen, setAbsOpen] = React.useState<boolean>(absActive);
+  const [notesOpen, setNotesOpen] = React.useState<boolean>(notesActive);
+
+  React.useEffect(() => {
+    if (organisationActive) setOrganisationOpen(true);
+  }, [organisationActive]);
+
+  React.useEffect(() => {
+    if (adminActive) setAdminOpen(true);
+  }, [adminActive]);
+
+  React.useEffect(() => {
+    if (callsControlActive) setCallsControlOpen(true);
+  }, [callsControlActive]);
+
+  React.useEffect(() => {
+    if (absActive) setAbsOpen(true);
+  }, [absActive]);
+
+  React.useEffect(() => {
+    if (notesActive) setNotesOpen(true);
+  }, [notesActive]);
+
   return (
-    <nav className="flex h-full flex-col">
-      <ul className="mt-2 flex-1 space-y-1 px-2">
-        {topNavItems.map(({ href, label, Icon, badge }) => {
-          const active = useIsActive(pathname, href);
-          const isAbsenceAuthorization = href === "/admin/autorisations";
-          const showPendingBadge = isAbsenceAuthorization && pendingAbsenceCount > 0;
+    <div
+      ref={wrapperRef}
+      className="relative h-full min-h-0 shrink-0 overflow-visible"
+      style={{
+        width: `${sidebarWidth}px`,
+        minWidth: `${sidebarWidth}px`,
+      }}
+    >
+      <nav className="flex h-full min-h-0 flex-col overflow-hidden bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950">
+        <div className="shrink-0 border-b border-white/6 px-4 pb-3 pt-4">
+          <div className="rounded-2xl border border-white/8 bg-white/[0.04] px-3 py-3 shadow-[0_10px_30px_rgba(0,0,0,0.18)]">
+            <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">
+              Navigation
+            </div>
+            <div className="mt-1 text-sm font-semibold text-white">Mon Cahier</div>
+            <div className="text-xs leading-snug text-slate-400">
+              Pilotage scolaire & suivi en temps réel
+            </div>
+          </div>
+        </div>
 
-          return (
-            <li key={href}>
-              <Link
-                href={href}
-                prefetch={false}
-                aria-current={active ? "page" : undefined}
-                className={[
-                  "relative flex items-center gap-3 rounded-lg px-3 py-2 text-sm",
-                  "transition hover:bg-slate-800/60 focus:outline-none focus:ring-2 focus:ring-emerald-500/40",
-                  active ? "bg-slate-800 text-white" : "text-slate-200",
-                ].join(" ")}
-              >
-                <span
-                  className={[
-                    "absolute left-0 my-1 h-[calc(100%-0.5rem)] w-1.5 rounded-r-full",
-                    active ? "bg-emerald-500" : "bg-transparent",
-                  ].join(" ")}
-                />
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 py-3 pr-4">
+          <ul className="space-y-1">
+            {topLevelItems.map((item) => (
+              <NavLinkItem
+                key={item.href}
+                item={item}
+                pathname={pathname}
+                accent="emerald"
+                pendingAbsenceCount={pendingAbsenceCount}
+                topLevel
+              />
+            ))}
 
-                <Icon className="h-5 w-5 shrink-0 opacity-90" />
-                <span className="truncate">{label}</span>
+            <GroupSection
+              title="Organisation scolaire"
+              Icon={School}
+              items={organisationItems}
+              pathname={pathname}
+              open={organisationOpen}
+              onToggle={() => setOrganisationOpen((v) => !v)}
+              accent="sky"
+            />
 
-                {showPendingBadge ? (
-                  <span className="ml-auto inline-flex min-w-[22px] items-center justify-center rounded-full bg-red-600 px-2 py-0.5 text-[11px] font-bold text-white shadow-sm ring-1 ring-red-400/40">
-                    {pendingAbsenceCount > 99 ? "99+" : pendingAbsenceCount}
-                  </span>
-                ) : badge ? (
-                  <span className="ml-auto rounded-full bg-emerald-600/20 px-2 py-0.5 text-[10px] font-semibold uppercase text-emerald-300 ring-1 ring-emerald-700/40">
-                    {badge}
-                  </span>
-                ) : null}
-              </Link>
-            </li>
-          );
-        })}
+            <GroupSection
+              title="Administration & services"
+              Icon={Settings}
+              items={adminItems}
+              pathname={pathname}
+              open={adminOpen}
+              onToggle={() => setAdminOpen((v) => !v)}
+              accent="amber"
+              badgeCount={pendingAbsenceCount}
+              pendingAbsenceCount={pendingAbsenceCount}
+            />
 
-        <li className="mt-2">
-          <button
-            type="button"
-            onClick={() => setAbsOpen((v) => !v)}
-            aria-expanded={absOpen}
-            className={[
-              "w-full select-none rounded-lg px-3 py-2 text-left text-sm",
-              "flex items-center gap-3",
-              "transition hover:bg-slate-800/60 focus:outline-none focus:ring-2 focus:ring-emerald-500/40",
-              absHeaderActive ? "bg-slate-800 text-white" : "text-slate-200",
-            ].join(" ")}
-          >
-            <span
-              className={[
-                "inline-block h-5 w-5 rotate-0 transition-transform",
-                absOpen ? "rotate-90" : "rotate-0",
-              ].join(" ")}
-              aria-hidden
-            >
-              <svg
-                viewBox="0 0 24 24"
-                className="h-5 w-5 opacity-70"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth={2}
-              >
-                <path d="M9 6l6 6-6 6" />
-              </svg>
-            </span>
-            <Ban className="h-5 w-5 opacity-90" />
-            <span className="truncate">Cahier des absences</span>
-          </button>
+            <GroupSection
+              title="Contrôle des appels"
+              Icon={BarChart3}
+              items={callsControlItems}
+              pathname={pathname}
+              open={callsControlOpen}
+              onToggle={() => setCallsControlOpen((v) => !v)}
+              accent="cyan"
+            />
 
-          {absOpen && (
-            <ul className="mt-1 space-y-1 pl-8">
-              {ABS_ITEMS.map(({ href, label, Icon }) => {
-                const active = useIsActive(pathname, href);
+            <GroupSection
+              title="Cahier des absences"
+              Icon={Ban}
+              items={absItems}
+              pathname={pathname}
+              open={absOpen}
+              onToggle={() => setAbsOpen((v) => !v)}
+              accent="emerald"
+            />
 
-                return (
-                  <li key={href}>
-                    <Link
-                      href={href}
-                      prefetch={false}
-                      aria-current={active ? "page" : undefined}
-                      className={[
-                        "relative flex items-center gap-2 rounded-md px-3 py-2 text-sm",
-                        "transition hover:bg-slate-800/60 focus:outline-none focus:ring-2 focus:ring-emerald-500/40",
-                        active ? "bg-slate-800 text-white" : "text-slate-300",
-                      ].join(" ")}
-                    >
-                      <span
-                        className={[
-                          "absolute left-0 my-1 h-[calc(100%-0.5rem)] w-1 rounded-r-full",
-                          active ? "bg-emerald-500" : "bg-transparent",
-                        ].join(" ")}
-                      />
-                      <Icon className="h-4 w-4 shrink-0 opacity-90" />
-                      <span className="truncate">{label}</span>
-                    </Link>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-        </li>
-
-        {!isEducator && (
-          <li className="mt-2">
-            <button
-              type="button"
-              onClick={() => setNotesOpen((v) => !v)}
-              aria-expanded={notesOpen}
-              className={[
-                "w-full select-none rounded-lg px-3 py-2 text-left text-sm",
-                "flex items-center gap-3",
-                "transition hover:bg-slate-800/60 focus:outline-none focus:ring-2 focus:ring-emerald-500/40",
-                notesHeaderActive ? "bg-slate-800 text-white" : "text-slate-200",
-              ].join(" ")}
-            >
-              <span
-                className={[
-                  "inline-block h-5 w-5 rotate-0 transition-transform",
-                  notesOpen ? "rotate-90" : "rotate-0",
-                ].join(" ")}
-                aria-hidden
-              >
-                <svg
-                  viewBox="0 0 24 24"
-                  className="h-5 w-5 opacity-70"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth={2}
-                >
-                  <path d="M9 6l6 6-6 6" />
-                </svg>
-              </span>
-              <NotebookPen className="h-5 w-5 opacity-90" />
-              <span className="truncate">Cahier de notes</span>
-            </button>
-
-            {notesOpen && (
-              <ul className="mt-1 space-y-1 pl-8">
-                {NOTES_ITEMS.map(({ href, label, Icon }) => {
-                  const active = useIsActive(pathname, href);
-
-                  return (
-                    <li key={href}>
-                      <Link
-                        href={href}
-                        prefetch={false}
-                        aria-current={active ? "page" : undefined}
-                        className={[
-                          "relative flex items-center gap-2 rounded-md px-3 py-2 text-sm",
-                          "transition hover:bg-slate-800/60 focus:outline-none focus:ring-2 focus:ring-emerald-500/40",
-                          active ? "bg-slate-800 text-white" : "text-slate-300",
-                        ].join(" ")}
-                      >
-                        <span
-                          className={[
-                            "absolute left-0 my-1 h-[calc(100%-0.5rem)] w-1 rounded-r-full",
-                            active ? "bg-violet-500" : "bg-transparent",
-                          ].join(" ")}
-                        />
-                        <Icon className="h-4 w-4 shrink-0 opacity-90" />
-                        <span className="truncate">{label}</span>
-                      </Link>
-                    </li>
-                  );
-                })}
-              </ul>
+            {!isEducator && (
+              <GroupSection
+                title="Cahier de notes"
+                Icon={NotebookPen}
+                items={notesItems}
+                pathname={pathname}
+                open={notesOpen}
+                onToggle={() => setNotesOpen((v) => !v)}
+                accent="violet"
+              />
             )}
-          </li>
-        )}
-      </ul>
+          </ul>
+        </div>
 
-      <div className="px-4 py-3 text-[11px] text-slate-500">
-        <div>© {new Date().getFullYear()} Mon Cahier</div>
-        <div className="text-[10px] text-slate-400">
-          Conçu et développé par{" "}
-          <span className="font-semibold text-slate-200">NEXA DIGITAL SARL</span>
+        <div className="shrink-0 border-t border-white/6 px-4 py-4">
+          <div className="rounded-2xl border border-white/8 bg-white/[0.03] px-3 py-3 text-[11px] text-slate-400">
+            <div>© {new Date().getFullYear()} Mon Cahier</div>
+            <div className="mt-1 text-[10px] text-slate-500">
+              Conçu et développé par{" "}
+              <span className="font-semibold text-slate-200">NEXA DIGITAL SARL</span>
+            </div>
+          </div>
+        </div>
+      </nav>
+
+      {/* Poignée resize déplacée hors de la piste de scroll */}
+      <div
+        onMouseDown={startResize}
+        onDoubleClick={resetWidth}
+        className="absolute right-[-8px] top-1/2 z-30 hidden h-24 w-4 -translate-y-1/2 cursor-col-resize items-center justify-center lg:flex"
+        title="Glisser pour redimensionner • Double-clic pour réinitialiser"
+        aria-hidden
+      >
+        <div className="flex h-20 w-3 items-center justify-center rounded-full border border-white/10 bg-slate-900/80 shadow-lg backdrop-blur">
+          <div className="h-10 w-[3px] rounded-full bg-emerald-400/70 transition hover:bg-emerald-300" />
         </div>
       </div>
-    </nav>
+    </div>
   );
 }
