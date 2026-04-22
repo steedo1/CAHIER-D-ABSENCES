@@ -267,8 +267,7 @@ export default async function VerifyByCodePage(props: any) {
     typeof bulletin?.general_avg === "number" &&
     Number.isFinite(bulletin.general_avg) &&
     coeffTotal > 0 &&
-    subjects.length > 0 &&
-    subjectsWithAvg.length === subjects.length;
+    subjectsWithAvg.length > 0;
 
   let derivedConductAvg: number | null = null;
   if (canDeriveConduct) {
@@ -279,20 +278,71 @@ export default async function VerifyByCodePage(props: any) {
   }
 
   const showSyntheticConductRow = !conductAlreadyVisible && derivedConductAvg !== null;
-  const displayCoeffTotal = coeffTotal + (showSyntheticConductRow ? 1 : 0);
+
+  const syntheticConductSubject = showSyntheticConductRow
+    ? {
+        subject_id: "__CONDUCT__",
+        subject_name: "Conduite",
+        coeff_bulletin: 1,
+        include_in_average: true,
+      }
+    : null;
+
+  function getDisplayedSubjectValues(subj: any) {
+    const sid = String(subj?.subject_id ?? "");
+    const isSyntheticConduct = sid === "__CONDUCT__";
+
+    if (isSyntheticConduct) {
+      const avg = derivedConductAvg;
+      const coeff = 1;
+      const total =
+        avg !== null && Number.isFinite(avg) ? round2(avg * coeff) : null;
+
+      return {
+        sid,
+        avg,
+        coeff,
+        total,
+        comps: [] as any[],
+        isSyntheticConduct,
+      };
+    }
+
+    const ps = perSubjectMap.get(sid);
+    const avg = typeof ps?.avg20 === "number" ? Number(ps.avg20) : null;
+    const coeff =
+      effectiveCoeffBySubjectId.get(sid) ?? Number(subj?.coeff_bulletin ?? 0);
+    const total =
+      avg !== null && Number.isFinite(coeff) ? round2(avg * coeff) : null;
+    const comps = subjectComponentsBySubject.get(sid) || [];
+
+    return {
+      sid,
+      avg,
+      coeff,
+      total,
+      comps,
+      isSyntheticConduct,
+    };
+  }
+
+  const displayCoeffTotal =
+    coeffTotal + (showSyntheticConductRow ? 1 : 0);
 
   function computeDisplayedGroupStats(groupSubjects: any[]) {
     let sum = 0;
     let sumCoeff = 0;
 
     for (const subj of groupSubjects) {
-      const sid = String(subj?.subject_id ?? "");
-      const ps = perSubjectMap.get(sid);
-      const avg = ps?.avg20;
-      if (typeof avg !== "number" || !Number.isFinite(avg)) continue;
-
-      const coeff = effectiveCoeffBySubjectId.get(sid) ?? Number(subj?.coeff_bulletin ?? 0);
-      if (!Number.isFinite(coeff) || coeff <= 0) continue;
+      const { avg, coeff } = getDisplayedSubjectValues(subj);
+      if (
+        avg === null ||
+        !Number.isFinite(avg) ||
+        !Number.isFinite(coeff) ||
+        coeff <= 0
+      ) {
+        continue;
+      }
 
       sum += avg * coeff;
       sumCoeff += coeff;
@@ -318,6 +368,10 @@ export default async function VerifyByCodePage(props: any) {
         groupSubjects.push(subj);
       }
 
+      if (isAutresGroup(g) && syntheticConductSubject) {
+        groupSubjects.push(syntheticConductSubject);
+      }
+
       if (!groupSubjects.length) return null;
 
       const stats = computeDisplayedGroupStats(groupSubjects);
@@ -325,13 +379,27 @@ export default async function VerifyByCodePage(props: any) {
         group: g,
         subjects: groupSubjects,
         stats,
+        includesSyntheticConduct:
+          !!syntheticConductSubject &&
+          groupSubjects.some(
+            (s: any) => String(s?.subject_id ?? "") === "__CONDUCT__"
+          ),
       };
     })
     .filter(Boolean) as any[];
 
-  const ungroupedSubjects = subjectsWithAvg.filter(
-    (s: any) => !groupedSubjectIds.has(String(s.subject_id))
+  const syntheticConductGrouped = renderedGroups.some(
+    (entry: any) => entry.includesSyntheticConduct
   );
+
+  const ungroupedSubjects = [
+    ...subjectsWithAvg.filter(
+      (s: any) => !groupedSubjectIds.has(String(s.subject_id))
+    ),
+    ...(syntheticConductSubject && !syntheticConductGrouped
+      ? [syntheticConductSubject]
+      : []),
+  ];
 
   const isAnnual = looksAnnualPeriod(period);
   const labelMain = mainAvgLabel(period);
@@ -374,40 +442,49 @@ export default async function VerifyByCodePage(props: any) {
     : null;
 
   const renderSubjectRow = (subj: any) => {
-    const sid = String(subj?.subject_id ?? "");
-    const ps = perSubjectMap.get(sid);
-    const avg = typeof ps?.avg20 === "number" ? Number(ps.avg20) : null;
-    const coeff = effectiveCoeffBySubjectId.get(sid) ?? Number(subj?.coeff_bulletin ?? 0);
-    const total = avg !== null && Number.isFinite(coeff) ? round2(avg * coeff) : null;
-    const comps = subjectComponentsBySubject.get(sid) || [];
+    const { sid, avg, coeff, total, comps, isSyntheticConduct } =
+      getDisplayedSubjectValues(subj);
 
     return (
       <Fragment key={`frag-${sid}`}>
-        <tr className="border-t border-slate-200">
-          <td className="px-3 py-2 font-medium text-slate-900">{subj.subject_name}</td>
+        <tr
+          className={
+            "border-t " +
+            (isSyntheticConduct
+              ? "border-amber-200 bg-amber-50 font-semibold text-slate-800"
+              : "border-slate-200")
+          }
+        >
+          <td className="px-3 py-2 font-medium text-slate-900">
+            {subj.subject_name}
+          </td>
           <td className="px-3 py-2 text-center">{formatNumber(avg)}</td>
           <td className="px-3 py-2 text-center">{formatNumber(coeff, 0)}</td>
           <td className="px-3 py-2 text-center">{formatNumber(total)}</td>
         </tr>
-        {comps.map((comp: any) => {
-          const key = `${sid}__${comp.id}`;
-          const c = perSubjectComponentMap.get(key);
-          const cAvg = typeof c?.avg20 === "number" ? Number(c.avg20) : null;
-          const cCoeff = Number(comp?.coeff_in_subject ?? 0);
-          const cTotal = cAvg !== null && Number.isFinite(cCoeff) ? round2(cAvg * cCoeff) : null;
+        {!isSyntheticConduct &&
+          comps.map((comp: any) => {
+            const key = `${sid}__${comp.id}`;
+            const c = perSubjectComponentMap.get(key);
+            const cAvg = typeof c?.avg20 === "number" ? Number(c.avg20) : null;
+            const cCoeff = Number(comp?.coeff_in_subject ?? 0);
+            const cTotal =
+              cAvg !== null && Number.isFinite(cCoeff)
+                ? round2(cAvg * cCoeff)
+                : null;
 
-          return (
-            <tr
-              key={`comp-${key}`}
-              className="border-t border-slate-100 bg-slate-50/70 text-[12px] text-slate-600"
-            >
-              <td className="px-3 py-1 pl-8">{comp.short_label || comp.label}</td>
-              <td className="px-3 py-1 text-center">{formatNumber(cAvg)}</td>
-              <td className="px-3 py-1 text-center">{formatNumber(cCoeff, 0)}</td>
-              <td className="px-3 py-1 text-center">{formatNumber(cTotal)}</td>
-            </tr>
-          );
-        })}
+            return (
+              <tr
+                key={`comp-${key}`}
+                className="border-t border-slate-100 bg-slate-50/70 text-[12px] text-slate-600"
+              >
+                <td className="px-3 py-1 pl-8">{comp.short_label || comp.label}</td>
+                <td className="px-3 py-1 text-center">{formatNumber(cAvg)}</td>
+                <td className="px-3 py-1 text-center">{formatNumber(cCoeff, 0)}</td>
+                <td className="px-3 py-1 text-center">{formatNumber(cTotal)}</td>
+              </tr>
+            );
+          })}
       </Fragment>
     );
   };
@@ -481,7 +558,7 @@ export default async function VerifyByCodePage(props: any) {
                   <div>
                     <h2 className="text-sm font-semibold text-slate-700">Récapitulatif officiel des notes</h2>
                     <p className="mt-1 text-xs text-slate-500">
-                      Calculé directement depuis la base Mon Cahier.
+                      Calculé à partir des données officielles enregistrées dans Mon Cahier.
                     </p>
                   </div>
                   {(period?.from || period?.to) && (
@@ -551,15 +628,6 @@ export default async function VerifyByCodePage(props: any) {
 
                           {ungroupedSubjects.map((subj: any) => renderSubjectRow(subj))}
 
-                          {showSyntheticConductRow && (
-                            <tr className="border-t border-amber-200 bg-amber-50 font-semibold text-slate-800">
-                              <td className="px-3 py-2">Conduite</td>
-                              <td className="px-3 py-2 text-center">{formatNumber(derivedConductAvg)}</td>
-                              <td className="px-3 py-2 text-center">1</td>
-                              <td className="px-3 py-2 text-center">{formatNumber(derivedConductAvg)}</td>
-                            </tr>
-                          )}
-
                           <tr className="border-t border-slate-300 bg-slate-100 font-bold text-slate-900">
                             <td className="px-3 py-2 text-right">TOTAUX :</td>
                             <td className="px-3 py-2" />
@@ -574,7 +642,7 @@ export default async function VerifyByCodePage(props: any) {
 
                 {!conductAlreadyVisible && !showSyntheticConductRow && typeof bulletin?.general_avg === "number" && (
                   <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900">
-                    La conduite est bien prise en compte dans la moyenne générale, mais son détail n’a pas pu être affiché séparément sur cette page.
+                    
                   </div>
                 )}
 

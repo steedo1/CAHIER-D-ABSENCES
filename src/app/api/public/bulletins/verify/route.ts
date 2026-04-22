@@ -88,6 +88,179 @@ function normText(s?: string | null) {
   return (s ?? "").toString().trim().toLowerCase();
 }
 
+
+/* ───────── Conduite (route publique, sans session admin) ───────── */
+
+const clampConduct = (n: number, min: number, max: number) =>
+  Math.max(min, Math.min(max, n));
+
+type LatenessMode = "ignore" | "as_hours" | "direct_points";
+
+type ConductSettings = {
+  rubric_max: {
+    assiduite: number;
+    tenue: number;
+    moralite: number;
+    discipline: number;
+  };
+  rules: {
+    assiduite: {
+      penalty_per_hour: number;
+      max_hours_before_zero: number;
+      note_after_threshold: number;
+      lateness_mode: LatenessMode;
+      lateness_minutes_per_absent_hour: number;
+      lateness_points_per_late: number;
+    };
+    tenue: {
+      warning_penalty: number;
+    };
+    moralite: {
+      event_penalty: number;
+    };
+    discipline: {
+      offense_penalty: number;
+      council_cap: number;
+    };
+  };
+};
+
+const DEFAULT_CONDUCT_SETTINGS: ConductSettings = {
+  rubric_max: { assiduite: 6, tenue: 3, moralite: 4, discipline: 7 },
+  rules: {
+    assiduite: {
+      penalty_per_hour: 0.5,
+      max_hours_before_zero: 10,
+      note_after_threshold: 0,
+      lateness_mode: "as_hours",
+      lateness_minutes_per_absent_hour: 60,
+      lateness_points_per_late: 0.25,
+    },
+    tenue: { warning_penalty: 0.5 },
+    moralite: { event_penalty: 1 },
+    discipline: { offense_penalty: 1, council_cap: 5 },
+  },
+};
+
+const numSetting = (v: any, fallback: number): number =>
+  typeof v === "number" && Number.isFinite(v) ? v : fallback;
+
+async function loadConductSettings(
+  srv: SupabaseClient,
+  institutionId: string
+): Promise<ConductSettings> {
+  try {
+    const { data, error } = await srv
+      .from("conduct_settings")
+      .select(
+        `
+        assiduite_max,
+        tenue_max,
+        moralite_max,
+        discipline_max,
+        points_per_absent_hour,
+        absent_hours_zero_threshold,
+        absent_hours_note_after_threshold,
+        lateness_mode,
+        lateness_minutes_per_absent_hour,
+        lateness_points_per_late
+      `
+      )
+      .eq("institution_id", institutionId)
+      .maybeSingle();
+
+    if (error || !data) return DEFAULT_CONDUCT_SETTINGS;
+
+    const raw = data as any;
+    const modeRaw = String(
+      raw.lateness_mode ?? DEFAULT_CONDUCT_SETTINGS.rules.assiduite.lateness_mode
+    )
+      .normalize("NFKC")
+      .trim()
+      .toLowerCase();
+
+    const allowedModes: LatenessMode[] = ["ignore", "as_hours", "direct_points"];
+    const lateness_mode: LatenessMode = allowedModes.includes(modeRaw as LatenessMode)
+      ? (modeRaw as LatenessMode)
+      : DEFAULT_CONDUCT_SETTINGS.rules.assiduite.lateness_mode;
+
+    return {
+      rubric_max: {
+        assiduite: numSetting(raw.assiduite_max, DEFAULT_CONDUCT_SETTINGS.rubric_max.assiduite),
+        tenue: numSetting(raw.tenue_max, DEFAULT_CONDUCT_SETTINGS.rubric_max.tenue),
+        moralite: numSetting(raw.moralite_max, DEFAULT_CONDUCT_SETTINGS.rubric_max.moralite),
+        discipline: numSetting(raw.discipline_max, DEFAULT_CONDUCT_SETTINGS.rubric_max.discipline),
+      },
+      rules: {
+        assiduite: {
+          penalty_per_hour: numSetting(
+            raw.points_per_absent_hour,
+            DEFAULT_CONDUCT_SETTINGS.rules.assiduite.penalty_per_hour
+          ),
+          max_hours_before_zero: numSetting(
+            raw.absent_hours_zero_threshold,
+            DEFAULT_CONDUCT_SETTINGS.rules.assiduite.max_hours_before_zero
+          ),
+          note_after_threshold: numSetting(
+            raw.absent_hours_note_after_threshold,
+            DEFAULT_CONDUCT_SETTINGS.rules.assiduite.note_after_threshold
+          ),
+          lateness_mode,
+          lateness_minutes_per_absent_hour: numSetting(
+            raw.lateness_minutes_per_absent_hour,
+            DEFAULT_CONDUCT_SETTINGS.rules.assiduite.lateness_minutes_per_absent_hour
+          ),
+          lateness_points_per_late: numSetting(
+            raw.lateness_points_per_late,
+            DEFAULT_CONDUCT_SETTINGS.rules.assiduite.lateness_points_per_late
+          ),
+        },
+        tenue: { warning_penalty: DEFAULT_CONDUCT_SETTINGS.rules.tenue.warning_penalty },
+        moralite: { event_penalty: DEFAULT_CONDUCT_SETTINGS.rules.moralite.event_penalty },
+        discipline: {
+          offense_penalty: DEFAULT_CONDUCT_SETTINGS.rules.discipline.offense_penalty,
+          council_cap: DEFAULT_CONDUCT_SETTINGS.rules.discipline.council_cap,
+        },
+      },
+    };
+  } catch {
+    return DEFAULT_CONDUCT_SETTINGS;
+  }
+}
+
+async function loadDefaultSessionMinutes(
+  srv: SupabaseClient,
+  institutionId: string
+): Promise<number> {
+  try {
+    const { data, error } = await srv
+      .from("institutions")
+      .select("default_session_minutes")
+      .eq("id", institutionId)
+      .maybeSingle();
+
+    if (error || !data) return 60;
+
+    const n = Number((data as any).default_session_minutes);
+    if (!Number.isFinite(n) || n <= 0) return 60;
+    return n;
+  } catch {
+    return 60;
+  }
+}
+
+function startISO(d?: string) {
+  return d
+    ? new Date(`${d}T00:00:00.000Z`).toISOString()
+    : "0001-01-01T00:00:00.000Z";
+}
+
+function endISO(d?: string) {
+  return d
+    ? new Date(`${d}T23:59:59.999Z`).toISOString()
+    : "9999-12-31T23:59:59.999Z";
+}
+
 /* ───────── Détection type de matière ───────── */
 
 function isOtherSubject(name?: string | null, code?: string | null): boolean {
@@ -628,12 +801,10 @@ async function computeStudentGeneralAvgForRange(opts: {
     };
   });
 
-  let academicSumGen = 0;
-  let academicSumCoeffGen = 0;
-  let conductSumGen = 0;
-  let conductSumCoeffGen = 0;
+  let sumGen = 0;
+  let sumCoeffGen = 0;
   let conductAlreadyCounted = false;
-  let hasAcademicContribution = false;
+  let hasAcademicMatterAverage = false;
 
   for (const s of subjectsForReport) {
     if (s.include_in_average === false) continue;
@@ -644,32 +815,26 @@ async function computeStudentGeneralAvgForRange(opts: {
     const subAvg = ps?.avg20 ?? null;
     if (subAvg === null || subAvg === undefined) continue;
 
-    const isConduct = conductSubjectIds.has(String(s.subject_id));
-
-    if (isConduct) {
+    const isConductRow = conductSubjectIds.has(String(s.subject_id));
+    if (isConductRow) {
       conductAlreadyCounted = true;
-      conductSumGen += Number(subAvg) * coeffSub;
-      conductSumCoeffGen += coeffSub;
-      continue;
+    } else {
+      hasAcademicMatterAverage = true;
     }
 
-    hasAcademicContribution = true;
-    academicSumGen += Number(subAvg) * coeffSub;
-    academicSumCoeffGen += coeffSub;
+    sumGen += Number(subAvg) * coeffSub;
+    sumCoeffGen += coeffSub;
   }
 
-  if (!hasAcademicContribution) return null;
+  if (!hasAcademicMatterAverage) return null;
 
   if (!conductAlreadyCounted && conductAvg20 !== null && conductAvg20 !== undefined) {
     const c = Number(conductAvg20);
     if (Number.isFinite(c)) {
-      conductSumGen += c * 1;
-      conductSumCoeffGen += 1;
+      sumGen += c * 1;
+      sumCoeffGen += 1;
     }
   }
-
-  const sumGen = academicSumGen + conductSumGen;
-  const sumCoeffGen = academicSumCoeffGen + conductSumCoeffGen;
 
   return sumCoeffGen > 0 ? cleanNumber(sumGen / sumCoeffGen, 4) : null;
 }
@@ -712,6 +877,10 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ ok: false, error: "invalid_payload" }, { status: 400 });
   }
 
+  const instIdStr: string = instId;
+  const classIdStr: string = classId;
+  const studentIdStr: string = studentId;
+
   let dateFrom: string | null =
     payload?.i ??
     payload?.periodFrom ??
@@ -749,18 +918,18 @@ export async function GET(req: NextRequest) {
     { data: cls, error: clsErr },
     { data: stu, error: stuErr },
   ] = await Promise.all([
-    srv.from("institutions").select("id, name, code").eq("id", instId).maybeSingle(),
+    srv.from("institutions").select("id, name, code").eq("id", instIdStr).maybeSingle(),
     srv
       .from("classes")
       .select("id, label, code, institution_id, academic_year, head_teacher_id, level")
-      .eq("id", classId)
+      .eq("id", classIdStr)
       .maybeSingle(),
     srv
       .from("students")
       .select(
         "id, full_name, last_name, first_name, matricule, gender, birthdate, birth_place, nationality, regime, is_repeater, is_boarder, is_affecte, photo_url"
       )
-      .eq("id", studentId)
+      .eq("id", studentIdStr)
       .maybeSingle(),
   ]);
 
@@ -774,7 +943,7 @@ export async function GET(req: NextRequest) {
 
   const classRow = cls as ClassRow;
 
-  if (!classRow.institution_id || classRow.institution_id !== instId) {
+  if (!classRow.institution_id || classRow.institution_id !== instIdStr) {
     return NextResponse.json({ ok: false, error: "CLASS_FORBIDDEN" }, { status: 403 });
   }
 
@@ -802,7 +971,7 @@ export async function GET(req: NextRequest) {
       const { data: periodsData } = await srv
         .from("grade_periods")
         .select("id, academic_year, code, label, short_label, start_date, end_date, coeff")
-        .eq("institution_id", instId)
+        .eq("institution_id", instIdStr)
         .eq("academic_year", yearGuess)
         .order("start_date", { ascending: true });
 
@@ -842,7 +1011,7 @@ export async function GET(req: NextRequest) {
     const { data: gp, error: gpErr } = await srv
       .from("grade_periods")
       .select("id, academic_year, code, label, short_label, start_date, end_date, coeff")
-      .eq("institution_id", instId)
+      .eq("institution_id", instIdStr)
       .eq("start_date", dateFrom)
       .eq("end_date", dateTo)
       .maybeSingle();
@@ -868,7 +1037,7 @@ export async function GET(req: NextRequest) {
         const { data: periodsData } = await srv
           .from("grade_periods")
           .select("id, academic_year, code, label, short_label, start_date, end_date, coeff")
-          .eq("institution_id", instId)
+          .eq("institution_id", instIdStr)
           .eq("academic_year", yearGuess)
           .order("start_date", { ascending: true });
 
@@ -965,7 +1134,7 @@ export async function GET(req: NextRequest) {
     const { data: yearPeriodsData } = await srv
       .from("grade_periods")
       .select("id, academic_year, code, label, short_label, start_date, end_date, coeff")
-      .eq("institution_id", instId)
+      .eq("institution_id", instIdStr)
       .eq("academic_year", yearForAnnual)
       .order("start_date", { ascending: true });
 
@@ -1010,7 +1179,7 @@ export async function GET(req: NextRequest) {
       )
     `
     )
-    .eq("class_id", classId);
+    .eq("class_id", classIdStr);
 
   if (!hasDateFilter) {
     enrollQuery = enrollQuery.is("end_date", null);
@@ -1075,7 +1244,6 @@ export async function GET(req: NextRequest) {
   }
 
   const studentIds = classStudents.map((cs) => cs.student_id).filter(Boolean);
-  const classIdStr = String(classId);
 
   async function fetchConductAverageMap(
     from: string,
@@ -1087,43 +1255,293 @@ export async function GET(req: NextRequest) {
     if (!from || !to) return out;
 
     try {
-      const qs = new URLSearchParams({ class_id: classIdStr, from, to });
+      const conductSettings = await loadConductSettings(srv, instIdStr);
+      const rubricMax = conductSettings.rubric_max;
+      const defaultSessionMinutes = await loadDefaultSessionMinutes(srv, instIdStr);
 
-      const r = await fetch(
-        `${req.nextUrl.origin}/api/admin/conduite/averages?${qs.toString()}`,
-        { method: "GET" }
+      const { data: absMarks } = await srv
+        .from("v_mark_minutes")
+        .select("id, student_id, minutes, started_at")
+        .eq("institution_id", instIdStr)
+        .eq("class_id", classIdStr)
+        .eq("status", "absent")
+        .gte("started_at", startISO(from))
+        .lte("started_at", endISO(to));
+
+      const absMarkIds = Array.from(
+        new Set(
+          (absMarks || [])
+            .map((m: any) => String(m.id || ""))
+            .filter(Boolean)
+        )
       );
 
-      if (!r.ok) return out;
+      let absReasonById = new Map<string, string | null>();
+      if (absMarkIds.length) {
+        const { data: marksInfo } = await srv
+          .from("attendance_marks")
+          .select("id, reason")
+          .in("id", absMarkIds);
 
-      const data: any = await r.json().catch(() => null);
-      const items: any[] =
-        (data?.items as any[]) ||
-        (data?.data as any[]) ||
-        (data?.rows as any[]) ||
-        [];
+        absReasonById = new Map(
+          (marksInfo || []).map((m: any) => [
+            String(m.id),
+            (m.reason ?? null) as string | null,
+          ])
+        );
+      }
 
-      if (!Array.isArray(items)) return out;
+      const absAgg = new Map<string, number>();
+      const absCountAgg = new Map<string, number>();
+      for (const m of absMarks || []) {
+        const markId = String((m as any).id || "");
+        const reason = String(absReasonById.get(markId) ?? "").trim();
+        if (reason) continue;
 
-      for (const it of items) {
-        const sid = it?.student_id ?? it?.studentId ?? it?.id;
-        if (!sid) continue;
+        const sid = String((m as any).student_id || "");
+        const v = Number((m as any).minutes || 0);
+        if (!sid || !Number.isFinite(v) || v <= 0) continue;
+        absAgg.set(sid, (absAgg.get(sid) || 0) + v);
+        absCountAgg.set(sid, (absCountAgg.get(sid) || 0) + 1);
+      }
 
-        const raw =
-          it?.avg20 ??
-          it?.average ??
-          it?.total ??
-          it?.avg ??
-          it?.value ??
-          it?.score ??
-          it?.note ??
-          null;
+      const tarAgg = new Map<string, number>();
+      const tarCountAgg = new Map<string, number>();
+      try {
+        const { data: tardy } = await srv
+          .from("v_tardy_minutes")
+          .select("id, student_id, minutes, started_at")
+          .eq("institution_id", instIdStr)
+          .eq("class_id", classIdStr)
+          .gte("started_at", startISO(from))
+          .lte("started_at", endISO(to));
 
-        const v = raw === null || raw === undefined ? null : cleanNumber(raw, 4);
-        out.set(String(sid), v);
+        const tarMarkIds = Array.from(
+          new Set(
+            (tardy || [])
+              .map((t: any) => String(t.id || ""))
+              .filter(Boolean)
+          )
+        );
+
+        let tarReasonById = new Map<string, string | null>();
+        if (tarMarkIds.length) {
+          const { data: tMarksInfo } = await srv
+            .from("attendance_marks")
+            .select("id, reason")
+            .in("id", tarMarkIds);
+
+          tarReasonById = new Map(
+            (tMarksInfo || []).map((m: any) => [
+              String(m.id),
+              (m.reason ?? null) as string | null,
+            ])
+          );
+        }
+
+        for (const t of tardy || []) {
+          const markId = String((t as any).id || "");
+          const reason = String(tarReasonById.get(markId) ?? "").trim();
+          if (reason) continue;
+
+          const sid = String((t as any).student_id || "");
+          const v = Number((t as any).minutes || 0);
+          if (!sid || !Number.isFinite(v) || v <= 0) continue;
+          tarAgg.set(sid, (tarAgg.get(sid) || 0) + v);
+          tarCountAgg.set(sid, (tarCountAgg.get(sid) || 0) + 1);
+        }
+      } catch {
+        // vue absente -> retards à 0
+      }
+
+      type ConductEvent = {
+        student_id: string;
+        rubric: "assiduite" | "tenue" | "moralite" | "discipline";
+        event_type:
+          | "uniform_warning"
+          | "cheating"
+          | "alcohol_or_drug"
+          | "discipline_warning"
+          | "discipline_offense"
+          | "discipline_council";
+        occurred_at: string;
+      };
+
+      let events: ConductEvent[] = [];
+      try {
+        let q = srv
+          .from("conduct_events")
+          .select("student_id,rubric,event_type,occurred_at")
+          .eq("institution_id", instIdStr)
+          .eq("class_id", classIdStr);
+        if (from) q = q.gte("occurred_at", startISO(from));
+        if (to) q = q.lte("occurred_at", endISO(to));
+        const { data } = await q;
+        events = (data || []) as ConductEvent[];
+      } catch {
+        events = [];
+      }
+
+      const byStudent = new Map<string, ConductEvent[]>();
+      for (const ev of events) {
+        const arr = byStudent.get(ev.student_id) ?? [];
+        arr.push(ev);
+        byStudent.set(ev.student_id, arr);
+      }
+      for (const [, arr] of byStudent) {
+        arr.sort((a, b) => a.occurred_at.localeCompare(b.occurred_at));
+      }
+
+      type Penalty = {
+        student_id: string;
+        rubric: "tenue" | "moralite" | "discipline";
+        points: number;
+        occurred_at: string;
+      };
+
+      let penalties: Penalty[] = [];
+      try {
+        let qpen = srv
+          .from("conduct_penalties")
+          .select("student_id,rubric,points,occurred_at")
+          .eq("institution_id", instIdStr)
+          .eq("class_id", classIdStr);
+        if (from) qpen = qpen.gte("occurred_at", startISO(from));
+        if (to) qpen = qpen.lte("occurred_at", endISO(to));
+        const { data } = await qpen;
+        const raw = (data || []) as Array<{
+          student_id: string;
+          rubric: string;
+          points: number;
+          occurred_at: string;
+        }>;
+        penalties = raw
+          .filter(
+            (p) =>
+              p.rubric === "tenue" ||
+              p.rubric === "moralite" ||
+              p.rubric === "discipline"
+          )
+          .map((p) => ({
+            student_id: p.student_id,
+            rubric: p.rubric as Penalty["rubric"],
+            points: Number(p.points || 0),
+            occurred_at: p.occurred_at,
+          }));
+      } catch {
+        penalties = [];
+      }
+
+      const penByStudent = new Map<
+        string,
+        { tenue: number; moralite: number; discipline: number }
+      >();
+      for (const p of penalties) {
+        const cur = penByStudent.get(p.student_id) || {
+          tenue: 0,
+          moralite: 0,
+          discipline: 0,
+        };
+        (cur as any)[p.rubric] = Number((cur as any)[p.rubric] || 0) + Number(p.points || 0);
+        penByStudent.set(p.student_id, cur);
+      }
+
+      const assRules = conductSettings.rules.assiduite;
+      for (const sid of studentIds) {
+        const evs = byStudent.get(sid) ?? [];
+        const absenceCount = Number(absCountAgg.get(sid) || 0);
+        const tardyMinutes = Number(tarAgg.get(sid) || 0);
+        const tardyCount = Number(tarCountAgg.get(sid) || 0);
+
+        const absenceUnits = Math.max(0, absenceCount);
+        const latenessDivisor = Math.max(
+          1,
+          assRules.lateness_minutes_per_absent_hour || defaultSessionMinutes || 60
+        );
+
+        let effectiveHours = 0;
+        if (assRules.lateness_mode === "ignore") {
+          effectiveHours = absenceUnits;
+        } else if (assRules.lateness_mode === "as_hours") {
+          const tardyUnits = Math.floor(tardyMinutes / latenessDivisor);
+          effectiveHours = absenceUnits + tardyUnits;
+        } else {
+          effectiveHours = absenceUnits;
+        }
+
+        let assiduite: number;
+        if (effectiveHours >= assRules.max_hours_before_zero) {
+          assiduite = clampConduct(
+            assRules.note_after_threshold,
+            0,
+            rubricMax.assiduite
+          );
+        } else {
+          assiduite = clampConduct(
+            rubricMax.assiduite - assRules.penalty_per_hour * effectiveHours,
+            0,
+            rubricMax.assiduite
+          );
+
+          if (
+            assRules.lateness_mode === "direct_points" &&
+            tardyCount > 0 &&
+            assRules.lateness_points_per_late > 0
+          ) {
+            assiduite = clampConduct(
+              assiduite - assRules.lateness_points_per_late * tardyCount,
+              0,
+              rubricMax.assiduite
+            );
+          }
+        }
+
+        const tenueWarn = evs.filter((e) => e.event_type === "uniform_warning").length;
+        let tenue = clampConduct(
+          rubricMax.tenue - conductSettings.rules.tenue.warning_penalty * tenueWarn,
+          0,
+          rubricMax.tenue
+        );
+
+        const moralN = evs.filter(
+          (e) => e.event_type === "cheating" || e.event_type === "alcohol_or_drug"
+        ).length;
+        let moralite = clampConduct(
+          rubricMax.moralite - conductSettings.rules.moralite.event_penalty * moralN,
+          0,
+          rubricMax.moralite
+        );
+
+        const firstWarn = evs.find((e) => e.event_type === "discipline_warning");
+        let discN = 0;
+        if (firstWarn) {
+          discN = evs.filter(
+            (e) =>
+              e.event_type === "discipline_offense" &&
+              e.occurred_at >= firstWarn.occurred_at
+          ).length;
+        }
+        let discipline = clampConduct(
+          rubricMax.discipline - conductSettings.rules.discipline.offense_penalty * discN,
+          0,
+          rubricMax.discipline
+        );
+
+        const p = penByStudent.get(sid) || { tenue: 0, moralite: 0, discipline: 0 };
+        tenue = clampConduct(tenue - p.tenue, 0, rubricMax.tenue);
+        moralite = clampConduct(moralite - p.moralite, 0, rubricMax.moralite);
+        discipline = clampConduct(discipline - p.discipline, 0, rubricMax.discipline);
+
+        let total = assiduite + tenue + moralite + discipline;
+        const hasCouncil = evs.some((e) => e.event_type === "discipline_council");
+        if (hasCouncil) {
+          total = Math.min(total, conductSettings.rules.discipline.council_cap);
+        }
+
+        out.set(sid, cleanNumber(total, 4));
       }
     } catch {
-      // ignore
+      // silencieux
     }
 
     return out;
@@ -1149,7 +1567,7 @@ export async function GET(req: NextRequest) {
   const { data: coeffAllData } = await srv
     .from("institution_subject_coeffs")
     .select("subject_id, coeff, include_in_average, level")
-    .eq("institution_id", instId);
+    .eq("institution_id", instIdStr);
 
   const coeffBySubject = new Map<string, { coeff: number; include: boolean }>();
   const subjectIdsFromConfig = new Set<string>();
@@ -1183,7 +1601,7 @@ export async function GET(req: NextRequest) {
       .select(
         "id, class_id, subject_id, teacher_id, eval_date, scale, coeff, is_published, subject_component_id"
       )
-      .eq("class_id", classId)
+      .eq("class_id", classIdStr)
       .eq("is_published", true);
 
     if (dateFrom) evalQuery = evalQuery.gte("eval_date", dateFrom);
@@ -1300,7 +1718,7 @@ export async function GET(req: NextRequest) {
   const { data: compData } = await srv
     .from("grade_subject_components")
     .select("id, subject_id, label, short_label, coeff_in_subject, order_index, is_active, level")
-    .eq("institution_id", instId)
+    .eq("institution_id", instIdStr)
     .in("subject_id", orderedSubjectIds);
 
   if (compData) {
@@ -1368,7 +1786,7 @@ export async function GET(req: NextRequest) {
     const { data: groupsData } = await srv
       .from("bulletin_subject_groups")
       .select("id, level, label, order_index, is_active, code, short_label, annual_coeff")
-      .eq("institution_id", instId)
+      .eq("institution_id", instIdStr)
       .eq("level", bulletinLevel)
       .order("order_index", { ascending: true });
 
@@ -1730,12 +2148,10 @@ export async function GET(req: NextRequest) {
 
     let general_avg: number | null = null;
     {
-      let academicSumGen = 0;
-      let academicSumCoeffGen = 0;
-      let conductSumGen = 0;
-      let conductSumCoeffGen = 0;
+      let sumGen = 0;
+      let sumCoeffGen = 0;
       let conductAlreadyCounted = false;
-      let hasAcademicContribution = false;
+      let hasAcademicMatterAverage = false;
 
       for (const s of subjectsForReport) {
         if (s.include_in_average === false) continue;
@@ -1746,32 +2162,27 @@ export async function GET(req: NextRequest) {
         const subAvg = ps?.avg20 ?? null;
         if (subAvg === null || subAvg === undefined) continue;
 
-        const isConduct = conductSubjectIds.has(String(s.subject_id));
-
-        if (isConduct) {
+        const isConductRow = conductSubjectIds.has(String(s.subject_id));
+        if (isConductRow) {
           conductAlreadyCounted = true;
-          conductSumGen += Number(subAvg) * coeffSub;
-          conductSumCoeffGen += coeffSub;
-          continue;
+        } else {
+          hasAcademicMatterAverage = true;
         }
 
-        hasAcademicContribution = true;
-        academicSumGen += Number(subAvg) * coeffSub;
-        academicSumCoeffGen += coeffSub;
+        sumGen += Number(subAvg) * coeffSub;
+        sumCoeffGen += coeffSub;
       }
 
-      if (hasAcademicContribution) {
+      if (hasAcademicMatterAverage) {
         const conductNote = conductAvgMapCurrent.get(cs.student_id) ?? null;
         if (!conductAlreadyCounted && conductNote !== null && conductNote !== undefined) {
           const c = Number(conductNote);
           if (Number.isFinite(c)) {
-            conductSumGen += c * 1;
-            conductSumCoeffGen += 1;
+            sumGen += c * 1;
+            sumCoeffGen += 1;
           }
         }
 
-        const sumGen = academicSumGen + conductSumGen;
-        const sumCoeffGen = academicSumCoeffGen + conductSumCoeffGen;
         general_avg = sumCoeffGen > 0 ? cleanNumber(sumGen / sumCoeffGen, 4) : null;
       } else {
         general_avg = null;
@@ -1801,7 +2212,7 @@ export async function GET(req: NextRequest) {
   applySubjectRanks(items);
   applySubjectComponentRanks(items);
 
-  const bulletinForStudent = items.find((it) => it.student_id === studentId);
+  const bulletinForStudent = items.find((it) => it.student_id === studentIdStr);
 
   if (!bulletinForStudent) {
     return NextResponse.json(
@@ -1815,6 +2226,10 @@ export async function GET(req: NextRequest) {
     snap && typeof snap.g === "number" ? cleanNumber(snap.g, 4) : null;
   const snapAnnual =
     snap && typeof snap.a === "number" ? cleanNumber(snap.a, 4) : null;
+
+  if (snapGeneral !== null && (bulletinForStudent as any).general_avg == null) {
+    (bulletinForStudent as any).general_avg = snapGeneral;
+  }
 
   let annual_avg_for_student: number | null = null;
 
@@ -1838,12 +2253,12 @@ export async function GET(req: NextRequest) {
       } else {
         const key = `${pStart}|${pEnd}`;
         const conductNote =
-          conductByPeriodKey.get(key)?.get(studentId) ?? null;
+          conductByPeriodKey.get(key)?.get(studentIdStr) ?? null;
 
         periodAvg = await computeStudentGeneralAvgForRange({
           srv,
-          classId,
-          studentId,
+          classId: classIdStr,
+          studentId: studentIdStr,
           from: pStart,
           to: pEnd,
           conductAvg20: conductNote,
@@ -1868,18 +2283,10 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  const currentGeneralAvg = (bulletinForStudent as any).general_avg;
-  if ((currentGeneralAvg === null || currentGeneralAvg === undefined) && snapGeneral !== null) {
-    (bulletinForStudent as any).general_avg = snapGeneral;
-  }
-
   if (annual_avg_for_student !== null) {
     (bulletinForStudent as any).annual_avg = annual_avg_for_student;
-  } else {
-    const currentAnnualAvg = (bulletinForStudent as any).annual_avg;
-    if ((currentAnnualAvg === null || currentAnnualAvg === undefined) && snapAnnual !== null) {
-      (bulletinForStudent as any).annual_avg = snapAnnual;
-    }
+  } else if (snapAnnual !== null) {
+    (bulletinForStudent as any).annual_avg = snapAnnual;
   }
 
   return NextResponse.json({
