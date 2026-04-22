@@ -120,6 +120,12 @@ function TextBadge({ text }: { text: string }) {
 const TOP_LEVEL_ITEMS: NavItem[] = [
   { href: "/admin/dashboard", label: "Tableau de bord", Icon: LayoutDashboard },
   {
+    href: "/admin/export-moyennes",
+    label: "Export moyennes",
+    Icon: FileSpreadsheet,
+    badge: "XLSX",
+  },
+  {
     href: "/admin/notes/predictions",
     label: "Prédictions de réussite",
     Icon: BarChart3,
@@ -524,6 +530,7 @@ export default function SidebarNav() {
     () =>
       TOP_LEVEL_ITEMS.filter((item) => {
         if (isEducator && item.href.startsWith("/admin/notes")) return false;
+        if (isEducator && item.href === "/admin/export-moyennes") return false;
         return true;
       }),
     [isEducator]
@@ -676,7 +683,6 @@ export default function SidebarNav() {
         </div>
       </nav>
 
-      {/* Poignée resize déplacée hors de la piste de scroll */}
       <div
         onMouseDown={startResize}
         onDoubleClick={resetWidth}
