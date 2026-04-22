@@ -43,6 +43,47 @@ function normalizeBulletinLevel(level?: string | null): string | null {
 
   return null;
 }
+function normalizeStoredLevel(level?: string | null): string | null {
+  const n = normalizeBulletinLevel(level);
+  if (n) return n;
+
+  const raw = String(level ?? "").trim().toLowerCase();
+  return raw || null;
+}
+
+function pickBestCoeffRow(
+  rows: SubjectCoeffRow[],
+  wantedLevel: string | null
+): SubjectCoeffRow | null {
+  if (!rows.length) return null;
+
+  const wanted = normalizeStoredLevel(wantedLevel);
+
+  const exact = rows.find((r) => normalizeStoredLevel(r.level) === wanted);
+  if (exact) return exact;
+
+  const globalRow = rows.find((r) => !normalizeStoredLevel(r.level));
+  if (globalRow) return globalRow;
+
+  return rows[0] ?? null;
+}
+
+function pickBestComponentRows<T extends { level?: string | null }>(
+  rows: T[],
+  wantedLevel: string | null
+): T[] {
+  if (!rows.length) return [];
+
+  const wanted = normalizeStoredLevel(wantedLevel);
+  const exact = rows.filter((r) => normalizeStoredLevel(r.level) === wanted);
+  if (exact.length) return exact;
+
+  const globalRows = rows.filter((r) => !normalizeStoredLevel(r.level));
+  if (globalRows.length) return globalRows;
+
+  return rows;
+}
+
 
 function normText(s?: string | null) {
   return (s ?? "").toString().trim().toLowerCase();
@@ -1075,25 +1116,33 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  let coeffAllQuery = srv
+  const { data: coeffAllData } = await srv
     .from("institution_subject_coeffs")
     .select("subject_id, coeff, include_in_average, level")
     .eq("institution_id", instId);
 
-  if (bulletinLevel) coeffAllQuery = coeffAllQuery.eq("level", bulletinLevel);
-
-  const { data: coeffAllData } = await coeffAllQuery;
-
   const coeffBySubject = new Map<string, { coeff: number; include: boolean }>();
   const subjectIdsFromConfig = new Set<string>();
+  const coeffRowsBySubject = new Map<string, SubjectCoeffRow[]>();
 
   for (const row of (coeffAllData || []) as SubjectCoeffRow[]) {
     const sid = String(row.subject_id || "");
     if (!sid || !isUuid(sid)) continue;
+
     subjectIdsFromConfig.add(sid);
+
+    const arr = coeffRowsBySubject.get(sid) || [];
+    arr.push(row);
+    coeffRowsBySubject.set(sid, arr);
+  }
+
+  for (const [sid, rows] of coeffRowsBySubject.entries()) {
+    const best = pickBestCoeffRow(rows, bulletinLevel);
+    if (!best) continue;
+
     coeffBySubject.set(sid, {
-      coeff: cleanCoeff(row.coeff),
-      include: row.include_in_average !== false,
+      coeff: cleanCoeff(best.coeff),
+      include: best.include_in_average !== false,
     });
   }
 
@@ -1209,39 +1258,58 @@ export async function GET(req: NextRequest) {
 
   const { data: compData } = await srv
     .from("grade_subject_components")
-    .select("id, subject_id, label, short_label, coeff_in_subject, order_index, is_active")
+    .select("id, subject_id, label, short_label, coeff_in_subject, order_index, is_active, level")
     .eq("institution_id", instId)
     .in("subject_id", orderedSubjectIds);
 
   if (compData) {
-    const rows = (compData || [])
-      .filter((r: any) => r.is_active !== false)
-      .map((r: any) => {
-        const coeff =
+    const rawRows = ((compData || []) as any[])
+      .filter((r) => r.is_active !== false)
+      .map((r: any) => ({
+        id: String(r.id),
+        subject_id: String(r.subject_id),
+        label: (r.label as string) || "Sous-matière",
+        short_label: r.short_label ? String(r.short_label) : null,
+        coeff_in_subject: cleanCoeff(
           r.coeff_in_subject !== null && r.coeff_in_subject !== undefined
             ? Number(r.coeff_in_subject)
-            : 1;
-        const ord =
-          r.order_index !== null && r.order_index !== undefined ? Number(r.order_index) : 1;
+            : 1
+        ),
+        order_index:
+          r.order_index !== null && r.order_index !== undefined ? Number(r.order_index) : 1,
+        level: r.level ? String(r.level) : null,
+      }));
 
-        const obj: BulletinSubjectComponent = {
-          id: String(r.id),
-          subject_id: String(r.subject_id),
-          label: (r.label as string) || "Sous-matière",
-          short_label: r.short_label ? String(r.short_label) : null,
-          coeff_in_subject: cleanCoeff(coeff),
-          order_index: ord,
-        };
-        return obj;
-      }) as BulletinSubjectComponent[];
+    const rawBySubject = new Map<string, any[]>();
+    for (const row of rawRows) {
+      const arr = rawBySubject.get(row.subject_id) || [];
+      arr.push(row);
+      rawBySubject.set(row.subject_id, arr);
+    }
 
-    rows.sort((a, b) => {
-      if (a.subject_id !== b.subject_id) return a.subject_id.localeCompare(b.subject_id);
-      return a.order_index - b.order_index;
-    });
+    const finalRows: BulletinSubjectComponent[] = [];
 
-    subjectComponentsForReport = rows;
-    rows.forEach((c) => {
+    for (const sid of orderedSubjectIds) {
+      const chosen = pickBestComponentRows(rawBySubject.get(sid) || [], bulletinLevel);
+
+      chosen.sort((a, b) => {
+        return (a.order_index ?? 1) - (b.order_index ?? 1);
+      });
+
+      for (const row of chosen) {
+        finalRows.push({
+          id: row.id,
+          subject_id: row.subject_id,
+          label: row.label,
+          short_label: row.short_label,
+          coeff_in_subject: row.coeff_in_subject,
+          order_index: row.order_index,
+        });
+      }
+    }
+
+    subjectComponentsForReport = finalRows;
+    finalRows.forEach((c) => {
       subjectComponentById.set(c.id, c);
       const arr = compsBySubject.get(c.subject_id) || [];
       arr.push(c);

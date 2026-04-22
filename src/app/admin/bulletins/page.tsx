@@ -1217,14 +1217,87 @@ function StudentBulletinCard({
     });
   }, [allSubjects, perSubject]);
 
+  const effectiveCoeffBySubjectId = useMemo(() => {
+    const map = new Map<string, number>();
+
+    subjectGroups.forEach((g) => {
+      if (!g.is_active) return;
+
+      g.items.forEach((it) => {
+        const subj = subjectsWithGrades.find((s) => s.subject_id === it.subject_id);
+        if (!subj) return;
+
+        const override = Number(it.subject_coeff_override ?? NaN);
+        const coeff =
+          Number.isFinite(override) && override > 0
+            ? override
+            : Number(subj.coeff_bulletin ?? 0);
+
+        if (Number.isFinite(coeff) && coeff > 0 && !map.has(subj.subject_id)) {
+          map.set(subj.subject_id, coeff);
+        }
+      });
+    });
+
+    subjectsWithGrades.forEach((s) => {
+      if (map.has(s.subject_id)) return;
+
+      const coeff =
+        s.subject_id === conductSubject?.subject_id
+          ? 1
+          : Number(s.coeff_bulletin ?? 0);
+
+      if (Number.isFinite(coeff) && coeff > 0) {
+        map.set(s.subject_id, coeff);
+      }
+    });
+
+    return map;
+  }, [subjectGroups, subjectsWithGrades, conductSubject]);
+
   const coeffTotal = useMemo(
     () =>
-      subjectsWithGrades.reduce((acc, s) => {
-        const c = Number(s.coeff_bulletin ?? 0);
-        return acc + (Number.isFinite(c) ? c : 0);
-      }, 0),
-    [subjectsWithGrades]
+      Array.from(effectiveCoeffBySubjectId.values()).reduce(
+        (acc, coeff) => acc + coeff,
+        0
+      ),
+    [effectiveCoeffBySubjectId]
   );
+
+  const computeDisplayedGroupStats = (
+    groupSubjects: BulletinSubject[]
+  ) => {
+    let sum = 0;
+    let sumCoeff = 0;
+
+    groupSubjects.forEach((s) => {
+      const cell = perSubject.find((ps) => ps.subject_id === s.subject_id);
+      const val = cell?.avg20;
+
+      if (val === null || val === undefined || !Number.isFinite(Number(val))) {
+        return;
+      }
+
+      const coeff =
+        effectiveCoeffBySubjectId.get(s.subject_id) ??
+        (s.subject_id === conductSubject?.subject_id
+          ? 1
+          : Number(s.coeff_bulletin ?? 0));
+
+      if (!Number.isFinite(coeff) || coeff <= 0) return;
+
+      sum += Number(val) * coeff;
+      sumCoeff += coeff;
+    });
+
+    const groupAvgRaw = sumCoeff > 0 ? sum / sumCoeff : null;
+
+    return {
+      groupAvg: groupAvgRaw !== null ? round2(groupAvgRaw) : null,
+      groupCoeff: sumCoeff,
+      groupTotal: sumCoeff > 0 ? round2(sum) : null,
+    };
+  };
 
   const subjectsById = useMemo(() => {
     const m = new Map<string, BulletinSubject>();
@@ -1364,9 +1437,15 @@ function StudentBulletinCard({
     if (avg === null || avg === undefined || !Number.isFinite(Number(avg)))
       return null;
 
+    const effectiveCoeff =
+      effectiveCoeffBySubjectId.get(s.subject_id) ??
+      (s.subject_id === conductSubject?.subject_id
+        ? 1
+        : Number(s.coeff_bulletin ?? 0));
+
     const moyCoeff =
-      avg !== null && Number.isFinite(Number(avg))
-        ? round2(Number(avg) * (s.coeff_bulletin || 0))
+      avg !== null && Number.isFinite(Number(avg)) && Number.isFinite(effectiveCoeff)
+        ? round2(Number(avg) * effectiveCoeff)
         : null;
 
     const subjectRankLabel =
@@ -1387,7 +1466,7 @@ function StudentBulletinCard({
           <td className="bdr px-1 py-[1px]">{s.subject_name}</td>
           <td className="bdr px-1 py-[1px] text-center">{formatNumber(avg)}</td>
           <td className="bdr px-1 py-[1px] text-center">
-            {formatNumber(s.coeff_bulletin, 0)}
+            {formatNumber(effectiveCoeff, 0)}
           </td>
           <td className="bdr px-1 py-[1px] text-center">
             {formatNumber(moyCoeff)}
@@ -1677,47 +1756,11 @@ function StudentBulletinCard({
                 if (!groupSubjects.length) return null;
 
                 const baseGroupInfo = perGroupMap.get(g.id);
-                let groupAvg = baseGroupInfo?.group_avg ?? null;
-                let groupCoeff = g.annual_coeff ?? 0;
-                let groupTotal: number | null =
-                  groupAvg !== null && groupCoeff
-                    ? round2(groupAvg * groupCoeff)
-                    : null;
-
-                if (groupIsAutres) {
-                  let sum = 0;
-                  let sumCoeff = 0;
-
-                  groupSubjects.forEach((s) => {
-                    const cell = perSubject.find(
-                      (ps) => ps.subject_id === s.subject_id
-                    );
-                    const val = cell?.avg20;
-                    if (
-                      val === null ||
-                      val === undefined ||
-                      !Number.isFinite(Number(val))
-                    )
-                      return;
-
-                    const avg = Number(val);
-                    const coeff =
-                      s.subject_id === conductSubject?.subject_id
-                        ? 1
-                        : Number(s.coeff_bulletin ?? 0);
-
-                    if (!Number.isFinite(coeff) || coeff <= 0) return;
-
-                    sum += avg * coeff;
-                    sumCoeff += coeff;
-                  });
-
-                  if (sumCoeff > 0) {
-                    groupAvg = sum / sumCoeff;
-                    groupCoeff = sumCoeff;
-                    groupTotal = round2(groupAvg * groupCoeff);
-                  }
-                }
+                const {
+                  groupAvg,
+                  groupCoeff,
+                  groupTotal,
+                } = computeDisplayedGroupStats(groupSubjects);
 
                 const groupRankLabel =
                   baseGroupInfo?.group_rank != null
