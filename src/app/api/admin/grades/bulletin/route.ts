@@ -1592,8 +1592,9 @@ export async function GET(req: NextRequest) {
     };
   });
 
-  // ✅ Forcer la matière "Conduite" à être comptée dans la moyenne générale
-  // (certaines configurations peuvent l'exclure par erreur)
+  // ✅ La conduite peut compléter la moyenne, mais ne doit jamais suffire à elle seule.
+  // On la garde "include_in_average = true" pour les cas où il existe déjà au moins
+  // une vraie note disciplinaire publiée sur la période.
   for (const s of subjectsForReport as any[]) {
     const meta = subjectById.get(String(s.subject_id));
     const key = `${meta?.code ?? ""} ${meta?.name ?? ""}`.toLowerCase();
@@ -2077,12 +2078,15 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    // ✅ moyenne générale: uniquement matières (pas bilans)
+    // ✅ moyenne générale: la conduite peut compléter, mais ne valide jamais seule un trimestre
     let general_avg: number | null = null;
     {
-      let sumGen = 0;
-      let sumCoeffGen = 0;
+      let academicSumGen = 0;
+      let academicSumCoeffGen = 0;
+      let conductSumGen = 0;
+      let conductSumCoeffGen = 0;
       let conductAlreadyCounted = false;
+      let hasAcademicContribution = false;
 
       for (const s of subjectsForReport) {
         if (s.include_in_average === false) continue;
@@ -2093,24 +2097,37 @@ export async function GET(req: NextRequest) {
         const subAvg = ps?.avg20 ?? null;
         if (subAvg === null || subAvg === undefined) continue;
 
-        const sn = String((s as any).subject_name ?? "").toLowerCase();
-        const isConduct = sn.includes("conduite") || sn.includes("conduct");
-        if (isConduct) conductAlreadyCounted = true;
+        const isConduct = isConductSubjectId(String(s.subject_id));
 
-        sumGen += Number(subAvg) * coeffSub;
-        sumCoeffGen += coeffSub;
-      }
-
-      // ✅ Injecter la conduite coef 1 (si non déjà comptée comme "matière")
-      if (!conductAlreadyCounted && conductAvgByStudent) {
-        const c = conductAvgByStudent.get(cs.student_id);
-        if (c !== null && c !== undefined && Number.isFinite(Number(c))) {
-          sumGen += Number(c) * 1;
-          sumCoeffGen += 1;
+        if (isConduct) {
+          conductAlreadyCounted = true;
+          conductSumGen += Number(subAvg) * coeffSub;
+          conductSumCoeffGen += coeffSub;
+          continue;
         }
+
+        hasAcademicContribution = true;
+        academicSumGen += Number(subAvg) * coeffSub;
+        academicSumCoeffGen += coeffSub;
       }
 
-      general_avg = sumCoeffGen > 0 ? cleanNumber(sumGen / sumCoeffGen, 4) : null;
+      // ✅ Pas de vraie note disciplinaire publiée => pas de moyenne trimestrielle
+      if (hasAcademicContribution) {
+        // ✅ La conduite externe (/conduite/averages) ne complète qu'un trimestre déjà valide
+        if (!conductAlreadyCounted && conductAvgByStudent) {
+          const c = conductAvgByStudent.get(cs.student_id);
+          if (c !== null && c !== undefined && Number.isFinite(Number(c))) {
+            conductSumGen += Number(c) * 1;
+            conductSumCoeffGen += 1;
+          }
+        }
+
+        const sumGen = academicSumGen + conductSumGen;
+        const sumCoeffGen = academicSumCoeffGen + conductSumCoeffGen;
+        general_avg = sumCoeffGen > 0 ? cleanNumber(sumGen / sumCoeffGen, 4) : null;
+      } else {
+        general_avg = null;
+      }
     }
 
     return {
@@ -2416,9 +2433,12 @@ export async function GET(req: NextRequest) {
         const sm = perStuSub.get(sid) || new Map();
         const cm = perStuComp.get(sid) || new Map();
 
-        let sumGen = 0;
-        let sumCoeffGen = 0;
+        let academicSumGen = 0;
+        let academicSumCoeffGen = 0;
+        let conductSumGen = 0;
+        let conductSumCoeffGen = 0;
         let conductAlreadyCounted = false;
+        let hasAcademicContribution = false;
 
         for (const s of subjectsList) {
           if (s.include_in_average === false) continue;
@@ -2462,23 +2482,36 @@ export async function GET(req: NextRequest) {
           if (subAvg === null || subAvg === undefined) continue;
           if (!Number.isFinite(subAvg)) continue;
 
-          if (conductSubjectIds.has(String(s.subject_id))) conductAlreadyCounted = true;
-
-          sumGen += Number(subAvg) * coeffSub;
-          sumCoeffGen += coeffSub;
-        }
-
-        // ✅ Injecter la conduite coef 1 (si non déjà comptée comme "matière")
-        if (!conductAlreadyCounted && conductMap) {
-          const c = conductMap.get(sid);
-          if (c !== null && c !== undefined && Number.isFinite(Number(c))) {
-            sumGen += Number(c) * 1;
-            sumCoeffGen += 1;
+          const isConduct = conductSubjectIds.has(String(s.subject_id));
+          if (isConduct) {
+            conductAlreadyCounted = true;
+            conductSumGen += Number(subAvg) * coeffSub;
+            conductSumCoeffGen += coeffSub;
+            continue;
           }
+
+          hasAcademicContribution = true;
+          academicSumGen += Number(subAvg) * coeffSub;
+          academicSumCoeffGen += coeffSub;
         }
 
-        const g = sumCoeffGen > 0 ? cleanNumber(sumGen / sumCoeffGen, 4) : null;
-        out.set(sid, g);
+        // ✅ La conduite ne complète que les périodes déjà valides académiquement
+        if (hasAcademicContribution) {
+          if (!conductAlreadyCounted && conductMap) {
+            const c = conductMap.get(sid);
+            if (c !== null && c !== undefined && Number.isFinite(Number(c))) {
+              conductSumGen += Number(c) * 1;
+              conductSumCoeffGen += 1;
+            }
+          }
+
+          const sumGen = academicSumGen + conductSumGen;
+          const sumCoeffGen = academicSumCoeffGen + conductSumCoeffGen;
+          const g = sumCoeffGen > 0 ? cleanNumber(sumGen / sumCoeffGen, 4) : null;
+          out.set(sid, g);
+        } else {
+          out.set(sid, null);
+        }
       }
 
       return out;

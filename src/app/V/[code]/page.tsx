@@ -114,6 +114,19 @@ function normalizeGroupKey(value?: string | null) {
     .replace(/[^A-Z0-9]+/g, "");
 }
 
+function normText(value?: string | null) {
+  return String(value ?? "").trim().toLowerCase();
+}
+
+function isConductSubject(subject: any) {
+  const name = normText(subject?.subject_name ?? subject?.name ?? subject?.label);
+  const code = normText(subject?.code);
+  return (
+    /(conduite|conduct|vie\s*scolaire)/.test(name) ||
+    /(conduite|conduct|vie\s*scolaire)/.test(code)
+  );
+}
+
 function isAutresGroup(group: any) {
   const a = normalizeGroupKey(group?.label);
   const b = normalizeGroupKey(group?.code);
@@ -232,6 +245,42 @@ export default async function VerifyByCodePage(props: any) {
     0
   );
 
+  const displayedWeightedTotal = subjectsWithAvg.reduce((acc, subj: any) => {
+    const sid = String(subj?.subject_id ?? "");
+    const ps = perSubjectMap.get(sid);
+    const avg = typeof ps?.avg20 === "number" ? Number(ps.avg20) : null;
+    const coeff = effectiveCoeffBySubjectId.get(sid) ?? Number(subj?.coeff_bulletin ?? 0);
+
+    if (avg === null || !Number.isFinite(avg) || !Number.isFinite(coeff) || coeff <= 0) {
+      return acc;
+    }
+    return acc + avg * coeff;
+  }, 0);
+
+  const conductSubject = subjects.find((s: any) => isConductSubject(s)) ?? null;
+  const conductSubjectId = conductSubject ? String(conductSubject.subject_id ?? "") : null;
+  const conductAlreadyVisible =
+    !!conductSubjectId && perSubjectMap.has(conductSubjectId);
+
+  const canDeriveConduct =
+    !conductAlreadyVisible &&
+    typeof bulletin?.general_avg === "number" &&
+    Number.isFinite(bulletin.general_avg) &&
+    coeffTotal > 0 &&
+    subjects.length > 0 &&
+    subjectsWithAvg.length === subjects.length;
+
+  let derivedConductAvg: number | null = null;
+  if (canDeriveConduct) {
+    const raw = Number(bulletin.general_avg) * (coeffTotal + 1) - displayedWeightedTotal;
+    if (Number.isFinite(raw) && raw >= 0 && raw <= 20) {
+      derivedConductAvg = round2(raw);
+    }
+  }
+
+  const showSyntheticConductRow = !conductAlreadyVisible && derivedConductAvg !== null;
+  const displayCoeffTotal = coeffTotal + (showSyntheticConductRow ? 1 : 0);
+
   function computeDisplayedGroupStats(groupSubjects: any[]) {
     let sum = 0;
     let sumCoeff = 0;
@@ -259,7 +308,6 @@ export default async function VerifyByCodePage(props: any) {
   const groupedSubjectIds = new Set<string>();
   const renderedGroups = subjectGroups
     .map((g: any) => {
-      const rows: any[] = [];
       const groupSubjects: any[] = [];
 
       for (const item of Array.isArray(g?.items) ? g.items : []) {
@@ -307,6 +355,8 @@ export default async function VerifyByCodePage(props: any) {
           annual_avg: bulletin?.annual_avg ?? null,
           labelMain,
           isAnnual,
+          conduct_visible_as_subject: conductAlreadyVisible,
+          conduct_derived: derivedConductAvg,
         },
         counts: {
           subjects: subjects.length,
@@ -347,7 +397,10 @@ export default async function VerifyByCodePage(props: any) {
           const cTotal = cAvg !== null && Number.isFinite(cCoeff) ? round2(cAvg * cCoeff) : null;
 
           return (
-            <tr key={`comp-${key}`} className="border-t border-slate-100 bg-slate-50/70 text-[12px] text-slate-600">
+            <tr
+              key={`comp-${key}`}
+              className="border-t border-slate-100 bg-slate-50/70 text-[12px] text-slate-600"
+            >
               <td className="px-3 py-1 pl-8">{comp.short_label || comp.label}</td>
               <td className="px-3 py-1 text-center">{formatNumber(cAvg)}</td>
               <td className="px-3 py-1 text-center">{formatNumber(cCoeff, 0)}</td>
@@ -498,15 +551,30 @@ export default async function VerifyByCodePage(props: any) {
 
                           {ungroupedSubjects.map((subj: any) => renderSubjectRow(subj))}
 
+                          {showSyntheticConductRow && (
+                            <tr className="border-t border-amber-200 bg-amber-50 font-semibold text-slate-800">
+                              <td className="px-3 py-2">Conduite</td>
+                              <td className="px-3 py-2 text-center">{formatNumber(derivedConductAvg)}</td>
+                              <td className="px-3 py-2 text-center">1</td>
+                              <td className="px-3 py-2 text-center">{formatNumber(derivedConductAvg)}</td>
+                            </tr>
+                          )}
+
                           <tr className="border-t border-slate-300 bg-slate-100 font-bold text-slate-900">
                             <td className="px-3 py-2 text-right">TOTAUX :</td>
                             <td className="px-3 py-2" />
-                            <td className="px-3 py-2 text-center">{formatNumber(coeffTotal, 0)}</td>
+                            <td className="px-3 py-2 text-center">{formatNumber(displayCoeffTotal, 0)}</td>
                             <td className="px-3 py-2" />
                           </tr>
                         </tbody>
                       </table>
                     </div>
+                  </div>
+                )}
+
+                {!conductAlreadyVisible && !showSyntheticConductRow && typeof bulletin?.general_avg === "number" && (
+                  <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900">
+                    La conduite est bien prise en compte dans la moyenne générale, mais son détail n’a pas pu être affiché séparément sur cette page.
                   </div>
                 )}
 

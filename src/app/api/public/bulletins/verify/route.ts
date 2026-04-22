@@ -84,7 +84,6 @@ function pickBestComponentRows<T extends { level?: string | null }>(
   return rows;
 }
 
-
 function normText(s?: string | null) {
   return (s ?? "").toString().trim().toLowerCase();
 }
@@ -147,6 +146,16 @@ function isScienceSubject(name?: string | null, code?: string | null): boolean {
   return (
     /(math|math[ée]m|phys|chim|svt|bio|science|info|algo|stat|techno)/.test(c) ||
     /(math|math[ée]m|phys|chim|svt|bio|science|informat|algo|stat|technolog)/.test(n)
+  );
+}
+
+function isConductSubject(name?: string | null, code?: string | null): boolean {
+  const n = normText(name);
+  const c = normText(code);
+
+  return (
+    /(conduite|conduct|vie\s*scolaire)/.test(n) ||
+    /(conduite|conduct|vie\s*scolaire)/.test(c)
   );
 }
 
@@ -496,6 +505,7 @@ async function computeStudentGeneralAvgForRange(opts: {
     coeff_bulletin: number;
     include_in_average: boolean;
   }[];
+  conductSubjectIds: Set<string>;
   subjectComponentsBySubject: Map<string, BulletinSubjectComponent[]>;
   subjectComponentById: Map<string, BulletinSubjectComponent>;
 }): Promise<number | null> {
@@ -507,6 +517,7 @@ async function computeStudentGeneralAvgForRange(opts: {
     to,
     conductAvg20,
     subjectsForReport,
+    conductSubjectIds,
     subjectComponentsBySubject,
     subjectComponentById,
   } = opts;
@@ -617,8 +628,12 @@ async function computeStudentGeneralAvgForRange(opts: {
     };
   });
 
-  let sumGen = 0;
-  let sumCoeffGen = 0;
+  let academicSumGen = 0;
+  let academicSumCoeffGen = 0;
+  let conductSumGen = 0;
+  let conductSumCoeffGen = 0;
+  let conductAlreadyCounted = false;
+  let hasAcademicContribution = false;
 
   for (const s of subjectsForReport) {
     if (s.include_in_average === false) continue;
@@ -629,17 +644,32 @@ async function computeStudentGeneralAvgForRange(opts: {
     const subAvg = ps?.avg20 ?? null;
     if (subAvg === null || subAvg === undefined) continue;
 
-    sumGen += Number(subAvg) * coeffSub;
-    sumCoeffGen += coeffSub;
+    const isConduct = conductSubjectIds.has(String(s.subject_id));
+
+    if (isConduct) {
+      conductAlreadyCounted = true;
+      conductSumGen += Number(subAvg) * coeffSub;
+      conductSumCoeffGen += coeffSub;
+      continue;
+    }
+
+    hasAcademicContribution = true;
+    academicSumGen += Number(subAvg) * coeffSub;
+    academicSumCoeffGen += coeffSub;
   }
 
-  if (conductAvg20 !== null && conductAvg20 !== undefined) {
+  if (!hasAcademicContribution) return null;
+
+  if (!conductAlreadyCounted && conductAvg20 !== null && conductAvg20 !== undefined) {
     const c = Number(conductAvg20);
     if (Number.isFinite(c)) {
-      sumGen += c * 1;
-      sumCoeffGen += 1;
+      conductSumGen += c * 1;
+      conductSumCoeffGen += 1;
     }
   }
+
+  const sumGen = academicSumGen + conductSumGen;
+  const sumCoeffGen = academicSumCoeffGen + conductSumCoeffGen;
 
   return sumCoeffGen > 0 ? cleanNumber(sumGen / sumCoeffGen, 4) : null;
 }
@@ -1252,6 +1282,17 @@ export async function GET(req: NextRequest) {
     };
   });
 
+  const conductSubjectIds = new Set<string>();
+  for (const s of subjectsForReport) {
+    const meta = subjectById.get(String(s.subject_id));
+    const subjectName = s.subject_name ?? meta?.name ?? null;
+    const subjectCode = meta?.code ?? null;
+
+    if (isConductSubject(subjectName, subjectCode)) {
+      conductSubjectIds.add(String(s.subject_id));
+    }
+  }
+
   let subjectComponentsForReport: BulletinSubjectComponent[] = [];
   const subjectComponentById = new Map<string, BulletinSubjectComponent>();
   const compsBySubject = new Map<string, BulletinSubjectComponent[]>();
@@ -1689,8 +1730,12 @@ export async function GET(req: NextRequest) {
 
     let general_avg: number | null = null;
     {
-      let sumGen = 0;
-      let sumCoeffGen = 0;
+      let academicSumGen = 0;
+      let academicSumCoeffGen = 0;
+      let conductSumGen = 0;
+      let conductSumCoeffGen = 0;
+      let conductAlreadyCounted = false;
+      let hasAcademicContribution = false;
 
       for (const s of subjectsForReport) {
         if (s.include_in_average === false) continue;
@@ -1701,20 +1746,36 @@ export async function GET(req: NextRequest) {
         const subAvg = ps?.avg20 ?? null;
         if (subAvg === null || subAvg === undefined) continue;
 
-        sumGen += Number(subAvg) * coeffSub;
-        sumCoeffGen += coeffSub;
-      }
+        const isConduct = conductSubjectIds.has(String(s.subject_id));
 
-      const conductNote = conductAvgMapCurrent.get(cs.student_id) ?? null;
-      if (conductNote !== null && conductNote !== undefined) {
-        const c = Number(conductNote);
-        if (Number.isFinite(c)) {
-          sumGen += c * 1;
-          sumCoeffGen += 1;
+        if (isConduct) {
+          conductAlreadyCounted = true;
+          conductSumGen += Number(subAvg) * coeffSub;
+          conductSumCoeffGen += coeffSub;
+          continue;
         }
+
+        hasAcademicContribution = true;
+        academicSumGen += Number(subAvg) * coeffSub;
+        academicSumCoeffGen += coeffSub;
       }
 
-      general_avg = sumCoeffGen > 0 ? cleanNumber(sumGen / sumCoeffGen, 4) : null;
+      if (hasAcademicContribution) {
+        const conductNote = conductAvgMapCurrent.get(cs.student_id) ?? null;
+        if (!conductAlreadyCounted && conductNote !== null && conductNote !== undefined) {
+          const c = Number(conductNote);
+          if (Number.isFinite(c)) {
+            conductSumGen += c * 1;
+            conductSumCoeffGen += 1;
+          }
+        }
+
+        const sumGen = academicSumGen + conductSumGen;
+        const sumCoeffGen = academicSumCoeffGen + conductSumCoeffGen;
+        general_avg = sumCoeffGen > 0 ? cleanNumber(sumGen / sumCoeffGen, 4) : null;
+      } else {
+        general_avg = null;
+      }
     }
 
     return {
@@ -1755,10 +1816,6 @@ export async function GET(req: NextRequest) {
   const snapAnnual =
     snap && typeof snap.a === "number" ? cleanNumber(snap.a, 4) : null;
 
-  if (snapGeneral !== null) {
-    (bulletinForStudent as any).general_avg = snapGeneral;
-  }
-
   let annual_avg_for_student: number | null = null;
 
   if (shouldComputeAnnual && yearPeriods.length && dateFrom && dateTo) {
@@ -1791,6 +1848,7 @@ export async function GET(req: NextRequest) {
           to: pEnd,
           conductAvg20: conductNote,
           subjectsForReport,
+          conductSubjectIds,
           subjectComponentsBySubject: compsBySubject,
           subjectComponentById,
         });
@@ -1810,10 +1868,18 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  if (snapAnnual !== null) {
-    (bulletinForStudent as any).annual_avg = snapAnnual;
-  } else if (annual_avg_for_student !== null) {
+  const currentGeneralAvg = (bulletinForStudent as any).general_avg;
+  if ((currentGeneralAvg === null || currentGeneralAvg === undefined) && snapGeneral !== null) {
+    (bulletinForStudent as any).general_avg = snapGeneral;
+  }
+
+  if (annual_avg_for_student !== null) {
     (bulletinForStudent as any).annual_avg = annual_avg_for_student;
+  } else {
+    const currentAnnualAvg = (bulletinForStudent as any).annual_avg;
+    if ((currentAnnualAvg === null || currentAnnualAvg === undefined) && snapAnnual !== null) {
+      (bulletinForStudent as any).annual_avg = snapAnnual;
+    }
   }
 
   return NextResponse.json({
