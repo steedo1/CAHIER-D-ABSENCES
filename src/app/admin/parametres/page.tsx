@@ -7,6 +7,7 @@ import React, {
   useState,
   ChangeEvent,
 } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 /* =========================
    Types
@@ -67,6 +68,49 @@ type AcademicYearRow = {
   end_date: string;
   is_current: boolean;
 };
+
+type SettingsTabKey =
+  | "security"
+  | "school"
+  | "academic-years"
+  | "grading-periods"
+  | "coefficients";
+
+const SETTINGS_TABS: Array<{
+  key: SettingsTabKey;
+  label: string;
+  description: string;
+}> = [
+  {
+    key: "security",
+    label: "Accès & sécurité",
+    description: "Mot de passe et gestion des accès utilisateurs.",
+  },
+  {
+    key: "school",
+    label: "Établissement & horaires",
+    description: "Identité de l’établissement, logo et créneaux officiels.",
+  },
+  {
+    key: "academic-years",
+    label: "Années scolaires",
+    description: "Année courante, archivage et bascule annuelle.",
+  },
+  {
+    key: "grading-periods",
+    label: "Périodes d’évaluation",
+    description: "Trimestres, semestres, dates et coefficients.",
+  },
+  {
+    key: "coefficients",
+    label: "Coefficients & sous-matières",
+    description: "Coefficients par niveau et ventilation par composantes.",
+  },
+];
+
+function isSettingsTabKey(value: string | null): value is SettingsTabKey {
+  return SETTINGS_TABS.some((tab) => tab.key === value);
+}
 
 /* =========================
    Mini UI helpers
@@ -481,12 +525,30 @@ function computeAcademicYearFromDate(d: Date = new Date()): string {
    Page
 ========================= */
 export default function AdminSettingsPage() {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+
   /* ---------- Toast manager ---------- */
   const [toasts, setToasts] = useState<Toast[]>([]);
   const pushToast = (kind: ToastKind, text: string) =>
     setToasts((l) => [...l, { id: rid(), kind, text }]);
   const closeToast = (id: string) =>
     setToasts((l) => l.filter((t) => t.id !== id));
+
+  const [activeTab, setActiveTab] = useState<SettingsTabKey>("security");
+
+  useEffect(() => {
+    const nextTab = searchParams.get("tab");
+    if (isSettingsTabKey(nextTab)) {
+      setActiveTab(nextTab);
+      return;
+    }
+    setActiveTab("security");
+    if (pathname === "/admin/parametres") {
+      router.replace("/admin/parametres?tab=security", { scroll: false });
+    }
+  }, [pathname, router, searchParams]);
 
   /* ----- Mon mot de passe ----- */
   const [pwd1, setPwd1] = useState("");
@@ -1912,32 +1974,51 @@ export default function AdminSettingsPage() {
         </header>
 
         <section className="rounded-[28px] border border-slate-200 bg-white p-4 shadow-sm md:p-5">
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-            <div>
-              <div className="text-[11px] font-black uppercase tracking-[0.2em] text-slate-500">
-                Navigation rapide
+          <div className="flex flex-col gap-4">
+            <div className="flex flex-col gap-2 lg:flex-row lg:items-end lg:justify-between">
+              <div>
+                <div className="text-[11px] font-black uppercase tracking-[0.2em] text-slate-500">
+                  Groupe paramètres
+                </div>
+                <p className="mt-1 text-sm text-slate-600">
+                  Chaque grande zone de configuration est désormais rangée dans un onglet, pour éviter la longue page unique.
+                </p>
               </div>
-              <p className="mt-1 text-sm text-slate-600">
-                Allez directement au bloc que vous voulez modifier.
-              </p>
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+                Onglet actif :
+                <span className="ml-2 font-semibold text-slate-900">
+                  {SETTINGS_TABS.find((tab) => tab.key === activeTab)?.label || "Accès & sécurité"}
+                </span>
+              </div>
             </div>
-            <div className="flex flex-wrap gap-2">
-              {[
-                ["#password", "Mon mot de passe"],
-                ["#users", "Utilisateurs"],
-                ["#schedule", "Horaires"],
-                ["#academic-years", "Années"],
-                ["#grading-periods", "Périodes"],
-                ["#subject-coeffs", "Coefficients"],
-              ].map(([href, label]) => (
-                <a
-                  key={href}
-                  href={href}
-                  className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-sm font-medium text-slate-700 transition hover:bg-slate-100"
-                >
-                  {label}
-                </a>
-              ))}
+
+            <div className="grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-5">
+              {SETTINGS_TABS.map((tab) => {
+                const active = activeTab === tab.key;
+                return (
+                  <button
+                    key={tab.key}
+                    type="button"
+                    onClick={() => {
+                      setActiveTab(tab.key);
+                      router.replace(`/admin/parametres?tab=${tab.key}`, {
+                        scroll: false,
+                      });
+                    }}
+                    className={[
+                      "rounded-2xl border px-4 py-3 text-left transition",
+                      active
+                        ? "border-sky-300 bg-sky-50 shadow-sm"
+                        : "border-slate-200 bg-white hover:bg-slate-50",
+                    ].join(" ")}
+                  >
+                    <div className="text-sm font-bold text-slate-900">{tab.label}</div>
+                    <div className="mt-1 text-xs leading-5 text-slate-600">
+                      {tab.description}
+                    </div>
+                  </button>
+                );
+              })}
             </div>
           </div>
         </section>
@@ -1969,6 +2050,8 @@ export default function AdminSettingsPage() {
           />
         </section>
 
+        {activeTab === "security" && (
+          <>
         {/* =======================
             1) Mon mot de passe
         ======================== */}
@@ -2150,7 +2233,11 @@ export default function AdminSettingsPage() {
             </>
           )}
         </SectionCard>
+          </>
+        )}
 
+        {activeTab === "school" && (
+          <>
         {/* =======================
             3) Horaires & séances + infos établissement
         ======================== */}
@@ -2782,7 +2869,11 @@ export default function AdminSettingsPage() {
           </div>
           </SubSection>
         </SectionCard>
+          </>
+        )}
 
+        {activeTab === "academic-years" && (
+          <>
         {/* =======================
             4) Années scolaires
         ======================== */}
@@ -2988,7 +3079,11 @@ export default function AdminSettingsPage() {
             </div>
           </div>
         </SectionCard>
+          </>
+        )}
 
+        {activeTab === "grading-periods" && (
+          <>
         {/* =======================
             5) Périodes d'évaluation (bulletins)
         ======================== */}
@@ -3229,7 +3324,11 @@ export default function AdminSettingsPage() {
             définir « Composition de mars », « Composition de juin », etc.
           </div>
         </SectionCard>
+          </>
+        )}
 
+        {activeTab === "coefficients" && (
+          <>
         {/* =======================
             6) Coefficients des disciplines + sous-matières
         ======================== */}
@@ -3451,6 +3550,8 @@ export default function AdminSettingsPage() {
             </div>
           </div>
         </SectionCard>
+          </>
+        )}
       </main>
 
       {/* Modal mot de passe personnalisé */}

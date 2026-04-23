@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import {
   LayoutDashboard,
   Ban,
@@ -25,6 +25,7 @@ type NavItem = {
   label: string;
   Icon: React.ComponentType<React.SVGProps<SVGSVGElement>>;
   badge?: string;
+  matchTab?: string;
 };
 
 type PendingAbsenceCountResponse =
@@ -48,12 +49,39 @@ function clamp(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), max);
 }
 
-function isPathActive(pathname: string | null, href: string): boolean {
-  return pathname === href || (pathname?.startsWith(href + "/") ?? false);
+function getHrefPath(href: string): string {
+  return href.split("?")[0]?.split("#")[0] || href;
 }
 
-function groupHasActiveItem(pathname: string | null, items: NavItem[]): boolean {
-  return items.some((item) => isPathActive(pathname, item.href));
+function getHrefTab(href: string): string | null {
+  const query = href.includes("?") ? href.split("?")[1] ?? "" : "";
+  if (!query) return null;
+  return new URLSearchParams(query).get("tab");
+}
+
+function isPathActive(
+  pathname: string | null,
+  item: NavItem,
+  currentTab: string | null
+): boolean {
+  const hrefPath = getHrefPath(item.href);
+  const pathActive =
+    pathname === hrefPath || (pathname?.startsWith(hrefPath + "/") ?? false);
+
+  if (!pathActive) return false;
+
+  const targetTab = item.matchTab ?? getHrefTab(item.href);
+  if (!targetTab) return true;
+
+  return currentTab === targetTab;
+}
+
+function groupHasActiveItem(
+  pathname: string | null,
+  items: NavItem[],
+  currentTab: string | null
+): boolean {
+  return items.some((item) => isPathActive(pathname, item, currentTab));
 }
 
 function getAccentClasses(accent: Accent, active: boolean) {
@@ -174,7 +202,42 @@ const ADMIN_ITEMS: NavItem[] = [
     Icon: FileSpreadsheet,
     badge: "PRO",
   },
-  { href: "/admin/parametres", label: "Paramètres", Icon: Settings },
+];
+
+/* =========================
+   Groupe : Paramètres
+========================= */
+const SETTINGS_ITEMS: NavItem[] = [
+  {
+    href: "/admin/parametres?tab=security",
+    label: "Accès & sécurité",
+    Icon: ShieldCheck,
+    matchTab: "security",
+  },
+  {
+    href: "/admin/parametres?tab=school",
+    label: "Établissement & horaires",
+    Icon: School,
+    matchTab: "school",
+  },
+  {
+    href: "/admin/parametres?tab=academic-years",
+    label: "Années scolaires",
+    Icon: NotebookPen,
+    matchTab: "academic-years",
+  },
+  {
+    href: "/admin/parametres?tab=grading-periods",
+    label: "Périodes d’évaluation",
+    Icon: FileText,
+    matchTab: "grading-periods",
+  },
+  {
+    href: "/admin/parametres?tab=coefficients",
+    label: "Coefficients & sous-matières",
+    Icon: FileSpreadsheet,
+    matchTab: "coefficients",
+  },
 ];
 
 /* =========================
@@ -217,17 +280,19 @@ const NOTES_ITEMS: NavItem[] = [
 function NavLinkItem({
   item,
   pathname,
+  currentTab,
   accent,
   pendingAbsenceCount = 0,
   topLevel = false,
 }: {
   item: NavItem;
   pathname: string | null;
+  currentTab: string | null;
   accent: Accent;
   pendingAbsenceCount?: number;
   topLevel?: boolean;
 }) {
-  const active = isPathActive(pathname, item.href);
+  const active = isPathActive(pathname, item, currentTab);
   const accentClasses = getAccentClasses(accent, active);
   const isAbsenceAuthorization = item.href === "/admin/autorisations";
   const showPendingBadge = isAbsenceAuthorization && pendingAbsenceCount > 0;
@@ -297,6 +362,7 @@ function GroupSection({
   Icon,
   items,
   pathname,
+  currentTab,
   open,
   onToggle,
   accent,
@@ -307,13 +373,14 @@ function GroupSection({
   Icon: React.ComponentType<React.SVGProps<SVGSVGElement>>;
   items: NavItem[];
   pathname: string | null;
+  currentTab: string | null;
   open: boolean;
   onToggle: () => void;
   accent: Accent;
   badgeCount?: number;
   pendingAbsenceCount?: number;
 }) {
-  const active = groupHasActiveItem(pathname, items);
+  const active = groupHasActiveItem(pathname, items, currentTab);
   const accentClasses = getAccentClasses(accent, active);
 
   return (
@@ -380,6 +447,7 @@ function GroupSection({
                   key={item.href}
                   item={item}
                   pathname={pathname}
+                  currentTab={currentTab}
                   accent={accent}
                   pendingAbsenceCount={pendingAbsenceCount}
                 />
@@ -394,6 +462,8 @@ function GroupSection({
 
 export default function SidebarNav() {
   const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const currentTab = searchParams.get("tab");
 
   const wrapperRef = React.useRef<HTMLDivElement | null>(null);
   const isResizingRef = React.useRef(false);
@@ -551,18 +621,21 @@ export default function SidebarNav() {
   const callsControlItems = React.useMemo(() => CALLS_CONTROL_ITEMS, []);
   const absItems = React.useMemo(() => ABS_ITEMS, []);
   const notesItems = React.useMemo(() => NOTES_ITEMS, []);
+  const settingsItems = React.useMemo(() => SETTINGS_ITEMS, []);
 
-  const organisationActive = groupHasActiveItem(pathname, organisationItems);
-  const adminActive = groupHasActiveItem(pathname, adminItems);
-  const callsControlActive = groupHasActiveItem(pathname, callsControlItems);
-  const absActive = groupHasActiveItem(pathname, absItems);
-  const notesActive = !isEducator && groupHasActiveItem(pathname, notesItems);
+  const organisationActive = groupHasActiveItem(pathname, organisationItems, currentTab);
+  const adminActive = groupHasActiveItem(pathname, adminItems, currentTab);
+  const callsControlActive = groupHasActiveItem(pathname, callsControlItems, currentTab);
+  const absActive = groupHasActiveItem(pathname, absItems, currentTab);
+  const notesActive = !isEducator && groupHasActiveItem(pathname, notesItems, currentTab);
+  const settingsActive = groupHasActiveItem(pathname, settingsItems, currentTab);
 
   const [organisationOpen, setOrganisationOpen] = React.useState<boolean>(organisationActive);
   const [adminOpen, setAdminOpen] = React.useState<boolean>(adminActive);
   const [callsControlOpen, setCallsControlOpen] = React.useState<boolean>(callsControlActive);
   const [absOpen, setAbsOpen] = React.useState<boolean>(absActive);
   const [notesOpen, setNotesOpen] = React.useState<boolean>(notesActive);
+  const [settingsOpen, setSettingsOpen] = React.useState<boolean>(settingsActive);
 
   React.useEffect(() => {
     if (organisationActive) setOrganisationOpen(true);
@@ -583,6 +656,10 @@ export default function SidebarNav() {
   React.useEffect(() => {
     if (notesActive) setNotesOpen(true);
   }, [notesActive]);
+
+  React.useEffect(() => {
+    if (settingsActive) setSettingsOpen(true);
+  }, [settingsActive]);
 
   return (
     <div
@@ -613,6 +690,7 @@ export default function SidebarNav() {
                 key={item.href}
                 item={item}
                 pathname={pathname}
+                currentTab={currentTab}
                 accent="emerald"
                 pendingAbsenceCount={pendingAbsenceCount}
                 topLevel
@@ -624,6 +702,7 @@ export default function SidebarNav() {
               Icon={School}
               items={organisationItems}
               pathname={pathname}
+              currentTab={currentTab}
               open={organisationOpen}
               onToggle={() => setOrganisationOpen((v) => !v)}
               accent="sky"
@@ -634,6 +713,7 @@ export default function SidebarNav() {
               Icon={Settings}
               items={adminItems}
               pathname={pathname}
+              currentTab={currentTab}
               open={adminOpen}
               onToggle={() => setAdminOpen((v) => !v)}
               accent="amber"
@@ -646,6 +726,7 @@ export default function SidebarNav() {
               Icon={BarChart3}
               items={callsControlItems}
               pathname={pathname}
+              currentTab={currentTab}
               open={callsControlOpen}
               onToggle={() => setCallsControlOpen((v) => !v)}
               accent="cyan"
@@ -656,6 +737,7 @@ export default function SidebarNav() {
               Icon={Ban}
               items={absItems}
               pathname={pathname}
+              currentTab={currentTab}
               open={absOpen}
               onToggle={() => setAbsOpen((v) => !v)}
               accent="emerald"
@@ -667,11 +749,23 @@ export default function SidebarNav() {
                 Icon={NotebookPen}
                 items={notesItems}
                 pathname={pathname}
+                currentTab={currentTab}
                 open={notesOpen}
                 onToggle={() => setNotesOpen((v) => !v)}
                 accent="violet"
               />
             )}
+
+            <GroupSection
+              title="Paramètres"
+              Icon={Settings}
+              items={settingsItems}
+              pathname={pathname}
+              currentTab={currentTab}
+              open={settingsOpen}
+              onToggle={() => setSettingsOpen((v) => !v)}
+              accent="amber"
+            />
           </ul>
         </div>
 

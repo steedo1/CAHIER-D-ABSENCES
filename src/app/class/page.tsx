@@ -2,7 +2,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Users, BookOpen, Clock, Play, Save, Square, LogOut } from "lucide-react";
+import { Users, BookOpen, Clock, Play, Save, Square, LogOut, Loader2 } from "lucide-react";
 import { getSupabaseBrowserClient } from "@/lib/supabase-browser";
 import {
   registerServiceWorker,
@@ -368,6 +368,7 @@ export default function ClassDevicePage() {
   );
   const [pendingSync, setPendingSync] = useState(0);
   const [syncing, setSyncing] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
   const [nowTick, setNowTick] = useState<number>(Date.now());
 
   /* ───────── Rappel sonore de fin de séance ───────── */
@@ -1768,6 +1769,9 @@ export default function ClassDevicePage() {
   }
 
   async function logout() {
+    if (loggingOut) return;
+
+    setLoggingOut(true);
     clearReminderLoop();
     try {
       // 1) Déconnexion Supabase côté navigateur
@@ -1868,10 +1872,16 @@ export default function ClassDevicePage() {
             <GhostButton
               tone="slate"
               onClick={logout}
-              className="shrink-0 rounded-full border-amber-400 bg-gradient-to-r from-amber-400 via-yellow-300 to-amber-500 px-4 py-2 text-sm font-semibold text-slate-900 shadow-md hover:shadow-lg hover:from-amber-500 hover:via-yellow-400 hover:to-amber-500 focus:ring-amber-400/40"
+              disabled={loggingOut}
+              aria-busy={loggingOut}
+              className="shrink-0 rounded-full border-amber-400 bg-gradient-to-r from-amber-400 via-yellow-300 to-amber-500 px-4 py-2 text-sm font-semibold text-slate-900 shadow-md hover:shadow-lg hover:from-amber-500 hover:via-yellow-400 hover:to-amber-500 focus:ring-amber-400/40 disabled:cursor-wait disabled:opacity-80"
             >
-              <LogOut className="h-4 w-4" />
-              Se déconnecter
+              {loggingOut ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <LogOut className="h-4 w-4" />
+              )}
+              {loggingOut ? "Déconnexion..." : "Se déconnecter"}
             </GhostButton>
           </div>
         </div>
