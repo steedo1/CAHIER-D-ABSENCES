@@ -1338,6 +1338,11 @@ export default function ClassDevicePage() {
         return;
       }
 
+      // IMPORTANT : on préchauffe toujours le cache legacy de la classe quand on est en ligne,
+      // même si l'UI affiche le mode auto. Sinon, en cas de coupure réseau brutale,
+      // le mode hors-ligne peut se retrouver sans aucune discipline en cache.
+      const legacyWarmPromise = loadLegacySubjects();
+
       if (!activeConfiguredSlot) {
         if (cancelled) return;
         setSubjects([]);
@@ -1365,7 +1370,7 @@ export default function ClassDevicePage() {
       }
 
       if (autoRequestFailed && canUseFallbackLegacyFlow) {
-        const legacyList = await loadLegacySubjects();
+        const legacyList = await legacyWarmPromise;
         if (legacyList.length > 0) {
           applyList(legacyList, "legacy-fallback");
           return;
@@ -1833,7 +1838,7 @@ export default function ClassDevicePage() {
                     ? activeConfiguredSlot
                       ? "— Aucune discipline disponible —"
                       : "— Hors créneau —"
-                    : "— Aucune discipline en cache —"}
+                    : "— Aucune discipline en cache (ouvrez une fois la classe en ligne) —"}
                 </option>
               ) : null}
               {subjects.map((s) => (
