@@ -104,6 +104,7 @@ type Evaluation = {
   class_id: string;
   subject_id: string | null;
   subject_component_id?: string | null; // ✅ sous-rubrique éventuelle
+  grading_period_id?: string | null;
   eval_date: string; // yyyy-mm-dd
   eval_kind: EvalKind;
   scale: 5 | 10 | 20 | 40 | 60; // on n’en crée que 5/10/20, mais on affiche tout ce qui existe
@@ -139,6 +140,18 @@ type AverageApiRow = {
   average: number;
   average_rounded: number;
   rank: number;
+};
+
+type GradePeriod = {
+  id: string;
+  academic_year: string | null;
+  code: string | null;
+  label: string | null;
+  short_label: string | null;
+  start_date: string;
+  end_date: string;
+  coeff?: number | null;
+  is_active?: boolean | null;
 };
 
 /* =========================
@@ -356,6 +369,15 @@ export default function TeacherNotesPage() {
     [classOptions, selKey]
   );
 
+  const [gradePeriods, setGradePeriods] = useState<GradePeriod[]>([]);
+  const [loadingPeriods, setLoadingPeriods] = useState(false);
+  const [selectedPeriodId, setSelectedPeriodId] = useState<string>("");
+
+  const selectedPeriod = useMemo(
+    () => gradePeriods.find((p) => p.id === selectedPeriodId) || null,
+    [gradePeriods, selectedPeriodId]
+  );
+
   /* -------- Données -------- */
   const [roster, setRoster] = useState<RosterItem[]>([]);
   const [evaluations, setEvaluations] = useState<Evaluation[]>([]);
@@ -377,6 +399,13 @@ export default function TeacherNotesPage() {
     }
     return map;
   }, [components]);
+
+  function appendSelectedPeriod(params: URLSearchParams) {
+    if (selectedPeriodId) {
+      params.set("grading_period_id", selectedPeriodId);
+    }
+    return params;
+  }
 
   /* -------- État & message -------- */
   const [loading, setLoading] = useState(false);
@@ -433,6 +462,44 @@ export default function TeacherNotesPage() {
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Périodes de notes configurées (trimestres, semestres, etc.)
+  useEffect(() => {
+    let cancelled = false;
+
+    (async () => {
+      try {
+        setLoadingPeriods(true);
+        const params = new URLSearchParams();
+        if (academicYearLabel) {
+          params.set("academic_year", academicYearLabel);
+        }
+        const url = `/api/admin/institution/grading-periods${
+          params.toString() ? `?${params.toString()}` : ""
+        }`;
+        const r = await fetch(url, { cache: "no-store" });
+        const j = await r.json().catch(() => ({}));
+        const arr = (j.items || []) as GradePeriod[];
+        if (cancelled) return;
+        setGradePeriods(arr);
+        setSelectedPeriodId((prev) => {
+          if (prev && arr.some((p) => p.id === prev)) return prev;
+          const firstActive = arr.find((p) => p.is_active !== false);
+          return firstActive?.id || arr[0]?.id || "";
+        });
+      } catch {
+        if (cancelled) return;
+        setGradePeriods([]);
+        setSelectedPeriodId("");
+      } finally {
+        if (!cancelled) setLoadingPeriods(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [academicYearLabel]);
 
   // Rubriques / sous-matières pour les niveaux 6e-3e
   useEffect(() => {
@@ -495,10 +562,16 @@ export default function TeacherNotesPage() {
         setRoster(ros);
 
         // 2) Liste des évaluations
+        const evalParams = new URLSearchParams({
+          class_id: selected.class_id,
+        });
+        if (selected.subject_id) {
+          evalParams.set("subject_id", selected.subject_id);
+        }
+        appendSelectedPeriod(evalParams);
+
         const rEvals = await fetch(
-          `/api/teacher/grades/evaluations?class_id=${
-            selected.class_id
-          }&subject_id=${selected.subject_id ?? ""}`,
+          `/api/teacher/grades/evaluations?${evalParams.toString()}`,
           { cache: "no-store" }
         );
         const jEvals = await rEvals.json().catch(() => ({ items: [] }));
@@ -539,7 +612,7 @@ export default function TeacherNotesPage() {
         setLoading(false);
       }
     })();
-  }, [selected?.class_id, selected?.subject_id]);
+  }, [selected?.class_id, selected?.subject_id, selectedPeriodId]);
 
   /* ==========================================
      Verrouillage (lecture statut)
@@ -816,6 +889,7 @@ export default function TeacherNotesPage() {
         class_id: selected.class_id,
         subject_id: selected?.subject_id ?? null, // ← important si "" arrive
         subject_component_id: hasComponents ? selectedComponentId : null, // ✅ sous-matière
+        grading_period_id: selectedPeriodId || null,
         eval_date: newDate,
         eval_kind: newType,
         scale: newScale,
@@ -1046,6 +1120,7 @@ export default function TeacherNotesPage() {
       if (selected.subject_id) {
         params.set("subject_id", selected.subject_id);
       }
+      appendSelectedPeriod(params);
       const r = await fetch(
         `/api/teacher/grades/averages?${params.toString()}`,
         { cache: "no-store" }
@@ -1079,6 +1154,7 @@ export default function TeacherNotesPage() {
         body: JSON.stringify({
           class_id: selected.class_id,
           subject_id: selected.subject_id,
+          grading_period_id: selectedPeriodId || null,
           items,
         }),
       });
@@ -1093,6 +1169,7 @@ export default function TeacherNotesPage() {
       if (selected.subject_id) {
         params.set("subject_id", selected.subject_id);
       }
+      appendSelectedPeriod(params);
       const r2 = await fetch(
         `/api/teacher/grades/averages?${params.toString()}`,
         { cache: "no-store" }
@@ -1595,7 +1672,7 @@ export default function TeacherNotesPage() {
 
       {/* Sélection + création NOTE */}
       <section className="rounded-2xl border border-emerald-200 bg-linear-to-b from-emerald-50/60 to-white p-5 space-y-4 ring-1 ring-emerald-100">
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
           <div>
             <div className="mb-1 flex items-center gap-2 text-xs text-slate-500">
               <Users className="h-3.5 w-3.5" />
@@ -1615,6 +1692,38 @@ export default function TeacherNotesPage() {
             </Select>
             <div className="mt-1 text-[11px] text-slate-500">
               Seules vos classes affectées apparaissent.
+            </div>
+          </div>
+
+          <div>
+            <div className="mb-1 flex items-center gap-2 text-xs text-slate-500">
+              <FileText className="h-3.5 w-3.5" />
+              Période configurée
+            </div>
+            <Select
+              value={selectedPeriodId}
+              onChange={(e) => setSelectedPeriodId(e.target.value)}
+              aria-label="Période configurée"
+              disabled={loadingPeriods || gradePeriods.length === 0}
+            >
+              {gradePeriods.length === 0 ? (
+                <option value="">— Aucune période configurée —</option>
+              ) : (
+                gradePeriods.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.label || p.short_label || p.code || "Période"}
+                  </option>
+                ))
+              )}
+            </Select>
+            <div className="mt-1 text-[11px] text-slate-500">
+              {loadingPeriods
+                ? "Chargement des périodes…"
+                : selectedPeriod
+                ? `Du ${formatDateFr(selectedPeriod.start_date)} au ${formatDateFr(
+                    selectedPeriod.end_date
+                  )}`
+                : "Choisissez le trimestre ou la période à afficher."}
             </div>
           </div>
 

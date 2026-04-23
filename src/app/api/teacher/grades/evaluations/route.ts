@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { queueGradeNotificationsForEvaluation } from "@/lib/push/grades";
+import { computeAcademicYear } from "@/lib/academicYear";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -21,6 +22,8 @@ type EvalRow = {
   class_id: string;
   subject_id: string | null;
   subject_component_id: string | null;
+  grading_period_id: string | null;
+  academic_year?: string | null;
   teacher_id: string | null;
   eval_date: string;
   eval_kind: EvalKind;
@@ -28,6 +31,16 @@ type EvalRow = {
   coeff: number;
   is_published: boolean;
   published_at?: string | null;
+};
+
+type GradePeriodRow = {
+  id: string;
+  institution_id: string;
+  academic_year: string;
+  start_date: string | null;
+  end_date: string | null;
+  is_active: boolean | null;
+  order_index: number | null;
 };
 
 type Ctx =
@@ -60,7 +73,6 @@ async function getContext(): Promise<Ctx> {
     return { ok: false, supa, status: 401, error: "unauthorized" };
   }
 
-  // ✅ IMPORTANT: pas de profiles.role chez toi
   const { data: profile, error: profErr } = await supa
     .from("profiles")
     .select("id,institution_id")
@@ -78,7 +90,6 @@ async function getContext(): Promise<Ctx> {
 
   const srv = getSupabaseServiceClient();
 
-  // ✅ roles dans user_roles
   const roles = new Set<Role>();
   const { data: roleRows, error: rolesErr } = await srv
     .from("user_roles")
@@ -88,7 +99,6 @@ async function getContext(): Promise<Ctx> {
 
   if (rolesErr) {
     console.error("[teacher/grades/evaluations] user_roles error", rolesErr);
-    // on continue quand même : l’accès prof sera validé par class_teachers
   } else if (Array.isArray(roleRows)) {
     for (const r of roleRows) roles.add(String((r as any).role) as Role);
   }
@@ -107,7 +117,27 @@ async function getContext(): Promise<Ctx> {
 /* ───────── Helpers ───────── */
 
 function isPrivileged(roles: Set<Role>) {
-  return roles.has("super_admin") || roles.has("admin") || roles.has("educator");
+  return (
+    roles.has("super_admin") || roles.has("admin") || roles.has("educator")
+  );
+}
+
+function normalizeUuidLike(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const v = value.trim();
+  return v ? v : null;
+}
+
+function computeAcademicYearFromEvalDate(evalDate: string): string {
+  const safe = /^\d{4}-\d{2}-\d{2}$/.test(evalDate)
+    ? new Date(`${evalDate}T12:00:00.000Z`)
+    : new Date(evalDate);
+
+  if (Number.isNaN(safe.getTime())) {
+    throw new Error("invalid_eval_date");
+  }
+
+  return computeAcademicYear(safe);
 }
 
 async function ensureClassInInstitution(
@@ -132,7 +162,6 @@ async function ensureClassInInstitution(
 }
 
 /**
- * Comme ton /api/teacher/grades/components :
  * - si subject_id est un subjects.id => globalId = subject_id
  * - si subject_id est un institution_subjects.id => globalId = subject_id lié
  * - si aucune correspondance => globalId = raw
@@ -147,8 +176,12 @@ async function resolveSubjectIds(
   }
   const raw = rawSubjectId;
 
-  // 1) raw est-il un subjects.id ?
-  const { data: subj } = await srv.from("subjects").select("id").eq("id", raw).maybeSingle();
+  const { data: subj } = await srv
+    .from("subjects")
+    .select("id")
+    .eq("id", raw)
+    .maybeSingle();
+
   if (subj?.id) {
     const { data: instSub } = await srv
       .from("institution_subjects")
@@ -160,7 +193,6 @@ async function resolveSubjectIds(
     return { raw, globalId: subj.id, instId: instSub?.id ?? null };
   }
 
-  // 2) raw est-il un institution_subjects.id ?
   const { data: instSub2 } = await srv
     .from("institution_subjects")
     .select("id,subject_id")
@@ -176,7 +208,6 @@ async function resolveSubjectIds(
     };
   }
 
-  // 3) fallback
   return { raw, globalId: raw, instId: null };
 }
 
@@ -187,7 +218,6 @@ async function teacherHasAccessToClass(
   classId: string,
   subjectCandidates: string[]
 ) {
-  // affectation prof + matière si possible
   if (subjectCandidates.length > 0) {
     const { data } = await srv
       .from("class_teachers")
@@ -202,7 +232,6 @@ async function teacherHasAccessToClass(
     if (data && data.length > 0) return true;
   }
 
-  // sinon affectation prof à la classe (fallback)
   const { data: anyRow } = await srv
     .from("class_teachers")
     .select("id")
@@ -213,6 +242,97 @@ async function teacherHasAccessToClass(
     .limit(1);
 
   return !!(anyRow && anyRow.length > 0);
+}
+
+async function getGradePeriodById(
+  srv: ReturnType<typeof getSupabaseServiceClient>,
+  institutionId: string,
+  gradingPeriodId: string
+): Promise<GradePeriodRow | null> {
+  const { data, error } = await srv
+    .from("grade_periods")
+    .select(
+      "id,institution_id,academic_year,start_date,end_date,is_active,order_index"
+    )
+    .eq("id", gradingPeriodId)
+    .eq("institution_id", institutionId)
+    .maybeSingle();
+
+  if (error) {
+    console.error("[teacher/grades/evaluations] getGradePeriodById error", {
+      gradingPeriodId,
+      institutionId,
+      error,
+    });
+    return null;
+  }
+
+  return (data as GradePeriodRow | null) ?? null;
+}
+
+async function autoDetectGradePeriodId(
+  srv: ReturnType<typeof getSupabaseServiceClient>,
+  institutionId: string,
+  academicYear: string,
+  evalDate: string
+): Promise<string | null> {
+  const { data, error } = await srv
+    .from("grade_periods")
+    .select("id")
+    .eq("institution_id", institutionId)
+    .eq("academic_year", academicYear)
+    .eq("is_active", true)
+    .lte("start_date", evalDate)
+    .gte("end_date", evalDate)
+    .order("order_index", { ascending: true })
+    .limit(1);
+
+  if (error) {
+    console.error("[teacher/grades/evaluations] autoDetectGradePeriodId error", {
+      institutionId,
+      academicYear,
+      evalDate,
+      error,
+    });
+    return null;
+  }
+
+  return data?.[0]?.id ?? null;
+}
+
+async function validateExplicitGradePeriod(
+  srv: ReturnType<typeof getSupabaseServiceClient>,
+  institutionId: string,
+  gradingPeriodId: string,
+  evalDate: string,
+  academicYear: string
+): Promise<
+  | { ok: true; period: GradePeriodRow }
+  | { ok: false; error: string }
+> {
+  const period = await getGradePeriodById(srv, institutionId, gradingPeriodId);
+
+  if (!period) {
+    return { ok: false, error: "invalid_grading_period" };
+  }
+
+  if (period.is_active === false) {
+    return { ok: false, error: "grading_period_inactive" };
+  }
+
+  if (period.academic_year !== academicYear) {
+    return { ok: false, error: "grading_period_academic_year_mismatch" };
+  }
+
+  if (period.start_date && evalDate < period.start_date) {
+    return { ok: false, error: "eval_date_outside_grading_period" };
+  }
+
+  if (period.end_date && evalDate > period.end_date) {
+    return { ok: false, error: "eval_date_outside_grading_period" };
+  }
+
+  return { ok: true, period };
 }
 
 /* ───────────────── Push dispatch immédiat ───────────────── */
@@ -239,7 +359,10 @@ async function triggerImmediatePushDispatch(originHint?: string | null) {
       cache: "no-store",
     });
   } catch (err) {
-    console.error("[teacher/grades/evaluations] triggerImmediatePushDispatch error", err);
+    console.error(
+      "[teacher/grades/evaluations] triggerImmediatePushDispatch error",
+      err
+    );
   }
 }
 
@@ -251,13 +374,20 @@ export async function GET(req: NextRequest) {
     const url = new URL(req.url);
     const classId = url.searchParams.get("class_id") || "";
     const rawSubjectId = url.searchParams.get("subject_id");
-    const subjectParam = rawSubjectId && rawSubjectId !== "" ? rawSubjectId : null;
+    const subjectParam =
+      rawSubjectId && rawSubjectId !== "" ? rawSubjectId : null;
 
     const subjectComponentRaw =
       url.searchParams.get("subject_component_id") ??
       url.searchParams.get("subjectComponentId");
     const subjectComponentId =
-      subjectComponentRaw && subjectComponentRaw !== "" ? subjectComponentRaw : null;
+      subjectComponentRaw && subjectComponentRaw !== ""
+        ? subjectComponentRaw
+        : null;
+
+    const gradingPeriodId =
+      normalizeUuidLike(url.searchParams.get("grading_period_id")) ??
+      normalizeUuidLike(url.searchParams.get("gradingPeriodId"));
 
     if (!classId) {
       return NextResponse.json({ items: [] as EvalRow[] }, { status: 200 });
@@ -275,27 +405,49 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ items: [] as EvalRow[] }, { status: 403 });
     }
 
-    const { raw, globalId, instId } = await resolveSubjectIds(srv, institutionId, subjectParam);
-    const subjectCandidates = [raw, globalId, instId].filter((x): x is string => !!x);
+    const { raw, globalId, instId } = await resolveSubjectIds(
+      srv,
+      institutionId,
+      subjectParam
+    );
+    const subjectCandidates = [raw, globalId, instId].filter(
+      (x): x is string => !!x
+    );
 
     const accessOk = isPrivileged(roles)
       ? true
-      : await teacherHasAccessToClass(srv, institutionId, profileId, classId, subjectCandidates);
+      : await teacherHasAccessToClass(
+          srv,
+          institutionId,
+          profileId,
+          classId,
+          subjectCandidates
+        );
 
     if (!accessOk) {
       return NextResponse.json({ items: [] as EvalRow[] }, { status: 403 });
     }
 
+    if (gradingPeriodId) {
+      const period = await getGradePeriodById(srv, institutionId, gradingPeriodId);
+      if (!period) {
+        return NextResponse.json({ items: [] as EvalRow[] }, { status: 200 });
+      }
+    }
+
     let q = srv
       .from("grade_evaluations")
       .select(
-        "id,class_id,subject_id,subject_component_id,teacher_id,eval_date,eval_kind,scale,coeff,is_published,published_at"
+        "id,class_id,subject_id,subject_component_id,grading_period_id,academic_year,teacher_id,eval_date,eval_kind,scale,coeff,is_published,published_at"
       )
       .eq("class_id", classId);
 
-    // ✅ un prof ne voit que ses évaluations (admins/educator voient tout)
     if (!isPrivileged(roles)) {
       q = q.eq("teacher_id", profileId);
+    }
+
+    if (gradingPeriodId) {
+      q = q.eq("grading_period_id", gradingPeriodId);
     }
 
     if (subjectComponentId) {
@@ -307,12 +459,16 @@ export async function GET(req: NextRequest) {
     }
 
     const { data, error } = await q.order("eval_date", { ascending: true });
+
     if (error) {
       console.error("[teacher/grades/evaluations] GET error", error);
       return NextResponse.json({ items: [] as EvalRow[] }, { status: 200 });
     }
 
-    return NextResponse.json({ items: (data ?? []) as EvalRow[] }, { status: 200 });
+    return NextResponse.json(
+      { items: (data ?? []) as EvalRow[] },
+      { status: 200 }
+    );
   } catch (e) {
     console.error("[teacher/grades/evaluations] unexpected GET", e);
     return NextResponse.json({ items: [] as EvalRow[] }, { status: 500 });
@@ -326,7 +482,10 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json().catch(() => null);
     if (!body) {
-      return NextResponse.json({ ok: false, error: "invalid_body" }, { status: 400 });
+      return NextResponse.json(
+        { ok: false, error: "invalid_body" },
+        { status: 400 }
+      );
     }
 
     const {
@@ -334,6 +493,8 @@ export async function POST(req: NextRequest) {
       subject_id,
       subject_component_id: subject_component_id_raw,
       subjectComponentId,
+      grading_period_id: grading_period_id_raw,
+      gradingPeriodId,
       eval_date,
       eval_kind,
       scale,
@@ -343,6 +504,8 @@ export async function POST(req: NextRequest) {
       subject_id?: string | null;
       subject_component_id?: string | null;
       subjectComponentId?: string | null;
+      grading_period_id?: string | null;
+      gradingPeriodId?: string | null;
       eval_date: string;
       eval_kind: EvalKind;
       scale: number;
@@ -350,39 +513,106 @@ export async function POST(req: NextRequest) {
     };
 
     if (!class_id || !eval_date || !eval_kind || typeof scale !== "number") {
-      return NextResponse.json({ ok: false, error: "missing_fields" }, { status: 400 });
+      return NextResponse.json(
+        { ok: false, error: "missing_fields" },
+        { status: 400 }
+      );
     }
 
     const ctx = await getContext();
     if (!ctx.ok) {
-      return NextResponse.json({ ok: false, error: ctx.error }, { status: ctx.status });
+      return NextResponse.json(
+        { ok: false, error: ctx.error },
+        { status: ctx.status }
+      );
     }
 
     const { srv, institutionId, profileId, roles } = ctx;
 
     const classOk = await ensureClassInInstitution(srv, class_id, institutionId);
     if (!classOk) {
-      return NextResponse.json({ ok: false, error: "forbidden" }, { status: 403 });
+      return NextResponse.json(
+        { ok: false, error: "forbidden" },
+        { status: 403 }
+      );
     }
 
     const subjRaw = subject_id && subject_id !== "" ? subject_id : null;
-    const { raw, globalId, instId } = await resolveSubjectIds(srv, institutionId, subjRaw);
-    const subjectCandidates = [raw, globalId, instId].filter((x): x is string => !!x);
+    const { raw, globalId, instId } = await resolveSubjectIds(
+      srv,
+      institutionId,
+      subjRaw
+    );
+    const subjectCandidates = [raw, globalId, instId].filter(
+      (x): x is string => !!x
+    );
 
     const accessOk = isPrivileged(roles)
       ? true
-      : await teacherHasAccessToClass(srv, institutionId, profileId, class_id, subjectCandidates);
+      : await teacherHasAccessToClass(
+          srv,
+          institutionId,
+          profileId,
+          class_id,
+          subjectCandidates
+        );
 
     if (!accessOk) {
-      return NextResponse.json({ ok: false, error: "forbidden" }, { status: 403 });
+      return NextResponse.json(
+        { ok: false, error: "forbidden" },
+        { status: 403 }
+      );
     }
 
     const subjectComponentIdNorm =
       typeof subjectComponentId === "string" && subjectComponentId.trim() !== ""
         ? subjectComponentId.trim()
-        : typeof subject_component_id_raw === "string" && subject_component_id_raw.trim() !== ""
+        : typeof subject_component_id_raw === "string" &&
+          subject_component_id_raw.trim() !== ""
         ? subject_component_id_raw.trim()
         : null;
+
+    const explicitGradingPeriodId =
+      normalizeUuidLike(gradingPeriodId) ??
+      normalizeUuidLike(grading_period_id_raw);
+
+    let academic_year: string;
+    try {
+      academic_year = computeAcademicYearFromEvalDate(eval_date);
+    } catch {
+      return NextResponse.json(
+        { ok: false, error: "invalid_eval_date" },
+        { status: 400 }
+      );
+    }
+
+    let grading_period_id: string | null = null;
+
+    if (explicitGradingPeriodId) {
+      const validated = await validateExplicitGradePeriod(
+        srv,
+        institutionId,
+        explicitGradingPeriodId,
+        eval_date,
+        academic_year
+      );
+
+      if (!validated.ok) {
+        return NextResponse.json(
+          { ok: false, error: validated.error },
+          { status: 400 }
+        );
+      }
+
+      grading_period_id = validated.period.id;
+    } else {
+      grading_period_id = await autoDetectGradePeriodId(
+        srv,
+        institutionId,
+        academic_year,
+        eval_date
+      );
+    }
 
     const { data, error } = await srv
       .from("grade_evaluations")
@@ -390,6 +620,8 @@ export async function POST(req: NextRequest) {
         class_id,
         subject_id: subjRaw ? (globalId as string) : null,
         subject_component_id: subjectComponentIdNorm,
+        grading_period_id,
+        academic_year,
         teacher_id: profileId,
         eval_date,
         eval_kind,
@@ -399,16 +631,22 @@ export async function POST(req: NextRequest) {
         published_at: null,
       })
       .select(
-        "id,class_id,subject_id,subject_component_id,teacher_id,eval_date,eval_kind,scale,coeff,is_published,published_at"
+        "id,class_id,subject_id,subject_component_id,grading_period_id,academic_year,teacher_id,eval_date,eval_kind,scale,coeff,is_published,published_at"
       )
       .single();
 
     if (error) {
       console.error("[teacher/grades/evaluations] POST error", error);
-      return NextResponse.json({ ok: false, error: error.message }, { status: 400 });
+      return NextResponse.json(
+        { ok: false, error: error.message },
+        { status: 400 }
+      );
     }
 
-    return NextResponse.json({ ok: true, item: data as EvalRow }, { status: 200 });
+    return NextResponse.json(
+      { ok: true, item: data as EvalRow },
+      { status: 200 }
+    );
   } catch (e: any) {
     console.error("[teacher/grades/evaluations] unexpected POST", e);
     return NextResponse.json(
@@ -425,7 +663,10 @@ export async function PATCH(req: NextRequest) {
   try {
     const body = await req.json().catch(() => null);
     if (!body) {
-      return NextResponse.json({ ok: false, error: "invalid_body" }, { status: 400 });
+      return NextResponse.json(
+        { ok: false, error: "invalid_body" },
+        { status: 400 }
+      );
     }
 
     const { evaluation_id, is_published } = body as {
@@ -434,12 +675,18 @@ export async function PATCH(req: NextRequest) {
     };
 
     if (!evaluation_id) {
-      return NextResponse.json({ ok: false, error: "missing_id" }, { status: 400 });
+      return NextResponse.json(
+        { ok: false, error: "missing_id" },
+        { status: 400 }
+      );
     }
 
     const ctx = await getContext();
     if (!ctx.ok) {
-      return NextResponse.json({ ok: false, error: ctx.error }, { status: ctx.status });
+      return NextResponse.json(
+        { ok: false, error: ctx.error },
+        { status: ctx.status }
+      );
     }
 
     const { srv, institutionId, profileId, roles } = ctx;
@@ -451,17 +698,29 @@ export async function PATCH(req: NextRequest) {
       .maybeSingle();
 
     if (evErr || !evalRow) {
-      return NextResponse.json({ ok: false, error: "evaluation_not_found" }, { status: 404 });
+      return NextResponse.json(
+        { ok: false, error: "evaluation_not_found" },
+        { status: 404 }
+      );
     }
 
-    const classOk = await ensureClassInInstitution(srv, evalRow.class_id, institutionId);
+    const classOk = await ensureClassInInstitution(
+      srv,
+      evalRow.class_id,
+      institutionId
+    );
     if (!classOk) {
-      return NextResponse.json({ ok: false, error: "forbidden" }, { status: 403 });
+      return NextResponse.json(
+        { ok: false, error: "forbidden" },
+        { status: 403 }
+      );
     }
 
-    // ✅ un prof ne publie que SES évaluations
     if (!isPrivileged(roles) && evalRow.teacher_id !== profileId) {
-      return NextResponse.json({ ok: false, error: "forbidden" }, { status: 403 });
+      return NextResponse.json(
+        { ok: false, error: "forbidden" },
+        { status: 403 }
+      );
     }
 
     const patch: any = {};
@@ -477,21 +736,29 @@ export async function PATCH(req: NextRequest) {
       .update(patch)
       .eq("id", evaluation_id)
       .select(
-        "id,class_id,subject_id,subject_component_id,teacher_id,eval_date,eval_kind,scale,coeff,is_published,published_at"
+        "id,class_id,subject_id,subject_component_id,grading_period_id,academic_year,teacher_id,eval_date,eval_kind,scale,coeff,is_published,published_at"
       )
       .maybeSingle();
 
     if (error) {
-      return NextResponse.json({ ok: false, error: error.message }, { status: 400 });
+      return NextResponse.json(
+        { ok: false, error: error.message },
+        { status: 400 }
+      );
     }
 
     if (typeof is_published === "boolean" && !wasPublished && is_published) {
       queueGradeNotificationsForEvaluation(evaluation_id)
         .then(() => triggerImmediatePushDispatch(req.headers.get("origin")))
-        .catch((e) => console.error("[teacher/grades/evaluations] push queue error", e));
+        .catch((e) =>
+          console.error("[teacher/grades/evaluations] push queue error", e)
+        );
     }
 
-    return NextResponse.json({ ok: true, item: data as EvalRow }, { status: 200 });
+    return NextResponse.json(
+      { ok: true, item: data as EvalRow },
+      { status: 200 }
+    );
   } catch (e: any) {
     console.error("[teacher/grades/evaluations] unexpected PATCH", e);
     return NextResponse.json(
@@ -508,17 +775,26 @@ export async function DELETE(req: NextRequest) {
   try {
     const body = await req.json().catch(() => null);
     if (!body) {
-      return NextResponse.json({ ok: false, error: "invalid_body" }, { status: 400 });
+      return NextResponse.json(
+        { ok: false, error: "invalid_body" },
+        { status: 400 }
+      );
     }
 
     const { evaluation_id } = body as { evaluation_id: string };
     if (!evaluation_id) {
-      return NextResponse.json({ ok: false, error: "missing_id" }, { status: 400 });
+      return NextResponse.json(
+        { ok: false, error: "missing_id" },
+        { status: 400 }
+      );
     }
 
     const ctx = await getContext();
     if (!ctx.ok) {
-      return NextResponse.json({ ok: false, error: ctx.error }, { status: ctx.status });
+      return NextResponse.json(
+        { ok: false, error: ctx.error },
+        { status: ctx.status }
+      );
     }
 
     const { srv, institutionId, profileId, roles } = ctx;
@@ -530,17 +806,29 @@ export async function DELETE(req: NextRequest) {
       .maybeSingle();
 
     if (evErr || !evalRow) {
-      return NextResponse.json({ ok: false, error: "evaluation_not_found" }, { status: 404 });
+      return NextResponse.json(
+        { ok: false, error: "evaluation_not_found" },
+        { status: 404 }
+      );
     }
 
-    const classOk = await ensureClassInInstitution(srv, evalRow.class_id, institutionId);
+    const classOk = await ensureClassInInstitution(
+      srv,
+      evalRow.class_id,
+      institutionId
+    );
     if (!classOk) {
-      return NextResponse.json({ ok: false, error: "forbidden" }, { status: 403 });
+      return NextResponse.json(
+        { ok: false, error: "forbidden" },
+        { status: 403 }
+      );
     }
 
-    // ✅ un prof ne supprime que SES évaluations
     if (!isPrivileged(roles) && evalRow.teacher_id !== profileId) {
-      return NextResponse.json({ ok: false, error: "forbidden" }, { status: 403 });
+      return NextResponse.json(
+        { ok: false, error: "forbidden" },
+        { status: 403 }
+      );
     }
 
     const { error: delScoresErr } = await srv
@@ -549,13 +837,22 @@ export async function DELETE(req: NextRequest) {
       .eq("evaluation_id", evaluation_id);
 
     if (delScoresErr) {
-      return NextResponse.json({ ok: false, error: delScoresErr.message }, { status: 400 });
+      return NextResponse.json(
+        { ok: false, error: delScoresErr.message },
+        { status: 400 }
+      );
     }
 
-    const { error } = await srv.from("grade_evaluations").delete().eq("id", evaluation_id);
+    const { error } = await srv
+      .from("grade_evaluations")
+      .delete()
+      .eq("id", evaluation_id);
 
     if (error) {
-      return NextResponse.json({ ok: false, error: error.message }, { status: 400 });
+      return NextResponse.json(
+        { ok: false, error: error.message },
+        { status: 400 }
+      );
     }
 
     return NextResponse.json({ ok: true }, { status: 200 });

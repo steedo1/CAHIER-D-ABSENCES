@@ -22,7 +22,6 @@ function roundTo(value: number, step: number) {
 }
 
 function denseRanks(values: number[]) {
-  // Valeurs déjà triées DESC; renvoie le rang dense (1,1,2,3…)
   const ranks: number[] = [];
   let rank = 0;
   let prev: number | null = null;
@@ -39,13 +38,18 @@ function denseRanks(values: number[]) {
 function isLyceeLevel(level?: string | null): boolean {
   if (!level) return false;
   let lvl = level.toLowerCase();
-  // normalisation des accents : "première" -> "premiere"
   try {
     lvl = lvl.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
   } catch {
-    // on ignore, on garde lvl tel quel
+    // on garde lvl tel quel
   }
   return lvl === "seconde" || lvl === "premiere" || lvl === "terminale";
+}
+
+function normalizeUuidLike(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const v = value.trim();
+  return v ? v : null;
 }
 
 type EvaluationRow = {
@@ -53,6 +57,7 @@ type EvaluationRow = {
   class_id: string;
   subject_id: string | null;
   subject_component_id?: string | null;
+  grading_period_id?: string | null;
   is_published: boolean;
   scale: number;
   coeff: number;
@@ -68,18 +73,55 @@ type BonusRow = {
   student_id: string;
   bonus: number;
   subject_id: string | null;
+  grading_period_id?: string | null;
+};
+
+type GradePeriodRow = {
+  id: string;
+  institution_id: string;
+  academic_year: string;
+  start_date: string | null;
+  end_date: string | null;
+  is_active: boolean | null;
+  order_index: number | null;
 };
 
 type Row = {
   student_id: string;
-  count_evals: number; // nb d’évals disponibles (avec note)
-  total_evals: number; // nb total d’évals considérées
-  average_raw: number; // moyenne /20 avant bonus
-  bonus: number; // bonus appliqué
-  average: number; // après bonus (non arrondi)
-  average_rounded: number; // arrondi si demandé (sinon = average)
-  rank: number; // rang dense
+  count_evals: number;
+  total_evals: number;
+  average_raw: number;
+  bonus: number;
+  average: number;
+  average_rounded: number;
+  rank: number;
 };
+
+async function getGradePeriodById(
+  srv: ReturnType<typeof getSupabaseServiceClient>,
+  institutionId: string,
+  gradingPeriodId: string
+): Promise<GradePeriodRow | null> {
+  const { data, error } = await srv
+    .from("grade_periods")
+    .select(
+      "id,institution_id,academic_year,start_date,end_date,is_active,order_index"
+    )
+    .eq("id", gradingPeriodId)
+    .eq("institution_id", institutionId)
+    .maybeSingle();
+
+  if (error) {
+    console.error(LOG_PREFIX, "getGradePeriodById error", {
+      gradingPeriodId,
+      institutionId,
+      error,
+    });
+    return null;
+  }
+
+  return (data as GradePeriodRow | null) ?? null;
+}
 
 export async function GET(req: NextRequest) {
   try {
@@ -93,9 +135,15 @@ export async function GET(req: NextRequest) {
     const class_id = String(searchParams.get("class_id") || "").trim();
     const rawSubject = searchParams.get("subject_id");
     const subject_id = rawSubject ? String(rawSubject) : null;
-    const academic_year =
-      String(searchParams.get("academic_year") || "").trim() ||
-      computeAcademicYear(new Date());
+
+    const grading_period_id =
+      normalizeUuidLike(searchParams.get("grading_period_id")) ??
+      normalizeUuidLike(searchParams.get("gradingPeriodId"));
+
+    const academic_year_param = String(
+      searchParams.get("academic_year") || ""
+    ).trim();
+
     const published_only = (searchParams.get("published_only") ?? "0") === "1";
     const missing = (searchParams.get("missing") ?? "ignore") as
       | "ignore"
@@ -120,14 +168,15 @@ export async function GET(req: NextRequest) {
       class_id,
       rawSubject,
       subject_id,
-      academic_year,
+      grading_period_id,
+      academic_year_param,
       published_only,
       missing,
       round_to_raw,
       rank_by,
     });
 
-    // 0) Infos de la classe : niveau + institution (pour savoir collège/lycée + rubriques)
+    // 0) Infos de la classe : niveau + institution
     const { data: cls, error: clsErr } = await supabase
       .from("classes")
       .select("id, level, institution_id")
@@ -147,16 +196,44 @@ export async function GET(req: NextRequest) {
 
     console.log(LOG_PREFIX, "class info", cls);
 
-    // 1) Évaluations concernées (RLS fait foi)
+    let academic_year =
+      academic_year_param || computeAcademicYear(new Date());
+
+    if (grading_period_id) {
+      if (!institution_id) {
+        return bad("CLASS_OR_INSTITUTION_NOT_FOUND", 400);
+      }
+
+      const period = await getGradePeriodById(
+        svc,
+        institution_id,
+        grading_period_id
+      );
+
+      if (!period) {
+        return bad("INVALID_GRADING_PERIOD", 400);
+      }
+
+      if (period.is_active === false) {
+        return bad("GRADING_PERIOD_INACTIVE", 400);
+      }
+
+      academic_year = period.academic_year;
+    }
+
+    // 1) Évaluations concernées
     let qEvals = supabase
       .from("grade_evaluations")
       .select(
-        "id, scale, coeff, class_id, subject_id, subject_component_id, is_published",
+        "id, scale, coeff, class_id, subject_id, subject_component_id, grading_period_id, is_published"
       )
       .eq("class_id", class_id)
       .eq("academic_year", academic_year);
 
     if (subject_id) qEvals = qEvals.eq("subject_id", subject_id);
+    if (grading_period_id) {
+      qEvals = qEvals.eq("grading_period_id", grading_period_id);
+    }
     if (published_only) qEvals = qEvals.eq("is_published", true);
 
     const { data: evals, error: eErr } = await qEvals;
@@ -168,6 +245,8 @@ export async function GET(req: NextRequest) {
     console.log(LOG_PREFIX, "evals loaded", {
       count: evaluations.length,
       evaluationIds,
+      grading_period_id,
+      academic_year,
     });
 
     if (evaluationIds.length === 0) {
@@ -176,6 +255,7 @@ export async function GET(req: NextRequest) {
         params: {
           class_id,
           subject_id,
+          grading_period_id,
           academic_year,
           published_only,
           missing,
@@ -187,12 +267,11 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    // Détection : y a-t-il au moins une évaluation rattachée à une rubrique ?
     const hasAnyComponentEval = evaluations.some(
-      (e) => !!(e as any).subject_component_id,
+      (e) => !!(e as any).subject_component_id
     );
 
-    // 1bis) Chargement des rubriques / sous-matières (coeff_in_subject) si nécessaire
+    // 1bis) Chargement des rubriques / sous-matières si nécessaire
     const componentCoeffMap = new Map<string, number>();
 
     if (!lycee && subject_id && institution_id && hasAnyComponentEval) {
@@ -230,7 +309,7 @@ export async function GET(req: NextRequest) {
       useComponentModel,
     });
 
-    // Pré-calcul : total des coeffs par rubrique (pour missing="zero")
+    // Pré-calcul : total des coeffs par rubrique
     const evalCoeffsByComponent = new Map<string, number>();
     const totalCoeff = evaluations.reduce((acc: number, e: EvaluationRow) => {
       const coeff = Number(e.coeff || 0);
@@ -238,7 +317,7 @@ export async function GET(req: NextRequest) {
       if (isFinite(coeff) && coeff > 0) {
         evalCoeffsByComponent.set(
           key,
-          (evalCoeffsByComponent.get(key) || 0) + coeff,
+          (evalCoeffsByComponent.get(key) || 0) + coeff
         );
         return acc + coeff;
       }
@@ -264,12 +343,22 @@ export async function GET(req: NextRequest) {
       sample: gradesRows.slice(0, 3),
     });
 
-    // 3) Bonus (grade_adjustments) — LECTURE VIA SERVICE CLIENT
-    const { data: bonuses, error: bErr } = await svc
+    // 3) Bonus filtrés aussi par période
+    let qBonuses = svc
       .from("grade_adjustments")
-      .select("student_id, bonus, subject_id, class_id, academic_year")
+      .select(
+        "student_id, bonus, subject_id, class_id, academic_year, grading_period_id"
+      )
       .eq("class_id", class_id)
       .eq("academic_year", academic_year);
+
+    if (grading_period_id) {
+      qBonuses = qBonuses.eq("grading_period_id", grading_period_id);
+    } else {
+      qBonuses = qBonuses.is("grading_period_id", null);
+    }
+
+    const { data: bonuses, error: bErr } = await qBonuses;
 
     if (bErr) {
       console.error(LOG_PREFIX, "bonus fetch error (svc)", bErr);
@@ -280,6 +369,7 @@ export async function GET(req: NextRequest) {
       count: (bonuses ?? []).length,
       sample: (bonuses ?? []).slice(0, 10),
       subject_id_in_query: subject_id,
+      grading_period_id,
     });
 
     const bonusMap = new Map<string, number>();
@@ -290,21 +380,17 @@ export async function GET(req: NextRequest) {
       const rowSubj = r.subject_id;
 
       if (!subject_id) {
-        // Vue "moyenne générale" → on ne garde que les bonus sans matière
         if (rowSubj === null) {
           bonusMap.set(sid, b);
         }
         continue;
       }
 
-      // Vue matière :
       if (rowSubj === subject_id) {
-        // Bonus spécifique à cette matière
         bonusMap.set(sid, b);
         continue;
       }
 
-      // Bonus général (subject_id null) utilisé SEULEMENT si pas de bonus matière
       if (rowSubj === null && !bonusMap.has(sid)) {
         bonusMap.set(sid, b);
       }
@@ -323,11 +409,9 @@ export async function GET(req: NextRequest) {
       { sum: number; denom: number; counted: number; present: number }
     >();
 
-    // Pour le modèle à 2 étages : par élève + par rubrique
     type PerComponentAgg = { num: number; denPresent: number };
     const perStudentComponent = new Map<string, Record<string, PerComponentAgg>>();
 
-    // Pass 1: accumuler les contributions des notes existantes
     for (const g of gradesRows) {
       const e = evalById.get(g.evaluation_id);
       if (!e) continue;
@@ -343,7 +427,6 @@ export async function GET(req: NextRequest) {
       const normalized = (score / scale) * 20;
       const contrib = normalized * coeff;
 
-      // Accumulateur "simple" (ancien modèle)
       const cur =
         gradesByStudent.get(g.student_id) || {
           sum: 0,
@@ -357,7 +440,6 @@ export async function GET(req: NextRequest) {
       cur.present += 1;
       gradesByStudent.set(g.student_id, cur);
 
-      // Accumulateur par rubrique si modèle composants activé
       if (useComponentModel) {
         const compKey = (e as any).subject_component_id || "__none__";
         const per = perStudentComponent.get(g.student_id) || {};
@@ -370,13 +452,10 @@ export async function GET(req: NextRequest) {
     }
 
     if (missing === "zero") {
-      // Pour tous les élèves qui ont au moins UNE note → forcer denom à totalCoeff
       for (const [sid, agg] of gradesByStudent) {
         agg.denom = totalCoeff;
         gradesByStudent.set(sid, agg);
       }
-      // Pour le modèle composants, on utilisera evalCoeffsByComponent
-      // pour fixer les dénominateurs par rubrique.
     }
 
     console.log(LOG_PREFIX, "gradesByStudent (raw)", {
@@ -384,7 +463,6 @@ export async function GET(req: NextRequest) {
       sample: Array.from(gradesByStudent.entries()).slice(0, 3),
     });
 
-    // Construire le tableau final (ignore les élèves 0 note si missing=ignore)
     const rows: Row[] = [];
     const totalEvals = evaluations.length;
 
@@ -392,14 +470,11 @@ export async function GET(req: NextRequest) {
       let avg20 = 0;
 
       if (useComponentModel) {
-        // Modèle à 2 étages : rubriques -> matière
         const per = perStudentComponent.get(sid) || {};
         let numSubject = 0;
         let denSubject = 0;
 
         for (const [compKey, compAgg] of Object.entries(per)) {
-          // dénominateur de la rubrique : soit seulement les coeff notés,
-          // soit tous les coeff de la rubrique (missing=zero).
           const totalCoeffForComp =
             evalCoeffsByComponent.get(compKey) ?? compAgg.denPresent;
           const denomComp =
@@ -408,7 +483,6 @@ export async function GET(req: NextRequest) {
 
           const moyComp = compAgg.num / denomComp;
 
-          // Poids de la rubrique dans la matière
           const wComp =
             compKey === "__none__"
               ? 1
@@ -420,7 +494,6 @@ export async function GET(req: NextRequest) {
 
         avg20 = denSubject > 0 ? numSubject / denSubject : 0;
       } else {
-        // Modèle simple : moyennes pondérées par les coeffs des évaluations
         const denom = agg.denom || 0;
         avg20 = denom > 0 ? agg.sum / denom : 0;
       }
@@ -441,9 +514,9 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    // Tri + rangs
     const sortKey = (r: Row) =>
       rank_by === "rounded" ? r.average_rounded : r.average;
+
     rows.sort((a, b) => sortKey(b) - sortKey(a));
     const ranks = denseRanks(rows.map(sortKey));
     rows.forEach((r, i) => (r.rank = ranks[i]));
@@ -458,6 +531,7 @@ export async function GET(req: NextRequest) {
       params: {
         class_id,
         subject_id,
+        grading_period_id,
         academic_year,
         published_only,
         missing,
