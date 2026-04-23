@@ -3,24 +3,46 @@ import { NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 
-// On ne se bat pas avec les types générés par Supabase pour les relations : on lit en `any`.
 type ItemOut = {
   class_id: string;
   class_label: string;
   level: string;
-  subject_id: string | null;   // ⚠️ sera toujours un subjects.id canonique si possible
+  subject_id: string | null;   // id canonique subjects.id si possible
   subject_name: string | null;
 };
 
 type ClassTeacherRaw = {
   class_id: string;
-  subject_id: string | null; // en pratique = institution_subjects.id
+  subject_id: string | null; // parfois institution_subjects.id, parfois subjects.id
   classes: {
     label?: string | null;
     level?: string | null;
     institution_id?: string | null;
   } | null;
 };
+
+type TimetableRow = {
+  institution_id?: string | null;
+  class_id?: string | null;
+  subject_id?: string | null; // parfois institution_subjects.id, parfois subjects.id
+  period_id?: string | null;
+};
+
+type SubjectLookup = {
+  instSubjectId: string | null;
+  canonicalSubjectId: string | null;
+  subjectName: string | null;
+};
+
+function uniqStrings(values: Array<string | null | undefined>): string[] {
+  return Array.from(
+    new Set(
+      values
+        .map((v) => String(v || "").trim())
+        .filter((v) => v.length > 0)
+    )
+  );
+}
 
 function hmsToMin(hms: string | null | undefined) {
   const s = String(hms || "00:00:00").slice(0, 8);
@@ -58,6 +80,87 @@ function weekdayInTZ1to7(d: Date, tz: string): number {
   return map[w] ?? 7;
 }
 
+async function buildSubjectLookup(
+  srv: any,
+  ids: Array<string | null | undefined>
+): Promise<Map<string, SubjectLookup>> {
+  const map = new Map<string, SubjectLookup>();
+  const uniqIds = uniqStrings(ids);
+
+  if (!uniqIds.length) return map;
+
+  const orExpr = uniqIds
+    .flatMap((id) => [`id.eq.${id}`, `subject_id.eq.${id}`])
+    .join(",");
+
+  const { data, error } = await srv
+    .from("institution_subjects")
+    .select("id, subject_id, custom_name, subjects:subject_id(id,name)")
+    .or(orExpr);
+
+  if (error) {
+    throw error;
+  }
+
+  for (const row of (data || []) as any[]) {
+    const instSubjectId = String(row?.id || "").trim() || null;
+    const subj = (row?.subjects as any) || {};
+    const canonicalSubjectId =
+      String(subj?.id || row?.subject_id || instSubjectId || "").trim() || null;
+
+    const subjectName =
+      (row?.custom_name as string | null) ??
+      (subj?.name as string | null) ??
+      null;
+
+    const lookup: SubjectLookup = {
+      instSubjectId,
+      canonicalSubjectId,
+      subjectName,
+    };
+
+    const keys = uniqStrings([
+      instSubjectId,
+      row?.subject_id ? String(row.subject_id) : null,
+      canonicalSubjectId,
+    ]);
+
+    for (const key of keys) {
+      map.set(key, lookup);
+    }
+  }
+
+  return map;
+}
+
+function subjectTokens(
+  subjectId: string | null | undefined,
+  lookup: Map<string, SubjectLookup>
+): string[] {
+  const raw = String(subjectId || "").trim();
+  if (!raw) return [];
+
+  const ref = lookup.get(raw);
+  if (!ref) return uniqStrings([raw]);
+
+  return uniqStrings([raw, ref.instSubjectId, ref.canonicalSubjectId]);
+}
+
+function dedupeAndSort(items: ItemOut[]): ItemOut[] {
+  const seen = new Set<string>();
+
+  return items
+    .filter((it) => {
+      const k = `${it.class_id}|${it.subject_id || ""}`;
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    })
+    .sort((a, b) =>
+      a.class_label.localeCompare(b.class_label, undefined, { numeric: true })
+    );
+}
+
 export async function GET() {
   try {
     const supa = await getSupabaseServerClient();
@@ -66,11 +169,12 @@ export async function GET() {
     const {
       data: { user },
     } = await supa.auth.getUser();
+
     if (!user) {
       return NextResponse.json({ error: "unauthorized" }, { status: 401 });
     }
 
-    // classes affectées au prof (+ matière éventuelle)
+    // 1) Affectations réelles du prof
     const { data, error } = await srv
       .from("class_teachers")
       .select("class_id, subject_id, classes:class_id(label,level,institution_id)")
@@ -81,18 +185,16 @@ export async function GET() {
     }
 
     const rawRows = ((data || []) as any[]).filter(Boolean) as ClassTeacherRaw[];
+
     if (!rawRows.length) {
       return NextResponse.json({ items: [] });
     }
 
-    const institutionIds = Array.from(
-      new Set(
-        rawRows
-          .map((r) => String(r?.classes?.institution_id || "").trim())
-          .filter((v) => v.length > 0)
-      )
+    const institutionIds = uniqStrings(
+      rawRows.map((r) => r?.classes?.institution_id || null)
     );
 
+    // 2) Déterminer le créneau actif par établissement
     const now = new Date();
     const activePeriodIdByInstitution = new Map<string, string>();
 
@@ -106,9 +208,7 @@ export async function GET() {
         return NextResponse.json({ error: instErr.message }, { status: 400 });
       }
 
-      const instRows = (institutions || []) as Array<{ id: string; tz?: string | null }>;
-
-      for (const inst of instRows) {
+      for (const inst of (institutions || []) as Array<{ id: string; tz?: string | null }>) {
         const tz = String(inst.tz || "Africa/Abidjan");
         const weekday = weekdayInTZ1to7(now, tz);
         const hm = hmInTZ(now, tz);
@@ -137,11 +237,12 @@ export async function GET() {
       }
     }
 
-    const allowedNow = new Set<string>();
-    const activePeriodIds = Array.from(new Set([...activePeriodIdByInstitution.values()]));
+    const activePeriodIds = uniqStrings([...activePeriodIdByInstitution.values()]);
 
+    // 3) Emploi du temps du prof sur les créneaux actifs
+    let ttRows: TimetableRow[] = [];
     if (activePeriodIds.length > 0) {
-      const { data: ttRows, error: ttErr } = await srv
+      const { data: ttData, error: ttErr } = await srv
         .from("teacher_timetables")
         .select("institution_id,class_id,subject_id,period_id")
         .eq("teacher_id", user.id)
@@ -151,88 +252,108 @@ export async function GET() {
         return NextResponse.json({ error: ttErr.message }, { status: 400 });
       }
 
-      for (const row of (ttRows || []) as any[]) {
-        const k = `${String(row.institution_id || "")}|${String(row.class_id || "")}|${String(
-          row.subject_id || ""
-        )}|${String(row.period_id || "")}`;
-        allowedNow.add(k);
+      ttRows = ((ttData || []) as any[]).filter(Boolean) as TimetableRow[];
+    }
+
+    // 4) Normaliser les IDs de matière des deux côtés
+    const subjectLookup = await buildSubjectLookup(srv, [
+      ...rawRows.map((r) => r.subject_id),
+      ...ttRows.map((r) => r.subject_id || null),
+    ]);
+
+    // Map: institution|class|period -> set de tokens matière acceptés
+    const allowedNow = new Map<string, Set<string>>();
+
+    for (const row of ttRows) {
+      const institutionId = String(row.institution_id || "").trim();
+      const classId = String(row.class_id || "").trim();
+      const periodId = String(row.period_id || "").trim();
+
+      if (!institutionId || !classId || !periodId) continue;
+
+      const baseKey = `${institutionId}|${classId}|${periodId}`;
+
+      if (!allowedNow.has(baseKey)) {
+        allowedNow.set(baseKey, new Set<string>());
+      }
+
+      const bucket = allowedNow.get(baseKey)!;
+      const tokens = subjectTokens(row.subject_id || null, subjectLookup);
+
+      if (tokens.length > 0) {
+        for (const token of tokens) bucket.add(token);
+      } else {
+        bucket.add("__ANY_SUBJECT__");
       }
     }
 
-    const items: ItemOut[] = [];
+    const fallbackItems: ItemOut[] = [];
+    const strictItems: ItemOut[] = [];
 
     for (const raw of rawRows) {
       const cls = raw.classes as any;
       if (!cls) continue;
 
       const institutionId = String(cls.institution_id || "").trim();
-      const instSubjectId = raw.subject_id ? String(raw.subject_id) : null;
-      const activePeriodId = activePeriodIdByInstitution.get(institutionId) || null;
+      const classId = String(raw.class_id || "").trim();
+      const rawSubjectId = String(raw.subject_id || "").trim() || null;
 
-      // ✅ si un créneau est actif pour cette institution, ne remonter QUE ce qui est prévu à ce créneau
-      if (activePeriodId) {
-        const allowedKey = `${institutionId}|${String(raw.class_id || "")}|${String(
-          instSubjectId || ""
-        )}|${activePeriodId}`;
-        if (!allowedNow.has(allowedKey)) {
-          continue;
-        }
-      }
+      const ref = rawSubjectId ? subjectLookup.get(rawSubjectId) : null;
 
-      let subject_name: string | null = null;
-      let subject_id: string | null = instSubjectId;
-
-      if (instSubjectId) {
-        const { data: isub } = await srv
-          .from("institution_subjects")
-          .select("id, subject_id, custom_name, subjects:subject_id(id,name)")
-          .or(`id.eq.${instSubjectId},subject_id.eq.${instSubjectId}`)
-          .limit(1)
-          .maybeSingle();
-
-        if (isub) {
-          const anySub = isub as any;
-          const subj = (anySub.subjects as any) || {};
-
-          subject_name =
-            (anySub.custom_name as string | null) ??
-            (subj.name as string | null) ??
-            null;
-
-          // ⚠️ Id canonique de la matière : subjects.id si dispo, sinon institution_subjects.subject_id,
-          // sinon fallback raw.subject_id
-          const canonical =
-            (subj.id as string | undefined) ??
-            (anySub.subject_id as string | undefined) ??
-            (instSubjectId as string | undefined);
-
-          subject_id = canonical ?? null;
-        }
-      }
-
-      items.push({
-        class_id: String(raw.class_id),
+      const item: ItemOut = {
+        class_id: classId,
         class_label: String(cls.label ?? " "),
         level: String(cls.level ?? " "),
-        subject_id,
-        subject_name,
-      });
+        subject_id: ref?.canonicalSubjectId ?? rawSubjectId,
+        subject_name: ref?.subjectName ?? null,
+      };
+
+      // Toujours garder la base des affectations réelles
+      fallbackItems.push(item);
+
+      const activePeriodId = activePeriodIdByInstitution.get(institutionId) || null;
+
+      // Pas de créneau actif trouvé pour cet établissement => on ne bloque pas
+      if (!activePeriodId) {
+        strictItems.push(item);
+        continue;
+      }
+
+      const slotKey = `${institutionId}|${classId}|${activePeriodId}`;
+      const allowedSubjects = allowedNow.get(slotKey);
+
+      // Créneau actif connu mais rien trouvé dans l'EDT pour cette classe :
+      // on laisse le filtre strict échouer ici, mais un fallback global évitera
+      // de bloquer complètement le prof.
+      if (!allowedSubjects || allowedSubjects.size === 0) {
+        continue;
+      }
+
+      // Si aucune matière côté affectation, on autorise la classe
+      if (!rawSubjectId) {
+        strictItems.push(item);
+        continue;
+      }
+
+      const rawTokens = subjectTokens(rawSubjectId, subjectLookup);
+      const matches =
+        rawTokens.some((token) => allowedSubjects.has(token)) ||
+        allowedSubjects.has("__ANY_SUBJECT__");
+
+      if (matches) {
+        strictItems.push(item);
+      }
     }
 
-    // dé-doublonner (class_id + subject_id)
-    const seen = new Set<string>();
-    const uniq = items
-      .filter((it) => {
-        const k = `${it.class_id}|${it.subject_id || ""}`;
-        if (seen.has(k)) return false;
-        seen.add(k);
-        return true;
-      })
-      .sort((a, b) =>
-        a.class_label.localeCompare(b.class_label, undefined, { numeric: true })
-      );
+    // 5) Comportement sûr :
+    //    - si le filtrage strict marche, on l'utilise ;
+    //    - sinon, on retombe sur les vraies affectations du prof.
+    const finalItems =
+      strictItems.length > 0
+        ? dedupeAndSort(strictItems)
+        : dedupeAndSort(fallbackItems);
 
-    return NextResponse.json({ items: uniq });
+    return NextResponse.json({ items: finalItems });
   } catch (e: any) {
     return NextResponse.json(
       { error: e?.message || "classes_failed" },
