@@ -140,6 +140,28 @@ function computeAcademicYearFromEvalDate(evalDate: string): string {
   return computeAcademicYear(safe);
 }
 
+function serverTodayIsoDate(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function isGradePeriodClosed(period: GradePeriodRow | null): boolean {
+  if (!period?.end_date) return false;
+  return serverTodayIsoDate() > period.end_date;
+}
+
+function closedPeriodResponse(period: GradePeriodRow) {
+  return NextResponse.json(
+    {
+      ok: false,
+      error: "grading_period_closed",
+      grading_period_id: period.id,
+      period_end_date: period.end_date,
+      today: serverTodayIsoDate(),
+    },
+    { status: 423 }
+  );
+}
+
 async function ensureClassInInstitution(
   srv: ReturnType<typeof getSupabaseServiceClient>,
   classId: string,
@@ -333,6 +355,24 @@ async function validateExplicitGradePeriod(
   }
 
   return { ok: true, period };
+}
+
+async function getClosedPeriodResponseIfNeeded(
+  srv: ReturnType<typeof getSupabaseServiceClient>,
+  institutionId: string,
+  roles: Set<Role>,
+  gradingPeriodId: string | null
+): Promise<NextResponse | null> {
+  if (isPrivileged(roles) || !gradingPeriodId) return null;
+
+  const period = await getGradePeriodById(srv, institutionId, gradingPeriodId);
+  if (!period) return null;
+
+  if (isGradePeriodClosed(period)) {
+    return closedPeriodResponse(period);
+  }
+
+  return null;
 }
 
 /* ───────────────── Push dispatch immédiat ───────────────── */
@@ -587,6 +627,7 @@ export async function POST(req: NextRequest) {
     }
 
     let grading_period_id: string | null = null;
+    let resolvedPeriod: GradePeriodRow | null = null;
 
     if (explicitGradingPeriodId) {
       const validated = await validateExplicitGradePeriod(
@@ -605,6 +646,7 @@ export async function POST(req: NextRequest) {
       }
 
       grading_period_id = validated.period.id;
+      resolvedPeriod = validated.period;
     } else {
       grading_period_id = await autoDetectGradePeriodId(
         srv,
@@ -612,6 +654,18 @@ export async function POST(req: NextRequest) {
         academic_year,
         eval_date
       );
+
+      if (grading_period_id) {
+        resolvedPeriod = await getGradePeriodById(
+          srv,
+          institutionId,
+          grading_period_id
+        );
+      }
+    }
+
+    if (!isPrivileged(roles) && resolvedPeriod && isGradePeriodClosed(resolvedPeriod)) {
+      return closedPeriodResponse(resolvedPeriod);
     }
 
     const { data, error } = await srv
@@ -693,7 +747,7 @@ export async function PATCH(req: NextRequest) {
 
     const { data: evalRow, error: evErr } = await srv
       .from("grade_evaluations")
-      .select("id,class_id,subject_id,teacher_id,is_published")
+      .select("id,class_id,subject_id,teacher_id,is_published,grading_period_id")
       .eq("id", evaluation_id)
       .maybeSingle();
 
@@ -722,6 +776,14 @@ export async function PATCH(req: NextRequest) {
         { status: 403 }
       );
     }
+
+    const closedResp = await getClosedPeriodResponseIfNeeded(
+      srv,
+      institutionId,
+      roles,
+      normalizeUuidLike((evalRow as any).grading_period_id)
+    );
+    if (closedResp) return closedResp;
 
     const patch: any = {};
     if (typeof is_published === "boolean") {
@@ -801,7 +863,7 @@ export async function DELETE(req: NextRequest) {
 
     const { data: evalRow, error: evErr } = await srv
       .from("grade_evaluations")
-      .select("id,class_id,subject_id,teacher_id")
+      .select("id,class_id,subject_id,teacher_id,grading_period_id")
       .eq("id", evaluation_id)
       .maybeSingle();
 
@@ -830,6 +892,14 @@ export async function DELETE(req: NextRequest) {
         { status: 403 }
       );
     }
+
+    const closedResp = await getClosedPeriodResponseIfNeeded(
+      srv,
+      institutionId,
+      roles,
+      normalizeUuidLike((evalRow as any).grading_period_id)
+    );
+    if (closedResp) return closedResp;
 
     const { error: delScoresErr } = await srv
       .from("student_grades")

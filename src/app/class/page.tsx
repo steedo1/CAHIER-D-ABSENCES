@@ -1729,7 +1729,7 @@ export default function ClassDevicePage() {
           // pour fermer la séance serveur dès qu'elle existera.
           await cacheSet(PENDING_END_KEY, { actual_end_at: actualEndAt } satisfies PendingEndPayload);
           await finishLocal();
-          setMsg("Séance terminée localement. La fermeture serveur sera appliquée dès que la synchronisation sera possible.");
+          setMsg("Séance terminée localement. La fin sera synchronisée dès que le réseau reviendra.");
           await refreshPending();
           return;
         }
@@ -1961,13 +1961,13 @@ export default function ClassDevicePage() {
 
         {usingLegacyOfflineMode && (
           <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
-            Hors ligne : ancien système activé. Choisissez la discipline dans la liste de la classe.
+            
           </div>
         )}
 
         {usingLegacyFallbackMode && (
           <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
-            Réseau instable : fallback ancien système activé. Vérifiez la discipline avant de démarrer l’appel.
+           
           </div>
         )}
 

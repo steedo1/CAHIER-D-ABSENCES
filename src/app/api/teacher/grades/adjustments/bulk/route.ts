@@ -29,6 +29,10 @@ function round2(n: number) {
   return Math.round(n * 100) / 100;
 }
 
+function serverTodayIsoDate() {
+  return new Date().toISOString().slice(0, 10);
+}
+
 type Item = {
   student_id: string;
   bonus?: number | string | null;
@@ -45,6 +49,11 @@ type GradePeriodRow = {
   is_active: boolean | null;
   order_index: number | null;
 };
+
+function isClosedByEndDate(period: GradePeriodRow | null): boolean {
+  if (!period?.end_date) return false;
+  return serverTodayIsoDate() > period.end_date;
+}
 
 /**
  * Même logique que dans /api/teacher/grades/evaluations :
@@ -184,7 +193,9 @@ function applyNullishEq<T extends { eq: Function; is: Function }>(
   column: string,
   value: string | null
 ): T {
-  return value === null ? (query.is(column, null) as T) : (query.eq(column, value) as T);
+  return value === null
+    ? (query.is(column, null) as T)
+    : (query.eq(column, value) as T);
 }
 
 /* ==========================================
@@ -232,13 +243,10 @@ export async function POST(req: NextRequest) {
     }
 
     let grading_period_id: string | null = null;
+    let period: GradePeriodRow | null = null;
 
     if (requested_period_id) {
-      const period = await getGradePeriodById(
-        svc,
-        institutionId,
-        requested_period_id
-      );
+      period = await getGradePeriodById(svc, institutionId, requested_period_id);
 
       if (!period) {
         return bad("INVALID_GRADING_PERIOD", 400, {
@@ -254,6 +262,16 @@ export async function POST(req: NextRequest) {
 
       academic_year = period.academic_year;
       grading_period_id = period.id;
+    }
+
+    // ✅ blocage côté prof / class_device si la période est déjà close
+    if ((mode === "teacher" || mode === "class_device") && period && isClosedByEndDate(period)) {
+      return bad("GRADING_PERIOD_CLOSED", 423, {
+        class_id,
+        grading_period_id: period.id,
+        period_end_date: period.end_date,
+        today: serverTodayIsoDate(),
+      });
     }
 
     let upserted = 0;
@@ -302,7 +320,7 @@ export async function POST(req: NextRequest) {
 
       const existingId =
         Array.isArray(existingRows) && existingRows.length > 0
-          ? (existingRows[0] as any).id as string
+          ? ((existingRows[0] as any).id as string)
           : null;
 
       if (existingId) {

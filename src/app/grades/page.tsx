@@ -378,6 +378,20 @@ export default function TeacherNotesPage() {
     [gradePeriods, selectedPeriodId]
   );
 
+  function todayIsoDate() {
+    return new Date().toISOString().slice(0, 10);
+  }
+
+  function isPeriodClosed(period: GradePeriod | null) {
+    if (!period?.end_date) return false;
+    return todayIsoDate() > period.end_date;
+  }
+
+  const selectedPeriodClosed = useMemo(
+    () => isPeriodClosed(selectedPeriod),
+    [selectedPeriod]
+  );
+
   /* -------- Données -------- */
   const [roster, setRoster] = useState<RosterItem[]>([]);
   const [evaluations, setEvaluations] = useState<Evaluation[]>([]);
@@ -802,6 +816,7 @@ export default function TeacherNotesPage() {
     value: number | null,
     scale: number
   ) {
+    if (selectedPeriodClosed) return;
     if (isEvalLocked(evId)) return;
     const v =
       value == null || Number.isNaN(value)
@@ -815,6 +830,10 @@ export default function TeacherNotesPage() {
 
   async function saveAllChanges() {
     if (!selected) return;
+    if (selectedPeriodClosed) {
+      setMsg("Cette période est clôturée. La saisie des notes est fermée.");
+      return;
+    }
     // Regrouper par évaluation
     const perEvalAll = Object.entries(changed).filter(([, per]) => Object.keys(per).length > 0);
     const perEval = perEvalAll.filter(([evaluation_id]) => !isEvalLocked(evaluation_id));
@@ -875,6 +894,10 @@ export default function TeacherNotesPage() {
 
   async function addEvaluation() {
     if (!selected) return;
+    if (selectedPeriodClosed) {
+      setMsg("Cette période est clôturée. Impossible d’ajouter une nouvelle note.");
+      return;
+    }
 
     // Si sous-matières configurées en collège, on impose la sélection
     if (hasComponents && !selectedComponentId) {
@@ -924,6 +947,10 @@ export default function TeacherNotesPage() {
 
   /* -------- Publication (panneau séparé) -------- */
   async function togglePublish(ev: Evaluation) {
+    if (selectedPeriodClosed) {
+      setMsg("Cette période est clôturée. Impossible de modifier la publication.");
+      return;
+    }
     setMsg(null);
     const next = !ev.is_published;
     setPublishBusy((prev) => ({ ...prev, [ev.id]: true }));
@@ -960,6 +987,10 @@ export default function TeacherNotesPage() {
 
   /* -------- Suppression d’une évaluation (colonne) -------- */
   async function deleteEvaluation(ev: Evaluation) {
+    if (selectedPeriodClosed) {
+      setMsg("Cette période est clôturée. Impossible de supprimer une colonne.");
+      return;
+    }
     if (
       !window.confirm(
         "Supprimer définitivement cette colonne de notes ?\nToutes les notes associées seront perdues."
@@ -1141,6 +1172,10 @@ export default function TeacherNotesPage() {
 
   async function saveBonuses() {
     if (!selected) return;
+    if (selectedPeriodClosed) {
+      setMsg("Cette période est clôturée. Impossible de modifier les bonus.");
+      return;
+    }
     setLoadingAvg(true);
     setMsg(null);
     try {
@@ -1740,6 +1775,7 @@ export default function TeacherNotesPage() {
                   value={newDate}
                   onChange={(e) => setNewDate(e.target.value)}
                   aria-label="Date"
+                  disabled={selectedPeriodClosed}
                 />
               </div>
               <div>
@@ -1747,6 +1783,7 @@ export default function TeacherNotesPage() {
                   value={newType}
                   onChange={(e) => setNewType(e.target.value as EvalKind)}
                   aria-label="Type d’évaluation"
+                  disabled={selectedPeriodClosed}
                 >
                   <option value="devoir">Devoir</option>
                   <option value="interro_ecrite">Interrogation écrite</option>
@@ -1760,6 +1797,7 @@ export default function TeacherNotesPage() {
                     value={selectedComponentId}
                     onChange={(e) => setSelectedComponentId(e.target.value)}
                     aria-label="Sous-rubrique"
+                    disabled={selectedPeriodClosed}
                   >
                     <option value="">
                       — Sous-rubrique (Français, etc.) —
@@ -1785,6 +1823,7 @@ export default function TeacherNotesPage() {
                     setNewScale(Number(e.target.value) as 5 | 10 | 20)
                   }
                   aria-label="Échelle"
+                  disabled={selectedPeriodClosed}
                 >
                   {[5, 10, 20].map((s) => (
                     <option key={s} value={s}>
@@ -1798,6 +1837,7 @@ export default function TeacherNotesPage() {
                   value={String(newCoeff)}
                   onChange={(e) => setNewCoeff(Number(e.target.value))}
                   aria-label="Coefficient"
+                  disabled={selectedPeriodClosed}
                 >
                   {[0.25, 0.5, 1, 2, 3].map((c) => (
                     <option key={c} value={c}>
@@ -1808,13 +1848,25 @@ export default function TeacherNotesPage() {
               </div>
             </div>
             <div className="mt-2">
-              <Button onClick={addEvaluation} disabled={!selected || creating}>
+              <Button
+                onClick={addEvaluation}
+                disabled={!selected || creating || selectedPeriodClosed}
+              >
                 <Plus className="h-4 w-4" />
                 {creating ? "Ajout…" : "Ajouter une note"}
               </Button>
             </div>
           </div>
         </div>
+
+        {selectedPeriodClosed && selectedPeriod && (
+          <div
+            className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800"
+            aria-live="polite"
+          >
+            Cette période est clôturée depuis le <strong>{formatDateFr(selectedPeriod.end_date)}</strong>. La saisie des notes et des bonus est désactivée côté enseignant.
+          </div>
+        )}
 
         {msg && (
           <div
@@ -1858,7 +1910,7 @@ export default function TeacherNotesPage() {
               <GhostButton
                 tone="slate"
                 onClick={() => setShowPublishPanel(true)}
-                disabled={!evaluations.length}
+                disabled={!evaluations.length || selectedPeriodClosed}
               >
                 Gérer la publication
               </GhostButton>
@@ -1872,7 +1924,7 @@ export default function TeacherNotesPage() {
               </GhostButton>
               <Button
                 onClick={saveAllChanges}
-                disabled={loading || totalChanges === 0}
+                disabled={loading || totalChanges === 0 || selectedPeriodClosed}
               >
                 <Save className="h-4 w-4" /> Enregistrer
               </Button>
@@ -1935,6 +1987,7 @@ export default function TeacherNotesPage() {
                     tone={locked ? "emerald" : "slate"}
                     onClick={() => openLockModal(ev, locked ? "unlock" : "lock")}
                     className="gap-2"
+                    disabled={selectedPeriodClosed || !!lockBusy[ev.id]}
                     title={locked ? "Déverrouiller cette évaluation (PIN)" : "Verrouiller cette évaluation (PIN)"}
                   >
                     {locked ? (
@@ -2005,7 +2058,7 @@ export default function TeacherNotesPage() {
                                   isEvalLocked(ev.id) ? "unlock" : "lock"
                                 )
                               }
-                              disabled={!!lockBusy[ev.id]}
+                              disabled={selectedPeriodClosed || !!lockBusy[ev.id]}
                               className={[
                                 "ml-1 inline-flex h-7 w-7 items-center justify-center rounded-lg border",
                                 isEvalLocked(ev.id)
@@ -2029,7 +2082,7 @@ export default function TeacherNotesPage() {
                             <button
                               type="button"
                               onClick={() => deleteEvaluation(ev)}
-                              disabled={!!publishBusy[ev.id]}
+                              disabled={selectedPeriodClosed || !!publishBusy[ev.id]}
                               className="ml-1 inline-flex h-7 w-7 items-center justify-center rounded-lg border border-red-100 text-red-500 hover:bg-red-50 hover:text-red-700 focus:outline-none focus:ring-2 focus:ring-red-500/40 disabled:opacity-60"
                               title="Supprimer cette colonne de notes"
                             >
@@ -2088,8 +2141,8 @@ export default function TeacherNotesPage() {
                                 step="0.25"
                                 min={0}
                                 max={scale}
-                                disabled={isEvalLocked(ev.id)}
-                                title={isEvalLocked(ev.id) ? "Évaluation verrouillée" : undefined}
+                                disabled={selectedPeriodClosed || isEvalLocked(ev.id)}
+                                title={selectedPeriodClosed ? "Période clôturée" : isEvalLocked(ev.id) ? "Évaluation verrouillée" : undefined}
                                 value={current == null ? "" : String(current)}
                                 onChange={(e) => {
                                   const raw = e.target.value.trim();
@@ -2175,8 +2228,8 @@ export default function TeacherNotesPage() {
                           step="0.25"
                           min={0}
                           max={scale}
-                                disabled={isEvalLocked(ev.id)}
-                                title={isEvalLocked(ev.id) ? "Évaluation verrouillée" : undefined}
+                                disabled={selectedPeriodClosed || isEvalLocked(ev.id)}
+                                title={selectedPeriodClosed ? "Période clôturée" : isEvalLocked(ev.id) ? "Évaluation verrouillée" : undefined}
                                 value={current == null ? "" : String(current)}
                           onChange={(e) => {
                             const raw = e.target.value.trim();
@@ -2207,7 +2260,7 @@ export default function TeacherNotesPage() {
               {roster.length} élèves
             </div>
             <div className="flex items-center gap-2">
-              <Button onClick={saveBonuses} disabled={loadingAvg}>
+              <Button onClick={saveBonuses} disabled={loadingAvg || selectedPeriodClosed}>
                 <Save className="h-4 w-4" /> Enregistrer bonus
               </Button>
             </div>
@@ -2319,6 +2372,8 @@ export default function TeacherNotesPage() {
                                 }));
                               }}
                               aria-label={`Bonus ${row.student.full_name}`}
+                              disabled={selectedPeriodClosed}
+                              title={selectedPeriodClosed ? "Période clôturée" : undefined}
                             />
                           </td>
                           <td className="px-3 py-2 text-right tabular-nums">
@@ -2437,6 +2492,8 @@ export default function TeacherNotesPage() {
                             }));
                           }}
                           aria-label={`Bonus ${row.student.full_name}`}
+                          disabled={selectedPeriodClosed}
+                          title={selectedPeriodClosed ? "Période clôturée" : undefined}
                         />
                       </div>
                     </div>
@@ -2536,7 +2593,7 @@ export default function TeacherNotesPage() {
                                 className="h-4 w-4 rounded border-slate-300 text-emerald-600"
                                 checked={!!ev.is_published}
                                 onChange={() => togglePublish(ev)}
-                                disabled={!!publishBusy[ev.id]}
+                                disabled={selectedPeriodClosed || !!publishBusy[ev.id]}
                               />
                               <span className="text-slate-700">
                                 {ev.is_published ? "Publié" : "Brouillon"}
@@ -2564,7 +2621,7 @@ export default function TeacherNotesPage() {
                                 tone="red"
                                 type="button"
                                 onClick={() => deleteEvaluation(ev)}
-                                disabled={!!publishBusy[ev.id]}
+                                disabled={selectedPeriodClosed || !!publishBusy[ev.id]}
                               >
                                 Supprimer la note
                               </GhostButton>

@@ -13,6 +13,7 @@ type Item = {
 };
 
 type Violation = { student_id: string; reason: string };
+
 type UpsertRow = {
   evaluation_id: string;
   student_id: string;
@@ -21,12 +22,44 @@ type UpsertRow = {
   updated_by: string;
 };
 
+type GradePeriodRow = {
+  id: string;
+  end_date: string | null;
+  is_active: boolean | null;
+};
+
 function bad(error: string, status = 400, extra?: Record<string, unknown>) {
   return NextResponse.json({ ok: false, error, ...(extra ?? {}) }, { status });
 }
 
 function round2(n: number) {
   return Math.round(n * 100) / 100;
+}
+
+function serverTodayIsoDate() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function isClosedByEndDate(period: GradePeriodRow | null): boolean {
+  if (!period?.end_date) return false;
+  return serverTodayIsoDate() > period.end_date;
+}
+
+async function isPrivilegedUser(userId: string) {
+  const svc = getSupabaseServiceClient();
+  const { data, error } = await svc
+    .from("user_roles")
+    .select("role")
+    .eq("profile_id", userId);
+
+  if (error) return false;
+
+  const roles = (data ?? []).map((r: any) => String(r.role || ""));
+  return (
+    roles.includes("super_admin") ||
+    roles.includes("admin") ||
+    roles.includes("educator")
+  );
 }
 
 export async function POST(req: NextRequest) {
@@ -51,6 +84,7 @@ export async function POST(req: NextRequest) {
     const strict = body.strict ?? true; // si true, on bloque sur 1 erreur
 
     if (!evaluation_id) return bad("evaluation_id requis");
+
     if (!Array.isArray(items) || items.length === 0) {
       return NextResponse.json({
         ok: true,
@@ -64,7 +98,7 @@ export async function POST(req: NextRequest) {
     // Lire l'évaluation (RLS protège l'accès côté prof)
     const { data: ge, error: geErr } = await supabase
       .from("grade_evaluations")
-      .select("id, scale, class_id, subject_id, is_published")
+      .select("id, scale, class_id, is_published, grading_period_id")
       .eq("id", evaluation_id)
       .single();
 
@@ -76,11 +110,38 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // ✅ CHECK LOCK (ULTRA IMPORTANT)
-    // On lit le lock via service client, car côté prof la RLS peut masquer la ligne.
-    // Sécurité: on ne fait cette lecture qu'après avoir validé l'accès à l'évaluation via RLS (ci-dessus).
     const srv = getSupabaseServiceClient();
 
+    // ✅ CHECK CLOTURE PAR FIN DE PERIODE
+    // On vérifie seulement pour les profils non privilégiés.
+    const privileged = await isPrivilegedUser(auth.user.id);
+
+    if (!privileged && ge?.grading_period_id) {
+      const { data: periodRow, error: periodErr } = await srv
+        .from("grade_periods")
+        .select("id, end_date, is_active")
+        .eq("id", ge.grading_period_id)
+        .maybeSingle();
+
+      if (periodErr) {
+        return bad(periodErr.message || "GRADE_PERIOD_FETCH_FAILED", 500);
+      }
+
+      const period = (periodRow ?? null) as GradePeriodRow | null;
+
+      if (isClosedByEndDate(period)) {
+        return bad("GRADING_PERIOD_CLOSED", 423, {
+          evaluation_id,
+          grading_period_id: ge.grading_period_id,
+          period_end_date: period?.end_date ?? null,
+          today: serverTodayIsoDate(),
+        });
+      }
+    }
+
+    // ✅ CHECK LOCK (ULTRA IMPORTANT)
+    // On lit le lock via service client, car côté prof la RLS peut masquer la ligne.
+    // Sécurité: on ne fait cette lecture qu'après avoir validé l'accès à l'évaluation via RLS.
     try {
       const { data: lockRow, error: lockErr } = await srv
         .from("grade_evaluation_locks")
@@ -94,6 +155,7 @@ export async function POST(req: NextRequest) {
         const looksLikeMissingTable =
           msg.includes('relation "grade_evaluation_locks" does not exist') ||
           msg.includes("42P01");
+
         if (!looksLikeMissingTable) {
           return bad(lockErr.message || "LOCK_CHECK_FAILED", 500);
         }
@@ -140,7 +202,10 @@ export async function POST(req: NextRequest) {
 
       const n = Number(it.score);
       if (!Number.isFinite(n) || n < 0 || n > scale) {
-        violations.push({ student_id, reason: `score invalide (0..${scale})` });
+        violations.push({
+          student_id,
+          reason: `score invalide (0..${scale})`,
+        });
         continue;
       }
 
