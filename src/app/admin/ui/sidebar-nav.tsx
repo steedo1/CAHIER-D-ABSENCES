@@ -123,7 +123,11 @@ const TOP_LEVEL_ITEMS: NavItem[] = [
     href: "/admin/export-moyennes",
     label: "Export moyennes",
     Icon: FileSpreadsheet,
-    badge: "XLSX",
+  },
+  {
+    href: "/admin/notes/conseil-classe",
+    label: "Conseil de classe",
+    Icon: FileText,
   },
   {
     href: "/admin/notes/predictions",
@@ -208,7 +212,6 @@ const NOTES_ITEMS: NavItem[] = [
   { href: "/admin/notes/evaluations", label: "Stats évaluations", Icon: NotebookPen },
   { href: "/admin/bulletins", label: "Bulletins", Icon: FileSpreadsheet },
   { href: "/admin/notes/statistiques", label: "Matrices", Icon: BarChart3 },
-  { href: "/admin/notes/conseil-classe", label: "Conseil de classe", Icon: FileText },
 ];
 
 function NavLinkItem({
