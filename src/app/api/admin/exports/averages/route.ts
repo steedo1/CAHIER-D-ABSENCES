@@ -35,6 +35,18 @@ type StudentMetaRow = {
   matricule: string | null;
 };
 
+type BulletinPerSubject = {
+  subject_id: string;
+  avg20: number | null;
+  subject_rank?: number | null;
+};
+
+type BulletinSubjectMeta = {
+  subject_id: string;
+  subject_name?: string | null;
+  coeff_bulletin?: number | null;
+};
+
 type BulletinItem = {
   student_id: string;
   full_name: string;
@@ -43,6 +55,7 @@ type BulletinItem = {
   annual_avg?: number | null;
   annual_rank?: number | null;
   rank?: number | null;
+  per_subject?: BulletinPerSubject[];
 };
 
 type BulletinResponse = {
@@ -63,6 +76,7 @@ type BulletinResponse = {
     coeff?: number | null;
   };
   items?: BulletinItem[];
+  subjects?: BulletinSubjectMeta[];
 };
 
 type ConductAverageItem = {
@@ -91,6 +105,7 @@ type ExportRow = {
   conduite: number | null;
   moyenne_annuelle: number | null;
   rang_annuel: number | null;
+  subject_values: Record<string, number | null>;
 };
 
 type ExportFormat = "xlsx" | "csv";
@@ -231,20 +246,75 @@ function makeDownloadFilename(opts: {
   return `${base}.${opts.format}`;
 }
 
-function buildExportRows(rows: ExportRow[]) {
-  return rows.map((row) => ({
-    Matricule: row.matricule,
-    Nom: row.nom,
-    "Prénoms": row.prenoms,
-    Classe: row.classe,
-    "Année scolaire": row.annee_scolaire,
-    Période: row.periode,
-    "Moyenne générale": row.moyenne_generale ?? "",
-    Rang: row.rang ?? "",
-    Conduite: row.conduite ?? "",
-    "Moyenne annuelle": row.moyenne_annuelle ?? "",
-    "Rang annuel": row.rang_annuel ?? "",
-  }));
+function buildExportRows(rows: ExportRow[], subjectHeaders: string[]) {
+  return rows.map((row) => {
+    const base: Record<string, unknown> = {
+      Matricule: row.matricule,
+      Nom: row.nom,
+      "Prénoms": row.prenoms,
+      Classe: row.classe,
+      "Année scolaire": row.annee_scolaire,
+      Période: row.periode,
+      "Moyenne générale": row.moyenne_generale ?? "",
+      Rang: row.rang ?? "",
+      Conduite: row.conduite ?? "",
+      "Moyenne annuelle": row.moyenne_annuelle ?? "",
+      "Rang annuel": row.rang_annuel ?? "",
+    };
+
+    for (const header of subjectHeaders) {
+      base[header] = row.subject_values[header] ?? "";
+    }
+
+    return base;
+  });
+}
+
+function assignRanks<T extends { moyenne_generale: number | null; moyenne_annuelle: number | null }>(
+  rows: T[]
+) {
+  const periodRankByIndex = new Map<number, number>();
+  const annualRankByIndex = new Map<number, number>();
+
+  const periodEntries = rows
+    .map((row, index) => ({ index, value: row.moyenne_generale }))
+    .filter((x) => typeof x.value === "number" && Number.isFinite(x.value))
+    .sort((a, b) => Number(b.value) - Number(a.value));
+
+  let currentRank = 0;
+  let lastValue: number | null = null;
+  let position = 0;
+
+  for (const entry of periodEntries) {
+    position += 1;
+    const value = Number(entry.value);
+    if (lastValue === null || value !== lastValue) {
+      currentRank = position;
+      lastValue = value;
+    }
+    periodRankByIndex.set(entry.index, currentRank);
+  }
+
+  const annualEntries = rows
+    .map((row, index) => ({ index, value: row.moyenne_annuelle }))
+    .filter((x) => typeof x.value === "number" && Number.isFinite(x.value))
+    .sort((a, b) => Number(b.value) - Number(a.value));
+
+  currentRank = 0;
+  lastValue = null;
+  position = 0;
+
+  for (const entry of annualEntries) {
+    position += 1;
+    const value = Number(entry.value);
+    if (lastValue === null || value !== lastValue) {
+      currentRank = position;
+      lastValue = value;
+    }
+    annualRankByIndex.set(entry.index, currentRank);
+  }
+
+  return { periodRankByIndex, annualRankByIndex };
 }
 
 async function getAdminAndInstitution() {
@@ -456,6 +526,9 @@ export async function GET(req: NextRequest) {
   const academicYear = String(searchParams.get("academic_year") || "").trim();
   const periodRef = String(searchParams.get("period_ref") || "").trim();
   const classId = String(searchParams.get("class_id") || "").trim();
+  const includeSubjects = ["1", "true", "yes", "on"].includes(
+    String(searchParams.get("include_subjects") || "").toLowerCase()
+  );
   const format = String(searchParams.get("format") || "xlsx").trim().toLowerCase() as ExportFormat;
 
   if (!academicYear) {
@@ -563,7 +636,10 @@ export async function GET(req: NextRequest) {
     .maybeSingle();
 
   const institutionName = String((institution as any)?.name || "Établissement");
-  const exportRows: ExportRow[] = [];
+
+  const allExportRows: ExportRow[] = [];
+  const subjectHeaderOrder: string[] = [];
+  const subjectHeaderSeen = new Set<string>();
 
   for (const cls of classes) {
     const currentClassId = String(cls.id);
@@ -585,7 +661,20 @@ export async function GET(req: NextRequest) {
 
     if (!bulletinData?.items?.length) continue;
 
-    for (const item of bulletinData.items) {
+    const subjectNameById = new Map<string, string>();
+    for (const subject of bulletinData.subjects || []) {
+      const sid = String(subject?.subject_id || "");
+      if (!sid) continue;
+      const label = String(subject?.subject_name || sid).trim() || sid;
+      subjectNameById.set(sid, label);
+
+      if (includeSubjects && !subjectHeaderSeen.has(label)) {
+        subjectHeaderSeen.add(label);
+        subjectHeaderOrder.push(label);
+      }
+    }
+
+    const classRows: ExportRow[] = bulletinData.items.map((item) => {
       const key = `${currentClassId}__${String(item.student_id)}`;
       const meta = studentMetaByKey.get(key);
       const split = splitStudentName({
@@ -603,12 +692,23 @@ export async function GET(req: NextRequest) {
           ? currentAnnual ?? currentGeneral
           : currentGeneral;
 
-      const exportedRank =
-        resolvedPeriod.requestedKind === "annual"
-          ? item.annual_rank ?? item.rank ?? null
-          : item.rank ?? null;
+      const subjectValues: Record<string, number | null> = {};
+      if (includeSubjects) {
+        for (const ps of item.per_subject || []) {
+          const sid = String(ps?.subject_id || "");
+          if (!sid) continue;
 
-      exportRows.push({
+          const label = subjectNameById.get(sid) || `Matière ${sid.slice(0, 8)}`;
+          if (!subjectHeaderSeen.has(label)) {
+            subjectHeaderSeen.add(label);
+            subjectHeaderOrder.push(label);
+          }
+
+          subjectValues[label] = cleanNumber(ps?.avg20, 4);
+        }
+      }
+
+      return {
         matricule: String(meta?.matricule || item.matricule || ""),
         nom: split.nom,
         prenoms: split.prenoms,
@@ -616,34 +716,59 @@ export async function GET(req: NextRequest) {
         annee_scolaire: String(meta?.academic_year || resolvedPeriod.academicYear || ""),
         periode: resolvedPeriod.requestedLabel,
         moyenne_generale: exportedAverage,
-        rang: exportedRank,
+        rang: item.rank ?? null,
         conduite: currentConduct,
         moyenne_annuelle: currentAnnual,
         rang_annuel: item.annual_rank ?? null,
-      });
-    }
+        subject_values: subjectValues,
+      };
+    });
+
+    const { periodRankByIndex, annualRankByIndex } = assignRanks(classRows);
+
+    classRows.forEach((row, index) => {
+      if (row.rang === null || row.rang === undefined) {
+        row.rang = periodRankByIndex.get(index) ?? null;
+      }
+      if (row.rang_annuel === null || row.rang_annuel === undefined) {
+        row.rang_annuel = annualRankByIndex.get(index) ?? null;
+      }
+    });
+
+    allExportRows.push(...classRows);
   }
 
-  if (!exportRows.length) {
+  if (!allExportRows.length) {
     return NextResponse.json({ ok: false, error: "NO_EXPORTABLE_DATA" }, { status: 404 });
   }
 
-  exportRows.sort((a, b) => {
+  allExportRows.sort((a, b) => {
     const classCmp = a.classe.localeCompare(b.classe, "fr");
     if (classCmp !== 0) return classCmp;
+
     const rankA = Number.isFinite(Number(a.rang)) ? Number(a.rang) : 999999;
     const rankB = Number.isFinite(Number(b.rang)) ? Number(b.rang) : 999999;
     if (rankA !== rankB) return rankA - rankB;
-    return `${a.nom} ${a.prenoms}`.trim().localeCompare(`${b.nom} ${b.prenoms}`.trim(), "fr");
+
+    return `${a.nom} ${a.prenoms}`.trim().localeCompare(
+      `${b.nom} ${b.prenoms}`.trim(),
+      "fr"
+    );
   });
 
-  const preparedRows = buildExportRows(exportRows);
+  const preparedRows = buildExportRows(
+    allExportRows,
+    includeSubjects ? subjectHeaderOrder : []
+  );
 
   const filename = makeDownloadFilename({
     institutionName,
     academicYear: resolvedPeriod.academicYear,
     requestedCode: resolvedPeriod.requestedCode,
-    classLabel: classes.length === 1 ? String(classes[0].label || classes[0].code || "") : undefined,
+    classLabel:
+      classes.length === 1
+        ? String(classes[0].label || classes[0].code || "")
+        : undefined,
     format,
   });
 
@@ -669,10 +794,13 @@ export async function GET(req: NextRequest) {
     if (classes.length > 1) {
       for (const cls of classes) {
         const classLabel = String(cls.label || cls.code || "Classe");
-        const classRows = exportRows.filter((row) => row.classe === classLabel);
+        const classRows = allExportRows.filter((row) => row.classe === classLabel);
         if (!classRows.length) continue;
 
-        const rowsForSheet = buildExportRows(classRows);
+        const rowsForSheet = buildExportRows(
+          classRows,
+          includeSubjects ? subjectHeaderOrder : []
+        );
         const ws = XLSX.utils.json_to_sheet(rowsForSheet);
         const sheetName = classLabel.slice(0, 31) || "Classe";
         XLSX.utils.book_append_sheet(workbook, ws, sheetName);
@@ -685,10 +813,8 @@ export async function GET(req: NextRequest) {
     }) as Buffer;
 
     const fileBytes = Uint8Array.from(buffer);
-    const fileArrayBuffer = fileBytes.buffer.slice(
-      fileBytes.byteOffset,
-      fileBytes.byteOffset + fileBytes.byteLength
-    );
+    const fileArrayBuffer = new ArrayBuffer(fileBytes.byteLength);
+    new Uint8Array(fileArrayBuffer).set(fileBytes);
 
     return new Response(fileArrayBuffer, {
       status: 200,

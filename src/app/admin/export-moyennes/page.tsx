@@ -227,6 +227,18 @@ export default async function ExportMoyennesPage() {
                     ))}
                   </select>
                 </div>
+
+                <div className="flex items-end">
+                  <label className="flex w-full items-center gap-3 rounded-xl border border-slate-300 bg-white px-3 py-3 text-sm font-medium text-slate-700">
+                    <input
+                      type="checkbox"
+                      name="include_subjects"
+                      value="1"
+                      className="h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                    />
+                    Inclure les moyennes par matière
+                  </label>
+                </div>
               </div>
 
               <div className="mt-5 flex flex-col gap-3 sm:flex-row">
