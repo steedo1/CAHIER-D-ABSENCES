@@ -1281,7 +1281,7 @@ export default function ClassDevicePage() {
 
   /* 2) charger les matières selon le mode courant
         - en ligne + créneau actif : nouveau système (slot)
-        - en ligne + échec auto : fallback ancien système
+        - en ligne + échec technique auto : fallback ancien système
         - hors ligne : ancien système pur */
   useEffect(() => {
     if (!classId) {
@@ -1351,6 +1351,12 @@ export default function ClassDevicePage() {
         `/api/class/subjects?class_id=${classId}&slot=${encodeURIComponent(activeSlotKey)}`,
         `classDevice:subjects:${classId}:${activeSlotKey}`
       ).catch(() => null as any);
+
+      // IMPORTANT :
+      // - autoResp === null  => échec technique (réseau / timeout / cache indisponible)
+      // - autoResp.items=[]  => réponse valide du backend : aucune matière prévue sur ce créneau
+      // Dans le 2e cas, on NE DOIT PAS retomber sur l'ancien système.
+      const autoRequestFailed = autoResp == null;
       const autoList = ((autoResp?.items || []) as Subject[]) ?? [];
 
       if (autoList.length > 0) {
@@ -1358,7 +1364,7 @@ export default function ClassDevicePage() {
         return;
       }
 
-      if (canUseFallbackLegacyFlow) {
+      if (autoRequestFailed && canUseFallbackLegacyFlow) {
         const legacyList = await loadLegacySubjects();
         if (legacyList.length > 0) {
           applyList(legacyList, "legacy-fallback");
