@@ -124,6 +124,8 @@ type SubjectLoadMode =
   | "closed-online"
   | "empty";
 
+type SaveUxState = "idle" | "saving" | "saved" | "queued" | "error";
+
 /* Nom par défaut (fallback local / dev) */
 const DEFAULT_INSTITUTION_NAME = "NOM DE L'ETABLISSEMENT";
 
@@ -352,6 +354,8 @@ export default function ClassDevicePage() {
   const [msg, setMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [loadingRoster, setLoadingRoster] = useState(false);
+  const [saveUxState, setSaveUxState] = useState<SaveUxState>("idle");
+  const saveUxTimerRef = useRef<number | null>(null);
 
   const changedCount = useMemo(
     () => Object.values(rows).filter((r) => r.absent || r.late).length,
@@ -589,6 +593,13 @@ export default function ClassDevicePage() {
     return () => window.clearInterval(id);
   }, []);
 
+  useEffect(() => {
+    return () => {
+      clearSaveUxTimer();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // ✅ Helpers : distinguer offline / erreur serveur
   function extractRespError(r: any): string | null {
     const cands = [r?.error, r?.message, r?.data?.error, r?.data?.message, r?.data?.details];
@@ -605,6 +616,25 @@ export default function ClassDevicePage() {
     if (r?.queued === true) return true;
     if (r?.status === 0) return true;
     return false;
+  }
+
+  function clearSaveUxTimer() {
+    if (saveUxTimerRef.current != null && typeof window !== "undefined") {
+      window.clearTimeout(saveUxTimerRef.current);
+      saveUxTimerRef.current = null;
+    }
+  }
+
+  function pulseSaveUx(next: SaveUxState, timeoutMs = 2200) {
+    setSaveUxState(next);
+    clearSaveUxTimer();
+    if (next === "idle") return;
+    if (typeof window !== "undefined") {
+      saveUxTimerRef.current = window.setTimeout(() => {
+        setSaveUxState("idle");
+        saveUxTimerRef.current = null;
+      }, timeoutMs);
+    }
   }
 
   /* ───────── Sanctions (inline) ───────── */
@@ -1385,6 +1415,16 @@ export default function ClassDevicePage() {
     };
   }, [classId, activeSlotKey, activeConfiguredSlot, canUseFallbackLegacyFlow, isOnline, open]);
 
+  /* 2bis) préchauffer la liste des élèves dès que la classe est connue en ligne
+        pour que l'ouverture de séance hors réseau retrouve un roster déjà en cache */
+  useEffect(() => {
+    if (!classId || !isOnline) return;
+    void offlineGetJson(
+      `/api/class/roster?class_id=${classId}`,
+      `classDevice:roster:${classId}`
+    ).catch(() => null);
+  }, [classId, isOnline]);
+
   /* 3) charger roster si séance ouverte */
   useEffect(() => {
     if (!open) {
@@ -1393,16 +1433,19 @@ export default function ClassDevicePage() {
       return;
     }
     (async () => {
-      setLoadingRoster(true);
-      const j = await offlineGetJson(
-        `/api/class/roster?class_id=${open.class_id}`,
-        `classDevice:roster:${open.class_id}`
-      );
-      setRoster((j?.items || []) as RosterItem[]);
+      try {
+        setLoadingRoster(true);
+        const j = await offlineGetJson(
+          `/api/class/roster?class_id=${open.class_id}`,
+          `classDevice:roster:${open.class_id}`
+        ).catch(() => null as any);
+        setRoster(((j?.items || []) as RosterItem[]) ?? []);
 
-      const snap = loadClassDeviceSnapshot<ClassPageSnapshotState>(open.class_id);
-      setRows(snap?.state?.rows || {});
-      setLoadingRoster(false);
+        const snap = loadClassDeviceSnapshot<ClassPageSnapshotState>(open.class_id);
+        setRows(snap?.state?.rows || {});
+      } finally {
+        setLoadingRoster(false);
+      }
     })();
   }, [open?.class_id]);
 
@@ -1434,6 +1477,22 @@ export default function ClassDevicePage() {
   const scheduleBlockedOnline = isOnline && !open && !activeConfiguredSlot;
   const noScheduledSubjectNow =
     isOnline && !!classId && !!activeConfiguredSlot && !open && subjectLoadMode === "empty" && subjects.length === 0;
+
+  const saveButtonLabel = busy && saveUxState === "saving"
+    ? "Enregistrement…"
+    : saveUxState === "queued"
+      ? "Enregistré hors ligne ✓"
+      : saveUxState === "saved"
+        ? "Enregistré ✓"
+        : saveUxState === "error"
+          ? "Réessayer l’enregistrement"
+          : `Enregistrer${changedCount ? ` (${changedCount})` : ""}`;
+
+  const saveButtonClassName = [
+    saveUxState === "queued" ? "ring-4 ring-amber-400/40 animate-pulse" : "",
+    saveUxState === "saved" ? "ring-4 ring-emerald-400/35" : "",
+    saveUxState === "error" ? "ring-4 ring-red-300/40" : "",
+  ].join(" ").trim();
 
   useEffect(() => {
     clearReminderLoop();
@@ -1589,13 +1648,17 @@ export default function ClassDevicePage() {
 
     setBusy(true);
     setMsg(null);
+    setSaveUxState("saving");
 
     try {
       // ✅ Si on a une séance "client:*" et qu’on est en ligne, on doit d’abord la confirmer côté serveur
       let sessionId = String(cur.id || "");
       if (isClientSessionId(sessionId) && isOnline) {
         const ensured = await ensureServerSessionOrExplain();
-        if (!ensured) return;
+        if (!ensured) {
+          pulseSaveUx("error", 1800);
+          return;
+        }
         sessionId = String(ensured.id);
       }
 
@@ -1614,16 +1677,22 @@ export default function ClassDevicePage() {
       if ((r as any).ok) {
         const j = (r as any).data;
         setMsg(`Enregistré : ${j.upserted} abs./ret. — ${j.deleted} suppressions (présent).`);
+        pulseSaveUx("saved");
+        vibrateIfPossible(80);
         await refreshPending();
       } else if (shouldTreatAsOffline(r)) {
         setMsg("Hors connexion : enregistrement mis en attente (sync auto).");
+        pulseSaveUx("queued", 2600);
+        vibrateIfPossible([70, 60, 70]);
         await refreshPending();
       } else {
         const err = extractRespError(r);
         setMsg(err ? `Erreur serveur : ${err}` : "Erreur serveur : échec de l’enregistrement.");
+        pulseSaveUx("error", 2200);
       }
     } catch (e: any) {
       setMsg(e?.message || "Échec enregistrement");
+      pulseSaveUx("error", 2200);
     } finally {
       setBusy(false);
     }
@@ -1931,9 +2000,9 @@ export default function ClassDevicePage() {
           </div>
         ) : (
           <div className="flex items-center gap-2">
-            <Button onClick={saveMarks} disabled={busy}>
+            <Button onClick={saveMarks} disabled={busy} className={saveButtonClassName}>
               <Save className="h-4 w-4" />
-              {busy ? "Enregistrement…" : `Enregistrer${changedCount ? ` (${changedCount})` : ""}`}
+              {saveButtonLabel}
             </Button>
             <GhostButton
               tone="red"
@@ -1948,6 +2017,19 @@ export default function ClassDevicePage() {
             </GhostButton>
           </div>
         )}
+
+        {!busy && saveUxState === "queued" && (
+          <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900" aria-live="polite">
+            Enregistrement bien pris en compte sur l’appareil. Il sera synchronisé dès que le réseau revient.
+          </div>
+        )}
+
+        {!busy && saveUxState === "saved" && (
+          <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800" aria-live="polite">
+            Appel enregistré avec succès.
+          </div>
+        )}
+
         {msg && (
           <div className="text-sm text-slate-700" aria-live="polite">
             {msg}
@@ -2107,13 +2189,15 @@ export default function ClassDevicePage() {
                 {loadingRoster ? (
                   <tr>
                     <td className="px-3 py-4 text-slate-500" colSpan={5}>
-                      Chargement…
+                      Chargement de la liste…
                     </td>
                   </tr>
                 ) : roster.length === 0 ? (
                   <tr>
                     <td className="px-3 py-4 text-slate-500" colSpan={5}>
-                      Aucun élève.
+                      {isOnline
+                        ? "Aucun élève."
+                        : "Aucun élève en cache pour cette classe. Ouvrez une fois la classe en ligne pour rendre la liste disponible hors connexion."}
                     </td>
                   </tr>
                 ) : (
