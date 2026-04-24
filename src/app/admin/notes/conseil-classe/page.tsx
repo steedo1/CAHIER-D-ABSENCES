@@ -523,6 +523,15 @@ function annualDecisionLabel(avg: number | null | undefined): string {
   return "—";
 }
 
+function normalizeLabelForMatch(value: string | null | undefined): string {
+  return String(value ?? "")
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
 /* ───────── Page ───────── */
 
 export default function ConseilClassePage() {
@@ -913,8 +922,8 @@ export default function ConseilClassePage() {
   }, [councilRows, enriched]);
 
   const effectiveSubjects = useMemo<BulletinSubject[]>(() => {
-    const subjectMetaById = new Map(
-      (enriched?.response.subjects ?? []).map((subject) => [subject.subject_id, subject] as const)
+    const subjectMetaById = new Map<string, BulletinSubject>(
+      (enriched?.response.subjects ?? []).map((subject) => [subject.subject_id, subject])
     );
     const seen = new Set<string>();
     const subjects: BulletinSubject[] = [];
@@ -922,6 +931,8 @@ export default function ConseilClassePage() {
     councilRows.forEach((row) => {
       (row.per_subject ?? []).forEach((ps) => {
         const subjectId = String(ps?.subject_id ?? "").trim();
+        const avg = ps?.avg20;
+        if (avg === null || avg === undefined || !Number.isFinite(Number(avg))) return;
         if (!subjectId || seen.has(subjectId)) return;
         seen.add(subjectId);
 
@@ -946,42 +957,47 @@ export default function ConseilClassePage() {
   const subjectStats = useMemo<SubjectCouncilStat[]>(() => {
     const effectif = councilRows.length;
 
-    return effectiveSubjects.map((subject) => {
-      const values = councilRows
-        .map((row) => {
+    return effectiveSubjects
+      .map((subject) => {
+        const values = councilRows
+          .map((row) => {
+            const cell = row.per_subject?.find((ps) => ps.subject_id === subject.subject_id);
+            const value = cell?.avg20;
+            return value === null || value === undefined ? null : Number(value);
+          })
+          .filter((v): v is number => v !== null && Number.isFinite(v));
+
+        let teacher_name: string | null = null;
+        let teacher_signature_png: string | null = null;
+        for (const row of councilRows) {
           const cell = row.per_subject?.find((ps) => ps.subject_id === subject.subject_id);
-          return cell?.avg20 ?? null;
-        })
-        .filter((v): v is number => v !== null && v !== undefined && Number.isFinite(v));
-
-      let teacher_name: string | null = null;
-      let teacher_signature_png: string | null = null;
-      for (const row of councilRows) {
-        const cell = row.per_subject?.find((ps) => ps.subject_id === subject.subject_id);
-        if (cell?.teacher_name && !teacher_name) {
-          teacher_name = cell.teacher_name;
+          const cellAvg = cell?.avg20;
+          if (cellAvg === null || cellAvg === undefined || !Number.isFinite(Number(cellAvg))) continue;
+          if (cell?.teacher_name && !teacher_name) {
+            teacher_name = cell.teacher_name;
+          }
+          if (cell?.teacher_signature_png && !teacher_signature_png) {
+            teacher_signature_png = cell.teacher_signature_png;
+          }
         }
-        if (cell?.teacher_signature_png && !teacher_signature_png) {
-          teacher_signature_png = cell.teacher_signature_png;
-        }
-      }
 
-      return {
-        subject_id: subject.subject_id,
-        subject_name: subject.subject_name,
-        coeff: Number(subject.coeff_bulletin ?? 0),
-        teacher_name,
-        teacher_signature_png,
-        noted_count: values.length,
-        not_noted_count: Math.max(0, effectif - values.length),
-        avg20: values.length
-          ? round2(values.reduce((a, b) => a + b, 0) / values.length)
-          : null,
-        gte10: values.filter((v) => v >= 10).length,
-        between85And10: values.filter((v) => v >= 8.5 && v < 10).length,
-        lt85: values.filter((v) => v < 8.5).length,
-      };
-    });
+        return {
+          subject_id: subject.subject_id,
+          subject_name: subject.subject_name,
+          coeff: Number(subject.coeff_bulletin ?? 0),
+          teacher_name,
+          teacher_signature_png,
+          noted_count: values.length,
+          not_noted_count: Math.max(0, effectif - values.length),
+          avg20: values.length
+            ? round2(values.reduce((a, b) => a + b, 0) / values.length)
+            : null,
+          gte10: values.filter((v) => v >= 10).length,
+          between85And10: values.filter((v) => v >= 8.5 && v < 10).length,
+          lt85: values.filter((v) => v < 8.5).length,
+        };
+      })
+      .filter((stat) => stat.noted_count > 0);
   }, [effectiveSubjects, councilRows]);
 
   const councilTeacherRows = useMemo(() => {
@@ -993,6 +1009,34 @@ export default function ConseilClassePage() {
       }
     >();
 
+    const addTeacherSubject = (teacherNameRaw: string | null | undefined, subjectRaw: string | null | undefined) => {
+      const teacherName = String(teacherNameRaw || "").trim();
+      const subjectLabel = String(subjectRaw || "").trim();
+      if (!teacherName) return;
+
+      const key = normalizeLabelForMatch(teacherName) || teacherName;
+      const existing = grouped.get(key);
+      if (existing) {
+        if (subjectLabel) existing.subjects.add(subjectLabel);
+        return;
+      }
+
+      grouped.set(key, {
+        teacherName,
+        subjects: new Set(subjectLabel ? [subjectLabel] : []),
+      });
+    };
+
+    const notedSubjectLabels = new Set(
+      subjectStats
+        .map((subject) => normalizeLabelForMatch(subject.subject_name))
+        .filter(Boolean)
+    );
+
+    subjectStats.forEach((subject) => {
+      addTeacherSubject(subject.teacher_name, subject.subject_name);
+    });
+
     currentAffectations
       .filter((item) =>
         Array.isArray(item.classes)
@@ -1000,24 +1044,13 @@ export default function ConseilClassePage() {
           : false
       )
       .forEach((item) => {
-        const teacherId = String(item.teacher?.id || "").trim();
+        const subjectLabel = String(item.subject?.label || "").trim();
+        if (!subjectLabel || !notedSubjectLabels.has(normalizeLabelForMatch(subjectLabel))) return;
+
         const teacherName = String(
           item.teacher?.display_name || item.teacher?.email || item.teacher?.phone || ""
         ).trim();
-        const subjectLabel = String(item.subject?.label || "").trim();
-
-        if (!teacherId || !teacherName) return;
-
-        const existing = grouped.get(teacherId);
-        if (existing) {
-          if (subjectLabel) existing.subjects.add(subjectLabel);
-          return;
-        }
-
-        grouped.set(teacherId, {
-          teacherName,
-          subjects: new Set(subjectLabel ? [subjectLabel] : []),
-        });
+        addTeacherSubject(teacherName, subjectLabel);
       });
 
     return Array.from(grouped.values())
@@ -1033,13 +1066,14 @@ export default function ConseilClassePage() {
           )
           .join(", "),
       }))
+      .filter((row) => row.teacherName.trim() && row.subjectsLabel.trim())
       .sort((a, b) =>
         a.teacherName.localeCompare(b.teacherName, undefined, {
           sensitivity: "base",
           numeric: true,
         })
       );
-  }, [currentAffectations, selectedClassId]);
+  }, [currentAffectations, selectedClassId, subjectStats]);
 
   const annualMode = useMemo(
     () => councilRows.some((r) => r.annual_avg !== null && r.annual_avg !== undefined),
@@ -1197,6 +1231,57 @@ export default function ConseilClassePage() {
       ).length,
     };
   }, [annualRecapRows]);
+
+  const periodTopThreeGroups = useMemo(() => {
+    if (!annualPeriods.length || !annualRecapRows.length) return [];
+
+    return annualPeriods
+      .map((period, periodIndex) => {
+        const rows = annualRecapRows
+          .map((row) => {
+            const periodCell = row.periods.find((p) => p.period_id === period.id) || null;
+            const avg = periodCell?.avg ?? null;
+            const rank = periodCell?.rank ?? null;
+
+            return {
+              student_id: row.student_id,
+              full_name: row.full_name,
+              matricule: row.matricule,
+              avg,
+              rank,
+            };
+          })
+          .filter((row) => row.avg !== null && row.avg !== undefined && Number.isFinite(Number(row.avg)))
+          .sort((a, b) => {
+            const rankA =
+              a.rank !== null && a.rank !== undefined
+                ? Number(a.rank)
+                : Number.POSITIVE_INFINITY;
+            const rankB =
+              b.rank !== null && b.rank !== undefined
+                ? Number(b.rank)
+                : Number.POSITIVE_INFINITY;
+            if (rankA !== rankB) return rankA - rankB;
+
+            const avgA = a.avg !== null && a.avg !== undefined ? Number(a.avg) : -Infinity;
+            const avgB = b.avg !== null && b.avg !== undefined ? Number(b.avg) : -Infinity;
+            if (avgB !== avgA) return avgB - avgA;
+
+            return a.full_name.localeCompare(b.full_name, undefined, {
+              sensitivity: "base",
+              numeric: true,
+            });
+          })
+          .slice(0, 3);
+
+        return {
+          period_id: period.id,
+          label: shortPeriodLabel(period, periodIndex),
+          rows,
+        };
+      })
+      .filter((group) => group.rows.length > 0);
+  }, [annualPeriods, annualRecapRows]);
 
   const currentClass = useMemo(
     () => classes.find((c) => c.id === selectedClassId) || null,
@@ -1817,7 +1902,7 @@ export default function ConseilClassePage() {
               <div className="mt-3">
                 <OfficialBand>Membres du conseil</OfficialBand>
                 <div className="mt-1 border p-3 text-[11px]" style={{ borderColor: "var(--pv-grid)", background: "var(--pv-soft)" }}>
-                  <div className="mb-2 font-semibold uppercase">Champ manuel à compléter</div>
+                  <div className="mb-2 font-semibold uppercase"></div>
                   <div className="pv-line-field" />
                 </div>
 
@@ -1900,11 +1985,44 @@ export default function ConseilClassePage() {
 
                 <div className="mt-3 grid grid-cols-5 gap-2 text-[11px]">
                   <QuickCell label="Effectif" value={String(annualRecapStats.effectif)} />
-                  <QuickCell label="1re annuelle" value={formatNumber(annualRecapStats.highest)} />
-                  <QuickCell label="Dernière annuelle" value={formatNumber(annualRecapStats.lowest)} />
+                  <QuickCell label="Meilleure moy." value={formatNumber(annualRecapStats.highest)} />
+                  <QuickCell label="Plus faible moy." value={formatNumber(annualRecapStats.lowest)} />
                   <QuickCell label="TH" value={String(annualRecapStats.honour)} />
                   <QuickCell label="TH + Enc./Fél." value={String(annualRecapStats.encouragement + annualRecapStats.excellence)} />
                 </div>
+
+                {periodTopThreeGroups.length > 0 ? (
+                  <div className="mt-3">
+                    <OfficialBand>Les 3 premiers de la classe par trimestre</OfficialBand>
+                    <div className="mt-1 grid grid-cols-3 gap-2">
+                      {periodTopThreeGroups.map((group) => (
+                        <div key={`period-top-${group.period_id}`} className="min-w-0">
+                          <div className="border border-slate-300 bg-slate-100 px-2 py-1 text-center text-[10px] font-bold uppercase text-slate-800">
+                            {group.label}
+                          </div>
+                          <table className="pv-grid-table pv-xs">
+                            <thead>
+                              <tr>
+                                <th style={{ width: "16%" }}>Rg</th>
+                                <th>Nom et prénom</th>
+                                <th style={{ width: "22%" }}>Moy.</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {group.rows.map((row) => (
+                                <tr key={`${group.period_id}-${row.student_id}`}>
+                                  <OfficialTd center strong>{row.rank ?? "—"}</OfficialTd>
+                                  <OfficialTd strong>{row.full_name}</OfficialTd>
+                                  <OfficialTd center strong>{formatNumber(row.avg)}</OfficialTd>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
 
                 <div className="mt-3">
                   <OfficialBand>Récapitulatif des moyennes générales et annuelles</OfficialBand>
