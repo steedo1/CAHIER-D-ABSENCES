@@ -274,6 +274,11 @@ const NOTES_ITEMS: NavItem[] = [
   { href: "/admin/notes", label: "Vue d’ensemble", Icon: NotebookPen },
   { href: "/admin/notes/evaluations", label: "Stats évaluations", Icon: NotebookPen },
   { href: "/admin/bulletins", label: "Bulletins", Icon: FileSpreadsheet },
+  {
+    href: "/admin/notes/matrice-annuelle",
+    label: "Matrice annuelle",
+    Icon: FileSpreadsheet,
+  },
   { href: "/admin/notes/statistiques", label: "Matrices", Icon: BarChart3 },
 ];
 
