@@ -1,966 +1,367 @@
-// src/app/api/admin/statistics/route.ts
+// src/app/api/admin/notes/stats/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
-/* ───────── helpers communs ───────── */
-function toDayRange(from: string, to: string) {
-  const [fy, fm, fd] = from.split("-").map(Number);
-  const [ty, tm, td] = to.split("-").map(Number);
-  const fromLocal = new Date(fy, fm - 1, fd, 0, 0, 0, 0);
-  const toLocalNext = new Date(ty, tm - 1, td + 1, 0, 0, 0, 0);
-  return {
-    fromISO: fromLocal.toISOString(),
-    toISOExclusive: toLocalNext.toISOString(),
-  };
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+type EvalRow = {
+  id: string;
+  class_id: string;
+  subject_id: string | null;
+  eval_date: string;
+  scale: number | null;
+  coeff: number | null;
+  is_published: boolean | null;
+  classes?: any;
+};
+
+type MarkRow = {
+  evaluation_id: string;
+  raw_score: number | null;
+  mark_20: number | null;
+};
+
+type ClassSubjectStat = {
+  class_id: string;
+  class_label: string;
+  level: string | null;
+  subject_id: string | null;
+  subject_name: string | null;
+  evals_count: number;
+  notes_count: number;
+  avg_score_20: number | null;
+};
+
+function relOne<T = any>(v: T | T[] | null | undefined): T | null {
+  if (Array.isArray(v)) return v[0] ?? null;
+  return v ?? null;
 }
 
-function niceName(p: any) {
-  const dn = String(p?.display_name ?? "").trim();
-  const ln = String(p?.last_name ?? "").trim();
-  const fn = String(p?.first_name ?? "").trim();
-  const em = String(p?.email ?? "").trim();
-  const ph = String(p?.phone ?? "").trim();
-  const emLocal = em.includes("@") ? em.split("@")[0] : em;
-  const id = String(p?.id ?? "");
-  return (
-    dn ||
-    `${ln} ${fn}`.trim() ||
-    emLocal ||
-    ph ||
-    `(enseignant ${id.slice(0, 6)})`
-  );
+function round2(v: number | null): number | null {
+  if (v == null || !Number.isFinite(v)) return null;
+  return Number(v.toFixed(2));
 }
 
-async function tableExists(db: any, name: string) {
-  const { error } = await db.from(name).select("*").limit(1);
-  return !error;
-}
-
-/** Pour un subjects.id, renvoie tous les IDs possibles pour sessions.subject_id */
-async function resolveSessionSubjectIds(
-  db: any,
-  baseSubjectId: string,
-  institutionId: string | null
-): Promise<string[]> {
-  const ids = new Set<string>([baseSubjectId]);
-  try {
-    let q = db
-      .from("institution_subjects")
-      .select("id, subject_id")
-      .eq("subject_id", baseSubjectId);
-    if (institutionId) q = q.eq("institution_id", institutionId);
-    const { data: links } = await q;
-    for (const l of links || []) ids.add(String(l.id));
-  } catch {}
-  return Array.from(ids);
-}
-
-const pad2 = (n: number) => String(n).padStart(2, "0");
-
-/* ───────── helpers HH:MM / dates (Abidjan) ───────── */
-function hmToMin(hhmm: string) {
-  const [h, m] = (hhmm || "00:00").split(":").map((x) => parseInt(x, 10));
-  return (isFinite(h) ? h : 0) * 60 + (isFinite(m) ? m : 0);
-}
-
-function minToHM(min: number) {
-  const h = Math.floor(min / 60);
-  const m = min % 60;
-  return `${pad2(h)}:${pad2(m)}`;
-}
-
-/** Différence (en minutes) entre startISO et actualISO (si null → 0) */
-function diffMinutes(startISO: string, actualISO: string | null) {
-  try {
-    const start = new Date(startISO);
-    const end = actualISO ? new Date(actualISO) : start;
-    const diffMs = end.getTime() - start.getTime();
-    return Math.floor(diffMs / 60000);
-  } catch {
-    return 0;
-  }
-}
-
-/**
- * Minutes réellement effectuées = minutes prévues − retard (premier appel − heure prévue)
- * (tout est borné à 0 pour éviter les valeurs négatives)
- */
-function effectiveMinutesFromSession(
-  expectedMinutes: number,
-  startISO: string,
-  actualISO: string | null
-) {
-  const planned = Math.max(0, Math.round(expectedMinutes || 0));
-  const delta = diffMinutes(startISO, actualISO);
-  const lateness = Math.max(0, delta);
-  const eff = Math.max(0, planned - lateness);
-  return eff;
-}
-
-/**
- * ✅ Séance réellement effectuée = clic "Démarrer" DANS le créneau prévu.
- * - si actual_call_at est null → FAUX
- * - si clic >= fin du créneau → FAUX
- * - si expected_minutes manquant/0 → on prend 60 min par défaut
- */
-function isCallWithinPlannedSlot(
-  startISO: string,
-  actualISO: string | null,
-  expectedMinutes: number
-) {
-  if (!actualISO) return false;
-
-  const planned = Math.max(0, Math.round(expectedMinutes || 0));
-  const durMin = planned > 0 ? planned : 60;
-
-  const start = new Date(startISO).getTime();
-  const actual = new Date(actualISO).getTime();
-  if (!Number.isFinite(start) || !Number.isFinite(actual)) return false;
-
-  const end = start + durMin * 60_000;
-  return actual >= start && actual < end;
-}
-
-function rangeDates(from: string, to: string): string[] {
-  const [fy, fm, fd] = from.split("-").map(Number);
-  const [ty, tm, td] = to.split("-").map(Number);
-  const cur = new Date(fy, fm - 1, fd, 12, 0, 0, 0);
-  const end = new Date(ty, tm - 1, td, 12, 0, 0, 0);
-  const out: string[] = [];
-  while (cur.getTime() <= end.getTime()) {
-    const y = cur.getFullYear();
-    const m = String(cur.getMonth() + 1).padStart(2, "0");
-    const d = String(cur.getDate()).padStart(2, "0");
-    out.push(`${y}-${m}-${d}`);
-    cur.setDate(cur.getDate() + 1);
-  }
+function chunks<T>(arr: T[], size = 500): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
   return out;
 }
 
-/* ───────── slots manuels ───────── */
-function buildUniformSlots(startHour: number, endHour: number, slotMin: number) {
-  const out: { start: string; end: string }[] = [];
-  let cur = startHour * 60;
-  const end = endHour * 60;
-  while (cur < end) {
-    const next = Math.min(cur + slotMin, end);
-    out.push({ start: minToHM(cur), end: minToHM(next) });
-    cur = next;
-  }
-  return out;
-}
-
-/** ancre l’arrondi sur startHour et coupe hors plage */
-function bucketToSlotStartAligned(
-  h: number,
-  min: number,
-  slotMin: number,
-  startHour: number,
-  endHour: number
-): string | null {
-  const t = h * 60 + min;
-  const first = startHour * 60;
-  const last = endHour * 60;
-  if (t < first || t >= last) return null;
-  const k = Math.floor((t - first) / slotMin);
-  const v = first + k * slotMin;
-  return minToHM(v);
-}
-
-/* ───────── slots établissement (institution_periods) ───────── */
-async function buildInstitutionSlots(
-  srv: ReturnType<typeof getSupabaseServiceClient>,
-  institutionId: string
-) {
-  const { data: per, error } = await srv
-    .from("institution_periods")
-    .select("weekday, period_no, label, start_time, end_time")
-    .eq("institution_id", institutionId)
-    .order("weekday", { ascending: true })
-    .order("period_no", { ascending: true });
-  if (error) throw new Error(error.message);
-
-  // Unifie par heure de début (HH:MM) — on conserve le premier end rencontré
-  const firstForStart = new Map<string, { start: string; end: string }>();
-  for (const p of per || []) {
-    const s = String(p.start_time || "08:00:00").slice(0, 5);
-    const e = String(p.end_time || "09:00:00").slice(0, 5);
-    if (!firstForStart.has(s)) firstForStart.set(s, { start: s, end: e });
-  }
-  return Array.from(firstForStart.values()).sort((a, b) =>
-    a.start.localeCompare(b.start)
-  );
-}
-
-/* ───────────────────────────────────── */
 export async function GET(req: NextRequest) {
-  const srv = getSupabaseServiceClient();
-  const rls = await getSupabaseServerClient();
+  const supabase = await getSupabaseServerClient();
 
   try {
-    const { searchParams } = new URL(req.url);
-    const mode = (searchParams.get("mode") || "summary") as
-      | "summary"
-      | "detail"
-      | "timesheet";
-    const from = searchParams.get("from");
-    const to = searchParams.get("to");
-    const subject_id = searchParams.get("subject_id") || null;
-    const teacher_id = searchParams.get("teacher_id") || null;
+    const {
+      data: { user },
+      error: authError,
+    } = await supabase.auth.getUser();
 
-    if (!from || !to) {
+    if (authError || !user) {
       return NextResponse.json(
-        { error: "from & to requis (YYYY-MM-DD)" },
+        { ok: false, error: "UNAUTHENTICATED" },
+        { status: 401 }
+      );
+    }
+
+    const { data: roleRow, error: roleErr } = await supabase
+      .from("user_roles")
+      .select("institution_id, role")
+      .eq("profile_id", user.id)
+      .maybeSingle();
+
+    if (roleErr || !roleRow || !["super_admin", "admin"].includes(roleRow.role)) {
+      return NextResponse.json(
+        { ok: false, error: "FORBIDDEN" },
+        { status: 403 }
+      );
+    }
+
+    const institutionId = roleRow.institution_id as string | null;
+    if (!institutionId) {
+      return NextResponse.json(
+        { ok: false, error: "NO_INSTITUTION" },
         { status: 400 }
       );
     }
 
-    const { fromISO, toISOExclusive } = toDayRange(from, to);
+    const { searchParams } = req.nextUrl;
+    const from = searchParams.get("from");
+    const to = searchParams.get("to");
+    const published = searchParams.get("published"); // "true" | "false" | null
 
-    // Établissement de l’utilisateur courant (RLS)
-    const {
-      data: { user },
-    } = await rls.auth.getUser();
-    let inst: string | null = null;
-    if (user) {
-      const { data: me } = await rls
-        .from("profiles")
-        .select("institution_id")
-        .eq("id", user.id)
-        .maybeSingle();
-      inst = (me?.institution_id as string) || null;
+    let evalQuery = supabase
+      .from("grade_evaluations")
+      .select(
+        `
+        id,
+        class_id,
+        subject_id,
+        eval_date,
+        scale,
+        coeff,
+        is_published,
+        classes!inner(
+          institution_id,
+          label,
+          level
+        )
+      `
+      )
+      .eq("classes.institution_id", institutionId)
+      .order("eval_date", { ascending: true })
+      .limit(10000);
+
+    if (from) evalQuery = evalQuery.gte("eval_date", from);
+    if (to) evalQuery = evalQuery.lte("eval_date", to);
+    if (published === "true") evalQuery = evalQuery.eq("is_published", true);
+    if (published === "false") evalQuery = evalQuery.eq("is_published", false);
+
+    const { data: evalsData, error: evalErr } = await evalQuery;
+
+    if (evalErr) {
+      console.error("[admin.notes.stats] grade_evaluations error", evalErr);
+      return NextResponse.json(
+        { ok: false, error: "EVALS_ERROR" },
+        { status: 500 }
+      );
     }
 
-    /* ============================ TIMESHEET ============================ */
-    if (mode === "timesheet") {
-      if (!teacher_id) {
-        return NextResponse.json(
-          { error: "teacher_id requis pour mode=timesheet" },
-          { status: 400 }
-        );
-      }
-
-      const usePeriods = searchParams.get("use_periods") === "1";
-      const slotMin = Math.max(1, parseInt(searchParams.get("slot") || "60", 10));
-      const startHour = Math.min(
-        23,
-        Math.max(0, parseInt(searchParams.get("start_hour") || "7", 10))
-      );
-      const endHour = Math.min(
-        24,
-        Math.max(1, parseInt(searchParams.get("end_hour") || "18", 10))
-      );
-
-      const dates = rangeDates(from, to);
-
-      let instForSlots = inst;
-      if (usePeriods && !instForSlots) {
-        const { data: profInst } = await srv
-          .from("profiles")
-          .select("institution_id")
-          .eq("id", teacher_id)
-          .maybeSingle();
-        instForSlots = (profInst?.institution_id as string) || null;
-      }
-
-      const subjectsSet = new Set<string>();
-      let teacherName: string | null = null;
-      {
-        let q = srv
-          .from("teacher_subjects")
-          .select("profile_id, subject_name, teacher_name");
-        if (inst) q = q.eq("institution_id", inst);
-        const { data: ts } = await q.eq("profile_id", teacher_id);
-        for (const r of ts || []) {
-          const nm = String(r.subject_name ?? "").trim();
-          if (nm) subjectsSet.add(nm);
-          if (!teacherName) {
-            const tnm = String(r.teacher_name ?? "").trim();
-            if (tnm) teacherName = tnm;
-          }
-        }
-        if (!teacherName) {
-          const { data: p } = await srv
-            .from("profiles")
-            .select("id, display_name, first_name, last_name, email, phone")
-            .eq("id", teacher_id)
-            .maybeSingle();
-          if (p) teacherName = niceName(p);
-        }
-      }
-
-      const sessionsTable =
-        (await tableExists(srv, "teacher_sessions"))
-          ? "teacher_sessions"
-          : (await tableExists(srv, "class_sessions"))
-            ? "class_sessions"
-            : "sessions";
-
-      let qCT = srv
-        .from("class_teachers")
-        .select("class_id, subject_id")
-        .eq("teacher_id", teacher_id);
-      if (inst) qCT = qCT.eq("institution_id", inst);
-      const { data: ctPairs } = await qCT;
-
-      const pairKey = (c?: string | null, s?: string | null) =>
-        `${c ?? ""}|${s ?? ""}`;
-
-      const allowedPairs = new Set<string>(
-        (ctPairs || []).map((r) =>
-          pairKey(String(r.class_id), r.subject_id ? String(r.subject_id) : null)
-        )
-      );
-
-      // Sessions créées côté prof
-      let q1 = srv
-        .from(sessionsTable)
-        .select(
-          "id, teacher_id, class_id, subject_id, started_at, actual_call_at, expected_minutes, institution_id, created_by"
-        )
-        .eq("teacher_id", teacher_id)
-        .gte("started_at", fromISO)
-        .lt("started_at", toISOExclusive);
-      if (inst) q1 = q1.eq("institution_id", inst);
-      const { data: sOwn } = await q1;
-
-      // Sessions créées côté compte-classe (mêmes classes du prof)
-      const classIdsForTeacher = Array.from(
-        new Set((ctPairs || []).map((r) => String(r.class_id)))
-      );
-      let sFromClass: any[] = [];
-      if (classIdsForTeacher.length) {
-        let q2 = srv
-          .from(sessionsTable)
-          .select(
-            "id, teacher_id, class_id, subject_id, started_at, actual_call_at, expected_minutes, institution_id, created_by"
-          )
-          .in("class_id", classIdsForTeacher)
-          .gte("started_at", fromISO)
-          .lt("started_at", toISOExclusive);
-        if (inst) q2 = q2.eq("institution_id", inst);
-        const { data: sRaw } = await q2;
-        sFromClass = (sRaw || []).filter((r) =>
-          allowedPairs.has(
-            pairKey(
-              r.class_id ? String(r.class_id) : null,
-              r.subject_id ? String(r.subject_id) : null
-            )
-          )
-        );
-      }
-
-      // Dédupe par ID seulement (on dédoublonnera ensuite PAR CELLULE)
-      const byId = new Map<string, any>();
-      for (const s of sOwn || []) byId.set(String(s.id), s);
-      for (const s of sFromClass || []) byId.set(String(s.id), s);
-
-      const sessions = Array.from(byId.values()).map((s: any) => ({
-        id: String(s.id),
-        class_id: s.class_id ? String(s.class_id) : null,
-        subject_id: s.subject_id ? String(s.subject_id) : null,
-        started_at: String(s.started_at),
-        actual_call_at: s.actual_call_at ? String(s.actual_call_at) : null,
-        expected_minutes: Number(s.expected_minutes || 0),
-        teacher_id: s.teacher_id ? String(s.teacher_id) : null,
-        created_by: s.created_by ? String(s.created_by) : null,
-      }));
-
-      const classIdsFromSessions = Array.from(
-        new Set(sessions.map((s) => s.class_id).filter(Boolean))
-      ) as string[];
-
-      let classes: { id: string; label: string }[] = [];
-      if (classIdsForTeacher.length) {
-        const { data: clsA } = await srv
-          .from("classes")
-          .select("id,label")
-          .in("id", classIdsForTeacher);
-        classes = (clsA || []).map((c: any) => ({
-          id: String(c.id),
-          label: String(c.label ?? ""),
-        }));
-      }
-
-      const known = new Set(classes.map((c) => c.id));
-      const missingClasses = classIdsFromSessions.filter((id) => !known.has(id));
-      if (missingClasses.length) {
-        const { data: clsB } = await srv
-          .from("classes")
-          .select("id,label")
-          .in("id", missingClasses);
-        const extra = (clsB || []).map((c: any) => ({
-          id: String(c.id),
-          label: String(c.label ?? ""),
-        }));
-        classes = [...classes, ...extra];
-      }
-
-      classes.sort((a, b) => a.label.localeCompare(b.label, "fr"));
-
-      let slots: { start: string; end: string }[] = [];
-      if (usePeriods && instForSlots) {
-        slots = await buildInstitutionSlots(srv, instForSlots);
-      } else {
-        slots = buildUniformSlots(startHour, endHour, slotMin);
-      }
-
-      const TZ = "Africa/Abidjan";
-      const fmtYMD = new Intl.DateTimeFormat("en-CA", {
-        timeZone: TZ,
-        year: "numeric",
-        month: "2-digit",
-        day: "2-digit",
-      });
-      const fmtHM = new Intl.DateTimeFormat("fr-FR", {
-        timeZone: TZ,
-        hour: "2-digit",
-        minute: "2-digit",
-        hour12: false,
-      });
-
-      const getHM = (d: Date) => {
-        const parts = fmtHM.formatToParts(d);
-        const h = parseInt(parts.find((p) => p.type === "hour")?.value || "0", 10);
-        const m = parseInt(
-          parts.find((p) => p.type === "minute")?.value || "0",
-          10
-        );
-        return { h, m };
-      };
-
-      const classIdSet = new Set(classes.map((c) => c.id));
-      const datesSet = new Set(dates);
-
-      // key = `${date}|${slotStart}|${classId}` -> ["HH:MM"] (UNIQUE : 1 seul clic)
-      const cells: Record<string, string[]> = {};
-      const cellsMeta: Record<
-        string,
-        { hhmm: string; origin?: "teacher" | "class_device" | "other" }[]
-      > = {};
-
-      const slotStarts = slots.map((s) => s.start);
-
-      function slotStartForHM(hhmm: string): string | null {
-        if (!hhmm) return null;
-        if (slotStarts.includes(hhmm)) return hhmm;
-
-        if (usePeriods) {
-          const t = hmToMin(hhmm);
-          for (const sl of slots) {
-            const a = hmToMin(sl.start);
-            const b = hmToMin(sl.end);
-            if (t >= a && t < b) return sl.start;
-          }
-          return null;
-        }
-
-        const [h, m] = hhmm.split(":").map((x) => parseInt(x, 10));
-        if (!isFinite(h) || !isFinite(m)) return null;
-        return bucketToSlotStartAligned(h, m, slotMin, startHour, endHour);
-      }
-
-      // Remplit les cellules : 1 cellule = 1 classe, 1 créneau
-      for (const s of sessions) {
-        if (!s.class_id || !classIdSet.has(s.class_id)) continue;
-        if (!s.actual_call_at) continue;
-
-        const sched = new Date(s.started_at);
-        const dateKey = fmtYMD.format(sched);
-        if (!datesSet.has(dateKey)) continue;
-
-        const schedHM = (() => {
-          const { h, m } = getHM(sched);
-          return `${pad2(h)}:${pad2(m)}`;
-        })();
-
-        const slotKey = slotStartForHM(schedHM);
-        if (!slotKey) continue;
-
-        const slotObj = slots.find((x) => x.start === slotKey);
-        if (!slotObj) continue;
-
-        const slotLen = Math.max(0, hmToMin(slotObj.end) - hmToMin(slotObj.start));
-        if (slotLen <= 0) continue;
-
-        // clic doit être DANS le créneau (slotLen)
-        const delta = diffMinutes(s.started_at, s.actual_call_at);
-        if (delta < 0 || delta >= slotLen) continue;
-
-        const click = new Date(s.actual_call_at);
-        const clickHM = (() => {
-          const { h, m } = getHM(click);
-          return `${pad2(h)}:${pad2(m)}`;
-        })();
-
-        const key = `${dateKey}|${slotKey}|${s.class_id}`;
-
-        // Garder uniquement le clic le plus tôt par cellule (évite double comptage prof + compte-classe)
-        const prev = cells[key]?.[0];
-        if (!prev || clickHM < prev) {
-          cells[key] = [clickHM];
-
-          let origin: "teacher" | "class_device" | "other" = "other";
-          if (s.created_by && s.teacher_id && s.created_by === s.teacher_id) origin = "teacher";
-          else if (s.created_by) origin = "class_device";
-
-          cellsMeta[key] = [{ hhmm: clickHM, origin }];
-        }
-      }
-
-      // ✅ Total minutes effectives = 1 fois par CRÉNEAU (date + slotStart), pas par classe
-      const slotByStart = new Map(slots.map((s) => [s.start, s]));
-
-      // key = `${date}|${slotStart}` -> earliest clickHM across classes
-      const slotClicks: Record<string, string> = {};
-      for (const k of Object.keys(cells)) {
-        const [dateKey, slotStart] = k.split("|");
-        const clickHM = cells[k]?.[0];
-        if (!clickHM) continue;
-        const sk = `${dateKey}|${slotStart}`;
-        const prev = slotClicks[sk];
-        if (!prev || clickHM < prev) slotClicks[sk] = clickHM;
-      }
-
-      let total_minutes = 0;
-      for (const sk of Object.keys(slotClicks)) {
-        const [, slotStart] = sk.split("|");
-        const sl = slotByStart.get(slotStart);
-        if (!sl) continue;
-
-        const slotLen = Math.max(0, hmToMin(sl.end) - hmToMin(sl.start));
-        if (slotLen <= 0) continue;
-
-        const clickHM = slotClicks[sk];
-        const lateness = Math.max(0, hmToMin(clickHM) - hmToMin(sl.start));
-        const eff = Math.max(0, slotLen - lateness);
-        total_minutes += eff;
-      }
-
-      const total_sessions = Object.keys(slotClicks).length;
-
-      return NextResponse.json({
-        teacher: {
-          id: teacher_id,
-          name: teacherName || "(enseignant)",
-          subjects: Array.from(subjectsSet).sort((a, b) => a.localeCompare(b, "fr")),
-          total_minutes,
-          total_sessions,
-        },
-        dates,
-        classes,
-        slots,
-        cells,
-        cellsMeta,
-      });
-    }
-
-    /* ====================== SUMMARY / DETAIL ====================== */
-
-    // 1) Base enseignants (de l’établissement)
-    let qUR = srv.from("user_roles").select("profile_id").eq("role", "teacher");
-    if (inst) qUR = qUR.eq("institution_id", inst);
-    const { data: ur } = await qUR;
-
-    const allTeacherIds = Array.from(
-      new Set((ur || []).map((r: any) => String(r.profile_id)))
+    const evalRows = ((evalsData || []) as any as EvalRow[]).filter(
+      (ev) => ev.id && ev.class_id && ev.subject_id
     );
 
-    // 2) Noms & disciplines depuis teacher_subjects
-    let qTS = srv
-      .from("teacher_subjects")
-      .select("profile_id, subject_id, teacher_name, subject_name, institution_id");
-    if (inst) qTS = qTS.eq("institution_id", inst);
-    if (allTeacherIds.length) qTS = qTS.in("profile_id", allTeacherIds);
-    if (subject_id) qTS = qTS.eq("subject_id", subject_id);
-    const { data: tsRows } = await qTS;
-
-    const teacherNameById = new Map<string, string>();
-    for (const r of tsRows || []) {
-      const pid = String(r.profile_id);
-      const nm = String(r.teacher_name ?? "").trim();
-      if (!teacherNameById.has(pid) && nm) teacherNameById.set(pid, nm);
+    if (!evalRows.length) {
+      return NextResponse.json({
+        ok: true,
+        meta: {
+          from,
+          to,
+          published,
+          total_evaluations: 0,
+          total_subject_classes: 0,
+        },
+        by_class_subject: [] as ClassSubjectStat[],
+      });
     }
 
-    const missing = allTeacherIds.filter((id) => !teacherNameById.has(id));
-    if (missing.length) {
-      const { data: profs } = await srv
-        .from("profiles")
-        .select("id, display_name, first_name, last_name, email, phone")
-        .in("id", missing);
-      for (const p of profs || []) teacherNameById.set(String(p.id), niceName(p));
-    }
+    const evalIds = Array.from(new Set(evalRows.map((ev) => ev.id)));
+    const subjectIds = Array.from(
+      new Set(evalRows.map((ev) => String(ev.subject_id || "")).filter(Boolean))
+    );
 
-    const subjectNamesPerTeacher: Record<string, string[]> = {};
-    for (const r of tsRows || []) {
-      const tid = String(r.profile_id);
-      const nm = String(r.subject_name ?? "").trim();
-      if (!nm) continue;
-      if (!subjectNamesPerTeacher[tid]) subjectNamesPerTeacher[tid] = [];
-      if (!subjectNamesPerTeacher[tid].includes(nm)) {
-        subjectNamesPerTeacher[tid].push(nm);
-      }
-    }
+    /* ───────── Noms des matières : institution_subjects puis fallback subjects ───────── */
+    const subjectsById: Record<string, { name: string }> = {};
 
-    for (const k of Object.keys(subjectNamesPerTeacher)) {
-      subjectNamesPerTeacher[k].sort((a, b) => a.localeCompare(b, "fr"));
-    }
+    if (subjectIds.length) {
+      const { data: instById, error: instByIdErr } = await supabase
+        .from("institution_subjects")
+        .select("id, subject_id, custom_name, subjects(name)")
+        .in("id", subjectIds)
+        .eq("institution_id", institutionId);
 
-    let teacherScope: string[] = allTeacherIds;
-    if (subject_id) {
-      const allowed = new Set((tsRows || []).map((r: any) => String(r.profile_id)));
-      teacherScope = teacherScope.filter((id) => allowed.has(id));
-    }
-
-    // 3) Séances
-    const sessionsTable2 =
-      (await tableExists(srv, "teacher_sessions"))
-        ? "teacher_sessions"
-        : (await tableExists(srv, "class_sessions"))
-          ? "class_sessions"
-          : "sessions";
-
-    const baseSessions = () => {
-      let q = srv
-        .from(sessionsTable2)
-        .select(
-          "id, teacher_id, subject_id, class_id, started_at, actual_call_at, expected_minutes, institution_id"
-        )
-        .gte("started_at", fromISO)
-        .lt("started_at", toISOExclusive);
-      if (inst) q = q.eq("institution_id", inst);
-      return q;
-    };
-
-    const allowedSessionSubjectIds = subject_id
-      ? await resolveSessionSubjectIds(srv, subject_id, inst)
-      : [];
-
-    let sessRows: any[] = [];
-    if (mode === "detail") {
-      if (!teacher_id) {
+      if (instByIdErr) {
+        console.error("[admin.notes.stats] institution_subjects by id error", instByIdErr);
         return NextResponse.json(
-          { error: "teacher_id requis pour mode=detail" },
-          { status: 400 }
+          { ok: false, error: "SUBJECTS_ERROR" },
+          { status: 500 }
         );
       }
-      let q = baseSessions().eq("teacher_id", teacher_id);
-      if (subject_id) {
-        const { data: withSubj } = await q.in("subject_id", allowedSessionSubjectIds);
-        const { data: noSubj } = await baseSessions()
-          .eq("teacher_id", teacher_id)
-          .is("subject_id", null);
-        sessRows = [...(withSubj || []), ...(noSubj || [])];
-      } else {
-        const { data } = await q;
-        sessRows = data || [];
+
+      const { data: instBySubject, error: instBySubjectErr } = await supabase
+        .from("institution_subjects")
+        .select("id, subject_id, custom_name, subjects(name)")
+        .in("subject_id", subjectIds)
+        .eq("institution_id", institutionId);
+
+      if (instBySubjectErr) {
+        console.error(
+          "[admin.notes.stats] institution_subjects by subject_id error",
+          instBySubjectErr
+        );
+        return NextResponse.json(
+          { ok: false, error: "SUBJECTS_ERROR" },
+          { status: 500 }
+        );
       }
-    } else {
-      let q = baseSessions();
-      if (teacherScope.length) q = q.in("teacher_id", teacherScope);
-      if (subject_id) {
-        const { data: withSubj } = await q.in("subject_id", allowedSessionSubjectIds);
-        const { data: noSubj } = await baseSessions()
-          .in("teacher_id", teacherScope)
-          .is("subject_id", null);
-        sessRows = [...(withSubj || []), ...(noSubj || [])];
-      } else {
-        const { data } = await q;
-        sessRows = data || [];
+
+      const instRows = [...((instById || []) as any[]), ...((instBySubject || []) as any[])];
+      const resolved = new Set<string>();
+
+      for (const row of instRows) {
+        const subj = relOne<any>(row.subjects);
+        const base = String(subj?.name || "Matière").trim();
+        const finalName = String(row.custom_name || base || "Matière").trim();
+
+        if (row.id) {
+          subjectsById[String(row.id)] = { name: finalName };
+          resolved.add(String(row.id));
+        }
+        if (row.subject_id) {
+          subjectsById[String(row.subject_id)] = { name: finalName };
+          resolved.add(String(row.subject_id));
+        }
+      }
+
+      const leftover = subjectIds.filter((id) => !resolved.has(id));
+      if (leftover.length) {
+        const { data: subjectsData, error: subjectsErr } = await supabase
+          .from("subjects")
+          .select("id, name")
+          .in("id", leftover);
+
+        if (subjectsErr) {
+          console.error("[admin.notes.stats] subjects error", subjectsErr);
+          return NextResponse.json(
+            { ok: false, error: "SUBJECTS_ERROR" },
+            { status: 500 }
+          );
+        }
+
+        for (const s of (subjectsData || []) as any[]) {
+          subjectsById[String(s.id)] = {
+            name: String(s.name || "Matière").trim(),
+          };
+        }
       }
     }
 
-    // 3.a dédoublonne par ID (au cas où)
-    const seen = new Set<string>();
-    type SessionRow = {
-      id: string;
-      teacher_id: string | null;
-      subject_id: string | null;
-      class_id: string | null;
-      started_at: string;
-      actual_call_at: string | null;
-      expected_minutes: number;
-    };
+    /* ───────── Notes ───────── */
+    const markRows: MarkRow[] = [];
 
-    const sessionsRaw: SessionRow[] = (sessRows || [])
-      .filter((r: any) => (seen.has(r.id) ? false : (seen.add(r.id), true)))
-      .map((s: any) => ({
-        id: String(s.id),
-        teacher_id: s.teacher_id ? String(s.teacher_id) : null,
-        subject_id: s.subject_id ? String(s.subject_id) : null,
-        class_id: s.class_id ? String(s.class_id) : null,
-        started_at: String(s.started_at),
-        actual_call_at: s.actual_call_at ? String(s.actual_call_at) : null,
-        expected_minutes: Number(s.expected_minutes || 0),
-      }));
+    for (const part of chunks(evalIds, 500)) {
+      const { data: marksData, error: marksErr } = await supabase
+        .from("grade_flat_marks")
+        .select("evaluation_id, raw_score, mark_20")
+        .in("evaluation_id", part);
 
-    /**
-     * ✅ DÉDOUBLONNAGE "NORMAL" : 1 séance = 1 PROF + 1 JOUR + 1 CRÉNEAU (HH:MM)
-     * -> On IGNORE class_id dans la clé de comptage.
-     * -> On conserve :
-     *    - la 1ère heure started_at (la plus tôt)
-     *    - expected_minutes max
-     *    - le 1er clic VALIDE (le plus tôt)
-     *    - la liste des classes/subjects rencontrés sur ce créneau (pour l’affichage)
-     */
-    const TZ2 = "Africa/Abidjan";
-    const fmtYMD2 = new Intl.DateTimeFormat("en-CA", {
-      timeZone: TZ2,
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-    });
-    const fmtHM2 = new Intl.DateTimeFormat("fr-FR", {
-      timeZone: TZ2,
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: false,
-    });
-
-    const getDateKeyFromISO = (iso: string) => {
-      try {
-        return fmtYMD2.format(new Date(iso)); // YYYY-MM-DD
-      } catch {
-        return String(iso).slice(0, 10);
+      if (marksErr) {
+        console.error("[admin.notes.stats] grade_flat_marks error", marksErr);
+        return NextResponse.json(
+          { ok: false, error: "MARKS_ERROR" },
+          { status: 500 }
+        );
       }
+
+      markRows.push(...((marksData || []) as any as MarkRow[]));
+    }
+
+    const evalById = new Map<string, EvalRow>();
+    for (const ev of evalRows) evalById.set(ev.id, ev);
+
+    type Acc = {
+      class_id: string;
+      class_label: string;
+      level: string | null;
+      subject_id: string;
+      subject_name: string;
+      evalIds: Set<string>;
+      notes_count: number;
+      weighted_sum: number;
+      weight_total: number;
     };
 
-    const getHMKeyFromISO = (iso: string) => {
-      try {
-        const parts = fmtHM2.formatToParts(new Date(iso));
-        const hh = parts.find((p) => p.type === "hour")?.value ?? "00";
-        const mm = parts.find((p) => p.type === "minute")?.value ?? "00";
-        const hNum = Number.parseInt(hh, 10);
-        const mNum = Number.parseInt(mm, 10);
-        return `${pad2(Number.isFinite(hNum) ? hNum : 0)}:${pad2(
-          Number.isFinite(mNum) ? mNum : 0
-        )}`;
-      } catch {
-        return "00:00";
-      }
-    };
+    const accByKey = new Map<string, Acc>();
 
-    type SlotAgg = SessionRow & {
-      _valid_call_at: string | null;
-      class_ids: Set<string>;
-      subject_ids: Set<string>;
-    };
+    function ensureAcc(ev: EvalRow): Acc {
+      const cls = relOne<any>(ev.classes);
+      const classLabel = String(cls?.label || "Classe").trim();
+      const level = cls?.level ? String(cls.level).trim() : null;
+      const subjectId = String(ev.subject_id);
+      const subjectName = subjectsById[subjectId]?.name || "Matière";
+      const key = `${ev.class_id}::${subjectId}`;
 
-    const sessionsBySlot = new Map<string, SlotAgg>();
-
-    for (const s of sessionsRaw) {
-      const tid = s.teacher_id || "";
-      if (!tid) continue;
-
-      const day = getDateKeyFromISO(s.started_at);
-      const hm = getHMKeyFromISO(s.started_at);
-
-      // ✅ clé "normale" (pas de class_id)
-      const key = `${tid}|${day}|${hm}`;
-
-      const validCall =
-        s.actual_call_at && isCallWithinPlannedSlot(s.started_at, s.actual_call_at, s.expected_minutes)
-          ? s.actual_call_at
-          : null;
-
-      const existing = sessionsBySlot.get(key);
-      if (!existing) {
-        const agg: SlotAgg = {
-          ...s,
-          _valid_call_at: validCall,
-          class_ids: new Set<string>(),
-          subject_ids: new Set<string>(),
+      let acc = accByKey.get(key);
+      if (!acc) {
+        acc = {
+          class_id: ev.class_id,
+          class_label: classLabel,
+          level,
+          subject_id: subjectId,
+          subject_name: subjectName,
+          evalIds: new Set<string>(),
+          notes_count: 0,
+          weighted_sum: 0,
+          weight_total: 0,
         };
-        if (s.class_id) agg.class_ids.add(String(s.class_id));
-        if (s.subject_id) agg.subject_ids.add(String(s.subject_id));
-        sessionsBySlot.set(key, agg);
-      } else {
-        // started_at le plus tôt
-        if (s.started_at < existing.started_at) existing.started_at = s.started_at;
-
-        // expected_minutes max
-        if ((s.expected_minutes || 0) > (existing.expected_minutes || 0)) {
-          existing.expected_minutes = s.expected_minutes;
-        }
-
-        // 1er clic VALIDE (le plus tôt)
-        if (validCall) {
-          if (!existing._valid_call_at || validCall < existing._valid_call_at) {
-            existing._valid_call_at = validCall;
-          }
-        }
-
-        // garde un "représentant" pour compat
-        if (!existing.class_id && s.class_id) existing.class_id = s.class_id;
-        if (!existing.subject_id && s.subject_id) existing.subject_id = s.subject_id;
-
-        // listes (pour affichage)
-        if (s.class_id) existing.class_ids.add(String(s.class_id));
-        if (s.subject_id) existing.subject_ids.add(String(s.subject_id));
+        accByKey.set(key, acc);
       }
+
+      acc.evalIds.add(ev.id);
+      return acc;
     }
 
-    // ✅ liste finale : 1 entrée par créneau + UNIQUEMENT si séance effectuée (clic valide)
-    type SessionAggOut = SessionRow & { class_ids: string[]; subject_ids: string[] };
-    const sessions: SessionAggOut[] = Array.from(sessionsBySlot.values())
-      .map(({ _valid_call_at, class_ids, subject_ids, ...rest }) => ({
-        ...rest,
-        actual_call_at: _valid_call_at,
-        class_ids: Array.from(class_ids),
-        subject_ids: Array.from(subject_ids),
+    // Créer les groupes même pour les évaluations sans note
+    for (const ev of evalRows) {
+      ensureAcc(ev);
+    }
+
+    for (const mark of markRows) {
+      const ev = evalById.get(mark.evaluation_id);
+      if (!ev || !ev.subject_id) continue;
+
+      const scale = Number(ev.scale || 20);
+      const coeff = Number(ev.coeff || 1);
+
+      if (!Number.isFinite(scale) || scale <= 0) continue;
+      if (!Number.isFinite(coeff) || coeff <= 0) continue;
+
+      let mark20: number | null = null;
+
+      if (mark.mark_20 !== null && mark.mark_20 !== undefined) {
+        mark20 = Number(mark.mark_20);
+      } else if (mark.raw_score !== null && mark.raw_score !== undefined) {
+        mark20 = (Number(mark.raw_score) / scale) * 20;
+      }
+
+      if (mark20 === null || !Number.isFinite(mark20)) continue;
+
+      const acc = ensureAcc(ev);
+      acc.notes_count += 1;
+      acc.weighted_sum += mark20 * coeff;
+      acc.weight_total += coeff;
+    }
+
+    const by_class_subject: ClassSubjectStat[] = Array.from(accByKey.values())
+      .map((acc) => ({
+        class_id: acc.class_id,
+        class_label: acc.class_label,
+        level: acc.level,
+        subject_id: acc.subject_id,
+        subject_name: acc.subject_name,
+        evals_count: acc.evalIds.size,
+        notes_count: acc.notes_count,
+        avg_score_20: acc.weight_total > 0 ? round2(acc.weighted_sum / acc.weight_total) : null,
       }))
-      .filter((s: any) => !!s.actual_call_at);
-
-    /* ======================== SUMMARY ======================== */
-    if (mode === "summary") {
-      const minutesByTeacher = new Map<string, number>();
-      const sessionsByTeacher = new Map<string, number>();
-
-      for (const id of teacherScope) {
-        minutesByTeacher.set(id, 0);
-        sessionsByTeacher.set(id, 0);
-      }
-
-      for (const r of sessions) {
-        const tid = r.teacher_id || "";
-        if (!tid || !minutesByTeacher.has(tid)) continue;
-
-        const real = effectiveMinutesFromSession(
-          r.expected_minutes || 0,
-          r.started_at,
-          r.actual_call_at || null
-        );
-
-        minutesByTeacher.set(tid, (minutesByTeacher.get(tid) || 0) + real);
-        sessionsByTeacher.set(tid, (sessionsByTeacher.get(tid) || 0) + 1);
-      }
-
-      const items = teacherScope.map((id) => ({
-        teacher_id: id,
-        teacher_name: teacherNameById.get(id) || `(enseignant ${id.slice(0, 6)})`,
-        total_minutes: minutesByTeacher.get(id) || 0,
-        sessions_count: sessionsByTeacher.get(id) || 0,
-        subject_names: subjectNamesPerTeacher[id] || [],
-      }));
-
-      items.sort(
-        (a, b) =>
-          (b.sessions_count || 0) - (a.sessions_count || 0) ||
-          a.teacher_name.localeCompare(b.teacher_name, "fr")
-      );
-
-      return NextResponse.json({ items });
-    }
-
-    /* ======================== DETAIL ======================== */
-
-    // Subjects à résoudre (tous les subject_ids rencontrés sur les créneaux)
-    const subIds = Array.from(
-      new Set(sessions.flatMap((s) => (s.subject_ids || []).filter(Boolean)))
-    ) as string[];
-
-    const subjectNameById: Record<string, string> = {};
-    if (subIds.length) {
-      const { data: subs } = await srv
-        .from("subjects")
-        .select("id,name")
-        .in("id", subIds);
-      for (const s of subs || []) {
-        subjectNameById[String(s.id)] = String(s.name ?? "");
-      }
-
-      // résout aussi les institution_subjects.id
-      const unresolved = subIds.filter((id) => !subjectNameById[id]);
-      if (unresolved.length) {
-        const { data: links } = await srv
-          .from("institution_subjects")
-          .select("id,subject_id")
-          .in("id", unresolved);
-        const baseIds = Array.from(
-          new Set((links || []).map((l: any) => String(l.subject_id)).filter(Boolean))
-        );
-        if (baseIds.length) {
-          const { data: subs2 } = await srv
-            .from("subjects")
-            .select("id,name")
-            .in("id", baseIds);
-          const nameByBase = new Map<string, string>();
-          for (const s of subs2 || []) {
-            nameByBase.set(String(s.id), String(s.name ?? ""));
-          }
-          for (const l of links || []) {
-            const nm = nameByBase.get(String(l.subject_id));
-            if (nm) subjectNameById[String(l.id)] = nm;
-          }
-        }
-      }
-    }
-
-    // Classes à résoudre (tous les class_ids rencontrés sur les créneaux)
-    const classIds = Array.from(
-      new Set(sessions.flatMap((s) => (s.class_ids || []).filter(Boolean)))
-    ) as string[];
-
-    const classLabelById: Record<string, string> = {};
-    if (classIds.length) {
-      const { data: klass } = await srv
-        .from("classes")
-        .select("id,label")
-        .in("id", classIds);
-      for (const c of klass || []) {
-        classLabelById[String(c.id)] = String(c.label ?? "");
-      }
-    }
-
-    const unique = <T,>(arr: T[]) => Array.from(new Set(arr));
-
-    const detailed = sessions
-      .sort((a, b) => a.started_at.localeCompare(b.started_at))
-      .map((r) => {
-        const real = effectiveMinutesFromSession(
-          r.expected_minutes || 0,
-          r.started_at,
-          r.actual_call_at || null
-        );
-
-        const classLabels = unique(
-          (r.class_ids || [])
-            .map((id) => classLabelById[id])
-            .filter((x) => !!x)
-        );
-        const classLabelJoined = classLabels.length ? classLabels.join(" + ") : null;
-
-        const subjNames = unique(
-          (r.subject_ids || [])
-            .map((id) => subjectNameById[id])
-            .filter((x) => !!x)
-        );
-        const subjJoined = subjNames.length ? subjNames.join(" / ") : "Discipline non renseignée";
-
-        return {
-          id: r.id,
-          dateISO: r.started_at,
-          subject_name: subjJoined,
-          subject_ids: r.subject_ids || [],
-          class_id: (r.class_ids && r.class_ids[0]) || r.class_id || null, // compat
-          class_label: classLabelJoined,
-          class_ids: r.class_ids || [],
-          expected_minutes: r.expected_minutes || 0,
-          real_minutes: real,
-          actual_call_iso: r.actual_call_at || null,
-        };
+      .sort((a, b) => {
+        const c = a.class_label.localeCompare(b.class_label, undefined, {
+          numeric: true,
+          sensitivity: "base",
+        });
+        if (c !== 0) return c;
+        return (a.subject_name || "").localeCompare(b.subject_name || "", undefined, {
+          numeric: true,
+          sensitivity: "base",
+        });
       });
 
-    const total_minutes = detailed.reduce((acc, it) => acc + (it.real_minutes || 0), 0);
-
     return NextResponse.json({
-      rows: detailed,
-      count: detailed.length,
-      total_minutes,
+      ok: true,
+      meta: {
+        from,
+        to,
+        published,
+        total_evaluations: evalRows.length,
+        total_subject_classes: by_class_subject.length,
+      },
+      by_class_subject,
     });
   } catch (e: any) {
-    console.error("/api/admin/statistics error", e);
-    return NextResponse.json({ error: e?.message || "Server error" }, { status: 500 });
+    console.error("[admin.notes.stats] fatal error", e);
+    return NextResponse.json(
+      { ok: false, error: e?.message || "INTERNAL_ERROR" },
+      { status: 500 }
+    );
   }
 }
