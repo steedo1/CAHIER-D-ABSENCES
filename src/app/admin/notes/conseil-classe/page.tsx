@@ -532,6 +532,93 @@ function normalizeLabelForMatch(value: string | null | undefined): string {
     .trim();
 }
 
+function subjectAliasesForMatch(value: string | null | undefined): Set<string> {
+  const normalized = normalizeLabelForMatch(value);
+  const aliases = new Set<string>();
+  if (!normalized) return aliases;
+
+  const compact = normalized.replace(/\s+/g, "");
+  aliases.add(normalized);
+  aliases.add(compact);
+
+  const stopWords = new Set(["a", "au", "aux", "d", "de", "des", "du", "et", "la", "le", "les", "l", "education", "enseignement", "science", "sciences"]);
+  const tokens = normalized.split(/\s+/).filter(Boolean);
+  const usefulTokens = tokens.filter((token) => !stopWords.has(token));
+  usefulTokens.forEach((token) => {
+    if (token.length >= 3) aliases.add(token);
+  });
+
+  const acronym = usefulTokens.map((token) => token[0]).join("");
+  if (acronym.length >= 2) aliases.add(acronym);
+
+  if (normalized.includes("mathem")) {
+    aliases.add("math");
+    aliases.add("maths");
+    aliases.add("mathematique");
+    aliases.add("mathematiques");
+  }
+  if (normalized.includes("francais")) aliases.add("francais");
+  if (normalized.includes("anglais")) aliases.add("anglais");
+  if (normalized.includes("espagnol")) aliases.add("espagnol");
+  if (normalized.includes("allemand")) aliases.add("allemand");
+  if (normalized.includes("histoire") && (normalized.includes("geo") || normalized.includes("geographie"))) {
+    aliases.add("hg");
+    aliases.add("histoire geographie");
+  }
+  if (normalized.includes("physique") && normalized.includes("chimie")) {
+    aliases.add("pc");
+    aliases.add("pct");
+    aliases.add("physique chimie");
+  }
+  if (
+    normalized === "svt" ||
+    (normalized.includes("science") && normalized.includes("vie") && normalized.includes("terre"))
+  ) {
+    aliases.add("svt");
+    aliases.add("science vie terre");
+    aliases.add("sciences vie terre");
+  }
+  if (normalized === "eps" || (normalized.includes("education") && normalized.includes("physique"))) {
+    aliases.add("eps");
+  }
+  if (
+    normalized === "edhc" ||
+    normalized.includes("droits humains") ||
+    normalized.includes("citoyennete")
+  ) {
+    aliases.add("edhc");
+  }
+  if (normalized.includes("art") && normalized.includes("plastique")) {
+    aliases.add("arts plastiques");
+    aliases.add("art plastique");
+  }
+  if (normalized.includes("musique")) aliases.add("musique");
+
+  return aliases;
+}
+
+function subjectLabelsMatch(a: string | null | undefined, b: string | null | undefined): boolean {
+  const aliasesA = subjectAliasesForMatch(a);
+  const aliasesB = subjectAliasesForMatch(b);
+  if (aliasesA.size === 0 || aliasesB.size === 0) return false;
+
+  for (const alias of aliasesA) {
+    if (aliasesB.has(alias)) return true;
+  }
+
+  const normalizedA = normalizeLabelForMatch(a);
+  const normalizedB = normalizeLabelForMatch(b);
+  if (!normalizedA || !normalizedB) return false;
+
+  const compactA = normalizedA.replace(/\s+/g, "");
+  const compactB = normalizedB.replace(/\s+/g, "");
+  if (compactA.length >= 4 && compactB.length >= 4) {
+    if (compactA.includes(compactB) || compactB.includes(compactA)) return true;
+  }
+
+  return false;
+}
+
 /* ───────── Page ───────── */
 
 export default function ConseilClassePage() {
@@ -1009,32 +1096,42 @@ export default function ConseilClassePage() {
       }
     >();
 
-    const addTeacherSubject = (teacherNameRaw: string | null | undefined, subjectRaw: string | null | undefined) => {
+    const addTeacherSubject = (
+      teacherKeyRaw: string | null | undefined,
+      teacherNameRaw: string | null | undefined,
+      subjectRaw: string | null | undefined
+    ) => {
       const teacherName = String(teacherNameRaw || "").trim();
       const subjectLabel = String(subjectRaw || "").trim();
-      if (!teacherName) return;
+      if (!teacherName || !subjectLabel) return;
 
-      const key = normalizeLabelForMatch(teacherName) || teacherName;
+      const key = String(teacherKeyRaw || "").trim() || normalizeLabelForMatch(teacherName) || teacherName;
       const existing = grouped.get(key);
       if (existing) {
-        if (subjectLabel) existing.subjects.add(subjectLabel);
+        existing.subjects.add(subjectLabel);
         return;
       }
 
       grouped.set(key, {
         teacherName,
-        subjects: new Set(subjectLabel ? [subjectLabel] : []),
+        subjects: new Set([subjectLabel]),
       });
     };
 
-    const notedSubjectLabels = new Set(
-      subjectStats
-        .map((subject) => normalizeLabelForMatch(subject.subject_name))
-        .filter(Boolean)
-    );
+    const notedSubjectIds = new Set(subjectStats.map((subject) => String(subject.subject_id || "").trim()).filter(Boolean));
+
+    const isSubjectNoted = (subjectIdRaw: string | null | undefined, subjectLabelRaw: string | null | undefined) => {
+      const subjectId = String(subjectIdRaw || "").trim();
+      const subjectLabel = String(subjectLabelRaw || "").trim();
+
+      if (subjectId && notedSubjectIds.has(subjectId)) return true;
+      if (!subjectLabel) return false;
+
+      return subjectStats.some((subject) => subjectLabelsMatch(subjectLabel, subject.subject_name));
+    };
 
     subjectStats.forEach((subject) => {
-      addTeacherSubject(subject.teacher_name, subject.subject_name);
+      addTeacherSubject(subject.teacher_name, subject.teacher_name, subject.subject_name);
     });
 
     currentAffectations
@@ -1044,13 +1141,16 @@ export default function ConseilClassePage() {
           : false
       )
       .forEach((item) => {
+        const subjectId = String(item.subject?.id || "").trim();
         const subjectLabel = String(item.subject?.label || "").trim();
-        if (!subjectLabel || !notedSubjectLabels.has(normalizeLabelForMatch(subjectLabel))) return;
+        if (!isSubjectNoted(subjectId, subjectLabel)) return;
 
+        const teacherId = String(item.teacher?.id || "").trim();
         const teacherName = String(
           item.teacher?.display_name || item.teacher?.email || item.teacher?.phone || ""
         ).trim();
-        addTeacherSubject(teacherName, subjectLabel);
+
+        addTeacherSubject(teacherId || teacherName, teacherName, subjectLabel);
       });
 
     return Array.from(grouped.values())
@@ -1232,10 +1332,72 @@ export default function ConseilClassePage() {
     };
   }, [annualRecapRows]);
 
+  const currentPeriodTopThreeRows = useMemo(() => {
+    return councilRows
+      .filter(
+        (row) =>
+          row.general_avg !== null &&
+          row.general_avg !== undefined &&
+          Number.isFinite(Number(row.general_avg))
+      )
+      .sort((a, b) => {
+        const rankA =
+          a.rank !== null && a.rank !== undefined
+            ? Number(a.rank)
+            : Number.POSITIVE_INFINITY;
+        const rankB =
+          b.rank !== null && b.rank !== undefined
+            ? Number(b.rank)
+            : Number.POSITIVE_INFINITY;
+        if (rankA !== rankB) return rankA - rankB;
+
+        const avgA = Number(a.general_avg ?? -Infinity);
+        const avgB = Number(b.general_avg ?? -Infinity);
+        if (avgB !== avgA) return avgB - avgA;
+
+        return (a.full_name || "").localeCompare(b.full_name || "", undefined, {
+          sensitivity: "base",
+          numeric: true,
+        });
+      })
+      .slice(0, 3);
+  }, [councilRows]);
+
+  const annualTopThreeRows = useMemo(() => {
+    return annualRecapRows
+      .filter(
+        (row) =>
+          row.annual_avg !== null &&
+          row.annual_avg !== undefined &&
+          Number.isFinite(Number(row.annual_avg))
+      )
+      .sort((a, b) => {
+        const rankA =
+          a.annual_rank !== null && a.annual_rank !== undefined
+            ? Number(a.annual_rank)
+            : Number.POSITIVE_INFINITY;
+        const rankB =
+          b.annual_rank !== null && b.annual_rank !== undefined
+            ? Number(b.annual_rank)
+            : Number.POSITIVE_INFINITY;
+        if (rankA !== rankB) return rankA - rankB;
+
+        const avgA = Number(a.annual_avg ?? -Infinity);
+        const avgB = Number(b.annual_avg ?? -Infinity);
+        if (avgB !== avgA) return avgB - avgA;
+
+        return a.full_name.localeCompare(b.full_name, undefined, {
+          sensitivity: "base",
+          numeric: true,
+        });
+      })
+      .slice(0, 3);
+  }, [annualRecapRows]);
+
   const periodTopThreeGroups = useMemo(() => {
     if (!annualPeriods.length || !annualRecapRows.length) return [];
 
-    return annualPeriods
+    const periodGroups = annualPeriods
       .map((period, periodIndex) => {
         const rows = annualRecapRows
           .map((row) => {
@@ -1281,7 +1443,25 @@ export default function ConseilClassePage() {
         };
       })
       .filter((group) => group.rows.length > 0);
-  }, [annualPeriods, annualRecapRows]);
+
+    const annualGroup = annualTopThreeRows.length
+      ? [
+          {
+            period_id: "annual",
+            label: "Annuel",
+            rows: annualTopThreeRows.map((row) => ({
+              student_id: row.student_id,
+              full_name: row.full_name,
+              matricule: row.matricule,
+              avg: row.annual_avg,
+              rank: row.annual_rank,
+            })),
+          },
+        ]
+      : [];
+
+    return [...periodGroups, ...annualGroup];
+  }, [annualPeriods, annualRecapRows, annualTopThreeRows]);
 
   const currentClass = useMemo(
     () => classes.find((c) => c.id === selectedClassId) || null,
@@ -1801,6 +1981,30 @@ export default function ConseilClassePage() {
                 </div>
 
                 <div className="flex flex-col gap-3">
+                  {currentPeriodTopThreeRows.length > 0 ? (
+                    <div>
+                      <OfficialBand>Les 3 premiers — {currentPeriodLabel}</OfficialBand>
+                      <table className="pv-grid-table mt-1 pv-mini">
+                        <thead>
+                          <tr>
+                            <th style={{ width: "16%" }}>Rg</th>
+                            <th>Nom et prénom</th>
+                            <th style={{ width: "23%" }}>Moy.</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {currentPeriodTopThreeRows.map((row) => (
+                            <tr key={`current-top-${row.student_id}`}>
+                              <OfficialTd center strong>{row.rank ?? "—"}</OfficialTd>
+                              <OfficialTd strong>{row.full_name}</OfficialTd>
+                              <OfficialTd center strong>{formatNumber(row.general_avg)}</OfficialTd>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : null}
+
                   <div>
                     <OfficialBand>Distinctions</OfficialBand>
                     <table className="pv-grid-table mt-1 pv-mini">
@@ -1993,8 +2197,8 @@ export default function ConseilClassePage() {
 
                 {periodTopThreeGroups.length > 0 ? (
                   <div className="mt-3">
-                    <OfficialBand>Les 3 premiers de la classe par trimestre</OfficialBand>
-                    <div className="mt-1 grid grid-cols-3 gap-2">
+                    <OfficialBand>Les 3 premiers de la classe par période et annuelle</OfficialBand>
+                    <div className="mt-1 grid grid-cols-2 gap-2">
                       {periodTopThreeGroups.map((group) => (
                         <div key={`period-top-${group.period_id}`} className="min-w-0">
                           <div className="border border-slate-300 bg-slate-100 px-2 py-1 text-center text-[10px] font-bold uppercase text-slate-800">
