@@ -46,7 +46,7 @@ function Help({ children }: { children: React.ReactNode }) {
   );
 }
 
-type SubjectItem = { id: string; name: string };
+type SubjectItem = { id: string; name: string; code?: string | null };
 
 type TeacherRow = {
   id: string;
@@ -90,6 +90,84 @@ function phoneLooseEqual(
   return da === db || da.endsWith(db) || db.endsWith(da);
 }
 
+function normalizeSubjectText(value: string | null | undefined) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/œ/g, "oe")
+    .replace(/æ/g, "ae")
+    .replace(/[^a-z0-9]+/g, "")
+    .trim();
+}
+
+const SUBJECT_ALIAS_TO_CANONICAL: Record<string, string> = {
+  math: "mathematiques",
+  maths: "mathematiques",
+  mathematique: "mathematiques",
+  mathematiques: "mathematiques",
+
+  francais: "francais",
+  fr: "francais",
+  french: "francais",
+
+  anglais: "anglais",
+  ang: "anglais",
+  english: "anglais",
+
+  allemand: "allemand",
+  all: "allemand",
+  allemandlv2: "allemand",
+
+  espagnol: "espagnol",
+  esp: "espagnol",
+  espagnollv2: "espagnol",
+
+  histoiregeographie: "histoiregeographie",
+  histoiregeo: "histoiregeographie",
+  histgeo: "histoiregeographie",
+  hg: "histoiregeographie",
+  hgeo: "histoiregeographie",
+  histoire: "histoiregeographie",
+  geographie: "histoiregeographie",
+
+  physiquechimie: "physiquechimie",
+  physique: "physiquechimie",
+  chimie: "physiquechimie",
+  pc: "physiquechimie",
+  pch: "physiquechimie",
+
+  svt: "svt",
+  sciencenaturelle: "svt",
+  sciencesnaturelles: "svt",
+  sciencesdelavieetdelaterre: "svt",
+  sciencevieetterre: "svt",
+
+  eps: "eps",
+  sport: "eps",
+  educationphysique: "eps",
+  educationphysiqueetsportive: "eps",
+
+  edhc: "edhc",
+  edh: "edhc",
+  educationcivique: "edhc",
+  educationauxdroitshumainsetalacitoyennete: "edhc",
+
+  philosophie: "philosophie",
+  philo: "philosophie",
+
+  dessin: "dessineducationmusicale",
+  musique: "dessineducationmusicale",
+  dessinmusique: "dessineducationmusicale",
+  dessineducationmusicale: "dessineducationmusicale",
+  educationmusicale: "dessineducationmusicale",
+};
+
+function canonicalSubjectKey(value: string | null | undefined) {
+  const raw = normalizeSubjectText(value);
+  return SUBJECT_ALIAS_TO_CANONICAL[raw] || raw;
+}
+
 export default function UsersPage() {
   const [authErr, setAuthErr] = useState(false);
 
@@ -99,6 +177,7 @@ export default function UsersPage() {
   const [tPhone, setTPhone] = useState("");
   const [tName, setTName] = useState("");
   const [tSubject, setTSubject] = useState("");
+  const [tSubjectId, setTSubjectId] = useState("");
   const [tEmploymentType, setTEmploymentType] =
     useState<EmploymentType>("permanent");
   const [tPayrollEnabled, setTPayrollEnabled] = useState(true);
@@ -117,6 +196,7 @@ export default function UsersPage() {
   const [teachersForAdd, setTeachersForAdd] = useState<TeacherRow[]>([]);
   const [teacherIdForAdd, setTeacherIdForAdd] = useState<string>("");
   const [newSubjectName, setNewSubjectName] = useState("");
+  const [newSubjectId, setNewSubjectId] = useState("");
   const [addingSubject, setAddingSubject] = useState(false);
   const [addMsg, setAddMsg] = useState<string | null>(null);
 
@@ -137,6 +217,38 @@ export default function UsersPage() {
       payrollTeachers.find((t) => t.profile_id === payrollTeacherId) || null,
     [payrollTeachers, payrollTeacherId]
   );
+
+  function findSubjectById(id: string | null | undefined) {
+    if (!id) return null;
+    return subjects.find((s) => s.id === id) || null;
+  }
+
+  function findSubjectByNameOrAlias(name: string | null | undefined) {
+    const value = String(name || "").trim();
+    if (!value) return null;
+
+    const wantedCanonical = canonicalSubjectKey(value);
+    const wantedRaw = normalizeSubjectText(value);
+
+    return (
+      subjects.find((s) => canonicalSubjectKey(s.name) === wantedCanonical) ||
+      subjects.find((s) => normalizeSubjectText(s.name) === wantedRaw) ||
+      subjects.find((s) => normalizeSubjectText(s.code) === wantedRaw) ||
+      null
+    );
+  }
+
+  const matchedCreateSubject = useMemo(() => {
+    return findSubjectById(tSubjectId) || findSubjectByNameOrAlias(tSubject);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [subjects, tSubjectId, tSubject]);
+
+  const matchedAddSubject = useMemo(() => {
+    return (
+      findSubjectById(newSubjectId) || findSubjectByNameOrAlias(newSubjectName)
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [subjects, newSubjectId, newSubjectName]);
 
   useEffect(() => {
     void loadSubjects();
@@ -159,7 +271,16 @@ export default function UsersPage() {
         return;
       }
       const j = await r.json().catch(() => ({}));
-      setSubjects(j.items || []);
+      const rows = Array.isArray(j.items) ? j.items : [];
+      setSubjects(
+        rows
+          .map((s: any) => ({
+            id: String(s.id),
+            name: String(s.name || s.custom_name || "Discipline"),
+            code: s.code ? String(s.code) : null,
+          }))
+          .filter((s: SubjectItem) => !!s.id && !!s.name)
+      );
     } catch {
       setMsg("Impossible de charger les disciplines.");
     }
@@ -307,8 +428,10 @@ export default function UsersPage() {
     const rawRole = createRole;
     const rawPhone = tPhone.trim();
     const rawName = tName.trim();
+    const rawSubject = tSubject.trim();
     const rawEmploymentType = tEmploymentType;
     const rawPayrollEnabled = tPayrollEnabled;
+    const canonicalSubject = matchedCreateSubject;
 
     try {
       const r = await fetch("/api/admin/users/create", {
@@ -319,7 +442,17 @@ export default function UsersPage() {
           email: tEmail.trim() || null,
           phone: rawPhone,
           display_name: rawName || null,
-          subject: rawRole === "teacher" ? tSubject.trim() || null : null,
+
+          // ✅ Cohérence bulletin/coefficient :
+          // si la discipline existe, on envoie son subject_id canonique.
+          subject_id:
+            rawRole === "teacher" && canonicalSubject
+              ? canonicalSubject.id
+              : null,
+          subject:
+            rawRole === "teacher"
+              ? canonicalSubject?.name || rawSubject || null
+              : null,
         }),
       });
 
@@ -343,7 +476,11 @@ export default function UsersPage() {
           employmentType: rawEmploymentType,
           payrollEnabled: rawPayrollEnabled,
         });
-        setMsg(payrollResult.message);
+        setMsg(
+          canonicalSubject
+            ? `${payrollResult.message} Discipline liée au référentiel : ${canonicalSubject.name}.`
+            : `${payrollResult.message} Discipline créée/associée : ${rawSubject}.`
+        );
       } else {
         let labelRole = "utilisateur";
         if (rawRole === "educator") labelRole = "éducateur";
@@ -355,6 +492,7 @@ export default function UsersPage() {
       setTPhone("");
       setTName("");
       setTSubject("");
+      setTSubjectId("");
       setTEmploymentType("permanent");
       setTPayrollEnabled(true);
 
@@ -450,7 +588,10 @@ export default function UsersPage() {
   }
 
   async function addSubjectToTeacher() {
-    if (!teacherIdForAdd || !newSubjectName.trim()) return;
+    const rawSubject = newSubjectName.trim();
+    const canonicalSubject = matchedAddSubject;
+
+    if (!teacherIdForAdd || !rawSubject) return;
     setAddingSubject(true);
     setAddMsg(null);
     try {
@@ -459,7 +600,11 @@ export default function UsersPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           profile_id: teacherIdForAdd,
-          subject: newSubjectName.trim(),
+
+          // ✅ On envoie aussi le subject_id canonique si reconnu.
+          // Si l’API actuelle ne l’utilise pas encore, ça ne casse rien.
+          subject_id: canonicalSubject?.id || null,
+          subject: canonicalSubject?.name || rawSubject,
         }),
       });
       const j = await r.json().catch(() => ({}));
@@ -477,8 +622,13 @@ export default function UsersPage() {
         await loadSubjects();
       } catch {}
 
-      setAddMsg("Discipline ajoutée à l’enseignant.");
+      setAddMsg(
+        canonicalSubject
+          ? `Discipline ajoutée à l’enseignant : ${canonicalSubject.name}.`
+          : "Discipline ajoutée à l’enseignant."
+      );
       setNewSubjectName("");
+      setNewSubjectId("");
     } catch (e: any) {
       setAddingSubject(false);
       setAddMsg(e?.message || "Erreur réseau.");
@@ -603,7 +753,12 @@ export default function UsersPage() {
                 <Input
                   list="subjects-list"
                   value={tSubject}
-                  onChange={(e) => setTSubject(e.target.value)}
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    setTSubject(value);
+                    const found = findSubjectByNameOrAlias(value);
+                    setTSubjectId(found?.id || "");
+                  }}
                   placeholder="Mathématiques, Français…"
                 />
                 <datalist id="subjects-list">
@@ -611,10 +766,28 @@ export default function UsersPage() {
                     <option key={s.id} value={s.name} />
                   ))}
                 </datalist>
-                <div className="mt-1 text-[11px] text-slate-500">
-                  Tu peux saisir une nouvelle discipline ou choisir une
-                  existante.
-                </div>
+
+                {tSubject.trim() ? (
+                  matchedCreateSubject ? (
+                    <div className="mt-1 rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1 text-[11px] text-emerald-800">
+                      Discipline reconnue :{" "}
+                      <b>{matchedCreateSubject.name}</b>. Le professeur sera lié
+                      au même identifiant matière que les coefficients et le
+                      bulletin.
+                    </div>
+                  ) : (
+                    <div className="mt-1 rounded-lg border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] text-amber-800">
+                      Nouvelle discipline détectée. Elle sera créée si elle
+                      n’existe pas encore. Pour les coefficients officiels,
+                      privilégie une discipline déjà reconnue.
+                    </div>
+                  )
+                ) : (
+                  <div className="mt-1 text-[11px] text-slate-500">
+                    Choisis une discipline existante pour garantir le lien avec
+                    les coefficients et les bulletins.
+                  </div>
+                )}
               </div>
 
               <div>
@@ -674,6 +847,8 @@ export default function UsersPage() {
         </div>
         <Help>
           Permet d’associer <b>plusieurs matières</b> au <b>même enseignant</b>.
+          Si la discipline existe déjà, Mon Cahier envoie aussi son identifiant
+          canonique.
         </Help>
 
         <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
@@ -698,9 +873,25 @@ export default function UsersPage() {
             <Input
               list="subjects-list"
               value={newSubjectName}
-              onChange={(e) => setNewSubjectName(e.target.value)}
+              onChange={(e) => {
+                const value = e.target.value;
+                setNewSubjectName(value);
+                const found = findSubjectByNameOrAlias(value);
+                setNewSubjectId(found?.id || "");
+              }}
               placeholder="Ex: Mathématiques"
             />
+            {newSubjectName.trim() ? (
+              matchedAddSubject ? (
+                <div className="mt-1 text-[11px] text-emerald-700">
+                  Discipline reconnue : <b>{matchedAddSubject.name}</b>
+                </div>
+              ) : (
+                <div className="mt-1 text-[11px] text-amber-700">
+                  Nouvelle discipline si elle n’existe pas.
+                </div>
+              )
+            ) : null}
           </div>
 
           <div className="md:col-span-1 flex items-end">

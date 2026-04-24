@@ -8,6 +8,11 @@ import React, {
   ChangeEvent,
 } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import {
+  applyGeneralSecondaryCoefficientPreset,
+  buildGeneralSecondaryCoefficientPreview,
+  type GeneralSecondaryCoeffPresetPreviewItem,
+} from "@/lib/default-general-secondary-coefficients-ci";
 
 /* =========================
    Types
@@ -684,6 +689,11 @@ export default function AdminSettingsPage() {
     subject_name: string;
   } | null>(null);
 
+  const [ciPresetPreview, setCiPresetPreview] = useState<
+    GeneralSecondaryCoeffPresetPreviewItem[]
+  >([]);
+  const [ciPresetAppliedOnce, setCiPresetAppliedOnce] = useState(false);
+
   const coeffLevels = useMemo(() => {
     const s = new Set<string>();
     for (const row of subjectCoeffs) {
@@ -736,6 +746,33 @@ export default function AdminSettingsPage() {
   const coeffMatchForTarget =
     !componentsTarget ||
     Math.abs(sumComponentsForTarget - parentCoeffForTarget) < 1e-6;
+
+  const ciPresetStats = useMemo(() => {
+    const applicable = ciPresetPreview.filter((item) => item.willApply);
+    const ignored = ciPresetPreview.filter((item) => !item.willApply);
+    const optional = applicable.filter((item) => item.optional);
+    const withComponents = applicable.filter((item) => item.components.length > 0);
+    const ambiguous = ignored.filter(
+      (item) => item.note.includes("A1") || item.note.includes("A2")
+    );
+
+    return {
+      total: ciPresetPreview.length,
+      applicable: applicable.length,
+      ignored: ignored.length,
+      optional: optional.length,
+      withComponents: withComponents.length,
+      ambiguous: ambiguous.length,
+    };
+  }, [ciPresetPreview]);
+
+  const ciPresetRowsForSelectedLevel = useMemo(
+    () =>
+      selectedCoeffLevel
+        ? ciPresetPreview.filter((item) => item.level === selectedCoeffLevel)
+        : ciPresetPreview.slice(0, 12),
+    [ciPresetPreview, selectedCoeffLevel]
+  );
 
   // si aucun niveau sélectionné mais des niveaux disponibles → on sélectionne le 1er
   useEffect(() => {
@@ -1882,6 +1919,70 @@ export default function AdminSettingsPage() {
     } finally {
       setSavingCoeffs(false);
     }
+  }
+
+  function previewGeneralSecondaryCiPreset() {
+    const preview = buildGeneralSecondaryCoefficientPreview(subjectCoeffs);
+    setCiPresetPreview(preview);
+    setCiPresetAppliedOnce(false);
+
+    const applicable = preview.filter((item) => item.willApply).length;
+    const ambiguous = preview.filter(
+      (item) => !item.willApply && (item.note.includes("A1") || item.note.includes("A2"))
+    ).length;
+
+    const msg =
+      applicable > 0
+        ? `Prévisualisation CI prête : ${applicable} coefficient(s) reconnu(s)${
+            ambiguous > 0 ? `, ${ambiguous} cas A1/A2 à préciser` : ""
+          }.`
+        : "Aucune discipline reconnue pour le référentiel CI dans les lignes actuelles.";
+
+    setMsgCoeffs(msg);
+    pushToast(applicable > 0 ? "info" : "error", msg);
+  }
+
+  function applyGeneralSecondaryCiPreset() {
+    if (subjectCoeffs.length === 0) {
+      const msg = "Aucun coefficient à initialiser. Cliquez d'abord sur « Rafraîchir ».";
+      setMsgCoeffs(msg);
+      pushToast("error", msg);
+      return;
+    }
+
+    const result = applyGeneralSecondaryCoefficientPreset(
+      subjectCoeffs,
+      subjectComponents
+    );
+
+    if (result.appliedCoeffs === 0) {
+      const msg =
+        "Aucune correspondance automatique trouvée. Vérifiez les noms des niveaux et des disciplines.";
+      setCiPresetPreview(result.preview);
+      setMsgCoeffs(msg);
+      pushToast("error", msg);
+      return;
+    }
+
+    setSubjectCoeffs(result.subjectCoeffs);
+    setSubjectComponents(result.subjectComponents);
+    setCiPresetPreview(result.preview);
+    setCiPresetAppliedOnce(true);
+
+    const msg =
+      `Référentiel CI appliqué localement : ${result.appliedCoeffs} coefficient(s)` +
+      `${result.appliedComponents > 0 ? `, ${result.appliedComponents} sous-matière(s) de Français` : ""}` +
+      `${result.optionalCount > 0 ? `, ${result.optionalCount} LV2 facultative(s)` : ""}` +
+      `${result.ambiguousCount > 0 ? `. ${result.ambiguousCount} cas A1/A2 restent à préciser.` : "."}` +
+      " Cliquez ensuite sur les boutons d’enregistrement.";
+
+    setMsgCoeffs(msg);
+    setMsgComponents(
+      result.appliedComponents > 0
+        ? "Sous-matières de Français générées niveau par niveau. Les anciennes lignes sans niveau sont ignorées dans l'état actuel de l'écran."
+        : msgComponents
+    );
+    pushToast("success", msg);
   }
 
   /* ====== chargement initial ====== */
@@ -3362,6 +3463,115 @@ export default function AdminSettingsPage() {
               {msgComponents}
             </div>
           )}
+
+          <div className="mb-5 rounded-3xl border border-emerald-200 bg-gradient-to-br from-emerald-50 via-white to-sky-50 p-4 shadow-sm">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+              <div className="max-w-3xl">
+                <div className="text-[11px] font-black uppercase tracking-[0.18em] text-emerald-700">
+                  Initialisation rapide
+                </div>
+                <div className="mt-1 text-lg font-black text-slate-900">
+                  Référentiel CI — Secondaire général
+                </div>
+                <p className="mt-1 text-sm leading-6 text-slate-600">
+                  Applique automatiquement les coefficients officiels aux niveaux et disciplines reconnus.
+                  Les matières non reconnues ne sont pas modifiées. Le Français du 1er cycle reçoit aussi ses
+                  sous-matières par niveau : Composition française, Expression orale, Orthographe-Grammaire.
+                </p>
+                <div className="mt-3 flex flex-wrap gap-2 text-[11px] font-semibold">
+                  <span className="rounded-full bg-white px-2.5 py-1 text-slate-700 ring-1 ring-slate-200">
+                    {ciPresetStats.applicable} reconnu(s)
+                  </span>
+                  <span className="rounded-full bg-white px-2.5 py-1 text-slate-700 ring-1 ring-slate-200">
+                    {ciPresetStats.withComponents} avec sous-matières
+                  </span>
+                  <span className="rounded-full bg-white px-2.5 py-1 text-slate-700 ring-1 ring-slate-200">
+                    {ciPresetStats.optional} LV2 facultative(s)
+                  </span>
+                  {ciPresetStats.ambiguous > 0 && (
+                    <span className="rounded-full bg-amber-100 px-2.5 py-1 text-amber-800 ring-1 ring-amber-200">
+                      {ciPresetStats.ambiguous} cas A1/A2 à préciser
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              <div className="flex shrink-0 flex-col gap-2 sm:flex-row lg:flex-col">
+                <button
+                  type="button"
+                  onClick={previewGeneralSecondaryCiPreset}
+                  disabled={loadingCoeffs || subjectCoeffs.length === 0}
+                  className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-bold text-slate-700 shadow-sm hover:bg-slate-50 disabled:opacity-60"
+                >
+                  Prévisualiser
+                </button>
+                <button
+                  type="button"
+                  onClick={applyGeneralSecondaryCiPreset}
+                  disabled={loadingCoeffs || subjectCoeffs.length === 0}
+                  className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-bold text-white shadow-sm hover:bg-emerald-700 disabled:opacity-60"
+                >
+                  Appliquer CI
+                </button>
+              </div>
+            </div>
+
+            {ciPresetPreview.length > 0 && (
+              <div className="mt-4 overflow-hidden rounded-2xl border border-slate-200 bg-white">
+                <div className="border-b border-slate-100 px-3 py-2 text-xs font-bold text-slate-700">
+                  Aperçu {selectedCoeffLevel ? `— ${selectedCoeffLevel}` : "global"}
+                  {ciPresetAppliedOnce ? " · appliqué localement" : ""}
+                </div>
+                <div className="max-h-60 overflow-auto">
+                  <table className="min-w-full text-xs">
+                    <thead className="sticky top-0 bg-slate-50 text-slate-600">
+                      <tr>
+                        <th className="px-3 py-2 text-left">Niveau</th>
+                        <th className="px-3 py-2 text-left">Discipline</th>
+                        <th className="px-3 py-2 text-right">Actuel</th>
+                        <th className="px-3 py-2 text-right">CI</th>
+                        <th className="px-3 py-2 text-left">Statut</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y">
+                      {ciPresetRowsForSelectedLevel.slice(0, 80).map((item) => (
+                        <tr key={`${item.level}-${item.subject_id}`}>
+                          <td className="px-3 py-2 font-medium text-slate-700">
+                            {item.level || "—"}
+                          </td>
+                          <td className="px-3 py-2 text-slate-700">
+                            {item.subject_name}
+                            {item.components.length > 0 && (
+                              <span className="ml-2 rounded-full bg-sky-50 px-2 py-0.5 text-[10px] font-bold text-sky-700 ring-1 ring-sky-100">
+                                sous-matières FR
+                              </span>
+                            )}
+                          </td>
+                          <td className="px-3 py-2 text-right text-slate-500">
+                            {item.currentCoeff}
+                          </td>
+                          <td className="px-3 py-2 text-right font-bold text-slate-900">
+                            {item.coeff ?? "—"}
+                          </td>
+                          <td className="px-3 py-2">
+                            {item.willApply ? (
+                              <span className="rounded-full bg-emerald-50 px-2 py-0.5 font-bold text-emerald-700 ring-1 ring-emerald-100">
+                                reconnu{item.optional ? " · facultatif" : ""}
+                              </span>
+                            ) : (
+                              <span className="rounded-full bg-slate-50 px-2 py-0.5 font-medium text-slate-600 ring-1 ring-slate-100">
+                                {item.note}
+                              </span>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+          </div>
 
           <div className="mb-3 grid grid-cols-1 gap-3 md:grid-cols-3">
             <div>

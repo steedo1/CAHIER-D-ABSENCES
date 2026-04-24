@@ -15,7 +15,97 @@ function slug(s: string) {
     .replace(/^-+|-+$/g, "");
 }
 
+function isUuid(v: string | null | undefined): boolean {
+  return /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(
+    String(v || "")
+  );
+}
+
+function normalizeSubjectText(value: string | null | undefined) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/œ/g, "oe")
+    .replace(/æ/g, "ae")
+    .replace(/[^a-z0-9]+/g, "")
+    .trim();
+}
+
+const SUBJECT_ALIAS_TO_CANONICAL: Record<string, string> = {
+  math: "mathematiques",
+  maths: "mathematiques",
+  mathematique: "mathematiques",
+  mathematiques: "mathematiques",
+
+  francais: "francais",
+  fr: "francais",
+  french: "francais",
+
+  anglais: "anglais",
+  ang: "anglais",
+  english: "anglais",
+
+  allemand: "allemand",
+  all: "allemand",
+  allemandlv2: "allemand",
+
+  espagnol: "espagnol",
+  esp: "espagnol",
+  espagnollv2: "espagnol",
+
+  histoiregeographie: "histoiregeographie",
+  histoiregeo: "histoiregeographie",
+  histgeo: "histoiregeographie",
+  hg: "histoiregeographie",
+  hgeo: "histoiregeographie",
+  histoire: "histoiregeographie",
+  geographie: "histoiregeographie",
+
+  physiquechimie: "physiquechimie",
+  physique: "physiquechimie",
+  chimie: "physiquechimie",
+  pc: "physiquechimie",
+  pch: "physiquechimie",
+
+  svt: "svt",
+  sciencenaturelle: "svt",
+  sciencesnaturelles: "svt",
+  sciencesdelavieetdelaterre: "svt",
+  sciencevieetterre: "svt",
+
+  eps: "eps",
+  sport: "eps",
+  educationphysique: "eps",
+  educationphysiqueetsportive: "eps",
+
+  edhc: "edhc",
+  edh: "edhc",
+  educationcivique: "edhc",
+  educationauxdroitshumainsetalacitoyennete: "edhc",
+
+  philosophie: "philosophie",
+  philo: "philosophie",
+
+  dessin: "dessineducationmusicale",
+  musique: "dessineducationmusicale",
+  dessinmusique: "dessineducationmusicale",
+  dessineducationmusicale: "dessineducationmusicale",
+  educationmusicale: "dessineducationmusicale",
+};
+
+function canonicalSubjectKey(value: string | null | undefined) {
+  const raw = normalizeSubjectText(value);
+  return SUBJECT_ALIAS_TO_CANONICAL[raw] || raw;
+}
+
 type BodyRole = "teacher" | "parent" | "admin" | "educator";
+
+type SubjectLite = {
+  id: string;
+  name: string | null;
+  code: string | null;
+};
 
 export async function POST(req: NextRequest) {
   const supaSrv = getSupabaseServiceClient(); // service (no RLS)
@@ -43,7 +133,15 @@ export async function POST(req: NextRequest) {
   const role = body?.role as BodyRole;
   const emailRaw = (body?.email ?? null) as string | null;
   const display_name = (body?.display_name ?? null) as string | null;
-  const subjectName = (body?.subject ?? null) as string | null; // REQUIS si role=teacher
+
+  // ✅ Nouveau : subject_id canonique optionnel.
+  // Si présent, il est prioritaire pour éviter les doublons "Maths" / "Mathématiques".
+  const subjectIdRaw =
+    typeof body?.subject_id === "string" && body.subject_id.trim()
+      ? String(body.subject_id).trim()
+      : null;
+
+  const subjectName = (body?.subject ?? null) as string | null;
   const country =
     typeof body?.country === "string" && body.country.trim()
       ? String(body.country).trim()
@@ -58,12 +156,21 @@ export async function POST(req: NextRequest) {
   if (!role) {
     return NextResponse.json({ error: "role_required" }, { status: 400 });
   }
+
   // Règle produit : le parent doit avoir un téléphone
   if (role === "parent" && !phone) {
     return NextResponse.json({ error: "phone_required" }, { status: 400 });
   }
-  // 🔒 Discipline OBLIGATOIRE pour les enseignants
-  if (role === "teacher" && !(subjectName && subjectName.trim())) {
+
+  // 🔒 Discipline OBLIGATOIRE pour les enseignants :
+  // soit subject_id, soit nom de discipline.
+  if (
+    role === "teacher" &&
+    !(
+      (subjectIdRaw && isUuid(subjectIdRaw)) ||
+      (subjectName && subjectName.trim())
+    )
+  ) {
     return NextResponse.json({ error: "subject_required" }, { status: 400 });
   }
 
@@ -72,20 +179,33 @@ export async function POST(req: NextRequest) {
 
   // a) profiles -> id
   if (phone) {
-    const { data } = await supaSrv.from("profiles").select("id").eq("phone", phone).maybeSingle();
+    const { data } = await supaSrv
+      .from("profiles")
+      .select("id")
+      .eq("phone", phone)
+      .maybeSingle();
     if (data?.id) {
       uid = String(data.id);
       try {
-        await supaSrv.auth.admin.updateUserById(uid, { password: DEFAULT_TEMP_PASSWORD });
+        await supaSrv.auth.admin.updateUserById(uid, {
+          password: DEFAULT_TEMP_PASSWORD,
+        });
       } catch {}
     }
   }
+
   if (!uid && email) {
-    const { data } = await supaSrv.from("profiles").select("id").eq("email", email).maybeSingle();
+    const { data } = await supaSrv
+      .from("profiles")
+      .select("id")
+      .eq("email", email)
+      .maybeSingle();
     if (data?.id) {
       uid = String(data.id);
       try {
-        await supaSrv.auth.admin.updateUserById(uid, { password: DEFAULT_TEMP_PASSWORD });
+        await supaSrv.auth.admin.updateUserById(uid, {
+          password: DEFAULT_TEMP_PASSWORD,
+        });
       } catch {}
     }
   }
@@ -116,7 +236,9 @@ export async function POST(req: NextRequest) {
     uid = await findInAuth();
     if (uid) {
       try {
-        await supaSrv.auth.admin.updateUserById(uid, { password: DEFAULT_TEMP_PASSWORD });
+        await supaSrv.auth.admin.updateUserById(uid, {
+          password: DEFAULT_TEMP_PASSWORD,
+        });
       } catch {}
     }
   }
@@ -138,10 +260,15 @@ export async function POST(req: NextRequest) {
       // fallback : re-lookup
       uid = await findInAuth();
       if (!uid) {
-        return NextResponse.json({ error: cErr?.message ?? "createUser_failed" }, { status: 400 });
+        return NextResponse.json(
+          { error: cErr?.message ?? "createUser_failed" },
+          { status: 400 }
+        );
       }
       try {
-        await supaSrv.auth.admin.updateUserById(uid, { password: DEFAULT_TEMP_PASSWORD });
+        await supaSrv.auth.admin.updateUserById(uid, {
+          password: DEFAULT_TEMP_PASSWORD,
+        });
       } catch {}
     }
   }
@@ -191,36 +318,107 @@ export async function POST(req: NextRequest) {
 
   // 4) Matière REQUISE (enseignant)
   if (role === "teacher") {
-    const name = String(subjectName).trim();
-    const code = slug(name).slice(0, 12).toUpperCase();
+    const rawName = String(subjectName || "").trim();
+    let subject_id: string | undefined;
+    let canonicalSubjectName = rawName;
+    let canonicalSubjectCode: string | null = null;
 
-    const { data: subj1 } = await supaSrv
-      .from("subjects")
-      .select("id")
-      .ilike("name", name)
-      .maybeSingle();
-    let subject_id = (subj1?.id as string) || undefined;
+    // ✅ Priorité 1 : subject_id envoyé par le front.
+    if (subjectIdRaw && isUuid(subjectIdRaw)) {
+      const { data: subjById, error: subjByIdErr } = await supaSrv
+        .from("subjects")
+        .select("id,name,code")
+        .eq("id", subjectIdRaw)
+        .maybeSingle();
 
+      if (subjByIdErr) {
+        return NextResponse.json({ error: subjByIdErr.message }, { status: 400 });
+      }
+
+      if (!subjById?.id) {
+        return NextResponse.json({ error: "subject_not_found" }, { status: 400 });
+      }
+
+      subject_id = String(subjById.id);
+      canonicalSubjectName = String(subjById.name || rawName || "Discipline");
+      canonicalSubjectCode = subjById.code ? String(subjById.code) : null;
+    }
+
+    // ✅ Priorité 2 : résolution intelligente par nom / alias.
     if (!subject_id) {
+      const name = rawName;
+      const wantedCanonical = canonicalSubjectKey(name);
+      const wantedRaw = normalizeSubjectText(name);
+
+      const { data: allSubjects } = await supaSrv
+        .from("subjects")
+        .select("id,name,code")
+        .limit(1000);
+
+      const rows = (Array.isArray(allSubjects) ? allSubjects : []) as SubjectLite[];
+
+      const found =
+        rows.find((s) => canonicalSubjectKey(s.name) === wantedCanonical) ||
+        rows.find((s) => normalizeSubjectText(s.name) === wantedRaw) ||
+        rows.find((s) => normalizeSubjectText(s.code) === wantedRaw) ||
+        null;
+
+      if (found?.id) {
+        subject_id = String(found.id);
+        canonicalSubjectName = String(found.name || name);
+        canonicalSubjectCode = found.code ? String(found.code) : null;
+      }
+    }
+
+    // ✅ Priorité 3 : fallback historique exact ilike.
+    if (!subject_id && rawName) {
+      const { data: subj1 } = await supaSrv
+        .from("subjects")
+        .select("id,name,code")
+        .ilike("name", rawName)
+        .maybeSingle();
+
+      if (subj1?.id) {
+        subject_id = String(subj1.id);
+        canonicalSubjectName = String(subj1.name || rawName);
+        canonicalSubjectCode = subj1.code ? String(subj1.code) : null;
+      }
+    }
+
+    // ✅ Priorité 4 : création uniquement si la discipline n’existe vraiment pas.
+    if (!subject_id) {
+      const name = rawName;
+      const code = slug(name).slice(0, 12).toUpperCase();
+
       const { data: createdSubj } = await supaSrv
         .from("subjects")
         .insert({ code, name })
-        .select("id")
+        .select("id,name,code")
         .maybeSingle();
+
       subject_id = (createdSubj?.id as string) || undefined;
+      canonicalSubjectName = String(createdSubj?.name || name);
+      canonicalSubjectCode = createdSubj?.code ? String(createdSubj.code) : code;
+
       if (!subject_id) {
         // Dernière tentative : collision sur code
         const { data: subjByCode } = await supaSrv
           .from("subjects")
-          .select("id")
+          .select("id,name,code")
           .eq("code", code)
           .maybeSingle();
+
         subject_id = (subjByCode?.id as string) || undefined;
+        canonicalSubjectName = String(subjByCode?.name || name);
+        canonicalSubjectCode = subjByCode?.code ? String(subjByCode.code) : code;
       }
     }
 
     if (!subject_id) {
-      return NextResponse.json({ error: "subject_create_failed" }, { status: 400 });
+      return NextResponse.json(
+        { error: "subject_create_failed" },
+        { status: 400 }
+      );
     }
 
     await supaSrv
@@ -244,7 +442,7 @@ export async function POST(req: NextRequest) {
             subject_id,
             institution_id: inst,
             teacher_name: display_name ?? null, // dénormalisé si colonnes dispo
-            subject_name: name,
+            subject_name: canonicalSubjectName,
           },
           { onConflict: "profile_id,subject_id,institution_id" }
         );
@@ -252,6 +450,14 @@ export async function POST(req: NextRequest) {
       // ne bloque pas la création
       console.warn("teacher_subjects upsert skipped:", (e as any)?.message);
     }
+
+    return NextResponse.json({
+      ok: true,
+      user_id: uid,
+      subject_id,
+      subject_name: canonicalSubjectName,
+      subject_code: canonicalSubjectCode,
+    });
   }
 
   return NextResponse.json({ ok: true, user_id: uid });

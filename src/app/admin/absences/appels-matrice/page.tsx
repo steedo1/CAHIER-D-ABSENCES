@@ -408,6 +408,13 @@ export default function AppelsMatricePage() {
         }
       `}</style>
 
+      {refreshing && (
+        <div className="pointer-events-none fixed bottom-4 right-4 z-50 inline-flex items-center gap-2 rounded-full border border-emerald-100 bg-white/95 px-3 py-2 text-xs font-medium text-emerald-700 shadow-lg shadow-emerald-100/70 backdrop-blur">
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          Actualisation...
+        </div>
+      )}
+
       <div className="mx-auto max-w-6xl space-y-6">
         <header className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div>
@@ -592,13 +599,6 @@ export default function AppelsMatricePage() {
               </div>
             </div>
           </div>
-
-          {refreshing && (
-            <div className="flex items-center gap-2 rounded-2xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
-              <Loader2 className="h-4 w-4 animate-spin" />
-              Actualisation de la vue admin en cours...
-            </div>
-          )}
 
           {initialLoading ? (
             <div className="flex min-h-[240px] flex-col items-center justify-center rounded-2xl border border-slate-200 bg-slate-50 text-slate-600">
