@@ -524,6 +524,98 @@ export default function AdminNotesStatsPage() {
   }, [allClasses, matrixLevel]);
 
   /* Charger les stats par classe × matière (pour la section 2) */
+  async function loadClassSubjectStatsFallback(): Promise<ClassSubjectStat[]> {
+    const qs = new URLSearchParams();
+    if (from) qs.set("from", from);
+    if (to) qs.set("to", to);
+    if (status === "published") qs.set("published", "true");
+    if (status === "draft") qs.set("published", "false");
+    qs.set("limit", "200");
+
+    const res = await fetch("/api/admin/notes/evaluations?" + qs.toString(), {
+      cache: "no-store",
+    });
+    const json = await res.json().catch(() => ({} as any));
+
+    if (!res.ok || !json?.ok) {
+      return [];
+    }
+
+    const items = Array.isArray(json.items) ? json.items : [];
+    const acc = new Map<
+      string,
+      {
+        class_id: string;
+        class_label: string;
+        level: string | null;
+        subject_id: string;
+        subject_name: string | null;
+        evals_count: number;
+        notes_count: number;
+        weighted_sum: number;
+        weighted_den: number;
+      }
+    >();
+
+    for (const it of items) {
+      const classId = String(it.class_id || "").trim();
+      const subjectId = String(it.subject_id || "").trim();
+      if (!classId || !subjectId) continue;
+
+      const key = `${classId}::${subjectId}`;
+      const scoresCount = Number(it?.stats?.scores_count || 0);
+      const avg20 =
+        it?.stats?.avg_score_20 == null ? null : Number(it.stats.avg_score_20);
+
+      let row = acc.get(key);
+      if (!row) {
+        row = {
+          class_id: classId,
+          class_label: String(it.class_label || "Classe"),
+          level: it.level == null ? null : String(it.level),
+          subject_id: subjectId,
+          subject_name: it.subject_name ? String(it.subject_name) : "Matière",
+          evals_count: 0,
+          notes_count: 0,
+          weighted_sum: 0,
+          weighted_den: 0,
+        };
+        acc.set(key, row);
+      }
+
+      row.evals_count += 1;
+      row.notes_count += scoresCount;
+
+      if (avg20 != null && Number.isFinite(avg20) && scoresCount > 0) {
+        row.weighted_sum += avg20 * scoresCount;
+        row.weighted_den += scoresCount;
+      }
+    }
+
+    return Array.from(acc.values())
+      .map((r) => ({
+        class_id: r.class_id,
+        class_label: r.class_label,
+        level: r.level,
+        subject_id: r.subject_id,
+        subject_name: r.subject_name,
+        evals_count: r.evals_count,
+        notes_count: r.notes_count,
+        avg_score_20: r.weighted_den > 0 ? r.weighted_sum / r.weighted_den : null,
+      }))
+      .sort((a, b) => {
+        const c = a.class_label.localeCompare(b.class_label, undefined, {
+          numeric: true,
+          sensitivity: "base",
+        });
+        if (c !== 0) return c;
+        return (a.subject_name || "").localeCompare(b.subject_name || "", undefined, {
+          numeric: true,
+          sensitivity: "base",
+        });
+      });
+  }
+
   async function refreshStats() {
     setStatsLoading(true);
     setStatsError(null);
@@ -534,15 +626,42 @@ export default function AdminNotesStatsPage() {
       if (status === "published") qs.set("published", "true");
       if (status === "draft") qs.set("published", "false");
 
-      const res = await fetch("/api/admin/notes/stats?" + qs.toString(), {
-        cache: "no-store",
-      });
-      const json = (await res.json().catch(() => ({}))) as StatsOk | StatsErr | any;
-      if (!res.ok || !json || !json.ok) {
-        throw new Error((json && json.error) || `HTTP_${res.status}`);
+      let rows: ClassSubjectStat[] = [];
+      let primaryError: string | null = null;
+
+      try {
+        const res = await fetch("/api/admin/notes/stats?" + qs.toString(), {
+          cache: "no-store",
+        });
+        const json = (await res.json().catch(() => ({}))) as StatsOk | StatsErr | any;
+        if (!res.ok || !json || !json.ok) {
+          throw new Error((json && json.error) || `HTTP_${res.status}`);
+        }
+
+        const data = json as StatsOk;
+        rows = Array.isArray(data.by_class_subject) ? data.by_class_subject : [];
+      } catch (e: any) {
+        primaryError = e?.message || "STATS_ROUTE_EMPTY";
+        console.warn("[admin.notes.stats] primary stats route failed, fallback enabled", e);
       }
-      const data = json as StatsOk;
-      setByClassSubject(data.by_class_subject || []);
+
+      // Filet de sécurité :
+      // - si /api/admin/notes/stats échoue ;
+      // - ou s'il répond OK mais sans ligne.
+      // On reconstruit depuis /api/admin/notes/evaluations.
+      if (!rows.length) {
+        rows = await loadClassSubjectStatsFallback();
+      }
+
+      setByClassSubject(rows);
+
+      if (!rows.length) {
+        setStatsError(
+          primaryError
+            ? `Aucune donnée affichable. Route stats: ${primaryError}. Vérifiez aussi la période et le filtre de publication.`
+            : "Aucune évaluation trouvée pour cette période. Vérifiez la période choisie ou le filtre de publication."
+        );
+      }
     } catch (e: any) {
       console.error("[admin.notes.stats] refreshStats error", e);
       setByClassSubject([]);
@@ -712,38 +831,84 @@ export default function AdminNotesStatsPage() {
   ): Promise<ClassMatrixComputed | null> => {
     const classInfo = allClasses.find((c) => c.id === classId) || null;
 
-    // 1) matières affectées à la classe
-    const subsRes = await fetch(`/api/class/subjects?class_id=${classId}`, {
-      cache: "no-store",
-    });
-    const subsJson = await subsRes.json().catch(() => ({}));
-    const rawItems = (subsJson.items || []) as any[];
-    const subjectsForClass = rawItems.map((s) => ({
-      subject_id: String(s.id),
-      subject_name: (s.label || s.name || "").trim() || String(s.id),
-    }));
+    const subjectsMap = new Map<string, { subject_id: string; subject_name: string }>();
+
+    const addSubject = (id: any, name: any) => {
+      const subjectId = String(id || "").trim();
+      if (!subjectId) return;
+
+      const subjectName =
+        String(name || "").trim() ||
+        byClassSubject.find(
+          (cs) => cs.class_id === classId && cs.subject_id === subjectId
+        )?.subject_name ||
+        "Matière";
+
+      if (!subjectsMap.has(subjectId)) {
+        subjectsMap.set(subjectId, {
+          subject_id: subjectId,
+          subject_name: subjectName,
+        });
+      }
+    };
+
+    // 1A) Source prioritaire : les stats déjà calculées par /api/admin/notes/stats
+    for (const cs of byClassSubject) {
+      if (cs.class_id !== classId || !cs.subject_id) continue;
+      addSubject(cs.subject_id, cs.subject_name || "Matière");
+    }
+
+    // 1B) Filet robuste : retrouver les matières depuis les évaluations elles-mêmes
+    //     Utile si /api/class/subjects ne renvoie rien côté admin.
+    try {
+      const evalQs = new URLSearchParams();
+      evalQs.set("class_id", classId);
+      evalQs.set("limit", "200");
+      if (from) evalQs.set("from", from);
+      if (to) evalQs.set("to", to);
+      if (status === "published") evalQs.set("published", "true");
+      if (status === "draft") evalQs.set("published", "false");
+
+      const evalRes = await fetch("/api/admin/notes/evaluations?" + evalQs.toString(), {
+        cache: "no-store",
+      });
+      const evalJson = await evalRes.json().catch(() => ({} as any));
+
+      if (evalRes.ok && evalJson?.ok && Array.isArray(evalJson.items)) {
+        for (const it of evalJson.items) {
+          addSubject(it.subject_id, it.subject_name || "Matière");
+        }
+      }
+    } catch (e) {
+      console.warn("[admin.notes.stats] subjects fallback from evaluations failed", e);
+    }
+
+    // 1C) Dernier filet : ancienne route des matières de classe.
+    try {
+      const subsRes = await fetch(`/api/class/subjects?class_id=${classId}`, {
+        cache: "no-store",
+      });
+      const subsJson = await subsRes.json().catch(() => ({} as any));
+      const rawItems = Array.isArray(subsJson.items) ? subsJson.items : [];
+
+      for (const s of rawItems) {
+        addSubject(s.id, s.label || s.name || "Matière");
+      }
+    } catch (e) {
+      console.warn("[admin.notes.stats] /api/class/subjects fallback failed", e);
+    }
+
+    const subjectsForClass = Array.from(subjectsMap.values()).sort((a, b) =>
+      a.subject_name.localeCompare(b.subject_name, undefined, {
+        numeric: true,
+        sensitivity: "base",
+      })
+    );
 
     if (!subjectsForClass.length) {
-      return {
-        class_id: classId,
-        class_label: classInfo?.label || "Classe",
-        level: classInfo?.level ?? null,
-        students: [],
-        subjects: [],
-        averages: {},
-        generalAverages: {},
-        global: {
-          class_avg_20: null,
-          class_min_20: null,
-          class_max_20: null,
-          dist: { lt5: 0, between5_10: 0, between10_12: 0, between12_15: 0, gte15: 0 },
-          subjectStats: [],
-        },
-        ranks: {
-          general: {},
-          bySubject: {},
-        },
-      };
+      throw new Error(
+        "Aucune matière avec évaluation n'a été trouvée pour cette classe sur la période choisie. Cliquez d'abord sur « Actualiser les statistiques », puis vérifiez la période et le filtre de publication."
+      );
     }
 
     const studentsMap = new Map<string, MatrixStudent>();
@@ -753,7 +918,7 @@ export default function AdminNotesStatsPage() {
       { subject: string; evals: number; notes: number; sumAvg: number; cntAvg: number }
     >();
 
-    // 2) pour chaque matière : appel /api/admin/notes/matrix
+    // 2) Pour chaque matière : appel /api/admin/notes/matrix
     for (const subj of subjectsForClass) {
       const qs = new URLSearchParams();
       qs.set("class_id", classId);
@@ -814,14 +979,20 @@ export default function AdminNotesStatsPage() {
         for (const [evalId, markObj] of Object.entries(evalMarks)) {
           const meta = metaByEval.get(evalId);
           if (!meta) continue;
-          if (markObj.raw == null) continue;
+
+          const raw = markObj.raw;
+          const mark20Stored = markObj.mark_20;
+
+          if (raw == null && mark20Stored == null) continue;
+
+          const mark20 =
+            mark20Stored != null
+              ? Number(mark20Stored)
+              : (Number(raw) / meta.scale) * 20;
+
+          if (!Number.isFinite(mark20)) continue;
 
           nbNotes++;
-          const mark20 =
-            markObj.mark_20 != null
-              ? Number(markObj.mark_20)
-              : (Number(markObj.raw) / meta.scale) * 20;
-
           weightedSum += mark20 * meta.coeff;
           weights += meta.coeff;
         }
@@ -865,6 +1036,12 @@ export default function AdminNotesStatsPage() {
         numeric: true,
       })
     );
+
+    if (!studentsList.length) {
+      throw new Error(
+        "Aucun élève n'a été trouvé pour cette classe sur cette période. Vérifiez les inscriptions de la classe ou la période sélectionnée."
+      );
+    }
 
     const generalAverages: Record<string, number | null> = {};
     let sumAll = 0;
