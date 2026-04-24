@@ -1105,7 +1105,14 @@ export default function ConseilClassePage() {
       const subjectLabel = String(subjectRaw || "").trim();
       if (!teacherName || !subjectLabel) return;
 
-      const key = String(teacherKeyRaw || "").trim() || normalizeLabelForMatch(teacherName) || teacherName;
+      // On groupe d'abord par nom normalisé pour éviter les doublons.
+      // Certains flux donnent le même professeur une fois par la matière notée
+      // et une autre fois par l'affectation courante avec un id différent.
+      const key =
+        normalizeLabelForMatch(teacherName) ||
+        normalizeLabelForMatch(teacherKeyRaw) ||
+        String(teacherKeyRaw || "").trim() ||
+        teacherName;
       const existing = grouped.get(key);
       if (existing) {
         existing.subjects.add(subjectLabel);
@@ -1981,29 +1988,33 @@ export default function ConseilClassePage() {
                 </div>
 
                 <div className="flex flex-col gap-3">
-                  {currentPeriodTopThreeRows.length > 0 ? (
-                    <div>
-                      <OfficialBand>Les 3 premiers — {currentPeriodLabel}</OfficialBand>
-                      <table className="pv-grid-table mt-1 pv-mini">
-                        <thead>
-                          <tr>
-                            <th style={{ width: "16%" }}>Rg</th>
-                            <th>Nom et prénom</th>
-                            <th style={{ width: "23%" }}>Moy.</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {currentPeriodTopThreeRows.map((row) => (
+                  <div>
+                    <OfficialBand>Les 3 premiers — {currentPeriodLabel}</OfficialBand>
+                    <table className="pv-grid-table mt-1 pv-mini">
+                      <thead>
+                        <tr>
+                          <th style={{ width: "16%" }}>Rg</th>
+                          <th>Nom et prénom</th>
+                          <th style={{ width: "23%" }}>Moy.</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {currentPeriodTopThreeRows.length > 0 ? (
+                          currentPeriodTopThreeRows.map((row) => (
                             <tr key={`current-top-${row.student_id}`}>
                               <OfficialTd center strong>{row.rank ?? "—"}</OfficialTd>
                               <OfficialTd strong>{row.full_name}</OfficialTd>
                               <OfficialTd center strong>{formatNumber(row.general_avg)}</OfficialTd>
                             </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  ) : null}
+                          ))
+                        ) : (
+                          <tr>
+                            <OfficialTd center colSpan={3}>Aucune moyenne disponible</OfficialTd>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
 
                   <div>
                     <OfficialBand>Distinctions</OfficialBand>

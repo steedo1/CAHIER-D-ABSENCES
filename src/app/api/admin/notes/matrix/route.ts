@@ -175,11 +175,74 @@ export async function GET(req: NextRequest) {
     }
 
     /*
+      ✅ Roster robuste de la classe.
+
+      Avant, le filtre faisait :
+      start_date <= periodTo ET end_date >= periodFrom.
+      Problème : si start_date est NULL, l'élève était exclu.
+
+      Maintenant :
+      - si période : inscription qui chevauche la période
+        start_date NULL ou <= to
+        end_date NULL ou >= from
+      - sans période : élèves actifs end_date NULL
+    */
+    const loadClassRoster = async (): Promise<StudentOut[]> => {
+      let enrollQuery = supabase
+        .from("class_enrollments")
+        .select(
+          `
+          student_id,
+          students:student_id (
+            id,
+            full_name,
+            first_name,
+            last_name,
+            matricule
+          )
+        `
+        )
+        .eq("class_id", classId);
+
+      if (from || to) {
+        if (to) {
+          enrollQuery = enrollQuery.or(`start_date.is.null,start_date.lte.${to}`);
+        }
+        if (from) {
+          enrollQuery = enrollQuery.or(`end_date.is.null,end_date.gte.${from}`);
+        }
+      } else {
+        enrollQuery = enrollQuery.is("end_date", null);
+      }
+
+      enrollQuery = enrollQuery.order("student_id", { ascending: true });
+
+      const { data: enrollData, error: enrollErr } = await enrollQuery;
+
+      if (enrollErr) {
+        console.error("[admin.notes.matrix] class_enrollments error", enrollErr);
+        throw new Error("ENROLLMENTS_ERROR");
+      }
+
+      return (enrollData || [])
+        .map((r: any) => {
+          const s = r.students || {};
+          return {
+            student_id: String(r.student_id || ""),
+            full_name: studentFullName(s),
+            matricule: (s.matricule ?? null) as string | null,
+          };
+        })
+        .filter((s) => !!s.student_id);
+    };
+
+    const initialStudents = await loadClassRoster();
+
+    /*
       Résolution matière :
       - subjectIdRaw peut être un subjects.id
       - ou un institution_subjects.id
       - et certaines anciennes évaluations peuvent encore avoir l'un ou l'autre.
-      Donc on construit une liste acceptée pour ne pas perdre les anciennes données.
     */
     let canonicalSubjectId: string | null = null;
     const acceptedSubjectIds = new Set<string>();
@@ -251,6 +314,7 @@ export async function GET(req: NextRequest) {
       to,
       published,
       institution_id: institutionId,
+      initial_students_count: initialStudents.length,
     });
 
     /* ───────── 1) Évaluations de la classe + matière ───────── */
@@ -283,10 +347,18 @@ export async function GET(req: NextRequest) {
     const evalRows = (evalsData || []) as any as EvalRow[];
 
     /*
-      Même s'il n'y a pas d'évaluation, on ne bloque pas brutalement.
-      Mais pour la matrice matière, sans évaluation il n'y a pas de notes à afficher.
+      ✅ Même s'il n'y a aucune évaluation pour cette matière,
+      on renvoie maintenant la liste des élèves de la classe.
+      Ainsi la matrice par classe ne tombe plus sur "Aucun élève trouvé".
     */
     if (!evalRows.length) {
+      const students = [...initialStudents].sort((a, b) =>
+        a.full_name.localeCompare(b.full_name, undefined, {
+          sensitivity: "base",
+          numeric: true,
+        })
+      );
+
       return NextResponse.json({
         ok: true,
         meta: {
@@ -296,66 +368,19 @@ export async function GET(req: NextRequest) {
           class_label: (cls as any)?.label ?? null,
           level: (cls as any)?.level ?? null,
           evaluations_count: 0,
-          students_count: 0,
+          students_count: students.length,
           from,
           to,
         },
         evaluations: [] as EvalOut[],
-        students: [] as StudentOut[],
+        students,
         marks: {} as Record<string, any>,
       });
     }
 
     const evalIds = Array.from(new Set(evalRows.map((e) => e.id)));
 
-    /* ───────── 2) Roster historique de la classe ───────── */
-    const rosterFrom = from || "0001-01-01";
-    const rosterTo = to || "9999-12-31";
-
-    let enrollQuery = supabase
-      .from("class_enrollments")
-      .select(
-        `
-        student_id,
-        students:student_id (
-          id,
-          full_name,
-          first_name,
-          last_name,
-          matricule
-        )
-      `
-      )
-      .eq("class_id", classId);
-
-    if (from || to) {
-      enrollQuery = enrollQuery
-        .lte("start_date", rosterTo)
-        .or(`end_date.is.null,end_date.gte.${rosterFrom}`);
-    } else {
-      enrollQuery = enrollQuery.is("end_date", null);
-    }
-
-    const { data: enrollData, error: enrollErr } = await enrollQuery;
-
-    if (enrollErr) {
-      console.error("[admin.notes.matrix] class_enrollments error", enrollErr);
-      return NextResponse.json(
-        { ok: false, error: "ENROLLMENTS_ERROR" },
-        { status: 500 }
-      );
-    }
-
-    const initialStudents: StudentOut[] = (enrollData || []).map((r: any) => {
-      const s = r.students || {};
-      return {
-        student_id: String(r.student_id),
-        full_name: studentFullName(s),
-        matricule: (s.matricule ?? null) as string | null,
-      };
-    });
-
-    /* ───────── 3) Notes depuis grade_flat_marks ───────── */
+    /* ───────── 2) Notes depuis grade_flat_marks ───────── */
     const marksRows: MarkRow[] = [];
 
     for (const part of chunks(evalIds, 500)) {
@@ -377,7 +402,7 @@ export async function GET(req: NextRequest) {
       marksRows.push(...((marksData || []) as MarkRow[]));
     }
 
-    /* ───────── 4) Construire élèves + matrice de notes ───────── */
+    /* ───────── 3) Construire élèves + matrice de notes ───────── */
     const studentsById = new Map<string, StudentOut>();
 
     for (const st of initialStudents) {
@@ -394,6 +419,11 @@ export async function GET(req: NextRequest) {
       const sid = row.student_id;
       if (!sid) continue;
 
+      /*
+        ✅ Filet de sécurité :
+        si l'élève a une note mais n'est pas sorti dans class_enrollments,
+        on l'ajoute quand même pour ne pas perdre les données.
+      */
       if (!studentsById.has(sid)) {
         const full = cleanName(row.last_name, row.first_name) || "Élève";
         studentsById.set(sid, {
@@ -420,7 +450,7 @@ export async function GET(req: NextRequest) {
       })
     );
 
-    /* ───────── 5) Noms des enseignants ───────── */
+    /* ───────── 4) Noms des enseignants ───────── */
     const teacherIds = uniqueStrings(evalRows.map((e) => e.teacher_id));
 
     const teachersById: Record<string, string> = {};
