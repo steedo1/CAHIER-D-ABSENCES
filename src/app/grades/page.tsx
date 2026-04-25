@@ -135,11 +135,20 @@ type AverageApiRow = {
   student_id: string;
   count_evals: number;
   total_evals: number;
+
+  // 0 = vraie moyenne ; null = aucune moyenne calculable.
   average_raw: number | null;
   bonus: number | null;
   average: number | null;
   average_rounded: number | null;
+
+  // Nouvelle règle : rang autorisé dès qu'une moyenne existe.
+  // Si l'API ne renvoie pas encore le rang, le front le reconstruit en sécurité.
   rank: number | null;
+
+  has_average?: boolean | null;
+  is_complete?: boolean | null;
+  status?: "complete" | "partial" | string | null;
 };
 
 type GradePeriod = {
@@ -1046,7 +1055,14 @@ export default function TeacherNotesPage() {
     bonus: number;
     final: number | null;
     rank: number | null;
+
+    // Nouvelle règle prof :
+    // - moyenne calculable = rang affiché ;
+    // - aucune note / aucune moyenne = NC.
     hasAverage: boolean;
+    isComplete: boolean;
+    status: "complete" | "partial" | "empty" | string;
+
     componentsAvg?: Record<string, number>; // ✅ moyenne /20 par sous-rubrique (subject_component_id -> moyenne)
   };
   const [avgRows, setAvgRows] = useState<RowAvg[]>([]);
@@ -1140,10 +1156,33 @@ export default function TeacherNotesPage() {
     return String(Math.round(n));
   }
 
+  function buildDenseRanksFromRows(rows: Array<{ studentId: string; final: number | null }>) {
+    const sorted = rows
+      .filter((row) => row.final !== null && Number.isFinite(Number(row.final)))
+      .map((row) => ({ studentId: row.studentId, final: Number(row.final) }))
+      .sort((a, b) => b.final - a.final);
+
+    const rankMap = new Map<string, number>();
+    let lastScore: number | null = null;
+    let currentRank = 0;
+    let position = 0;
+
+    for (const row of sorted) {
+      position += 1;
+      if (lastScore === null || row.final !== lastScore) {
+        currentRank = position;
+        lastScore = row.final;
+      }
+      rankMap.set(row.studentId, currentRank);
+    }
+
+    return rankMap;
+  }
+
   function applyAveragesFromApi(items: AverageApiRow[]) {
     const map = new Map(items.map((row) => [row.student_id, row]));
 
-    const rows: RowAvg[] = roster.map((st) => {
+    const rowsBase: RowAvg[] = roster.map((st) => {
       const src = map.get(st.id);
 
       const avg20 = src ? cleanAvgValue(src.average_raw ?? src.average) : null;
@@ -1159,18 +1198,36 @@ export default function TeacherNotesPage() {
           ? Math.min(20, Math.max(0, Math.round((avg20 + bonus) * 100) / 100))
           : null;
 
-      const rank = src ? cleanAvgValue(src.rank) : null;
-      const hasAverage = avg20 !== null || final !== null;
+      const hasAverage =
+        src?.has_average === true ||
+        avg20 !== null ||
+        final !== null;
 
       return {
         student: st,
         avg20,
         bonus,
         final,
-        rank,
+        rank: src ? cleanAvgValue(src.rank) : null,
         hasAverage,
+        isComplete: src?.is_complete === true,
+        status: hasAverage ? String(src?.status || "partial") : "empty",
       };
     });
+
+    // Sécurité front : côté prof, un élève ayant une moyenne calculable doit avoir un rang.
+    // Cela garde la page compatible même si une ancienne API ne renvoie pas encore rank.
+    const fallbackRanks = buildDenseRanksFromRows(
+      rowsBase.map((row) => ({
+        studentId: row.student.id,
+        final: row.hasAverage ? row.final : null,
+      }))
+    );
+
+    const rows = rowsBase.map((row) => ({
+      ...row,
+      rank: row.hasAverage ? row.rank ?? fallbackRanks.get(row.student.id) ?? null : null,
+    }));
 
     setAvgRows(rows);
 
@@ -2437,7 +2494,7 @@ export default function TeacherNotesPage() {
                             {formatAvgOrNC(final)}
                           </td>
                           <td className="px-3 py-2 text-right">
-                            {formatRankOrNC(row.rank)}
+                            {row.hasAverage ? formatRankOrNC(row.rank) : "NC"}
                           </td>
                         </tr>
                       );
@@ -2481,7 +2538,7 @@ export default function TeacherNotesPage() {
                         <div className="text-[11px] text-slate-500 text-right">
                           Rang :{" "}
                           <span className="font-semibold">
-                            {formatRankOrNC(row.rank)}
+                            {row.hasAverage ? formatRankOrNC(row.rank) : "NC"}
                           </span>
                         </div>
                       </div>

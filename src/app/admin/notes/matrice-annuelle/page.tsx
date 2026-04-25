@@ -75,7 +75,14 @@ type BulletinItem = {
   // Métadonnées renvoyées par l’API bulletin NC.
   coverage?: BulletinCoverage | null;
   general_avg_is_complete?: boolean | null;
-  general_avg_status?: "complete" | "partial" | "empty" | string | null;
+  general_avg_status?: "complete" | "partial" | "empty" | "admin_nc" | string | null;
+
+  // Décision NC admin centralisée via public.bulletin_nc_overrides.
+  admin_forced_nc?: boolean | null;
+  general_avg_before_admin_nc?: number | null;
+  rank_before_admin_nc?: number | null;
+  admin_nc_reason?: string | null;
+  admin_nc_missing_subjects_snapshot?: BulletinMissingSubject[] | null;
 
   // Annuel renvoyé par l’API sur la dernière période, si disponible.
   annual_avg?: number | null;
@@ -87,8 +94,15 @@ type BulletinItem = {
     | "partial"
     | "empty"
     | "not_last_period"
+    | "admin_nc"
     | string
     | null;
+
+  // Réservé au cas où l’admin force NC sur l’annuel.
+  admin_annual_forced_nc?: boolean | null;
+  annual_avg_before_admin_nc?: number | null;
+  annual_rank_before_admin_nc?: number | null;
+  admin_annual_nc_reason?: string | null;
 };
 
 type BulletinResponse = {
@@ -115,6 +129,7 @@ type MatrixCell = {
   rank: number | null;
   is_complete: boolean;
   status: string | null;
+  admin_forced_nc?: boolean;
 };
 
 type MatrixRow = {
@@ -124,13 +139,16 @@ type MatrixRow = {
   periods: Record<string, MatrixCell>;
 
   // Annuel affiché.
-  // Si annual_has_star = true : affichage 15.00* et rang annuel NC.
+  // Nouvelle règle : si une moyenne est calculable, le rang est autorisé.
+  // Plus d’étoile et plus de rang bloqué automatiquement sur une moyenne partielle.
+  // Si admin_annual_forced_nc=true, l’annuel reste NC même si des périodes existent.
   annual_avg: number | null;
   annual_rank: number | null;
   annual_is_complete: boolean;
-  annual_has_star: boolean;
+  annual_has_star: boolean; // conservé pour compatibilité, toujours false dans cette version
   annual_source_period_count: number;
   annual_expected_period_count: number;
+  admin_annual_forced_nc: boolean;
 };
 
 type PeriodLoadState = {
@@ -159,20 +177,19 @@ function formatRank(n: number | null | undefined) {
   return String(n);
 }
 
-function formatAnnualNumber(row: Pick<MatrixRow, "annual_avg" | "annual_has_star">) {
+function formatAnnualNumber(row: Pick<MatrixRow, "annual_avg">) {
   if (row.annual_avg === null || row.annual_avg === undefined) return "—";
   if (!Number.isFinite(Number(row.annual_avg))) return "—";
-  return `${Number(row.annual_avg).toFixed(2)}${row.annual_has_star ? "*" : ""}`;
+  return Number(row.annual_avg).toFixed(2);
 }
 
-function formatAnnualRank(row: Pick<MatrixRow, "annual_rank" | "annual_is_complete">) {
-  if (!row.annual_is_complete) return "NC";
+function formatAnnualRank(row: Pick<MatrixRow, "annual_rank">) {
   return formatRank(row.annual_rank);
 }
 
-function formatMaybeStar(n: number | null | undefined, hasStar: boolean, digits = 2) {
+function formatMaybeStar(n: number | null | undefined, _hasStar: boolean, digits = 2) {
   if (n === null || n === undefined || !Number.isFinite(Number(n))) return "—";
-  return `${Number(n).toFixed(digits)}${hasStar ? "*" : ""}`;
+  return Number(n).toFixed(digits);
 }
 
 function formatDateFR(value?: string | null) {
@@ -242,13 +259,36 @@ function isAnnualAverageCompleteFromApi(item: BulletinItem): boolean | null {
   return null;
 }
 
+function isAdminForcedNc(item: BulletinItem | null | undefined): boolean {
+  if (!item) return false;
+  return item.admin_forced_nc === true || item.general_avg_status === "admin_nc";
+}
+
+function isAdminAnnualForcedNc(item: BulletinItem | null | undefined): boolean {
+  if (!item) return false;
+  return item.admin_annual_forced_nc === true || item.annual_avg_status === "admin_nc";
+}
+
+function displayCellRank(cell: MatrixCell | undefined) {
+  if (!cell) return "NC";
+  if (cell.admin_forced_nc) return "NC";
+  return cell.avg !== null ? formatRank(cell.rank) : "NC";
+}
+
+function exportCellRank(cell: MatrixCell | undefined) {
+  if (!cell) return "NC";
+  if (cell.admin_forced_nc) return "NC";
+  return cell.avg !== null ? cell.rank ?? "" : "NC";
+}
+
 function buildRankMap(
   rows: Array<{ student_id: string; avg: number | null; is_complete?: boolean }>
 ) {
+  // Nouvelle règle : toute moyenne calculable est classable.
+  // is_complete est conservé pour compatibilité, mais ne bloque plus le rang.
   const valid = rows
     .filter(
       (r) =>
-        r.is_complete !== false &&
         typeof r.avg === "number" &&
         Number.isFinite(r.avg)
     )
@@ -367,10 +407,7 @@ export default function AnnualMatrixPage() {
       });
   }, [periods, selectedAcademicYear]);
 
-  const hasPartialAnnualRows = useMemo(
-    () => matrixRows.some((row) => row.annual_has_star),
-    [matrixRows]
-  );
+  const hasPartialAnnualRows = false;
 
   const stats = useMemo(() => {
     const valid = matrixRows
@@ -394,7 +431,7 @@ export default function AnnualMatrixPage() {
       classAvg: Math.round((sum / valid.length) * 100) / 100,
       highest: Math.round(Math.max(...valid) * 100) / 100,
       lowest: Math.round(Math.min(...valid) * 100) / 100,
-      hasStar: hasPartialAnnualRows,
+      hasStar: false,
     };
   }, [matrixRows, hasPartialAnnualRows]);
 
@@ -558,13 +595,14 @@ export default function AnnualMatrixPage() {
           const items = Array.isArray(res.items) ? res.items : [];
 
           const periodRowsForRank = items.map((it) => {
-            const avg = cleanAvg(it.general_avg);
-            const isComplete = avg !== null && isPeriodAverageComplete(it);
+            const forcedNc = isAdminForcedNc(it);
+            const avg = forcedNc ? null : cleanAvg(it.general_avg);
+            const hasAverage = avg !== null;
 
             return {
               student_id: it.student_id,
               avg,
-              is_complete: isComplete,
+              is_complete: hasAverage,
             };
           });
 
@@ -572,7 +610,6 @@ export default function AnnualMatrixPage() {
           periodResults.push({ period, items, ranks });
 
           const avgCount = periodRowsForRank.filter((row) => row.avg !== null).length;
-          const completeCount = periodRowsForRank.filter((row) => row.is_complete).length;
 
           for (const it of items) {
             if (!students.has(it.student_id)) {
@@ -587,36 +624,47 @@ export default function AnnualMatrixPage() {
                 annual_has_star: false,
                 annual_source_period_count: 0,
                 annual_expected_period_count: matrixPeriods.length,
+                admin_annual_forced_nc: false,
               });
             }
 
             const row = students.get(it.student_id)!;
-            const avg = cleanAvg(it.general_avg);
-            const isComplete = avg !== null && isPeriodAverageComplete(it);
+            const forcedNc = isAdminForcedNc(it);
+            const avg = forcedNc ? null : cleanAvg(it.general_avg);
+            const hasAverage = avg !== null;
+            const annualForcedNc = isAdminAnnualForcedNc(it);
 
             row.full_name = it.full_name || row.full_name;
             row.matricule = it.matricule ?? row.matricule;
 
             row.periods[period.id] = {
               avg,
-              rank: isComplete ? ranks.get(it.student_id) ?? null : null,
-              is_complete: isComplete,
-              status: periodAverageStatus(it),
+              rank: hasAverage ? ranks.get(it.student_id) ?? null : null,
+              is_complete: hasAverage,
+              status: forcedNc ? "admin_nc" : periodAverageStatus(it),
+              admin_forced_nc: forcedNc,
             };
 
-            const apiAnnualAvg = cleanAvg(it.annual_avg);
-            if (apiAnnualAvg !== null) {
-              row.annual_avg = apiAnnualAvg;
-              const apiAnnualComplete = isAnnualAverageCompleteFromApi(it);
-              if (apiAnnualComplete !== null) {
-                row.annual_is_complete = apiAnnualComplete;
-                row.annual_has_star = !apiAnnualComplete;
-              }
-
-              if (apiAnnualComplete === true) {
+            if (annualForcedNc) {
+              row.admin_annual_forced_nc = true;
+              row.annual_avg = null;
+              row.annual_rank = null;
+              row.annual_is_complete = false;
+              row.annual_has_star = false;
+            } else {
+              const apiAnnualAvg = cleanAvg(it.annual_avg);
+              if (apiAnnualAvg !== null) {
+                row.annual_avg = apiAnnualAvg;
+                const apiAnnualComplete = isAnnualAverageCompleteFromApi(it);
+                // Nouvelle règle : si l’annuel est calculable, le rang est autorisé,
+                // même si l’annuel est partiel. On garde annual_is_complete en information.
+                if (apiAnnualComplete !== null) {
+                  row.annual_is_complete = apiAnnualComplete;
+                } else {
+                  row.annual_is_complete = true;
+                }
+                row.annual_has_star = false;
                 row.annual_rank = cleanRank(it.annual_rank);
-              } else {
-                row.annual_rank = null;
               }
             }
           }
@@ -628,7 +676,7 @@ export default function AnnualMatrixPage() {
                     ...s,
                     status: avgCount ? "ok" : "empty",
                     message: avgCount
-                      ? `${avgCount} moyenne(s), ${completeCount} complète(s)`
+                      ? `${avgCount} moyenne(s) calculable(s)`
                       : "Aucune moyenne publiée",
                   }
                 : s
@@ -666,7 +714,6 @@ export default function AnnualMatrixPage() {
           den += coeff;
           sourceCount += 1;
 
-          if (cell?.is_complete) completeCount += 1;
         }
 
         row.annual_source_period_count = sourceCount;
@@ -674,51 +721,41 @@ export default function AnnualMatrixPage() {
 
         // Si l’API n’a pas déjà fourni annual_avg, on calcule une synthèse sur les périodes publiées disponibles.
         // Important : les périodes sans note restent NC et ne deviennent jamais 0.
-        if (row.annual_avg === null) {
+        if (row.admin_annual_forced_nc) {
+          row.annual_avg = null;
+          row.annual_rank = null;
+        } else if (row.annual_avg === null) {
           row.annual_avg = den > 0 ? Math.round((num / den) * 100) / 100 : null;
         }
 
-        const completeByPeriods =
-          sourceCount === matrixPeriods.length &&
-          completeCount === matrixPeriods.length &&
-          sourceCount > 0;
-
-        // Si l’API a dit que l’annuel est complet, on respecte.
-        // Sinon, on considère que l’annuel est complet seulement si toutes les périodes sont présentes et complètes.
-        if (!row.annual_is_complete) {
-          row.annual_is_complete = completeByPeriods;
-        }
-
-        row.annual_has_star = row.annual_avg !== null && !row.annual_is_complete;
-
-        if (row.annual_has_star) {
-          row.annual_rank = null;
-        }
+        // Nouvelle règle : dès qu’une moyenne annuelle est calculable, elle est classable.
+        // On conserve annual_is_complete comme info technique, mais elle ne bloque plus le rang.
+        row.annual_is_complete = row.annual_avg !== null && !row.admin_annual_forced_nc;
+        row.annual_has_star = false;
       }
 
       const annualRanks = buildRankMap(
         rows.map((r) => ({
           student_id: r.student_id,
-          avg: r.annual_avg,
-          is_complete: r.annual_is_complete,
+          avg: r.admin_annual_forced_nc ? null : r.annual_avg,
+          is_complete: r.annual_avg !== null && !r.admin_annual_forced_nc,
         }))
       );
 
       rows.forEach((r) => {
-        if (r.annual_is_complete) {
-          r.annual_rank = r.annual_rank ?? annualRanks.get(r.student_id) ?? null;
-        } else {
-          r.annual_rank = null;
-        }
+        r.annual_rank =
+          r.annual_avg !== null && !r.admin_annual_forced_nc
+            ? r.annual_rank ?? annualRanks.get(r.student_id) ?? null
+            : null;
       });
 
       rows.sort((a, b) => {
         const ar =
-          a.annual_is_complete && a.annual_rank !== null
+          a.annual_rank !== null
             ? a.annual_rank
             : Number.POSITIVE_INFINITY;
         const br =
-          b.annual_is_complete && b.annual_rank !== null
+          b.annual_rank !== null
             ? b.annual_rank
             : Number.POSITIVE_INFINITY;
 
@@ -779,26 +816,13 @@ export default function AnnualMatrixPage() {
 
         cells.push(
           cell.avg !== null ? cell.avg.toFixed(2) : "",
-          cell.is_complete ? cell.rank ?? "" : "NC"
+          exportCellRank(cell)
         );
       }
 
       cells.push(formatAnnualNumber(row), formatAnnualRank(row));
       lines.push(cells.map(csvCell).join(";"));
     });
-
-    if (hasPartialAnnualRows) {
-      lines.push("");
-      lines.push(
-        [
-          "",
-          "",
-          "* Moyenne calculée sur les périodes publiées disponibles. Rang annuel : NC tant que l’année est incomplète.",
-        ]
-          .map(csvCell)
-          .join(";")
-      );
-    }
 
     const csv = "\ufeff" + lines.join("\r\n");
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
@@ -851,7 +875,7 @@ export default function AnnualMatrixPage() {
             };
 
             return `<td class="num">${formatNumber(cell.avg)}</td><td class="num">${
-              cell.is_complete ? formatRank(cell.rank) : "NC"
+              displayCellRank(cell)
             }</td>`;
           })
           .join("");
@@ -867,9 +891,7 @@ export default function AnnualMatrixPage() {
       })
       .join("");
 
-    const footnote = hasPartialAnnualRows
-      ? `<div class="note">* Moyenne calculée sur les périodes publiées disponibles. Rang annuel : NC tant que l’année est incomplète.</div>`
-      : "";
+    const footnote = "";
 
     const html = `<!doctype html>
 <html lang="fr">
@@ -961,8 +983,8 @@ export default function AnnualMatrixPage() {
             </h1>
 
             <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-200">
-              Les périodes sans notes publiées restent NC. L’annuel est marqué par une
-              étoile si toutes les périodes ou moyennes nécessaires ne sont pas complètes.
+              Les périodes sans notes publiées restent NC. Dès qu’une moyenne est calculable,
+              le rang est autorisé, sauf décision NC validée par l’administration.
             </p>
           </div>
 
@@ -1098,13 +1120,6 @@ export default function AnnualMatrixPage() {
           </div>
         )}
 
-        {hasPartialAnnualRows && (
-          <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-800">
-            * Moyenne calculée sur les périodes publiées disponibles. Rang annuel : NC
-            tant que l’année est incomplète.
-          </div>
-        )}
-
         {errorMsg && (
           <div className="mt-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
             {errorMsg}
@@ -1236,7 +1251,7 @@ export default function AnnualMatrixPage() {
                             {formatNumber(cell.avg)}
                           </td>
                           <td className="border-b border-r border-slate-100 px-3 py-2 text-right tabular-nums">
-                            {cell.is_complete ? formatRank(cell.rank) : "NC"}
+                            {displayCellRank(cell)}
                           </td>
                         </React.Fragment>
                       );

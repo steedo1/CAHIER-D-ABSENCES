@@ -44,6 +44,12 @@ type SubjectRow = {
   name?: string | null;
 };
 
+function uniqueStrings(values: Array<string | null | undefined>) {
+  return Array.from(
+    new Set(values.map((v) => String(v ?? "").trim()).filter(Boolean))
+  );
+}
+
 type TeacherRow = {
   id: string;
   display_name?: string | null;
@@ -127,12 +133,22 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  /* ───────── Résolution du subject_id canonique ───────── */
+  /* ───────── Résolution robuste du subject_id ─────────
+     Le sélecteur peut envoyer :
+     - un subjects.id canonique ;
+     - ou un institution_subjects.id.
+
+     Et certaines anciennes évaluations peuvent avoir été enregistrées avec
+     l’un OU l’autre format. On accepte donc les deux pour que le sélecteur
+     matière fonctionne correctement sans casser l’historique.
+  */
   let canonicalSubjectId: string | null = null;
+  const acceptedSubjectIds = new Set<string>();
 
   if (subjectIdRaw) {
-    // Si subjectIdRaw correspond à un institution_subjects.id,
-    // on vérifie qu'il appartient à la même institution.
+    acceptedSubjectIds.add(subjectIdRaw);
+
+    // Cas 1 : subjectIdRaw = institution_subjects.id
     const { data: isub, error: isubErr } = await supabase
       .from("institution_subjects")
       .select("id, subject_id, institution_id")
@@ -140,7 +156,7 @@ export async function GET(req: NextRequest) {
       .maybeSingle();
 
     if (isubErr) {
-      console.error("[admin.notes.evaluations] institution_subjects error", isubErr);
+      console.error("[admin.notes.evaluations] institution_subjects by id error", isubErr);
       return NextResponse.json(
         { ok: false, error: "SUBJECTS_ERROR" },
         { status: 500 }
@@ -154,12 +170,38 @@ export async function GET(req: NextRequest) {
           { status: 403 }
         );
       }
-      canonicalSubjectId = (isub as any).subject_id as string;
+
+      canonicalSubjectId = String((isub as any).subject_id);
+      acceptedSubjectIds.add(String((isub as any).id));
+      acceptedSubjectIds.add(canonicalSubjectId);
     } else {
-      // sinon on considère que c’est déjà un subjects.id
+      // Cas 2 : subjectIdRaw = subjects.id canonique
       canonicalSubjectId = subjectIdRaw;
+
+      const { data: links, error: linksErr } = await supabase
+        .from("institution_subjects")
+        .select("id, subject_id, institution_id")
+        .eq("subject_id", canonicalSubjectId)
+        .eq("institution_id", institutionId);
+
+      if (linksErr) {
+        console.error("[admin.notes.evaluations] institution_subjects by subject_id error", linksErr);
+        return NextResponse.json(
+          { ok: false, error: "SUBJECTS_ERROR" },
+          { status: 500 }
+        );
+      }
+
+      for (const link of links || []) {
+        if ((link as any).id) acceptedSubjectIds.add(String((link as any).id));
+        if ((link as any).subject_id) {
+          acceptedSubjectIds.add(String((link as any).subject_id));
+        }
+      }
     }
   }
+
+  const subjectIdsForQuery = uniqueStrings(Array.from(acceptedSubjectIds));
 
   console.log("[admin.notes.evaluations] PARAMS", {
     from,
@@ -167,6 +209,7 @@ export async function GET(req: NextRequest) {
     classId,
     subjectIdRaw,
     canonicalSubjectId,
+    subjectIdsForQuery,
     published,
     page,
     limit,
@@ -186,7 +229,7 @@ export async function GET(req: NextRequest) {
   if (from) query = query.gte("eval_date", from);
   if (to) query = query.lte("eval_date", to);
   if (classId) query = query.eq("class_id", classId);
-  if (canonicalSubjectId) query = query.eq("subject_id", canonicalSubjectId);
+  if (subjectIdsForQuery.length) query = query.in("subject_id", subjectIdsForQuery);
   if (published === "true") query = query.eq("is_published", true);
   if (published === "false") query = query.eq("is_published", false);
 
@@ -213,6 +256,8 @@ export async function GET(req: NextRequest) {
         total: count ?? 0,
         from,
         to,
+        subject_id: canonicalSubjectId,
+        subject_ids_used: subjectIdsForQuery,
       },
       items: [] as any[],
     });
@@ -481,6 +526,8 @@ export async function GET(req: NextRequest) {
       total: count ?? items.length,
       from,
       to,
+      subject_id: canonicalSubjectId,
+      subject_ids_used: subjectIdsForQuery,
     },
     items,
   });

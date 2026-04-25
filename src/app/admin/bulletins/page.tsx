@@ -187,6 +187,19 @@ type BulletinItemBase = {
   annual_coverage?: BulletinAnnualCoverage | null;
   annual_avg_is_complete?: boolean | null;
   annual_avg_status?: "complete" | "partial" | "empty" | "not_last_period" | string | null;
+
+  // ✅ Décision administrative centralisée : NC au général.
+  // Si true, la moyenne/rang général affichés doivent être NC,
+  // sans masquer les moyennes par matière.
+  admin_forced_nc?: boolean | null;
+  admin_nc_reason?: string | null;
+  admin_nc_missing_subjects_snapshot?: BulletinMissingSubject[] | null;
+
+  // Valeurs conservées par l’API pour permettre l’aperçu/restauration locale
+  // si l’admin décoche NC sans recharger toute la page.
+  general_avg_before_admin_nc?: number | null;
+  annual_avg_before_admin_nc?: number | null;
+  annual_rank_before_admin_nc?: number | null;
 };
 
 type BulletinItemWithRank = BulletinItemBase & {
@@ -478,24 +491,13 @@ function hasNumericValue(n: number | null | undefined): boolean {
 
 function formatNumberOrNCWithMarker(
   n: number | null | undefined,
-  showMarker: boolean,
+  _showMarker: boolean,
   digits = 2
 ): string {
   if (!hasNumericValue(n)) return "NC";
-  return `${Number(n).toFixed(digits)}${showMarker ? "*" : ""}`;
+  return `${Number(n).toFixed(digits)}`;
 }
 
-function isGeneralAverageComplete(item: BulletinItemBase): boolean {
-  if (typeof item.general_avg_is_complete === "boolean") return item.general_avg_is_complete;
-  if (item.coverage && typeof item.coverage.is_complete === "boolean") return item.coverage.is_complete;
-  return true;
-}
-
-function isAnnualAverageComplete(item: BulletinItemBase): boolean {
-  if (typeof item.annual_avg_is_complete === "boolean") return item.annual_avg_is_complete;
-  if (item.annual_coverage && typeof item.annual_coverage.is_complete === "boolean") return item.annual_coverage.is_complete;
-  return true;
-}
 
 function round2(n: number): number {
   return Math.round(n * 100) / 100;
@@ -931,16 +933,53 @@ function computeRanksAndStats(res: BulletinResponse | null): EnrichedBulletin | 
   const baseItems = res.items ?? [];
 
   // ✅ Le front ne fabrique plus une moyenne générale quand l’API renvoie null.
-  // L’API bulletin est la source de vérité : 0 = vraie note, null = NC / non classé.
+  // Nouvelle règle :
+  // - moyenne calculable, même partielle => rang autorisé ;
+  // - aucune moyenne => NC ;
+  // - décision admin centralisée => moyenne générale NC + rang NC,
+  //   sans masquer les notes par matière.
   const itemsWithAvg: BulletinItemWithRank[] = baseItems.map((it) => {
+    const forcedNc = it.admin_forced_nc === true || it.general_avg_status === "admin_nc";
+
+    const sourceAvg =
+      it.general_avg_before_admin_nc !== null &&
+      it.general_avg_before_admin_nc !== undefined
+        ? it.general_avg_before_admin_nc
+        : it.general_avg;
+
     const apiAvg =
-      it.general_avg !== null && it.general_avg !== undefined
-        ? Number(it.general_avg)
+      sourceAvg !== null && sourceAvg !== undefined
+        ? Number(sourceAvg)
         : null;
 
-    const finalAvg = apiAvg !== null && Number.isFinite(apiAvg) ? round2(apiAvg) : null;
+    const finalAvg =
+      !forcedNc && apiAvg !== null && Number.isFinite(apiAvg)
+        ? round2(apiAvg)
+        : null;
 
-    return { ...it, general_avg: finalAvg, rank: null };
+    const sourceAnnualAvg =
+      it.annual_avg_before_admin_nc !== null &&
+      it.annual_avg_before_admin_nc !== undefined
+        ? it.annual_avg_before_admin_nc
+        : it.annual_avg;
+
+    const apiAnnualAvg =
+      sourceAnnualAvg !== null && sourceAnnualAvg !== undefined
+        ? Number(sourceAnnualAvg)
+        : null;
+
+    const finalAnnualAvg =
+      !forcedNc && apiAnnualAvg !== null && Number.isFinite(apiAnnualAvg)
+        ? round2(apiAnnualAvg)
+        : null;
+
+    return {
+      ...it,
+      general_avg: finalAvg,
+      annual_avg: finalAnnualAvg,
+      annual_rank: forcedNc ? null : it.annual_rank ?? null,
+      rank: null,
+    };
   });
 
   const withAvg = itemsWithAvg.filter(
@@ -964,10 +1003,9 @@ function computeRanksAndStats(res: BulletinResponse | null): EnrichedBulletin | 
     stats.classAvg = round2(classAvg);
   }
 
-  // ✅ Rang officiel : seulement quand la moyenne est complète.
-  // Si l’API ancienne ne donne pas coverage/general_avg_is_complete, on garde l’ancien comportement.
-  const rankable = withAvg.filter((it) => isGeneralAverageComplete(it));
-  const sortedForRank = [...rankable].sort(
+  // ✅ Rang officiel autorisé dès qu’une moyenne générale existe,
+  // même si certaines matières sont manquantes.
+  const sortedForRank = [...withAvg].sort(
     (a, b) => (b.general_avg ?? 0) - (a.general_avg ?? 0)
   );
 
@@ -1369,19 +1407,20 @@ function StudentBulletinCard({
     return m;
   }, [subjectsForTable]);
 
-  const generalAvgComplete = isGeneralAverageComplete(item);
-  const annualAvgComplete = isAnnualAverageComplete(item);
-  const showGeneralIncompleteMarker =
-    !generalAvgComplete && hasNumericValue(item.general_avg);
-  const showAnnualIncompleteMarker =
-    showAnnual && !annualAvgComplete && hasNumericValue(annualAvgOn20);
-  const showIncompleteAverageFootnote =
-    showGeneralIncompleteMarker || showAnnualIncompleteMarker;
-  const mentions = generalAvgComplete
+  const generalAvgHasValue = hasNumericValue(item.general_avg);
+  const annualAvgHasValue = showAnnual && hasNumericValue(annualAvgOn20);
+
+  // ✅ Plus d’étoile.
+  // Une moyenne calculable, même partielle, peut être classée.
+  // Si l’admin a coché l’élève NC au général, item.general_avg / annual_avg sont déjà null.
+  const showGeneralIncompleteMarker = false;
+  const showAnnualIncompleteMarker = false;
+
+  const mentions = generalAvgHasValue
     ? computeCouncilMentions(item.general_avg, conductNoteOn20)
     : computeCouncilMentions(null, conductNoteOn20);
 
-  const councilText = generalAvgComplete
+  const councilText = generalAvgHasValue
     ? computeCouncilAppreciationText(mentions, item.general_avg, conductNoteOn20)
     : "Conseil à compléter.";
 
@@ -1957,7 +1996,7 @@ function StudentBulletinCard({
                 <div className="mt-[1px] text-[8px]">
                   Rang :{" "}
                   <span className="font-semibold">
-                    {generalAvgComplete ? formatRankOrNC(item.rank) : "NC"}
+                    {generalAvgHasValue ? formatRankOrNC(item.rank) : "NC"}
                   </span>{" "}
                   / {total}
                 </div>
@@ -1974,18 +2013,12 @@ function StudentBulletinCard({
                 <div className="mt-[1px] text-[8px]">
                   Rang :{" "}
                   <span className="font-semibold">
-                    {annualAvgComplete ? formatRankOrNC(annualRank) : "NC"}
+                    {annualAvgHasValue ? formatRankOrNC(annualRank) : "NC"}
                   </span>{" "}
                   / {total}
                 </div>
               </div>
             </div>
-
-            {showIncompleteAverageFootnote && (
-              <div className="mt-[2px] text-[7px] font-semibold text-amber-700">
-                * Moyenne calculée sur les données publiées disponibles.
-              </div>
-            )}
           </div>
         ) : (
           <div className="bdr p-1 text-center">
@@ -2000,16 +2033,10 @@ function StudentBulletinCard({
             <div className="mt-[2px]">
               Rang :{" "}
               <span className="font-semibold">
-                {generalAvgComplete ? formatRankOrNC(item.rank) : "NC"}
+                {generalAvgHasValue ? formatRankOrNC(item.rank) : "NC"}
               </span>{" "}
               / {total}
             </div>
-
-            {showIncompleteAverageFootnote && (
-              <div className="mt-[2px] text-[7px] font-semibold text-amber-700">
-                * Moyenne calculée sur les matières publiées disponibles.
-              </div>
-            )}
           </div>
         )}
 
@@ -2327,6 +2354,8 @@ export default function BulletinsPage() {
           : null;
       if (sigFromApi !== null) setSignaturesEnabled(sigFromApi);
 
+      // L’API bulletin lit déjà les décisions NC centralisées
+      // depuis public.bulletin_nc_overrides.
       setBulletinRaw(json);
 
       if (resConduct.ok) {

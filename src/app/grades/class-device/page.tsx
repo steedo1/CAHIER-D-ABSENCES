@@ -102,14 +102,20 @@ type AverageApiRow = {
   student_id: string;
   count_evals: number;
   total_evals: number;
-  average_raw: number;
-  bonus: number;
-  average: number;
-  average_rounded: number;
-  rank: number;
-  has_average?: boolean;
-  is_complete?: boolean;
-  status?: "complete" | "partial" | string;
+
+  // 0 = vraie moyenne ; null = aucune moyenne calculable.
+  average_raw: number | null;
+  bonus: number | null;
+  average: number | null;
+  average_rounded: number | null;
+
+  // Nouvelle règle : rang autorisé dès qu'une moyenne existe.
+  // Si l'API ne renvoie pas encore le rang, le front le reconstruit en sécurité.
+  rank: number | null;
+
+  has_average?: boolean | null;
+  is_complete?: boolean | null;
+  status?: "complete" | "partial" | string | null;
 };
 
 /* =========================
@@ -1127,10 +1133,15 @@ export default function ClassDeviceNotesPage() {
     bonus: number;
     final: number | null;
     rank: number | null;
+
+    // Compte-classe :
+    // - moyenne calculable = rang affiché ;
+    // - aucune note / aucune moyenne = NC.
     hasAverage: boolean;
     isComplete: boolean;
-    hasStar: boolean;
+    hasStar: boolean; // conservé pour compatibilité, toujours false dans cette version
     status: "complete" | "partial" | "empty" | string;
+
     /** Moyennes par sous-rubrique (clé = component.id, valeur = moyenne /20) */
     componentAvgs?: Record<string, number>;
   };
@@ -1144,19 +1155,44 @@ export default function ClassDeviceNotesPage() {
     return Math.round(n * 100) / 100;
   }
 
-  function formatAverageValue(value: number | null | undefined, hasStar = false) {
+  function formatAverageValue(value: number | null | undefined, _hasStar = false) {
     if (value === null || value === undefined || !Number.isFinite(Number(value))) {
       return "NC";
     }
-    return `${Number(value).toFixed(2)}${hasStar ? "*" : ""}`;
+    return Number(value).toFixed(2);
   }
 
-  function formatRankValue(row: Pick<RowAvg, "rank" | "hasAverage" | "isComplete">) {
-    if (!row.hasAverage || !row.isComplete) return "NC";
+  function formatRankValue(row: Pick<RowAvg, "rank" | "hasAverage">) {
+    if (!row.hasAverage) return "NC";
     if (row.rank === null || row.rank === undefined || !Number.isFinite(Number(row.rank))) {
       return "NC";
     }
-    return String(row.rank);
+    const n = Number(row.rank);
+    if (n <= 0) return "NC";
+    return String(Math.round(n));
+  }
+
+  function buildDenseRanksFromRows(rows: Array<{ studentId: string; final: number | null }>) {
+    const sorted = rows
+      .filter((row) => row.final !== null && Number.isFinite(Number(row.final)))
+      .map((row) => ({ studentId: row.studentId, final: Number(row.final) }))
+      .sort((a, b) => b.final - a.final);
+
+    const rankMap = new Map<string, number>();
+    let lastScore: number | null = null;
+    let currentRank = 0;
+    let position = 0;
+
+    for (const row of sorted) {
+      position += 1;
+      if (lastScore === null || row.final !== lastScore) {
+        currentRank = position;
+        lastScore = row.final;
+      }
+      rankMap.set(row.studentId, currentRank);
+    }
+
+    return rankMap;
   }
 
   function computeDisplayFinal(row: RowAvg) {
@@ -1221,18 +1257,23 @@ export default function ClassDeviceNotesPage() {
       });
     }
 
-    const rows: RowAvg[] = roster.map((st) => {
+    const rowsBase: RowAvg[] = roster.map((st) => {
       const src = map.get(st.id);
       const avg20 = src ? cleanAverage(src.average_raw ?? src.average) : null;
       const bonus = src ? Number(src.bonus ?? 0) : 0;
       const final = src
         ? cleanAverage(src.average_rounded ?? src.average ?? null)
         : null;
-      const rank = src && Number.isFinite(Number(src.rank)) ? Number(src.rank) : null;
-      const hasAverage = avg20 !== null || final !== null || !!src?.has_average;
-      const isComplete = hasAverage && src?.is_complete !== false;
-      const hasStar = hasAverage && !isComplete;
-      const status = !hasAverage ? "empty" : isComplete ? "complete" : "partial";
+
+      // 0 reste une vraie moyenne.
+      const hasAverage =
+        src?.has_average === true ||
+        avg20 !== null ||
+        final !== null;
+
+      const isComplete = src?.is_complete === true;
+      const status = !hasAverage ? "empty" : String(src?.status || (isComplete ? "complete" : "partial"));
+      const rank = src ? cleanAverage(src.rank) : null;
 
       let componentAvgs: Record<string, number> | undefined = undefined;
       if (hasComponents && perStudentComp) {
@@ -1259,11 +1300,25 @@ export default function ClassDeviceNotesPage() {
         rank,
         hasAverage,
         isComplete,
-        hasStar,
+        hasStar: false,
         status,
         componentAvgs,
       };
     });
+
+    // Sécurité front : compte-classe doit afficher le rang dès qu’une moyenne existe.
+    // Si une ancienne API ne renvoie pas encore rank, on le reconstruit ici.
+    const fallbackRanks = buildDenseRanksFromRows(
+      rowsBase.map((row) => ({
+        studentId: row.student.id,
+        final: row.hasAverage ? row.final ?? row.avg20 : null,
+      }))
+    );
+
+    const rows = rowsBase.map((row) => ({
+      ...row,
+      rank: row.hasAverage ? row.rank ?? fallbackRanks.get(row.student.id) ?? null : null,
+    }));
 
     logInfo("applyAveragesFromApi -> rows calculés", rows);
     setAvgRows(rows);
@@ -1539,11 +1594,9 @@ export default function ClassDeviceNotesPage() {
         const apiFinal = apiRow
           ? cleanAverage(apiRow.average_rounded ?? apiRow.average ?? null)
           : null;
-        const apiComplete = apiRow ? apiRow.is_complete !== false : true;
         const finalValue = apiFinal ?? finalLocal;
-        const hasStar = finalValue !== null && !apiComplete;
 
-        row.push(finalValue === null ? "NC" : `${finalValue.toFixed(2)}${hasStar ? "*" : ""}`);
+        row.push(finalValue === null ? "NC" : finalValue.toFixed(2));
 
         const rowStr = row.map((cell) => {
           const v = cell == null ? "" : String(cell);

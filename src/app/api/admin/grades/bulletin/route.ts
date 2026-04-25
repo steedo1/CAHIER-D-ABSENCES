@@ -134,6 +134,18 @@ type GradePeriodRow = {
   coeff: number | null;
 };
 
+type BulletinNcOverrideRow = {
+  id: string;
+  student_id: string;
+  scope: "period" | "annual" | string;
+  is_nc: boolean;
+  reason: string | null;
+  missing_subjects_snapshot: any;
+  period_from?: string | null;
+  period_to?: string | null;
+  academic_year?: string | null;
+};
+
 /* ───────── helpers nombres ───────── */
 
 // ✅ IMPORTANT: on garde plus de précision (4 décimales) pour éviter
@@ -1092,6 +1104,114 @@ function buildRankMapFromAverageMap(avgByStudent: Map<string, number | null>) {
   return rankByStudent;
 }
 
+async function loadBulletinNcOverrideMap(
+  srv: SupabaseClient,
+  opts: {
+    institutionId: string;
+    classId: string;
+    academicYear: string | null | undefined;
+    from: string | null | undefined;
+    to: string | null | undefined;
+    scope: "period" | "annual";
+  }
+): Promise<Map<string, BulletinNcOverrideRow>> {
+  const out = new Map<string, BulletinNcOverrideRow>();
+
+  const academicYear = String(opts.academicYear || "").trim();
+  const from = String(opts.from || "").trim();
+  const to = String(opts.to || "").trim();
+
+  if (!opts.institutionId || !opts.classId || !academicYear || !from || !to) {
+    return out;
+  }
+
+  try {
+    const { data, error } = await srv
+      .from("bulletin_nc_overrides")
+      .select(
+        "id, student_id, academic_year, period_from, period_to, scope, is_nc, reason, missing_subjects_snapshot"
+      )
+      .eq("institution_id", opts.institutionId)
+      .eq("class_id", opts.classId)
+      .eq("academic_year", academicYear)
+      .eq("period_from", from)
+      .eq("period_to", to)
+      .eq("scope", opts.scope)
+      .eq("is_nc", true);
+
+    if (error) {
+      // Non cassant : si la migration n'est pas encore exécutée, le bulletin reste lisible.
+      console.warn("[bulletin] nc overrides indisponibles", {
+        scope: opts.scope,
+        from,
+        to,
+        error,
+      });
+      return out;
+    }
+
+    for (const row of (data || []) as any[]) {
+      const sid = String(row.student_id || "");
+      if (!sid) continue;
+      out.set(sid, {
+        id: String(row.id),
+        student_id: sid,
+        scope: String(row.scope || opts.scope),
+        is_nc: row.is_nc === true,
+        reason: row.reason ?? null,
+        missing_subjects_snapshot: row.missing_subjects_snapshot ?? [],
+        period_from: row.period_from ?? from,
+        period_to: row.period_to ?? to,
+        academic_year: row.academic_year ?? academicYear,
+      });
+    }
+
+    return out;
+  } catch (error) {
+    console.warn("[bulletin] nc overrides exception", {
+      scope: opts.scope,
+      from,
+      to,
+      error,
+    });
+    return out;
+  }
+}
+
+function applyPeriodNcOverridesToItems(
+  items: any[],
+  overrides: Map<string, BulletinNcOverrideRow>
+) {
+  if (!items.length || !overrides.size) return;
+
+  for (const item of items) {
+    const sid = String(item?.student_id || "");
+    const override = overrides.get(sid);
+    if (!override) continue;
+
+    const before =
+      typeof item.general_avg === "number" && Number.isFinite(item.general_avg)
+        ? item.general_avg
+        : null;
+
+    item.admin_forced_nc = true;
+    item.admin_nc_override = {
+      id: override.id,
+      scope: "period",
+      reason: override.reason,
+      missing_subjects_snapshot: override.missing_subjects_snapshot ?? [],
+    };
+    item.general_avg_before_admin_nc = before;
+
+    // Décision admin : NC au général uniquement.
+    // Les moyennes par matière restent intactes.
+    item.general_avg = null;
+    item.rank = null;
+    item.general_avg_is_complete = false;
+    item.general_avg_status = "admin_nc";
+  }
+}
+
 /* ───────── GET /api/admin/grades/bulletin ───────── */
 export async function GET(req: NextRequest) {
   const supabase = await getSupabaseServerClient();
@@ -1330,6 +1450,21 @@ export async function GET(req: NextRequest) {
 
   const classStudents = (csData || []) as ClassStudentRow[];
   const studentIds = classStudents.map((cs) => cs.student_id);
+
+  const bulletinAcademicYear =
+    periodMeta.academic_year ?? classRow.academic_year ?? academicYearForPeriods ?? null;
+
+  const periodNcOverrideMap =
+    dateFrom && dateTo
+      ? await loadBulletinNcOverrideMap(srvClient, {
+          institutionId,
+          classId: classRow.id,
+          academicYear: bulletinAcademicYear,
+          from: dateFrom,
+          to: dateTo,
+          scope: "period",
+        })
+      : new Map<string, BulletinNcOverrideRow>();
 
   // Si aucun élève : on renvoie structure minimale (non cassant)
   if (!classStudents.length) {
@@ -1578,6 +1713,7 @@ export async function GET(req: NextRequest) {
         per_subject: [],
         per_group: [],
         general_avg: null,
+        rank: null as number | null,
         coverage: {
           expected_subjects: 0,
           covered_subjects: 0,
@@ -1592,10 +1728,14 @@ export async function GET(req: NextRequest) {
         annual_avg: null as number | null,
         annual_rank: null as number | null,
         annual_coverage: null,
+        annual_coverage_is_complete: false,
+        annual_coverage_status: "not_last_period",
         annual_avg_is_complete: false,
         annual_avg_status: "not_last_period",
       };
     });
+
+    applyPeriodNcOverridesToItems(baseItems, periodNcOverrideMap);
 
     const itemsWithQr = await addQrToItems(srvClient, baseItems, {
       origin,
@@ -2322,12 +2462,15 @@ export async function GET(req: NextRequest) {
       per_subject,
       per_group,
       general_avg,
+      rank: null as number | null,
 
-      // ✅ Couverture de moyenne : utile pour afficher “Moyenne provisoire”,
-      // NC, rang non officiel, etc. sans casser les champs historiques.
+      // ✅ Couverture pédagogique : on conserve les matières manquantes pour informer l’admin.
+      // ✅ Nouvelle règle : une moyenne générale calculable reste classable, même si la couverture est partielle.
       coverage,
-      general_avg_is_complete: coverage.is_complete,
-      general_avg_status: coverage.status,
+      coverage_is_complete: coverage.is_complete,
+      coverage_status: coverage.status,
+      general_avg_is_complete: general_avg !== null,
+      general_avg_status: general_avg !== null ? "complete" : "empty",
 
       per_subject_components,
 
@@ -2336,6 +2479,24 @@ export async function GET(req: NextRequest) {
       annual_rank: null as number | null,
     };
   });
+
+  applyPeriodNcOverridesToItems(items, periodNcOverrideMap);
+
+  // ✅ Rang général trimestriel
+  // Nouvelle règle : on classe tout élève qui possède une moyenne générale calculable.
+  // Une couverture partielle n'annule plus automatiquement le rang.
+  // L’admin pourra ensuite forcer NC au général depuis l’interface bulletin.
+  const generalAvgByStudent = new Map<string, number | null>();
+  for (const it of items as any[]) {
+    const g = cleanNumber(it?.general_avg, 4);
+    generalAvgByStudent.set(String(it.student_id), g);
+  }
+
+  const generalRankByStudent = buildRankMapFromAverageMap(generalAvgByStudent);
+  for (const it of items as any[]) {
+    const g = generalAvgByStudent.get(String(it.student_id)) ?? null;
+    (it as any).rank = g !== null ? generalRankByStudent.get(String(it.student_id)) ?? null : null;
+  }
 
   // Rang matière / sous-matière
   applySubjectRanks(items);
@@ -2697,6 +2858,21 @@ export async function GET(req: NextRequest) {
         }
       }
 
+      const rangeOverrideMap = await loadBulletinNcOverrideMap(srvClient, {
+        institutionId,
+        classId: classRow.id,
+        academicYear: academicYearForPeriods ?? classRow.academic_year ?? periodMeta.academic_year ?? null,
+        from,
+        to,
+        scope: "period",
+      });
+
+      if (rangeOverrideMap.size) {
+        for (const sid of rangeOverrideMap.keys()) {
+          out.set(sid, null);
+        }
+      }
+
       return out;
     };
 
@@ -2770,6 +2946,29 @@ export async function GET(req: NextRequest) {
       });
     }
 
+    const annualNcOverrideMap =
+      dateFrom && dateTo
+        ? await loadBulletinNcOverrideMap(srvClient, {
+            institutionId,
+            classId: classRow.id,
+            academicYear: academicYearForPeriods ?? classRow.academic_year ?? periodMeta.academic_year ?? null,
+            from: dateFrom,
+            to: dateTo,
+            scope: "annual",
+          })
+        : new Map<string, BulletinNcOverrideRow>();
+
+    if (annualNcOverrideMap.size) {
+      for (const sid of annualNcOverrideMap.keys()) {
+        annualAvgByStudent.set(sid, null);
+        const cov = annualCoverageByStudent.get(sid);
+        if (cov) {
+          cov.status = "admin_nc";
+          cov.is_complete = false;
+        }
+      }
+    }
+
     const annualRankByStudent = buildRankMapFromAverageMap(annualAvgByStudent);
 
     for (const it of items) {
@@ -2784,11 +2983,34 @@ export async function GET(req: NextRequest) {
           status: "empty",
         };
 
+      const annualOverride = annualNcOverrideMap.get(String(it.student_id));
+      const annualBeforeAdminNc = a;
+
       (it as any).annual_avg = a;
-      (it as any).annual_rank = r;
+      (it as any).annual_rank = a !== null ? r : null;
       (it as any).annual_coverage = annualCoverage;
-      (it as any).annual_avg_is_complete = annualCoverage.is_complete;
-      (it as any).annual_avg_status = annualCoverage.status;
+      (it as any).annual_coverage_is_complete = annualCoverage.is_complete;
+      (it as any).annual_coverage_status = annualCoverage.status;
+      // ✅ Nouvelle règle : une moyenne annuelle calculable reste classable,
+      // même si toutes les périodes ne sont pas encore couvertes.
+      (it as any).annual_avg_is_complete = a !== null;
+      (it as any).annual_avg_status = a !== null ? "complete" : "empty";
+
+      if (annualOverride) {
+        (it as any).admin_annual_forced_nc = true;
+        (it as any).admin_annual_nc_override = {
+          id: annualOverride.id,
+          scope: "annual",
+          reason: annualOverride.reason,
+          missing_subjects_snapshot: annualOverride.missing_subjects_snapshot ?? [],
+        };
+        (it as any).annual_avg_before_admin_nc = annualBeforeAdminNc;
+        (it as any).annual_avg = null;
+        (it as any).annual_rank = null;
+        (it as any).annual_avg_is_complete = false;
+        (it as any).annual_avg_status = "admin_nc";
+        (it as any).annual_coverage_status = "admin_nc";
+      }
     }
   } else {
     // cohérence: si pas dernier trimestre -> valeurs null
@@ -2796,6 +3018,8 @@ export async function GET(req: NextRequest) {
       (it as any).annual_avg = null;
       (it as any).annual_rank = null;
       (it as any).annual_coverage = null;
+      (it as any).annual_coverage_is_complete = false;
+      (it as any).annual_coverage_status = "not_last_period";
       (it as any).annual_avg_is_complete = false;
       (it as any).annual_avg_status = "not_last_period";
     }

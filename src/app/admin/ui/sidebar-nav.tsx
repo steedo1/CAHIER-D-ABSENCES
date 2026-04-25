@@ -158,6 +158,14 @@ const PREDICTION_ITEMS: NavItem[] = [
   },
 ];
 
+const NON_CLASSES_ITEMS: NavItem[] = [
+  {
+    href: "/admin/notes/non-classes",
+    label: "Élèves non classés",
+    Icon: UserRoundCheck,
+  },
+];
+
 const CONDUCT_RULE_ITEMS: NavItem[] = [
   {
     href: "/admin/regles-conduite",
@@ -644,6 +652,15 @@ export default function SidebarNav() {
     [isEducator]
   );
 
+  const nonClassesItems = React.useMemo(
+    () =>
+      NON_CLASSES_ITEMS.filter((item) => {
+        if (isEducator && item.href.startsWith("/admin/notes")) return false;
+        return true;
+      }),
+    [isEducator]
+  );
+
   const conductRuleItems = React.useMemo(() => CONDUCT_RULE_ITEMS, []);
 
   const fileCorrespondenceItems = React.useMemo(
@@ -764,6 +781,30 @@ export default function SidebarNav() {
               />
             ))}
 
+            {predictionItems.map((item) => (
+              <NavLinkItem
+                key={item.href}
+                item={item}
+                pathname={pathname}
+                currentTab={currentTab}
+                accent="cyan"
+                pendingAbsenceCount={pendingAbsenceCount}
+                topLevel
+              />
+            ))}
+
+            {nonClassesItems.map((item) => (
+              <NavLinkItem
+                key={item.href}
+                item={item}
+                pathname={pathname}
+                currentTab={currentTab}
+                accent="amber"
+                pendingAbsenceCount={pendingAbsenceCount}
+                topLevel
+              />
+            ))}
+
             {!isEducator && fileCorrespondenceItems.length > 0 && (
               <GroupSection
                 title="Correspondant fichier"
@@ -776,18 +817,6 @@ export default function SidebarNav() {
                 accent="violet"
               />
             )}
-
-            {predictionItems.map((item) => (
-              <NavLinkItem
-                key={item.href}
-                item={item}
-                pathname={pathname}
-                currentTab={currentTab}
-                accent="cyan"
-                pendingAbsenceCount={pendingAbsenceCount}
-                topLevel
-              />
-            ))}
 
             {conductRuleItems.map((item) => (
               <NavLinkItem

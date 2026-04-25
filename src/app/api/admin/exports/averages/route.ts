@@ -92,7 +92,14 @@ type BulletinItem = {
 
   coverage?: BulletinCoverage | null;
   general_avg_is_complete?: boolean | null;
-  general_avg_status?: "complete" | "partial" | "empty" | string | null;
+  general_avg_status?: "complete" | "partial" | "empty" | "admin_nc" | string | null;
+
+  // Décision NC admin centralisée via public.bulletin_nc_overrides.
+  admin_forced_nc?: boolean | null;
+  general_avg_before_admin_nc?: number | null;
+  rank_before_admin_nc?: number | null;
+  admin_nc_reason?: string | null;
+  admin_nc_missing_subjects_snapshot?: BulletinMissingSubject[] | null;
 
   annual_avg?: number | null;
   annual_rank?: number | null;
@@ -103,8 +110,15 @@ type BulletinItem = {
     | "partial"
     | "empty"
     | "not_last_period"
+    | "admin_nc"
     | string
     | null;
+
+  // Réservé au cas où l’admin force NC sur l’annuel.
+  admin_annual_forced_nc?: boolean | null;
+  annual_avg_before_admin_nc?: number | null;
+  annual_rank_before_admin_nc?: number | null;
+  admin_annual_nc_reason?: string | null;
 
   per_subject?: BulletinPerSubject[];
 };
@@ -156,14 +170,18 @@ type ExportRow = {
   // Pour une période : moyenne trimestrielle.
   // Pour l’annuel : moyenne annuelle.
   moyenne_generale: number | null;
+  // Conservé pour compatibilité : signifie maintenant "moyenne classable".
   moyenne_generale_complete: boolean;
+  // Conservé pour compatibilité : toujours false, car on ne met plus d’étoile.
   moyenne_generale_has_star: boolean;
   rang: number | null;
 
   conduite: number | null;
 
   moyenne_annuelle: number | null;
+  // Conservé pour compatibilité : signifie maintenant "moyenne annuelle classable".
   moyenne_annuelle_complete: boolean;
+  // Conservé pour compatibilité : toujours false, car on ne met plus d’étoile.
   moyenne_annuelle_has_star: boolean;
   rang_annuel: number | null;
 
@@ -317,54 +335,48 @@ function makeDownloadFilename(opts: {
   return `${base}.${opts.format}`;
 }
 
+function isAdminForcedNc(item: BulletinItem): boolean {
+  return item.admin_forced_nc === true || item.general_avg_status === "admin_nc";
+}
+
+function isAdminAnnualForcedNc(item: BulletinItem): boolean {
+  return item.admin_annual_forced_nc === true || item.annual_avg_status === "admin_nc";
+}
+
+/**
+ * Nom conservé pour éviter de casser le reste du fichier.
+ * Nouvelle règle : une moyenne générale est classable dès qu'elle existe.
+ * La couverture incomplète ne bloque plus le rang.
+ */
 function isGeneralAverageComplete(item: BulletinItem): boolean {
-  if (item.general_avg === null || item.general_avg === undefined) return false;
-
-  if (typeof item.general_avg_is_complete === "boolean") {
-    return item.general_avg_is_complete;
-  }
-
-  if (item.coverage && typeof item.coverage.is_complete === "boolean") {
-    return item.coverage.is_complete;
-  }
-
-  // Compatibilité ancienne API : si aucune info de couverture n’existe,
-  // on conserve l’ancien comportement.
-  return true;
+  if (isAdminForcedNc(item)) return false;
+  return item.general_avg !== null && item.general_avg !== undefined && Number.isFinite(Number(item.general_avg));
 }
 
+/**
+ * Nom conservé pour éviter de casser le reste du fichier.
+ * Nouvelle règle : une moyenne annuelle est classable dès qu'elle existe.
+ */
 function isAnnualAverageComplete(item: BulletinItem): boolean {
-  if (item.annual_avg === null || item.annual_avg === undefined) return false;
-
-  if (typeof item.annual_avg_is_complete === "boolean") {
-    return item.annual_avg_is_complete;
-  }
-
-  if (item.annual_coverage && typeof item.annual_coverage.is_complete === "boolean") {
-    return item.annual_coverage.is_complete;
-  }
-
-  // Compatibilité ancienne API.
-  return true;
+  if (isAdminAnnualForcedNc(item)) return false;
+  return item.annual_avg !== null && item.annual_avg !== undefined && Number.isFinite(Number(item.annual_avg));
 }
 
-function formatAverageForExport(value: number | null, hasStar: boolean): number | string {
+function formatAverageForExport(value: number | null, _hasStar: boolean): number | string {
   if (value === null || value === undefined || !Number.isFinite(Number(value))) return "NC";
-  const n = Number(value);
-  return hasStar ? `${n.toFixed(2)}*` : Number(n.toFixed(2));
+  return Number(Number(value).toFixed(2));
 }
 
 function formatOptionalAverageForExport(
   value: number | null,
-  hasStar: boolean
+  _hasStar: boolean
 ): number | string {
   if (value === null || value === undefined || !Number.isFinite(Number(value))) return "";
-  const n = Number(value);
-  return hasStar ? `${n.toFixed(2)}*` : Number(n.toFixed(2));
+  return Number(Number(value).toFixed(2));
 }
 
-function formatRankForExport(rank: number | null, isComplete: boolean): number | string {
-  if (!isComplete) return "NC";
+function formatRankForExport(rank: number | null, isClassable: boolean): number | string {
+  if (!isClassable) return "NC";
   if (rank === null || rank === undefined || !Number.isFinite(Number(rank))) return "NC";
   return Number(rank);
 }
@@ -439,7 +451,6 @@ function assignRanks<
     }))
     .filter(
       (x) =>
-        x.complete &&
         typeof x.value === "number" &&
         Number.isFinite(x.value)
     )
@@ -467,7 +478,6 @@ function assignRanks<
     }))
     .filter(
       (x) =>
-        x.complete &&
         typeof x.value === "number" &&
         Number.isFinite(x.value)
     )
@@ -886,34 +896,32 @@ export async function GET(req: NextRequest) {
         full_name: meta?.full_name ?? item.full_name ?? null,
       });
 
-      const currentGeneral = cleanNumber(item.general_avg, 4);
-      const currentGeneralComplete = currentGeneral !== null && isGeneralAverageComplete(item);
-      const currentGeneralHasStar = currentGeneral !== null && !currentGeneralComplete;
+      const generalForcedNc = isAdminForcedNc(item);
+      const annualForcedNc = isAdminAnnualForcedNc(item);
 
-      const currentAnnual = cleanNumber(item.annual_avg, 4);
-      const currentAnnualComplete = currentAnnual !== null && isAnnualAverageComplete(item);
-      const currentAnnualHasStar = currentAnnual !== null && !currentAnnualComplete;
+      // NC admin : la moyenne générale/rang deviennent NC, mais les moyennes matière restent exportées.
+      // Sinon : une moyenne calculable est classable, même si la couverture est partielle.
+      const currentGeneral = generalForcedNc ? null : cleanNumber(item.general_avg, 4);
+      const currentGeneralComplete = currentGeneral !== null;
+      const currentGeneralHasStar = false;
+
+      const currentAnnual = annualForcedNc ? null : cleanNumber(item.annual_avg, 4);
+      const currentAnnualComplete = currentAnnual !== null;
+      const currentAnnualHasStar = false;
 
       const currentConduct = cleanNumber(conductMap.get(String(item.student_id)) ?? null, 4);
 
       const exportedAverage =
         resolvedPeriod.requestedKind === "annual" ? currentAnnual : currentGeneral;
 
-      const exportedAverageComplete =
-        resolvedPeriod.requestedKind === "annual"
-          ? currentAnnualComplete
-          : currentGeneralComplete;
-
-      const exportedAverageHasStar =
-        exportedAverage !== null && !exportedAverageComplete;
+      const exportedAverageComplete = exportedAverage !== null;
+      const exportedAverageHasStar = false;
 
       const exportedRank =
-        resolvedPeriod.requestedKind === "annual"
-          ? currentAnnualComplete
+        exportedAverage !== null
+          ? resolvedPeriod.requestedKind === "annual"
             ? cleanRank(item.annual_rank)
-            : null
-          : currentGeneralComplete
-          ? cleanRank(item.rank)
+            : cleanRank(item.rank)
           : null;
 
       const subjectValues: Record<string, number | null> = {};
@@ -950,14 +958,14 @@ export async function GET(req: NextRequest) {
 
         moyenne_generale: exportedAverage,
         moyenne_generale_complete: exportedAverageComplete,
-        moyenne_generale_has_star: exportedAverageHasStar,
+        moyenne_generale_has_star: false,
         rang: exportedRank,
 
         conduite: currentConduct,
 
         moyenne_annuelle: currentAnnual,
         moyenne_annuelle_complete: currentAnnualComplete,
-        moyenne_annuelle_has_star: currentAnnualHasStar,
+        moyenne_annuelle_has_star: false,
         rang_annuel: currentAnnualComplete ? cleanRank(item.annual_rank) : null,
 
         subject_values: subjectValues,
@@ -968,22 +976,21 @@ export async function GET(req: NextRequest) {
 
     classRows.forEach((row, index) => {
       if (
-        row.moyenne_generale_complete &&
+        row.moyenne_generale !== null &&
         (row.rang === null || row.rang === undefined)
       ) {
         row.rang = periodRankByIndex.get(index) ?? null;
       }
 
       if (
-        row.moyenne_annuelle_complete &&
         row.moyenne_annuelle !== null &&
         (row.rang_annuel === null || row.rang_annuel === undefined)
       ) {
         row.rang_annuel = annualRankByIndex.get(index) ?? null;
       }
 
-      if (!row.moyenne_generale_complete) row.rang = null;
-      if (!row.moyenne_annuelle_complete) row.rang_annuel = null;
+      if (row.moyenne_generale === null) row.rang = null;
+      if (row.moyenne_annuelle === null) row.rang_annuel = null;
     });
 
     allExportRows.push(...classRows);
@@ -998,12 +1005,12 @@ export async function GET(req: NextRequest) {
     if (classCmp !== 0) return classCmp;
 
     const rankA =
-      a.moyenne_generale_complete && Number.isFinite(Number(a.rang))
+      Number.isFinite(Number(a.rang))
         ? Number(a.rang)
         : 999999;
 
     const rankB =
-      b.moyenne_generale_complete && Number.isFinite(Number(b.rang))
+      Number.isFinite(Number(b.rang))
         ? Number(b.rang)
         : 999999;
 
@@ -1062,28 +1069,6 @@ export async function GET(req: NextRequest) {
 
     const summarySheet = XLSX.utils.json_to_sheet(preparedRows);
     XLSX.utils.book_append_sheet(workbook, summarySheet, "Moyennes");
-
-    const hasStar = allExportRows.some(
-      (row) => row.moyenne_generale_has_star || row.moyenne_annuelle_has_star
-    );
-
-    if (hasStar) {
-      const legendRows = [
-        {
-          Symbole: "*",
-          Signification:
-            "Moyenne calculée sur les notes ou périodes publiées disponibles. Le rang correspondant reste NC tant que le calcul est incomplet.",
-        },
-        {
-          Symbole: "NC",
-          Signification:
-            "Non classé : aucune moyenne publiée ou moyenne incomplète pour un classement officiel.",
-        },
-      ];
-
-      const legendSheet = XLSX.utils.json_to_sheet(legendRows);
-      XLSX.utils.book_append_sheet(workbook, legendSheet, "Légende");
-    }
 
     if (classes.length > 1) {
       for (const cls of classes) {
