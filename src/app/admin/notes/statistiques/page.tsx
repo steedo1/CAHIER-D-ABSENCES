@@ -77,6 +77,36 @@ type BulletinResponse = {
   items?: BulletinItem[];
 };
 
+type CurrentAffectationItem = {
+  teacher?: {
+    id?: string | null;
+    display_name?: string | null;
+    email?: string | null;
+    phone?: string | null;
+  } | null;
+  subject?: {
+    id?: string | null;
+    label?: string | null;
+    name?: string | null;
+  } | null;
+  subject_id?: string | null;
+  subject_name?: string | null;
+  subject_label?: string | null;
+  class_id?: string | null;
+  classes?: Array<{
+    id?: string | null;
+    name?: string | null;
+    label?: string | null;
+    level?: string | null;
+  }>;
+};
+
+type AffectationsResponse = {
+  ok?: boolean;
+  items?: CurrentAffectationItem[];
+  error?: string;
+};
+
 type SubjectOption = {
   id: string;
   name: string;
@@ -399,6 +429,32 @@ function Select(props: React.SelectHTMLAttributes<HTMLSelectElement>) {
   );
 }
 
+function getAffectationSubjectId(item: CurrentAffectationItem) {
+  const direct = String(item.subject?.id || item.subject_id || "").trim();
+  const label = String(
+    item.subject?.label || item.subject?.name || item.subject_name || item.subject_label || ""
+  ).trim();
+
+  if (direct) return direct;
+  if (label) return `label:${normalizeLabelForMatch(label)}`;
+  return "";
+}
+
+function getAffectationSubjectName(item: CurrentAffectationItem) {
+  return String(
+    item.subject?.label || item.subject?.name || item.subject_name || item.subject_label || ""
+  ).trim();
+}
+
+function affectationMatchesClass(item: CurrentAffectationItem, classId: string) {
+  const directClassId = String(item.class_id || "").trim();
+
+  if (directClassId && directClassId === classId) return true;
+
+  const classes = Array.isArray(item.classes) ? item.classes : [];
+  return classes.some((c) => String(c.id || "").trim() === classId);
+}
+
 export default function AdminNotesStatsPage() {
   const [classes, setClasses] = useState<ClassRow[]>([]);
   const [classesLoading, setClassesLoading] = useState(false);
@@ -407,6 +463,7 @@ export default function AdminNotesStatsPage() {
   const [selectedAcademicYear, setSelectedAcademicYear] = useState("");
   const [periods, setPeriods] = useState<GradePeriod[]>([]);
   const [periodsLoading, setPeriodsLoading] = useState(false);
+  const [selectedPeriodId, setSelectedPeriodId] = useState("");
 
   const [subjectOptions, setSubjectOptions] = useState<SubjectOption[]>([]);
   const [subjectsLoading, setSubjectsLoading] = useState(false);
@@ -456,6 +513,29 @@ export default function AdminNotesStatsPage() {
       });
   }, [periods, selectedAcademicYear]);
 
+  const selectedPeriod = useMemo(
+    () => matrixPeriods.find((p) => p.id === selectedPeriodId) || null,
+    [matrixPeriods, selectedPeriodId]
+  );
+
+  const selectedPeriodIsLast = useMemo(() => {
+    if (!selectedPeriodId || !matrixPeriods.length) return false;
+    return matrixPeriods[matrixPeriods.length - 1]?.id === selectedPeriodId;
+  }, [matrixPeriods, selectedPeriodId]);
+
+  const periodsToDisplay = useMemo(() => {
+    if (!selectedPeriod) return [];
+
+    if (selectedPeriodIsLast && matrixPeriods.length > 1) {
+      const selectedIndex = matrixPeriods.findIndex((p) => p.id === selectedPeriod.id);
+      return matrixPeriods.slice(0, selectedIndex + 1);
+    }
+
+    return [selectedPeriod];
+  }, [matrixPeriods, selectedPeriod, selectedPeriodIsLast]);
+
+  const showAnnualColumns = selectedPeriodIsLast && periodsToDisplay.length > 1;
+
   const matrixPeriodsKey = useMemo(
     () =>
       matrixPeriods
@@ -464,9 +544,21 @@ export default function AdminNotesStatsPage() {
     [matrixPeriods]
   );
 
+  const periodsToDisplayKey = useMemo(
+    () =>
+      periodsToDisplay
+        .map((p) => `${p.id}:${p.start_date}:${p.end_date}:${p.coeff ?? ""}`)
+        .join("|"),
+    [periodsToDisplay]
+  );
+
   const stats = useMemo(() => {
     const valid = matrixRows
-      .map((r) => r.annual_avg)
+      .map((r) => {
+        if (showAnnualColumns) return r.annual_avg;
+        const onlyPeriod = periodsToDisplay[0];
+        return onlyPeriod ? r.periods[onlyPeriod.id]?.avg ?? null : null;
+      })
       .filter((n): n is number => typeof n === "number" && Number.isFinite(n));
 
     if (!valid.length) {
@@ -486,7 +578,7 @@ export default function AdminNotesStatsPage() {
       highest: Math.round(Math.max(...valid) * 100) / 100,
       lowest: Math.round(Math.min(...valid) * 100) / 100,
     };
-  }, [matrixRows]);
+  }, [matrixRows, periodsToDisplay, showAnnualColumns]);
 
   useEffect(() => {
     let cancelled = false;
@@ -581,6 +673,7 @@ export default function AdminNotesStatsPage() {
       } catch (e: any) {
         if (!cancelled) {
           setPeriods([]);
+          setSelectedPeriodId("");
           setErrorMsg(e?.message || "Impossible de charger les périodes.");
         }
       } finally {
@@ -596,14 +689,26 @@ export default function AdminNotesStatsPage() {
   }, [selectedAcademicYear]);
 
   useEffect(() => {
+    if (!matrixPeriods.length) {
+      setSelectedPeriodId("");
+      return;
+    }
+
+    setSelectedPeriodId((prev) => {
+      if (prev && matrixPeriods.some((p) => p.id === prev)) return prev;
+      return matrixPeriods[0]?.id || "";
+    });
+  }, [matrixPeriodsKey, matrixPeriods]);
+
+  useEffect(() => {
     setMatrixRows([]);
     setLoadedPeriods([]);
     setPeriodStates([]);
     setErrorMsg(null);
-  }, [selectedClassId, selectedAcademicYear, selectedSubjectId]);
+  }, [selectedClassId, selectedAcademicYear, selectedPeriodId, selectedSubjectId]);
 
   useEffect(() => {
-    if (!selectedClassId || !matrixPeriods.length) {
+    if (!selectedClassId) {
       setSubjectOptions([]);
       setSelectedSubjectId("");
       setSubjectsMsg(null);
@@ -612,7 +717,7 @@ export default function AdminNotesStatsPage() {
 
     loadSubjectOptions();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedClassId, matrixPeriodsKey]);
+  }, [selectedClassId, selectedAcademicYear]);
 
   async function fetchBulletinForPeriod(classId: string, period: GradePeriod) {
     const params = new URLSearchParams();
@@ -620,10 +725,6 @@ export default function AdminNotesStatsPage() {
     params.set("class_id", classId);
     params.set("from", period.start_date);
     params.set("to", period.end_date);
-
-    // RÈGLE OFFICIELLE :
-    // La matrice matière ne travaille que sur les notes publiées.
-    // Aucun filtre brouillon / publication n'est exposé dans l'interface.
     params.set("published", "true");
 
     const res = await fetch(`/api/admin/grades/bulletin?${params.toString()}`, {
@@ -642,6 +743,44 @@ export default function AdminNotesStatsPage() {
     return json;
   }
 
+  async function fetchAssignedSubjectsForClass(classId: string): Promise<SubjectOption[]> {
+    const res = await fetch("/api/admin/affectations/current", { cache: "no-store" });
+
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new Error(text || `Erreur affectations ${res.status}`);
+    }
+
+    const json = (await res.json().catch(() => null)) as AffectationsResponse | null;
+    const items = Array.isArray(json?.items) ? json.items : [];
+
+    const map = new Map<string, SubjectOption>();
+
+    for (const item of items) {
+      if (!affectationMatchesClass(item, classId)) continue;
+
+      const id = getAffectationSubjectId(item);
+      const name = getAffectationSubjectName(item);
+
+      if (!id || !name) continue;
+
+      if (!map.has(id)) {
+        map.set(id, {
+          id,
+          name,
+          notes_count: 0,
+        });
+      }
+    }
+
+    return Array.from(map.values()).sort((a, b) =>
+      a.name.localeCompare(b.name, undefined, {
+        sensitivity: "base",
+        numeric: true,
+      })
+    );
+  }
+
   async function loadSubjectOptions() {
     setSubjectsLoading(true);
     setSubjectsMsg(null);
@@ -653,52 +792,8 @@ export default function AdminNotesStatsPage() {
       return;
     }
 
-    if (!matrixPeriods.length) {
-      setSelectedSubjectId("");
-      setSubjectsMsg("Aucune période active avec dates n’est configurée.");
-      setSubjectsLoading(false);
-      return;
-    }
-
     try {
-      const map = new Map<string, SubjectOption>();
-
-      for (const period of matrixPeriods) {
-        try {
-          const bulletin = await fetchBulletinForPeriod(selectedClassId, period);
-          const subjects = Array.isArray(bulletin.subjects) ? bulletin.subjects : [];
-          const items = Array.isArray(bulletin.items) ? bulletin.items : [];
-
-          for (const subject of subjects) {
-            const subjectId = String(subject.subject_id || "").trim();
-
-            if (!subjectId) continue;
-
-            const values = items
-              .map((item) => cleanAvg(findSubjectCell(item, subject)?.avg20))
-              .filter((v): v is number => typeof v === "number" && Number.isFinite(v));
-
-            if (!values.length) continue;
-
-            const current = map.get(subjectId);
-
-            map.set(subjectId, {
-              id: subjectId,
-              name: subject.subject_name || current?.name || "Matière",
-              notes_count: (current?.notes_count || 0) + values.length,
-            });
-          }
-        } catch (err) {
-          console.warn("[admin.notes.stats] période ignorée pour matières", period.id, err);
-        }
-      }
-
-      const options = Array.from(map.values()).sort((a, b) =>
-        a.name.localeCompare(b.name, undefined, {
-          sensitivity: "base",
-          numeric: true,
-        })
-      );
+      const options = await fetchAssignedSubjectsForClass(selectedClassId);
 
       setSubjectOptions(options);
 
@@ -709,13 +804,13 @@ export default function AdminNotesStatsPage() {
 
       if (!options.length) {
         setSubjectsMsg(
-          "Aucune matière avec moyenne publiée n’a été trouvée pour cette classe et cette année."
+          "Aucune matière affectée n’a été trouvée pour cette classe. Vérifiez les attributions des enseignants."
         );
       }
     } catch (e: any) {
       setSubjectOptions([]);
       setSelectedSubjectId("");
-      setSubjectsMsg(e?.message || "Impossible de charger les matières.");
+      setSubjectsMsg(e?.message || "Impossible de charger les matières affectées.");
     } finally {
       setSubjectsLoading(false);
     }
@@ -731,21 +826,26 @@ export default function AdminNotesStatsPage() {
       return;
     }
 
-    if (!selectedSubjectId) {
-      setErrorMsg("Veuillez sélectionner une matière.");
+    if (!selectedPeriodId || !selectedPeriod) {
+      setErrorMsg("Veuillez sélectionner une période.");
       return;
     }
 
-    if (!matrixPeriods.length) {
-      setErrorMsg("Aucune période active avec dates n’est configurée pour cette année scolaire.");
+    if (!selectedSubjectId) {
+      setErrorMsg("Veuillez sélectionner une matière affectée à la classe.");
+      return;
+    }
+
+    if (!periodsToDisplay.length) {
+      setErrorMsg("Aucune période valide n’est disponible pour cette sélection.");
       return;
     }
 
     setLoadingMatrix(true);
-    setLoadedPeriods(matrixPeriods);
+    setLoadedPeriods(periodsToDisplay);
 
     setPeriodStates(
-      matrixPeriods.map((p) => ({
+      periodsToDisplay.map((p) => ({
         period_id: p.id,
         label: periodLabel(p),
         status: "pending",
@@ -762,7 +862,7 @@ export default function AdminNotesStatsPage() {
         ranks: Map<string, number>;
       }> = [];
 
-      for (const period of matrixPeriods) {
+      for (const period of periodsToDisplay) {
         try {
           const bulletin = await fetchBulletinForPeriod(selectedClassId, period);
           const subjects = Array.isArray(bulletin.subjects) ? bulletin.subjects : [];
@@ -775,13 +875,31 @@ export default function AdminNotesStatsPage() {
           );
 
           if (!subject) {
+            for (const item of items) {
+              if (!students.has(item.student_id)) {
+                students.set(item.student_id, {
+                  student_id: item.student_id,
+                  full_name: item.full_name || "Élève",
+                  matricule: item.matricule ?? null,
+                  periods: {},
+                  annual_avg: null,
+                  annual_rank: null,
+                });
+              }
+
+              const row = students.get(item.student_id)!;
+              row.full_name = item.full_name || row.full_name;
+              row.matricule = item.matricule ?? row.matricule;
+              row.periods[period.id] = { avg: null, rank: null };
+            }
+
             setPeriodStates((prev) =>
               prev.map((s) =>
                 s.period_id === period.id
                   ? {
                       ...s,
                       status: "empty",
-                      message: "Matière absente",
+                      message: "Aucune moyenne publiée",
                     }
                   : s
               )
@@ -861,41 +979,56 @@ export default function AdminNotesStatsPage() {
 
       const rows = Array.from(students.values());
 
-      for (const row of rows) {
-        let num = 0;
-        let den = 0;
+      if (showAnnualColumns) {
+        for (const row of rows) {
+          let num = 0;
+          let den = 0;
 
-        for (const { period } of periodResults) {
-          const avg = row.periods[period.id]?.avg;
+          for (const { period } of periodResults) {
+            const avg = row.periods[period.id]?.avg;
 
-          if (avg === null || avg === undefined || !Number.isFinite(avg)) continue;
+            if (avg === null || avg === undefined || !Number.isFinite(avg)) continue;
 
-          const coeffRaw = Number(period.coeff ?? 1);
-          const coeff = Number.isFinite(coeffRaw) && coeffRaw > 0 ? coeffRaw : 1;
+            const coeffRaw = Number(period.coeff ?? 1);
+            const coeff = Number.isFinite(coeffRaw) && coeffRaw > 0 ? coeffRaw : 1;
 
-          num += avg * coeff;
-          den += coeff;
+            num += avg * coeff;
+            den += coeff;
+          }
+
+          row.annual_avg = den > 0 ? Math.round((num / den) * 100) / 100 : null;
         }
 
-        row.annual_avg = den > 0 ? Math.round((num / den) * 100) / 100 : null;
+        const annualRanks = buildRankMap(
+          rows.map((r) => ({
+            student_id: r.student_id,
+            avg: r.annual_avg,
+          }))
+        );
+
+        rows.forEach((row) => {
+          row.annual_rank = annualRanks.get(row.student_id) ?? null;
+        });
+      } else {
+        rows.forEach((row) => {
+          row.annual_avg = null;
+          row.annual_rank = null;
+        });
       }
 
-      const annualRanks = buildRankMap(
-        rows.map((r) => ({
-          student_id: r.student_id,
-          avg: r.annual_avg,
-        }))
-      );
-
-      rows.forEach((row) => {
-        row.annual_rank = annualRanks.get(row.student_id) ?? null;
-      });
-
       rows.sort((a, b) => {
-        const ar = a.annual_rank ?? 99999;
-        const br = b.annual_rank ?? 99999;
+        if (showAnnualColumns) {
+          const ar = a.annual_rank ?? 99999;
+          const br = b.annual_rank ?? 99999;
 
-        if (ar !== br) return ar - br;
+          if (ar !== br) return ar - br;
+        } else {
+          const period = periodsToDisplay[0];
+          const ar = period ? a.periods[period.id]?.rank ?? 99999 : 99999;
+          const br = period ? b.periods[period.id]?.rank ?? 99999 : 99999;
+
+          if (ar !== br) return ar - br;
+        }
 
         return a.full_name.localeCompare(b.full_name, "fr", {
           sensitivity: "base",
@@ -906,7 +1039,7 @@ export default function AdminNotesStatsPage() {
       setMatrixRows(rows);
 
       if (!rows.length) {
-        setErrorMsg("Aucun élève ou aucune moyenne publiée n’a été trouvé pour cette matière.");
+        setErrorMsg("Aucun élève n’a été trouvé pour cette classe.");
       }
     } finally {
       setLoadingMatrix(false);
@@ -926,7 +1059,9 @@ export default function AdminNotesStatsPage() {
       headers.push(`${label} moyenne`, `${label} rang`);
     }
 
-    headers.push("Moyenne annuelle matière", "Rang annuel matière");
+    if (showAnnualColumns) {
+      headers.push("Moyenne annuelle matière", "Rang annuel matière");
+    }
 
     const lines = [headers.map(csvCell).join(";")];
 
@@ -943,10 +1078,12 @@ export default function AdminNotesStatsPage() {
         cells.push(cell.avg !== null ? cell.avg.toFixed(2) : "", cell.rank ?? "");
       }
 
-      cells.push(
-        row.annual_avg !== null ? row.annual_avg.toFixed(2) : "",
-        row.annual_rank ?? ""
-      );
+      if (showAnnualColumns) {
+        cells.push(
+          row.annual_avg !== null ? row.annual_avg.toFixed(2) : "",
+          row.annual_rank ?? ""
+        );
+      }
 
       lines.push(cells.map(csvCell).join(";"));
     });
@@ -958,10 +1095,14 @@ export default function AdminNotesStatsPage() {
     const safeClass = clsLabel(selectedClass).replace(/[^a-z0-9_-]+/gi, "_");
     const safeSubject = selectedSubjectName.replace(/[^a-z0-9_-]+/gi, "_");
     const safeYear = (selectedAcademicYear || "annee").replace(/[^a-z0-9_-]+/gi, "_");
+    const safePeriod = (selectedPeriod ? periodLabel(selectedPeriod) : "periode").replace(
+      /[^a-z0-9_-]+/gi,
+      "_"
+    );
 
     const a = document.createElement("a");
     a.href = url;
-    a.download = `matrice_matiere_${safeSubject}_${safeClass}_${safeYear}.csv`;
+    a.download = `matrice_matiere_${safeSubject}_${safeClass}_${safeYear}_${safePeriod}.csv`;
 
     document.body.appendChild(a);
     a.click();
@@ -978,9 +1119,8 @@ export default function AdminNotesStatsPage() {
 
     const className = clsLabel(selectedClass);
     const title = `Matrice matière — ${selectedSubjectName}`;
-    const subtitle = `${className || "Classe"} — Année scolaire ${
-      selectedAcademicYear || "—"
-    }`;
+    const periodText = selectedPeriod ? periodLabel(selectedPeriod) : "Période";
+    const subtitle = `${className || "Classe"} — ${selectedAcademicYear || "—"} — ${periodText}`;
 
     const periodHeader = loadedPeriods
       .map(
@@ -999,6 +1139,9 @@ export default function AdminNotesStatsPage() {
       .map(() => `<th>Moy.</th><th>Rang</th>`)
       .join("");
 
+    const annualHeader = showAnnualColumns ? `<th colspan="2">Annuel matière</th>` : "";
+    const annualSecondHeader = showAnnualColumns ? `<th>Moy.</th><th>Rang</th>` : "";
+
     const body = matrixRows
       .map((row, idx) => {
         const periodCells = loadedPeriods
@@ -1011,13 +1154,17 @@ export default function AdminNotesStatsPage() {
           })
           .join("");
 
+        const annualCells = showAnnualColumns
+          ? `<td class="num strong">${formatNumber(row.annual_avg)}</td>
+             <td class="num strong">${formatRank(row.annual_rank)}</td>`
+          : "";
+
         return `<tr>
           <td class="num">${idx + 1}</td>
           <td>${escapeHtml(row.matricule || "")}</td>
           <td>${escapeHtml(row.full_name)}</td>
           ${periodCells}
-          <td class="num strong">${formatNumber(row.annual_avg)}</td>
-          <td class="num strong">${formatRank(row.annual_rank)}</td>
+          ${annualCells}
         </tr>`;
       })
       .join("");
@@ -1104,6 +1251,7 @@ export default function AdminNotesStatsPage() {
   <div class="meta">
     <div><strong>Classe :</strong> ${escapeHtml(className || "—")}</div>
     <div><strong>Matière :</strong> ${escapeHtml(selectedSubjectName)}</div>
+    <div><strong>Période :</strong> ${escapeHtml(periodText)}</div>
     <div><strong>Élèves :</strong> ${matrixRows.length}</div>
     <div><strong>Moyenne matière :</strong> ${formatNumber(stats.classAvg)}</div>
     <div><strong>Plus forte :</strong> ${formatNumber(stats.highest)}</div>
@@ -1117,9 +1265,9 @@ export default function AdminNotesStatsPage() {
         <th rowspan="2">Matricule</th>
         <th rowspan="2">Nom et prénoms</th>
         ${periodHeader}
-        <th colspan="2">Annuel matière</th>
+        ${annualHeader}
       </tr>
-      <tr>${secondHeader}<th>Moy.</th><th>Rang</th></tr>
+      <tr>${secondHeader}${annualSecondHeader}</tr>
     </thead>
     <tbody>${body}</tbody>
   </table>
@@ -1165,8 +1313,8 @@ export default function AdminNotesStatsPage() {
             </h1>
 
             <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-200">
-              Sélectionnez une classe, une année scolaire et une matière pour afficher les
-              moyennes publiées et les rangs par période, puis la moyenne annuelle de la matière.
+              Seules les matières affectées à la classe sont proposées. Choisissez la
+              période à produire ; le récap annuel apparaît uniquement sur la dernière période.
             </p>
           </div>
 
@@ -1201,7 +1349,7 @@ export default function AdminNotesStatsPage() {
                 Périodes
               </div>
               <div className="mt-1 text-xl font-bold text-white">
-                {loadedPeriods.length || matrixPeriods.length}
+                {loadedPeriods.length || periodsToDisplay.length || matrixPeriods.length}
               </div>
             </div>
           </div>
@@ -1210,7 +1358,7 @@ export default function AdminNotesStatsPage() {
 
       <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-12 lg:items-end">
-          <div className="lg:col-span-4">
+          <div className="lg:col-span-3">
             <label className="mb-1 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
               <School className="h-4 w-4" /> Classe
             </label>
@@ -1232,9 +1380,9 @@ export default function AdminNotesStatsPage() {
             </Select>
           </div>
 
-          <div className="lg:col-span-3">
+          <div className="lg:col-span-2">
             <label className="mb-1 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
-              <CalendarDays className="h-4 w-4" /> Année scolaire
+              <CalendarDays className="h-4 w-4" /> Année
             </label>
 
             <Select
@@ -1254,6 +1402,27 @@ export default function AdminNotesStatsPage() {
 
           <div className="lg:col-span-3">
             <label className="mb-1 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+              <CalendarDays className="h-4 w-4" /> Période
+            </label>
+
+            <Select
+              value={selectedPeriodId}
+              onChange={(e) => setSelectedPeriodId(e.target.value)}
+              disabled={periodsLoading || !matrixPeriods.length}
+            >
+              <option value="">— Sélectionner une période —</option>
+
+              {matrixPeriods.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {periodLabel(p)} • {formatDateFR(p.start_date)} →{" "}
+                  {formatDateFR(p.end_date)}
+                </option>
+              ))}
+            </Select>
+          </div>
+
+          <div className="lg:col-span-2">
+            <label className="mb-1 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
               <BookOpen className="h-4 w-4" /> Matière
             </label>
 
@@ -1263,7 +1432,9 @@ export default function AdminNotesStatsPage() {
               disabled={!selectedClassId || subjectsLoading || !subjectOptions.length}
             >
               <option value="">
-                {subjectsLoading ? "Chargement des matières…" : "— Sélectionner une matière —"}
+                {subjectsLoading
+                  ? "Chargement…"
+                  : "— Matière affectée —"}
               </option>
 
               {subjectOptions.map((s) => (
@@ -1277,7 +1448,12 @@ export default function AdminNotesStatsPage() {
           <div className="flex flex-wrap gap-2 lg:col-span-2 lg:justify-end">
             <Button
               onClick={loadMatrix}
-              disabled={!selectedClassId || !selectedSubjectId || loadingMatrix}
+              disabled={
+                !selectedClassId ||
+                !selectedPeriodId ||
+                !selectedSubjectId ||
+                loadingMatrix
+              }
             >
               {loadingMatrix ? (
                 <RefreshCw className="h-4 w-4 animate-spin" />
@@ -1293,7 +1469,7 @@ export default function AdminNotesStatsPage() {
           <GhostButton
             type="button"
             onClick={loadSubjectOptions}
-            disabled={!selectedClassId || subjectsLoading || !matrixPeriods.length}
+            disabled={!selectedClassId || subjectsLoading}
           >
             {subjectsLoading ? (
               <RefreshCw className="h-4 w-4 animate-spin" />
@@ -1312,14 +1488,16 @@ export default function AdminNotesStatsPage() {
           </GhostButton>
 
           <span className="text-xs text-slate-500">
-            {selectedClass ? clsLabel(selectedClass) : "Aucune classe sélectionnée"} •{" "}
-            {selectedAcademicYear || "année courante"} • {selectedSubjectName}
+            {selectedClass ? clsLabel(selectedClass) : "Aucune classe"} •{" "}
+            {selectedAcademicYear || "année courante"} •{" "}
+            {selectedPeriod ? periodLabel(selectedPeriod) : "période"} •{" "}
+            {selectedSubjectName}
           </span>
         </div>
 
         <div className="mt-4 flex flex-wrap gap-2 text-xs">
-          {matrixPeriods.length ? (
-            matrixPeriods.map((p) => (
+          {periodsToDisplay.length ? (
+            periodsToDisplay.map((p) => (
               <span
                 key={p.id}
                 className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-slate-600"
@@ -1330,7 +1508,13 @@ export default function AdminNotesStatsPage() {
             ))
           ) : (
             <span className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-amber-700">
-              Aucune période active avec dates pour cette sélection.
+              Sélectionnez une période pour produire le fichier.
+            </span>
+          )}
+
+          {selectedPeriodIsLast && matrixPeriods.length > 1 && (
+            <span className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-emerald-700">
+              Dernière période : récap annuel activé
             </span>
           )}
         </div>
@@ -1377,8 +1561,9 @@ export default function AdminNotesStatsPage() {
             <h2 className="text-base font-bold text-slate-900">Tableau matière</h2>
             <p className="text-sm text-slate-500">
               {selectedSubjectName} •{" "}
-              {selectedClass ? clsLabel(selectedClass) : "Aucune classe sélectionnée"} •{" "}
-              {selectedAcademicYear || "année courante"}
+              {selectedClass ? clsLabel(selectedClass) : "Aucune classe"} •{" "}
+              {selectedAcademicYear || "année courante"} •{" "}
+              {selectedPeriod ? periodLabel(selectedPeriod) : "période"}
             </p>
           </div>
 
@@ -1425,12 +1610,14 @@ export default function AdminNotesStatsPage() {
                   </th>
                 ))}
 
-                <th
-                  colSpan={2}
-                  className="border-b border-slate-200 bg-emerald-50 px-3 py-3 text-center text-emerald-800"
-                >
-                  Annuel matière
-                </th>
+                {showAnnualColumns && (
+                  <th
+                    colSpan={2}
+                    className="border-b border-slate-200 bg-emerald-50 px-3 py-3 text-center text-emerald-800"
+                  >
+                    Annuel matière
+                  </th>
+                )}
               </tr>
 
               <tr className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
@@ -1445,12 +1632,16 @@ export default function AdminNotesStatsPage() {
                   </React.Fragment>
                 ))}
 
-                <th className="border-b border-r border-slate-200 px-3 py-2 text-right">
-                  Moy.
-                </th>
-                <th className="border-b border-slate-200 px-3 py-2 text-right">
-                  Rang
-                </th>
+                {showAnnualColumns && (
+                  <>
+                    <th className="border-b border-r border-slate-200 px-3 py-2 text-right">
+                      Moy.
+                    </th>
+                    <th className="border-b border-slate-200 px-3 py-2 text-right">
+                      Rang
+                    </th>
+                  </>
+                )}
               </tr>
             </thead>
 
@@ -1458,10 +1649,10 @@ export default function AdminNotesStatsPage() {
               {matrixRows.length === 0 ? (
                 <tr>
                   <td
-                    colSpan={3 + loadedPeriods.length * 2 + 2}
+                    colSpan={3 + loadedPeriods.length * 2 + (showAnnualColumns ? 2 : 0)}
                     className="px-6 py-14 text-center text-sm text-slate-500"
                   >
-                    Sélectionnez une classe, une matière, puis chargez la matrice.
+                    Sélectionnez une classe, une période et une matière affectée, puis chargez la matrice.
                   </td>
                 </tr>
               ) : (
@@ -1497,13 +1688,17 @@ export default function AdminNotesStatsPage() {
                       );
                     })}
 
-                    <td className="border-b border-r border-slate-100 bg-emerald-50/60 px-3 py-2 text-right font-bold tabular-nums text-emerald-900">
-                      {formatNumber(row.annual_avg)}
-                    </td>
+                    {showAnnualColumns && (
+                      <>
+                        <td className="border-b border-r border-slate-100 bg-emerald-50/60 px-3 py-2 text-right font-bold tabular-nums text-emerald-900">
+                          {formatNumber(row.annual_avg)}
+                        </td>
 
-                    <td className="border-b border-slate-100 bg-emerald-50/60 px-3 py-2 text-right font-bold tabular-nums text-emerald-900">
-                      {formatRank(row.annual_rank)}
-                    </td>
+                        <td className="border-b border-slate-100 bg-emerald-50/60 px-3 py-2 text-right font-bold tabular-nums text-emerald-900">
+                          {formatRank(row.annual_rank)}
+                        </td>
+                      </>
+                    )}
                   </tr>
                 ))
               )}
