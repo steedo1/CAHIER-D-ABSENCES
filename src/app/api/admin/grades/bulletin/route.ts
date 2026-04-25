@@ -181,6 +181,21 @@ function normalizeStoredLevel(level?: string | null): string | null {
   return raw || null;
 }
 
+/**
+ * ✅ Les sous-matières du bulletin ne sont autorisées que pour le collège.
+ *
+ * Exemple métier :
+ * - 6e/5e/4e/3e : Français peut avoir Composition, Expression, Orthographe…
+ * - Seconde/Première/Terminale : Français reste une matière unique.
+ *
+ * Les notes avec subject_component_id ne sont pas supprimées : elles contribuent
+ * simplement à la moyenne de la matière principale via le calcul direct.
+ */
+function allowSubjectComponentsForBulletinLevel(level?: string | null): boolean {
+  const n = normalizeBulletinLevel(level);
+  return n === "6e" || n === "5e" || n === "4e" || n === "3e";
+}
+
 function pickBestCoeffRow(
   rows: SubjectCoeffRow[],
   wantedLevel: string | null
@@ -1140,6 +1155,7 @@ export async function GET(req: NextRequest) {
   }
 
   const bulletinLevel = normalizeBulletinLevel(classRow.level);
+  const allowSubjectComponents = allowSubjectComponentsForBulletinLevel(bulletinLevel);
 
   /* ✅ lire l'option établissement : bulletin_signatures_enabled (institutions) */
   let bulletinSignaturesEnabled = false;
@@ -1696,73 +1712,85 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  /* 6bis) Sous-matières */
+  /* 6bis) Sous-matières
+   *
+   * ✅ Règle métier importante :
+   * Les sous-matières ne sont affichées/calculées comme lignes séparées que
+   * pour les niveaux collège (6e, 5e, 4e, 3e).
+   *
+   * Pour le lycée (seconde, première, terminale), même si des composants
+   * existent encore dans le référentiel ou dans d’anciennes évaluations,
+   * ils ne doivent PAS apparaître sur le bulletin. La matière principale
+   * reste unique.
+   */
   let subjectComponentsForReport: BulletinSubjectComponent[] = [];
   const subjectComponentById = new Map<string, BulletinSubjectComponent>();
   const compsBySubject = new Map<string, BulletinSubjectComponent[]>();
 
-  const { data: compData, error: compErr } = await srv
-    .from("grade_subject_components")
-    .select("id, subject_id, label, short_label, coeff_in_subject, order_index, is_active, level")
-    .eq("institution_id", institutionId)
-    .in("subject_id", orderedSubjectIds);
+  if (allowSubjectComponents && orderedSubjectIds.length) {
+    const { data: compData, error: compErr } = await srv
+      .from("grade_subject_components")
+      .select("id, subject_id, label, short_label, coeff_in_subject, order_index, is_active, level")
+      .eq("institution_id", institutionId)
+      .in("subject_id", orderedSubjectIds);
 
-  if (compErr) {
-    // ignore
-  } else {
-    const rawRows = ((compData || []) as any[])
-      .filter((r) => r.is_active !== false)
-      .map((r: any) => ({
-        id: String(r.id),
-        subject_id: String(r.subject_id),
-        label: (r.label as string) || "Sous-matière",
-        short_label: r.short_label ? String(r.short_label) : null,
-        coeff_in_subject: cleanCoeff(
-          r.coeff_in_subject !== null && r.coeff_in_subject !== undefined
-            ? Number(r.coeff_in_subject)
-            : 1
-        ),
-        order_index:
-          r.order_index !== null && r.order_index !== undefined ? Number(r.order_index) : 1,
-        level: r.level ? String(r.level) : null,
-      }));
+    if (compErr) {
+      // ignore
+    } else {
+      const rawRows = ((compData || []) as any[])
+        .filter((r) => r.is_active !== false)
+        .map((r: any) => ({
+          id: String(r.id),
+          subject_id: String(r.subject_id),
+          label: (r.label as string) || "Sous-matière",
+          short_label: r.short_label ? String(r.short_label) : null,
+          coeff_in_subject: cleanCoeff(
+            r.coeff_in_subject !== null && r.coeff_in_subject !== undefined
+              ? Number(r.coeff_in_subject)
+              : 1
+          ),
+          order_index:
+            r.order_index !== null && r.order_index !== undefined ? Number(r.order_index) : 1,
+          level: r.level ? String(r.level) : null,
+        }));
 
-    const rawBySubject = new Map<string, any[]>();
-    for (const row of rawRows) {
-      const arr = rawBySubject.get(row.subject_id) || [];
-      arr.push(row);
-      rawBySubject.set(row.subject_id, arr);
-    }
-
-    const finalRows: BulletinSubjectComponent[] = [];
-
-    for (const sid of orderedSubjectIds) {
-      const chosen = pickBestComponentRows(rawBySubject.get(sid) || [], bulletinLevel);
-
-      chosen.sort((a, b) => {
-        return (a.order_index ?? 1) - (b.order_index ?? 1);
-      });
-
-      for (const row of chosen) {
-        finalRows.push({
-          id: row.id,
-          subject_id: row.subject_id,
-          label: row.label,
-          short_label: row.short_label,
-          coeff_in_subject: row.coeff_in_subject,
-          order_index: row.order_index,
-        });
+      const rawBySubject = new Map<string, any[]>();
+      for (const row of rawRows) {
+        const arr = rawBySubject.get(row.subject_id) || [];
+        arr.push(row);
+        rawBySubject.set(row.subject_id, arr);
       }
+
+      const finalRows: BulletinSubjectComponent[] = [];
+
+      for (const sid of orderedSubjectIds) {
+        const chosen = pickBestComponentRows(rawBySubject.get(sid) || [], bulletinLevel);
+
+        chosen.sort((a, b) => {
+          return (a.order_index ?? 1) - (b.order_index ?? 1);
+        });
+
+        for (const row of chosen) {
+          finalRows.push({
+            id: row.id,
+            subject_id: row.subject_id,
+            label: row.label,
+            short_label: row.short_label,
+            coeff_in_subject: row.coeff_in_subject,
+            order_index: row.order_index,
+          });
+        }
+      }
+
+      subjectComponentsForReport = finalRows;
+
+      finalRows.forEach((c) => {
+        subjectComponentById.set(c.id, c);
+        const arr = compsBySubject.get(c.subject_id) || [];
+        arr.push(c);
+        compsBySubject.set(c.subject_id, arr);
+      });
     }
-
-    subjectComponentsForReport = finalRows;
-
-    finalRows.forEach((c) => {
-      subjectComponentById.set(c.id, c);
-      const arr = compsBySubject.get(c.subject_id) || [];
-      arr.push(c);
-      compsBySubject.set(c.subject_id, arr);
-    });
   }
 
   /* 6ter) Groupes (BILAN LETTRES / SCIENCES / AUTRES) */
@@ -2439,7 +2467,7 @@ export async function GET(req: NextRequest) {
     // seed existing compsBySubject
     compsBySubject.forEach((v, k) => annualCompsBySubject.set(k, v.slice()));
 
-    if (annualOrderedSubjectIds.length) {
+    if (allowSubjectComponents && annualOrderedSubjectIds.length) {
       const { data: addCompData, error: addCompErr } = await srv
         .from("grade_subject_components")
         .select("id, subject_id, label, short_label, coeff_in_subject, order_index, is_active, level")
