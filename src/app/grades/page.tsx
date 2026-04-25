@@ -135,11 +135,11 @@ type AverageApiRow = {
   student_id: string;
   count_evals: number;
   total_evals: number;
-  average_raw: number;
-  bonus: number;
-  average: number;
-  average_rounded: number;
-  rank: number;
+  average_raw: number | null;
+  bonus: number | null;
+  average: number | null;
+  average_rounded: number | null;
+  rank: number | null;
 };
 
 type GradePeriod = {
@@ -1041,10 +1041,12 @@ export default function TeacherNotesPage() {
   ========================================== */
   type RowAvg = {
     student: RosterItem;
-    avg20: number; // moyenne brute avant bonus (API)
+    // 0 = vraie moyenne publiée/saisie ; null = aucune moyenne calculable, donc NC.
+    avg20: number | null;
     bonus: number;
-    final: number; // après bonus (et éventuel arrondi côté API)
-    rank: number;
+    final: number | null;
+    rank: number | null;
+    hasAverage: boolean;
     componentsAvg?: Record<string, number>; // ✅ moyenne /20 par sous-rubrique (subject_component_id -> moyenne)
   };
   const [avgRows, setAvgRows] = useState<RowAvg[]>([]);
@@ -1116,26 +1118,71 @@ export default function TeacherNotesPage() {
     );
   }, [mode, hasComponents, components, evaluations, grades, roster]);
 
+  function cleanAvgValue(value: unknown): number | null {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return null;
+    return Math.round(n * 100) / 100;
+  }
+
+  function formatAvgOrNC(value: number | null | undefined): string {
+    if (value === null || value === undefined || !Number.isFinite(Number(value))) {
+      return "NC";
+    }
+    return Number(value).toFixed(2);
+  }
+
+  function formatRankOrNC(value: number | null | undefined): string {
+    if (value === null || value === undefined || !Number.isFinite(Number(value))) {
+      return "NC";
+    }
+    const n = Number(value);
+    if (n <= 0) return "NC";
+    return String(Math.round(n));
+  }
+
   function applyAveragesFromApi(items: AverageApiRow[]) {
     const map = new Map(items.map((row) => [row.student_id, row]));
+
     const rows: RowAvg[] = roster.map((st) => {
       const src = map.get(st.id);
-      const avg20 = src ? src.average_raw ?? src.average ?? 0 : 0;
-      const bonus = src ? src.bonus ?? 0 : 0;
-      const final = src
-        ? src.average_rounded ?? src.average ?? avg20 + bonus
-        : avg20 + bonus;
-      const rank = src ? src.rank ?? 0 : 0;
-      return { student: st, avg20, bonus, final, rank };
+
+      const avg20 = src ? cleanAvgValue(src.average_raw ?? src.average) : null;
+      const bonus = src ? cleanAvgValue(src.bonus) ?? 0 : 0;
+      const finalFromApi = src
+        ? cleanAvgValue(src.average_rounded ?? src.average)
+        : null;
+
+      const final =
+        finalFromApi !== null
+          ? finalFromApi
+          : avg20 !== null
+          ? Math.min(20, Math.max(0, Math.round((avg20 + bonus) * 100) / 100))
+          : null;
+
+      const rank = src ? cleanAvgValue(src.rank) : null;
+      const hasAverage = avg20 !== null || final !== null;
+
+      return {
+        student: st,
+        avg20,
+        bonus,
+        final,
+        rank,
+        hasAverage,
+      };
     });
+
     setAvgRows(rows);
+
     const bm: Record<string, number> = {};
     rows.forEach((r) => {
       bm[r.student.id] = r.bonus;
     });
-    if (!rows.length) {
+
+    if (!items.length) {
       setMsg("Aucune moyenne à calculer pour le moment (aucune note saisie).");
     }
+
     setBonusMap(bm);
   }
 
@@ -1498,6 +1545,7 @@ export default function TeacherNotesPage() {
         if (selected.subject_id) {
           params.set("subject_id", selected.subject_id);
         }
+        appendSelectedPeriod(params);
         const r = await fetch(
           `/api/teacher/grades/averages?${params.toString()}`,
           { cache: "no-store" }
@@ -1548,19 +1596,22 @@ export default function TeacherNotesPage() {
           }
         });
 
-        const avg20Local = den > 0 ? num / den : 0;
+        const avg20Local = den > 0 ? num / den : null;
         const bonusLocal = bonusMap[st.id] ?? 0;
-        const finalLocal = Math.min(
-          20,
-          Math.max(0, Math.round((avg20Local + bonusLocal) * 100) / 100)
-        );
+        const finalLocal =
+          avg20Local !== null
+            ? Math.min(
+                20,
+                Math.max(0, Math.round((avg20Local + bonusLocal) * 100) / 100)
+              )
+            : null;
 
         const apiRow = avgByStudent.get(st.id);
         const finalFromApi = apiRow
-          ? apiRow.average_rounded ?? apiRow.average ?? finalLocal
+          ? cleanAvgValue(apiRow.average_rounded ?? apiRow.average) ?? finalLocal
           : finalLocal;
 
-        row.push(finalFromApi.toFixed(2));
+        row.push(finalFromApi === null ? "NC" : finalFromApi.toFixed(2));
 
         // Conversion en string + échappement CSV
         const rowStr = row.map((cell) => {
@@ -2320,7 +2371,13 @@ export default function TeacherNotesPage() {
                   ) : (
                     avgRows.map((row, idx) => {
                       const bonus = bonusMap[row.student.id] ?? row.bonus ?? 0;
-                      const final = Math.min(20, row.avg20 + bonus);
+                      const final =
+                        row.avg20 !== null
+                          ? Math.min(
+                              20,
+                              Math.max(0, Math.round((row.avg20 + bonus) * 100) / 100)
+                            )
+                          : null;
                       return (
                         <tr
                           key={row.student.id}
@@ -2352,7 +2409,7 @@ export default function TeacherNotesPage() {
                             })}
 
                           <td className="px-3 py-2 text-right tabular-nums">
-                            {row.avg20.toFixed(2)}
+                            {formatAvgOrNC(row.avg20)}
                           </td>
                           <td className="px-3 py-2 w-24">
                             <Input
@@ -2377,10 +2434,10 @@ export default function TeacherNotesPage() {
                             />
                           </td>
                           <td className="px-3 py-2 text-right tabular-nums">
-                            {final.toFixed(2)}
+                            {formatAvgOrNC(final)}
                           </td>
                           <td className="px-3 py-2 text-right">
-                            {row.rank || ""}
+                            {formatRankOrNC(row.rank)}
                           </td>
                         </tr>
                       );
@@ -2405,7 +2462,13 @@ export default function TeacherNotesPage() {
               ) : (
                 avgRows.map((row, idx) => {
                   const bonus = bonusMap[row.student.id] ?? row.bonus ?? 0;
-                  const final = Math.min(20, row.avg20 + bonus);
+                  const final =
+                    row.avg20 !== null
+                      ? Math.min(
+                          20,
+                          Math.max(0, Math.round((row.avg20 + bonus) * 100) / 100)
+                        )
+                      : null;
                   return (
                     <div
                       key={row.student.id}
@@ -2418,7 +2481,7 @@ export default function TeacherNotesPage() {
                         <div className="text-[11px] text-slate-500 text-right">
                           Rang :{" "}
                           <span className="font-semibold">
-                            {row.rank || "—"}
+                            {formatRankOrNC(row.rank)}
                           </span>
                         </div>
                       </div>
@@ -2433,7 +2496,7 @@ export default function TeacherNotesPage() {
                             Moyenne /20
                           </div>
                           <div className="text-sm font-semibold">
-                            {row.avg20.toFixed(2)}
+                            {formatAvgOrNC(row.avg20)}
                           </div>
                         </div>
                         <div>
@@ -2441,7 +2504,7 @@ export default function TeacherNotesPage() {
                             Finale /20
                           </div>
                           <div className="text-sm font-semibold">
-                            {final.toFixed(2)}
+                            {formatAvgOrNC(final)}
                           </div>
                         </div>
                       </div>

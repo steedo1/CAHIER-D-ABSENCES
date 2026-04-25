@@ -1464,13 +1464,79 @@ export async function GET(req: NextRequest) {
     evals = (evalData || []) as EvalRow[];
   }
 
-  // sujets vus dans les évaluations
+  // sujets vus dans les évaluations publiées
   const subjectIdSet = new Set<string>();
   for (const e of evals) if (e.subject_id) subjectIdSet.add(String(e.subject_id));
 
-  // ✅ union: config coeffs + sujets des évaluations (pour ne pas “oublier” une matière)
+  /*
+   * ✅ Matières officiellement affectées à la classe
+   * class_teachers.subject_id = institution_subjects.id ;
+   * on le résout ensuite vers subjects.id.
+   *
+   * Règle métier :
+   * - matière non affectée => invisible dans le bulletin ;
+   * - matière affectée mais sans note publiée => avg20 = null, affichage NC / — côté front ;
+   * - vraie note 0 publiée => avg20 = 0, conservée comme vraie moyenne.
+   *
+   * Fallback non cassant : si aucune affectation n'est trouvée pour la classe,
+   * on conserve l'ancien comportement basé sur coeffs + évaluations.
+   */
+  const assignedSubjectIds = new Set<string>();
+
+  {
+    let ctQuery = srv
+      .from("class_teachers")
+      .select("subject_id, start_date, end_date")
+      .eq("institution_id", institutionId)
+      .eq("class_id", classId);
+
+    const pivot = dateTo || dateFrom || null;
+    if (pivot) {
+      ctQuery = ctQuery
+        .or(`end_date.is.null,end_date.gte.${pivot}`)
+        .or(`start_date.is.null,start_date.lte.${pivot}`);
+    } else {
+      ctQuery = ctQuery.is("end_date", null);
+    }
+
+    const { data: ctData, error: ctErr } = await ctQuery;
+
+    if (!ctErr && ctData?.length) {
+      const instSubjectIds = Array.from(
+        new Set(
+          (ctData as any[])
+            .map((row) => String(row.subject_id || ""))
+            .filter((id) => !!id && isUuid(id))
+        )
+      );
+
+      if (instSubjectIds.length) {
+        const { data: instSubData, error: instSubErr } = await srv
+          .from("institution_subjects")
+          .select("id, subject_id")
+          .eq("institution_id", institutionId)
+          .in("id", instSubjectIds);
+
+        if (!instSubErr && instSubData?.length) {
+          (instSubData as any[]).forEach((row) => {
+            const sid = String(row.subject_id || "");
+            if (sid && isUuid(sid)) assignedSubjectIds.add(sid);
+          });
+        }
+      }
+    }
+  }
+
+  const hasAssignedSubjectsForClass = assignedSubjectIds.size > 0;
+
+  // ✅ Lookup large : on charge les noms de toutes les matières possibles, puis on filtre après
+  // avoir identifié les matières de conduite.
   const subjectIdsUnionRaw = Array.from(
-    new Set([...Array.from(subjectIdsFromConfig), ...Array.from(subjectIdSet)])
+    new Set([
+      ...Array.from(subjectIdsFromConfig),
+      ...Array.from(subjectIdSet),
+      ...Array.from(assignedSubjectIds),
+    ])
   );
   const subjectIds = subjectIdsUnionRaw.filter((sid) => isUuid(sid));
 
@@ -1496,9 +1562,22 @@ export async function GET(req: NextRequest) {
         per_subject: [],
         per_group: [],
         general_avg: null,
+        coverage: {
+          expected_subjects: 0,
+          covered_subjects: 0,
+          missing_subjects: [],
+          is_complete: false,
+          has_academic_grade: false,
+          status: "empty",
+        },
+        general_avg_is_complete: false,
+        general_avg_status: "empty",
         per_subject_components: [],
         annual_avg: null as number | null,
         annual_rank: null as number | null,
+        annual_coverage: null,
+        annual_avg_is_complete: false,
+        annual_avg_status: "not_last_period",
       };
     });
 
@@ -1574,7 +1653,19 @@ export async function GET(req: NextRequest) {
   };
 
   // ordre final des matières (par nom)
-  const orderedSubjectIds = subjects.map((s) => s.id).filter((sid) => isUuid(sid));
+  // ✅ Si des affectations existent, on garde uniquement :
+  // - les matières affectées à la classe ;
+  // - les matières de conduite configurées ;
+  // et on exclut les matières parasites simplement présentes dans le référentiel/coefficients.
+  const orderedSubjectIds = subjects
+    .map((s) => s.id)
+    .filter((sid) => {
+      if (!isUuid(sid)) return false;
+      if (!hasAssignedSubjectsForClass) return true;
+      if (assignedSubjectIds.has(sid)) return true;
+      if (isConductSubjectId(sid)) return true;
+      return false;
+    });
 
   /* 6) Liste matières pour le bulletin */
   const subjectsForReport = orderedSubjectIds.map((sid) => {
@@ -2023,9 +2114,20 @@ export async function GET(req: NextRequest) {
         }
       }
 
+      const hasGrade = avg20 !== null && avg20 !== undefined && Number.isFinite(Number(avg20));
+
       return {
         subject_id: s.subject_id,
         avg20,
+
+        // ✅ Métadonnées NC : ne cassent pas le front existant, mais permettent
+        // aux bulletins/matrices d'afficher clairement NC / — sans confondre avec 0.
+        has_grade: hasGrade,
+        is_nc: !hasGrade,
+        is_assigned:
+          !hasAssignedSubjectsForClass ||
+          assignedSubjectIds.has(String(s.subject_id)) ||
+          isConductSubjectId(String(s.subject_id)),
 
         // ✅ champs ajoutés (remplis plus bas par attachTeachersToSubjects + signatures)
         teacher_id: null as string | null,
@@ -2080,6 +2182,7 @@ export async function GET(req: NextRequest) {
 
     // ✅ moyenne générale: la conduite peut compléter, mais ne valide jamais seule un trimestre
     let general_avg: number | null = null;
+    let hasAcademicContributionForGeneral = false;
     {
       let academicSumGen = 0;
       let academicSumCoeffGen = 0;
@@ -2107,6 +2210,7 @@ export async function GET(req: NextRequest) {
         }
 
         hasAcademicContribution = true;
+        hasAcademicContributionForGeneral = true;
         academicSumGen += Number(subAvg) * coeffSub;
         academicSumCoeffGen += coeffSub;
       }
@@ -2130,6 +2234,47 @@ export async function GET(req: NextRequest) {
       }
     }
 
+    const expectedAverageSubjects = subjectsForReport.filter((s) => {
+      if (s.include_in_average === false) return false;
+      const coeffSub = Number(s.coeff_bulletin ?? 0);
+      if (!coeffSub || coeffSub <= 0) return false;
+      if (isConductSubjectId(String(s.subject_id))) return false;
+      return true;
+    });
+
+    const coveredAverageSubjectIds = new Set<string>();
+    for (const ps of per_subject as any[]) {
+      if (isConductSubjectId(String(ps.subject_id))) continue;
+      if (typeof ps.avg20 === "number" && Number.isFinite(ps.avg20)) {
+        coveredAverageSubjectIds.add(String(ps.subject_id));
+      }
+    }
+
+    const missingAverageSubjects = expectedAverageSubjects
+      .filter((s) => !coveredAverageSubjectIds.has(String(s.subject_id)))
+      .map((s) => ({
+        subject_id: s.subject_id,
+        subject_name: s.subject_name,
+      }));
+
+    const coverage = {
+      expected_subjects: expectedAverageSubjects.length,
+      covered_subjects: coveredAverageSubjectIds.size,
+      missing_subjects: missingAverageSubjects,
+      is_complete:
+        expectedAverageSubjects.length > 0 &&
+        coveredAverageSubjectIds.size === expectedAverageSubjects.length,
+      has_academic_grade: hasAcademicContributionForGeneral,
+      status:
+        expectedAverageSubjects.length === 0
+          ? "empty"
+          : coveredAverageSubjectIds.size === expectedAverageSubjects.length
+            ? "complete"
+            : coveredAverageSubjectIds.size > 0
+              ? "partial"
+              : "empty",
+    };
+
     return {
       student_id: cs.student_id,
       full_name: fullName,
@@ -2149,6 +2294,13 @@ export async function GET(req: NextRequest) {
       per_subject,
       per_group,
       general_avg,
+
+      // ✅ Couverture de moyenne : utile pour afficher “Moyenne provisoire”,
+      // NC, rang non officiel, etc. sans casser les champs historiques.
+      coverage,
+      general_avg_is_complete: coverage.is_complete,
+      general_avg_status: coverage.status,
+
       per_subject_components,
 
       // ✅ annuel (rempli seulement si is_last)
@@ -2208,7 +2360,7 @@ export async function GET(req: NextRequest) {
     const yearTo = String(lastPeriod?.end_date ?? dateTo ?? "");
 
     // 1) Matières vues sur toute l'année (évaluations publiées)
-    const annualSubjectIds = new Set<string>(subjectIds);
+    const annualSubjectIds = new Set<string>(orderedSubjectIds);
     if (yearFrom && yearTo) {
       const { data: yEvals, error: yErr } = await supabase
         .from("grade_evaluations")
@@ -2221,7 +2373,10 @@ export async function GET(req: NextRequest) {
       if (!yErr && yEvals?.length) {
         for (const r of yEvals as any[]) {
           const sid = r?.subject_id ? String(r.subject_id) : "";
-          if (sid && isUuid(sid)) annualSubjectIds.add(sid);
+          if (!sid || !isUuid(sid)) continue;
+          if (!hasAssignedSubjectsForClass || assignedSubjectIds.has(sid) || isConductSubjectId(sid)) {
+            annualSubjectIds.add(sid);
+          }
         }
       }
     }
@@ -2518,10 +2673,14 @@ export async function GET(req: NextRequest) {
     };
 
     const annualAvgByStudent = new Map<string, number | null>();
+    const annualCoverageByStudent = new Map<
+      string,
+      { expected_periods: number; covered_periods: number; missing_periods: any[]; is_complete: boolean; status: string }
+    >();
     studentIds.forEach((sid) => annualAvgByStudent.set(sid, null));
 
     // ✅ calcule UNE fois par période (évite N_students × N_periods requêtes)
-    const periodMaps: { w: number; map: Map<string, number | null> }[] = [];
+    const periodMaps: { w: number; period: GradePeriodRow; map: Map<string, number | null> }[] = [];
 
     for (const p of periodsForYear) {
       const from = String(p.start_date);
@@ -2539,23 +2698,48 @@ export async function GET(req: NextRequest) {
         annualSubjectComponentById,
         conductMapForPeriod
       );
-      periodMaps.push({ w, map });
+      periodMaps.push({ w, period: p, map });
     }
 
     for (const sid of studentIds) {
       let sum = 0;
       let sumW = 0;
+      let covered = 0;
+      const missingPeriods: any[] = [];
 
       for (const pm of periodMaps) {
         const avg = pm.map.get(sid) ?? null;
         if (typeof avg === "number" && Number.isFinite(avg)) {
           sum += avg * pm.w;
           sumW += pm.w;
+          covered += 1;
+        } else {
+          missingPeriods.push({
+            from: pm.period.start_date,
+            to: pm.period.end_date,
+            code: pm.period.code ?? null,
+            label: pm.period.label ?? null,
+            short_label: pm.period.short_label ?? null,
+          });
         }
       }
 
       const a = sumW > 0 ? cleanNumber(sum / sumW, 4) : null;
       annualAvgByStudent.set(sid, a);
+      annualCoverageByStudent.set(sid, {
+        expected_periods: periodMaps.length,
+        covered_periods: covered,
+        missing_periods: missingPeriods,
+        is_complete: periodMaps.length > 0 && covered === periodMaps.length,
+        status:
+          periodMaps.length === 0
+            ? "empty"
+            : covered === periodMaps.length
+              ? "complete"
+              : covered > 0
+                ? "partial"
+                : "empty",
+      });
     }
 
     const annualRankByStudent = buildRankMapFromAverageMap(annualAvgByStudent);
@@ -2563,14 +2747,29 @@ export async function GET(req: NextRequest) {
     for (const it of items) {
       const a = annualAvgByStudent.get(it.student_id) ?? null;
       const r = annualRankByStudent.get(it.student_id) ?? null;
+      const annualCoverage =
+        annualCoverageByStudent.get(it.student_id) ?? {
+          expected_periods: periodMaps.length,
+          covered_periods: 0,
+          missing_periods: [],
+          is_complete: false,
+          status: "empty",
+        };
+
       (it as any).annual_avg = a;
       (it as any).annual_rank = r;
+      (it as any).annual_coverage = annualCoverage;
+      (it as any).annual_avg_is_complete = annualCoverage.is_complete;
+      (it as any).annual_avg_status = annualCoverage.status;
     }
   } else {
     // cohérence: si pas dernier trimestre -> valeurs null
     for (const it of items) {
       (it as any).annual_avg = null;
       (it as any).annual_rank = null;
+      (it as any).annual_coverage = null;
+      (it as any).annual_avg_is_complete = false;
+      (it as any).annual_avg_status = "not_last_period";
     }
   }
 

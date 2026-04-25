@@ -84,7 +84,14 @@ type PerSubjectAvg = {
   subject_id: string;
   avg20: number | null;
   subject_rank?: number | null;
+  teacher_id?: string | null;
   teacher_name?: string | null;
+
+  // ✅ Métadonnées renvoyées par l’API bulletin NC
+  // 0 reste une vraie note ; null = non classé / pas de moyenne publiée.
+  has_grade?: boolean | null;
+  is_nc?: boolean | null;
+  is_assigned?: boolean | null;
 
   // 🆕 signature (data URL) renvoyée par l’API quand activé
   teacher_signature_png?: string | null;
@@ -101,6 +108,36 @@ type PerSubjectComponentAvg = {
   component_id: string;
   avg20: number | null;
   component_rank?: number | null;
+};
+
+type BulletinMissingSubject = {
+  subject_id: string;
+  subject_name: string;
+};
+
+type BulletinCoverage = {
+  expected_subjects?: number;
+  covered_subjects?: number;
+  missing_subjects?: BulletinMissingSubject[];
+  is_complete?: boolean;
+  has_academic_grade?: boolean;
+  status?: "complete" | "partial" | "empty" | string;
+};
+
+type BulletinMissingPeriod = {
+  from?: string | null;
+  to?: string | null;
+  code?: string | null;
+  label?: string | null;
+  short_label?: string | null;
+};
+
+type BulletinAnnualCoverage = {
+  expected_periods?: number;
+  covered_periods?: number;
+  missing_periods?: BulletinMissingPeriod[];
+  is_complete?: boolean;
+  status?: "complete" | "partial" | "empty" | "not_last_period" | string;
 };
 
 type BulletinItemBase = {
@@ -136,11 +173,20 @@ type BulletinItemBase = {
   per_subject: PerSubjectAvg[];
   per_group: PerGroupAvg[];
   general_avg: number | null;
+
+  // ✅ Couverture officielle renvoyée par l’API bulletin
+  coverage?: BulletinCoverage | null;
+  general_avg_is_complete?: boolean | null;
+  general_avg_status?: "complete" | "partial" | "empty" | string | null;
+
   per_subject_components?: PerSubjectComponentAvg[];
 
   // ✅ ANNUEL (rempli par l’API seulement sur la dernière période)
   annual_avg?: number | null;
   annual_rank?: number | null;
+  annual_coverage?: BulletinAnnualCoverage | null;
+  annual_avg_is_complete?: boolean | null;
+  annual_avg_status?: "complete" | "partial" | "empty" | "not_last_period" | string | null;
 };
 
 type BulletinItemWithRank = BulletinItemBase & {
@@ -169,6 +215,17 @@ type BulletinResponse = {
     short_label?: string | null;
     academic_year?: string | null;
     coeff?: number | null;
+    periods_defined?: boolean | null;
+    is_last?: boolean | null;
+    last_period?: {
+      from: string | null;
+      to: string | null;
+      code?: string | null;
+      label?: string | null;
+      short_label?: string | null;
+      academic_year?: string | null;
+      coeff?: number | null;
+    } | null;
   };
   subjects: BulletinSubject[];
   subject_groups: BulletinGroup[];
@@ -408,6 +465,36 @@ function Button({ variant = "primary", ...props }: ButtonProps) {
 function formatNumber(n: number | null | undefined, digits = 2): string {
   if (n === null || n === undefined || !Number.isFinite(n)) return "–";
   return Number(n).toFixed(digits);
+}
+
+function formatRankOrNC(n: number | null | undefined): string {
+  if (n === null || n === undefined || !Number.isFinite(Number(n))) return "NC";
+  return `${Number(n)}e`;
+}
+
+function hasNumericValue(n: number | null | undefined): boolean {
+  return n !== null && n !== undefined && Number.isFinite(Number(n));
+}
+
+function formatNumberOrNCWithMarker(
+  n: number | null | undefined,
+  showMarker: boolean,
+  digits = 2
+): string {
+  if (!hasNumericValue(n)) return "NC";
+  return `${Number(n).toFixed(digits)}${showMarker ? "*" : ""}`;
+}
+
+function isGeneralAverageComplete(item: BulletinItemBase): boolean {
+  if (typeof item.general_avg_is_complete === "boolean") return item.general_avg_is_complete;
+  if (item.coverage && typeof item.coverage.is_complete === "boolean") return item.coverage.is_complete;
+  return true;
+}
+
+function isAnnualAverageComplete(item: BulletinItemBase): boolean {
+  if (typeof item.annual_avg_is_complete === "boolean") return item.annual_avg_is_complete;
+  if (item.annual_coverage && typeof item.annual_coverage.is_complete === "boolean") return item.annual_coverage.is_complete;
+  return true;
 }
 
 function round2(n: number): number {
@@ -843,45 +930,17 @@ function computeRanksAndStats(res: BulletinResponse | null): EnrichedBulletin | 
 
   const baseItems = res.items ?? [];
 
-  // Ne pas réinjecter la conduite ici : l'API bulletin calcule déjà general_avg (conduite incluse si applicable).
-  // Fallback : si l'API renvoie null, on peut recalculer une moyenne matières côté front sans casser l'affichage.
+  // ✅ Le front ne fabrique plus une moyenne générale quand l’API renvoie null.
+  // L’API bulletin est la source de vérité : 0 = vraie note, null = NC / non classé.
   const itemsWithAvg: BulletinItemWithRank[] = baseItems.map((it) => {
-    const perSubject = it.per_subject ?? [];
-
-    let sum = 0;
-    let sumCoeff = 0;
-
-    res.subjects.forEach((s) => {
-      const cell = perSubject.find((ps) => ps.subject_id === s.subject_id);
-      const val = cell?.avg20;
-      if (val === null || val === undefined) return;
-
-      const avg = Number(val);
-      if (!Number.isFinite(avg)) return;
-
-      if (s.include_in_average === false) return;
-
-      const coeff = Number(s.coeff_bulletin ?? 0);
-      if (!Number.isFinite(coeff) || coeff <= 0) return;
-
-      sum += avg * coeff;
-      sumCoeff += coeff;
-    });
-
-    const baseAvg = sumCoeff > 0 ? sum / sumCoeff : null;
-
     const apiAvg =
       it.general_avg !== null && it.general_avg !== undefined
         ? Number(it.general_avg)
         : null;
 
-    const finalAvg =
-      apiAvg !== null && Number.isFinite(apiAvg) ? apiAvg : baseAvg;
+    const finalAvg = apiAvg !== null && Number.isFinite(apiAvg) ? round2(apiAvg) : null;
 
-    const rounded =
-      finalAvg !== null && Number.isFinite(finalAvg) ? round2(finalAvg) : null;
-
-    return { ...it, general_avg: rounded, rank: null };
+    return { ...it, general_avg: finalAvg, rank: null };
   });
 
   const withAvg = itemsWithAvg.filter(
@@ -890,13 +949,25 @@ function computeRanksAndStats(res: BulletinResponse | null): EnrichedBulletin | 
 
   const stats: ClassStats = { highest: null, lowest: null, classAvg: null };
 
-  if (!withAvg.length) {
-    applyComponentRanksFront(itemsWithAvg);
-    applyGroupRanksFront(itemsWithAvg);
-    return { response: res, items: itemsWithAvg, stats };
+  if (withAvg.length) {
+    const sortedForStats = [...withAvg].sort(
+      (a, b) => (b.general_avg ?? 0) - (a.general_avg ?? 0)
+    );
+
+    const sumAll = withAvg.reduce((acc, it) => acc + (it.general_avg ?? 0), 0);
+    const highest = sortedForStats[0].general_avg ?? null;
+    const lowest = sortedForStats[sortedForStats.length - 1].general_avg ?? null;
+    const classAvg = sumAll / withAvg.length;
+
+    stats.highest = highest !== null ? round2(highest) : null;
+    stats.lowest = lowest !== null ? round2(lowest) : null;
+    stats.classAvg = round2(classAvg);
   }
 
-  const sorted = [...withAvg].sort(
+  // ✅ Rang officiel : seulement quand la moyenne est complète.
+  // Si l’API ancienne ne donne pas coverage/general_avg_is_complete, on garde l’ancien comportement.
+  const rankable = withAvg.filter((it) => isGeneralAverageComplete(it));
+  const sortedForRank = [...rankable].sort(
     (a, b) => (b.general_avg ?? 0) - (a.general_avg ?? 0)
   );
 
@@ -904,7 +975,7 @@ function computeRanksAndStats(res: BulletinResponse | null): EnrichedBulletin | 
   let lastRank = 0;
   const rankByStudent = new Map<string, number>();
 
-  sorted.forEach((it, idx) => {
+  sortedForRank.forEach((it, idx) => {
     const g = it.general_avg ?? 0;
     if (lastScore === null || g !== lastScore) {
       lastRank = idx + 1;
@@ -912,15 +983,6 @@ function computeRanksAndStats(res: BulletinResponse | null): EnrichedBulletin | 
     }
     rankByStudent.set(it.student_id, lastRank);
   });
-
-  const sumAll = withAvg.reduce((acc, it) => acc + (it.general_avg ?? 0), 0);
-  const highest = sorted[0].general_avg ?? null;
-  const lowest = sorted[sorted.length - 1].general_avg ?? null;
-  const classAvg = sumAll / withAvg.length;
-
-  stats.highest = highest !== null ? round2(highest) : null;
-  stats.lowest = lowest !== null ? round2(lowest) : null;
-  stats.classAvg = round2(classAvg);
 
   const itemsWithRank: BulletinItemWithRank[] = itemsWithAvg.map((it) => ({
     ...it,
@@ -1209,13 +1271,15 @@ function StudentBulletinCard({
     return [...subjects];
   }, [subjects, conductSubject]);
 
-  const subjectsWithGrades = useMemo(() => {
+  const subjectsForTable = useMemo(() => {
     return allSubjects.filter((s) => {
-      const cell = perSubject.find((ps) => ps.subject_id === s.subject_id);
-      const val = cell?.avg20;
-      return val !== null && val !== undefined && Number.isFinite(Number(val));
+      // La conduite ajoutée côté front n’apparaît que si elle existe.
+      if (s.subject_id === conductSubject?.subject_id) return conductNoteOn20 !== null;
+      // Les autres matières viennent de l’API bulletin : elles sont déjà filtrées côté API
+      // pour exclure les matières non affectées. Si elles n’ont pas de note, on affiche NC.
+      return true;
     });
-  }, [allSubjects, perSubject]);
+  }, [allSubjects, conductSubject, conductNoteOn20]);
 
   const effectiveCoeffBySubjectId = useMemo(() => {
     const map = new Map<string, number>();
@@ -1224,7 +1288,7 @@ function StudentBulletinCard({
       if (!g.is_active) return;
 
       g.items.forEach((it) => {
-        const subj = subjectsWithGrades.find((s) => s.subject_id === it.subject_id);
+        const subj = subjectsForTable.find((s) => s.subject_id === it.subject_id);
         if (!subj) return;
 
         const override = Number(it.subject_coeff_override ?? NaN);
@@ -1239,7 +1303,7 @@ function StudentBulletinCard({
       });
     });
 
-    subjectsWithGrades.forEach((s) => {
+    subjectsForTable.forEach((s) => {
       if (map.has(s.subject_id)) return;
 
       const coeff =
@@ -1253,7 +1317,7 @@ function StudentBulletinCard({
     });
 
     return map;
-  }, [subjectGroups, subjectsWithGrades, conductSubject]);
+  }, [subjectGroups, subjectsForTable, conductSubject]);
 
   const coeffTotal = useMemo(
     () =>
@@ -1301,16 +1365,25 @@ function StudentBulletinCard({
 
   const subjectsById = useMemo(() => {
     const m = new Map<string, BulletinSubject>();
-    subjectsWithGrades.forEach((s) => m.set(s.subject_id, s));
+    subjectsForTable.forEach((s) => m.set(s.subject_id, s));
     return m;
-  }, [subjectsWithGrades]);
+  }, [subjectsForTable]);
 
-  const mentions = computeCouncilMentions(item.general_avg, conductNoteOn20);
-  const councilText = computeCouncilAppreciationText(
-    mentions,
-    item.general_avg,
-    conductNoteOn20
-  );
+  const generalAvgComplete = isGeneralAverageComplete(item);
+  const annualAvgComplete = isAnnualAverageComplete(item);
+  const showGeneralIncompleteMarker =
+    !generalAvgComplete && hasNumericValue(item.general_avg);
+  const showAnnualIncompleteMarker =
+    showAnnual && !annualAvgComplete && hasNumericValue(annualAvgOn20);
+  const showIncompleteAverageFootnote =
+    showGeneralIncompleteMarker || showAnnualIncompleteMarker;
+  const mentions = generalAvgComplete
+    ? computeCouncilMentions(item.general_avg, conductNoteOn20)
+    : computeCouncilMentions(null, conductNoteOn20);
+
+  const councilText = generalAvgComplete
+    ? computeCouncilAppreciationText(mentions, item.general_avg, conductNoteOn20)
+    : "Conseil à compléter.";
 
   const tick = (checked: boolean) => (
     <span
@@ -1367,7 +1440,7 @@ function StudentBulletinCard({
   const qrImgSrc = item.qr_png || qrDataUrl;
 
   const totalTableRows = useMemo(() => {
-    const subjectRows = subjectsWithGrades.reduce((acc, s) => {
+    const subjectRows = subjectsForTable.reduce((acc, s) => {
       const comps = subjectCompsBySubject.get(s.subject_id) ?? [];
       return acc + 1 + comps.length;
     }, 0);
@@ -1400,7 +1473,7 @@ function StudentBulletinCard({
     const totalsRow = 1;
     return subjectRows + groupTotalRows + totalsRow;
   }, [
-    subjectsWithGrades,
+    subjectsForTable,
     subjectCompsBySubject,
     subjectGroups,
     subjectsById,
@@ -1433,9 +1506,7 @@ function StudentBulletinCard({
   const renderSubjectBlock = (s: BulletinSubject) => {
     const cell = perSubject.find((ps) => ps.subject_id === s.subject_id);
     const avg = cell?.avg20 ?? null;
-
-    if (avg === null || avg === undefined || !Number.isFinite(Number(avg)))
-      return null;
+    const hasAvg = avg !== null && avg !== undefined && Number.isFinite(Number(avg));
 
     const effectiveCoeff =
       effectiveCoeffBySubjectId.get(s.subject_id) ??
@@ -1444,14 +1515,14 @@ function StudentBulletinCard({
         : Number(s.coeff_bulletin ?? 0));
 
     const moyCoeff =
-      avg !== null && Number.isFinite(Number(avg)) && Number.isFinite(effectiveCoeff)
+      hasAvg && Number.isFinite(effectiveCoeff)
         ? round2(Number(avg) * effectiveCoeff)
         : null;
 
     const subjectRankLabel =
-      cell && cell.subject_rank != null ? `${cell.subject_rank}e` : "—";
+      hasAvg && cell && cell.subject_rank != null ? `${cell.subject_rank}e` : "NC";
     const subjectTeacher = cell?.teacher_name || "";
-    const appreciationLabel = computeSubjectAppreciation(avg);
+    const appreciationLabel = hasAvg ? computeSubjectAppreciation(avg) : "Non classé";
 
     const signaturePng =
       signaturesActive && cell && (cell as any).teacher_signature_png
@@ -1464,12 +1535,14 @@ function StudentBulletinCard({
       <React.Fragment key={s.subject_id}>
         <tr>
           <td className="bdr px-1 py-[1px]">{s.subject_name}</td>
-          <td className="bdr px-1 py-[1px] text-center">{formatNumber(avg)}</td>
+          <td className="bdr px-1 py-[1px] text-center">
+            {hasAvg ? formatNumber(avg) : "NC"}
+          </td>
           <td className="bdr px-1 py-[1px] text-center">
             {formatNumber(effectiveCoeff, 0)}
           </td>
           <td className="bdr px-1 py-[1px] text-center">
-            {formatNumber(moyCoeff)}
+            {hasAvg ? formatNumber(moyCoeff) : "—"}
           </td>
           <td className="bdr px-1 py-[1px] text-center">{subjectRankLabel}</td>
           <td className="bdr px-1 py-[1px]">{appreciationLabel}</td>
@@ -1483,9 +1556,10 @@ function StudentBulletinCard({
           const key = `${s.subject_id}__${comp.id}`;
           const compCell = perSubjectComponentMap.get(key);
           const cAvg = compCell?.avg20 ?? null;
+          const cHasAvg = cAvg !== null && cAvg !== undefined && Number.isFinite(Number(cAvg));
           const cRank = compCell?.component_rank ?? null;
           const cMoyCoeff =
-            cAvg !== null && Number.isFinite(Number(cAvg))
+            cHasAvg
               ? round2(Number(cAvg) * (comp.coeff_in_subject || 0))
               : null;
 
@@ -1498,16 +1572,16 @@ function StudentBulletinCard({
                 {comp.short_label || comp.label}
               </td>
               <td className="bdr px-1 py-[1px] text-center">
-                {formatNumber(cAvg)}
+                {cHasAvg ? formatNumber(cAvg) : "NC"}
               </td>
               <td className="bdr px-1 py-[1px] text-center">
                 {formatNumber(comp.coeff_in_subject, 0)}
               </td>
               <td className="bdr px-1 py-[1px] text-center">
-                {formatNumber(cMoyCoeff)}
+                {cHasAvg ? formatNumber(cMoyCoeff) : "—"}
               </td>
               <td className="bdr px-1 py-[1px] text-center">
-                {cRank != null ? `${cRank}e` : "—"}
+                {cHasAvg && cRank != null ? `${cRank}e` : "NC"}
               </td>
               <td className="bdr px-1 py-[1px]" />
               <td className="bdr px-1 py-[1px]" />
@@ -1794,12 +1868,12 @@ function StudentBulletinCard({
                 ];
               })}
 
-              {subjectsWithGrades
+              {subjectsForTable
                 .filter((s) => !groupedSubjectIds.has(s.subject_id))
                 .map((s) => renderSubjectBlock(s))}
             </>
           ) : (
-            subjectsWithGrades.map((s) => renderSubjectBlock(s))
+            subjectsForTable.map((s) => renderSubjectBlock(s))
           )}
 
           <tr className="bg-slate-50 font-bold">
@@ -1875,12 +1949,15 @@ function StudentBulletinCard({
               <div>
                 <div className="text-[8px] font-semibold uppercase">Trimestre</div>
                 <div className="mt-[2px] text-[10px] font-bold">
-                  {formatNumber(item.general_avg)} / 20
+                  {formatNumberOrNCWithMarker(
+                    item.general_avg,
+                    showGeneralIncompleteMarker
+                  )} / 20
                 </div>
                 <div className="mt-[1px] text-[8px]">
                   Rang :{" "}
                   <span className="font-semibold">
-                    {item.rank ? `${item.rank}e` : "—"}
+                    {generalAvgComplete ? formatRankOrNC(item.rank) : "NC"}
                   </span>{" "}
                   / {total}
                 </div>
@@ -1889,31 +1966,50 @@ function StudentBulletinCard({
               <div>
                 <div className="text-[8px] font-semibold uppercase">Annuel</div>
                 <div className="mt-[2px] text-[10px] font-bold">
-                  {formatNumber(annualAvgOn20)} / 20
+                  {formatNumberOrNCWithMarker(
+                    annualAvgOn20,
+                    showAnnualIncompleteMarker
+                  )} / 20
                 </div>
                 <div className="mt-[1px] text-[8px]">
                   Rang :{" "}
                   <span className="font-semibold">
-                    {annualRank != null ? `${annualRank}e` : "—"}
+                    {annualAvgComplete ? formatRankOrNC(annualRank) : "NC"}
                   </span>{" "}
                   / {total}
                 </div>
               </div>
             </div>
+
+            {showIncompleteAverageFootnote && (
+              <div className="mt-[2px] text-[7px] font-semibold text-amber-700">
+                * Moyenne calculée sur les données publiées disponibles.
+              </div>
+            )}
           </div>
         ) : (
           <div className="bdr p-1 text-center">
             <div className="font-semibold">Moyenne trimestrielle</div>
             <div className="mt-[3px] text-[10px] font-bold">
-              {formatNumber(item.general_avg)} / 20
+              Moyenne trimestrielle :{" "}
+              {formatNumberOrNCWithMarker(
+                item.general_avg,
+                showGeneralIncompleteMarker
+              )} / 20
             </div>
             <div className="mt-[2px]">
               Rang :{" "}
               <span className="font-semibold">
-                {item.rank ? `${item.rank}e` : "—"}
+                {generalAvgComplete ? formatRankOrNC(item.rank) : "NC"}
               </span>{" "}
               / {total}
             </div>
+
+            {showIncompleteAverageFootnote && (
+              <div className="mt-[2px] text-[7px] font-semibold text-amber-700">
+                * Moyenne calculée sur les matières publiées disponibles.
+              </div>
+            )}
           </div>
         )}
 

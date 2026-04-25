@@ -25,6 +25,7 @@ function denseRanks(values: number[]) {
   const ranks: number[] = [];
   let rank = 0;
   let prev: number | null = null;
+
   for (const v of values) {
     if (prev === null || Math.abs(v - prev) > 1e-9) {
       rank += 1;
@@ -32,17 +33,21 @@ function denseRanks(values: number[]) {
     }
     ranks.push(rank);
   }
+
   return ranks;
 }
 
 function isLyceeLevel(level?: string | null): boolean {
   if (!level) return false;
+
   let lvl = level.toLowerCase();
+
   try {
     lvl = lvl.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
   } catch {
     // on garde lvl tel quel
   }
+
   return lvl === "seconde" || lvl === "premiere" || lvl === "terminale";
 }
 
@@ -88,13 +93,24 @@ type GradePeriodRow = {
 
 type Row = {
   student_id: string;
+
+  // count_evals = nombre de notes réellement prises en compte.
+  // total_evals = nombre d’évaluations concernées.
   count_evals: number;
   total_evals: number;
+
+  // 0 = vraie moyenne calculée à partir d’une vraie note 0.
+  // absence de ligne pour un élève = aucune moyenne calculable / NC côté front.
   average_raw: number;
   bonus: number;
   average: number;
   average_rounded: number;
   rank: number;
+
+  // Champs explicites pour éviter toute confusion côté front.
+  has_average: boolean;
+  is_complete: boolean;
+  status: "complete" | "partial";
 };
 
 async function getGradePeriodById(
@@ -132,9 +148,10 @@ export async function GET(req: NextRequest) {
     if (!auth?.user) return bad("UNAUTHENTICATED", 401);
 
     const { searchParams } = new URL(req.url);
+
     const class_id = String(searchParams.get("class_id") || "").trim();
     const rawSubject = searchParams.get("subject_id");
-    const subject_id = rawSubject ? String(rawSubject) : null;
+    const subject_id = rawSubject ? String(rawSubject).trim() || null : null;
 
     const grading_period_id =
       normalizeUuidLike(searchParams.get("grading_period_id")) ??
@@ -144,18 +161,34 @@ export async function GET(req: NextRequest) {
       searchParams.get("academic_year") || ""
     ).trim();
 
+    // Compatibilité : on conserve le défaut historique à 0.
+    // Les écrans officiels peuvent forcer published_only=1.
     const published_only = (searchParams.get("published_only") ?? "0") === "1";
+
+    // ignore = absence de note ignorée.
+    // zero = absence de note comptée comme 0 seulement si explicitement demandé.
     const missing = (searchParams.get("missing") ?? "ignore") as
       | "ignore"
       | "zero";
+
     const round_to_raw = String(searchParams.get("round_to") || "none");
+
     const rank_by = (searchParams.get("rank_by") ?? "average") as
       | "average"
       | "rounded";
 
     if (!class_id) return bad("class_id requis");
 
+    if (!["ignore", "zero"].includes(missing)) {
+      return bad("missing invalide (attendu: ignore|zero)", 400);
+    }
+
+    if (!["average", "rounded"].includes(rank_by)) {
+      return bad("rank_by invalide (attendu: average|rounded)", 400);
+    }
+
     let round_to: number | null = null;
+
     if (round_to_raw !== "none") {
       const n = Number(round_to_raw);
       if (!isFinite(n) || n <= 0) {
@@ -192,12 +225,12 @@ export async function GET(req: NextRequest) {
       | string
       | null
       | undefined;
+
     const lycee = isLyceeLevel(classLevel ?? null);
 
     console.log(LOG_PREFIX, "class info", cls);
 
-    let academic_year =
-      academic_year_param || computeAcademicYear(new Date());
+    let academic_year = academic_year_param || computeAcademicYear(new Date());
 
     if (grading_period_id) {
       if (!institution_id) {
@@ -231,9 +264,11 @@ export async function GET(req: NextRequest) {
       .eq("academic_year", academic_year);
 
     if (subject_id) qEvals = qEvals.eq("subject_id", subject_id);
+
     if (grading_period_id) {
       qEvals = qEvals.eq("grading_period_id", grading_period_id);
     }
+
     if (published_only) qEvals = qEvals.eq("is_published", true);
 
     const { data: evals, error: eErr } = await qEvals;
@@ -247,6 +282,7 @@ export async function GET(req: NextRequest) {
       evaluationIds,
       grading_period_id,
       academic_year,
+      published_only,
     });
 
     if (evaluationIds.length === 0) {
@@ -263,7 +299,10 @@ export async function GET(req: NextRequest) {
           rank_by,
         },
         items: [],
-        meta: { evaluations: 0 },
+        meta: {
+          evaluations: 0,
+          note: "Aucune évaluation concernée. Aucun élève ne doit être affiché avec 0 par défaut.",
+        },
       });
     }
 
@@ -290,6 +329,7 @@ export async function GET(req: NextRequest) {
           const rawW = (c as any).coeff_in_subject;
           const w =
             typeof rawW === "number" && isFinite(rawW) && rawW > 0 ? rawW : 1;
+
           componentCoeffMap.set(id, w);
         }
       }
@@ -311,9 +351,11 @@ export async function GET(req: NextRequest) {
 
     // Pré-calcul : total des coeffs par rubrique
     const evalCoeffsByComponent = new Map<string, number>();
+
     const totalCoeff = evaluations.reduce((acc: number, e: EvaluationRow) => {
       const coeff = Number(e.coeff || 0);
       const key = (e as any).subject_component_id || "__none__";
+
       if (isFinite(coeff) && coeff > 0) {
         evalCoeffsByComponent.set(
           key,
@@ -321,6 +363,7 @@ export async function GET(req: NextRequest) {
         );
         return acc + coeff;
       }
+
       return acc;
     }, 0);
 
@@ -336,6 +379,7 @@ export async function GET(req: NextRequest) {
       .in("evaluation_id", evaluationIds);
 
     if (gErr) return bad(gErr.message || "GRADES_FETCH_FAILED", 400);
+
     const gradesRows = (grades ?? []) as unknown as GradeRow[];
 
     console.log(LOG_PREFIX, "grades loaded", {
@@ -379,6 +423,8 @@ export async function GET(req: NextRequest) {
       const b = Number((r as any).bonus ?? 0);
       const rowSubj = r.subject_id;
 
+      if (!sid || !Number.isFinite(b)) continue;
+
       if (!subject_id) {
         if (rowSubj === null) {
           bonusMap.set(sid, b);
@@ -406,7 +452,12 @@ export async function GET(req: NextRequest) {
 
     const gradesByStudent = new Map<
       string,
-      { sum: number; denom: number; counted: number; present: number }
+      {
+        sum: number;
+        denom: number;
+        counted: number;
+        present: number;
+      }
     >();
 
     type PerComponentAgg = { num: number; denPresent: number };
@@ -421,7 +472,12 @@ export async function GET(req: NextRequest) {
       const s =
         g.score === null || g.score === undefined ? null : Number(g.score);
 
+      // Important :
+      // - null / vide = aucune note, ignorée
+      // - 0 = vraie note zéro, prise en compte
       if (s === null || !isFinite(s) || s < 0) continue;
+      if (!isFinite(scale) || scale <= 0) continue;
+      if (!isFinite(coeff) || coeff <= 0) continue;
 
       const score = Math.max(0, Math.min(scale, s));
       const normalized = (score / scale) * 20;
@@ -434,6 +490,7 @@ export async function GET(req: NextRequest) {
           counted: 0,
           present: 0,
         };
+
       cur.sum += contrib;
       cur.denom += coeff;
       cur.counted += 1;
@@ -444,6 +501,7 @@ export async function GET(req: NextRequest) {
         const compKey = (e as any).subject_component_id || "__none__";
         const per = perStudentComponent.get(g.student_id) || {};
         const agg = per[compKey] || { num: 0, denPresent: 0 };
+
         agg.num += contrib;
         agg.denPresent += coeff;
         per[compKey] = agg;
@@ -467,7 +525,7 @@ export async function GET(req: NextRequest) {
     const totalEvals = evaluations.length;
 
     for (const [sid, agg] of gradesByStudent) {
-      let avg20 = 0;
+      let avg20: number | null = null;
 
       if (useComponentModel) {
         const per = perStudentComponent.get(sid) || {};
@@ -477,8 +535,10 @@ export async function GET(req: NextRequest) {
         for (const [compKey, compAgg] of Object.entries(per)) {
           const totalCoeffForComp =
             evalCoeffsByComponent.get(compKey) ?? compAgg.denPresent;
+
           const denomComp =
             missing === "zero" ? totalCoeffForComp : compAgg.denPresent;
+
           if (!denomComp || denomComp <= 0) continue;
 
           const moyComp = compAgg.num / denomComp;
@@ -492,15 +552,24 @@ export async function GET(req: NextRequest) {
           denSubject += wComp;
         }
 
-        avg20 = denSubject > 0 ? numSubject / denSubject : 0;
+        avg20 = denSubject > 0 ? numSubject / denSubject : null;
       } else {
         const denom = agg.denom || 0;
-        avg20 = denom > 0 ? agg.sum / denom : 0;
+        avg20 = denom > 0 ? agg.sum / denom : null;
       }
+
+      // Aucun calcul possible = pas de ligne renvoyée.
+      // Le front affichera NC pour cet élève en complétant avec le roster.
+      if (avg20 === null || !Number.isFinite(avg20)) continue;
 
       const b = bonusMap.get(sid) ?? 0;
       const afterBonus = clamp(avg20 + b, 0, 20);
       const rounded = round_to ? roundTo(afterBonus, round_to) : afterBonus;
+
+      const isComplete =
+        missing === "zero"
+          ? totalEvals > 0
+          : agg.counted >= totalEvals && totalEvals > 0;
 
       rows.push({
         student_id: sid,
@@ -511,15 +580,22 @@ export async function GET(req: NextRequest) {
         average: Number(afterBonus.toFixed(4)),
         average_rounded: Number(rounded.toFixed(2)),
         rank: 0,
+        has_average: true,
+        is_complete: isComplete,
+        status: isComplete ? "complete" : "partial",
       });
     }
 
     const sortKey = (r: Row) =>
       rank_by === "rounded" ? r.average_rounded : r.average;
 
+    // On conserve le classement sur les moyennes calculables.
+    // Le front peut choisir d’afficher NC si is_complete=false.
     rows.sort((a, b) => sortKey(b) - sortKey(a));
     const ranks = denseRanks(rows.map(sortKey));
-    rows.forEach((r, i) => (r.rank = ranks[i]));
+    rows.forEach((r, i) => {
+      r.rank = ranks[i];
+    });
 
     console.log(LOG_PREFIX, "final rows", {
       count: rows.length,
@@ -539,7 +615,13 @@ export async function GET(req: NextRequest) {
         rank_by,
       },
       items: rows,
-      meta: { evaluations: totalEvals },
+      meta: {
+        evaluations: totalEvals,
+        notes_count: gradesRows.length,
+        returned_students: rows.length,
+        rule:
+          "0 est une vraie note. null/vide est ignoré. Un élève sans moyenne calculable n’est pas renvoyé et doit être affiché NC côté front.",
+      },
     });
   } catch (e: any) {
     console.error(LOG_PREFIX, "unexpected error", e);

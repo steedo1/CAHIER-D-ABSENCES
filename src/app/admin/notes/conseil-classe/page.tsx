@@ -123,6 +123,41 @@ type PerSubjectAvg = {
   subject_rank?: number | null;
   teacher_name?: string | null;
   teacher_signature_png?: string | null;
+
+  // API bulletin NC : 0 = vraie note, null = non classé / pas de moyenne publiée.
+  has_grade?: boolean | null;
+  is_nc?: boolean | null;
+  is_assigned?: boolean | null;
+};
+
+type BulletinMissingSubject = {
+  subject_id: string;
+  subject_name: string;
+};
+
+type BulletinCoverage = {
+  expected_subjects?: number;
+  covered_subjects?: number;
+  missing_subjects?: BulletinMissingSubject[];
+  is_complete?: boolean;
+  has_academic_grade?: boolean;
+  status?: "complete" | "partial" | "empty" | string;
+};
+
+type BulletinMissingPeriod = {
+  from?: string | null;
+  to?: string | null;
+  code?: string | null;
+  label?: string | null;
+  short_label?: string | null;
+};
+
+type BulletinAnnualCoverage = {
+  expected_periods?: number;
+  covered_periods?: number;
+  missing_periods?: BulletinMissingPeriod[];
+  is_complete?: boolean;
+  status?: "complete" | "partial" | "empty" | "not_last_period" | string;
 };
 
 type BulletinItemBase = {
@@ -147,8 +182,17 @@ type BulletinItemBase = {
   per_subject: PerSubjectAvg[];
   general_avg: number | null;
 
+  // Couverture officielle renvoyée par l’API bulletin.
+  // Si la moyenne existe mais n’est pas complète, on affiche une étoile et Rang : NC.
+  coverage?: BulletinCoverage | null;
+  general_avg_is_complete?: boolean | null;
+  general_avg_status?: "complete" | "partial" | "empty" | string | null;
+
   annual_avg?: number | null;
   annual_rank?: number | null;
+  annual_coverage?: BulletinAnnualCoverage | null;
+  annual_avg_is_complete?: boolean | null;
+  annual_avg_status?: "complete" | "partial" | "empty" | "not_last_period" | string | null;
 };
 
 type BulletinItemWithRank = BulletinItemBase & {
@@ -286,6 +330,43 @@ function formatNumber(n: number | null | undefined, digits = 2): string {
   return Number(n).toFixed(digits);
 }
 
+function formatNumberWithStar(
+  n: number | null | undefined,
+  needsStar: boolean,
+  digits = 2
+): string {
+  if (n === null || n === undefined || !Number.isFinite(Number(n))) return "—";
+  return `${Number(n).toFixed(digits)}${needsStar ? "*" : ""}`;
+}
+
+function formatRankNC(n: number | null | undefined): string {
+  if (n === null || n === undefined || !Number.isFinite(Number(n))) return "NC";
+  return String(Number(n));
+}
+
+function isGeneralAverageComplete(item: BulletinItemBase): boolean {
+  if (typeof item.general_avg_is_complete === "boolean") return item.general_avg_is_complete;
+  if (item.coverage && typeof item.coverage.is_complete === "boolean") {
+    return item.coverage.is_complete;
+  }
+  return true;
+}
+
+function isAnnualAverageComplete(item: BulletinItemBase): boolean {
+  if (typeof item.annual_avg_is_complete === "boolean") return item.annual_avg_is_complete;
+  if (item.annual_coverage && typeof item.annual_coverage.is_complete === "boolean") {
+    return item.annual_coverage.is_complete;
+  }
+  return true;
+}
+
+function averageNeedsStar(
+  avg: number | null | undefined,
+  complete: boolean
+): boolean {
+  return avg !== null && avg !== undefined && Number.isFinite(Number(avg)) && !complete;
+}
+
 function formatPercent(part: number, total: number): string {
   if (!total) return "0.00%";
   return `${formatNumber((part * 100) / total)}%`;
@@ -401,35 +482,19 @@ function computeCouncilAppreciationText(
 function computeRanksAndStats(res: BulletinResponse | null): EnrichedBulletin | null {
   if (!res) return null;
 
+  // L’API bulletin est la source de vérité.
+  // 0 = vraie note publiée ; null = NC.
+  // Le front ne fabrique plus une moyenne si l’API renvoie null.
   const itemsWithAvg: BulletinItemWithRank[] = (res.items ?? []).map((it) => {
-    const perSubject = it.per_subject ?? [];
-    let sum = 0;
-    let sumCoeff = 0;
-
-    (res.subjects ?? []).forEach((s) => {
-      const cell = perSubject.find((ps) => ps.subject_id === s.subject_id);
-      const val = cell?.avg20;
-      if (val === null || val === undefined) return;
-      const avg = Number(val);
-      if (!Number.isFinite(avg)) return;
-      if (s.include_in_average === false) return;
-      const coeff = Number(s.coeff_bulletin ?? 0);
-      if (!Number.isFinite(coeff) || coeff <= 0) return;
-      sum += avg * coeff;
-      sumCoeff += coeff;
-    });
-
-    const fallbackAvg = sumCoeff > 0 ? sum / sumCoeff : null;
     const apiAvg =
       it.general_avg !== null && it.general_avg !== undefined
         ? Number(it.general_avg)
         : null;
-    const finalAvg =
-      apiAvg !== null && Number.isFinite(apiAvg) ? apiAvg : fallbackAvg;
 
     return {
       ...it,
-      general_avg: finalAvg !== null ? round2(finalAvg) : null,
+      general_avg:
+        apiAvg !== null && Number.isFinite(apiAvg) ? round2(apiAvg) : null,
       rank: null,
     };
   });
@@ -438,21 +503,31 @@ function computeRanksAndStats(res: BulletinResponse | null): EnrichedBulletin | 
     (it) => typeof it.general_avg === "number" && Number.isFinite(it.general_avg)
   );
 
-  if (!withAvg.length) {
-    return {
-      response: res,
-      items: itemsWithAvg,
-      stats: { highest: null, lowest: null, classAvg: null },
-    };
+  const stats: ClassStats = { highest: null, lowest: null, classAvg: null };
+
+  if (withAvg.length) {
+    const sortedForStats = [...withAvg].sort(
+      (a, b) => (b.general_avg ?? 0) - (a.general_avg ?? 0)
+    );
+    const sumAll = withAvg.reduce((acc, it) => acc + Number(it.general_avg ?? 0), 0);
+
+    stats.highest = sortedForStats[0]?.general_avg ?? null;
+    stats.lowest = sortedForStats[sortedForStats.length - 1]?.general_avg ?? null;
+    stats.classAvg = round2(sumAll / withAvg.length);
   }
 
-  const sorted = [...withAvg].sort((a, b) => (b.general_avg ?? 0) - (a.general_avg ?? 0));
+  // Rang officiel : uniquement pour les élèves dont la moyenne est complète.
+  // Si l’API ancienne ne donne pas encore la couverture, on conserve l’ancien comportement.
+  const rankable = withAvg.filter((it) => isGeneralAverageComplete(it));
+  const sortedForRank = [...rankable].sort(
+    (a, b) => (b.general_avg ?? 0) - (a.general_avg ?? 0)
+  );
 
   let lastScore: number | null = null;
   let lastRank = 0;
   const rankByStudent = new Map<string, number>();
 
-  sorted.forEach((it, idx) => {
+  sortedForRank.forEach((it, idx) => {
     const g = it.general_avg ?? 0;
     if (lastScore === null || g !== lastScore) {
       lastRank = idx + 1;
@@ -461,19 +536,13 @@ function computeRanksAndStats(res: BulletinResponse | null): EnrichedBulletin | 
     rankByStudent.set(it.student_id, lastRank);
   });
 
-  const sumAll = withAvg.reduce((acc, it) => acc + Number(it.general_avg ?? 0), 0);
-
   return {
     response: res,
     items: itemsWithAvg.map((it) => ({
       ...it,
       rank: rankByStudent.get(it.student_id) ?? null,
     })),
-    stats: {
-      highest: sorted[0]?.general_avg ?? null,
-      lowest: sorted[sorted.length - 1]?.general_avg ?? null,
-      classAvg: round2(sumAll / withAvg.length),
-    },
+    stats,
   };
 }
 
@@ -514,7 +583,11 @@ function shortPeriodLabel(
   return compact;
 }
 
-function annualDecisionLabel(avg: number | null | undefined): string {
+function annualDecisionLabel(
+  avg: number | null | undefined,
+  complete = true
+): string {
+  if (!complete) return "—";
   if (avg === null || avg === undefined || !Number.isFinite(Number(avg))) return "—";
   const g = Number(avg);
   if (g >= 16) return "Excellence";
@@ -780,6 +853,7 @@ export default function ConseilClassePage() {
       params.set("class_id", selectedClassId);
       params.set("from", dateFrom);
       params.set("to", dateTo);
+      params.set("published", "true");
 
       const [resBulletin, resConduct, resAffectations] = await Promise.all([
         fetch(`/api/admin/grades/bulletin?${params.toString()}`, { cache: "no-store" }),
@@ -853,6 +927,7 @@ export default function ConseilClassePage() {
               p.set("class_id", selectedClassId);
               p.set("from", period.start_date);
               p.set("to", period.end_date);
+              p.set("published", "true");
 
               try {
                 const res = await fetch(`/api/admin/grades/bulletin?${p.toString()}`, {
@@ -933,10 +1008,11 @@ export default function ConseilClassePage() {
           ? clampTo20(round2((Number(conduct.total || 0) * 20) / Number(totalMax)))
           : null;
 
-      const mentions = computeCouncilMentions(item.general_avg, conductOn20);
+      const generalForCouncil = isGeneralAverageComplete(item) ? item.general_avg : null;
+      const mentions = computeCouncilMentions(generalForCouncil, conductOn20);
       const appreciation = computeCouncilAppreciationText(
         mentions,
-        item.general_avg,
+        generalForCouncil,
         conductOn20
       );
 
@@ -960,10 +1036,12 @@ export default function ConseilClassePage() {
     ).length;
 
     const validGeneral = councilRows
+      .filter((r) => isGeneralAverageComplete(r))
       .map((r) => r.general_avg)
       .filter((v): v is number => v !== null && v !== undefined && Number.isFinite(v));
 
     const annualVals = councilRows
+      .filter((r) => isAnnualAverageComplete(r))
       .map((r) => r.annual_avg)
       .filter((v): v is number => v !== null && v !== undefined && Number.isFinite(v));
 
@@ -1209,6 +1287,7 @@ export default function ConseilClassePage() {
     const currentMap = new Map<string, CouncilStudentRow>(
       councilRows.map((row) => [row.student_id, row] as [string, CouncilStudentRow])
     );
+
     const base = new Map<
       string,
       {
@@ -1218,6 +1297,7 @@ export default function ConseilClassePage() {
         birthdate: string | null;
         annual_avg: number | null;
         annual_rank: number | null;
+        annual_is_complete: boolean;
       }
     >();
 
@@ -1226,21 +1306,31 @@ export default function ConseilClassePage() {
       bulletin?.items?.forEach((item) => {
         const existing = base.get(item.student_id);
         const rowCurrent = currentMap.get(item.student_id);
+
+        const sourceForAnnual = rowCurrent ?? item;
+        const apiAnnualAvg =
+          sourceForAnnual.annual_avg !== null && sourceForAnnual.annual_avg !== undefined
+            ? Number(sourceForAnnual.annual_avg)
+            : existing?.annual_avg ?? null;
+
+        const apiAnnualRank =
+          sourceForAnnual.annual_rank !== null && sourceForAnnual.annual_rank !== undefined
+            ? Number(sourceForAnnual.annual_rank)
+            : existing?.annual_rank ?? null;
+
+        const annualComplete = isAnnualAverageComplete(sourceForAnnual);
+
         base.set(item.student_id, {
           student_id: item.student_id,
           full_name: item.full_name,
           matricule: item.matricule,
           birthdate: item.birthdate || item.birth_date || existing?.birthdate || null,
           annual_avg:
-            rowCurrent?.annual_avg ??
-            item.annual_avg ??
-            existing?.annual_avg ??
-            null,
-          annual_rank:
-            rowCurrent?.annual_rank ??
-            item.annual_rank ??
-            existing?.annual_rank ??
-            null,
+            apiAnnualAvg !== null && Number.isFinite(Number(apiAnnualAvg))
+              ? round2(Number(apiAnnualAvg))
+              : null,
+          annual_rank: annualComplete ? apiAnnualRank : null,
+          annual_is_complete: annualComplete,
         });
       });
     });
@@ -1250,17 +1340,25 @@ export default function ConseilClassePage() {
         const item =
           yearPeriodBulletins[period.id]?.items?.find((x) => x.student_id === baseRow.student_id) ||
           null;
+        const complete = item ? isGeneralAverageComplete(item) : false;
+        const avg = item?.general_avg ?? null;
+
         return {
           period_id: period.id,
           label: shortPeriodLabel(period),
-          avg: item?.general_avg ?? null,
-          rank: item?.rank ?? null,
+          avg,
+          rank: complete ? item?.rank ?? null : null,
+          is_complete: complete,
+          needs_star: averageNeedsStar(avg, complete),
         };
       });
 
       const validAvgs = periods
         .map((p) => p.avg)
         .filter((v): v is number => v !== null && v !== undefined && Number.isFinite(v));
+
+      const allPeriodsComplete =
+        periods.length > 0 && periods.every((p) => p.is_complete && p.avg !== null);
 
       const annual_avg =
         baseRow.annual_avg !== null && baseRow.annual_avg !== undefined
@@ -1269,17 +1367,29 @@ export default function ConseilClassePage() {
           ? round2(validAvgs.reduce((a, b) => a + b, 0) / validAvgs.length)
           : null;
 
+      const annual_is_complete =
+        baseRow.annual_avg !== null && baseRow.annual_avg !== undefined
+          ? baseRow.annual_is_complete
+          : allPeriodsComplete;
+
       return {
         ...baseRow,
         periods,
         annual_avg,
-        annual_rank: baseRow.annual_rank,
+        annual_rank: annual_is_complete ? baseRow.annual_rank : null,
+        annual_is_complete,
+        annual_needs_star: averageNeedsStar(annual_avg, annual_is_complete),
       };
     });
 
     const withAnnual = rows.filter(
-      (row) => row.annual_avg !== null && row.annual_avg !== undefined && Number.isFinite(row.annual_avg)
+      (row) =>
+        row.annual_is_complete &&
+        row.annual_avg !== null &&
+        row.annual_avg !== undefined &&
+        Number.isFinite(row.annual_avg)
     );
+
     const sorted = [...withAnnual].sort((a, b) => Number(b.annual_avg) - Number(a.annual_avg));
     let lastScore: number | null = null;
     let lastRank = 0;
@@ -1297,9 +1407,11 @@ export default function ConseilClassePage() {
       .map((row) => ({
         ...row,
         annual_rank:
-          row.annual_rank !== null && row.annual_rank !== undefined
+          row.annual_is_complete && row.annual_rank !== null && row.annual_rank !== undefined
             ? row.annual_rank
-            : rankMap.get(row.student_id) ?? null,
+            : row.annual_is_complete
+            ? rankMap.get(row.student_id) ?? null
+            : null,
       }))
       .sort((a, b) => {
         const rankA =
@@ -1321,6 +1433,7 @@ export default function ConseilClassePage() {
 
   const annualRecapStats = useMemo(() => {
     const vals = annualRecapRows
+      .filter((row) => row.annual_is_complete)
       .map((row) => row.annual_avg)
       .filter((v): v is number => v !== null && v !== undefined && Number.isFinite(v));
 
@@ -1329,12 +1442,20 @@ export default function ConseilClassePage() {
       classAvg: vals.length ? round2(vals.reduce((a, b) => a + b, 0) / vals.length) : null,
       highest: vals.length ? Math.max(...vals) : null,
       lowest: vals.length ? Math.min(...vals) : null,
-      excellence: annualRecapRows.filter((row) => (row.annual_avg ?? -Infinity) >= 16).length,
+      excellence: annualRecapRows.filter(
+        (row) => row.annual_is_complete && (row.annual_avg ?? -Infinity) >= 16
+      ).length,
       honour: annualRecapRows.filter(
-        (row) => (row.annual_avg ?? -Infinity) >= 14 && (row.annual_avg ?? -Infinity) < 16
+        (row) =>
+          row.annual_is_complete &&
+          (row.annual_avg ?? -Infinity) >= 14 &&
+          (row.annual_avg ?? -Infinity) < 16
       ).length,
       encouragement: annualRecapRows.filter(
-        (row) => (row.annual_avg ?? -Infinity) >= 12 && (row.annual_avg ?? -Infinity) < 14
+        (row) =>
+          row.annual_is_complete &&
+          (row.annual_avg ?? -Infinity) >= 12 &&
+          (row.annual_avg ?? -Infinity) < 14
       ).length,
     };
   }, [annualRecapRows]);
@@ -1343,6 +1464,7 @@ export default function ConseilClassePage() {
     return councilRows
       .filter(
         (row) =>
+          isGeneralAverageComplete(row) &&
           row.general_avg !== null &&
           row.general_avg !== undefined &&
           Number.isFinite(Number(row.general_avg))
@@ -1374,6 +1496,7 @@ export default function ConseilClassePage() {
     return annualRecapRows
       .filter(
         (row) =>
+          row.annual_is_complete &&
           row.annual_avg !== null &&
           row.annual_avg !== undefined &&
           Number.isFinite(Number(row.annual_avg))
@@ -1420,7 +1543,14 @@ export default function ConseilClassePage() {
               rank,
             };
           })
-          .filter((row) => row.avg !== null && row.avg !== undefined && Number.isFinite(Number(row.avg)))
+          .filter(
+            (row) =>
+              row.rank !== null &&
+              row.rank !== undefined &&
+              row.avg !== null &&
+              row.avg !== undefined &&
+              Number.isFinite(Number(row.avg))
+          )
           .sort((a, b) => {
             const rankA =
               a.rank !== null && a.rank !== undefined
@@ -1469,6 +1599,19 @@ export default function ConseilClassePage() {
 
     return [...periodGroups, ...annualGroup];
   }, [annualPeriods, annualRecapRows, annualTopThreeRows]);
+
+  const hasPartialCurrentRows = useMemo(
+    () =>
+      councilRows.some((row) =>
+        averageNeedsStar(row.general_avg, isGeneralAverageComplete(row))
+      ),
+    [councilRows]
+  );
+
+  const hasPartialAnnualRows = useMemo(
+    () => annualRecapRows.some((row) => row.annual_needs_star),
+    [annualRecapRows]
+  );
 
   const currentClass = useMemo(
     () => classes.find((c) => c.id === selectedClassId) || null,
@@ -1933,8 +2076,8 @@ export default function ConseilClassePage() {
                         <OfficialTd strong>{row.full_name}</OfficialTd>
                         <OfficialTd>{row.matricule || "—"}</OfficialTd>
                         <OfficialTd>{formatDateFR(row.birthdate || row.birth_date)}</OfficialTd>
-                        <OfficialTd center>{formatNumber(row.general_avg)}</OfficialTd>
-                        <OfficialTd center>{row.rank ?? "—"}</OfficialTd>
+                        <OfficialTd center>{formatNumberWithStar(row.general_avg, averageNeedsStar(row.general_avg, isGeneralAverageComplete(row)))}</OfficialTd>
+                        <OfficialTd center>{isGeneralAverageComplete(row) ? formatRankNC(row.rank) : "NC"}</OfficialTd>
                         <OfficialTd center>{row.mentions.distinction === "excellence" ? "X" : ""}</OfficialTd>
                         <OfficialTd center>{row.mentions.distinction === "encouragement" ? "X" : ""}</OfficialTd>
                         <OfficialTd center>{row.mentions.distinction === "honour" ? "X" : ""}</OfficialTd>
@@ -1942,6 +2085,11 @@ export default function ConseilClassePage() {
                     ))}
                   </tbody>
                 </table>
+                {hasPartialCurrentRows ? (
+                  <div className="mt-1 text-[9px] font-semibold text-slate-700">
+                    * Moyenne calculée sur les matières publiées disponibles. Rang : NC tant que le calcul est incomplet.
+                  </div>
+                ) : null}
               </div>
 
               <div className="mt-3 grid grid-cols-[1.35fr_0.95fr] gap-3">
@@ -2002,7 +2150,7 @@ export default function ConseilClassePage() {
                         {currentPeriodTopThreeRows.length > 0 ? (
                           currentPeriodTopThreeRows.map((row) => (
                             <tr key={`current-top-${row.student_id}`}>
-                              <OfficialTd center strong>{row.rank ?? "—"}</OfficialTd>
+                              <OfficialTd center strong>{formatRankNC(row.rank)}</OfficialTd>
                               <OfficialTd strong>{row.full_name}</OfficialTd>
                               <OfficialTd center strong>{formatNumber(row.general_avg)}</OfficialTd>
                             </tr>
@@ -2226,7 +2374,7 @@ export default function ConseilClassePage() {
                             <tbody>
                               {group.rows.map((row) => (
                                 <tr key={`${group.period_id}-${row.student_id}`}>
-                                  <OfficialTd center strong>{row.rank ?? "—"}</OfficialTd>
+                                  <OfficialTd center strong>{formatRankNC(row.rank)}</OfficialTd>
                                   <OfficialTd strong>{row.full_name}</OfficialTd>
                                   <OfficialTd center strong>{formatNumber(row.avg)}</OfficialTd>
                                 </tr>
@@ -2266,17 +2414,22 @@ export default function ConseilClassePage() {
                           <OfficialTd>{row.matricule || "—"}</OfficialTd>
                           {row.periods.map((p) => (
                             <React.Fragment key={p.period_id}>
-                              <OfficialTd center>{formatNumber(p.avg)}</OfficialTd>
-                              <OfficialTd center>{p.rank ?? "—"}</OfficialTd>
+                              <OfficialTd center>{formatNumberWithStar(p.avg, p.needs_star)}</OfficialTd>
+                              <OfficialTd center>{p.is_complete ? formatRankNC(p.rank) : "NC"}</OfficialTd>
                             </React.Fragment>
                           ))}
-                          <OfficialTd center strong>{formatNumber(row.annual_avg)}</OfficialTd>
-                          <OfficialTd center>{row.annual_rank ?? "—"}</OfficialTd>
-                          <OfficialTd center>{annualDecisionLabel(row.annual_avg)}</OfficialTd>
+                          <OfficialTd center strong>{formatNumberWithStar(row.annual_avg, row.annual_needs_star)}</OfficialTd>
+                          <OfficialTd center>{row.annual_is_complete ? formatRankNC(row.annual_rank) : "NC"}</OfficialTd>
+                          <OfficialTd center>{annualDecisionLabel(row.annual_avg, row.annual_is_complete)}</OfficialTd>
                         </tr>
                       ))}
                     </tbody>
                   </table>
+                  {hasPartialAnnualRows ? (
+                    <div className="mt-1 text-[9px] font-semibold text-slate-700">
+                      * Moyenne calculée sur les périodes publiées disponibles. Rang annuel : NC tant que l’année est incomplète.
+                    </div>
+                  ) : null}
                 </div>
 
                 <div className="mt-3 grid grid-cols-2 gap-3">

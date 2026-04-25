@@ -39,22 +39,73 @@ type BulletinPerSubject = {
   subject_id: string;
   avg20: number | null;
   subject_rank?: number | null;
+  has_grade?: boolean | null;
+  is_nc?: boolean | null;
+  is_assigned?: boolean | null;
 };
 
 type BulletinSubjectMeta = {
   subject_id: string;
   subject_name?: string | null;
   coeff_bulletin?: number | null;
+  include_in_average?: boolean | null;
+};
+
+type BulletinMissingSubject = {
+  subject_id: string;
+  subject_name: string;
+};
+
+type BulletinCoverage = {
+  expected_subjects?: number;
+  covered_subjects?: number;
+  missing_subjects?: BulletinMissingSubject[];
+  is_complete?: boolean;
+  has_academic_grade?: boolean;
+  status?: "complete" | "partial" | "empty" | string;
+};
+
+type BulletinMissingPeriod = {
+  from?: string | null;
+  to?: string | null;
+  code?: string | null;
+  label?: string | null;
+  short_label?: string | null;
+};
+
+type BulletinAnnualCoverage = {
+  expected_periods?: number;
+  covered_periods?: number;
+  missing_periods?: BulletinMissingPeriod[];
+  is_complete?: boolean;
+  status?: "complete" | "partial" | "empty" | "not_last_period" | string;
 };
 
 type BulletinItem = {
   student_id: string;
   full_name: string;
   matricule: string | null;
+
+  // 0 = vraie moyenne publiée ; null = NC / pas de moyenne.
   general_avg: number | null;
+  rank?: number | null;
+
+  coverage?: BulletinCoverage | null;
+  general_avg_is_complete?: boolean | null;
+  general_avg_status?: "complete" | "partial" | "empty" | string | null;
+
   annual_avg?: number | null;
   annual_rank?: number | null;
-  rank?: number | null;
+  annual_coverage?: BulletinAnnualCoverage | null;
+  annual_avg_is_complete?: boolean | null;
+  annual_avg_status?:
+    | "complete"
+    | "partial"
+    | "empty"
+    | "not_last_period"
+    | string
+    | null;
+
   per_subject?: BulletinPerSubject[];
 };
 
@@ -100,11 +151,25 @@ type ExportRow = {
   classe: string;
   annee_scolaire: string;
   periode: string;
+
+  // Valeur exportée principale.
+  // Pour une période : moyenne trimestrielle.
+  // Pour l’annuel : moyenne annuelle.
   moyenne_generale: number | null;
+  moyenne_generale_complete: boolean;
+  moyenne_generale_has_star: boolean;
   rang: number | null;
+
   conduite: number | null;
+
   moyenne_annuelle: number | null;
+  moyenne_annuelle_complete: boolean;
+  moyenne_annuelle_has_star: boolean;
   rang_annuel: number | null;
+
+  // Une clé absente = matière non affectée à cette classe.
+  // Une clé présente avec null = matière affectée mais NC.
+  // Une clé présente avec 0 = vraie note/moyenne zéro.
   subject_values: Record<string, number | null>;
 };
 
@@ -127,6 +192,12 @@ function cleanNumber(value: unknown, precision = 2): number | null {
   const n = Number(value);
   if (!Number.isFinite(n)) return null;
   return Number(n.toFixed(precision));
+}
+
+function cleanRank(value: unknown): number | null {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return null;
+  return Math.round(n);
 }
 
 function isUuid(v: string): boolean {
@@ -246,6 +317,77 @@ function makeDownloadFilename(opts: {
   return `${base}.${opts.format}`;
 }
 
+function isGeneralAverageComplete(item: BulletinItem): boolean {
+  if (item.general_avg === null || item.general_avg === undefined) return false;
+
+  if (typeof item.general_avg_is_complete === "boolean") {
+    return item.general_avg_is_complete;
+  }
+
+  if (item.coverage && typeof item.coverage.is_complete === "boolean") {
+    return item.coverage.is_complete;
+  }
+
+  // Compatibilité ancienne API : si aucune info de couverture n’existe,
+  // on conserve l’ancien comportement.
+  return true;
+}
+
+function isAnnualAverageComplete(item: BulletinItem): boolean {
+  if (item.annual_avg === null || item.annual_avg === undefined) return false;
+
+  if (typeof item.annual_avg_is_complete === "boolean") {
+    return item.annual_avg_is_complete;
+  }
+
+  if (item.annual_coverage && typeof item.annual_coverage.is_complete === "boolean") {
+    return item.annual_coverage.is_complete;
+  }
+
+  // Compatibilité ancienne API.
+  return true;
+}
+
+function formatAverageForExport(value: number | null, hasStar: boolean): number | string {
+  if (value === null || value === undefined || !Number.isFinite(Number(value))) return "NC";
+  const n = Number(value);
+  return hasStar ? `${n.toFixed(2)}*` : Number(n.toFixed(2));
+}
+
+function formatOptionalAverageForExport(
+  value: number | null,
+  hasStar: boolean
+): number | string {
+  if (value === null || value === undefined || !Number.isFinite(Number(value))) return "";
+  const n = Number(value);
+  return hasStar ? `${n.toFixed(2)}*` : Number(n.toFixed(2));
+}
+
+function formatRankForExport(rank: number | null, isComplete: boolean): number | string {
+  if (!isComplete) return "NC";
+  if (rank === null || rank === undefined || !Number.isFinite(Number(rank))) return "NC";
+  return Number(rank);
+}
+
+function formatSubjectValueForExport(
+  subjectValues: Record<string, number | null>,
+  header: string
+): number | string {
+  if (!Object.prototype.hasOwnProperty.call(subjectValues, header)) {
+    // Matière non affectée à cette classe.
+    return "";
+  }
+
+  const value = subjectValues[header];
+
+  if (value === null || value === undefined || !Number.isFinite(Number(value))) {
+    // Matière affectée mais aucune moyenne publiée.
+    return "NC";
+  }
+
+  return Number(Number(value).toFixed(2));
+}
+
 function buildExportRows(rows: ExportRow[], subjectHeaders: string[]) {
   return rows.map((row) => {
     const base: Record<string, unknown> = {
@@ -255,30 +397,52 @@ function buildExportRows(rows: ExportRow[], subjectHeaders: string[]) {
       Classe: row.classe,
       "Année scolaire": row.annee_scolaire,
       Période: row.periode,
-      "Moyenne générale": row.moyenne_generale ?? "",
-      Rang: row.rang ?? "",
+      "Moyenne générale": formatAverageForExport(
+        row.moyenne_generale,
+        row.moyenne_generale_has_star
+      ),
+      Rang: formatRankForExport(row.rang, row.moyenne_generale_complete),
       Conduite: row.conduite ?? "",
-      "Moyenne annuelle": row.moyenne_annuelle ?? "",
-      "Rang annuel": row.rang_annuel ?? "",
+      "Moyenne annuelle": formatOptionalAverageForExport(
+        row.moyenne_annuelle,
+        row.moyenne_annuelle_has_star
+      ),
+      "Rang annuel": row.moyenne_annuelle === null
+        ? ""
+        : formatRankForExport(row.rang_annuel, row.moyenne_annuelle_complete),
     };
 
     for (const header of subjectHeaders) {
-      base[header] = row.subject_values[header] ?? "";
+      base[header] = formatSubjectValueForExport(row.subject_values, header);
     }
 
     return base;
   });
 }
 
-function assignRanks<T extends { moyenne_generale: number | null; moyenne_annuelle: number | null }>(
-  rows: T[]
-) {
+function assignRanks<
+  T extends {
+    moyenne_generale: number | null;
+    moyenne_annuelle: number | null;
+    moyenne_generale_complete: boolean;
+    moyenne_annuelle_complete: boolean;
+  }
+>(rows: T[]) {
   const periodRankByIndex = new Map<number, number>();
   const annualRankByIndex = new Map<number, number>();
 
   const periodEntries = rows
-    .map((row, index) => ({ index, value: row.moyenne_generale }))
-    .filter((x) => typeof x.value === "number" && Number.isFinite(x.value))
+    .map((row, index) => ({
+      index,
+      value: row.moyenne_generale,
+      complete: row.moyenne_generale_complete,
+    }))
+    .filter(
+      (x) =>
+        x.complete &&
+        typeof x.value === "number" &&
+        Number.isFinite(x.value)
+    )
     .sort((a, b) => Number(b.value) - Number(a.value));
 
   let currentRank = 0;
@@ -296,8 +460,17 @@ function assignRanks<T extends { moyenne_generale: number | null; moyenne_annuel
   }
 
   const annualEntries = rows
-    .map((row, index) => ({ index, value: row.moyenne_annuelle }))
-    .filter((x) => typeof x.value === "number" && Number.isFinite(x.value))
+    .map((row, index) => ({
+      index,
+      value: row.moyenne_annuelle,
+      complete: row.moyenne_annuelle_complete,
+    }))
+    .filter(
+      (x) =>
+        x.complete &&
+        typeof x.value === "number" &&
+        Number.isFinite(x.value)
+    )
     .sort((a, b) => Number(b.value) - Number(a.value));
 
   currentRank = 0;
@@ -438,9 +611,13 @@ async function fetchBulletinForClass(params: {
 }): Promise<BulletinResponse | null> {
   const origin = pickOrigin(params.req);
   const url = new URL("/api/admin/grades/bulletin", origin);
+
   url.searchParams.set("class_id", params.classId);
   url.searchParams.set("from", params.from);
   url.searchParams.set("to", params.to);
+
+  // Export officiel : notes publiées uniquement.
+  url.searchParams.set("published", "true");
 
   const cookie = params.req.headers.get("cookie") ?? "";
 
@@ -452,8 +629,10 @@ async function fetchBulletinForClass(params: {
     });
 
     if (!res.ok) return null;
+
     const data = (await res.json().catch(() => null)) as BulletinResponse | null;
     if (!data?.ok) return null;
+
     return data;
   } catch {
     return null;
@@ -469,6 +648,7 @@ async function fetchConductMap(params: {
   const out = new Map<string, number | null>();
   const origin = pickOrigin(params.req);
   const url = new URL("/api/admin/conduite/averages", origin);
+
   url.searchParams.set("class_id", params.classId);
   url.searchParams.set("from", params.from);
   url.searchParams.set("to", params.to);
@@ -496,8 +676,16 @@ async function fetchConductMap(params: {
     for (const item of items) {
       const sid = String(item?.student_id || "");
       if (!sid) continue;
+
       const raw =
-        item?.total ?? item?.avg20 ?? item?.avg ?? item?.value ?? item?.score ?? item?.note ?? null;
+        item?.total ??
+        item?.avg20 ??
+        item?.avg ??
+        item?.value ??
+        item?.score ??
+        item?.note ??
+        null;
+
       out.set(sid, cleanNumber(raw, 4));
     }
   } catch {
@@ -517,6 +705,7 @@ export async function GET(req: NextRequest) {
         : ctx.error === "FORBIDDEN"
         ? 403
         : 400;
+
     return NextResponse.json({ ok: false, error: ctx.error }, { status });
   }
 
@@ -526,10 +715,14 @@ export async function GET(req: NextRequest) {
   const academicYear = String(searchParams.get("academic_year") || "").trim();
   const periodRef = String(searchParams.get("period_ref") || "").trim();
   const classId = String(searchParams.get("class_id") || "").trim();
+
   const includeSubjects = ["1", "true", "yes", "on"].includes(
     String(searchParams.get("include_subjects") || "").toLowerCase()
   );
-  const format = String(searchParams.get("format") || "xlsx").trim().toLowerCase() as ExportFormat;
+
+  const format = String(searchParams.get("format") || "xlsx")
+    .trim()
+    .toLowerCase() as ExportFormat;
 
   if (!academicYear) {
     return NextResponse.json({ ok: false, error: "MISSING_ACADEMIC_YEAR" }, { status: 400 });
@@ -566,15 +759,18 @@ export async function GET(req: NextRequest) {
     if (!isUuid(classId)) {
       return NextResponse.json({ ok: false, error: "INVALID_CLASS_ID" }, { status: 400 });
     }
+
     classesQuery = classesQuery.eq("id", classId);
   }
 
   const { data: classRows, error: classErr } = await classesQuery;
+
   if (classErr) {
     return NextResponse.json({ ok: false, error: "CLASSES_ERROR" }, { status: 500 });
   }
 
   const classes = (classRows || []) as ClassRow[];
+
   if (!classes.length) {
     return NextResponse.json({ ok: false, error: "NO_CLASSES_FOUND" }, { status: 404 });
   }
@@ -605,9 +801,11 @@ export async function GET(req: NextRequest) {
   }
 
   const studentMetaByKey = new Map<string, StudentMetaRow>();
+
   for (const row of (enrollments || []) as any[]) {
     const currentClassId = String(row?.class_id || "");
     const studentId = String(row?.student_id || "");
+
     if (!currentClassId || !studentId) continue;
 
     const cls = classMap.get(currentClassId);
@@ -662,11 +860,15 @@ export async function GET(req: NextRequest) {
     if (!bulletinData?.items?.length) continue;
 
     const subjectNameById = new Map<string, string>();
+    const classSubjectLabels: string[] = [];
+
     for (const subject of bulletinData.subjects || []) {
       const sid = String(subject?.subject_id || "");
       if (!sid) continue;
+
       const label = String(subject?.subject_name || sid).trim() || sid;
       subjectNameById.set(sid, label);
+      classSubjectLabels.push(label);
 
       if (includeSubjects && !subjectHeaderSeen.has(label)) {
         subjectHeaderSeen.add(label);
@@ -677,6 +879,7 @@ export async function GET(req: NextRequest) {
     const classRows: ExportRow[] = bulletinData.items.map((item) => {
       const key = `${currentClassId}__${String(item.student_id)}`;
       const meta = studentMetaByKey.get(key);
+
       const split = splitStudentName({
         first_name: meta?.first_name ?? null,
         last_name: meta?.last_name ?? null,
@@ -684,21 +887,50 @@ export async function GET(req: NextRequest) {
       });
 
       const currentGeneral = cleanNumber(item.general_avg, 4);
+      const currentGeneralComplete = currentGeneral !== null && isGeneralAverageComplete(item);
+      const currentGeneralHasStar = currentGeneral !== null && !currentGeneralComplete;
+
       const currentAnnual = cleanNumber(item.annual_avg, 4);
+      const currentAnnualComplete = currentAnnual !== null && isAnnualAverageComplete(item);
+      const currentAnnualHasStar = currentAnnual !== null && !currentAnnualComplete;
+
       const currentConduct = cleanNumber(conductMap.get(String(item.student_id)) ?? null, 4);
 
       const exportedAverage =
+        resolvedPeriod.requestedKind === "annual" ? currentAnnual : currentGeneral;
+
+      const exportedAverageComplete =
         resolvedPeriod.requestedKind === "annual"
-          ? currentAnnual ?? currentGeneral
-          : currentGeneral;
+          ? currentAnnualComplete
+          : currentGeneralComplete;
+
+      const exportedAverageHasStar =
+        exportedAverage !== null && !exportedAverageComplete;
+
+      const exportedRank =
+        resolvedPeriod.requestedKind === "annual"
+          ? currentAnnualComplete
+            ? cleanRank(item.annual_rank)
+            : null
+          : currentGeneralComplete
+          ? cleanRank(item.rank)
+          : null;
 
       const subjectValues: Record<string, number | null> = {};
+
       if (includeSubjects) {
+        // Les matières renvoyées par l’API bulletin sont les matières affectées.
+        // On les initialise à NC ; si une moyenne publiée existe, elle remplace NC.
+        for (const label of classSubjectLabels) {
+          subjectValues[label] = null;
+        }
+
         for (const ps of item.per_subject || []) {
           const sid = String(ps?.subject_id || "");
           if (!sid) continue;
 
           const label = subjectNameById.get(sid) || `Matière ${sid.slice(0, 8)}`;
+
           if (!subjectHeaderSeen.has(label)) {
             subjectHeaderSeen.add(label);
             subjectHeaderOrder.push(label);
@@ -715,11 +947,19 @@ export async function GET(req: NextRequest) {
         classe: String(meta?.class_label || cls.label || cls.code || "Classe"),
         annee_scolaire: String(meta?.academic_year || resolvedPeriod.academicYear || ""),
         periode: resolvedPeriod.requestedLabel,
+
         moyenne_generale: exportedAverage,
-        rang: item.rank ?? null,
+        moyenne_generale_complete: exportedAverageComplete,
+        moyenne_generale_has_star: exportedAverageHasStar,
+        rang: exportedRank,
+
         conduite: currentConduct,
+
         moyenne_annuelle: currentAnnual,
-        rang_annuel: item.annual_rank ?? null,
+        moyenne_annuelle_complete: currentAnnualComplete,
+        moyenne_annuelle_has_star: currentAnnualHasStar,
+        rang_annuel: currentAnnualComplete ? cleanRank(item.annual_rank) : null,
+
         subject_values: subjectValues,
       };
     });
@@ -727,12 +967,23 @@ export async function GET(req: NextRequest) {
     const { periodRankByIndex, annualRankByIndex } = assignRanks(classRows);
 
     classRows.forEach((row, index) => {
-      if (row.rang === null || row.rang === undefined) {
+      if (
+        row.moyenne_generale_complete &&
+        (row.rang === null || row.rang === undefined)
+      ) {
         row.rang = periodRankByIndex.get(index) ?? null;
       }
-      if (row.rang_annuel === null || row.rang_annuel === undefined) {
+
+      if (
+        row.moyenne_annuelle_complete &&
+        row.moyenne_annuelle !== null &&
+        (row.rang_annuel === null || row.rang_annuel === undefined)
+      ) {
         row.rang_annuel = annualRankByIndex.get(index) ?? null;
       }
+
+      if (!row.moyenne_generale_complete) row.rang = null;
+      if (!row.moyenne_annuelle_complete) row.rang_annuel = null;
     });
 
     allExportRows.push(...classRows);
@@ -746,9 +997,29 @@ export async function GET(req: NextRequest) {
     const classCmp = a.classe.localeCompare(b.classe, "fr");
     if (classCmp !== 0) return classCmp;
 
-    const rankA = Number.isFinite(Number(a.rang)) ? Number(a.rang) : 999999;
-    const rankB = Number.isFinite(Number(b.rang)) ? Number(b.rang) : 999999;
+    const rankA =
+      a.moyenne_generale_complete && Number.isFinite(Number(a.rang))
+        ? Number(a.rang)
+        : 999999;
+
+    const rankB =
+      b.moyenne_generale_complete && Number.isFinite(Number(b.rang))
+        ? Number(b.rang)
+        : 999999;
+
     if (rankA !== rankB) return rankA - rankB;
+
+    const avgA =
+      a.moyenne_generale !== null && Number.isFinite(Number(a.moyenne_generale))
+        ? Number(a.moyenne_generale)
+        : -Infinity;
+
+    const avgB =
+      b.moyenne_generale !== null && Number.isFinite(Number(b.moyenne_generale))
+        ? Number(b.moyenne_generale)
+        : -Infinity;
+
+    if (avgB !== avgA) return avgB - avgA;
 
     return `${a.nom} ${a.prenoms}`.trim().localeCompare(
       `${b.nom} ${b.prenoms}`.trim(),
@@ -774,6 +1045,7 @@ export async function GET(req: NextRequest) {
 
   if (format === "csv") {
     const csv = buildCsv(preparedRows);
+
     return new NextResponse(csv, {
       status: 200,
       headers: {
@@ -791,16 +1063,40 @@ export async function GET(req: NextRequest) {
     const summarySheet = XLSX.utils.json_to_sheet(preparedRows);
     XLSX.utils.book_append_sheet(workbook, summarySheet, "Moyennes");
 
+    const hasStar = allExportRows.some(
+      (row) => row.moyenne_generale_has_star || row.moyenne_annuelle_has_star
+    );
+
+    if (hasStar) {
+      const legendRows = [
+        {
+          Symbole: "*",
+          Signification:
+            "Moyenne calculée sur les notes ou périodes publiées disponibles. Le rang correspondant reste NC tant que le calcul est incomplet.",
+        },
+        {
+          Symbole: "NC",
+          Signification:
+            "Non classé : aucune moyenne publiée ou moyenne incomplète pour un classement officiel.",
+        },
+      ];
+
+      const legendSheet = XLSX.utils.json_to_sheet(legendRows);
+      XLSX.utils.book_append_sheet(workbook, legendSheet, "Légende");
+    }
+
     if (classes.length > 1) {
       for (const cls of classes) {
         const classLabel = String(cls.label || cls.code || "Classe");
         const classRows = allExportRows.filter((row) => row.classe === classLabel);
+
         if (!classRows.length) continue;
 
         const rowsForSheet = buildExportRows(
           classRows,
           includeSubjects ? subjectHeaderOrder : []
         );
+
         const ws = XLSX.utils.json_to_sheet(rowsForSheet);
         const sheetName = classLabel.slice(0, 31) || "Classe";
         XLSX.utils.book_append_sheet(workbook, ws, sheetName);

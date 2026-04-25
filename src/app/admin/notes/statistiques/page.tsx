@@ -118,13 +118,21 @@ type MatrixCell = {
   rank: number | null;
 };
 
+type AnnualStatus = "complete" | "partial" | "empty";
+
 type MatrixRow = {
   student_id: string;
   full_name: string;
   matricule: string | null;
   periods: Record<string, MatrixCell>;
+
+  // Annuel matière : calculé uniquement avec les périodes ayant une moyenne publiée.
+  // Le rang annuel n'est attribué que si l'élève est complet sur toutes les périodes affichées.
   annual_avg: number | null;
   annual_rank: number | null;
+  annual_status: AnnualStatus;
+  annual_available_periods: number;
+  annual_expected_periods: number;
 };
 
 type PeriodLoadState = {
@@ -149,8 +157,20 @@ function formatNumber(n: number | null | undefined, digits = 2) {
 }
 
 function formatRank(n: number | null | undefined) {
-  if (n === null || n === undefined || !Number.isFinite(Number(n))) return "—";
+  if (n === null || n === undefined || !Number.isFinite(Number(n))) return "NC";
   return String(n);
+}
+
+function formatAnnualAverage(row: MatrixRow, digits = 2) {
+  if (row.annual_avg === null || row.annual_avg === undefined) return "—";
+  if (!Number.isFinite(Number(row.annual_avg))) return "—";
+  const value = Number(row.annual_avg).toFixed(digits);
+  return row.annual_status === "partial" ? `${value}*` : value;
+}
+
+function formatAnnualRank(row: MatrixRow) {
+  if (row.annual_status !== "complete") return "NC";
+  return formatRank(row.annual_rank);
 }
 
 function formatDateFR(value?: string | null) {
@@ -855,13 +875,6 @@ export default function AdminNotesStatsPage() {
     try {
       const students = new Map<string, MatrixRow>();
 
-      const periodResults: Array<{
-        period: GradePeriod;
-        items: BulletinItem[];
-        subject: BulletinSubject;
-        ranks: Map<string, number>;
-      }> = [];
-
       for (const period of periodsToDisplay) {
         try {
           const bulletin = await fetchBulletinForPeriod(selectedClassId, period);
@@ -884,6 +897,9 @@ export default function AdminNotesStatsPage() {
                   periods: {},
                   annual_avg: null,
                   annual_rank: null,
+                  annual_status: "empty",
+                  annual_available_periods: 0,
+                  annual_expected_periods: 0,
                 });
               }
 
@@ -918,13 +934,6 @@ export default function AdminNotesStatsPage() {
             (r) => typeof r.avg === "number" && Number.isFinite(r.avg)
           ).length;
 
-          periodResults.push({
-            period,
-            items,
-            subject,
-            ranks,
-          });
-
           for (const item of items) {
             if (!students.has(item.student_id)) {
               students.set(item.student_id, {
@@ -934,6 +943,9 @@ export default function AdminNotesStatsPage() {
                 periods: {},
                 annual_avg: null,
                 annual_rank: null,
+                annual_status: "empty",
+                annual_available_periods: 0,
+                annual_expected_periods: 0,
               });
             }
 
@@ -980,13 +992,18 @@ export default function AdminNotesStatsPage() {
       const rows = Array.from(students.values());
 
       if (showAnnualColumns) {
+        const expectedPeriods = periodsToDisplay.length;
+
         for (const row of rows) {
           let num = 0;
           let den = 0;
+          let availablePeriods = 0;
 
-          for (const { period } of periodResults) {
+          for (const period of periodsToDisplay) {
             const avg = row.periods[period.id]?.avg;
 
+            // IMPORTANT : absence de note publiée = NC / —, jamais 0.
+            // Une vraie note 0 reste un nombre et sera donc bien prise en compte.
             if (avg === null || avg === undefined || !Number.isFinite(avg)) continue;
 
             const coeffRaw = Number(period.coeff ?? 1);
@@ -994,34 +1011,62 @@ export default function AdminNotesStatsPage() {
 
             num += avg * coeff;
             den += coeff;
+            availablePeriods += 1;
           }
 
+          row.annual_available_periods = availablePeriods;
+          row.annual_expected_periods = expectedPeriods;
           row.annual_avg = den > 0 ? Math.round((num / den) * 100) / 100 : null;
+          row.annual_status =
+            availablePeriods === 0
+              ? "empty"
+              : availablePeriods === expectedPeriods
+              ? "complete"
+              : "partial";
         }
 
+        // Rang annuel officiel uniquement si l'élève est complet sur toutes les périodes affichées.
+        // Les moyennes annuelles partielles restent visibles avec astérisque et Rang = NC.
         const annualRanks = buildRankMap(
           rows.map((r) => ({
             student_id: r.student_id,
-            avg: r.annual_avg,
+            avg: r.annual_status === "complete" ? r.annual_avg : null,
           }))
         );
 
         rows.forEach((row) => {
-          row.annual_rank = annualRanks.get(row.student_id) ?? null;
+          row.annual_rank =
+            row.annual_status === "complete" ? annualRanks.get(row.student_id) ?? null : null;
         });
       } else {
         rows.forEach((row) => {
           row.annual_avg = null;
           row.annual_rank = null;
+          row.annual_status = "empty";
+          row.annual_available_periods = 0;
+          row.annual_expected_periods = 0;
         });
       }
 
       rows.sort((a, b) => {
         if (showAnnualColumns) {
+          const order: Record<AnnualStatus, number> = {
+            complete: 0,
+            partial: 1,
+            empty: 2,
+          };
+
+          const ao = order[a.annual_status ?? "empty"] ?? 2;
+          const bo = order[b.annual_status ?? "empty"] ?? 2;
+          if (ao !== bo) return ao - bo;
+
           const ar = a.annual_rank ?? 99999;
           const br = b.annual_rank ?? 99999;
-
           if (ar !== br) return ar - br;
+
+          const aa = a.annual_avg ?? -1;
+          const ba = b.annual_avg ?? -1;
+          if (aa !== ba) return ba - aa;
         } else {
           const period = periodsToDisplay[0];
           const ar = period ? a.periods[period.id]?.rank ?? 99999 : 99999;
@@ -1080,8 +1125,8 @@ export default function AdminNotesStatsPage() {
 
       if (showAnnualColumns) {
         cells.push(
-          row.annual_avg !== null ? row.annual_avg.toFixed(2) : "",
-          row.annual_rank ?? ""
+          formatAnnualAverage(row),
+          formatAnnualRank(row)
         );
       }
 
@@ -1140,7 +1185,9 @@ export default function AdminNotesStatsPage() {
       .join("");
 
     const annualHeader = showAnnualColumns ? `<th colspan="2">Annuel matière</th>` : "";
-    const annualSecondHeader = showAnnualColumns ? `<th>Moy.</th><th>Rang</th>` : "";
+    const annualSecondHeader = showAnnualColumns
+      ? `<th>Moy.</th><th>Rang</th>`
+      : "";
 
     const body = matrixRows
       .map((row, idx) => {
@@ -1155,8 +1202,8 @@ export default function AdminNotesStatsPage() {
           .join("");
 
         const annualCells = showAnnualColumns
-          ? `<td class="num strong">${formatNumber(row.annual_avg)}</td>
-             <td class="num strong">${formatRank(row.annual_rank)}</td>`
+          ? `<td class="num strong">${escapeHtml(formatAnnualAverage(row))}</td>
+             <td class="num strong">${escapeHtml(formatAnnualRank(row))}</td>`
           : "";
 
         return `<tr>
@@ -1230,11 +1277,21 @@ export default function AdminNotesStatsPage() {
     background: #ecfdf5;
     color: #065f46;
   }
+  td.status {
+    font-weight: 800;
+    background: #fffbeb;
+    color: #92400e;
+  }
   tr:nth-child(even) td {
     background: #f8fafc;
   }
   tr:nth-child(even) td.strong {
     background: #d1fae5;
+  }
+  .note {
+    margin-top: 8px;
+    font-size: 9px;
+    color: #92400e;
   }
   .footer {
     margin-top: 10px;
@@ -1271,6 +1328,8 @@ export default function AdminNotesStatsPage() {
     </thead>
     <tbody>${body}</tbody>
   </table>
+
+  ${showAnnualColumns ? '<div class="note">* Moyenne calculée sur les périodes publiées disponibles. Rang annuel NC tant que l’année matière est incomplète.</div>' : ''}
 
   <div class="footer">Document généré depuis Mon Cahier — Nexa Digital SARL</div>
 </body>
@@ -1314,7 +1373,7 @@ export default function AdminNotesStatsPage() {
 
             <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-200">
               Seules les matières affectées à la classe sont proposées. Choisissez la
-              période à produire ; le récap annuel apparaît uniquement sur la dernière période.
+              période à produire ; le récap annuel apparaît uniquement sur la dernière période. Un astérisque signale une moyenne annuelle calculée avec des périodes publiées manquantes.
             </p>
           </div>
 
@@ -1517,6 +1576,12 @@ export default function AdminNotesStatsPage() {
               Dernière période : récap annuel activé
             </span>
           )}
+
+          {showAnnualColumns && (
+            <span className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-amber-700">
+              Annuel : 15.00* = calcul sur périodes publiées disponibles • rang annuel NC si incomplet
+            </span>
+          )}
         </div>
 
         {periodStates.length > 0 && (
@@ -1690,12 +1755,19 @@ export default function AdminNotesStatsPage() {
 
                     {showAnnualColumns && (
                       <>
-                        <td className="border-b border-r border-slate-100 bg-emerald-50/60 px-3 py-2 text-right font-bold tabular-nums text-emerald-900">
-                          {formatNumber(row.annual_avg)}
+                        <td
+                          className="border-b border-r border-slate-100 bg-emerald-50/60 px-3 py-2 text-right font-bold tabular-nums text-emerald-900"
+                          title={
+                            row.annual_status === "partial"
+                              ? `Moyenne calculée sur ${row.annual_available_periods}/${row.annual_expected_periods} période(s) publiée(s). Rang annuel NC tant que l’année matière est incomplète.`
+                              : undefined
+                          }
+                        >
+                          {formatAnnualAverage(row)}
                         </td>
 
                         <td className="border-b border-slate-100 bg-emerald-50/60 px-3 py-2 text-right font-bold tabular-nums text-emerald-900">
-                          {formatRank(row.annual_rank)}
+                          {formatAnnualRank(row)}
                         </td>
                       </>
                     )}
@@ -1705,6 +1777,12 @@ export default function AdminNotesStatsPage() {
             </tbody>
           </table>
         </div>
+
+        {showAnnualColumns && matrixRows.some((row) => row.annual_status === "partial") && (
+          <div className="border-t border-slate-100 px-5 py-3 text-xs font-medium text-amber-700">
+            * Moyenne calculée sur les périodes publiées disponibles.
+          </div>
+        )}
       </section>
     </main>
   );
