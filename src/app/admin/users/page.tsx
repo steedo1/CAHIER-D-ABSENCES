@@ -141,6 +141,7 @@ const SUBJECT_ALIAS_TO_CANONICAL: Record<string, string> = {
   sciencenaturelle: "svt",
   sciencesnaturelles: "svt",
   sciencesdelavieetdelaterre: "svt",
+  sciencesvieetterre: "svt",
   sciencevieetterre: "svt",
 
   eps: "eps",
@@ -156,11 +157,24 @@ const SUBJECT_ALIAS_TO_CANONICAL: Record<string, string> = {
   philosophie: "philosophie",
   philo: "philosophie",
 
-  dessin: "dessineducationmusicale",
-  musique: "dessineducationmusicale",
-  dessinmusique: "dessineducationmusicale",
-  dessineducationmusicale: "dessineducationmusicale",
-  educationmusicale: "dessineducationmusicale",
+  // ✅ Musique reste une discipline séparée.
+  musique: "musique",
+  music: "musique",
+  educationmusicale: "musique",
+  edmusicale: "musique",
+  chant: "musique",
+
+  // ✅ Arts plastiques / Dessin restent une discipline séparée de Musique.
+  art: "artsplastiques",
+  arts: "artsplastiques",
+  artplastique: "artsplastiques",
+  artplastiques: "artsplastiques",
+  artsplastique: "artsplastiques",
+  artsplastiques: "artsplastiques",
+  dessin: "artsplastiques",
+  dessins: "artsplastiques",
+  educationartistique: "artsplastiques",
+  artsvisuels: "artsplastiques",
 };
 
 function canonicalSubjectKey(value: string | null | undefined) {
@@ -759,7 +773,7 @@ export default function UsersPage() {
                     const found = findSubjectByNameOrAlias(value);
                     setTSubjectId(found?.id || "");
                   }}
-                  placeholder="Mathématiques, Français…"
+                  placeholder="Mathématiques, Français, Musique, Arts plastiques…"
                 />
                 <datalist id="subjects-list">
                   {subjects.map((s) => (
@@ -879,7 +893,7 @@ export default function UsersPage() {
                 const found = findSubjectByNameOrAlias(value);
                 setNewSubjectId(found?.id || "");
               }}
-              placeholder="Ex: Mathématiques"
+              placeholder="Ex: Mathématiques, Musique, Arts plastiques"
             />
             {newSubjectName.trim() ? (
               matchedAddSubject ? (

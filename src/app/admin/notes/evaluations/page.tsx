@@ -540,28 +540,52 @@ export default function AdminNotesEvaluationsPage() {
     if (range.to) setTo(range.to);
   }
 
-  /* Charger matières d'une classe */
+  /* Charger matières d'une classe — endpoint admin, sans contrôle téléphone classe */
   useEffect(() => {
-    setSelectedSubjectId("");
-    setSubjects([]);
-    if (!selectedClassId) return;
+    let cancelled = false;
 
-    fetch(
-      `/api/class/subjects?class_id=${encodeURIComponent(
-        selectedClassId
-      )}&mode=class_assigned`,
-      { cache: "no-store" }
-    )
-      .then((r) => r.json())
-      .then((j) => {
-        const arr = (j.items || []) as any[];
-        const subs: SubjectItem[] = arr.map((s) => ({
-          id: s.id,
-          name: (s.label || s.name || "").trim() || s.id,
-        }));
-        setSubjects(subs);
-      })
-      .catch(() => setSubjects([]));
+    async function loadSubjectsForClass() {
+      setSelectedSubjectId("");
+      setSubjects([]);
+      if (!selectedClassId) return;
+
+      try {
+        const res = await fetch(
+          `/api/admin/notes/subjects?class_id=${encodeURIComponent(selectedClassId)}`,
+          { cache: "no-store" }
+        );
+
+        const j = await res.json().catch(() => ({} as any));
+        if (!res.ok || (j && j.ok === false)) {
+          throw new Error((j && j.error) || `HTTP_${res.status}`);
+        }
+
+        const arr = Array.isArray(j?.items) ? j.items : [];
+        const subs: SubjectItem[] = arr
+          .map((s: any) => {
+            const id = String(s?.id || s?.subject_id || "").trim();
+            const name =
+              String(s?.label || s?.name || s?.subject_name || "").trim() || id;
+            return { id, name };
+          })
+          .filter((s: SubjectItem) => !!s.id);
+
+        if (!cancelled) {
+          setSubjects(subs);
+        }
+      } catch (err) {
+        console.error("[admin.notes.evaluations] subjects load error", err);
+        if (!cancelled) {
+          setSubjects([]);
+        }
+      }
+    }
+
+    loadSubjectsForClass();
+
+    return () => {
+      cancelled = true;
+    };
   }, [selectedClassId]);
 
   /* Rafraîchir liste des évaluations */

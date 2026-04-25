@@ -80,6 +80,7 @@ const SUBJECT_ALIAS_TO_CANONICAL: Record<string, string> = {
   sciencenaturelle: "svt",
   sciencesnaturelles: "svt",
   sciencesdelavieetdelaterre: "svt",
+  sciencesvieetterre: "svt",
   sciencevieetterre: "svt",
 
   eps: "eps",
@@ -95,11 +96,24 @@ const SUBJECT_ALIAS_TO_CANONICAL: Record<string, string> = {
   philosophie: "philosophie",
   philo: "philosophie",
 
-  dessin: "dessineducationmusicale",
-  musique: "dessineducationmusicale",
-  dessinmusique: "dessineducationmusicale",
-  dessineducationmusicale: "dessineducationmusicale",
-  educationmusicale: "dessineducationmusicale",
+  // ✅ Musique reste une discipline séparée.
+  musique: "musique",
+  music: "musique",
+  educationmusicale: "musique",
+  edmusicale: "musique",
+  chant: "musique",
+
+  // ✅ Arts plastiques / Dessin restent séparés de Musique.
+  art: "artsplastiques",
+  arts: "artsplastiques",
+  artplastique: "artsplastiques",
+  artplastiques: "artsplastiques",
+  artsplastique: "artsplastiques",
+  artsplastiques: "artsplastiques",
+  dessin: "artsplastiques",
+  dessins: "artsplastiques",
+  educationartistique: "artsplastiques",
+  artsvisuels: "artsplastiques",
 };
 
 function canonicalSubjectKey(value: string | null | undefined) {
@@ -134,7 +148,7 @@ export async function POST(req: NextRequest) {
   const subject =
     typeof body?.subject === "string" ? body.subject.trim() : "";
 
-  // ✅ Nouveau : subject_id canonique envoyé par le front si la matière existe déjà.
+  // ✅ subject_id canonique envoyé par le front si la matière existe déjà.
   const subjectIdRaw =
     typeof body?.subject_id === "string" && body.subject_id.trim()
       ? body.subject_id.trim()
@@ -225,7 +239,9 @@ export async function POST(req: NextRequest) {
       .select("id,name,code,subject_key")
       .limit(1000);
 
-    const rows = (Array.isArray(allSubjects) ? allSubjects : []) as SubjectLite[];
+    const rows = (Array.isArray(allSubjects)
+      ? allSubjects
+      : []) as SubjectLite[];
 
     const found =
       rows.find((s) => canonicalSubjectKey(s.name) === wantedCanonical) ||

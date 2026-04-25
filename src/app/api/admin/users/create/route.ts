@@ -72,6 +72,7 @@ const SUBJECT_ALIAS_TO_CANONICAL: Record<string, string> = {
   sciencenaturelle: "svt",
   sciencesnaturelles: "svt",
   sciencesdelavieetdelaterre: "svt",
+  sciencesvieetterre: "svt",
   sciencevieetterre: "svt",
 
   eps: "eps",
@@ -87,11 +88,24 @@ const SUBJECT_ALIAS_TO_CANONICAL: Record<string, string> = {
   philosophie: "philosophie",
   philo: "philosophie",
 
-  dessin: "dessineducationmusicale",
-  musique: "dessineducationmusicale",
-  dessinmusique: "dessineducationmusicale",
-  dessineducationmusicale: "dessineducationmusicale",
-  educationmusicale: "dessineducationmusicale",
+  // ✅ Musique reste une discipline séparée.
+  musique: "musique",
+  music: "musique",
+  educationmusicale: "musique",
+  edmusicale: "musique",
+  chant: "musique",
+
+  // ✅ Arts plastiques / Dessin restent une discipline séparée de Musique.
+  art: "artsplastiques",
+  arts: "artsplastiques",
+  artplastique: "artsplastiques",
+  artplastiques: "artsplastiques",
+  artsplastique: "artsplastiques",
+  artsplastiques: "artsplastiques",
+  dessin: "artsplastiques",
+  dessins: "artsplastiques",
+  educationartistique: "artsplastiques",
+  artsvisuels: "artsplastiques",
 };
 
 function canonicalSubjectKey(value: string | null | undefined) {
@@ -115,7 +129,10 @@ export async function POST(req: NextRequest) {
   const {
     data: { user },
   } = await supa.auth.getUser();
-  if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+
+  if (!user) {
+    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  }
 
   // Etablissement courant de l'admin
   const { data: me, error: meErr } = await supa
@@ -123,10 +140,16 @@ export async function POST(req: NextRequest) {
     .select("institution_id")
     .eq("id", user.id)
     .maybeSingle();
-  if (meErr) return NextResponse.json({ error: meErr.message }, { status: 400 });
+
+  if (meErr) {
+    return NextResponse.json({ error: meErr.message }, { status: 400 });
+  }
 
   const inst = (me?.institution_id as string) || null;
-  if (!inst) return NextResponse.json({ error: "no_institution" }, { status: 400 });
+
+  if (!inst) {
+    return NextResponse.json({ error: "no_institution" }, { status: 400 });
+  }
 
   // Payload
   const body = await req.json().catch(() => ({} as any));
@@ -134,14 +157,15 @@ export async function POST(req: NextRequest) {
   const emailRaw = (body?.email ?? null) as string | null;
   const display_name = (body?.display_name ?? null) as string | null;
 
-  // ✅ Nouveau : subject_id canonique optionnel.
-  // Si présent, il est prioritaire pour éviter les doublons "Maths" / "Mathématiques".
+  // ✅ subject_id canonique optionnel.
+  // Si présent, il est prioritaire pour éviter les doublons.
   const subjectIdRaw =
     typeof body?.subject_id === "string" && body.subject_id.trim()
       ? String(body.subject_id).trim()
       : null;
 
   const subjectName = (body?.subject ?? null) as string | null;
+
   const country =
     typeof body?.country === "string" && body.country.trim()
       ? String(body.country).trim()
@@ -151,6 +175,7 @@ export async function POST(req: NextRequest) {
     normalizePhone(body?.phone ?? null, {
       defaultCountryAlpha2: country,
     }) || null;
+
   const email = emailRaw ? emailRaw.trim().toLowerCase() : null;
 
   if (!role) {
@@ -184,6 +209,7 @@ export async function POST(req: NextRequest) {
       .select("id")
       .eq("phone", phone)
       .maybeSingle();
+
     if (data?.id) {
       uid = String(data.id);
       try {
@@ -200,6 +226,7 @@ export async function POST(req: NextRequest) {
       .select("id")
       .eq("email", email)
       .maybeSingle();
+
     if (data?.id) {
       uid = String(data.id);
       try {
@@ -218,22 +245,27 @@ export async function POST(req: NextRequest) {
         .select("id")
         .eq("phone", phone)
         .maybeSingle();
+
       if (data?.id) return String(data.id);
     }
+
     if (email) {
       const { data } = await supaSrv
         .from("auth.users")
         .select("id")
         .eq("email", email)
         .maybeSingle();
+
       if (data?.id) return String(data.id);
     }
+
     return null;
   };
 
   // b) auth.users -> id (si pas trouvé via profiles)
   if (!uid) {
     uid = await findInAuth();
+
     if (uid) {
       try {
         await supaSrv.auth.admin.updateUserById(uid, {
@@ -259,12 +291,14 @@ export async function POST(req: NextRequest) {
     } else {
       // fallback : re-lookup
       uid = await findInAuth();
+
       if (!uid) {
         return NextResponse.json(
           { error: cErr?.message ?? "createUser_failed" },
           { status: 400 }
         );
       }
+
       try {
         await supaSrv.auth.admin.updateUserById(uid, {
           password: DEFAULT_TEMP_PASSWORD,
@@ -288,6 +322,7 @@ export async function POST(req: NextRequest) {
       email: email ?? null,
       phone: phone ?? null,
     });
+
     if (pInsErr) {
       return NextResponse.json({ error: pInsErr.message }, { status: 400 });
     }
@@ -300,6 +335,7 @@ export async function POST(req: NextRequest) {
         phone: phone ?? existingProfile.phone ?? null,
       })
       .eq("id", uid);
+
     if (pUpdErr) {
       return NextResponse.json({ error: pUpdErr.message }, { status: 400 });
     }
@@ -312,6 +348,7 @@ export async function POST(req: NextRequest) {
       { profile_id: uid, institution_id: inst, role },
       { onConflict: "profile_id,institution_id,role" }
     );
+
   if (rErr) {
     return NextResponse.json({ error: rErr.message }, { status: 400 });
   }
@@ -319,6 +356,7 @@ export async function POST(req: NextRequest) {
   // 4) Matière REQUISE (enseignant)
   if (role === "teacher") {
     const rawName = String(subjectName || "").trim();
+
     let subject_id: string | undefined;
     let canonicalSubjectName = rawName;
     let canonicalSubjectCode: string | null = null;
@@ -332,11 +370,17 @@ export async function POST(req: NextRequest) {
         .maybeSingle();
 
       if (subjByIdErr) {
-        return NextResponse.json({ error: subjByIdErr.message }, { status: 400 });
+        return NextResponse.json(
+          { error: subjByIdErr.message },
+          { status: 400 }
+        );
       }
 
       if (!subjById?.id) {
-        return NextResponse.json({ error: "subject_not_found" }, { status: 400 });
+        return NextResponse.json(
+          { error: "subject_not_found" },
+          { status: 400 }
+        );
       }
 
       subject_id = String(subjById.id);
@@ -345,17 +389,18 @@ export async function POST(req: NextRequest) {
     }
 
     // ✅ Priorité 2 : résolution intelligente par nom / alias.
-    if (!subject_id) {
-      const name = rawName;
-      const wantedCanonical = canonicalSubjectKey(name);
-      const wantedRaw = normalizeSubjectText(name);
+    if (!subject_id && rawName) {
+      const wantedCanonical = canonicalSubjectKey(rawName);
+      const wantedRaw = normalizeSubjectText(rawName);
 
       const { data: allSubjects } = await supaSrv
         .from("subjects")
         .select("id,name,code")
         .limit(1000);
 
-      const rows = (Array.isArray(allSubjects) ? allSubjects : []) as SubjectLite[];
+      const rows = (Array.isArray(allSubjects)
+        ? allSubjects
+        : []) as SubjectLite[];
 
       const found =
         rows.find((s) => canonicalSubjectKey(s.name) === wantedCanonical) ||
@@ -365,7 +410,7 @@ export async function POST(req: NextRequest) {
 
       if (found?.id) {
         subject_id = String(found.id);
-        canonicalSubjectName = String(found.name || name);
+        canonicalSubjectName = String(found.name || rawName);
         canonicalSubjectCode = found.code ? String(found.code) : null;
       }
     }
@@ -386,7 +431,7 @@ export async function POST(req: NextRequest) {
     }
 
     // ✅ Priorité 4 : création uniquement si la discipline n’existe vraiment pas.
-    if (!subject_id) {
+    if (!subject_id && rawName) {
       const name = rawName;
       const code = slug(name).slice(0, 12).toUpperCase();
 
@@ -410,7 +455,9 @@ export async function POST(req: NextRequest) {
 
         subject_id = (subjByCode?.id as string) || undefined;
         canonicalSubjectName = String(subjByCode?.name || name);
-        canonicalSubjectCode = subjByCode?.code ? String(subjByCode.code) : code;
+        canonicalSubjectCode = subjByCode?.code
+          ? String(subjByCode.code)
+          : code;
       }
     }
 

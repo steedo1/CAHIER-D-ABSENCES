@@ -1922,64 +1922,132 @@ export default function AdminSettingsPage() {
   }
 
   function previewGeneralSecondaryCiPreset() {
-    const preview = buildGeneralSecondaryCoefficientPreview(subjectCoeffs);
+    if (!selectedCoeffLevel) {
+      const msg =
+        "Choisissez d'abord un niveau avant de prévisualiser le référentiel CI.";
+      setMsgCoeffs(msg);
+      pushToast("error", msg);
+      return;
+    }
+
+    const targetRows = subjectCoeffs.filter(
+      (row) => row.level === selectedCoeffLevel
+    );
+
+    if (targetRows.length === 0) {
+      const msg =
+        `Aucune discipline à prévisualiser pour le niveau ${selectedCoeffLevel}. Cliquez sur « Rafraîchir » si vous venez d'ajouter des matières.`;
+      setCiPresetPreview([]);
+      setCiPresetAppliedOnce(false);
+      setMsgCoeffs(msg);
+      pushToast("error", msg);
+      return;
+    }
+
+    const preview = buildGeneralSecondaryCoefficientPreview(targetRows);
     setCiPresetPreview(preview);
     setCiPresetAppliedOnce(false);
 
     const applicable = preview.filter((item) => item.willApply).length;
     const ambiguous = preview.filter(
-      (item) => !item.willApply && (item.note.includes("A1") || item.note.includes("A2"))
+      (item) =>
+        !item.willApply &&
+        (item.note.includes("A1") || item.note.includes("A2"))
     ).length;
 
     const msg =
       applicable > 0
-        ? `Prévisualisation CI prête : ${applicable} coefficient(s) reconnu(s)${
+        ? `Prévisualisation CI prête pour ${selectedCoeffLevel} : ${applicable} coefficient(s) reconnu(s)${
             ambiguous > 0 ? `, ${ambiguous} cas A1/A2 à préciser` : ""
           }.`
-        : "Aucune discipline reconnue pour le référentiel CI dans les lignes actuelles.";
+        : `Aucune discipline reconnue par le référentiel CI pour le niveau ${selectedCoeffLevel}.`;
 
     setMsgCoeffs(msg);
     pushToast(applicable > 0 ? "info" : "error", msg);
   }
 
   function applyGeneralSecondaryCiPreset() {
+    if (!selectedCoeffLevel) {
+      const msg =
+        "Choisissez d'abord un niveau avant d'appliquer le référentiel CI.";
+      setMsgCoeffs(msg);
+      pushToast("error", msg);
+      return;
+    }
+
     if (subjectCoeffs.length === 0) {
-      const msg = "Aucun coefficient à initialiser. Cliquez d'abord sur « Rafraîchir ».";
+      const msg =
+        "Aucun coefficient à initialiser. Cliquez d'abord sur « Rafraîchir ».";
+      setMsgCoeffs(msg);
+      pushToast("error", msg);
+      return;
+    }
+
+    const targetRows = subjectCoeffs.filter(
+      (row) => row.level === selectedCoeffLevel
+    );
+
+    if (targetRows.length === 0) {
+      const msg =
+        `Aucune discipline à initialiser pour le niveau ${selectedCoeffLevel}. Cliquez sur « Rafraîchir » si vous venez d'ajouter des matières.`;
       setMsgCoeffs(msg);
       pushToast("error", msg);
       return;
     }
 
     const result = applyGeneralSecondaryCoefficientPreset(
-      subjectCoeffs,
+      targetRows,
       subjectComponents
     );
 
     if (result.appliedCoeffs === 0) {
       const msg =
-        "Aucune correspondance automatique trouvée. Vérifiez les noms des niveaux et des disciplines.";
+        `Aucune correspondance automatique trouvée pour le niveau ${selectedCoeffLevel}. Vérifiez les noms des disciplines.`;
       setCiPresetPreview(result.preview);
+      setCiPresetAppliedOnce(false);
       setMsgCoeffs(msg);
       pushToast("error", msg);
       return;
     }
 
-    setSubjectCoeffs(result.subjectCoeffs);
+    const updatedByKey = new Map(
+      result.subjectCoeffs.map((row) => [`${row.level}::${row.subject_id}`, row])
+    );
+
+    setSubjectCoeffs((prev) =>
+      prev.map((row) =>
+        row.level === selectedCoeffLevel
+          ? updatedByKey.get(`${row.level}::${row.subject_id}`) || row
+          : row
+      )
+    );
     setSubjectComponents(result.subjectComponents);
     setCiPresetPreview(result.preview);
     setCiPresetAppliedOnce(true);
 
     const msg =
-      `Référentiel CI appliqué localement : ${result.appliedCoeffs} coefficient(s)` +
-      `${result.appliedComponents > 0 ? `, ${result.appliedComponents} sous-matière(s) de Français` : ""}` +
-      `${result.optionalCount > 0 ? `, ${result.optionalCount} LV2 facultative(s)` : ""}` +
-      `${result.ambiguousCount > 0 ? `. ${result.ambiguousCount} cas A1/A2 restent à préciser.` : "."}` +
+      `Référentiel CI appliqué localement pour ${selectedCoeffLevel} : ${result.appliedCoeffs} coefficient(s)` +
+      `${
+        result.appliedComponents > 0
+          ? `, ${result.appliedComponents} sous-matière(s) de Français`
+          : ""
+      }` +
+      `${
+        result.optionalCount > 0
+          ? `, ${result.optionalCount} LV2 facultative(s)`
+          : ""
+      }` +
+      `${
+        result.ambiguousCount > 0
+          ? `. ${result.ambiguousCount} cas A1/A2 restent à préciser.`
+          : "."
+      }` +
       " Cliquez ensuite sur les boutons d’enregistrement.";
 
     setMsgCoeffs(msg);
     setMsgComponents(
       result.appliedComponents > 0
-        ? "Sous-matières de Français générées niveau par niveau. Les anciennes lignes sans niveau sont ignorées dans l'état actuel de l'écran."
+        ? "Sous-matières de Français générées pour le niveau sélectionné. Les anciennes lignes sans niveau sont ignorées dans l'état actuel de l'écran."
         : msgComponents
     );
     pushToast("success", msg);
@@ -3464,6 +3532,45 @@ export default function AdminSettingsPage() {
             </div>
           )}
 
+          <div className="mb-5 rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-3 md:items-end">
+              <div>
+                <div className="mb-1 text-xs font-bold uppercase tracking-[0.14em] text-slate-500">
+                  Niveau à configurer
+                </div>
+                <select
+                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm outline-none transition focus:border-emerald-400 focus:ring-4 focus:ring-emerald-500/20"
+                  value={selectedCoeffLevel}
+                  onChange={(e) => setSelectedCoeffLevel(e.target.value)}
+                >
+                  <option value="">— Choisir un niveau —</option>
+                  {coeffLevels.map((lvl) => (
+                    <option key={lvl} value={lvl}>
+                      {lvl}
+                    </option>
+                  ))}
+                </select>
+                <div className="mt-1 text-[11px] text-slate-500">
+                  Choisissez d’abord le niveau, puis prévisualisez ou appliquez
+                  le référentiel CI pour ce niveau.
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600 md:col-span-2">
+                Niveau actif :
+                <span className="ml-2 font-bold text-slate-900">
+                  {selectedCoeffLevel || "Aucun niveau sélectionné"}
+                </span>
+                <span className="mx-2 text-slate-300">•</span>
+                <span>
+                  {selectedCoeffLevel
+                    ? `${coeffRowsForSelectedLevel.length} discipline(s) affichée(s)`
+                    : "Sélection requise avant l’initialisation CI"}
+                </span>
+              </div>
+            </div>
+          </div>
+
           <div className="mb-5 rounded-3xl border border-emerald-200 bg-gradient-to-br from-emerald-50 via-white to-sky-50 p-4 shadow-sm">
             <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
               <div className="max-w-3xl">
@@ -3474,7 +3581,7 @@ export default function AdminSettingsPage() {
                   Référentiel CI — Secondaire général
                 </div>
                 <p className="mt-1 text-sm leading-6 text-slate-600">
-                  Applique automatiquement les coefficients officiels aux niveaux et disciplines reconnus.
+                  Après sélection du niveau ci-dessus, applique automatiquement les coefficients officiels aux disciplines reconnues.
                   Les matières non reconnues ne sont pas modifiées. Le Français du 1er cycle reçoit aussi ses
                   sous-matières par niveau : Composition française, Expression orale, Orthographe-Grammaire.
                 </p>
@@ -3500,7 +3607,7 @@ export default function AdminSettingsPage() {
                 <button
                   type="button"
                   onClick={previewGeneralSecondaryCiPreset}
-                  disabled={loadingCoeffs || subjectCoeffs.length === 0}
+                  disabled={loadingCoeffs || !selectedCoeffLevel || coeffRowsForSelectedLevel.length === 0}
                   className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-bold text-slate-700 shadow-sm hover:bg-slate-50 disabled:opacity-60"
                 >
                   Prévisualiser
@@ -3508,7 +3615,7 @@ export default function AdminSettingsPage() {
                 <button
                   type="button"
                   onClick={applyGeneralSecondaryCiPreset}
-                  disabled={loadingCoeffs || subjectCoeffs.length === 0}
+                  disabled={loadingCoeffs || !selectedCoeffLevel || coeffRowsForSelectedLevel.length === 0}
                   className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-bold text-white shadow-sm hover:bg-emerald-700 disabled:opacity-60"
                 >
                   Appliquer CI
@@ -3571,30 +3678,6 @@ export default function AdminSettingsPage() {
                 </div>
               </div>
             )}
-          </div>
-
-          <div className="mb-3 grid grid-cols-1 gap-3 md:grid-cols-3">
-            <div>
-              <div className="mb-1 text-xs text-slate-500">
-                Niveau
-              </div>
-              <select
-                className="w-full rounded-lg border px-3 py-2 text-sm"
-                value={selectedCoeffLevel}
-                onChange={(e) => setSelectedCoeffLevel(e.target.value)}
-              >
-                <option value="">— Choisir un niveau —</option>
-                {coeffLevels.map((lvl) => (
-                  <option key={lvl} value={lvl}>
-                    {lvl}
-                  </option>
-                ))}
-              </select>
-              <div className="mt-1 text-[11px] text-slate-500">
-                Seules les disciplines du niveau sélectionné sont affichées
-                ci-dessous.
-              </div>
-            </div>
           </div>
 
           <div className="overflow-x-auto rounded-xl border">

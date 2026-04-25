@@ -5,7 +5,8 @@
 
 export type GeneralSecondarySubjectKey =
   | "english"
-  | "arts_music"
+  | "music"
+  | "arts_plastiques"
   | "edhc"
   | "eps"
   | "french"
@@ -86,7 +87,8 @@ type SubjectComponentLike = {
 
 const SUBJECT_LABELS: Record<GeneralSecondarySubjectKey, string> = {
   english: "Anglais",
-  arts_music: "Dessin / Éducation musicale",
+  music: "Musique",
+  arts_plastiques: "Arts plastiques",
   edhc: "E.D.H.C.",
   eps: "E.P.S.",
   french: "Français",
@@ -101,26 +103,69 @@ const SUBJECT_LABELS: Record<GeneralSecondarySubjectKey, string> = {
 };
 
 const FRENCH_COMPONENTS_3: GeneralSecondaryCoeffComponentPreset[] = [
-  { code: "fr_compo", label: "Composition française", coeff: 1, order_index: 1 },
-  { code: "fr_oral", label: "Expression orale", coeff: 1, order_index: 2 },
-  { code: "fr_og", label: "Orthographe-Grammaire", coeff: 1, order_index: 3 },
+  {
+    code: "fr_compo",
+    label: "Composition française",
+    coeff: 1,
+    order_index: 1,
+  },
+  {
+    code: "fr_oral",
+    label: "Expression orale",
+    coeff: 1,
+    order_index: 2,
+  },
+  {
+    code: "fr_og",
+    label: "Orthographe-Grammaire",
+    coeff: 1,
+    order_index: 3,
+  },
 ];
 
 const FRENCH_COMPONENTS_4: GeneralSecondaryCoeffComponentPreset[] = [
-  { code: "fr_compo", label: "Composition française", coeff: 2, order_index: 1 },
-  { code: "fr_oral", label: "Expression orale", coeff: 1, order_index: 2 },
-  { code: "fr_og", label: "Orthographe-Grammaire", coeff: 1, order_index: 3 },
+  {
+    code: "fr_compo",
+    label: "Composition française",
+    coeff: 2,
+    order_index: 1,
+  },
+  {
+    code: "fr_oral",
+    label: "Expression orale",
+    coeff: 1,
+    order_index: 2,
+  },
+  {
+    code: "fr_og",
+    label: "Orthographe-Grammaire",
+    coeff: 1,
+    order_index: 3,
+  },
 ];
 
-function row(coeff: number, options: Omit<GeneralSecondaryCoeffPresetEntry, "coeff"> = {}): GeneralSecondaryCoeffPresetEntry {
+function row(
+  coeff: number,
+  options: Omit<GeneralSecondaryCoeffPresetEntry, "coeff"> = {}
+): GeneralSecondaryCoeffPresetEntry {
   return { coeff, ...options };
 }
 
-function lv2(coeff: number, optional = false): GeneralSecondaryCoeffPresetEntry {
-  return row(coeff, optional ? { optional: true, note: "LV2 facultative d'après la grille." } : {});
+function lv2(
+  coeff: number,
+  optional = false
+): GeneralSecondaryCoeffPresetEntry {
+  return row(
+    coeff,
+    optional
+      ? { optional: true, note: "LV2 facultative d'après la grille." }
+      : {}
+  );
 }
 
-const LV2_PRESET: Partial<Record<GeneralSecondaryLevelKey, GeneralSecondaryCoeffPresetEntry>> = {
+const LV2_PRESET: Partial<
+  Record<GeneralSecondaryLevelKey, GeneralSecondaryCoeffPresetEntry>
+> = {
   "4e": lv2(1),
   "3e": lv2(1),
   "2A": lv2(3),
@@ -135,6 +180,27 @@ const LV2_PRESET: Partial<Record<GeneralSecondaryLevelKey, GeneralSecondaryCoeff
   TA2: lv2(3),
   TC: lv2(1, true),
   TD: lv2(1, true),
+};
+
+const ARTISTIC_PRESET: Partial<
+  Record<GeneralSecondaryLevelKey, GeneralSecondaryCoeffPresetEntry>
+> = {
+  "6e": row(1),
+  "5e": row(1),
+  "4e": row(1),
+  "3e": row(1),
+  "2A": row(1),
+  "2C": row(1),
+  "1A": row(1),
+  "1A1": row(1),
+  "1A2": row(1),
+  "1C": row(1),
+  "1D": row(1),
+  TA: row(1),
+  TA1: row(1),
+  TA2: row(1),
+  TC: row(1),
+  TD: row(1),
 };
 
 const PRESET: Record<
@@ -159,24 +225,13 @@ const PRESET: Record<
     TC: row(1),
     TD: row(1),
   },
-  arts_music: {
-    "6e": row(1),
-    "5e": row(1),
-    "4e": row(1),
-    "3e": row(1),
-    "2A": row(1),
-    "2C": row(1),
-    "1A": row(1),
-    "1A1": row(1),
-    "1A2": row(1),
-    "1C": row(1),
-    "1D": row(1),
-    TA: row(1),
-    TA1: row(1),
-    TA2: row(1),
-    TC: row(1),
-    TD: row(1),
-  },
+
+  // ✅ Musique est maintenant une discipline indépendante.
+  music: ARTISTIC_PRESET,
+
+  // ✅ Arts plastiques / Dessin est maintenant une discipline indépendante.
+  arts_plastiques: ARTISTIC_PRESET,
+
   edhc: {
     "6e": row(1),
     "5e": row(1),
@@ -319,20 +374,43 @@ function compactText(value: string): string {
   return normalizeText(value).replace(/\s+/g, "");
 }
 
-export function resolveGeneralSecondaryLevelKey(level: string): GeneralSecondaryLevelKey | null {
+export function resolveGeneralSecondaryLevelKey(
+  level: string
+): GeneralSecondaryLevelKey | null {
   const clean = normalizeText(level);
   const compact = compactText(level);
 
   if (!clean) return null;
 
-  if (/(^|\s)6(e|eme|ieme)?(\s|$)/.test(clean) || clean.includes("sixieme")) return "6e";
-  if (/(^|\s)5(e|eme|ieme)?(\s|$)/.test(clean) || clean.includes("cinquieme")) return "5e";
-  if (/(^|\s)4(e|eme|ieme)?(\s|$)/.test(clean) || clean.includes("quatrieme")) return "4e";
-  if (/(^|\s)3(e|eme|ieme)?(\s|$)/.test(clean) || clean.includes("troisieme")) return "3e";
+  if (/(^|\s)6(e|eme|ieme)?(\s|$)/.test(clean) || clean.includes("sixieme")) {
+    return "6e";
+  }
+  if (
+    /(^|\s)5(e|eme|ieme)?(\s|$)/.test(clean) ||
+    clean.includes("cinquieme")
+  ) {
+    return "5e";
+  }
+  if (
+    /(^|\s)4(e|eme|ieme)?(\s|$)/.test(clean) ||
+    clean.includes("quatrieme")
+  ) {
+    return "4e";
+  }
+  if (
+    /(^|\s)3(e|eme|ieme)?(\s|$)/.test(clean) ||
+    clean.includes("troisieme")
+  ) {
+    return "3e";
+  }
 
   const hasA1 = compact.includes("a1");
   const hasA2 = compact.includes("a2");
-  const hasA = /(^|\s)a(\s|$)/.test(clean) || compact.endsWith("a") || hasA1 || hasA2;
+  const hasA =
+    /(^|\s)a(\s|$)/.test(clean) ||
+    compact.endsWith("a") ||
+    hasA1 ||
+    hasA2;
   const hasC = /(^|\s)c(\s|$)/.test(clean) || compact.endsWith("c");
   const hasD = /(^|\s)d(\s|$)/.test(clean) || compact.endsWith("d");
 
@@ -394,29 +472,129 @@ export function resolveGeneralSecondaryLevelKey(level: string): GeneralSecondary
   return null;
 }
 
-export function resolveGeneralSecondarySubjectKey(subjectName: string): GeneralSecondarySubjectKey | null {
+export function resolveGeneralSecondarySubjectKey(
+  subjectName: string
+): GeneralSecondarySubjectKey | null {
   const clean = normalizeText(subjectName);
   const compact = compactText(subjectName);
 
   if (!clean) return null;
 
-  if (clean.includes("anglais") || clean.includes("english")) return "english";
+  if (clean.includes("anglais") || clean.includes("english")) {
+    return "english";
+  }
 
-  const hasDessin = clean.includes("dessin") || clean.includes("arts plastiques") || clean.includes("art plastique");
-  const hasMusic = clean.includes("musique") || clean.includes("musicale") || compact.includes("edmusicale") || compact.includes("educationmusicale");
-  if (hasDessin && hasMusic) return "arts_music";
+  // ✅ Musique séparée des Arts plastiques.
+  if (
+    clean.includes("musique") ||
+    clean.includes("musicale") ||
+    clean.includes("chant") ||
+    compact.includes("music") ||
+    compact.includes("edmusicale") ||
+    compact.includes("educationmusicale")
+  ) {
+    return "music";
+  }
 
-  if (compact === "edhc" || clean.includes("education aux droits") || clean.includes("droit de l homme") || clean.includes("droits de l homme") || clean.includes("citoyennete")) return "edhc";
-  if (compact === "eps" || clean.includes("education physique") || clean.includes("sport")) return "eps";
-  if (clean.includes("francais") || clean.includes("langue francaise")) return "french";
-  if ((clean.includes("histoire") && clean.includes("geographie")) || compact === "hg" || compact === "histgeo" || compact === "histoiregeographie") return "history_geo";
-  if (clean.includes("allemand") || clean.includes("german")) return "german";
-  if (clean.includes("espagnol") || clean.includes("spanish")) return "spanish";
-  if (compact === "lv2" || clean.includes("lv 2") || clean.includes("l v 2") || clean.includes("deuxieme langue") || clean.includes("langue vivante 2")) return "second_language";
-  if (clean.includes("mathematique") || clean.includes("maths") || compact === "math") return "mathematics";
-  if (clean.includes("philosophie") || clean.includes("philo")) return "philosophy";
-  if ((clean.includes("physique") && clean.includes("chimie")) || compact === "pc" || compact === "physiquechimie") return "physics_chemistry";
-  if (compact === "svt" || clean.includes("science de la vie") || clean.includes("sciences de la vie") || clean.includes("vie et de la terre") || clean.includes("vie et terre")) return "svt";
+  // ✅ Arts plastiques / Dessin séparé de Musique.
+  if (
+    clean.includes("arts plastiques") ||
+    clean.includes("art plastique") ||
+    clean.includes("art plastiques") ||
+    clean.includes("dessin") ||
+    clean.includes("dessins") ||
+    clean.includes("education artistique") ||
+    compact === "arts" ||
+    compact === "art" ||
+    compact === "artplastique" ||
+    compact === "artsplastiques" ||
+    compact === "dessin" ||
+    compact === "dessins"
+  ) {
+    return "arts_plastiques";
+  }
+
+  if (
+    compact === "edhc" ||
+    clean.includes("education aux droits") ||
+    clean.includes("droit de l homme") ||
+    clean.includes("droits de l homme") ||
+    clean.includes("citoyennete")
+  ) {
+    return "edhc";
+  }
+
+  if (
+    compact === "eps" ||
+    clean.includes("education physique") ||
+    clean.includes("sport")
+  ) {
+    return "eps";
+  }
+
+  if (clean.includes("francais") || clean.includes("langue francaise")) {
+    return "french";
+  }
+
+  if (
+    (clean.includes("histoire") && clean.includes("geographie")) ||
+    compact === "hg" ||
+    compact === "histgeo" ||
+    compact === "histoiregeographie"
+  ) {
+    return "history_geo";
+  }
+
+  if (clean.includes("allemand") || clean.includes("german")) {
+    return "german";
+  }
+
+  if (clean.includes("espagnol") || clean.includes("spanish")) {
+    return "spanish";
+  }
+
+  if (
+    compact === "lv2" ||
+    clean.includes("lv 2") ||
+    clean.includes("l v 2") ||
+    clean.includes("deuxieme langue") ||
+    clean.includes("langue vivante 2")
+  ) {
+    return "second_language";
+  }
+
+  if (
+    clean.includes("mathematique") ||
+    clean.includes("maths") ||
+    compact === "math"
+  ) {
+    return "mathematics";
+  }
+
+  if (clean.includes("philosophie") || clean.includes("philo")) {
+    return "philosophy";
+  }
+
+  if (
+    (clean.includes("physique") && clean.includes("chimie")) ||
+    compact === "pc" ||
+    compact === "physiquechimie"
+  ) {
+    return "physics_chemistry";
+  }
+
+  if (
+    compact === "svt" ||
+    clean.includes("science de la vie") ||
+    clean.includes("sciences de la vie") ||
+    clean.includes("vie et de la terre") ||
+    clean.includes("vie et terre") ||
+    clean.includes("sciences vie et terre") ||
+    compact === "sciencesvieetterre" ||
+    compact === "sciencesdelavieetdelaterre"
+  ) {
+    return "svt";
+  }
 
   return null;
 }
@@ -425,24 +603,49 @@ function getPresetEntry(
   subjectKey: GeneralSecondarySubjectKey | null,
   levelKey: GeneralSecondaryLevelKey | null
 ): { entry: GeneralSecondaryCoeffPresetEntry | null; note: string } {
-  if (!subjectKey) return { entry: null, note: "Discipline non reconnue par le référentiel CI." };
-  if (!levelKey) return { entry: null, note: "Niveau/série non reconnu par le référentiel CI." };
+  if (!subjectKey) {
+    return {
+      entry: null,
+      note: "Discipline non reconnue par le référentiel CI.",
+    };
+  }
+
+  if (!levelKey) {
+    return {
+      entry: null,
+      note: "Niveau/série non reconnu par le référentiel CI.",
+    };
+  }
 
   if (subjectKey === "mathematics" && levelKey === "1A") {
-    return { entry: null, note: "Mathématiques en 1ère A : précisez A1 ou A2 pour appliquer automatiquement." };
+    return {
+      entry: null,
+      note: "Mathématiques en 1ère A : précisez A1 ou A2 pour appliquer automatiquement.",
+    };
   }
+
   if (subjectKey === "mathematics" && levelKey === "TA") {
-    return { entry: null, note: "Mathématiques en Terminale A : précisez A1 ou A2 pour appliquer automatiquement." };
+    return {
+      entry: null,
+      note: "Mathématiques en Terminale A : précisez A1 ou A2 pour appliquer automatiquement.",
+    };
   }
 
   const entry = PRESET[subjectKey]?.[levelKey] || null;
-  if (!entry) return { entry: null, note: "Aucun coefficient prévu pour cette discipline à ce niveau/série." };
+
+  if (!entry) {
+    return {
+      entry: null,
+      note: "Aucun coefficient prévu pour cette discipline à ce niveau/série.",
+    };
+  }
+
   return { entry, note: entry.note || "Coefficient reconnu." };
 }
 
-export function buildGeneralSecondaryCoefficientPreview<TCoeff extends SubjectCoeffLike>(
-  subjectCoeffs: TCoeff[]
-): GeneralSecondaryCoeffPresetPreviewItem[] {
+export function buildGeneralSecondaryCoefficientPreview<
+  TCoeff extends SubjectCoeffLike
+>(subjectCoeffs: TCoeff[]): GeneralSecondaryCoeffPresetPreviewItem[] {
   return subjectCoeffs.map((row) => {
     const subjectKey = resolveGeneralSecondarySubjectKey(row.subject_name);
     const levelKey = resolveGeneralSecondaryLevelKey(row.level);
@@ -498,13 +701,19 @@ export function applyGeneralSecondaryCoefficientPreset<
 
   const nextSubjectCoeffs = subjectCoeffs.map((row) => {
     const item = byRow.get(`${row.level}::${row.subject_id}`);
+
     if (!item?.willApply || item.coeff === null) {
-      if (item?.note.includes("A1") || item?.note.includes("A2")) ambiguousCount += 1;
+      if (item?.note.includes("A1") || item?.note.includes("A2")) {
+        ambiguousCount += 1;
+      }
       return row;
     }
 
     appliedCoeffs += 1;
-    if (item.optional) optionalCount += 1;
+
+    if (item.optional) {
+      optionalCount += 1;
+    }
 
     if (item.components.length > 0) {
       const level = String(row.level || "").trim();
@@ -537,11 +746,15 @@ export function applyGeneralSecondaryCoefficientPreset<
     const level = String(component.level || "").trim();
     const key = `${component.subject_id}::${level}`;
 
-    if (componentTargets.has(key)) return false;
+    if (componentTargets.has(key)) {
+      return false;
+    }
 
     // Nettoyage côté état React : les sous-matières de Français sans niveau ne doivent plus être gardées
     // quand le référentiel vient de générer des sous-matières niveau par niveau.
-    if (!level && componentSubjectsWithEmptyCleanup.has(component.subject_id)) return false;
+    if (!level && componentSubjectsWithEmptyCleanup.has(component.subject_id)) {
+      return false;
+    }
 
     return true;
   });
