@@ -12,6 +12,7 @@ const LOG_PREFIX = "[grades/averages]";
 function logInfo(...args: any[]) {
   console.log(LOG_PREFIX, ...args);
 }
+
 function logError(...args: any[]) {
   console.error(LOG_PREFIX, ...args);
 }
@@ -30,10 +31,11 @@ function roundTo(value: number, step: number) {
 }
 
 function denseRanks(values: number[]) {
-  // Valeurs déjà triées DESC; renvoie le rang dense (1,1,2,3…)
+  // Valeurs déjà triées DESC ; renvoie le rang dense : 1, 1, 2, 3…
   const ranks: number[] = [];
   let rank = 0;
   let prev: number | null = null;
+
   for (const v of values) {
     if (prev === null || Math.abs(v - prev) > 1e-9) {
       rank += 1;
@@ -41,25 +43,28 @@ function denseRanks(values: number[]) {
     }
     ranks.push(rank);
   }
+
   return ranks;
 }
 
 function isLyceeLevel(level?: string | null): boolean {
   if (!level) return false;
+
   let lvl = level.toLowerCase();
-  // normalisation des accents : "première" -> "premiere"
+
   try {
     lvl = lvl.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
   } catch {
     // ignore
   }
+
   return lvl === "seconde" || lvl === "premiere" || lvl === "terminale";
 }
 
 type EvaluationRow = {
   id: string;
   class_id: string;
-  subject_id: string | null;           // ✅ subjects.id (canonique)
+  subject_id: string | null; // ✅ subjects.id canonique
   subject_component_id?: string | null;
   is_published: boolean;
   scale: number;
@@ -72,30 +77,42 @@ type GradeRow = {
   score: number | null;
 };
 
-type BonusRow = { student_id: string; bonus: number };
+type BonusRow = {
+  student_id: string;
+  bonus: number;
+};
 
 type Row = {
   student_id: string;
-  count_evals: number; // nb d’évals disponibles (avec note)
-  total_evals: number; // nb total d’évals considérées
-  average_raw: number; // moyenne /20 avant bonus
-  bonus: number; // bonus appliqué
-  average: number; // après bonus (non arrondi)
-  average_rounded: number; // arrondi si demandé (sinon = average)
-  rank: number; // rang dense
+
+  // count_evals = nombre d’évaluations avec une vraie note.
+  // total_evals = nombre total d’évaluations considérées.
+  count_evals: number;
+  total_evals: number;
+
+  // 0 = vraie moyenne calculée avec une vraie note 0.
+  // absence de ligne pour un élève = aucune moyenne calculable / NC côté front.
+  average_raw: number;
+  bonus: number;
+  average: number;
+  average_rounded: number;
+  rank: number;
+
+  // Champs explicites pour les interfaces.
+  has_average: boolean;
+  is_complete: boolean;
+  status: "complete" | "partial";
 };
 
 /**
  * Normalise le subject_id venant du front :
- * - si c'est déjà un subjects.id → on le garde
- * - sinon on essaie de le résoudre via institution_subjects.subject_id
- * - si rien ne matche → on renvoie null (pas de filtre subject_id)
+ * - si c'est déjà un subjects.id → on le garde ;
+ * - sinon on essaie de le résoudre via institution_subjects.subject_id ;
+ * - si rien ne matche → null.
  *
  * IMPORTANT :
- *  - grade_evaluations.subject_id et grade_adjustments.subject_id
- *    utilisent **subjects.id** (canonique)
- *  - grade_subject_components.subject_id reste l’ID local
- *    de institution_subjects (on garde donc le subject_id brut pour ça).
+ * - grade_evaluations.subject_id et grade_adjustments.subject_id utilisent subjects.id ;
+ * - grade_subject_components.subject_id reste l’ID local institution_subjects.id.
  */
 async function resolveSubjectIdToGlobal(
   supa: any,
@@ -103,6 +120,7 @@ async function resolveSubjectIdToGlobal(
   rawSubjectId?: string | null
 ): Promise<string | null> {
   if (!rawSubjectId) return null;
+
   const sid = rawSubjectId.trim();
   if (!sid) return null;
 
@@ -118,13 +136,14 @@ async function resolveSubjectIdToGlobal(
       logInfo("resolveSubjectIdToGlobal: direct subjects.id", {
         rawSubjectId: sid,
       });
+
       return subj.id as string;
     }
   } catch (err) {
     logError("resolveSubjectIdToGlobal subjects error", err, { sid });
   }
 
-  // 1) Sinon on tente via institution_subjects (ID d’établissement)
+  // 1) Sinon on tente via institution_subjects
   if (institutionId) {
     try {
       const { data: instSub } = await supa
@@ -140,6 +159,7 @@ async function resolveSubjectIdToGlobal(
           rawSubjectId: sid,
           resolved: instSub.subject_id,
         });
+
         return instSub.subject_id as string;
       }
     } catch (err) {
@@ -154,6 +174,7 @@ async function resolveSubjectIdToGlobal(
     institutionId,
     rawSubjectId: sid,
   });
+
   return null;
 }
 
@@ -161,6 +182,7 @@ export async function GET(req: NextRequest) {
   try {
     const supabase = await getSupabaseServerClient();
     const { data: auth } = await supabase.auth.getUser();
+
     if (!auth?.user) return bad("UNAUTHENTICATED", 401);
 
     // 🔹 Récupérer le profil + établissement de l’utilisateur
@@ -180,27 +202,47 @@ export async function GET(req: NextRequest) {
 
     const class_id = String(searchParams.get("class_id") || "").trim();
     const subjectIdRaw = searchParams.get("subject_id");
-    const subject_id = subjectIdRaw ? String(subjectIdRaw) : null; // brut (institution_subjects.id ou subjects.id)
+    const subject_id = subjectIdRaw ? String(subjectIdRaw).trim() || null : null;
+
     const academic_year =
       String(searchParams.get("academic_year") || "").trim() ||
       computeAcademicYear(new Date());
+
+    // Compatibilité : on conserve le défaut historique à 0.
+    // Les écrans officiels peuvent forcer published_only=1.
     const published_only = (searchParams.get("published_only") ?? "0") === "1";
+
+    // ignore = absence de note ignorée.
+    // zero = absence de note comptée comme 0 seulement si explicitement demandé.
     const missing = (searchParams.get("missing") ?? "ignore") as
       | "ignore"
       | "zero";
+
     const round_to_raw = String(searchParams.get("round_to") || "none");
+
     const rank_by = (searchParams.get("rank_by") ?? "average") as
       | "average"
       | "rounded";
 
     if (!class_id) return bad("class_id requis");
 
+    if (!["ignore", "zero"].includes(missing)) {
+      return bad("missing invalide (attendu: ignore|zero)", 400);
+    }
+
+    if (!["average", "rounded"].includes(rank_by)) {
+      return bad("rank_by invalide (attendu: average|rounded)", 400);
+    }
+
     let round_to: number | null = null;
+
     if (round_to_raw !== "none") {
       const n = Number(round_to_raw);
+
       if (!isFinite(n) || n <= 0) {
         return bad("round_to invalide (attendu: none|0.5|1)", 400);
       }
+
       round_to = n;
     }
 
@@ -214,7 +256,7 @@ export async function GET(req: NextRequest) {
       rank_by,
     });
 
-    // 0) Infos de la classe via SERVICE CLIENT (pas de RLS) + check établissement
+    // 0) Infos de la classe via SERVICE CLIENT + check établissement
     const { data: cls, error: clsErr } = await svc
       .from("classes")
       .select("id, level, institution_id")
@@ -232,6 +274,7 @@ export async function GET(req: NextRequest) {
         profile_institution_id: profile.institution_id,
         class_institution_id: cls?.institution_id ?? null,
       });
+
       return bad("FORBIDDEN", 403);
     }
 
@@ -240,6 +283,7 @@ export async function GET(req: NextRequest) {
       | string
       | null
       | undefined;
+
     const lycee = isLyceeLevel(classLevel ?? null);
 
     logInfo("class info", {
@@ -264,13 +308,15 @@ export async function GET(req: NextRequest) {
       .eq("class_id", class_id)
       .eq("academic_year", academic_year);
 
-    // ⚠️ On filtre grade_evaluations sur le subjects.id global
+    // ⚠️ On filtre grade_evaluations sur le subjects.id global.
     if (effectiveSubjectId) {
       qEvals = qEvals.eq("subject_id", effectiveSubjectId);
     }
+
     if (published_only) qEvals = qEvals.eq("is_published", true);
 
     const { data: evals, error: eErr } = await qEvals;
+
     if (eErr) return bad(eErr.message || "EVALS_FETCH_FAILED", 400);
 
     const evaluations = (evals ?? []) as unknown as EvaluationRow[];
@@ -279,6 +325,7 @@ export async function GET(req: NextRequest) {
     logInfo("evals loaded", {
       count: evaluations.length,
       evaluationIds,
+      published_only,
     });
 
     if (evaluationIds.length === 0) {
@@ -288,6 +335,7 @@ export async function GET(req: NextRequest) {
         effectiveSubjectId,
         academic_year,
       });
+
       return NextResponse.json({
         ok: true,
         params: {
@@ -300,16 +348,19 @@ export async function GET(req: NextRequest) {
           rank_by,
         },
         items: [],
-        meta: { evaluations: 0 },
+        meta: {
+          evaluations: 0,
+          note: "Aucune évaluation concernée. Aucun élève ne doit être affiché avec 0 par défaut.",
+        },
       });
     }
 
-    // Détection : au moins une éval attachée à une sous-matière ?
+    // Détection : au moins une évaluation attachée à une sous-matière ?
     const hasAnyComponentEval = evaluations.some(
       (e) => !!(e as any).subject_component_id
     );
 
-    // 1bis) Rubriques / sous-matières (coeff_in_subject) si nécessaire
+    // 1bis) Rubriques / sous-matières si nécessaire
     const componentCoeffMap = new Map<string, number>();
 
     if (!lycee && subject_id && institution_id && hasAnyComponentEval) {
@@ -329,6 +380,7 @@ export async function GET(req: NextRequest) {
           const rawW = (c as any).coeff_in_subject;
           const w =
             typeof rawW === "number" && isFinite(rawW) && rawW > 0 ? rawW : 1;
+
           componentCoeffMap.set(id, w);
         }
       }
@@ -340,11 +392,13 @@ export async function GET(req: NextRequest) {
       hasAnyComponentEval &&
       componentCoeffMap.size > 0;
 
-    // Pré-calcul : total des coeffs par rubrique (pour missing="zero")
+    // Pré-calcul : total des coeffs par rubrique pour missing="zero"
     const evalCoeffsByComponent = new Map<string, number>();
+
     const totalCoeff = evaluations.reduce((acc: number, e: EvaluationRow) => {
       const coeff = Number(e.coeff || 0);
       const key = (e as any).subject_component_id || "__none__";
+
       if (isFinite(coeff) && coeff > 0) {
         evalCoeffsByComponent.set(
           key,
@@ -352,6 +406,7 @@ export async function GET(req: NextRequest) {
         );
         return acc + coeff;
       }
+
       return acc;
     }, 0);
 
@@ -375,6 +430,7 @@ export async function GET(req: NextRequest) {
       .in("evaluation_id", evaluationIds);
 
     if (gErr) return bad(gErr.message || "GRADES_FETCH_FAILED", 400);
+
     const gradesRows = (grades ?? []) as unknown as GradeRow[];
 
     logInfo("grades loaded", {
@@ -382,11 +438,11 @@ export async function GET(req: NextRequest) {
       sample: gradesRows.slice(0, 3),
     });
 
-    // 3) Bonus (grade_adjustments) – subject_id = subjects.id (canonique)
+    // 3) Bonus — subject_id = subjects.id canonique
     let bonusRows: BonusRow[] = [];
 
     if (subject_id && !effectiveSubjectId) {
-      // impossible de résoudre la matière → aucun bonus possible
+      // Impossible de résoudre la matière → aucun bonus possible
       bonusRows = [];
       logError("no effectiveSubjectId while subject_id provided", {
         subject_id,
@@ -399,14 +455,15 @@ export async function GET(req: NextRequest) {
         .eq("academic_year", academic_year);
 
       if (subject_id) {
-        // matière précise → filtre sur subjects.id canonique
+        // Matière précise → filtre sur subjects.id canonique
         qBonus = qBonus.eq("subject_id", effectiveSubjectId as string);
       } else {
-        // moyenne générale → bonus avec subject_id NULL
+        // Moyenne générale → bonus avec subject_id NULL
         qBonus = qBonus.is("subject_id", null);
       }
 
       const { data: bonuses, error: bErr } = await qBonus;
+
       if (bErr) return bad(bErr.message || "BONUS_FETCH_FAILED", 400);
 
       bonusRows = (bonuses ?? []) as unknown as BonusRow[];
@@ -420,8 +477,11 @@ export async function GET(req: NextRequest) {
     }
 
     const bonusMap = new Map<string, number>();
+
     for (const r of bonusRows) {
-      bonusMap.set(r.student_id, Number(r.bonus || 0));
+      const b = Number(r.bonus || 0);
+      if (!r.student_id || !Number.isFinite(b)) continue;
+      bonusMap.set(r.student_id, b);
     }
 
     logInfo("bonusMap built", {
@@ -434,14 +494,19 @@ export async function GET(req: NextRequest) {
 
     const gradesByStudent = new Map<
       string,
-      { sum: number; denom: number; counted: number; present: number }
+      {
+        sum: number;
+        denom: number;
+        counted: number;
+        present: number;
+      }
     >();
 
     // Pour le modèle 2 étages : par élève + par rubrique
     type PerComponentAgg = { num: number; denPresent: number };
     const perStudentComponent = new Map<string, Record<string, PerComponentAgg>>();
 
-    // Pass 1: accumuler les contributions des notes existantes
+    // Pass 1 : accumuler les contributions des notes existantes
     for (const g of gradesRows) {
       const e = evalById.get(g.evaluation_id);
       if (!e) continue;
@@ -451,13 +516,18 @@ export async function GET(req: NextRequest) {
       const s =
         g.score === null || g.score === undefined ? null : Number(g.score);
 
+      // RÈGLE :
+      // - null/vide = aucune note, donc ignorée ;
+      // - 0 = vraie note zéro, donc prise en compte.
       if (s === null || !isFinite(s) || s < 0) continue;
+      if (!isFinite(scale) || scale <= 0) continue;
+      if (!isFinite(coeff) || coeff <= 0) continue;
 
       const score = Math.max(0, Math.min(scale, s));
       const normalized = (score / scale) * 20;
       const contrib = normalized * coeff;
 
-      // Accumulateur "simple"
+      // Accumulateur simple
       const cur =
         gradesByStudent.get(g.student_id) || {
           sum: 0,
@@ -465,6 +535,7 @@ export async function GET(req: NextRequest) {
           counted: 0,
           present: 0,
         };
+
       cur.sum += contrib;
       cur.denom += coeff;
       cur.counted += 1;
@@ -476,6 +547,7 @@ export async function GET(req: NextRequest) {
         const compKey = (e as any).subject_component_id || "__none__";
         const per = perStudentComponent.get(g.student_id) || {};
         const agg = per[compKey] || { num: 0, denPresent: 0 };
+
         agg.num += contrib;
         agg.denPresent += coeff;
         per[compKey] = agg;
@@ -484,7 +556,7 @@ export async function GET(req: NextRequest) {
     }
 
     if (missing === "zero") {
-      // Pour tous les élèves qui ont au moins UNE note → denom = totalCoeff
+      // Pour tous les élèves qui ont au moins UNE note → denom = totalCoeff.
       for (const [sid, agg] of gradesByStudent) {
         agg.denom = totalCoeff;
         gradesByStudent.set(sid, agg);
@@ -501,7 +573,7 @@ export async function GET(req: NextRequest) {
     const totalEvals = evaluations.length;
 
     for (const [sid, agg] of gradesByStudent) {
-      let avg20 = 0;
+      let avg20: number | null = null;
 
       if (useComponentModel) {
         // Modèle à 2 étages : rubriques -> matière
@@ -512,8 +584,10 @@ export async function GET(req: NextRequest) {
         for (const [compKey, compAgg] of Object.entries(per)) {
           const totalCoeffForComp =
             evalCoeffsByComponent.get(compKey) ?? compAgg.denPresent;
+
           const denomComp =
             missing === "zero" ? totalCoeffForComp : compAgg.denPresent;
+
           if (!denomComp || denomComp <= 0) continue;
 
           const moyComp = compAgg.num / denomComp;
@@ -527,15 +601,24 @@ export async function GET(req: NextRequest) {
           denSubject += wComp;
         }
 
-        avg20 = denSubject > 0 ? numSubject / denSubject : 0;
+        avg20 = denSubject > 0 ? numSubject / denSubject : null;
       } else {
         const denom = agg.denom || 0;
-        avg20 = denom > 0 ? agg.sum / denom : 0;
+        avg20 = denom > 0 ? agg.sum / denom : null;
       }
+
+      // Aucun calcul possible = pas de ligne.
+      // Le front complète avec le roster et affiche NC.
+      if (avg20 === null || !Number.isFinite(avg20)) continue;
 
       const b = bonusMap.get(sid) ?? 0;
       const afterBonus = clamp(avg20 + b, 0, 20);
       const rounded = round_to ? roundTo(afterBonus, round_to) : afterBonus;
+
+      const isComplete =
+        missing === "zero"
+          ? totalEvals > 0
+          : agg.counted >= totalEvals && totalEvals > 0;
 
       rows.push({
         student_id: sid,
@@ -546,15 +629,23 @@ export async function GET(req: NextRequest) {
         average: Number(afterBonus.toFixed(4)),
         average_rounded: Number(rounded.toFixed(2)),
         rank: 0,
+        has_average: true,
+        is_complete: isComplete,
+        status: isComplete ? "complete" : "partial",
       });
     }
 
-    // Tri + rangs
+    // Tri + rangs.
+    // On conserve le rang calculé sur les moyennes disponibles.
+    // Le front peut afficher NC si is_complete=false.
     const sortKey = (r: Row) =>
       rank_by === "rounded" ? r.average_rounded : r.average;
+
     rows.sort((a, b) => sortKey(b) - sortKey(a));
     const ranks = denseRanks(rows.map(sortKey));
-    rows.forEach((r, i) => (r.rank = ranks[i]));
+    rows.forEach((r, i) => {
+      r.rank = ranks[i];
+    });
 
     logInfo("final rows", {
       count: rows.length,
@@ -573,7 +664,13 @@ export async function GET(req: NextRequest) {
         rank_by,
       },
       items: rows,
-      meta: { evaluations: totalEvals },
+      meta: {
+        evaluations: totalEvals,
+        notes_count: gradesRows.length,
+        returned_students: rows.length,
+        rule:
+          "0 est une vraie note. null/vide est ignoré. Un élève sans moyenne calculable n’est pas renvoyé et doit être affiché NC côté front.",
+      },
     });
   } catch (e: any) {
     logError("unexpected error", e);

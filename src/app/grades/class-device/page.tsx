@@ -107,6 +107,9 @@ type AverageApiRow = {
   average: number;
   average_rounded: number;
   rank: number;
+  has_average?: boolean;
+  is_complete?: boolean;
+  status?: "complete" | "partial" | string;
 };
 
 /* =========================
@@ -1119,16 +1122,48 @@ export default function ClassDeviceNotesPage() {
   ========================================== */
   type RowAvg = {
     student: RosterItem;
-    avg20: number;
+    // null = NC / aucune moyenne calculable. 0 = vraie moyenne à 0.
+    avg20: number | null;
     bonus: number;
-    final: number;
-    rank: number;
+    final: number | null;
+    rank: number | null;
+    hasAverage: boolean;
+    isComplete: boolean;
+    hasStar: boolean;
+    status: "complete" | "partial" | "empty" | string;
     /** Moyennes par sous-rubrique (clé = component.id, valeur = moyenne /20) */
     componentAvgs?: Record<string, number>;
   };
   const [avgRows, setAvgRows] = useState<RowAvg[]>([]);
   const [bonusMap, setBonusMap] = useState<Record<string, number>>({});
   const [loadingAvg, setLoadingAvg] = useState(false);
+
+  function cleanAverage(value: unknown): number | null {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return null;
+    return Math.round(n * 100) / 100;
+  }
+
+  function formatAverageValue(value: number | null | undefined, hasStar = false) {
+    if (value === null || value === undefined || !Number.isFinite(Number(value))) {
+      return "NC";
+    }
+    return `${Number(value).toFixed(2)}${hasStar ? "*" : ""}`;
+  }
+
+  function formatRankValue(row: Pick<RowAvg, "rank" | "hasAverage" | "isComplete">) {
+    if (!row.hasAverage || !row.isComplete) return "NC";
+    if (row.rank === null || row.rank === undefined || !Number.isFinite(Number(row.rank))) {
+      return "NC";
+    }
+    return String(row.rank);
+  }
+
+  function computeDisplayFinal(row: RowAvg) {
+    if (!row.hasAverage || row.avg20 === null) return null;
+    const bonus = bonusMap[row.student.id] ?? row.bonus ?? 0;
+    return Math.min(20, Math.max(0, Math.round((row.avg20 + bonus) * 100) / 100));
+  }
 
   function applyAveragesFromApi(items: AverageApiRow[]) {
     logInfo("applyAveragesFromApi -> items bruts", items);
@@ -1146,20 +1181,24 @@ export default function ClassDeviceNotesPage() {
         // On se cale sur la vue moyennes : uniquement les évaluations publiées
         if (!ev.is_published) continue;
         const compId = ev.subject_component_id;
-        if (!compId) continue; // on ne garde que les évaluations liées à une sous-rubrique
+        if (!compId) continue;
 
         const scale = Number(ev.scale || 20);
         const coeff = Number(ev.coeff || 1);
-        if (!isFinite(scale) || scale <= 0 || !isFinite(coeff) || coeff <= 0)
+        if (!isFinite(scale) || scale <= 0 || !isFinite(coeff) || coeff <= 0) {
           continue;
+        }
 
         const perGrades = grades[ev.id] || {};
         for (const [student_id, rawScore] of Object.entries(perGrades)) {
           if (!rosterIds.has(student_id)) continue;
+
+          // null/vide = pas de note ; 0 = vraie note zéro.
           if (rawScore == null || Number.isNaN(rawScore as any)) continue;
 
           const score = Number(rawScore);
           if (!isFinite(score)) continue;
+
           const clamped = Math.max(0, Math.min(scale, score));
           const normalized = (clamped / scale) * 20;
           const contrib = normalized * coeff;
@@ -1169,6 +1208,7 @@ export default function ClassDeviceNotesPage() {
             perComp = {};
             perStudentComp.set(student_id, perComp);
           }
+
           const agg = perComp[compId] || { num: 0, denom: 0 };
           agg.num += contrib;
           agg.denom += coeff;
@@ -1183,12 +1223,16 @@ export default function ClassDeviceNotesPage() {
 
     const rows: RowAvg[] = roster.map((st) => {
       const src = map.get(st.id);
-      const avg20 = src ? src.average_raw ?? src.average ?? 0 : 0;
-      const bonus = src ? src.bonus ?? 0 : 0;
+      const avg20 = src ? cleanAverage(src.average_raw ?? src.average) : null;
+      const bonus = src ? Number(src.bonus ?? 0) : 0;
       const final = src
-        ? src.average_rounded ?? src.average ?? avg20 + bonus
-        : avg20 + bonus;
-      const rank = src ? src.rank ?? 0 : 0;
+        ? cleanAverage(src.average_rounded ?? src.average ?? null)
+        : null;
+      const rank = src && Number.isFinite(Number(src.rank)) ? Number(src.rank) : null;
+      const hasAverage = avg20 !== null || final !== null || !!src?.has_average;
+      const isComplete = hasAverage && src?.is_complete !== false;
+      const hasStar = hasAverage && !isComplete;
+      const status = !hasAverage ? "empty" : isComplete ? "complete" : "partial";
 
       let componentAvgs: Record<string, number> | undefined = undefined;
       if (hasComponents && perStudentComp) {
@@ -1198,7 +1242,7 @@ export default function ClassDeviceNotesPage() {
           components.forEach((c) => {
             const agg = perComp![c.id];
             if (agg && agg.denom > 0) {
-              tmp[c.id] = agg.num / agg.denom;
+              tmp[c.id] = Math.round((agg.num / agg.denom) * 100) / 100;
             }
           });
           if (Object.keys(tmp).length > 0) {
@@ -1207,17 +1251,32 @@ export default function ClassDeviceNotesPage() {
         }
       }
 
-      return { student: st, avg20, bonus, final, rank, componentAvgs };
+      return {
+        student: st,
+        avg20,
+        bonus,
+        final,
+        rank,
+        hasAverage,
+        isComplete,
+        hasStar,
+        status,
+        componentAvgs,
+      };
     });
+
     logInfo("applyAveragesFromApi -> rows calculés", rows);
     setAvgRows(rows);
+
     const bm: Record<string, number> = {};
     rows.forEach((r) => {
       bm[r.student.id] = r.bonus;
     });
-    if (!rows.length) {
-      setMsg("Aucune moyenne à calculer pour le moment (aucune note saisie).");
+
+    if (!items.length) {
+      setMsg("Aucune moyenne à calculer pour le moment (aucune note publiée).");
     }
+
     setBonusMap(bm);
   }
 
@@ -1234,7 +1293,7 @@ export default function ClassDeviceNotesPage() {
         class_id: selected.class_id,
         published_only: "1",
         missing: "ignore",
-        round_to_raw: "none",
+        round_to: "none",
         rank_by: "average",
       });
       if (selected.subject_id) {
@@ -1309,7 +1368,7 @@ export default function ClassDeviceNotesPage() {
         class_id: selected.class_id,
         published_only: "1",
         missing: "ignore",
-        round_to_raw: "none",
+        round_to: "none",
         rank_by: "average",
       });
       if (selected.subject_id) {
@@ -1395,7 +1454,7 @@ export default function ClassDeviceNotesPage() {
           class_id: selected.class_id,
           published_only: "1",
           missing: "ignore",
-          round_to_raw: "none",
+          round_to: "none",
           rank_by: "average",
         });
         if (selected.subject_id) {
@@ -1458,7 +1517,7 @@ export default function ClassDeviceNotesPage() {
 
           row.push(raw == null ? "" : Number(raw));
 
-          if (raw != null) {
+          if (raw != null && ev.is_published) {
             const normalized = (Number(raw) / ev.scale) * 20;
             const w = Number(ev.coeff || 1);
             num += normalized * w;
@@ -1466,19 +1525,25 @@ export default function ClassDeviceNotesPage() {
           }
         });
 
-        const avg20Local = den > 0 ? num / den : 0;
+        const avg20Local = den > 0 ? num / den : null;
         const bonusLocal = bonusMap[st.id] ?? 0;
-        const finalLocal = Math.min(
-          20,
-          Math.max(0, Math.round((avg20Local + bonusLocal) * 100) / 100)
-        );
+        const finalLocal =
+          avg20Local === null
+            ? null
+            : Math.min(
+                20,
+                Math.max(0, Math.round((avg20Local + bonusLocal) * 100) / 100)
+              );
 
         const apiRow = avgByStudent.get(st.id);
-        const finalFromApi = apiRow
-          ? apiRow.average_rounded ?? apiRow.average ?? finalLocal
-          : finalLocal;
+        const apiFinal = apiRow
+          ? cleanAverage(apiRow.average_rounded ?? apiRow.average ?? null)
+          : null;
+        const apiComplete = apiRow ? apiRow.is_complete !== false : true;
+        const finalValue = apiFinal ?? finalLocal;
+        const hasStar = finalValue !== null && !apiComplete;
 
-        row.push(finalFromApi.toFixed(2));
+        row.push(finalValue === null ? "NC" : `${finalValue.toFixed(2)}${hasStar ? "*" : ""}`);
 
         const rowStr = row.map((cell) => {
           const v = cell == null ? "" : String(cell);
@@ -2474,6 +2539,9 @@ export default function ClassDeviceNotesPage() {
             <div className="text-sm text-slate-700">
               Moyennes de la classe (pondérées par coeff et sous-matières) •{" "}
               {roster.length} élèves
+              <div className="mt-1 text-xs text-slate-500">
+                0.00 = vraie note calculée • NC = aucune moyenne publiée • * = moyenne incomplète.
+              </div>
             </div>
             <div className="flex items-center gap-2">
               <Button onClick={saveBonuses} disabled={loadingAvg}>
@@ -2564,7 +2632,7 @@ export default function ClassDeviceNotesPage() {
                           })}
 
                         <td className="px-3 py-2 text-right tabular-nums">
-                          {row.avg20.toFixed(2)}
+                          {formatAverageValue(row.avg20, row.hasStar)}
                         </td>
                         <td className="px-3 py-2 w-24">
                           <Input
@@ -2588,13 +2656,10 @@ export default function ClassDeviceNotesPage() {
                           />
                         </td>
                         <td className="px-3 py-2 text-right tabular-nums">
-                          {Math.min(
-                            20,
-                            row.avg20 + (bonusMap[row.student.id] ?? 0)
-                          ).toFixed(2)}
+                          {formatAverageValue(computeDisplayFinal(row), row.hasStar)}
                         </td>
                         <td className="px-3 py-2 text-right">
-                          {row.rank || ""}
+                          {formatRankValue(row)}
                         </td>
                       </tr>
                     ))
@@ -2618,7 +2683,7 @@ export default function ClassDeviceNotesPage() {
               ) : (
                 avgRows.map((row, idx) => {
                   const bonus = bonusMap[row.student.id] ?? 0;
-                  const final = Math.min(20, row.avg20 + bonus);
+                  const final = computeDisplayFinal(row);
                   return (
                     <div
                       key={row.student.id}
@@ -2631,7 +2696,7 @@ export default function ClassDeviceNotesPage() {
                         <div className="text-[11px] text-slate-500 text-right">
                           Rang :{" "}
                           <span className="font-semibold">
-                            {row.rank || "—"}
+                            {formatRankValue(row)}
                           </span>
                         </div>
                       </div>
@@ -2644,7 +2709,7 @@ export default function ClassDeviceNotesPage() {
                             Moyenne /20
                           </div>
                           <div className="text-sm font-semibold">
-                            {row.avg20.toFixed(2)}
+                            {formatAverageValue(row.avg20, row.hasStar)}
                           </div>
                         </div>
                         <div>
@@ -2652,7 +2717,7 @@ export default function ClassDeviceNotesPage() {
                             Finale /20
                           </div>
                           <div className="text-sm font-semibold">
-                            {final.toFixed(2)}
+                            {formatAverageValue(final, row.hasStar)}
                           </div>
                         </div>
                       </div>
