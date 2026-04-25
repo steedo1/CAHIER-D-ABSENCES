@@ -1,286 +1,37 @@
+// src/app/admin/notes/stats/page.tsx
 "use client";
 
-import { Fragment, useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
-  Filter,
-  NotebookPen,
+  BookOpen,
+  CalendarDays,
+  Download,
+  FileSpreadsheet,
+  Printer,
   RefreshCw,
   School,
-  BookOpen,
-  FileSpreadsheet,
-  Target,
-  BarChart3,
+  Search,
 } from "lucide-react";
 
-/* ───────── UI helpers ───────── */
-function Input(p: React.InputHTMLAttributes<HTMLInputElement>) {
-  return (
-    <input
-      {...p}
-      className={[
-        "w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm",
-        "shadow-sm outline-none transition",
-        "focus:border-emerald-400 focus:ring-4 focus:ring-emerald-500/20",
-        "disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400",
-        p.className ?? "",
-      ].join(" ")}
-    />
-  );
-}
-function Select(p: React.SelectHTMLAttributes<HTMLSelectElement>) {
-  return (
-    <select
-      {...p}
-      className={[
-        "w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm",
-        "shadow-sm outline-none transition",
-        "focus:border-emerald-400 focus:ring-4 focus:ring-emerald-500/20",
-        "disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400",
-        p.className ?? "",
-      ].join(" ")}
-    />
-  );
-}
-function Button(p: React.ButtonHTMLAttributes<HTMLButtonElement>) {
-  return (
-    <button
-      {...p}
-      className={[
-        "inline-flex items-center gap-2 rounded-xl bg-emerald-600 text-white px-4 py-2 text-sm font-medium shadow",
-        p.disabled ? "opacity-60 cursor-not-allowed" : "hover:bg-emerald-700 transition",
-        p.className ?? "",
-      ].join(" ")}
-    />
-  );
-}
-function GhostButton(p: React.ButtonHTMLAttributes<HTMLButtonElement>) {
-  return (
-    <button
-      {...p}
-      className={[
-        "inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium",
-        "hover:bg-slate-50 transition",
-        p.className ?? "",
-      ].join(" ")}
-    />
-  );
-}
-function Card(props: {
-  title: string;
-  subtitle?: string;
-  icon?: React.ReactNode;
-  children: React.ReactNode;
-  actions?: React.ReactNode;
-}) {
-  const { title, subtitle, icon, children, actions } = props;
-  return (
-    <div className="rounded-2xl border bg-white p-5 shadow-sm">
-      <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <div className="flex items-center gap-2 text-base font-semibold text-slate-900">
-            {icon}
-            <span>{title}</span>
-          </div>
-          {subtitle && <p className="mt-0.5 text-xs text-slate-500">{subtitle}</p>}
-        </div>
-        {actions}
-      </div>
-      {children}
-    </div>
-  );
-}
-
-/* ───────── Types ───────── */
-
-type EvalKind = "devoir" | "interro_ecrite" | "interro_orale";
-
-type ClassItem = {
+type ClassRow = {
   id: string;
-  label: string;
-  level: string | null;
+  name?: string;
+  label?: string | null;
+  level?: string | null;
+  academic_year?: string | null;
 };
 
-type MatrixEval = {
+type GradePeriod = {
   id: string;
-  eval_date: string;
-  eval_kind: EvalKind;
-  scale: number;
-  coeff: number;
-  title: string | null;
-  teacher_id: string | null;
-  teacher_name: string | null;
-};
-
-type MatrixStudent = {
-  student_id: string;
-  full_name: string;
-  matricule: string | null;
-};
-
-type MatrixMarks = Record<
-  string,
-  Record<
-    string,
-    {
-      raw: number | null;
-      mark_20: number | null;
-    }
-  >
->;
-
-type MatrixOk = {
-  ok: true;
-  meta: {
-    class_id: string;
-    subject_id: string;
-    class_label: string;
-    subject_name: string | null;
-    level: string | null;
-    from: string | null;
-    to: string | null;
-  };
-  evaluations: MatrixEval[];
-  students: MatrixStudent[];
-  marks: MatrixMarks;
-};
-type MatrixErr = { ok: false; error: string };
-
-/* stats /api/admin/notes/stats → on ne garde que ce dont on a besoin */
-type ClassSubjectStat = {
-  class_id: string;
-  class_label: string;
-  level: string | null;
-  subject_id: string | null;
-  subject_name: string | null;
-  evals_count: number;
-  notes_count: number;
-  avg_score_20: number | null;
-};
-type StatsOk = {
-  ok: true;
-  by_class_subject: ClassSubjectStat[];
-};
-type StatsErr = { ok: false; error: string };
-
-/* Calcul client pour la matrice par classe */
-type SubjectMatrixStat = {
-  subject_id: string;
-  subject_name: string;
-  evals_count: number;
-  notes_count: number;
-  avg_20_class: number | null;
-};
-
-type ClassMatrixComputed = {
-  class_id: string;
-  class_label: string;
-  level: string | null;
-  students: MatrixStudent[];
-  subjects: { subject_id: string; subject_name: string }[];
-  averages: Record<
-    string,
-    Record<
-      string,
-      {
-        avg_20: number | null;
-        nb_evals: number;
-        nb_notes: number;
-      }
-    >
-  >;
-  generalAverages: Record<string, number | null>;
-  global: {
-    class_avg_20: number | null;
-    class_min_20: number | null;
-    class_max_20: number | null;
-    dist: {
-      lt5: number;
-      between5_10: number;
-      between10_12: number;
-      between12_15: number;
-      gte15: number;
-    };
-    subjectStats: SubjectMatrixStat[];
-  };
-  ranks: {
-    general: Record<string, number | null>;
-    bySubject: Record<string, Record<string, number | null>>;
-  };
-};
-
-/* Calcul client pour la section par matière (vue agrégée par classe) */
-type SubjectView = {
-  subject_id: string;
-  subject_name: string;
-  global: {
-    avg_20: number | null;
-    min_20: number | null;
-    max_20: number | null;
-    evals_count: number;
-    notes_count: number;
-    dist_classes: {
-      lt5: number;
-      between5_10: number;
-      between10_12: number;
-      between12_15: number;
-      gte15: number;
-    };
-  };
-  rows: ClassSubjectStat[];
-};
-
-/* Matrice élèves pour une matière donnée dans UNE classe */
-type SubjectClassMatrix = {
-  class_id: string;
-  class_label: string;
-  level: string | null;
-  subject_id: string;
-  subject_name: string | null;
-  teacher_names: string | null;
-  students: MatrixStudent[];
-  averages: Record<
-    string,
-    {
-      avg_20: number | null;
-      nb_evals: number;
-      nb_notes: number;
-      rank: number | null;
-    }
-  >;
-  global: {
-    class_avg_20: number | null;
-    class_min_20: number | null;
-    class_max_20: number | null;
-    dist: {
-      lt5: number;
-      between5_10: number;
-      between10_12: number;
-      between12_15: number;
-      gte15: number;
-    };
-    evals_count: number;
-    notes_count: number;
-  };
-};
-
-type AcademicYear = {
-  id: string;
-  code: string;
-  label: string;
+  academic_year: string | null;
+  code: string | null;
+  label: string | null;
+  short_label: string | null;
   start_date: string;
   end_date: string;
-  is_current: boolean;
-};
-
-type GradingPeriod = {
-  id: string;
-  code: string;
-  label: string;
-  short_label: string;
-  start_date: string | null;
-  end_date: string | null;
-  order_index: number;
-  is_active: boolean;
+  order_index?: number | null;
+  coeff?: number | null;
+  is_active?: boolean | null;
 };
 
 type BulletinSubject = {
@@ -290,7 +41,7 @@ type BulletinSubject = {
   include_in_average?: boolean | null;
 };
 
-type BulletinPerSubject = {
+type PerSubjectAvg = {
   subject_id: string;
   avg20: number | null;
   subject_rank?: number | null;
@@ -302,8 +53,8 @@ type BulletinItem = {
   student_id: string;
   full_name: string;
   matricule: string | null;
-  per_subject?: BulletinPerSubject[];
-  general_avg: number | null;
+  per_subject?: PerSubjectAvg[];
+  general_avg?: number | null;
 };
 
 type BulletinResponse = {
@@ -312,7 +63,7 @@ type BulletinResponse = {
     id: string;
     label?: string | null;
     academic_year?: string | null;
-  } | null;
+  };
   period?: {
     from: string | null;
     to: string | null;
@@ -320,63 +71,86 @@ type BulletinResponse = {
     label?: string | null;
     short_label?: string | null;
     academic_year?: string | null;
-  } | null;
+    coeff?: number | null;
+  };
   subjects?: BulletinSubject[];
   items?: BulletinItem[];
 };
 
-/* ───────── Helpers ───────── */
+type SubjectOption = {
+  id: string;
+  name: string;
+  notes_count: number;
+};
 
-const df = new Intl.DateTimeFormat("fr-FR", {
-  day: "2-digit",
-  month: "2-digit",
-  year: "numeric",
-});
-const nf = new Intl.NumberFormat("fr-FR", {
-  minimumFractionDigits: 1,
-  maximumFractionDigits: 2,
-});
+type MatrixCell = {
+  avg: number | null;
+  rank: number | null;
+};
 
-function computeRanks(values: Record<string, number | null | undefined>): Record<string, number> {
-  const entries: { id: string; value: number }[] = [];
-  for (const [id, v] of Object.entries(values)) {
-    if (v != null && !Number.isNaN(v)) {
-      entries.push({ id, value: v });
-    }
-  }
-  if (!entries.length) return {};
+type MatrixRow = {
+  student_id: string;
+  full_name: string;
+  matricule: string | null;
+  periods: Record<string, MatrixCell>;
+  annual_avg: number | null;
+  annual_rank: number | null;
+};
 
-  entries.sort((a, b) => b.value - a.value);
+type PeriodLoadState = {
+  period_id: string;
+  label: string;
+  status: "pending" | "ok" | "empty" | "error";
+  message?: string;
+};
 
-  const ranks: Record<string, number> = {};
-  let currentRank = 1;
-  let prevValue = entries[0].value;
-  ranks[entries[0].id] = 1;
-
-  for (let i = 1; i < entries.length; i++) {
-    const { id, value } = entries[i];
-    if (value !== prevValue) {
-      currentRank += 1;
-      prevValue = value;
-    }
-    ranks[id] = currentRank;
-  }
-
-  return ranks;
+function clsLabel(c: ClassRow | null | undefined) {
+  if (!c) return "";
+  return c.label || c.name || "Classe";
 }
 
-function formatRank(r: number | null | undefined): string {
-  if (!r) return "—";
-  if (r === 1) return "1er";
-  return `${r}e`;
+function periodLabel(p: GradePeriod) {
+  return p.short_label || p.label || p.code || "Période";
 }
 
-function toFiniteNumber(value: unknown): number | null {
+function formatNumber(n: number | null | undefined, digits = 2) {
+  if (n === null || n === undefined || !Number.isFinite(Number(n))) return "—";
+  return Number(n).toFixed(digits);
+}
+
+function formatRank(n: number | null | undefined) {
+  if (n === null || n === undefined || !Number.isFinite(Number(n))) return "—";
+  return String(n);
+}
+
+function formatDateFR(value?: string | null) {
+  if (!value) return "—";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return value;
+  return d.toLocaleDateString("fr-FR");
+}
+
+function escapeHtml(value: string) {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function csvCell(value: unknown) {
+  const v = value === null || value === undefined ? "" : String(value);
+  return `"${v.replace(/"/g, '""')}"`;
+}
+
+function cleanAvg(value: unknown): number | null {
   const n = Number(value);
-  return Number.isFinite(n) ? n : null;
+  if (!Number.isFinite(n)) return null;
+  return Math.round(n * 100) / 100;
 }
 
-function normalizeStatsLabel(value: string | null | undefined): string {
+function normalizeLabelForMatch(value: string | null | undefined): string {
   return String(value ?? "")
     .normalize("NFKD")
     .replace(/[\u0300-\u036f]/g, "")
@@ -385,63 +159,131 @@ function normalizeStatsLabel(value: string | null | undefined): string {
     .trim();
 }
 
-function subjectNamesMatch(a: string | null | undefined, b: string | null | undefined): boolean {
-  const aa = normalizeStatsLabel(a);
-  const bb = normalizeStatsLabel(b);
-  if (!aa || !bb) return false;
-  if (aa === bb) return true;
+function subjectAliasesForMatch(value: string | null | undefined): Set<string> {
+  const normalized = normalizeLabelForMatch(value);
+  const aliases = new Set<string>();
 
-  const compactA = aa.replace(/\s+/g, "");
-  const compactB = bb.replace(/\s+/g, "");
-  if (compactA === compactB) return true;
+  if (!normalized) return aliases;
 
-  const aliases = (x: string) => {
-    const s = new Set<string>([x, x.replace(/\s+/g, "")]);
-    if (x.includes("mathem")) s.add("math");
-    if (x.includes("francais")) s.add("francais");
-    if (x.includes("anglais")) s.add("anglais");
-    if (x.includes("histoire") && (x.includes("geo") || x.includes("geographie"))) s.add("hg");
-    if (x.includes("physique") && x.includes("chimie")) s.add("pc");
-    if (x === "svt" || (x.includes("vie") && x.includes("terre"))) s.add("svt");
-    if (x === "eps" || (x.includes("education") && x.includes("physique"))) s.add("eps");
-    if (x === "edhc" || x.includes("droits humains") || x.includes("citoyennete")) s.add("edhc");
-    if (x.includes("musique")) s.add("musique");
-    if (x.includes("conduite")) s.add("conduite");
-    return s;
-  };
+  const compact = normalized.replace(/\s+/g, "");
+  aliases.add(normalized);
+  aliases.add(compact);
 
-  const aSet = aliases(aa);
-  const bSet = aliases(bb);
-  for (const x of aSet) if (bSet.has(x)) return true;
+  const stopWords = new Set([
+    "a",
+    "au",
+    "aux",
+    "d",
+    "de",
+    "des",
+    "du",
+    "et",
+    "la",
+    "le",
+    "les",
+    "l",
+    "education",
+    "enseignement",
+    "science",
+    "sciences",
+  ]);
 
-  return compactA.length >= 4 && compactB.length >= 4
-    ? compactA.includes(compactB) || compactB.includes(compactA)
-    : false;
-}
+  const tokens = normalized.split(/\s+/).filter(Boolean);
+  const usefulTokens = tokens.filter((token) => !stopWords.has(token));
 
-function distFromValues(values: number[]) {
-  const dist = {
-    lt5: 0,
-    between5_10: 0,
-    between10_12: 0,
-    between12_15: 0,
-    gte15: 0,
-  };
+  usefulTokens.forEach((token) => {
+    if (token.length >= 3) aliases.add(token);
+  });
 
-  for (const v of values) {
-    if (v < 5) dist.lt5++;
-    else if (v < 10) dist.between5_10++;
-    else if (v < 12) dist.between10_12++;
-    else if (v < 15) dist.between12_15++;
-    else dist.gte15++;
+  const acronym = usefulTokens.map((token) => token[0]).join("");
+  if (acronym.length >= 2) aliases.add(acronym);
+
+  if (normalized.includes("mathem")) {
+    aliases.add("math");
+    aliases.add("maths");
+    aliases.add("mathematique");
+    aliases.add("mathematiques");
   }
 
-  return dist;
+  if (normalized.includes("francais")) aliases.add("francais");
+  if (normalized.includes("anglais")) aliases.add("anglais");
+  if (normalized.includes("espagnol")) aliases.add("espagnol");
+  if (normalized.includes("allemand")) aliases.add("allemand");
+
+  if (
+    normalized.includes("histoire") &&
+    (normalized.includes("geo") || normalized.includes("geographie"))
+  ) {
+    aliases.add("hg");
+    aliases.add("histoire geographie");
+  }
+
+  if (normalized.includes("physique") && normalized.includes("chimie")) {
+    aliases.add("pc");
+    aliases.add("pct");
+    aliases.add("physique chimie");
+  }
+
+  if (
+    normalized === "svt" ||
+    (normalized.includes("science") &&
+      normalized.includes("vie") &&
+      normalized.includes("terre"))
+  ) {
+    aliases.add("svt");
+    aliases.add("science vie terre");
+    aliases.add("sciences vie terre");
+  }
+
+  if (
+    normalized === "eps" ||
+    (normalized.includes("education") && normalized.includes("physique"))
+  ) {
+    aliases.add("eps");
+  }
+
+  if (
+    normalized === "edhc" ||
+    normalized.includes("droits humains") ||
+    normalized.includes("citoyennete")
+  ) {
+    aliases.add("edhc");
+  }
+
+  if (normalized.includes("art") && normalized.includes("plastique")) {
+    aliases.add("arts plastiques");
+    aliases.add("art plastique");
+  }
+
+  if (normalized.includes("musique")) aliases.add("musique");
+  if (normalized.includes("conduite")) aliases.add("conduite");
+
+  return aliases;
 }
 
-function avgOf(values: number[]): number | null {
-  if (!values.length) return null;
-  return values.reduce((a, b) => a + b, 0) / values.length;
+function subjectLabelsMatch(a: string | null | undefined, b: string | null | undefined) {
+  const aliasesA = subjectAliasesForMatch(a);
+  const aliasesB = subjectAliasesForMatch(b);
+
+  if (aliasesA.size === 0 || aliasesB.size === 0) return false;
+
+  for (const alias of aliasesA) {
+    if (aliasesB.has(alias)) return true;
+  }
+
+  const normalizedA = normalizeLabelForMatch(a);
+  const normalizedB = normalizeLabelForMatch(b);
+
+  if (!normalizedA || !normalizedB) return false;
+
+  const compactA = normalizedA.replace(/\s+/g, "");
+  const compactB = normalizedB.replace(/\s+/g, "");
+
+  if (compactA.length >= 4 && compactB.length >= 4) {
+    if (compactA.includes(compactB) || compactB.includes(compactA)) return true;
+  }
+
+  return false;
 }
 
 function findSubjectCell(
@@ -454,2768 +296,1221 @@ function findSubjectCell(
   return cells.find((cell) => String(cell.subject_id || "").trim() === subjectId) || null;
 }
 
-/* ───────── Page principale ───────── */
+function findBulletinSubject(
+  subjects: BulletinSubject[],
+  selectedSubjectId: string,
+  selectedSubjectName: string
+): BulletinSubject | null {
+  const exact =
+    subjects.find(
+      (subject) =>
+        String(subject.subject_id || "").trim() === String(selectedSubjectId || "").trim()
+    ) || null;
 
-export default function AdminNotesStatsPage() {
-  /* Filtres globaux */
-  const [from, setFrom] = useState<string>("");
-  const [to, setTo] = useState<string>("");
-  const [status, setStatus] = useState<"all" | "published" | "draft">("all");
+  if (exact) return exact;
 
-  /* Années scolaires + périodes d'évaluation (paramètres établissement) */
-  const [years, setYears] = useState<AcademicYear[]>([]);
-  const [loadingYears, setLoadingYears] = useState(false);
-  const [selectedYearCode, setSelectedYearCode] = useState<string>("");
-
-  const [periods, setPeriods] = useState<GradingPeriod[]>([]);
-  const [loadingPeriods, setLoadingPeriods] = useState(false);
-  const [selectedPeriodId, setSelectedPeriodId] = useState<string>("");
-
-  /* Classes + stats matières (back) */
-  const [allClasses, setAllClasses] = useState<ClassItem[]>([]);
-  const [byClassSubject, setByClassSubject] = useState<ClassSubjectStat[]>([]);
-  const [statsLoading, setStatsLoading] = useState(false);
-  const [statsError, setStatsError] = useState<string | null>(null);
-
-  /* Section 1 : matrice par classe (multi-disciplines) */
-  const [matrixLevel, setMatrixLevel] = useState<string>("");
-  const [matrixClassId, setMatrixClassId] = useState<string>("");
-  const [classMatrix, setClassMatrix] = useState<ClassMatrixComputed | null>(null);
-  const [matrixLoading, setMatrixLoading] = useState(false);
-  const [matrixError, setMatrixError] = useState<string | null>(null);
-
-  /* Section 2 : analyse par matière (mono-discipline) */
-  const [selectedSubjectId, setSelectedSubjectId] = useState<string>("");
-  const [subjectLevelFilter, setSubjectLevelFilter] = useState<string>("");
-  const [subjectClassId, setSubjectClassId] = useState<string>("");
-  const [subjectClassMatrix, setSubjectClassMatrix] = useState<SubjectClassMatrix | null>(
-    null
+  return (
+    subjects.find((subject) =>
+      subjectLabelsMatch(subject.subject_name, selectedSubjectName)
+    ) || null
   );
-  const [subjectClassLoading, setSubjectClassLoading] = useState(false);
-  const [subjectClassError, setSubjectClassError] = useState<string | null>(null);
+}
 
-  /* Charger les classes une fois */
-  useEffect(() => {
-    fetch("/api/admin/classes?limit=500", { cache: "no-store" })
-      .then((r) => r.json())
-      .then((j) => {
-        const arr = (j.items || []) as any[];
-        const mapped: ClassItem[] = arr.map((c) => ({
-          id: String(c.id),
-          label: (c.label || c.name || "Classe").trim(),
-          level: (c.level ?? null) ? String(c.level).trim() : null,
-        }));
-        setAllClasses(mapped);
-      })
-      .catch((e) => {
-        console.error("[admin.notes.stats] load classes error", e);
-        setAllClasses([]);
-      });
-  }, []);
+function buildRankMap(rows: Array<{ student_id: string; avg: number | null }>) {
+  const valid = rows
+    .filter((r) => typeof r.avg === "number" && Number.isFinite(r.avg))
+    .map((r) => ({ student_id: r.student_id, avg: Number(r.avg) }))
+    .sort((a, b) => b.avg - a.avg);
 
-  /* Années scolaires */
-  async function loadAcademicYears() {
-    setLoadingYears(true);
-    try {
-      const r = await fetch("/api/admin/institution/academic-years", {
-        cache: "no-store",
-      });
-      const j = await r.json().catch(() => ({} as any));
+  const map = new Map<string, number>();
 
-      if (!r.ok || !j?.ok) {
-        throw new Error(j?.error || "Échec du chargement des années scolaires.");
-      }
+  let lastAvg: number | null = null;
+  let currentRank = 0;
+  let position = 0;
 
-      const items = Array.isArray(j.items) ? j.items : [];
-      const mapped: AcademicYear[] = items.map((y: any) => ({
-        id: String(y.id),
-        code: String(y.code),
-        label: String(y.label || y.code),
-        start_date: y.start_date ? String(y.start_date).slice(0, 10) : "",
-        end_date: y.end_date ? String(y.end_date).slice(0, 10) : "",
-        is_current: !!y.is_current,
-      }));
-      setYears(mapped);
+  for (const row of valid) {
+    position += 1;
 
-      const current = mapped.find((y) => y.is_current) || mapped[mapped.length - 1];
-      if (current) {
-        setSelectedYearCode((prev) => prev || current.code);
-      }
-    } catch (e: any) {
-      console.error("[admin.notes.stats] loadAcademicYears", e);
-      setYears([]);
-    } finally {
-      setLoadingYears(false);
+    if (lastAvg === null || row.avg !== lastAvg) {
+      currentRank = position;
+      lastAvg = row.avg;
     }
+
+    map.set(row.student_id, currentRank);
   }
 
-  /* Périodes d'évaluation */
-  async function loadPeriods(yearCode: string) {
-    if (!yearCode) {
-      setPeriods([]);
-      setSelectedPeriodId("");
+  return map;
+}
+
+function Button(
+  props: React.ButtonHTMLAttributes<HTMLButtonElement> & {
+    tone?: "emerald" | "slate" | "amber";
+  }
+) {
+  const { tone = "emerald", className = "", ...rest } = props;
+
+  const tones = {
+    emerald:
+      "bg-emerald-600 text-white hover:bg-emerald-700 focus:ring-emerald-500/30",
+    slate: "bg-slate-900 text-white hover:bg-slate-800 focus:ring-slate-500/30",
+    amber: "bg-amber-500 text-slate-950 hover:bg-amber-600 focus:ring-amber-500/30",
+  } as const;
+
+  return (
+    <button
+      {...rest}
+      className={[
+        "inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold shadow-sm transition",
+        "focus:outline-none focus:ring-4 disabled:cursor-not-allowed disabled:opacity-50",
+        tones[tone],
+        className,
+      ].join(" ")}
+    />
+  );
+}
+
+function GhostButton(props: React.ButtonHTMLAttributes<HTMLButtonElement>) {
+  const { className = "", ...rest } = props;
+
+  return (
+    <button
+      {...rest}
+      className={[
+        "inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition",
+        "hover:bg-slate-50 focus:outline-none focus:ring-4 focus:ring-slate-400/20 disabled:cursor-not-allowed disabled:opacity-50",
+        className,
+      ].join(" ")}
+    />
+  );
+}
+
+function Select(props: React.SelectHTMLAttributes<HTMLSelectElement>) {
+  const { className = "", ...rest } = props;
+
+  return (
+    <select
+      {...rest}
+      className={[
+        "w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm outline-none transition",
+        "focus:border-emerald-400 focus:ring-4 focus:ring-emerald-500/20 disabled:bg-slate-50 disabled:text-slate-400",
+        className,
+      ].join(" ")}
+    />
+  );
+}
+
+export default function AdminNotesStatsPage() {
+  const [classes, setClasses] = useState<ClassRow[]>([]);
+  const [classesLoading, setClassesLoading] = useState(false);
+  const [selectedClassId, setSelectedClassId] = useState("");
+
+  const [selectedAcademicYear, setSelectedAcademicYear] = useState("");
+  const [periods, setPeriods] = useState<GradePeriod[]>([]);
+  const [periodsLoading, setPeriodsLoading] = useState(false);
+
+  const [subjectOptions, setSubjectOptions] = useState<SubjectOption[]>([]);
+  const [subjectsLoading, setSubjectsLoading] = useState(false);
+  const [subjectsMsg, setSubjectsMsg] = useState<string | null>(null);
+  const [selectedSubjectId, setSelectedSubjectId] = useState("");
+
+  const [matrixRows, setMatrixRows] = useState<MatrixRow[]>([]);
+  const [loadedPeriods, setLoadedPeriods] = useState<GradePeriod[]>([]);
+  const [periodStates, setPeriodStates] = useState<PeriodLoadState[]>([]);
+  const [loadingMatrix, setLoadingMatrix] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  const selectedClass = useMemo(
+    () => classes.find((c) => c.id === selectedClassId) || null,
+    [classes, selectedClassId]
+  );
+
+  const selectedSubject = useMemo(
+    () => subjectOptions.find((s) => s.id === selectedSubjectId) || null,
+    [subjectOptions, selectedSubjectId]
+  );
+
+  const selectedSubjectName = selectedSubject?.name || "Matière";
+
+  const academicYears = useMemo(() => {
+    const set = new Set<string>();
+
+    classes.forEach((c) => c.academic_year && set.add(c.academic_year));
+    periods.forEach((p) => p.academic_year && set.add(p.academic_year));
+
+    return Array.from(set).sort().reverse();
+  }, [classes, periods]);
+
+  const matrixPeriods = useMemo(() => {
+    return periods
+      .filter((p) => p.is_active !== false)
+      .filter((p) => !selectedAcademicYear || p.academic_year === selectedAcademicYear)
+      .filter((p) => !!p.start_date && !!p.end_date)
+      .slice()
+      .sort((a, b) => {
+        const ai = Number(a.order_index ?? 999);
+        const bi = Number(b.order_index ?? 999);
+
+        if (ai !== bi) return ai - bi;
+
+        return String(a.start_date).localeCompare(String(b.start_date));
+      });
+  }, [periods, selectedAcademicYear]);
+
+  const matrixPeriodsKey = useMemo(
+    () =>
+      matrixPeriods
+        .map((p) => `${p.id}:${p.start_date}:${p.end_date}:${p.coeff ?? ""}`)
+        .join("|"),
+    [matrixPeriods]
+  );
+
+  const stats = useMemo(() => {
+    const valid = matrixRows
+      .map((r) => r.annual_avg)
+      .filter((n): n is number => typeof n === "number" && Number.isFinite(n));
+
+    if (!valid.length) {
+      return {
+        count: matrixRows.length,
+        classAvg: null,
+        highest: null,
+        lowest: null,
+      };
+    }
+
+    const sum = valid.reduce((acc, n) => acc + n, 0);
+
+    return {
+      count: matrixRows.length,
+      classAvg: Math.round((sum / valid.length) * 100) / 100,
+      highest: Math.round(Math.max(...valid) * 100) / 100,
+      lowest: Math.round(Math.min(...valid) * 100) / 100,
+    };
+  }, [matrixRows]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadClasses() {
+      setClassesLoading(true);
+      setErrorMsg(null);
+
+      try {
+        const res = await fetch("/api/admin/classes", { cache: "no-store" });
+
+        if (!res.ok) throw new Error(`Erreur classes : ${res.status}`);
+
+        const json = await res.json().catch(() => null);
+
+        const items: ClassRow[] = Array.isArray(json)
+          ? json
+          : Array.isArray(json?.items)
+          ? json.items
+          : [];
+
+        if (cancelled) return;
+
+        setClasses(items);
+
+        if (!selectedClassId && items.length) {
+          setSelectedClassId(items[0].id);
+          if (items[0].academic_year) {
+            setSelectedAcademicYear(items[0].academic_year);
+          }
+        }
+      } catch (e: any) {
+        if (!cancelled) {
+          setErrorMsg(e?.message || "Impossible de charger les classes.");
+        }
+      } finally {
+        if (!cancelled) setClassesLoading(false);
+      }
+    }
+
+    loadClasses();
+
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    const cls = classes.find((c) => c.id === selectedClassId);
+
+    if (cls?.academic_year) {
+      setSelectedAcademicYear(cls.academic_year);
+    }
+  }, [selectedClassId, classes]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadPeriods() {
+      setPeriodsLoading(true);
+      setErrorMsg(null);
+
+      try {
+        const params = new URLSearchParams();
+
+        if (selectedAcademicYear) params.set("academic_year", selectedAcademicYear);
+
+        const url = `/api/admin/institution/grading-periods${
+          params.toString() ? `?${params.toString()}` : ""
+        }`;
+
+        const res = await fetch(url, { cache: "no-store" });
+
+        if (!res.ok) throw new Error(`Erreur périodes : ${res.status}`);
+
+        const json = await res.json().catch(() => null);
+
+        const items: GradePeriod[] = Array.isArray(json)
+          ? json
+          : Array.isArray(json?.items)
+          ? json.items
+          : [];
+
+        if (cancelled) return;
+
+        setPeriods(items);
+
+        if (!selectedAcademicYear && typeof json?.academic_year === "string") {
+          setSelectedAcademicYear(json.academic_year);
+        }
+      } catch (e: any) {
+        if (!cancelled) {
+          setPeriods([]);
+          setErrorMsg(e?.message || "Impossible de charger les périodes.");
+        }
+      } finally {
+        if (!cancelled) setPeriodsLoading(false);
+      }
+    }
+
+    loadPeriods();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedAcademicYear]);
+
+  useEffect(() => {
+    setMatrixRows([]);
+    setLoadedPeriods([]);
+    setPeriodStates([]);
+    setErrorMsg(null);
+  }, [selectedClassId, selectedAcademicYear, selectedSubjectId]);
+
+  useEffect(() => {
+    if (!selectedClassId || !matrixPeriods.length) {
+      setSubjectOptions([]);
+      setSelectedSubjectId("");
+      setSubjectsMsg(null);
       return;
     }
 
-    setLoadingPeriods(true);
-    try {
-      const params = new URLSearchParams();
-      params.set("academic_year", yearCode);
+    loadSubjectOptions();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedClassId, matrixPeriodsKey]);
 
-      const r = await fetch(`/api/admin/institution/grading-periods?${params.toString()}`, {
-        cache: "no-store",
-      });
-      const j = await r.json().catch(() => ({} as any));
+  async function fetchBulletinForPeriod(classId: string, period: GradePeriod) {
+    const params = new URLSearchParams();
 
-      if (!r.ok || !j?.ok) {
-        throw new Error(j?.error || "Échec du chargement des périodes d'évaluation.");
-      }
+    params.set("class_id", classId);
+    params.set("from", period.start_date);
+    params.set("to", period.end_date);
 
-      const items = Array.isArray(j.items) ? j.items : [];
-      const mapped: GradingPeriod[] = items.map((p: any, idx: number) => ({
-        id: String(p.id),
-        code: String(p.code || ""),
-        label: String(p.label || ""),
-        short_label: String(p.short_label || p.label || ""),
-        start_date: p.start_date ? String(p.start_date).slice(0, 10) : null,
-        end_date: p.end_date ? String(p.end_date).slice(0, 10) : null,
-        order_index: Number(p.order_index ?? idx + 1),
-        is_active: p.is_active !== false,
-      }));
+    // RÈGLE OFFICIELLE :
+    // La matrice matière ne travaille que sur les notes publiées.
+    // Aucun filtre brouillon / publication n'est exposé dans l'interface.
+    params.set("published", "true");
 
-      mapped.sort((a, b) => a.order_index - b.order_index);
-      setPeriods(mapped);
-
-      const def =
-        mapped.find((p) => p.is_active && p.start_date && p.end_date) || mapped[0];
-
-      if (def) {
-        setSelectedPeriodId(def.id);
-        if (def.start_date) setFrom(def.start_date);
-        if (def.end_date) setTo(def.end_date);
-      }
-    } catch (e: any) {
-      console.error("[admin.notes.stats] loadPeriods", e);
-      setPeriods([]);
-      setSelectedPeriodId("");
-    } finally {
-      setLoadingPeriods(false);
-    }
-  }
-
-  function handlePeriodChange(id: string) {
-    setSelectedPeriodId(id);
-    const p = periods.find((x) => x.id === id);
-    if (p) {
-      if (p.start_date) setFrom(p.start_date);
-      if (p.end_date) setTo(p.end_date);
-    }
-  }
-
-  /* Effet initial : années scolaires */
-  useEffect(() => {
-    loadAcademicYears();
-  }, []);
-
-  /* Quand l'année change, recharger les périodes */
-  useEffect(() => {
-    if (selectedYearCode) {
-      loadPeriods(selectedYearCode);
-    } else {
-      setPeriods([]);
-      setSelectedPeriodId("");
-    }
-  }, [selectedYearCode]);
-
-  /* Niveaux possibles, d'après les classes */
-  const levels = useMemo(() => {
-    const s = new Set<string>();
-    for (const c of allClasses) if (c.level) s.add(c.level);
-    return Array.from(s).sort((a, b) =>
-      a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" })
-    );
-  }, [allClasses]);
-
-  const classesForLevel = useMemo(() => {
-    if (!matrixLevel) return [];
-    return allClasses
-      .filter((c) => c.level === matrixLevel)
-      .sort((a, b) =>
-        a.label.localeCompare(b.label, undefined, {
-          numeric: true,
-          sensitivity: "base",
-        })
-      );
-  }, [allClasses, matrixLevel]);
-
-  /* Charger les stats par classe × matière (pour la section 2) */
-  async function loadClassSubjectStatsFallback(): Promise<ClassSubjectStat[]> {
-    const qs = new URLSearchParams();
-    if (from) qs.set("from", from);
-    if (to) qs.set("to", to);
-    if (status === "published") qs.set("published", "true");
-    if (status === "draft") qs.set("published", "false");
-    qs.set("limit", "200");
-
-    const res = await fetch("/api/admin/notes/evaluations?" + qs.toString(), {
+    const res = await fetch(`/api/admin/grades/bulletin?${params.toString()}`, {
       cache: "no-store",
     });
-    const json = await res.json().catch(() => ({} as any));
 
-    if (!res.ok || !json?.ok) {
-      return [];
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new Error(text || `Erreur bulletin ${res.status}`);
     }
 
-    const items = Array.isArray(json.items) ? json.items : [];
-    const acc = new Map<
-      string,
-      {
-        class_id: string;
-        class_label: string;
-        level: string | null;
-        subject_id: string;
-        subject_name: string | null;
-        evals_count: number;
-        notes_count: number;
-        weighted_sum: number;
-        weighted_den: number;
-      }
-    >();
+    const json = (await res.json().catch(() => null)) as BulletinResponse | null;
 
-    for (const it of items) {
-      const classId = String(it.class_id || "").trim();
-      const subjectId = String(it.subject_id || "").trim();
-      if (!classId || !subjectId) continue;
+    if (!json?.ok) throw new Error("Réponse bulletin invalide.");
 
-      const key = `${classId}::${subjectId}`;
-      const scoresCount = Number(it?.stats?.scores_count || 0);
-      const avg20 =
-        it?.stats?.avg_score_20 == null ? null : Number(it.stats.avg_score_20);
-
-      let row = acc.get(key);
-      if (!row) {
-        row = {
-          class_id: classId,
-          class_label: String(it.class_label || "Classe"),
-          level: it.level == null ? null : String(it.level),
-          subject_id: subjectId,
-          subject_name: it.subject_name ? String(it.subject_name) : "Matière",
-          evals_count: 0,
-          notes_count: 0,
-          weighted_sum: 0,
-          weighted_den: 0,
-        };
-        acc.set(key, row);
-      }
-
-      row.evals_count += 1;
-      row.notes_count += scoresCount;
-
-      if (avg20 != null && Number.isFinite(avg20) && scoresCount > 0) {
-        row.weighted_sum += avg20 * scoresCount;
-        row.weighted_den += scoresCount;
-      }
-    }
-
-    return Array.from(acc.values())
-      .map((r) => ({
-        class_id: r.class_id,
-        class_label: r.class_label,
-        level: r.level,
-        subject_id: r.subject_id,
-        subject_name: r.subject_name,
-        evals_count: r.evals_count,
-        notes_count: r.notes_count,
-        avg_score_20: r.weighted_den > 0 ? r.weighted_sum / r.weighted_den : null,
-      }))
-      .sort((a, b) => {
-        const c = a.class_label.localeCompare(b.class_label, undefined, {
-          numeric: true,
-          sensitivity: "base",
-        });
-        if (c !== 0) return c;
-        return (a.subject_name || "").localeCompare(b.subject_name || "", undefined, {
-          numeric: true,
-          sensitivity: "base",
-        });
-      });
+    return json;
   }
 
-  async function fetchOfficialBulletin(classId: string): Promise<BulletinResponse> {
-    if (!from || !to) {
-      throw new Error("Veuillez sélectionner une période avec une date de début et une date de fin.");
+  async function loadSubjectOptions() {
+    setSubjectsLoading(true);
+    setSubjectsMsg(null);
+    setSubjectOptions([]);
+
+    if (!selectedClassId) {
+      setSelectedSubjectId("");
+      setSubjectsLoading(false);
+      return;
     }
 
-    const qs = new URLSearchParams();
-    qs.set("class_id", classId);
-    qs.set("from", from);
-    qs.set("to", to);
-
-    const res = await fetch(`/api/admin/grades/bulletin?${qs.toString()}`, {
-      cache: "no-store",
-    });
-    const json = await res.json().catch(() => ({} as any));
-
-    if (!res.ok || !json?.ok) {
-      throw new Error(json?.error || `BULLETIN_HTTP_${res.status}`);
+    if (!matrixPeriods.length) {
+      setSelectedSubjectId("");
+      setSubjectsMsg("Aucune période active avec dates n’est configurée.");
+      setSubjectsLoading(false);
+      return;
     }
-
-    return json as BulletinResponse;
-  }
-
-  function findRawSubjectStat(
-    classId: string,
-    subjectId: string,
-    subjectName: string | null | undefined,
-    rows: ClassSubjectStat[] = byClassSubject
-  ): ClassSubjectStat | null {
-    return (
-      rows.find(
-        (r) =>
-          r.class_id === classId &&
-          String(r.subject_id || "").trim() === String(subjectId || "").trim()
-      ) ||
-      rows.find(
-        (r) =>
-          r.class_id === classId &&
-          subjectNamesMatch(r.subject_name, subjectName || subjectId)
-      ) ||
-      null
-    );
-  }
-
-  async function refreshStats() {
-    setStatsLoading(true);
-    setStatsError(null);
-    setByClassSubject([]);
 
     try {
-      if (status === "draft") {
-        setStatsError(
-          "La matrice officielle s'appuie sur les bulletins. Les brouillons ne sont donc pas utilisés ici. Choisissez « Toutes les évaluations » ou « Publiées »."
-        );
-        return;
-      }
+      const map = new Map<string, SubjectOption>();
 
-      if (!from || !to) {
-        setStatsError("Veuillez sélectionner une période complète avant d'actualiser.");
-        return;
-      }
-
-      // On conserve les anciennes routes uniquement pour récupérer les volumes
-      // (nombre d'évaluations / notes). Les moyennes affichées viennent du bulletin.
-      let rawRows: ClassSubjectStat[] = [];
-      try {
-        const qs = new URLSearchParams();
-        qs.set("from", from);
-        qs.set("to", to);
-        qs.set("published", "true");
-
-        const res = await fetch("/api/admin/notes/stats?" + qs.toString(), {
-          cache: "no-store",
-        });
-        const json = (await res.json().catch(() => ({}))) as StatsOk | StatsErr | any;
-        if (res.ok && json?.ok && Array.isArray(json.by_class_subject)) {
-          rawRows = json.by_class_subject as ClassSubjectStat[];
-        }
-      } catch (e) {
-        console.warn("[admin.notes.stats] raw stats ignored; bulletin remains source", e);
-      }
-
-      if (!rawRows.length) {
-        rawRows = await loadClassSubjectStatsFallback();
-      }
-
-      const classIds = Array.from(
-        new Set(
-          (rawRows.length ? rawRows.map((r) => r.class_id) : allClasses.map((c) => c.id))
-            .map((id) => String(id || "").trim())
-            .filter(Boolean)
-        )
-      );
-
-      const officialRows: ClassSubjectStat[] = [];
-
-      for (const classId of classIds) {
+      for (const period of matrixPeriods) {
         try {
-          const bulletin = await fetchOfficialBulletin(classId);
-          const classInfo = allClasses.find((c) => c.id === classId) || null;
+          const bulletin = await fetchBulletinForPeriod(selectedClassId, period);
           const subjects = Array.isArray(bulletin.subjects) ? bulletin.subjects : [];
           const items = Array.isArray(bulletin.items) ? bulletin.items : [];
 
           for (const subject of subjects) {
+            const subjectId = String(subject.subject_id || "").trim();
+
+            if (!subjectId) continue;
+
             const values = items
-              .map((item) => toFiniteNumber(findSubjectCell(item, subject)?.avg20))
-              .filter((v): v is number => v !== null);
+              .map((item) => cleanAvg(findSubjectCell(item, subject)?.avg20))
+              .filter((v): v is number => typeof v === "number" && Number.isFinite(v));
 
             if (!values.length) continue;
 
-            const raw = findRawSubjectStat(
-              classId,
-              subject.subject_id,
-              subject.subject_name,
-              rawRows
-            );
+            const current = map.get(subjectId);
 
-            officialRows.push({
-              class_id: classId,
-              class_label:
-                raw?.class_label ||
-                bulletin.class?.label ||
-                classInfo?.label ||
-                "Classe",
-              level: raw?.level ?? classInfo?.level ?? null,
-              subject_id: String(subject.subject_id),
-              subject_name: subject.subject_name || raw?.subject_name || "Matière",
-              evals_count: raw?.evals_count ?? 0,
-              notes_count: raw?.notes_count ?? values.length,
-              avg_score_20: avgOf(values),
+            map.set(subjectId, {
+              id: subjectId,
+              name: subject.subject_name || current?.name || "Matière",
+              notes_count: (current?.notes_count || 0) + values.length,
             });
           }
-        } catch (e) {
-          console.warn("[admin.notes.stats] bulletin class ignored", classId, e);
+        } catch (err) {
+          console.warn("[admin.notes.stats] période ignorée pour matières", period.id, err);
         }
       }
 
-      officialRows.sort((a, b) => {
-        const c = (a.class_label || "").localeCompare(b.class_label || "", undefined, {
-          numeric: true,
+      const options = Array.from(map.values()).sort((a, b) =>
+        a.name.localeCompare(b.name, undefined, {
           sensitivity: "base",
-        });
-        if (c !== 0) return c;
-        return (a.subject_name || "").localeCompare(b.subject_name || "", undefined, {
           numeric: true,
-          sensitivity: "base",
-        });
+        })
+      );
+
+      setSubjectOptions(options);
+
+      setSelectedSubjectId((prev) => {
+        if (prev && options.some((o) => o.id === prev)) return prev;
+        return options[0]?.id || "";
       });
 
-      setByClassSubject(officialRows);
-
-      if (!officialRows.length) {
-        setStatsError(
-          "Aucune moyenne officielle n'a été trouvée dans les bulletins pour cette période. Vérifiez la classe, la période et les évaluations publiées."
+      if (!options.length) {
+        setSubjectsMsg(
+          "Aucune matière avec moyenne publiée n’a été trouvée pour cette classe et cette année."
         );
       }
     } catch (e: any) {
-      console.error("[admin.notes.stats] refreshStats error", e);
-      setByClassSubject([]);
-      setStatsError(e?.message || "Erreur de chargement des statistiques officielles.");
+      setSubjectOptions([]);
+      setSelectedSubjectId("");
+      setSubjectsMsg(e?.message || "Impossible de charger les matières.");
     } finally {
-      setStatsLoading(false);
+      setSubjectsLoading(false);
     }
   }
 
-  const currentYear = useMemo(
-    () => years.find((y) => y.code === selectedYearCode) || null,
-    [years, selectedYearCode]
-  );
+  async function loadMatrix() {
+    setErrorMsg(null);
+    setMatrixRows([]);
+    setLoadedPeriods([]);
 
-  const currentPeriod = useMemo(
-    () => periods.find((p) => p.id === selectedPeriodId) || null,
-    [periods, selectedPeriodId]
-  );
-
-  const periodLabel = useMemo(() => {
-    const parts: string[] = [];
-
-    if (currentYear) {
-      parts.push(`Année scolaire : ${currentYear.label}`);
-    }
-    if (currentPeriod) {
-      const label = currentPeriod.short_label || currentPeriod.label || currentPeriod.code;
-      let dates = "";
-      if (currentPeriod.start_date && currentPeriod.end_date) {
-        dates = ` (${df.format(new Date(currentPeriod.start_date))} – ${df.format(
-          new Date(currentPeriod.end_date)
-        )})`;
-      }
-      parts.push(`Période : ${label}${dates}`);
-    } else if (from || to) {
-      try {
-        if (from && to) {
-          parts.push(`Du ${df.format(new Date(from))} au ${df.format(new Date(to))}`);
-        } else if (from && !to) {
-          parts.push(`À partir du ${df.format(new Date(from))}`);
-        } else if (!from && to) {
-          parts.push(`Jusqu'au ${df.format(new Date(to))}`);
-        }
-      } catch {
-        // ignore parse errors
-      }
-    }
-
-    if (!parts.length) {
-      return "Toutes les évaluations enregistrées";
-    }
-    return parts.join(" — ");
-  }, [currentYear, currentPeriod, from, to]);
-
-  const currentYearLabelSafe = currentYear?.label ?? "";
-  const currentPeriodLabelSafe =
-    currentPeriod?.short_label || currentPeriod?.label || currentPeriod?.code || "";
-  const currentPeriodStart = currentPeriod?.start_date || null;
-  const currentPeriodEnd = currentPeriod?.end_date || null;
-
-  /* ───────── Section 2 : options de matières + classes ───────── */
-
-  const subjectOptions = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const cs of byClassSubject) {
-      if (!cs.subject_id) continue;
-      if (!map.has(cs.subject_id)) {
-        map.set(cs.subject_id, cs.subject_name || "Matière");
-      }
-    }
-    return Array.from(map.entries()).map(([id, name]) => ({ id, name }));
-  }, [byClassSubject]);
-
-  const subjectView: SubjectView | null = useMemo(() => {
-    if (!selectedSubjectId) return null;
-
-    const filteredRows = byClassSubject.filter(
-      (cs) =>
-        cs.subject_id === selectedSubjectId &&
-        (!subjectLevelFilter || cs.level === subjectLevelFilter)
-    );
-    if (!filteredRows.length) return null;
-
-    const subjectName = filteredRows[0].subject_name || "Matière";
-
-    let totalNotes = 0;
-    let totalEvals = 0;
-    let sumWeighted = 0;
-    let denWeighted = 0;
-    let min: number | null = null;
-    let max: number | null = null;
-    const dist = {
-      lt5: 0,
-      between5_10: 0,
-      between10_12: 0,
-      between12_15: 0,
-      gte15: 0,
-    };
-
-    for (const r of filteredRows) {
-      totalNotes += r.notes_count;
-      totalEvals += r.evals_count;
-      if (r.avg_score_20 != null && r.notes_count > 0) {
-        const avg = r.avg_score_20;
-        sumWeighted += avg * r.notes_count;
-        denWeighted += r.notes_count;
-
-        if (min == null || avg < min) min = avg;
-        if (max == null || avg > max) max = avg;
-
-        if (avg < 5) dist.lt5++;
-        else if (avg < 10) dist.between5_10++;
-        else if (avg < 12) dist.between10_12++;
-        else if (avg < 15) dist.between12_15++;
-        else dist.gte15++;
-      }
-    }
-
-    const avg = denWeighted ? sumWeighted / denWeighted : null;
-
-    return {
-      subject_id: selectedSubjectId,
-      subject_name: subjectName,
-      global: {
-        avg_20: avg,
-        min_20: min,
-        max_20: max,
-        evals_count: totalEvals,
-        notes_count: totalNotes,
-        dist_classes: dist,
-      },
-      rows: filteredRows.sort((a, b) =>
-        (a.class_label || "").localeCompare(b.class_label || "", undefined, {
-          numeric: true,
-          sensitivity: "base",
-        })
-      ),
-    };
-  }, [selectedSubjectId, subjectLevelFilter, byClassSubject]);
-
-  const subjectClasses = useMemo(() => {
-    if (!selectedSubjectId) return [];
-    const map = new Map<string, { id: string; label: string; level: string | null }>();
-    for (const cs of byClassSubject) {
-      if (cs.subject_id !== selectedSubjectId) continue;
-      if (subjectLevelFilter && cs.level !== subjectLevelFilter) continue;
-      if (!map.has(cs.class_id)) {
-        map.set(cs.class_id, {
-          id: cs.class_id,
-          label: cs.class_label,
-          level: cs.level ?? null,
-        });
-      }
-    }
-    return Array.from(map.values()).sort((a, b) =>
-      (a.label || "").localeCompare(b.label || "", undefined, {
-        numeric: true,
-        sensitivity: "base",
-      })
-    );
-  }, [selectedSubjectId, subjectLevelFilter, byClassSubject]);
-
-  /* ───────── Core : calcul de matrice pour UNE classe (multi-disciplines) ───────── */
-
-  const computeClassMatrixForClass = async (
-    classId: string
-  ): Promise<ClassMatrixComputed | null> => {
-    const bulletin = await fetchOfficialBulletin(classId);
-    const classInfo = allClasses.find((c) => c.id === classId) || null;
-    const items = Array.isArray(bulletin.items) ? bulletin.items : [];
-    const bulletinSubjects = Array.isArray(bulletin.subjects) ? bulletin.subjects : [];
-
-    const subjectsForClass = bulletinSubjects
-      .filter((subject) =>
-        items.some((item) => toFiniteNumber(findSubjectCell(item, subject)?.avg20) !== null)
-      )
-      .map((subject) => ({
-        subject_id: String(subject.subject_id),
-        subject_name: subject.subject_name || "Matière",
-      }))
-      .sort((a, b) =>
-        a.subject_name.localeCompare(b.subject_name, undefined, {
-          numeric: true,
-          sensitivity: "base",
-        })
-      );
-
-    if (!items.length) {
-      throw new Error(
-        "Aucun élève n'a été trouvé dans le bulletin officiel pour cette classe sur cette période."
-      );
-    }
-
-    if (!subjectsForClass.length) {
-      throw new Error(
-        "Aucune moyenne par matière n'a été trouvée dans le bulletin officiel pour cette classe sur cette période."
-      );
-    }
-
-    const studentsList: MatrixStudent[] = items
-      .map((item) => ({
-        student_id: item.student_id,
-        full_name: item.full_name || "Élève",
-        matricule: item.matricule ?? null,
-      }))
-      .sort((a, b) =>
-        a.full_name.localeCompare(b.full_name, undefined, {
-          sensitivity: "base",
-          numeric: true,
-        })
-      );
-
-    const averages: ClassMatrixComputed["averages"] = {};
-
-    for (const item of items) {
-      averages[item.student_id] = {};
-      for (const subject of subjectsForClass) {
-        const cell = findSubjectCell(item, subject);
-        const avg = toFiniteNumber(cell?.avg20);
-        averages[item.student_id][subject.subject_id] = {
-          avg_20: avg,
-          nb_evals: 0,
-          nb_notes: avg === null ? 0 : 1,
-        };
-      }
-    }
-
-    const generalAverages: Record<string, number | null> = {};
-    const generalValues: number[] = [];
-
-    for (const item of items) {
-      const avg = toFiniteNumber(item.general_avg);
-      generalAverages[item.student_id] = avg;
-      if (avg !== null) generalValues.push(avg);
-    }
-
-    const generalRanksRaw = computeRanks(generalAverages);
-    const generalRanks: Record<string, number | null> = {};
-    for (const st of studentsList) {
-      generalRanks[st.student_id] = generalRanksRaw[st.student_id] ?? null;
-    }
-
-    const ranksBySubject: Record<string, Record<string, number | null>> = {};
-    const subjectStats: SubjectMatrixStat[] = [];
-
-    for (const subject of subjectsForClass) {
-      const vals: Record<string, number | null> = {};
-      const subjectValues: number[] = [];
-      let hasApiRank = false;
-      const apiRanks: Record<string, number | null> = {};
-
-      for (const item of items) {
-        const cell = findSubjectCell(item, subject);
-        const avg = toFiniteNumber(cell?.avg20);
-        vals[item.student_id] = avg;
-        if (avg !== null) subjectValues.push(avg);
-
-        const apiRank = toFiniteNumber(cell?.subject_rank);
-        apiRanks[item.student_id] = apiRank;
-        if (apiRank !== null) hasApiRank = true;
-      }
-
-      const computedRanks = computeRanks(vals);
-      const finalRanks: Record<string, number | null> = {};
-      for (const st of studentsList) {
-        finalRanks[st.student_id] =
-          (hasApiRank ? apiRanks[st.student_id] : null) ?? computedRanks[st.student_id] ?? null;
-      }
-      ranksBySubject[subject.subject_id] = finalRanks;
-
-      const raw = findRawSubjectStat(classId, subject.subject_id, subject.subject_name);
-      subjectStats.push({
-        subject_id: subject.subject_id,
-        subject_name: subject.subject_name,
-        evals_count: raw?.evals_count ?? 0,
-        notes_count: raw?.notes_count ?? subjectValues.length,
-        avg_20_class: avgOf(subjectValues),
-      });
-    }
-
-    subjectStats.sort((a, b) => b.notes_count - a.notes_count);
-
-    return {
-      class_id: classId,
-      class_label: bulletin.class?.label || classInfo?.label || "Classe",
-      level: classInfo?.level ?? null,
-      students: studentsList,
-      subjects: subjectsForClass,
-      averages,
-      generalAverages,
-      global: {
-        class_avg_20: avgOf(generalValues),
-        class_min_20: generalValues.length ? Math.min(...generalValues) : null,
-        class_max_20: generalValues.length ? Math.max(...generalValues) : null,
-        dist: distFromValues(generalValues),
-        subjectStats,
-      },
-      ranks: {
-        general: generalRanks,
-        bySubject: ranksBySubject,
-      },
-    };
-  };
-
-  /* ───────── Section 1 : charger la matrice pour la classe choisie ───────── */
-
-  async function loadClassMatrix() {
-    if (!matrixClassId) {
-      setMatrixError("Choisissez d'abord une classe.");
+    if (!selectedClassId) {
+      setErrorMsg("Veuillez sélectionner une classe.");
       return;
     }
-    setMatrixLoading(true);
-    setMatrixError(null);
-    setClassMatrix(null);
-    try {
-      const m = await computeClassMatrixForClass(matrixClassId);
-      setClassMatrix(m);
-    } catch (e: any) {
-      console.error("[admin.notes.stats] loadClassMatrix error", e);
-      setMatrixError(
-        e?.message || "Erreur lors du calcul de la matrice pour cette classe."
-      );
-      setClassMatrix(null);
-    } finally {
-      setMatrixLoading(false);
-    }
-  }
 
-  /* ───────── Calcul de matrice pour UNE matière dans UNE classe ───────── */
-
-  const computeSubjectClassMatrix = async (
-    classId: string,
-    subjectId: string
-  ): Promise<SubjectClassMatrix | null> => {
-    const bulletin = await fetchOfficialBulletin(classId);
-    const classInfo = allClasses.find((c) => c.id === classId) || null;
-    const items = Array.isArray(bulletin.items) ? bulletin.items : [];
-    const subjects = Array.isArray(bulletin.subjects) ? bulletin.subjects : [];
-    const selectedRow = byClassSubject.find(
-      (cs) => String(cs.subject_id || "").trim() === String(subjectId || "").trim()
-    );
-
-    const targetSubject =
-      subjects.find((s) => String(s.subject_id || "").trim() === String(subjectId || "").trim()) ||
-      subjects.find((s) => subjectNamesMatch(s.subject_name, selectedRow?.subject_name || subjectId)) ||
-      null;
-
-    if (!targetSubject) {
-      throw new Error(
-        "Cette matière n'a pas été trouvée dans le bulletin officiel pour cette classe sur cette période."
-      );
-    }
-
-    const students: MatrixStudent[] = items
-      .map((item) => ({
-        student_id: item.student_id,
-        full_name: item.full_name || "Élève",
-        matricule: item.matricule ?? null,
-      }))
-      .sort((a, b) =>
-        a.full_name.localeCompare(b.full_name, undefined, {
-          sensitivity: "base",
-          numeric: true,
-        })
-      );
-
-    const averages: SubjectClassMatrix["averages"] = {};
-    const rankValues: Record<string, number | null> = {};
-    const apiRanks: Record<string, number | null> = {};
-    let hasApiRank = false;
-    const values: number[] = [];
-    const teacherNamesSet = new Set<string>();
-
-    for (const item of items) {
-      const cell = findSubjectCell(item, targetSubject);
-      const avg = toFiniteNumber(cell?.avg20);
-      const apiRank = toFiniteNumber(cell?.subject_rank);
-
-      if (avg !== null) values.push(avg);
-      if (apiRank !== null) hasApiRank = true;
-      if (cell?.teacher_name && String(cell.teacher_name).trim()) {
-        teacherNamesSet.add(String(cell.teacher_name).trim());
-      }
-
-      rankValues[item.student_id] = avg;
-      apiRanks[item.student_id] = apiRank;
-      averages[item.student_id] = {
-        avg_20: avg,
-        nb_evals: 0,
-        nb_notes: avg === null ? 0 : 1,
-        rank: null,
-      };
-    }
-
-    const computedRanks = computeRanks(rankValues);
-    for (const st of students) {
-      averages[st.student_id].rank =
-        (hasApiRank ? apiRanks[st.student_id] : null) ?? computedRanks[st.student_id] ?? null;
-    }
-
-    const raw = findRawSubjectStat(classId, targetSubject.subject_id, targetSubject.subject_name);
-    const teacherNames = teacherNamesSet.size
-      ? Array.from(teacherNamesSet).sort((a, b) =>
-          a.localeCompare(b, undefined, { sensitivity: "base" })
-        ).join(" / ")
-      : null;
-
-    return {
-      class_id: classId,
-      class_label: bulletin.class?.label || classInfo?.label || raw?.class_label || "Classe",
-      level: raw?.level ?? classInfo?.level ?? null,
-      subject_id: String(targetSubject.subject_id),
-      subject_name: targetSubject.subject_name || raw?.subject_name || "Matière",
-      teacher_names: teacherNames,
-      students,
-      averages,
-      global: {
-        class_avg_20: avgOf(values),
-        class_min_20: values.length ? Math.min(...values) : null,
-        class_max_20: values.length ? Math.max(...values) : null,
-        dist: distFromValues(values),
-        evals_count: raw?.evals_count ?? 0,
-        notes_count: raw?.notes_count ?? values.length,
-      },
-    };
-  };
-
-  async function loadSubjectClassMatrix() {
     if (!selectedSubjectId) {
-      setSubjectClassError("Choisissez d'abord une matière.");
-      return;
-    }
-    if (!subjectClassId) {
-      setSubjectClassError("Choisissez d'abord une classe.");
+      setErrorMsg("Veuillez sélectionner une matière.");
       return;
     }
 
-    setSubjectClassLoading(true);
-    setSubjectClassError(null);
-    setSubjectClassMatrix(null);
-    try {
-      const m = await computeSubjectClassMatrix(subjectClassId, selectedSubjectId);
-      setSubjectClassMatrix(m);
-    } catch (e: any) {
-      console.error("[admin.notes.stats] loadSubjectClassMatrix error", e);
-      setSubjectClassError(
-        e?.message || "Erreur lors du calcul de la matrice pour cette matière."
-      );
-      setSubjectClassMatrix(null);
-    } finally {
-      setSubjectClassLoading(false);
-    }
-  }
-
-  /* ───────── Export CSV : matrice d'une classe (multi-disciplines) ───────── */
-
-  function exportClassMatrixCsv() {
-    if (!classMatrix) {
-      setMatrixError(
-        "Aucune matrice calculée pour la classe sélectionnée. Cliquez d'abord sur « Calculer »."
-      );
+    if (!matrixPeriods.length) {
+      setErrorMsg("Aucune période active avec dates n’est configurée pour cette année scolaire.");
       return;
     }
 
-    const sep = ";";
-    const {
-      class_label,
-      level,
-      students,
-      subjects,
-      averages,
-      generalAverages,
-      ranks,
-    } = classMatrix;
-    const safe = (s: string | null | undefined) => (s ?? "").replace(/"/g, '""');
+    setLoadingMatrix(true);
+    setLoadedPeriods(matrixPeriods);
 
-    const rows: string[] = [];
-
-    if (currentYearLabelSafe) {
-      rows.push(`Année scolaire;${safe(currentYearLabelSafe)}`);
-    }
-    if (currentPeriodLabelSafe) {
-      const dates =
-        currentPeriodStart && currentPeriodEnd
-          ? `;${df.format(new Date(currentPeriodStart))};${df.format(
-              new Date(currentPeriodEnd)
-            )}`
-          : "";
-      rows.push(`Période;${safe(currentPeriodLabelSafe)}${dates}`);
-    } else if (from || to) {
-      rows.push(
-        `Période;${from ? df.format(new Date(from)) : ""};${
-          to ? df.format(new Date(to)) : ""
-        }`
-      );
-    }
-
-    rows.push(
-      `Classe;${safe(class_label)}${level ? `;Niveau;${safe(level)}` : ""}`
+    setPeriodStates(
+      matrixPeriods.map((p) => ({
+        period_id: p.id,
+        label: periodLabel(p),
+        status: "pending",
+      }))
     );
-    rows.push("");
 
-    const header = [
-      "Eleve",
-      "Matricule",
-      ...subjects.flatMap((s) => [
-        `MOY ${safe(s.subject_name)} /20`,
-        `Rang ${safe(s.subject_name)}`,
-      ]),
-      "Moyenne_generale_20",
-      "Rang_general",
-    ];
-    rows.push(header.join(sep));
+    try {
+      const students = new Map<string, MatrixRow>();
 
-    for (const st of students) {
-      const perSubj = averages[st.student_id] || {};
-      const cols: string[] = [];
+      const periodResults: Array<{
+        period: GradePeriod;
+        items: BulletinItem[];
+        subject: BulletinSubject;
+        ranks: Map<string, number>;
+      }> = [];
 
-      cols.push(`"${safe(st.full_name)}"`);
-      cols.push(`"${safe(st.matricule)}"`);
+      for (const period of matrixPeriods) {
+        try {
+          const bulletin = await fetchBulletinForPeriod(selectedClassId, period);
+          const subjects = Array.isArray(bulletin.subjects) ? bulletin.subjects : [];
+          const items = Array.isArray(bulletin.items) ? bulletin.items : [];
 
-      for (const subj of subjects) {
-        const cell = perSubj[subj.subject_id];
-        const avg = cell?.avg_20 ?? null;
-        const rMap = ranks.bySubject[subj.subject_id] || {};
-        const r = rMap[st.student_id] ?? null;
+          const subject = findBulletinSubject(
+            subjects,
+            selectedSubjectId,
+            selectedSubjectName
+          );
 
-        cols.push(avg == null ? "" : nf.format(avg).replace(".", ","));
-        cols.push(r == null ? "" : String(r));
-      }
-
-      const gen = generalAverages[st.student_id] ?? null;
-      const rGen = ranks.general[st.student_id] ?? null;
-      cols.push(gen == null ? "" : nf.format(gen).replace(".", ","));
-      cols.push(rGen == null ? "" : String(rGen));
-
-      rows.push(cols.join(sep));
-    }
-
-    const blob = new Blob([rows.join("\n")], {
-      type: "text/csv;charset=utf-8;",
-    });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    const now = new Date();
-    const y = now.getFullYear();
-    const m = String(now.getMonth() + 1).padStart(2, "0");
-    const d = String(now.getDate()).padStart(2, "0");
-    a.href = url;
-    a.download = `notes_moyennes_classe_${class_label}_${y}${m}${d}.csv`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-  }
-
-  /* ───────── Export PDF : matrice d'une classe (multi-disciplines) ───────── */
-
-  function exportClassMatrixPdf() {
-    if (typeof window === "undefined" || !classMatrix) return;
-
-    const {
-      class_label,
-      level,
-      students,
-      subjects,
-      averages,
-      generalAverages,
-      global,
-      ranks,
-    } = classMatrix;
-
-    const yearHtml = currentYearLabelSafe
-      ? `<span><strong>Année scolaire :</strong> ${currentYearLabelSafe}</span>`
-      : `<span>&nbsp;</span>`;
-
-    const levelHtml = `<span><strong>Niveau :</strong> ${level ?? "—"}</span>`;
-    const classHtml = `<span><strong>Classe :</strong> ${class_label}</span>`;
-
-    const periodHtml = currentPeriodLabelSafe
-      ? `<span><strong>Période :</strong> ${currentPeriodLabelSafe}${
-          currentPeriodStart && currentPeriodEnd
-            ? ` (${df.format(new Date(currentPeriodStart))} – ${df.format(
-                new Date(currentPeriodEnd)
-              )})`
-            : ""
-        }</span>`
-      : `<span><strong>Période :</strong> ${
-          from ? df.format(new Date(from)) : "début"
-        } – ${to ? df.format(new Date(to)) : "aujourd'hui"}</span>`;
-
-    const tableHeader = `
-      <tr>
-        <th style="text-align:left;padding:4px;border:1px solid #ddd;">Élève</th>
-        ${subjects
-          .map(
-            (s) => `
-          <th colspan="2" style="text-align:center;padding:4px;border:1px solid #ddd;">
-            ${s.subject_name || "Matière"}
-          </th>
-        `
-          )
-          .join("")}
-        <th colspan="2" style="text-align:center;padding:4px;border:1px solid #ddd;">
-          Moyenne générale
-        </th>
-      </tr>
-      <tr>
-        ${[0]
-          .map(
-            () =>
-              `<th style="text-align:left;padding:4px;border:1px solid #ddd;"></th>`
-          )
-          .join("")}
-        ${subjects
-          .map(
-            () => `
-          <th style="text-align:right;padding:4px;border:1px solid #ddd;">MOY</th>
-          <th style="text-align:right;padding:4px;border:1px solid #ddd;">Rang</th>
-        `
-          )
-          .join("")}
-        <th style="text-align:right;padding:4px;border:1px solid #ddd;">MOY</th>
-        <th style="text-align:right;padding:4px;border:1px solid #ddd;">Rang</th>
-      </tr>
-    `;
-
-    const tableRows = students
-      .map((st) => {
-        const perSubj = averages[st.student_id] || {};
-        const gen = generalAverages[st.student_id] ?? null;
-        const rGen = ranks.general[st.student_id] ?? null;
-        const generalRankLabel = formatRank(rGen);
-
-        const cells = subjects
-          .map((s) => {
-            const cell = perSubj[s.subject_id];
-            const avg = cell?.avg_20 ?? null;
-            const rMap = ranks.bySubject[s.subject_id] || {};
-            const r = rMap[st.student_id] ?? null;
-            const rankLabel = formatRank(r);
-
-            return `
-              <td style="text-align:right;padding:4px;border:1px solid #ddd;">${
-                avg == null ? "—" : nf.format(avg)
-              }</td>
-              <td style="text-align:right;padding:4px;border:1px solid #ddd;">${rankLabel}</td>
-            `;
-          })
-          .join("");
-
-        const nameBlock = `
-          <div style="display:flex;flex-direction:column;">
-            <span style="font-weight:600;">${st.full_name}</span>
-            <span style="font-size:10px;color:#6b7280;">${st.matricule ?? ""}</span>
-          </div>
-        `;
-
-        return `
-          <tr>
-            <td style="padding:4px;border:1px solid #ddd;">${nameBlock}</td>
-            ${cells}
-            <td style="text-align:right;padding:4px;border:1px solid #ddd;">${
-              gen == null ? "—" : nf.format(gen)
-            }</td>
-            <td style="text-align:right;padding:4px;border:1px solid #ddd;">${generalRankLabel}</td>
-          </tr>
-        `;
-      })
-      .join("");
-
-    const html = `
-      <!doctype html>
-      <html>
-        <head>
-          <meta charset="utf-8" />
-          <title>Matrice de la classe ${class_label}</title>
-          <style>
-            body {
-              font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-              font-size: 11px;
-              color: #111827;
-              margin: 24px;
-            }
-            h1 { font-size: 16px; margin-bottom: 6px; }
-            h2 { font-size: 13px; margin: 10px 0 4px; }
-            table { border-collapse: collapse; width: 100%; margin-top: 6px; }
-            th, td { border: 1px solid #ddd; padding: 4px; }
-            th { background: #f1f5f9; }
-            ul { font-size: 10px; padding-left: 16px; margin-top: 4px; }
-            .meta-row {
-              display: flex;
-              justify-content: space-between;
-              gap: 8px;
-              font-size: 10px;
-              margin-bottom: 4px;
-              flex-wrap: wrap;
-            }
-          </style>
-        </head>
-        <body>
-          <h1>Matrice de notes de la classe ${class_label}</h1>
-
-          <div class="meta-row">
-            ${yearHtml}
-            ${levelHtml}
-            ${classHtml}
-            ${periodHtml}
-          </div>
-
-          <h2>Statistiques de classe</h2>
-          <ul>
-            <li>Moyenne de classe : ${
-              global.class_avg_20 == null ? "—" : nf.format(global.class_avg_20)
-            } /20</li>
-            <li>Min / Max des moyennes élèves : ${
-              global.class_min_20 == null ? "—" : nf.format(global.class_min_20)
-            } / ${
-      global.class_max_20 == null ? "—" : nf.format(global.class_max_20)
-    }</li>
-            <li>
-              Répartition des moyennes (élèves) :
-              &lt;5 : ${global.dist.lt5} · [5;10[ : ${
-      global.dist.between5_10
-    } · [10;12[ : ${global.dist.between10_12} · [12;15[ : ${
-      global.dist.between12_15
-    } · ≥15 : ${global.dist.gte15}
-            </li>
-          </ul>
-
-          <h2>Matières – Indicateurs</h2>
-          <table>
-            <tr>
-              <th>Matière</th>
-              <th style="text-align:right;">Évals</th>
-              <th style="text-align:right;">Notes</th>
-              <th style="text-align:right;">Moyenne /20</th>
-            </tr>
-            ${global.subjectStats
-              .map(
-                (s) => `
-              <tr>
-                <td>${s.subject_name}</td>
-                <td style="text-align:right;">${s.evals_count}</td>
-                <td style="text-align:right;">${s.notes_count}</td>
-                <td style="text-align:right;">${
-                  s.avg_20_class == null ? "—" : nf.format(s.avg_20_class)
-                }</td>
-              </tr>
-            `
+          if (!subject) {
+            setPeriodStates((prev) =>
+              prev.map((s) =>
+                s.period_id === period.id
+                  ? {
+                      ...s,
+                      status: "empty",
+                      message: "Matière absente",
+                    }
+                  : s
               )
-              .join("")}
-          </table>
-
-          <h2>Matrice des moyennes par élève</h2>
-          <table>
-            <thead>${tableHeader}</thead>
-            <tbody>${tableRows}</tbody>
-          </table>
-        </body>
-      </html>
-    `;
-
-    const win = window.open("", "_blank");
-    if (!win) return;
-    win.document.write(html);
-    win.document.close();
-    win.focus();
-    win.print();
-  }
-
-  /* ───────── Export CSV : matrices pour TOUT un niveau ───────── */
-
-  async function exportLevelMatricesCsv() {
-    const levelToUse = matrixLevel;
-    if (!levelToUse) {
-      setMatrixError("Choisissez d'abord un niveau pour exporter les matrices en masse.");
-      return;
-    }
-    const classesToExport = allClasses.filter((c) => c.level === levelToUse);
-    if (!classesToExport.length) {
-      setMatrixError("Aucune classe trouvée pour ce niveau.");
-      return;
-    }
-
-    setMatrixError(null);
-    const sep = ";";
-    const safe = (s: string | null | undefined) => (s ?? "").replace(/"/g, '""');
-    const rows: string[] = [];
-
-    if (currentYearLabelSafe) {
-      rows.push(`Année scolaire;${safe(currentYearLabelSafe)}`);
-    }
-    if (currentPeriodLabelSafe) {
-      const dates =
-        currentPeriodStart && currentPeriodEnd
-          ? `;${df.format(new Date(currentPeriodStart))};${df.format(
-              new Date(currentPeriodEnd)
-            )}`
-          : "";
-      rows.push(`Période;${safe(currentPeriodLabelSafe)}${dates}`);
-    } else if (from || to) {
-      rows.push(
-        `Période;${from ? df.format(new Date(from)) : ""};${
-          to ? df.format(new Date(to)) : ""
-        }`
-      );
-    }
-    rows.push("");
-
-    for (const cls of classesToExport) {
-      try {
-        const m = await computeClassMatrixForClass(cls.id);
-        if (!m) continue;
-
-        const {
-          class_label,
-          level,
-          students,
-          subjects,
-          averages,
-          generalAverages,
-          ranks,
-        } = m;
-
-        rows.push(
-          `Classe;${safe(class_label)}${level ? `;Niveau;${safe(level)}` : ""}`
-        );
-        rows.push("");
-
-        const header = [
-          "Eleve",
-          "Matricule",
-          ...subjects.flatMap((s) => [
-            `MOY ${safe(s.subject_name)} /20`,
-            `Rang ${safe(s.subject_name)}`,
-          ]),
-          "Moyenne_generale_20",
-          "Rang_general",
-        ];
-        rows.push(header.join(sep));
-
-        for (const st of students) {
-          const perSubj = averages[st.student_id] || {};
-          const cols: string[] = [];
-
-          cols.push(`"${safe(st.full_name)}"`);
-          cols.push(`"${safe(st.matricule)}"`);
-
-          for (const subj of subjects) {
-            const cell = perSubj[subj.subject_id];
-            const avg = cell?.avg_20 ?? null;
-            const rMap = ranks.bySubject[subj.subject_id] || {};
-            const r = rMap[st.student_id] ?? null;
-
-            cols.push(avg == null ? "" : nf.format(avg).replace(".", ","));
-            cols.push(r == null ? "" : String(r));
+            );
+            continue;
           }
 
-          const gen = generalAverages[st.student_id] ?? null;
-          const rGen = ranks.general[st.student_id] ?? null;
-          cols.push(gen == null ? "" : nf.format(gen).replace(".", ","));
-          cols.push(rGen == null ? "" : String(rGen));
+          const subjectRows = items.map((item) => ({
+            student_id: item.student_id,
+            avg: cleanAvg(findSubjectCell(item, subject)?.avg20),
+          }));
 
-          rows.push(cols.join(sep));
+          const ranks = buildRankMap(subjectRows);
+
+          const notedCount = subjectRows.filter(
+            (r) => typeof r.avg === "number" && Number.isFinite(r.avg)
+          ).length;
+
+          periodResults.push({
+            period,
+            items,
+            subject,
+            ranks,
+          });
+
+          for (const item of items) {
+            if (!students.has(item.student_id)) {
+              students.set(item.student_id, {
+                student_id: item.student_id,
+                full_name: item.full_name || "Élève",
+                matricule: item.matricule ?? null,
+                periods: {},
+                annual_avg: null,
+                annual_rank: null,
+              });
+            }
+
+            const row = students.get(item.student_id)!;
+            const avg = cleanAvg(findSubjectCell(item, subject)?.avg20);
+
+            row.full_name = item.full_name || row.full_name;
+            row.matricule = item.matricule ?? row.matricule;
+
+            row.periods[period.id] = {
+              avg,
+              rank: ranks.get(item.student_id) ?? null,
+            };
+          }
+
+          setPeriodStates((prev) =>
+            prev.map((s) =>
+              s.period_id === period.id
+                ? {
+                    ...s,
+                    status: notedCount ? "ok" : "empty",
+                    message: notedCount
+                      ? `${notedCount} moyenne(s) publiée(s)`
+                      : "Aucune moyenne publiée",
+                  }
+                : s
+            )
+          );
+        } catch (e: any) {
+          setPeriodStates((prev) =>
+            prev.map((s) =>
+              s.period_id === period.id
+                ? {
+                    ...s,
+                    status: "error",
+                    message: e?.message || "Erreur",
+                  }
+                : s
+            )
+          );
+        }
+      }
+
+      const rows = Array.from(students.values());
+
+      for (const row of rows) {
+        let num = 0;
+        let den = 0;
+
+        for (const { period } of periodResults) {
+          const avg = row.periods[period.id]?.avg;
+
+          if (avg === null || avg === undefined || !Number.isFinite(avg)) continue;
+
+          const coeffRaw = Number(period.coeff ?? 1);
+          const coeff = Number.isFinite(coeffRaw) && coeffRaw > 0 ? coeffRaw : 1;
+
+          num += avg * coeff;
+          den += coeff;
         }
 
-        rows.push("");
-        rows.push("");
-      } catch (e) {
-        console.error("[admin.notes.stats] exportLevelMatricesCsv error", e);
+        row.annual_avg = den > 0 ? Math.round((num / den) * 100) / 100 : null;
       }
+
+      const annualRanks = buildRankMap(
+        rows.map((r) => ({
+          student_id: r.student_id,
+          avg: r.annual_avg,
+        }))
+      );
+
+      rows.forEach((row) => {
+        row.annual_rank = annualRanks.get(row.student_id) ?? null;
+      });
+
+      rows.sort((a, b) => {
+        const ar = a.annual_rank ?? 99999;
+        const br = b.annual_rank ?? 99999;
+
+        if (ar !== br) return ar - br;
+
+        return a.full_name.localeCompare(b.full_name, "fr", {
+          sensitivity: "base",
+          numeric: true,
+        });
+      });
+
+      setMatrixRows(rows);
+
+      if (!rows.length) {
+        setErrorMsg("Aucun élève ou aucune moyenne publiée n’a été trouvé pour cette matière.");
+      }
+    } finally {
+      setLoadingMatrix(false);
+    }
+  }
+
+  function exportCsv() {
+    if (!matrixRows.length) {
+      setErrorMsg("Chargez d’abord la matrice avant d’exporter.");
+      return;
     }
 
-    const blob = new Blob([rows.join("\n")], {
-      type: "text/csv;charset=utf-8;",
+    const headers = ["N°", "Matricule", "Nom et prénoms"];
+
+    for (const p of loadedPeriods) {
+      const label = periodLabel(p);
+      headers.push(`${label} moyenne`, `${label} rang`);
+    }
+
+    headers.push("Moyenne annuelle matière", "Rang annuel matière");
+
+    const lines = [headers.map(csvCell).join(";")];
+
+    matrixRows.forEach((row, idx) => {
+      const cells: Array<string | number | null> = [
+        idx + 1,
+        row.matricule || "",
+        row.full_name,
+      ];
+
+      for (const p of loadedPeriods) {
+        const cell = row.periods[p.id] || { avg: null, rank: null };
+
+        cells.push(cell.avg !== null ? cell.avg.toFixed(2) : "", cell.rank ?? "");
+      }
+
+      cells.push(
+        row.annual_avg !== null ? row.annual_avg.toFixed(2) : "",
+        row.annual_rank ?? ""
+      );
+
+      lines.push(cells.map(csvCell).join(";"));
     });
+
+    const csv = "\ufeff" + lines.join("\r\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
+
+    const safeClass = clsLabel(selectedClass).replace(/[^a-z0-9_-]+/gi, "_");
+    const safeSubject = selectedSubjectName.replace(/[^a-z0-9_-]+/gi, "_");
+    const safeYear = (selectedAcademicYear || "annee").replace(/[^a-z0-9_-]+/gi, "_");
+
     const a = document.createElement("a");
-    const now = new Date();
-    const y = now.getFullYear();
-    const m = String(now.getMonth() + 1).padStart(2, "0");
-    const d = String(now.getDate()).padStart(2, "0");
     a.href = url;
-    a.download = `notes_moyennes_niveau_${levelToUse}_${y}${m}${d}.csv`;
+    a.download = `matrice_matiere_${safeSubject}_${safeClass}_${safeYear}.csv`;
+
     document.body.appendChild(a);
     a.click();
-    document.body.removeChild(a);
+    a.remove();
+
     URL.revokeObjectURL(url);
   }
 
-  /* ───────── Export PDF : matrices pour tout un niveau ───────── */
-
-  async function exportLevelMatricesPdf() {
-    if (typeof window === "undefined") return;
-    const levelToUse = matrixLevel;
-    if (!levelToUse) {
-      setMatrixError("Choisissez d'abord un niveau pour exporter en PDF.");
-      return;
-    }
-    const classesToExport = allClasses.filter((c) => c.level === levelToUse);
-    if (!classesToExport.length) {
-      setMatrixError("Aucune classe trouvée pour ce niveau.");
+  function exportPdf() {
+    if (!matrixRows.length) {
+      setErrorMsg("Chargez d’abord la matrice avant d’exporter.");
       return;
     }
 
-    const yearHtml = currentYearLabelSafe
-      ? `<span><strong>Année scolaire :</strong> ${currentYearLabelSafe}</span>`
-      : `<span>&nbsp;</span>`;
-    const periodHtml = currentPeriodLabelSafe
-      ? `<span><strong>Période :</strong> ${currentPeriodLabelSafe}${
-          currentPeriodStart && currentPeriodEnd
-            ? ` (${df.format(new Date(currentPeriodStart))} – ${df.format(
-                new Date(currentPeriodEnd)
-              )})`
-            : ""
-        }</span>`
-      : `<span><strong>Période :</strong> ${
-          from ? df.format(new Date(from)) : "début"
-        } – ${to ? df.format(new Date(to)) : "aujourd'hui"}</span>`;
+    const className = clsLabel(selectedClass);
+    const title = `Matrice matière — ${selectedSubjectName}`;
+    const subtitle = `${className || "Classe"} — Année scolaire ${
+      selectedAcademicYear || "—"
+    }`;
 
-    const htmlParts: string[] = [];
-    htmlParts.push(`
-      <!doctype html>
-      <html>
-        <head>
-          <meta charset="utf-8" />
-          <title>Matrices de notes – Niveau ${levelToUse}</title>
-          <style>
-            body {
-              font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-              font-size: 11px;
-              color: #111827;
-              margin: 24px;
-            }
-            h1 { font-size: 16px; margin-bottom: 6px; }
-            h2 { font-size: 13px; margin: 14px 0 4px; }
-            table { border-collapse: collapse; width: 100%; margin-top: 6px; }
-            th, td { border: 1px solid #ddd; padding: 3px; }
-            th { background: #f1f5f9; }
-            .meta-row {
-              display:flex;
-              justify-content: space-between;
-              gap:8px;
-              font-size:10px;
-              margin-bottom:8px;
-              flex-wrap:wrap;
-            }
-          </style>
-        </head>
-        <body>
-          <h1>Matrices de notes – Niveau ${levelToUse}</h1>
-          <div class="meta-row">
-            ${yearHtml}
-            ${periodHtml}
-          </div>
-    `);
+    const periodHeader = loadedPeriods
+      .map(
+        (p) => `
+          <th colspan="2">
+            ${escapeHtml(periodLabel(p))}
+            <br/>
+            <span>${escapeHtml(formatDateFR(p.start_date))} — ${escapeHtml(
+          formatDateFR(p.end_date)
+        )}</span>
+          </th>`
+      )
+      .join("");
 
-    for (const cls of classesToExport) {
-      try {
-        const m = await computeClassMatrixForClass(cls.id);
-        if (!m) continue;
+    const secondHeader = loadedPeriods
+      .map(() => `<th>Moy.</th><th>Rang</th>`)
+      .join("");
 
-        const {
-          class_label,
-          level,
-          students,
-          subjects,
-          averages,
-          generalAverages,
-          ranks,
-        } = m;
+    const body = matrixRows
+      .map((row, idx) => {
+        const periodCells = loadedPeriods
+          .map((p) => {
+            const cell = row.periods[p.id] || { avg: null, rank: null };
 
-        const headerRow = `
-          <tr>
-            <th style="text-align:left;">Élève</th>
-            ${subjects
-              .map(
-                (s) => `
-              <th colspan="2" style="text-align:center;">${s.subject_name || "Matière"}</th>
-            `
-              )
-              .join("")}
-            <th colspan="2" style="text-align:center;">Moyenne générale</th>
-          </tr>
-          <tr>
-            <th></th>
-            ${subjects
-              .map(
-                () => `
-              <th style="text-align:right;">MOY</th>
-              <th style="text-align:right;">Rang</th>
-            `
-              )
-              .join("")}
-            <th style="text-align:right;">MOY</th>
-            <th style="text-align:right;">Rang</th>
-          </tr>
-        `;
-        const rows = students
-          .map((st) => {
-            const perSubj = averages[st.student_id] || {};
-            const gen = generalAverages[st.student_id] ?? null;
-            const rGen = ranks.general[st.student_id] ?? null;
-            const generalRankLabel = formatRank(rGen);
-            const cells = subjects
-              .map((s) => {
-                const cell = perSubj[s.subject_id];
-                const avg = cell?.avg_20 ?? null;
-                const rMap = ranks.bySubject[s.subject_id] || {};
-                const r = rMap[st.student_id] ?? null;
-                const rankLabel = formatRank(r);
-                return `
-                  <td style="text-align:right;">${avg == null ? "—" : nf.format(avg)}</td>
-                  <td style="text-align:right;">${rankLabel}</td>
-                `;
-              })
-              .join("");
-            const nameBlock = `
-              <div style="display:flex;flex-direction:column;">
-                <span style="font-weight:600;">${st.full_name}</span>
-                <span style="font-size:10px;color:#6b7280;">${st.matricule ?? ""}</span>
-              </div>
-            `;
-            return `
-              <tr>
-                <td>${nameBlock}</td>
-                ${cells}
-                <td style="text-align:right;">${gen == null ? "—" : nf.format(gen)}</td>
-                <td style="text-align:right;">${generalRankLabel}</td>
-              </tr>
-            `;
+            return `<td class="num">${formatNumber(cell.avg)}</td><td class="num">${formatRank(
+              cell.rank
+            )}</td>`;
           })
           .join("");
 
-        htmlParts.push(`
-          <h2>Classe ${class_label} (${level ?? "—"})</h2>
-          <table>
-            <thead>${headerRow}</thead>
-            <tbody>${rows}</tbody>
-          </table>
-        `);
-      } catch (e) {
-        console.error("[admin.notes.stats] exportLevelMatricesPdf class error", e);
-      }
-    }
+        return `<tr>
+          <td class="num">${idx + 1}</td>
+          <td>${escapeHtml(row.matricule || "")}</td>
+          <td>${escapeHtml(row.full_name)}</td>
+          ${periodCells}
+          <td class="num strong">${formatNumber(row.annual_avg)}</td>
+          <td class="num strong">${formatRank(row.annual_rank)}</td>
+        </tr>`;
+      })
+      .join("");
 
-    htmlParts.push(`</body></html>`);
-    const html = htmlParts.join("");
+    const html = `<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8" />
+<title>${escapeHtml(title)}</title>
+<style>
+  @page { size: A4 landscape; margin: 10mm; }
+  * { box-sizing: border-box; }
+  body {
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    color: #0f172a;
+    margin: 0;
+  }
+  h1 {
+    font-size: 18px;
+    margin: 0;
+    text-transform: uppercase;
+  }
+  .subtitle {
+    margin-top: 4px;
+    color: #475569;
+    font-size: 12px;
+  }
+  .meta {
+    display: flex;
+    gap: 12px;
+    margin: 12px 0;
+    font-size: 11px;
+    color: #334155;
+    flex-wrap: wrap;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 10px;
+  }
+  th,
+  td {
+    border: 1px solid #cbd5e1;
+    padding: 5px 6px;
+    vertical-align: middle;
+  }
+  th {
+    background: #e2e8f0;
+    font-weight: 800;
+    text-align: center;
+  }
+  th span {
+    font-size: 8px;
+    color: #475569;
+    font-weight: 600;
+  }
+  td.num {
+    text-align: right;
+    white-space: nowrap;
+  }
+  td.strong {
+    font-weight: 800;
+    background: #ecfdf5;
+    color: #065f46;
+  }
+  tr:nth-child(even) td {
+    background: #f8fafc;
+  }
+  tr:nth-child(even) td.strong {
+    background: #d1fae5;
+  }
+  .footer {
+    margin-top: 10px;
+    font-size: 9px;
+    color: #64748b;
+    text-align: right;
+  }
+</style>
+</head>
+<body>
+  <h1>${escapeHtml(title)}</h1>
+  <div class="subtitle">${escapeHtml(subtitle)}</div>
+
+  <div class="meta">
+    <div><strong>Classe :</strong> ${escapeHtml(className || "—")}</div>
+    <div><strong>Matière :</strong> ${escapeHtml(selectedSubjectName)}</div>
+    <div><strong>Élèves :</strong> ${matrixRows.length}</div>
+    <div><strong>Moyenne matière :</strong> ${formatNumber(stats.classAvg)}</div>
+    <div><strong>Plus forte :</strong> ${formatNumber(stats.highest)}</div>
+    <div><strong>Plus faible :</strong> ${formatNumber(stats.lowest)}</div>
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th rowspan="2">N°</th>
+        <th rowspan="2">Matricule</th>
+        <th rowspan="2">Nom et prénoms</th>
+        ${periodHeader}
+        <th colspan="2">Annuel matière</th>
+      </tr>
+      <tr>${secondHeader}<th>Moy.</th><th>Rang</th></tr>
+    </thead>
+    <tbody>${body}</tbody>
+  </table>
+
+  <div class="footer">Document généré depuis Mon Cahier — Nexa Digital SARL</div>
+</body>
+</html>`;
 
     const win = window.open("", "_blank");
-    if (!win) return;
-    win.document.write(html);
-    win.document.close();
-    win.focus();
-    win.print();
-  }
 
-  /* ───────── Export CSV : section par matière (vue agrégée par classe) ───────── */
-
-  function exportSubjectAggregatedCsv() {
-    if (!subjectView) return;
-
-    const sep = ";";
-    const safe = (s: string | null | undefined) => (s ?? "").replace(/"/g, '""');
-
-    const rows: string[] = [];
-
-    if (currentYearLabelSafe) {
-      rows.push(`Année scolaire;${safe(currentYearLabelSafe)}`);
-    }
-    if (currentPeriodLabelSafe) {
-      const dates =
-        currentPeriodStart && currentPeriodEnd
-          ? `;${df.format(new Date(currentPeriodStart))};${df.format(
-              new Date(currentPeriodEnd)
-            )}`
-          : "";
-      rows.push(`Période;${safe(currentPeriodLabelSafe)}${dates}`);
-    } else if (from || to) {
-      rows.push(
-        `Période;${from ? df.format(new Date(from)) : ""};${
-          to ? df.format(new Date(to)) : ""
-        }`
-      );
-    }
-
-    rows.push(
-      `Matière;${safe(subjectView.subject_name)};ID;${safe(
-        subjectView.subject_id
-      )}`
-    );
-    rows.push("");
-
-    rows.push(
-      [
-        "Évals_totales",
-        "Notes_totales",
-        "Moyenne_globale_20",
-        "Min_moyenne_classe",
-        "Max_moyenne_classe",
-      ].join(sep)
-    );
-    rows.push(
-      [
-        subjectView.global.evals_count.toString(),
-        subjectView.global.notes_count.toString(),
-        subjectView.global.avg_20 == null
-          ? ""
-          : nf.format(subjectView.global.avg_20).replace(".", ","),
-        subjectView.global.min_20 == null
-          ? ""
-          : nf.format(subjectView.global.min_20).replace(".", ","),
-        subjectView.global.max_20 == null
-          ? ""
-          : nf.format(subjectView.global.max_20).replace(".", ","),
-      ].join(sep)
-    );
-
-    rows.push("");
-    rows.push(
-      ["Classe", "Niveau", "Évals", "Notes", "Moyenne_classe_20"].join(sep)
-    );
-
-    for (const r of subjectView.rows) {
-      rows.push(
-        [
-          `"${safe(r.class_label)}"`,
-          `"${safe(r.level)}"`,
-          r.evals_count.toString(),
-          r.notes_count.toString(),
-          r.avg_score_20 == null
-            ? ""
-            : nf.format(r.avg_score_20).replace(".", ","),
-        ].join(sep)
-      );
-    }
-
-    const blob = new Blob([rows.join("\n")], {
-      type: "text/csv;charset=utf-8;",
-    });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    const now = new Date();
-    const y = now.getFullYear();
-    const m = String(now.getMonth() + 1).padStart(2, "0");
-    const d = String(now.getDate()).padStart(2, "0");
-    a.href = url;
-    a.download = `stats_matiere_${subjectView.subject_name}_${y}${m}${d}.csv`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-  }
-
-  /* ───────── Export PDF : section par matière (vue agrégée par classe) ───────── */
-
-  function exportSubjectAggregatedPdf() {
-    if (typeof window === "undefined" || !subjectView) return;
-
-    const yearHtml = currentYearLabelSafe
-      ? `<span><strong>Année scolaire :</strong> ${currentYearLabelSafe}</span>`
-      : `<span>&nbsp;</span>`;
-    const periodHtml = currentPeriodLabelSafe
-      ? `<span><strong>Période :</strong> ${currentPeriodLabelSafe}${
-          currentPeriodStart && currentPeriodEnd
-            ? ` (${df.format(new Date(currentPeriodStart))} – ${df.format(
-                new Date(currentPeriodEnd)
-              )})`
-            : ""
-        }</span>`
-      : `<span><strong>Période :</strong> ${
-          from ? df.format(new Date(from)) : "début"
-        } – ${to ? df.format(new Date(to)) : "aujourd'hui"}</span>`;
-
-    const html = `
-      <!doctype html>
-      <html>
-        <head>
-          <meta charset="utf-8" />
-          <title>Statistiques matière – ${subjectView.subject_name}</title>
-          <style>
-            body {
-              font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-              font-size: 11px;
-              color: #111827;
-              margin: 24px;
-            }
-            h1 { font-size: 16px; margin-bottom: 6px; }
-            h2 { font-size: 13px; margin: 10px 0 4px; }
-            table { border-collapse: collapse; width: 100%; margin-top: 6px; }
-            th, td { border: 1px solid #ddd; padding: 4px; }
-            th { background: #f1f5f9; }
-            ul { font-size: 10px; padding-left: 16px; margin-top: 4px; }
-            .meta-row {
-              display:flex;
-              justify-content: space-between;
-              gap:8px;
-              font-size:10px;
-              margin-bottom:4px;
-              flex-wrap:wrap;
-            }
-          </style>
-        </head>
-        <body>
-          <h1>Analyse par matière – ${subjectView.subject_name}</h1>
-          <div class="meta-row">
-            ${yearHtml}
-            ${periodHtml}
-          </div>
-
-          <h2>Statistiques globales (par classe)</h2>
-          <ul>
-            <li>Moyenne globale (pondérée) : ${
-              subjectView.global.avg_20 == null
-                ? "—"
-                : nf.format(subjectView.global.avg_20)
-            } /20</li>
-            <li>Min / Max des moyennes de classe : ${
-              subjectView.global.min_20 == null
-                ? "—"
-                : nf.format(subjectView.global.min_20)
-            } / ${
-      subjectView.global.max_20 == null
-        ? "—"
-        : nf.format(subjectView.global.max_20)
-    }</li>
-            <li>Volume : ${
-              subjectView.global.evals_count
-            } évaluations · ${subjectView.global.notes_count} notes</li>
-            <li>
-              Répartition des classes (selon la moyenne) :
-              &lt;5 : ${subjectView.global.dist_classes.lt5} ·
-              [5;10[ : ${subjectView.global.dist_classes.between5_10} ·
-              [10;12[ : ${subjectView.global.dist_classes.between10_12} ·
-              [12;15[ : ${subjectView.global.dist_classes.between12_15} ·
-              ≥15 : ${subjectView.global.dist_classes.gte15}
-            </li>
-          </ul>
-
-          <h2>Détail par classe</h2>
-          <table>
-            <thead>
-              <tr>
-                <th>Classe</th>
-                <th>Niveau</th>
-                <th style="text-align:right;">Évals</th>
-                <th style="text-align:right;">Notes</th>
-                <th style="text-align:right;">Moyenne /20</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${subjectView.rows
-                .map(
-                  (r) => `
-                <tr>
-                  <td>${r.class_label}</td>
-                  <td>${r.level ?? ""}</td>
-                  <td style="text-align:right;">${r.evals_count}</td>
-                  <td style="text-align:right;">${r.notes_count}</td>
-                  <td style="text-align:right;">${
-                    r.avg_score_20 == null ? "—" : nf.format(r.avg_score_20)
-                  }</td>
-                </tr>
-              `
-                )
-                .join("")}
-            </tbody>
-          </table>
-        </body>
-      </html>
-    `;
-
-    const win = window.open("", "_blank");
-    if (!win) return;
-    win.document.write(html);
-    win.document.close();
-    win.focus();
-    win.print();
-  }
-
-  /* ───────── Export CSV : matrice élèves pour une matière donnée (section 2) ───────── */
-
-  function exportSubjectClassCsv() {
-    if (!subjectClassMatrix) {
-      setSubjectClassError(
-        "Aucune matrice élèves pour cette matière. Lancez le calcul d'abord."
+    if (!win) {
+      setErrorMsg(
+        "Impossible d’ouvrir la fenêtre d’impression. Vérifiez le blocage des popups."
       );
       return;
     }
 
-    const sep = ";";
-    const { class_label, level, subject_name, teacher_names, students, averages, global } =
-      subjectClassMatrix;
-    const safe = (s: string | null | undefined) => (s ?? "").replace(/"/g, '""');
-
-    const rows: string[] = [];
-
-    if (currentYearLabelSafe) {
-      rows.push(`Année scolaire;${safe(currentYearLabelSafe)}`);
-    }
-    if (currentPeriodLabelSafe) {
-      const dates =
-        currentPeriodStart && currentPeriodEnd
-          ? `;${df.format(new Date(currentPeriodStart))};${df.format(
-              new Date(currentPeriodEnd)
-            )}`
-          : "";
-      rows.push(`Période;${safe(currentPeriodLabelSafe)}${dates}`);
-    } else if (from || to) {
-      rows.push(
-        `Période;${from ? df.format(new Date(from)) : ""};${
-          to ? df.format(new Date(to)) : ""
-        }`
-      );
-    }
-
-    rows.push(
-      `Classe;${safe(class_label)}${level ? `;Niveau;${safe(level)}` : ""}`
-    );
-    rows.push(`Matière;${safe(subject_name)}`);
-    if (teacher_names) {
-      rows.push(`Professeur(s);${safe(teacher_names)}`);
-    }
-    rows.push("");
-
-    rows.push(
-      [
-        "Moyenne_classe_20",
-        "Min_20",
-        "Max_20",
-        "Nb_evals",
-        "Nb_notes",
-      ].join(sep)
-    );
-    rows.push(
-      [
-        global.class_avg_20 == null
-          ? ""
-          : nf.format(global.class_avg_20).replace(".", ","),
-        global.class_min_20 == null
-          ? ""
-          : nf.format(global.class_min_20).replace(".", ","),
-        global.class_max_20 == null
-          ? ""
-          : nf.format(global.class_max_20).replace(".", ","),
-        global.evals_count.toString(),
-        global.notes_count.toString(),
-      ].join(sep)
-    );
-
-    rows.push("");
-    rows.push(["Élève", "Matricule", "Moyenne_20", "Rang"].join(sep));
-
-    for (const st of students) {
-      const a = averages[st.student_id];
-      const avg = a?.avg_20 ?? null;
-      const r = a?.rank ?? null;
-      rows.push(
-        [
-          `"${safe(st.full_name)}"`,
-          `"${safe(st.matricule)}"`,
-          avg == null ? "" : nf.format(avg).replace(".", ","),
-          r == null ? "" : String(r),
-        ].join(sep)
-      );
-    }
-
-    const blob = new Blob([rows.join("\n")], {
-      type: "text/csv;charset=utf-8;",
-    });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    const now = new Date();
-    const y = now.getFullYear();
-    const m = String(now.getMonth() + 1).padStart(2, "0");
-    const d = String(now.getDate()).padStart(2, "0");
-    a.href = url;
-    a.download = `notes_${subject_name}_${class_label}_${y}${m}${d}.csv`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-  }
-
-  /* ───────── Export PDF : matrice élèves pour une matière donnée (section 2) ───────── */
-
-  function exportSubjectClassPdf() {
-    if (typeof window === "undefined" || !subjectClassMatrix) return;
-
-    const {
-      class_label,
-      level,
-      subject_name,
-      teacher_names,
-      students,
-      averages,
-      global,
-    } = subjectClassMatrix;
-
-    const fallbackSubjectName =
-      subject_name ||
-      subjectOptions.find((s) => s.id === selectedSubjectId)?.name ||
-      "Matière";
-    const fallbackClassLabel = class_label || "Classe";
-    const fallbackLevel = level || null;
-
-    const yearHtml = currentYearLabelSafe
-      ? `<span><strong>Année scolaire :</strong> ${currentYearLabelSafe}</span>`
-      : `<span>&nbsp;</span>`;
-    const periodHtml = currentPeriodLabelSafe
-      ? `<span><strong>Période :</strong> ${currentPeriodLabelSafe}${
-          currentPeriodStart && currentPeriodEnd
-            ? ` (${df.format(new Date(currentPeriodStart))} – ${df.format(
-                new Date(currentPeriodEnd)
-              )})`
-            : ""
-        }</span>`
-      : `<span><strong>Période :</strong> ${
-          from ? df.format(new Date(from)) : "début"
-        } – ${to ? df.format(new Date(to)) : "aujourd'hui"}</span>`;
-
-    const teacherLine = teacher_names
-      ? `<span><strong>Professeur(s) :</strong> ${teacher_names}</span>`
-      : "";
-
-    const distributionTable = `
-      <table>
-        <thead>
-          <tr>
-            <th>Tranche de moyenne</th>
-            <th style="text-align:right;">Nombre d'élèves</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td>&lt; 5</td>
-            <td style="text-align:right;">${global.dist.lt5}</td>
-          </tr>
-          <tr>
-            <td>[5 ; 10[</td>
-            <td style="text-align:right;">${global.dist.between5_10}</td>
-          </tr>
-          <tr>
-            <td>[10 ; 12[</td>
-            <td style="text-align:right;">${global.dist.between10_12}</td>
-          </tr>
-          <tr>
-            <td>[12 ; 15[</td>
-            <td style="text-align:right;">${global.dist.between12_15}</td>
-          </tr>
-          <tr>
-            <td>≥ 15</td>
-            <td style="text-align:right;">${global.dist.gte15}</td>
-          </tr>
-        </tbody>
-      </table>
-    `;
-
-    const rows = students
-      .map((st) => {
-        const a = averages[st.student_id];
-        const avg = a?.avg_20 ?? null;
-        const r = a?.rank ?? null;
-        const rLabel = formatRank(r);
-        const nameBlock = `
-          <div style="display:flex;flex-direction:column;">
-            <span style="font-weight:600;">${st.full_name}</span>
-            <span style="font-size:10px;color:#6b7280;">${st.matricule ?? ""}</span>
-          </div>
-        `;
-        return `
-          <tr>
-            <td>${nameBlock}</td>
-            <td style="text-align:right;">${avg == null ? "—" : nf.format(avg)}</td>
-            <td style="text-align:right;">${rLabel}</td>
-          </tr>
-        `;
-      })
-      .join("");
-
-    const html = `
-      <!doctype html>
-      <html>
-        <head>
-          <meta charset="utf-8" />
-          <title>Moyennes – ${fallbackSubjectName} – ${fallbackClassLabel}</title>
-          <style>
-            body {
-              font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-              font-size: 11px;
-              color: #111827;
-              margin: 24px;
-            }
-            h1 { font-size: 16px; margin-bottom: 6px; }
-            h2 { font-size: 13px; margin: 10px 0 4px; }
-            table { border-collapse: collapse; width: 100%; margin-top: 6px; }
-            th, td { border: 1px solid #ddd; padding: 4px; }
-            th { background: #f1f5f9; }
-            ul { font-size: 10px; padding-left: 16px; margin-top: 4px; }
-            .meta-row {
-              display:flex;
-              justify-content: space-between;
-              gap:8px;
-              font-size:10px;
-              margin-bottom:4px;
-              flex-wrap:wrap;
-            }
-          </style>
-        </head>
-        <body>
-          <h1>${fallbackSubjectName} – Classe ${fallbackClassLabel}</h1>
-          <div class="meta-row">
-            ${yearHtml}
-            <span><strong>Niveau :</strong> ${fallbackLevel ?? "—"}</span>
-            ${periodHtml}
-            ${teacherLine}
-          </div>
-
-          <h2>Statistiques de la matière (élèves)</h2>
-          <ul>
-            <li>Moyenne de la classe : ${
-              global.class_avg_20 == null ? "—" : nf.format(global.class_avg_20)
-            } /20</li>
-            <li>Min / Max des moyennes élèves : ${
-              global.class_min_20 == null ? "—" : nf.format(global.class_min_20)
-            } / ${
-      global.class_max_20 == null ? "—" : nf.format(global.class_max_20)
-    }</li>
-            <li>Volume : ${global.evals_count} évaluations · ${
-      global.notes_count
-    } notes</li>
-          </ul>
-
-          <h2>Répartition des moyennes des élèves</h2>
-          ${distributionTable}
-
-          <h2>Détail des élèves</h2>
-          <table>
-            <thead>
-              <tr>
-                <th>Élève</th>
-                <th style="text-align:right;">MOY /20</th>
-                <th style="text-align:right;">Rang</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${rows}
-            </tbody>
-          </table>
-        </body>
-      </html>
-    `;
-
-    const win = window.open("", "_blank");
-    if (!win) return;
+    win.document.open();
     win.document.write(html);
     win.document.close();
     win.focus();
-    win.print();
+
+    setTimeout(() => {
+      try {
+        win.print();
+      } catch {
+        // silencieux
+      }
+    }, 400);
   }
 
-  /* ───────── Rendu ───────── */
-
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex flex-col gap-1">
-        <h1 className="text-2xl font-semibold text-slate-900">
-          Statistiques avancées des notes
-        </h1>
-        <p className="text-sm text-slate-600">
-          Deux vues : matrice par classe (toutes les disciplines) et analyse par matière (une
-          discipline à la fois) — avec toujours la liste des élèves et leurs moyennes.
-        </p>
-      </div>
+    <main className="mx-auto max-w-7xl space-y-6 px-4 py-6">
+      <header className="overflow-hidden rounded-3xl border border-slate-800 bg-gradient-to-r from-slate-950 via-indigo-950 to-slate-900 p-6 text-white shadow-sm">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.22em] text-emerald-200/80">
+              Cahier de notes • Matrice matière
+            </p>
 
-      {/* Filtres globaux */}
-      <Card
-        title="Filtres globaux"
-        subtitle="Année scolaire, période d'évaluation et filtres appliqués à toutes les statistiques."
-        icon={<Filter className="h-4 w-4 text-emerald-600" />}
-      >
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-5 mb-3">
-          {/* Année scolaire */}
-          <div className="md:col-span-2">
-            <div className="mb-1 text-xs text-slate-500">Année scolaire</div>
-            <Select
-              value={selectedYearCode}
-              onChange={(e) => {
-                setSelectedYearCode(e.target.value);
-                setSelectedPeriodId("");
-              }}
-            >
-              <option value="">
-                {loadingYears ? "Chargement..." : "— Choisir une année scolaire —"}
-              </option>
-              {years.map((y) => (
-                <option key={y.id} value={y.code}>
-                  {y.label}
-                </option>
-              ))}
-            </Select>
+            <h1 className="mt-2 text-2xl font-bold tracking-tight md:text-3xl">
+              Matrice des moyennes par matière
+            </h1>
+
+            <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-200">
+              Sélectionnez une classe, une année scolaire et une matière pour afficher les
+              moyennes publiées et les rangs par période, puis la moyenne annuelle de la matière.
+            </p>
           </div>
 
-          {/* Période d'évaluation */}
-          <div className="md:col-span-2">
-            <div className="mb-1 text-xs text-slate-500">Période d&apos;évaluation</div>
-            <Select
-              value={selectedPeriodId}
-              onChange={(e) => handlePeriodChange(e.target.value)}
-              disabled={!selectedYearCode || loadingPeriods}
-            >
-              <option value="">
-                {selectedYearCode
-                  ? loadingPeriods
-                    ? "Chargement..."
-                    : "— Toute l'année —"
-                  : "Sélectionnez d'abord une année"}
-              </option>
-              {periods.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.label}
-                </option>
-              ))}
-            </Select>
-          </div>
+          <div className="grid grid-cols-2 gap-2 text-center text-xs text-slate-200 sm:min-w-[520px] md:grid-cols-4">
+            <div className="rounded-2xl border border-white/10 bg-white/10 p-3">
+              <div className="text-[10px] uppercase tracking-wide text-slate-400">
+                Élèves
+              </div>
+              <div className="mt-1 text-xl font-bold text-white">{stats.count}</div>
+            </div>
 
-          {/* État de publication */}
-          <div className="md:col-span-1">
-            <div className="mb-1 text-xs text-slate-500">État de publication</div>
-            <Select value={status} onChange={(e) => setStatus(e.target.value as any)}>
-              <option value="all">Toutes les évaluations</option>
-              <option value="published">Publié pour les parents</option>
-              <option value="draft">Brouillon uniquement</option>
-            </Select>
+            <div className="rounded-2xl border border-white/10 bg-white/10 p-3">
+              <div className="text-[10px] uppercase tracking-wide text-slate-400">
+                Moy. matière
+              </div>
+              <div className="mt-1 text-xl font-bold text-white">
+                {formatNumber(stats.classAvg)}
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-white/10 bg-white/10 p-3">
+              <div className="text-[10px] uppercase tracking-wide text-slate-400">
+                Plus forte
+              </div>
+              <div className="mt-1 text-xl font-bold text-white">
+                {formatNumber(stats.highest)}
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-white/10 bg-white/10 p-3">
+              <div className="text-[10px] uppercase tracking-wide text-slate-400">
+                Périodes
+              </div>
+              <div className="mt-1 text-xl font-bold text-white">
+                {loadedPeriods.length || matrixPeriods.length}
+              </div>
+            </div>
           </div>
         </div>
+      </header>
 
-        {/* Bornes explicites Du / Au si besoin d’ajuster manuellement */}
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
-          <div className="md:col-span-2">
-            <div className="mb-1 text-xs text-slate-500">Du</div>
-            <Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
+      <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-12 lg:items-end">
+          <div className="lg:col-span-4">
+            <label className="mb-1 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+              <School className="h-4 w-4" /> Classe
+            </label>
+
+            <Select
+              value={selectedClassId}
+              onChange={(e) => setSelectedClassId(e.target.value)}
+              disabled={classesLoading}
+            >
+              <option value="">— Sélectionner une classe —</option>
+
+              {classes.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {clsLabel(c)}
+                  {c.level ? ` • ${c.level}` : ""}
+                  {c.academic_year ? ` • ${c.academic_year}` : ""}
+                </option>
+              ))}
+            </Select>
           </div>
-          <div className="md:col-span-2">
-            <div className="mb-1 text-xs text-slate-500">Au</div>
-            <Input type="date" value={to} onChange={(e) => setTo(e.target.value)} />
+
+          <div className="lg:col-span-3">
+            <label className="mb-1 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+              <CalendarDays className="h-4 w-4" /> Année scolaire
+            </label>
+
+            <Select
+              value={selectedAcademicYear}
+              onChange={(e) => setSelectedAcademicYear(e.target.value)}
+              disabled={periodsLoading}
+            >
+              <option value="">Année courante</option>
+
+              {academicYears.map((y) => (
+                <option key={y} value={y}>
+                  {y}
+                </option>
+              ))}
+            </Select>
+          </div>
+
+          <div className="lg:col-span-3">
+            <label className="mb-1 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+              <BookOpen className="h-4 w-4" /> Matière
+            </label>
+
+            <Select
+              value={selectedSubjectId}
+              onChange={(e) => setSelectedSubjectId(e.target.value)}
+              disabled={!selectedClassId || subjectsLoading || !subjectOptions.length}
+            >
+              <option value="">
+                {subjectsLoading ? "Chargement des matières…" : "— Sélectionner une matière —"}
+              </option>
+
+              {subjectOptions.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name}
+                </option>
+              ))}
+            </Select>
+          </div>
+
+          <div className="flex flex-wrap gap-2 lg:col-span-2 lg:justify-end">
+            <Button
+              onClick={loadMatrix}
+              disabled={!selectedClassId || !selectedSubjectId || loadingMatrix}
+            >
+              {loadingMatrix ? (
+                <RefreshCw className="h-4 w-4 animate-spin" />
+              ) : (
+                <Search className="h-4 w-4" />
+              )}
+              {loadingMatrix ? "Chargement…" : "Charger"}
+            </Button>
           </div>
         </div>
 
         <div className="mt-4 flex flex-wrap items-center gap-2">
-          <Button type="button" onClick={refreshStats} disabled={statsLoading}>
-            {statsLoading ? (
-              <RefreshCw className="h-4 w-4 animate-spin" />
-            ) : (
-              <BarChart3 className="h-4 w-4" />
-            )}
-            Actualiser les statistiques
-          </Button>
           <GhostButton
             type="button"
-            onClick={() => {
-              setFrom("");
-              setTo("");
-              setStatus("all");
-              setByClassSubject([]);
-              setStatsError(null);
-              setClassMatrix(null);
-              setMatrixError(null);
-              setSelectedSubjectId("");
-              setSubjectLevelFilter("");
-              setSubjectClassId("");
-              setSubjectClassMatrix(null);
-              setSubjectClassError(null);
-              setSelectedPeriodId("");
-              setSelectedYearCode("");
-            }}
+            onClick={loadSubjectOptions}
+            disabled={!selectedClassId || subjectsLoading || !matrixPeriods.length}
           >
-            Réinitialiser
-          </GhostButton>
-          <span className="text-xs text-slate-500">{periodLabel}</span>
-        </div>
-
-        {statsError && (
-          <div className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
-            {statsError}
-          </div>
-        )}
-      </Card>
-
-      {/* ───────── Section 1 : Matrice par classe (multi-disciplines) ───────── */}
-      <Card
-        title="Matrice par classe"
-        subtitle="Pour une classe : toutes les disciplines, moyennes par matière, moyenne générale et rangs."
-        icon={<School className="h-4 w-4 text-emerald-600" />}
-        actions={
-          <div className="flex flex-wrap items-center gap-2">
-            <GhostButton
-              type="button"
-              onClick={exportClassMatrixCsv}
-              disabled={!classMatrix || !classMatrix.students.length}
-            >
-              <FileSpreadsheet className="h-4 w-4" />
-              Exporter CSV (classe)
-            </GhostButton>
-            <GhostButton
-              type="button"
-              onClick={exportClassMatrixPdf}
-              disabled={!classMatrix || !classMatrix.students.length}
-            >
-              <Target className="h-4 w-4" />
-              Exporter PDF (classe)
-            </GhostButton>
-            <GhostButton
-              type="button"
-              onClick={exportLevelMatricesCsv}
-              disabled={!matrixLevel}
-            >
-              <FileSpreadsheet className="h-4 w-4" />
-              Export CSV (niveau)
-            </GhostButton>
-            <GhostButton
-              type="button"
-              onClick={exportLevelMatricesPdf}
-              disabled={!matrixLevel}
-            >
-              <Target className="h-4 w-4" />
-              Export PDF (niveau)
-            </GhostButton>
-          </div>
-        }
-      >
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-4 mb-3">
-          <div className="md:col-span-2">
-            <div className="mb-1 text-xs text-slate-500">Niveau</div>
-            <Select
-              value={matrixLevel}
-              onChange={(e) => {
-                setMatrixLevel(e.target.value);
-                setMatrixClassId("");
-                setClassMatrix(null);
-                setMatrixError(null);
-              }}
-            >
-              <option value="">— Choisir un niveau —</option>
-              {levels.map((lvl) => (
-                <option key={lvl} value={lvl}>
-                  {lvl}
-                </option>
-              ))}
-            </Select>
-          </div>
-          <div className="md:col-span-2">
-            <div className="mb-1 text-xs text-slate-500">Classe</div>
-            <Select
-              value={matrixClassId}
-              onChange={(e) => {
-                setMatrixClassId(e.target.value);
-                setClassMatrix(null);
-                setMatrixError(null);
-              }}
-              disabled={!matrixLevel}
-            >
-              <option value="">— Choisir une classe —</option>
-              {classesForLevel.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.label}
-                </option>
-              ))}
-            </Select>
-          </div>
-        </div>
-
-        <div className="mb-3">
-          <Button
-            type="button"
-            onClick={loadClassMatrix}
-            disabled={matrixLoading || !matrixClassId}
-          >
-            {matrixLoading ? (
+            {subjectsLoading ? (
               <RefreshCw className="h-4 w-4 animate-spin" />
             ) : (
-              <NotebookPen className="h-4 w-4" />
+              <BookOpen className="h-4 w-4" />
             )}
-            Calculer la matrice
-          </Button>
+            Actualiser matières
+          </GhostButton>
+
+          <GhostButton onClick={exportCsv} disabled={!matrixRows.length}>
+            <Download className="h-4 w-4" /> CSV
+          </GhostButton>
+
+          <GhostButton onClick={exportPdf} disabled={!matrixRows.length}>
+            <Printer className="h-4 w-4" /> PDF
+          </GhostButton>
+
+          <span className="text-xs text-slate-500">
+            {selectedClass ? clsLabel(selectedClass) : "Aucune classe sélectionnée"} •{" "}
+            {selectedAcademicYear || "année courante"} • {selectedSubjectName}
+          </span>
         </div>
 
-        {matrixError && (
-          <div className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
-            {matrixError}
-          </div>
-        )}
-
-        {!classMatrix ? (
-          <p className="text-xs text-slate-500">
-            Choisissez un niveau, une classe, puis cliquez sur « Calculer la matrice » pour voir
-            les moyennes par matière, la moyenne générale et les rangs des élèves.
-          </p>
-        ) : (
-          <>
-            {/* Stats de classe */}
-            <div className="mb-3 grid grid-cols-1 gap-3 md:grid-cols-4 text-xs">
-              <div className="rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-2">
-                <div className="text-[11px] text-slate-500">Classe</div>
-                <div className="text-sm font-semibold text-slate-900">
-                  {classMatrix.class_label}{" "}
-                  {classMatrix.level ? `(${classMatrix.level})` : ""}
-                </div>
-              </div>
-              <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
-                <div className="text-[11px] text-slate-500">Moyenne de classe</div>
-                <div className="text-sm font-semibold text-slate-900">
-                  {classMatrix.global.class_avg_20 == null
-                    ? "—"
-                    : `${nf.format(classMatrix.global.class_avg_20)} /20`}
-                </div>
-              </div>
-              <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
-                <div className="text-[11px] text-slate-500">Min / Max des moyennes élèves</div>
-                <div className="text-sm font-semibold text-slate-900">
-                  {classMatrix.global.class_min_20 == null
-                    ? "—"
-                    : nf.format(classMatrix.global.class_min_20)}{" "}
-                  /{" "}
-                  {classMatrix.global.class_max_20 == null
-                    ? "—"
-                    : nf.format(classMatrix.global.class_max_20)}
-                </div>
-              </div>
-              <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
-                <div className="text-[11px] text-slate-500 mb-1">
-                  Répartition des moyennes (élèves)
-                </div>
-                <div className="flex flex-wrap gap-2 text-[11px] text-slate-700">
-                  <span>&lt; 5 : {classMatrix.global.dist.lt5}</span>
-                  <span>[5 ; 10[ : {classMatrix.global.dist.between5_10}</span>
-                  <span>[10 ; 12[ : {classMatrix.global.dist.between10_12}</span>
-                  <span>[12 ; 15[ : {classMatrix.global.dist.between12_15}</span>
-                  <span>≥ 15 : {classMatrix.global.dist.gte15}</span>
-                </div>
-              </div>
-            </div>
-
-            {/* Matières clés */}
-            {classMatrix.global.subjectStats.length > 0 && (
-              <div className="mb-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs">
-                <div className="mb-1 text-[11px] font-semibold text-slate-700">
-                  Matières — indicateurs clés (classe)
-                </div>
-                <div className="overflow-x-auto">
-                  <table className="min-w-full text-[11px]">
-                    <thead>
-                      <tr className="bg-slate-100 text-slate-600">
-                        <th className="px-2 py-1 text-left">Matière</th>
-                        <th className="px-2 py-1 text-right">Évals</th>
-                        <th className="px-2 py-1 text-right">Notes</th>
-                        <th className="px-2 py-1 text-right">Moyenne /20</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {classMatrix.global.subjectStats.map((s) => (
-                        <tr key={s.subject_id} className="border-t">
-                          <td className="px-2 py-1 text-slate-700">{s.subject_name}</td>
-                          <td className="px-2 py-1 text-right text-slate-700">
-                            {s.evals_count.toLocaleString("fr-FR")}
-                          </td>
-                          <td className="px-2 py-1 text-right text-slate-700">
-                            {s.notes_count.toLocaleString("fr-FR")}
-                          </td>
-                          <td className="px-2 py-1 text-right text-slate-700">
-                            {s.avg_20_class == null ? "—" : nf.format(s.avg_20_class)}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            )}
-
-            {/* Matrice élèves × matières */}
-            <div className="overflow-x-auto rounded-xl border">
-              <table className="min-w-full text-xs sm:text-sm">
-                <thead className="bg-slate-50 text-slate-600">
-                  <tr>
-                    <th
-                      rowSpan={2}
-                      className="px-2 py-2 text-left align-bottom"
-                    >
-                      Élève
-                    </th>
-                    {classMatrix.subjects.map((s) => (
-                      <th
-                        key={s.subject_id}
-                        colSpan={2}
-                        className="px-2 py-2 text-center align-bottom"
-                      >
-                        <div className="flex flex-col items-center gap-0.5">
-                          <span className="font-semibold">
-                            {s.subject_name || "Matière"}
-                          </span>
-                        </div>
-                      </th>
-                    ))}
-                    <th colSpan={2} className="px-2 py-2 text-center align-bottom">
-                      <div className="flex flex-col items-center gap-0.5">
-                        <span className="font-semibold">Moyenne générale</span>
-                      </div>
-                    </th>
-                  </tr>
-                  <tr>
-                    {classMatrix.subjects.map((s) => (
-                      <Fragment key={`${s.subject_id}-sub`}>
-                        <th className="px-2 py-1 text-right text-[11px]">MOY</th>
-                        <th className="px-2 py-1 text-right text-[11px]">Rang</th>
-                      </Fragment>
-                    ))}
-                    <th className="px-2 py-1 text-right text-[11px]">MOY</th>
-                    <th className="px-2 py-1 text-right text-[11px]">Rang</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y">
-                  {classMatrix.students.map((st) => {
-                    const perSubj = classMatrix.averages[st.student_id] || {};
-                    const gen = classMatrix.generalAverages[st.student_id];
-                    const rGen = classMatrix.ranks.general[st.student_id] ?? null;
-                    return (
-                      <tr key={st.student_id} className="hover:bg-slate-50/60">
-                        <td className="px-2 py-2 text-slate-800">
-                          <div className="flex flex-col">
-                            <span className="font-semibold">{st.full_name}</span>
-                            <span className="text-[11px] text-slate-500">
-                              {st.matricule || "—"}
-                            </span>
-                          </div>
-                        </td>
-                        {classMatrix.subjects.map((s) => {
-                          const cell = perSubj[s.subject_id];
-                          const avg = cell?.avg_20 ?? null;
-                          const rMap = classMatrix.ranks.bySubject[s.subject_id] || {};
-                          const r = rMap[st.student_id] ?? null;
-                          return (
-                            <Fragment key={`${st.student_id}-${s.subject_id}`}>
-                              <td className="px-2 py-2 text-right tabular-nums">
-                                {avg == null ? "—" : nf.format(avg)}
-                              </td>
-                              <td className="px-2 py-2 text-right tabular-nums">
-                                {formatRank(r)}
-                              </td>
-                            </Fragment>
-                          );
-                        })}
-                        <td className="px-2 py-2 text-right tabular-nums font-semibold">
-                          {gen == null ? "—" : nf.format(gen)}
-                        </td>
-                        <td className="px-2 py-2 text-right tabular-nums font-semibold">
-                          {formatRank(rGen)}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </>
-        )}
-      </Card>
-
-      {/* ───────── Section 2 : Analyse par matière (mono-discipline) ───────── */}
-      <Card
-        title="Matrice par discipline"
-        subtitle="On choisit une discipline d'abord, puis éventuellement un niveau et une classe pour voir les moyennes et rangs des élèves."
-        icon={<BookOpen className="h-4 w-4 text-emerald-600" />}
-        actions={
-          <div className="flex flex-wrap items-center gap-2">
-            <GhostButton
-              type="button"
-              onClick={exportSubjectAggregatedCsv}
-              disabled={!subjectView}
-            >
-              <FileSpreadsheet className="h-4 w-4" />
-              Exporter CSV (classes)
-            </GhostButton>
-            <GhostButton
-              type="button"
-              onClick={exportSubjectAggregatedPdf}
-              disabled={!subjectView}
-            >
-              <Target className="h-4 w-4" />
-              Exporter PDF (classes)
-            </GhostButton>
-          </div>
-        }
-      >
-        {!byClassSubject.length ? (
-          <p className="text-xs text-slate-500">
-            Lancez d&apos;abord un calcul de statistiques globales avec le bouton
-            &laquo; Actualiser les statistiques &raquo; ci-dessus. Cette section utilise les
-            données agrégées par classe × matière.
-          </p>
-        ) : (
-          <>
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-6 mb-3">
-              <div className="md:col-span-3">
-                <div className="mb-1 text-xs text-slate-500">Matière (obligatoire)</div>
-                <Select
-                  value={selectedSubjectId}
-                  onChange={(e) => {
-                    setSelectedSubjectId(e.target.value);
-                    setSubjectLevelFilter("");
-                    setSubjectClassId("");
-                    setSubjectClassMatrix(null);
-                    setSubjectClassError(null);
-                  }}
-                >
-                  <option value="">— Choisir une matière —</option>
-                  {subjectOptions.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.name}
-                    </option>
-                  ))}
-                </Select>
-              </div>
-              <div className="md:col-span-2">
-                <div className="mb-1 text-xs text-slate-500">Niveau (optionnel)</div>
-                <Select
-                  value={subjectLevelFilter}
-                  onChange={(e) => {
-                    setSubjectLevelFilter(e.target.value);
-                    setSubjectClassId("");
-                    setSubjectClassMatrix(null);
-                    setSubjectClassError(null);
-                  }}
-                  disabled={!selectedSubjectId}
-                >
-                  <option value="">— Tous les niveaux —</option>
-                  {levels.map((lvl) => (
-                    <option key={lvl} value={lvl}>
-                      {lvl}
-                    </option>
-                  ))}
-                </Select>
-              </div>
-              <div className="md:col-span-1">
-                <div className="mb-1 text-xs text-slate-500">
-                  Classe (pour détail élèves)
-                </div>
-                <Select
-                  value={subjectClassId}
-                  onChange={(e) => {
-                    setSubjectClassId(e.target.value);
-                    setSubjectClassMatrix(null);
-                    setSubjectClassError(null);
-                  }}
-                  disabled={!selectedSubjectId || !subjectClasses.length}
-                >
-                  <option value="">— Classe —</option>
-                  {subjectClasses.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.label}
-                    </option>
-                  ))}
-                </Select>
-              </div>
-            </div>
-
-            <div className="mb-3 flex flex-wrap items-center gap-2">
-              <Button
-                type="button"
-                onClick={loadSubjectClassMatrix}
-                disabled={
-                  subjectClassLoading || !selectedSubjectId || !subjectClassId
-                }
+        <div className="mt-4 flex flex-wrap gap-2 text-xs">
+          {matrixPeriods.length ? (
+            matrixPeriods.map((p) => (
+              <span
+                key={p.id}
+                className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-slate-600"
               >
-                {subjectClassLoading ? (
-                  <RefreshCw className="h-4 w-4 animate-spin" />
-                ) : (
-                  <NotebookPen className="h-4 w-4" />
-                )}
-                Calculer la matrice (matière)
-              </Button>
-              {subjectClassError && (
-                <span className="text-xs text-red-600">{subjectClassError}</span>
-              )}
-            </div>
+                {periodLabel(p)} : {formatDateFR(p.start_date)} →{" "}
+                {formatDateFR(p.end_date)}
+              </span>
+            ))
+          ) : (
+            <span className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-amber-700">
+              Aucune période active avec dates pour cette sélection.
+            </span>
+          )}
+        </div>
 
-            {!selectedSubjectId ? (
-              <p className="text-xs text-slate-500">
-                Sélectionnez d&apos;abord une matière pour voir les statistiques globales, puis
-                éventuellement une classe pour afficher la matrice des élèves (MOY + Rang).
-              </p>
-            ) : !subjectView ? (
-              <p className="text-xs text-slate-500">
-                Aucune classe n&apos;a de notes pour cette matière avec les filtres choisis.
-              </p>
-            ) : (
-              <>
-                {/* Stats globales matière (par classe) */}
-                <div className="mb-3 grid grid-cols-1 gap-3 md:grid-cols-4 text-xs">
-                  <div className="rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-2">
-                    <div className="text-[11px] text-slate-500">Moyenne globale (classes)</div>
-                    <div className="text-sm font-semibold text-slate-900">
-                      {subjectView.global.avg_20 == null
-                        ? "—"
-                        : `${nf.format(subjectView.global.avg_20)} /20`}
-                    </div>
-                  </div>
-                  <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
-                    <div className="text-[11px] text-slate-500">
-                      Min / Max des moyennes de classe
-                    </div>
-                    <div className="text-sm font-semibold text-slate-900">
-                      {subjectView.global.min_20 == null
-                        ? "—"
-                        : nf.format(subjectView.global.min_20)}{" "}
-                      /{" "}
-                      {subjectView.global.max_20 == null
-                        ? "—"
-                        : nf.format(subjectView.global.max_20)}
-                    </div>
-                  </div>
-                  <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
-                    <div className="text-[11px] text-slate-500">Volume (toutes classes)</div>
-                    <div className="text-sm font-semibold text-slate-900">
-                      {subjectView.global.evals_count.toLocaleString("fr-FR")} évals ·{" "}
-                      {subjectView.global.notes_count.toLocaleString("fr-FR")} notes
-                    </div>
-                  </div>
-                  <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
-                    <div className="text-[11px] text-slate-500 mb-1">
-                      Répartition des classes (selon la moyenne)
-                    </div>
-                    <div className="flex flex-wrap gap-2 text-[11px] text-slate-700">
-                      <span>&lt; 5 : {subjectView.global.dist_classes.lt5}</span>
-                      <span>
-                        [5 ; 10[ : {subjectView.global.dist_classes.between5_10}
-                      </span>
-                      <span>
-                        [10 ; 12[ : {subjectView.global.dist_classes.between10_12}
-                      </span>
-                      <span>
-                        [12 ; 15[ : {subjectView.global.dist_classes.between12_15}
-                      </span>
-                      <span>≥ 15 : {subjectView.global.dist_classes.gte15}</span>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Détail par classe (agrégé) */}
-                <div className="overflow-x-auto rounded-xl border mb-5">
-                  <table className="min-w-full text-xs sm:text-sm">
-                    <thead className="bg-slate-50 text-slate-600">
-                      <tr>
-                        <th className="px-2 py-2 text-left">Classe</th>
-                        <th className="px-2 py-2 text-left">Niveau</th>
-                        <th className="px-2 py-2 text-right">Évals</th>
-                        <th className="px-2 py-2 text-right">Notes</th>
-                        <th className="px-2 py-2 text-right">Moyenne /20</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y">
-                      {subjectView.rows.map((r) => (
-                        <tr
-                          key={`${r.class_id}-${r.subject_id}`}
-                          className="hover:bg-slate-50/60"
-                        >
-                          <td className="px-2 py-2 text-slate-800">
-                            {r.class_label}
-                          </td>
-                          <td className="px-2 py-2 text-slate-700">{r.level || "—"}</td>
-                          <td className="px-2 py-2 text-right tabular-nums">
-                            {r.evals_count.toLocaleString("fr-FR")}
-                          </td>
-                          <td className="px-2 py-2 text-right tabular-nums">
-                            {r.notes_count.toLocaleString("fr-FR")}
-                          </td>
-                          <td className="px-2 py-2 text-right tabular-nums">
-                            {r.avg_score_20 == null
-                              ? "—"
-                              : nf.format(r.avg_score_20)}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-
-                {/* Matrice élèves pour une classe dans cette matière */}
-                {subjectClassMatrix ? (
-                  <div className="space-y-3">
-                    <div className="grid grid-cols-1 gap-3 md:grid-cols-4 text-xs">
-                      <div className="rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-2">
-                        <div className="text-[11px] text-slate-500">
-                          Classe / Matière
-                        </div>
-                        <div className="text-sm font-semibold text-slate-900">
-                          {subjectClassMatrix.class_label}{" "}
-                          {subjectClassMatrix.level
-                            ? `(${subjectClassMatrix.level})`
-                            : ""}{" "}
-                          — {subjectClassMatrix.subject_name || "Matière"}
-                        </div>
-                      </div>
-                      <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
-                        <div className="text-[11px] text-slate-500">
-                          Moyenne de la classe (élèves)
-                        </div>
-                        <div className="text-sm font-semibold text-slate-900">
-                          {subjectClassMatrix.global.class_avg_20 == null
-                            ? "—"
-                            : `${nf.format(subjectClassMatrix.global.class_avg_20)} /20`}
-                        </div>
-                      </div>
-                      <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
-                        <div className="text-[11px] text-slate-500">
-                          Min / Max des moyennes (élèves)
-                        </div>
-                        <div className="text-sm font-semibold text-slate-900">
-                          {subjectClassMatrix.global.class_min_20 == null
-                            ? "—"
-                            : nf.format(subjectClassMatrix.global.class_min_20)}{" "}
-                          /{" "}
-                          {subjectClassMatrix.global.class_max_20 == null
-                            ? "—"
-                            : nf.format(subjectClassMatrix.global.class_max_20)}
-                        </div>
-                      </div>
-                      <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
-                        <div className="text-[11px] text-slate-500">
-                          Volume pour cette classe
-                        </div>
-                        <div className="text-sm font-semibold text-slate-900">
-                          {subjectClassMatrix.global.evals_count.toLocaleString("fr-FR")}{" "}
-                          évals ·{" "}
-                          {subjectClassMatrix.global.notes_count.toLocaleString("fr-FR")}{" "}
-                          notes
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Répartition des moyennes (élèves) */}
-                    <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs">
-                      <div className="mb-1 text-[11px] font-semibold text-slate-700">
-                        Répartition des moyennes des élèves (matrice mono-discipline)
-                      </div>
-                      <div className="overflow-x-auto">
-                        <table className="min-w-[320px] text-[11px]">
-                          <thead>
-                            <tr className="bg-slate-100 text-slate-600">
-                              <th className="px-2 py-1 text-left">Tranche</th>
-                              <th className="px-2 py-1 text-right">Nombre d&apos;élèves</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            <tr>
-                              <td className="px-2 py-1 text-slate-700">&lt; 5</td>
-                              <td className="px-2 py-1 text-right text-slate-700">
-                                {subjectClassMatrix.global.dist.lt5}
-                              </td>
-                            </tr>
-                            <tr>
-                              <td className="px-2 py-1 text-slate-700">[5 ; 10[</td>
-                              <td className="px-2 py-1 text-right text-slate-700">
-                                {subjectClassMatrix.global.dist.between5_10}
-                              </td>
-                            </tr>
-                            <tr>
-                              <td className="px-2 py-1 text-slate-700">[10 ; 12[</td>
-                              <td className="px-2 py-1 text-right text-slate-700">
-                                {subjectClassMatrix.global.dist.between10_12}
-                              </td>
-                            </tr>
-                            <tr>
-                              <td className="px-2 py-1 text-slate-700">[12 ; 15[</td>
-                              <td className="px-2 py-1 text-right text-slate-700">
-                                {subjectClassMatrix.global.dist.between12_15}
-                              </td>
-                            </tr>
-                            <tr>
-                              <td className="px-2 py-1 text-slate-700">≥ 15</td>
-                              <td className="px-2 py-1 text-right text-slate-700">
-                                {subjectClassMatrix.global.dist.gte15}
-                              </td>
-                            </tr>
-                          </tbody>
-                        </table>
-                      </div>
-                    </div>
-
-                    {/* Exports élèves matière */}
-                    <div className="flex flex-wrap items-center gap-2">
-                      <GhostButton
-                        type="button"
-                        onClick={exportSubjectClassCsv}
-                      >
-                        <FileSpreadsheet className="h-4 w-4" />
-                        Exporter CSV (classe / matière)
-                      </GhostButton>
-                      <GhostButton
-                        type="button"
-                        onClick={exportSubjectClassPdf}
-                      >
-                        <Target className="h-4 w-4" />
-                        Exporter PDF (classe / matière)
-                      </GhostButton>
-                    </div>
-                  </div>
-                ) : (
-                  <p className="text-xs text-slate-500">
-                    Pour voir le détail des élèves, choisissez une classe puis lancez le calcul
-                    de la matrice (matière).
-                  </p>
-                )}
-              </>
-            )}
-          </>
+        {periodStates.length > 0 && (
+          <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-3">
+            {periodStates.map((s) => (
+              <div
+                key={s.period_id}
+                className={[
+                  "rounded-2xl border px-3 py-2 text-xs",
+                  s.status === "ok"
+                    ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                    : s.status === "error"
+                    ? "border-red-200 bg-red-50 text-red-700"
+                    : s.status === "empty"
+                    ? "border-amber-200 bg-amber-50 text-amber-800"
+                    : "border-slate-200 bg-slate-50 text-slate-600",
+                ].join(" ")}
+              >
+                <div className="font-semibold">{s.label}</div>
+                <div>{s.status === "pending" ? "En attente…" : s.message || s.status}</div>
+              </div>
+            ))}
+          </div>
         )}
-      </Card>
-    </div>
+
+        {subjectsMsg && (
+          <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+            {subjectsMsg}
+          </div>
+        )}
+
+        {errorMsg && (
+          <div className="mt-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+            {errorMsg}
+          </div>
+        )}
+      </section>
+
+      <section className="rounded-3xl border border-slate-200 bg-white shadow-sm">
+        <div className="flex flex-col gap-2 border-b border-slate-100 px-5 py-4 md:flex-row md:items-center md:justify-between">
+          <div>
+            <h2 className="text-base font-bold text-slate-900">Tableau matière</h2>
+            <p className="text-sm text-slate-500">
+              {selectedSubjectName} •{" "}
+              {selectedClass ? clsLabel(selectedClass) : "Aucune classe sélectionnée"} •{" "}
+              {selectedAcademicYear || "année courante"}
+            </p>
+          </div>
+
+          <div className="flex items-center gap-2 text-xs text-slate-500">
+            <FileSpreadsheet className="h-4 w-4" /> {matrixRows.length} ligne(s)
+          </div>
+        </div>
+
+        <div className="overflow-x-auto">
+          <table className="min-w-full border-separate border-spacing-0 text-sm">
+            <thead>
+              <tr className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+                <th
+                  rowSpan={2}
+                  className="sticky left-0 z-20 border-b border-r border-slate-200 bg-slate-50 px-3 py-3 text-left"
+                >
+                  N°
+                </th>
+
+                <th
+                  rowSpan={2}
+                  className="sticky left-12 z-20 border-b border-r border-slate-200 bg-slate-50 px-3 py-3 text-left"
+                >
+                  Matricule
+                </th>
+
+                <th
+                  rowSpan={2}
+                  className="sticky left-44 z-20 min-w-[260px] border-b border-r border-slate-200 bg-slate-50 px-3 py-3 text-left"
+                >
+                  Nom et prénoms
+                </th>
+
+                {loadedPeriods.map((p) => (
+                  <th
+                    key={p.id}
+                    colSpan={2}
+                    className="border-b border-r border-slate-200 bg-indigo-50 px-3 py-3 text-center text-indigo-800"
+                  >
+                    <div className="font-bold">{periodLabel(p)}</div>
+                    <div className="text-[10px] font-medium normal-case text-indigo-500">
+                      {formatDateFR(p.start_date)} → {formatDateFR(p.end_date)}
+                    </div>
+                  </th>
+                ))}
+
+                <th
+                  colSpan={2}
+                  className="border-b border-slate-200 bg-emerald-50 px-3 py-3 text-center text-emerald-800"
+                >
+                  Annuel matière
+                </th>
+              </tr>
+
+              <tr className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+                {loadedPeriods.map((p) => (
+                  <React.Fragment key={`${p.id}-sub`}>
+                    <th className="border-b border-r border-slate-200 px-3 py-2 text-right">
+                      Moy.
+                    </th>
+                    <th className="border-b border-r border-slate-200 px-3 py-2 text-right">
+                      Rang
+                    </th>
+                  </React.Fragment>
+                ))}
+
+                <th className="border-b border-r border-slate-200 px-3 py-2 text-right">
+                  Moy.
+                </th>
+                <th className="border-b border-slate-200 px-3 py-2 text-right">
+                  Rang
+                </th>
+              </tr>
+            </thead>
+
+            <tbody>
+              {matrixRows.length === 0 ? (
+                <tr>
+                  <td
+                    colSpan={3 + loadedPeriods.length * 2 + 2}
+                    className="px-6 py-14 text-center text-sm text-slate-500"
+                  >
+                    Sélectionnez une classe, une matière, puis chargez la matrice.
+                  </td>
+                </tr>
+              ) : (
+                matrixRows.map((row, idx) => (
+                  <tr
+                    key={row.student_id}
+                    className="group odd:bg-white even:bg-slate-50/70 hover:bg-emerald-50/50"
+                  >
+                    <td className="sticky left-0 z-10 border-b border-r border-slate-100 bg-inherit px-3 py-2 font-medium text-slate-600">
+                      {idx + 1}
+                    </td>
+
+                    <td className="sticky left-12 z-10 border-b border-r border-slate-100 bg-inherit px-3 py-2 text-slate-600">
+                      {row.matricule || "—"}
+                    </td>
+
+                    <td className="sticky left-44 z-10 min-w-[260px] border-b border-r border-slate-100 bg-inherit px-3 py-2 font-semibold text-slate-900">
+                      {row.full_name}
+                    </td>
+
+                    {loadedPeriods.map((p) => {
+                      const cell = row.periods[p.id] || { avg: null, rank: null };
+
+                      return (
+                        <React.Fragment key={`${row.student_id}-${p.id}`}>
+                          <td className="border-b border-r border-slate-100 px-3 py-2 text-right tabular-nums">
+                            {formatNumber(cell.avg)}
+                          </td>
+                          <td className="border-b border-r border-slate-100 px-3 py-2 text-right tabular-nums">
+                            {formatRank(cell.rank)}
+                          </td>
+                        </React.Fragment>
+                      );
+                    })}
+
+                    <td className="border-b border-r border-slate-100 bg-emerald-50/60 px-3 py-2 text-right font-bold tabular-nums text-emerald-900">
+                      {formatNumber(row.annual_avg)}
+                    </td>
+
+                    <td className="border-b border-slate-100 bg-emerald-50/60 px-3 py-2 text-right font-bold tabular-nums text-emerald-900">
+                      {formatRank(row.annual_rank)}
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </main>
   );
 }

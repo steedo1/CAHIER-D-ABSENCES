@@ -147,6 +147,29 @@ function TextBadge({ text }: { text: string }) {
 ========================= */
 const TOP_LEVEL_ITEMS: NavItem[] = [
   { href: "/admin/dashboard", label: "Tableau de bord", Icon: LayoutDashboard },
+];
+
+const PREDICTION_ITEMS: NavItem[] = [
+  {
+    href: "/admin/notes/predictions",
+    label: "Prédictions de réussite",
+    Icon: BarChart3,
+    badge: "IA",
+  },
+];
+
+const CONDUCT_RULE_ITEMS: NavItem[] = [
+  {
+    href: "/admin/regles-conduite",
+    label: "Règles de conduite",
+    Icon: ShieldCheck,
+  },
+];
+
+/* =========================
+   Groupe : Correspondant fichier
+========================= */
+const FILE_CORRESPONDENCE_ITEMS: NavItem[] = [
   {
     href: "/admin/export-moyennes",
     label: "Export moyennes",
@@ -158,10 +181,19 @@ const TOP_LEVEL_ITEMS: NavItem[] = [
     Icon: FileText,
   },
   {
-    href: "/admin/notes/predictions",
-    label: "Prédictions de réussite",
+    href: "/admin/bulletins",
+    label: "Bulletins",
+    Icon: FileSpreadsheet,
+  },
+  {
+    href: "/admin/notes/matrice-annuelle",
+    label: "Matrice annuelle",
+    Icon: FileSpreadsheet,
+  },
+  {
+    href: "/admin/notes/statistiques",
+    label: "Matrice matière",
     Icon: BarChart3,
-    badge: "IA",
   },
 ];
 
@@ -190,7 +222,6 @@ const ORGANISATION_ITEMS: NavItem[] = [
    Groupe : Administration & services
 ========================= */
 const ADMIN_ITEMS: NavItem[] = [
-  { href: "/admin/regles-conduite", label: "Règles de conduite", Icon: ShieldCheck },
   {
     href: "/admin/autorisations",
     label: "Autorisation absences",
@@ -273,13 +304,6 @@ const ABS_ITEMS: NavItem[] = [
 const NOTES_ITEMS: NavItem[] = [
   { href: "/admin/notes", label: "Vue d’ensemble", Icon: NotebookPen },
   { href: "/admin/notes/evaluations", label: "Stats évaluations", Icon: NotebookPen },
-  { href: "/admin/bulletins", label: "Bulletins", Icon: FileSpreadsheet },
-  {
-    href: "/admin/notes/matrice-annuelle",
-    label: "Matrice annuelle",
-    Icon: FileSpreadsheet,
-  },
-  { href: "/admin/notes/statistiques", label: "Matrices", Icon: BarChart3 },
 ];
 
 function NavLinkItem({
@@ -481,6 +505,7 @@ export default function SidebarNav() {
     try {
       const raw = window.localStorage.getItem(SIDEBAR_WIDTH_KEY);
       if (!raw) return;
+
       const parsed = Number(raw);
       if (Number.isFinite(parsed)) {
         setSidebarWidth(clamp(parsed, MIN_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH));
@@ -509,6 +534,7 @@ export default function SidebarNav() {
 
     function stopResize() {
       if (!isResizingRef.current) return;
+
       isResizingRef.current = false;
       document.body.style.cursor = "";
       document.body.style.userSelect = "";
@@ -527,6 +553,7 @@ export default function SidebarNav() {
 
   const startResize = React.useCallback((event: React.MouseEvent<HTMLDivElement>) => {
     event.preventDefault();
+
     isResizingRef.current = true;
     document.body.style.cursor = "col-resize";
     document.body.style.userSelect = "none";
@@ -545,6 +572,7 @@ export default function SidebarNav() {
         if (!r.ok) return;
 
         const j = await r.json().catch(() => ({}));
+
         if (!cancelled) {
           setRole((j.role ?? null) as AppRole | null);
         }
@@ -582,6 +610,7 @@ export default function SidebarNav() {
         }
 
         const count = Array.isArray(json.items) ? json.items.length : 0;
+
         if (!cancelled) {
           setPendingAbsenceCount(count);
         }
@@ -604,17 +633,30 @@ export default function SidebarNav() {
 
   const isEducator = role === "educator";
 
-  const topLevelItems = React.useMemo(
+  const topLevelItems = React.useMemo(() => TOP_LEVEL_ITEMS, []);
+
+  const predictionItems = React.useMemo(
     () =>
-      TOP_LEVEL_ITEMS.filter((item) => {
+      PREDICTION_ITEMS.filter((item) => {
         if (isEducator && item.href.startsWith("/admin/notes")) return false;
-        if (isEducator && item.href === "/admin/export-moyennes") return false;
+        return true;
+      }),
+    [isEducator]
+  );
+
+  const conductRuleItems = React.useMemo(() => CONDUCT_RULE_ITEMS, []);
+
+  const fileCorrespondenceItems = React.useMemo(
+    () =>
+      FILE_CORRESPONDENCE_ITEMS.filter((item) => {
+        if (isEducator) return false;
         return true;
       }),
     [isEducator]
   );
 
   const organisationItems = React.useMemo(() => ORGANISATION_ITEMS, []);
+
   const adminItems = React.useMemo(
     () =>
       ADMIN_ITEMS.filter((item) => {
@@ -623,11 +665,23 @@ export default function SidebarNav() {
       }),
     [isEducator]
   );
+
   const callsControlItems = React.useMemo(() => CALLS_CONTROL_ITEMS, []);
   const absItems = React.useMemo(() => ABS_ITEMS, []);
-  const notesItems = React.useMemo(() => NOTES_ITEMS, []);
+
+  const notesItems = React.useMemo(
+    () =>
+      NOTES_ITEMS.filter((item) => {
+        if (isEducator && item.href.startsWith("/admin/notes")) return false;
+        return true;
+      }),
+    [isEducator]
+  );
+
   const settingsItems = React.useMemo(() => SETTINGS_ITEMS, []);
 
+  const fileCorrespondenceActive =
+    !isEducator && groupHasActiveItem(pathname, fileCorrespondenceItems, currentTab);
   const organisationActive = groupHasActiveItem(pathname, organisationItems, currentTab);
   const adminActive = groupHasActiveItem(pathname, adminItems, currentTab);
   const callsControlActive = groupHasActiveItem(pathname, callsControlItems, currentTab);
@@ -635,12 +689,20 @@ export default function SidebarNav() {
   const notesActive = !isEducator && groupHasActiveItem(pathname, notesItems, currentTab);
   const settingsActive = groupHasActiveItem(pathname, settingsItems, currentTab);
 
-  const [organisationOpen, setOrganisationOpen] = React.useState<boolean>(organisationActive);
+  const [fileCorrespondenceOpen, setFileCorrespondenceOpen] =
+    React.useState<boolean>(fileCorrespondenceActive);
+  const [organisationOpen, setOrganisationOpen] =
+    React.useState<boolean>(organisationActive);
   const [adminOpen, setAdminOpen] = React.useState<boolean>(adminActive);
-  const [callsControlOpen, setCallsControlOpen] = React.useState<boolean>(callsControlActive);
+  const [callsControlOpen, setCallsControlOpen] =
+    React.useState<boolean>(callsControlActive);
   const [absOpen, setAbsOpen] = React.useState<boolean>(absActive);
   const [notesOpen, setNotesOpen] = React.useState<boolean>(notesActive);
   const [settingsOpen, setSettingsOpen] = React.useState<boolean>(settingsActive);
+
+  React.useEffect(() => {
+    if (fileCorrespondenceActive) setFileCorrespondenceOpen(true);
+  }, [fileCorrespondenceActive]);
 
   React.useEffect(() => {
     if (organisationActive) setOrganisationOpen(true);
@@ -702,6 +764,43 @@ export default function SidebarNav() {
               />
             ))}
 
+            {!isEducator && fileCorrespondenceItems.length > 0 && (
+              <GroupSection
+                title="Correspondant fichier"
+                Icon={FileSpreadsheet}
+                items={fileCorrespondenceItems}
+                pathname={pathname}
+                currentTab={currentTab}
+                open={fileCorrespondenceOpen}
+                onToggle={() => setFileCorrespondenceOpen((v) => !v)}
+                accent="violet"
+              />
+            )}
+
+            {predictionItems.map((item) => (
+              <NavLinkItem
+                key={item.href}
+                item={item}
+                pathname={pathname}
+                currentTab={currentTab}
+                accent="cyan"
+                pendingAbsenceCount={pendingAbsenceCount}
+                topLevel
+              />
+            ))}
+
+            {conductRuleItems.map((item) => (
+              <NavLinkItem
+                key={item.href}
+                item={item}
+                pathname={pathname}
+                currentTab={currentTab}
+                accent="amber"
+                pendingAbsenceCount={pendingAbsenceCount}
+                topLevel
+              />
+            ))}
+
             <GroupSection
               title="Organisation scolaire"
               Icon={School}
@@ -748,7 +847,7 @@ export default function SidebarNav() {
               accent="emerald"
             />
 
-            {!isEducator && (
+            {!isEducator && notesItems.length > 0 && (
               <GroupSection
                 title="Cahier de notes"
                 Icon={NotebookPen}
