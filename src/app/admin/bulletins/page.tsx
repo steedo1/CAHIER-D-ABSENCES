@@ -2325,10 +2325,31 @@ export default function BulletinsPage() {
       setBulletinLoading(true);
       setConductSummary(null);
 
+      const selectedPeriod = periods.find((p) => p.id === selectedPeriodId);
+
       const params = new URLSearchParams();
       params.set("class_id", selectedClassId);
       params.set("from", dateFrom);
       params.set("to", dateTo);
+
+      /*
+       * ✅ Important pour la conduite officielle :
+       * l'API conduite utilise academic_year + period_code pour retrouver
+       * une éventuelle moyenne finale modifiée par l'administration.
+       *
+       * On ne change pas la logique du bulletin : on enrichit seulement
+       * l'appel conduite avec les informations de période déjà connues ici.
+       */
+      const effectiveAcademicYear =
+        selectedAcademicYear || selectedPeriod?.academic_year || "";
+      const effectivePeriodCode = selectedPeriod?.code || "";
+
+      if (effectiveAcademicYear) {
+        params.set("academic_year", effectiveAcademicYear);
+      }
+      if (effectivePeriodCode) {
+        params.set("period_code", effectivePeriodCode);
+      }
 
       const [resBulletin, resConduct] = await Promise.all([
         fetch(`/api/admin/grades/bulletin?${params.toString()}`),

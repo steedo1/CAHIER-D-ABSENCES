@@ -92,6 +92,14 @@ type SubjectCoeffRow = {
   level?: string | null;
 };
 
+type SubjectGradePolicyRow = {
+  subject_id: string;
+  include_in_general_average?: boolean | null;
+  include_in_conduct_average?: boolean | null;
+  conduct_weight?: number | null;
+  is_active?: boolean | null;
+};
+
 type BulletinSubjectGroupItem = {
   id: string;
   group_id: string;
@@ -255,6 +263,8 @@ function computeGroupAnnualCoeff(
     }
 
     const base = coeffBySubject.get(String(item.subject_id));
+    if (base?.include === false) continue;
+
     const c = Number(base?.coeff ?? 0);
     if (Number.isFinite(c) && c > 0) sumCoeff += c;
   }
@@ -1592,6 +1602,79 @@ export async function GET(req: NextRequest) {
     });
   }
 
+  /*
+   * ✅ Règles spéciales par établissement et par matière.
+   * Exemple : COURS SECONDAIRE CATHOLIQUE ABOISSO
+   * LATIN / RELIGION doivent rester visibles au bulletin,
+   * mais ne doivent pas compter dans la moyenne générale.
+   *
+   * Non cassant : si la table n'existe pas encore ou si aucune règle n'est trouvée,
+   * l'ancien comportement institution_subject_coeffs reste inchangé.
+   */
+  const subjectGradePolicyBySubject = new Map<
+    string,
+    {
+      includeInGeneralAverage: boolean | null;
+      includeInConductAverage: boolean;
+      conductWeight: number;
+    }
+  >();
+
+  try {
+    const { data: policyData, error: policyErr } = await srvClient
+      .from("institution_subject_grade_policies")
+      .select(
+        "subject_id, include_in_general_average, include_in_conduct_average, conduct_weight, is_active"
+      )
+      .eq("institution_id", institutionId)
+      .eq("is_active", true);
+
+    if (!policyErr && policyData?.length) {
+      for (const row of policyData as SubjectGradePolicyRow[]) {
+        const sid = String(row.subject_id || "");
+        if (!sid || !isUuid(sid)) continue;
+
+        const includeInGeneralAverage =
+          typeof row.include_in_general_average === "boolean"
+            ? row.include_in_general_average
+            : null;
+
+        const conductWeightRaw = Number(row.conduct_weight ?? 1);
+        const conductWeight =
+          Number.isFinite(conductWeightRaw) && conductWeightRaw > 0 ? conductWeightRaw : 1;
+
+        subjectGradePolicyBySubject.set(sid, {
+          includeInGeneralAverage,
+          includeInConductAverage: row.include_in_conduct_average === true,
+          conductWeight,
+        });
+
+        // ✅ On surcharge uniquement l'inclusion dans la moyenne générale.
+        // Le coefficient existant reste celui de institution_subject_coeffs s'il existe.
+        if (includeInGeneralAverage !== null) {
+          const existing = coeffBySubject.get(sid);
+          coeffBySubject.set(sid, {
+            coeff: existing ? existing.coeff : 1,
+            include: includeInGeneralAverage,
+          });
+        }
+      }
+    }
+  } catch (err) {
+    console.warn("[bulletin] institution_subject_grade_policies indisponible", err);
+  }
+
+  const shouldIncludeSubjectInGeneralAverage = (
+    subjectId: string,
+    fallback: boolean
+  ): boolean => {
+    const policy = subjectGradePolicyBySubject.get(String(subjectId));
+    if (policy && typeof policy.includeInGeneralAverage === "boolean") {
+      return policy.includeInGeneralAverage;
+    }
+    return fallback;
+  };
+
   /* 4) Evaluations publiées (peut être vide) */
   let evals: EvalRow[] = [];
   {
@@ -1829,7 +1912,10 @@ export async function GET(req: NextRequest) {
     const name = s?.name || s?.code || "Matière";
     const info = coeffBySubject.get(sid);
     const coeffBulletin = info ? info.coeff : 1;
-    const includeInAverage = info ? info.include : true;
+    const includeInAverage = shouldIncludeSubjectInGeneralAverage(
+      sid,
+      info ? info.include : true
+    );
 
     return {
       subject_id: sid,
@@ -2593,7 +2679,10 @@ export async function GET(req: NextRequest) {
         const name = (s as any)?.name || (s as any)?.code || "Matière";
         const info = coeffBySubject.get(sid);
         const coeffBulletin = info ? info.coeff : 1;
-        const includeInAverage = info ? info.include : true;
+        const includeInAverage = shouldIncludeSubjectInGeneralAverage(
+          sid,
+          info ? info.include : true
+        );
 
         return {
           subject_id: sid,

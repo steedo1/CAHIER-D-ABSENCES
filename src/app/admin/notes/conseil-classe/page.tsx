@@ -2463,37 +2463,80 @@ function OfficialHeader({
   classLabel: string;
   title: string;
 }) {
-  return (
-    <div>
-      <div className="grid grid-cols-[1fr_auto_1fr] items-start gap-3">
-        <div className="text-[10px] leading-4">
-          <div className="font-bold uppercase">{institution?.country_name || "République"}</div>
-          <div>{institution?.country_motto || ""}</div>
-        </div>
+  const institutionName = String(
+    institution?.institution_name || classLabel || "Établissement"
+  ).trim();
 
-        <div className="flex flex-col items-center justify-center">
-          {institution?.institution_logo_url ? (
-            <img
-              src={institution.institution_logo_url}
-              alt="Logo établissement"
-              className="h-16 w-16 object-contain"
-            />
-          ) : (
-            <div className="h-16 w-16 rounded-full border border-slate-300" />
-          )}
-          <div className="mt-1 text-center text-[9px] font-semibold uppercase tracking-[0.03em] text-slate-600">
-            {institution?.institution_name || classLabel}
+  const metaParts = [
+    institution?.institution_postal_address,
+    institution?.institution_phone ? `Tél : ${institution.institution_phone}` : "",
+    institution?.institution_email,
+    institution?.institution_status,
+    institution?.institution_code ? `Code : ${institution.institution_code}` : "",
+  ]
+    .map((x) => String(x || "").trim())
+    .filter(Boolean);
+
+  return (
+    <div className="border border-[#9fb0c8] bg-white px-3 py-2">
+      <div className="grid grid-cols-[1fr_126px_1fr] items-start gap-3">
+        <div className="text-[9.5px] leading-4 text-[#10233f]">
+          <div className="font-bold uppercase">
+            {institution?.country_name || "République de Côte d'Ivoire"}
+          </div>
+          <div>{institution?.country_motto || "Union - Discipline - Travail"}</div>
+          <div className="mt-1 h-[1px] w-20 bg-[#9fb0c8]" />
+          <div className="mt-1 uppercase">
+            {institution?.institution_region || ""}
           </div>
         </div>
 
-        <div className="text-right text-[10px] leading-4">
-          <div className="font-bold uppercase">{institution?.ministry_name || "Ministère"}</div>
-          <div>{institution?.institution_name || ""}</div>
-          <div>{institution?.institution_code ? `Code : ${institution.institution_code}` : ""}</div>
+        <div className="flex flex-col items-center justify-start">
+          <div className="flex h-[70px] w-[70px] items-center justify-center overflow-hidden rounded-2xl border border-[#9fb0c8] bg-white p-1 shadow-sm">
+            {institution?.institution_logo_url ? (
+              <img
+                src={institution.institution_logo_url}
+                alt="Logo établissement"
+                className="h-full w-full object-contain"
+              />
+            ) : (
+              <div className="text-center text-[8px] font-semibold uppercase text-slate-400">
+                Logo
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="text-right text-[9.5px] leading-4 text-[#10233f]">
+          <div className="font-bold uppercase">
+            {institution?.ministry_name || "Ministère de l'Éducation Nationale"}
+          </div>
+          <div className="mt-1 font-semibold uppercase">
+            {institutionName}
+          </div>
+          {institution?.institution_code ? (
+            <div className="text-[9px]">Code : {institution.institution_code}</div>
+          ) : null}
         </div>
       </div>
 
-      <h1 className="mt-2 text-center text-[16px] font-bold uppercase tracking-[0.02em]">
+      <div className="mt-1 text-center">
+        <div className="text-[14px] font-black uppercase leading-tight tracking-[0.03em] text-[#0f274f]">
+          {institutionName}
+        </div>
+
+        {metaParts.length > 0 ? (
+          <div className="mt-[2px] text-[8.5px] leading-tight text-slate-600">
+            {metaParts.join(" • ")}
+          </div>
+        ) : null}
+
+        <div className="mt-[3px] inline-flex items-center justify-center rounded-full border border-emerald-200 bg-emerald-50 px-3 py-[2px] text-[8.5px] font-bold uppercase tracking-[0.08em] text-emerald-800">
+          Nexa Digital SARL • www.mon-cahier.com
+        </div>
+      </div>
+
+      <h1 className="mt-2 border-y border-[#9fb0c8] bg-[#dfe6ef] py-1 text-center text-[15px] font-black uppercase tracking-[0.03em] text-[#0f274f]">
         {title}
       </h1>
     </div>

@@ -166,14 +166,6 @@ const NON_CLASSES_ITEMS: NavItem[] = [
   },
 ];
 
-const CONDUCT_RULE_ITEMS: NavItem[] = [
-  {
-    href: "/admin/regles-conduite",
-    label: "Règles de conduite",
-    Icon: ShieldCheck,
-  },
-];
-
 /* =========================
    Groupe : Correspondant fichier
 ========================= */
@@ -201,6 +193,22 @@ const FILE_CORRESPONDENCE_ITEMS: NavItem[] = [
   {
     href: "/admin/notes/statistiques",
     label: "Matrice matière",
+    Icon: BarChart3,
+  },
+];
+
+/* =========================
+   Groupe : Gestion conduite
+========================= */
+const CONDUCT_MANAGEMENT_ITEMS: NavItem[] = [
+  {
+    href: "/admin/regles-conduite",
+    label: "Règles de conduite",
+    Icon: ShieldCheck,
+  },
+  {
+    href: "/admin/conduite",
+    label: "Moyenne de conduite",
     Icon: BarChart3,
   },
 ];
@@ -303,7 +311,6 @@ const ABS_ITEMS: NavItem[] = [
     label: "Appel administratif",
     Icon: Users,
   },
-  { href: "/admin/conduite", label: "Moyenne de conduite", Icon: ShieldCheck },
 ];
 
 /* =========================
@@ -661,8 +668,6 @@ export default function SidebarNav() {
     [isEducator]
   );
 
-  const conductRuleItems = React.useMemo(() => CONDUCT_RULE_ITEMS, []);
-
   const fileCorrespondenceItems = React.useMemo(
     () =>
       FILE_CORRESPONDENCE_ITEMS.filter((item) => {
@@ -671,6 +676,8 @@ export default function SidebarNav() {
       }),
     [isEducator]
   );
+
+  const conductManagementItems = React.useMemo(() => CONDUCT_MANAGEMENT_ITEMS, []);
 
   const organisationItems = React.useMemo(() => ORGANISATION_ITEMS, []);
 
@@ -699,6 +706,11 @@ export default function SidebarNav() {
 
   const fileCorrespondenceActive =
     !isEducator && groupHasActiveItem(pathname, fileCorrespondenceItems, currentTab);
+  const conductManagementActive = groupHasActiveItem(
+    pathname,
+    conductManagementItems,
+    currentTab
+  );
   const organisationActive = groupHasActiveItem(pathname, organisationItems, currentTab);
   const adminActive = groupHasActiveItem(pathname, adminItems, currentTab);
   const callsControlActive = groupHasActiveItem(pathname, callsControlItems, currentTab);
@@ -708,6 +720,8 @@ export default function SidebarNav() {
 
   const [fileCorrespondenceOpen, setFileCorrespondenceOpen] =
     React.useState<boolean>(fileCorrespondenceActive);
+  const [conductManagementOpen, setConductManagementOpen] =
+    React.useState<boolean>(conductManagementActive);
   const [organisationOpen, setOrganisationOpen] =
     React.useState<boolean>(organisationActive);
   const [adminOpen, setAdminOpen] = React.useState<boolean>(adminActive);
@@ -720,6 +734,10 @@ export default function SidebarNav() {
   React.useEffect(() => {
     if (fileCorrespondenceActive) setFileCorrespondenceOpen(true);
   }, [fileCorrespondenceActive]);
+
+  React.useEffect(() => {
+    if (conductManagementActive) setConductManagementOpen(true);
+  }, [conductManagementActive]);
 
   React.useEffect(() => {
     if (organisationActive) setOrganisationOpen(true);
@@ -818,17 +836,18 @@ export default function SidebarNav() {
               />
             )}
 
-            {conductRuleItems.map((item) => (
-              <NavLinkItem
-                key={item.href}
-                item={item}
+            {conductManagementItems.length > 0 && (
+              <GroupSection
+                title="Gestion conduite"
+                Icon={ShieldCheck}
+                items={conductManagementItems}
                 pathname={pathname}
                 currentTab={currentTab}
+                open={conductManagementOpen}
+                onToggle={() => setConductManagementOpen((v) => !v)}
                 accent="amber"
-                pendingAbsenceCount={pendingAbsenceCount}
-                topLevel
               />
-            ))}
+            )}
 
             <GroupSection
               title="Organisation scolaire"

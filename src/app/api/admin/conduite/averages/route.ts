@@ -43,22 +43,22 @@ const DEFAULT_CONDUCT_SETTINGS: ConductSettings = {
   rubric_max: { assiduite: 6, tenue: 3, moralite: 4, discipline: 7 },
   rules: {
     assiduite: {
-      penalty_per_hour: 0.5, // -0,5 par heure d'absence/retard
-      max_hours_before_zero: 10, // seuil d'heures
-      note_after_threshold: 0, // au-delà du seuil → note fixée à 0 par défaut
+      penalty_per_hour: 0.5,
+      max_hours_before_zero: 10,
+      note_after_threshold: 0,
       lateness_mode: "as_hours",
       lateness_minutes_per_absent_hour: 60,
       lateness_points_per_late: 0.25,
     },
     tenue: {
-      warning_penalty: 0.5, // -0,5 par avertissement de tenue
+      warning_penalty: 0.5,
     },
     moralite: {
-      event_penalty: 1, // -1 par évènement (triche, alcool/drogue)
+      event_penalty: 1,
     },
     discipline: {
-      offense_penalty: 1, // -1 par offence après avertissement
-      council_cap: 5, // plafond si conseil de discipline
+      offense_penalty: 1,
+      council_cap: 5,
     },
   },
 };
@@ -66,13 +66,6 @@ const DEFAULT_CONDUCT_SETTINGS: ConductSettings = {
 const num = (v: any, fallback: number): number =>
   typeof v === "number" && Number.isFinite(v) ? v : fallback;
 
-/**
- * 🔗 On lit tous les réglages utiles dans conduct_settings :
- * - max par rubrique
- * - points par heure d’absence
- * - seuil d’heures + note au-delà du seuil
- * - stratégie retards (mode + paramètres)
- */
 async function loadConductSettings(
   srv: any,
   institution_id: string,
@@ -98,7 +91,6 @@ async function loadConductSettings(
       .maybeSingle();
 
     if (error || !data) {
-      // Aucun réglage spécifique → valeurs par défaut
       return DEFAULT_CONDUCT_SETTINGS;
     }
 
@@ -116,7 +108,7 @@ async function loadConductSettings(
       ? (modeRaw as LatenessMode)
       : DEFAULT_CONDUCT_SETTINGS.rules.assiduite.lateness_mode;
 
-    const settings: ConductSettings = {
+    return {
       rubric_max: {
         assiduite: num(
           raw.assiduite_max,
@@ -160,7 +152,6 @@ async function loadConductSettings(
             DEFAULT_CONDUCT_SETTINGS.rules.assiduite.lateness_points_per_late,
           ),
         },
-        // Pour l’instant : autres rubriques = défauts (pas encore d’UI dédiée)
         tenue: {
           warning_penalty:
             DEFAULT_CONDUCT_SETTINGS.rules.tenue.warning_penalty,
@@ -177,26 +168,18 @@ async function loadConductSettings(
         },
       },
     };
-
-    return settings;
   } catch {
-    // En cas de problème inattendu → fallback
     return DEFAULT_CONDUCT_SETTINGS;
   }
 }
 
-/**
- * 🔗 Durée de séance paramétrée dans l’établissement.
- * On s’en sert comme fallback pour les retards (mode as_hours),
- * si lateness_minutes_per_absent_hour n’est pas renseigné.
- */
 async function loadDefaultSessionMinutes(
   srv: any,
   institution_id: string,
 ): Promise<number> {
   try {
     const { data, error } = await srv
-      .from("institutions") // ✅ même table que dans /api/admin/institution/settings
+      .from("institutions")
       .select("default_session_minutes")
       .eq("id", institution_id)
       .maybeSingle();
@@ -219,13 +202,13 @@ function startISO(d?: string) {
     ? new Date(`${d}T00:00:00.000Z`).toISOString()
     : "0001-01-01T00:00:00.000Z";
 }
+
 function endISO(d?: string) {
   return d
     ? new Date(`${d}T23:59:59.999Z`).toISOString()
     : "9999-12-31T23:59:59.999Z";
 }
 
-/** Même grille que côté parents (couverture continue). */
 function appreciationFromTotal(total: number): string {
   if (total <= 5) return "Blâme";
   if (total < 8) return "Mauvaise conduite";
@@ -236,19 +219,379 @@ function appreciationFromTotal(total: number): string {
   return "Excellente conduite";
 }
 
-/**
- * ⚠️ On garde les minutes pour info, mais on ajoute surtout absenceCount :
- *  - absenceMinutes : minutes d’absence injustifiée
- *  - absenceCount   : nombre de marques d’absence injustifiée (séances)
- *  - tardyMinutes   : minutes de retard injustifié
- *  - tardyCount     : nombre de retards
- */
 type MinutesRec = {
   absenceMinutes: number;
   absenceCount: number;
   tardyMinutes: number;
   tardyCount: number;
 };
+
+type ConductOverride = {
+  student_id: string;
+  override_total: number;
+  calculated_total: number | null;
+  reason: string | null;
+  updated_at: string | null;
+  edited_by: string | null;
+};
+
+
+type InstitutionConductPolicy = {
+  mode: "standard" | "conduct_plus_subjects";
+  classic_conduct_weight: number;
+  missing_subject_strategy: "ignore_missing" | "count_as_zero";
+  is_active: boolean;
+};
+
+type ConductSubjectPolicy = {
+  subject_id: string;
+  subject_name: string;
+  conduct_weight: number;
+};
+
+type ConductPolicyComponent = {
+  kind: "classic_conduct" | "subject";
+  label: string;
+  subject_id: string | null;
+  avg20: number | null;
+  weight: number;
+  included: boolean;
+  missing: boolean;
+};
+
+type ConductPolicyResult = {
+  total: number;
+  avg20: number;
+  policy_applied: boolean;
+  mode: InstitutionConductPolicy["mode"];
+  classic_total: number;
+  classic_avg20: number;
+  components: ConductPolicyComponent[];
+};
+
+function clean2(v: any): number | null {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return null;
+  return Number(n.toFixed(2));
+}
+
+function normalizeScoreTo20(score: number, totalMax: number): number {
+  const max = Number(totalMax);
+  if (!Number.isFinite(max) || max <= 0 || max === 20) {
+    return clamp(score, 0, 20);
+  }
+  return clamp((score * 20) / max, 0, 20);
+}
+
+function normalizeScoreFrom20(avg20: number, totalMax: number): number {
+  const max = Number(totalMax);
+  if (!Number.isFinite(max) || max <= 0 || max === 20) {
+    return clamp(avg20, 0, 20);
+  }
+  return clamp((avg20 * max) / 20, 0, max);
+}
+
+async function loadInstitutionConductPolicy(
+  srv: any,
+  institution_id: string,
+): Promise<InstitutionConductPolicy> {
+  const fallback: InstitutionConductPolicy = {
+    mode: "standard",
+    classic_conduct_weight: 1,
+    missing_subject_strategy: "ignore_missing",
+    is_active: false,
+  };
+
+  try {
+    const { data, error } = await srv
+      .from("institution_conduct_policies")
+      .select(
+        "mode, classic_conduct_weight, missing_subject_strategy, is_active",
+      )
+      .eq("institution_id", institution_id)
+      .maybeSingle();
+
+    if (error || !data || (data as any).is_active === false) return fallback;
+
+    const modeRaw = String((data as any).mode || "standard");
+    const mode: InstitutionConductPolicy["mode"] =
+      modeRaw === "conduct_plus_subjects" ? "conduct_plus_subjects" : "standard";
+
+    const strategyRaw = String(
+      (data as any).missing_subject_strategy || "ignore_missing",
+    );
+    const missing_subject_strategy: InstitutionConductPolicy["missing_subject_strategy"] =
+      strategyRaw === "count_as_zero" ? "count_as_zero" : "ignore_missing";
+
+    const weight = Number((data as any).classic_conduct_weight ?? 1);
+
+    return {
+      mode,
+      classic_conduct_weight:
+        Number.isFinite(weight) && weight >= 0 ? weight : 1,
+      missing_subject_strategy,
+      is_active: true,
+    };
+  } catch {
+    return fallback;
+  }
+}
+
+async function loadConductSubjectPolicies(
+  srv: any,
+  institution_id: string,
+): Promise<ConductSubjectPolicy[]> {
+  try {
+    const { data, error } = await srv
+      .from("institution_subject_grade_policies")
+      .select("subject_id, conduct_weight, include_in_conduct_average, is_active")
+      .eq("institution_id", institution_id)
+      .eq("include_in_conduct_average", true)
+      .eq("is_active", true);
+
+    if (error || !Array.isArray(data) || data.length === 0) return [];
+
+    const rows = (data as any[])
+      .map((row) => ({
+        subject_id: String(row.subject_id || ""),
+        conduct_weight: Number(row.conduct_weight ?? 1),
+      }))
+      .filter((row) => !!row.subject_id);
+
+    const subjectIds = Array.from(new Set(rows.map((row) => row.subject_id)));
+    const nameBySubject = new Map<string, string>();
+
+    if (subjectIds.length > 0) {
+      const { data: subjectRows } = await srv
+        .from("subjects")
+        .select("id, name, code")
+        .in("id", subjectIds);
+
+      for (const s of (subjectRows || []) as any[]) {
+        const id = String(s.id || "");
+        const label = String(s.name || s.code || "Matière").trim();
+        if (id) nameBySubject.set(id, label || "Matière");
+      }
+    }
+
+    return rows.map((row) => ({
+      subject_id: row.subject_id,
+      subject_name: nameBySubject.get(row.subject_id) || "Matière",
+      conduct_weight:
+        Number.isFinite(row.conduct_weight) && row.conduct_weight >= 0
+          ? row.conduct_weight
+          : 1,
+    }));
+  } catch {
+    return [];
+  }
+}
+
+async function loadSubjectAveragesForConductPolicy(
+  srv: any,
+  opts: {
+    class_id: string;
+    subject_ids: string[];
+    student_ids: string[];
+    from: string;
+    to: string;
+  },
+): Promise<Map<string, Map<string, number>>> {
+  const out = new Map<string, Map<string, number>>();
+
+  const subjectIds = Array.from(new Set(opts.subject_ids.filter(Boolean)));
+  const studentIds = Array.from(new Set(opts.student_ids.filter(Boolean)));
+
+  if (!opts.class_id || subjectIds.length === 0 || studentIds.length === 0) {
+    return out;
+  }
+
+  try {
+    let evalQuery = srv
+      .from("grade_evaluations")
+      .select("id, subject_id, scale, coeff, eval_date, is_published")
+      .eq("class_id", opts.class_id)
+      .eq("is_published", true)
+      .in("subject_id", subjectIds);
+
+    if (opts.from) evalQuery = evalQuery.gte("eval_date", opts.from);
+    if (opts.to) evalQuery = evalQuery.lte("eval_date", opts.to);
+
+    const { data: evalRows, error: evalErr } = await evalQuery;
+    if (evalErr || !Array.isArray(evalRows) || evalRows.length === 0) return out;
+
+    const evalById = new Map<
+      string,
+      { subject_id: string; scale: number; coeff: number }
+    >();
+
+    for (const ev of evalRows as any[]) {
+      const id = String(ev.id || "");
+      const subject_id = String(ev.subject_id || "");
+      if (!id || !subject_id) continue;
+
+      const scaleRaw = Number(ev.scale ?? 20);
+      const coeffRaw = Number(ev.coeff ?? 1);
+
+      evalById.set(id, {
+        subject_id,
+        scale: Number.isFinite(scaleRaw) && scaleRaw > 0 ? scaleRaw : 20,
+        coeff: Number.isFinite(coeffRaw) && coeffRaw > 0 ? coeffRaw : 1,
+      });
+    }
+
+    const evalIds = Array.from(evalById.keys());
+    if (evalIds.length === 0) return out;
+
+    const { data: gradeRows, error: gradeErr } = await srv
+      .from("student_grades")
+      .select("evaluation_id, student_id, score")
+      .in("evaluation_id", evalIds)
+      .in("student_id", studentIds);
+
+    if (gradeErr || !Array.isArray(gradeRows) || gradeRows.length === 0) {
+      return out;
+    }
+
+    const acc = new Map<string, { sum: number; coeff: number }>();
+
+    for (const grade of gradeRows as any[]) {
+      const evaluationId = String(grade.evaluation_id || "");
+      const studentId = String(grade.student_id || "");
+      const ev = evalById.get(evaluationId);
+      if (!ev || !studentId) continue;
+
+      const score = Number(grade.score);
+      if (!Number.isFinite(score)) continue;
+
+      const mark20 = clamp((score * 20) / ev.scale, 0, 20);
+      const key = `${ev.subject_id}|${studentId}`;
+      const cur = acc.get(key) || { sum: 0, coeff: 0 };
+      cur.sum += mark20 * ev.coeff;
+      cur.coeff += ev.coeff;
+      acc.set(key, cur);
+    }
+
+    for (const [key, value] of acc.entries()) {
+      if (!value.coeff) continue;
+      const [subjectId, studentId] = key.split("|");
+      if (!subjectId || !studentId) continue;
+
+      const avg = clean2(value.sum / value.coeff);
+      if (avg === null) continue;
+
+      const byStudent = out.get(subjectId) || new Map<string, number>();
+      byStudent.set(studentId, avg);
+      out.set(subjectId, byStudent);
+    }
+
+    return out;
+  } catch {
+    return out;
+  }
+}
+
+function applyInstitutionConductPolicyToStudent(opts: {
+  student_id: string;
+  classic_total: number;
+  total_max: number;
+  conduct_policy: InstitutionConductPolicy;
+  subject_policies: ConductSubjectPolicy[];
+  subject_averages: Map<string, Map<string, number>>;
+}): ConductPolicyResult {
+  const classicTotal = clean2(opts.classic_total) ?? 0;
+  const classicAvg20 = clean2(normalizeScoreTo20(classicTotal, opts.total_max)) ?? 0;
+
+  const classicWeight = Math.max(
+    0,
+    Number(opts.conduct_policy.classic_conduct_weight ?? 1),
+  );
+
+  const components: ConductPolicyComponent[] = [
+    {
+      kind: "classic_conduct",
+      label: "Conduite",
+      subject_id: null,
+      avg20: classicAvg20,
+      weight: classicWeight,
+      included: classicWeight > 0,
+      missing: false,
+    },
+  ];
+
+  if (
+    opts.conduct_policy.mode !== "conduct_plus_subjects" ||
+    opts.subject_policies.length === 0
+  ) {
+    return {
+      total: classicTotal,
+      avg20: classicAvg20,
+      policy_applied: false,
+      mode: opts.conduct_policy.mode,
+      classic_total: classicTotal,
+      classic_avg20: classicAvg20,
+      components,
+    };
+  }
+
+  let weightedSum = classicWeight > 0 ? classicAvg20 * classicWeight : 0;
+  let totalWeight = classicWeight > 0 ? classicWeight : 0;
+
+  for (const subjectPolicy of opts.subject_policies) {
+    const weight = Math.max(0, Number(subjectPolicy.conduct_weight ?? 1));
+    const rawAvg = opts.subject_averages
+      .get(subjectPolicy.subject_id)
+      ?.get(opts.student_id);
+
+    const hasAvg = typeof rawAvg === "number" && Number.isFinite(rawAvg);
+    const shouldCountMissing =
+      opts.conduct_policy.missing_subject_strategy === "count_as_zero";
+
+    const included = weight > 0 && (hasAvg || shouldCountMissing);
+    const avg20 = hasAvg ? clamp(rawAvg, 0, 20) : shouldCountMissing ? 0 : null;
+
+    components.push({
+      kind: "subject",
+      label: subjectPolicy.subject_name,
+      subject_id: subjectPolicy.subject_id,
+      avg20: avg20 === null ? null : clean2(avg20),
+      weight,
+      included,
+      missing: !hasAvg,
+    });
+
+    if (included && avg20 !== null) {
+      weightedSum += avg20 * weight;
+      totalWeight += weight;
+    }
+  }
+
+  if (totalWeight <= 0) {
+    return {
+      total: classicTotal,
+      avg20: classicAvg20,
+      policy_applied: false,
+      mode: opts.conduct_policy.mode,
+      classic_total: classicTotal,
+      classic_avg20: classicAvg20,
+      components,
+    };
+  }
+
+  const finalAvg20 = clean2(weightedSum / totalWeight) ?? classicAvg20;
+  const finalTotal =
+    clean2(normalizeScoreFrom20(finalAvg20, opts.total_max)) ?? classicTotal;
+
+  return {
+    total: finalTotal,
+    avg20: finalAvg20,
+    policy_applied: true,
+    mode: opts.conduct_policy.mode,
+    classic_total: classicTotal,
+    classic_avg20: classicAvg20,
+    components,
+  };
+}
 
 export async function GET(req: NextRequest) {
   const supa = await getSupabaseServerClient();
@@ -257,26 +600,42 @@ export async function GET(req: NextRequest) {
   const {
     data: { user },
   } = await supa.auth.getUser();
-  if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+
+  if (!user) {
+    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  }
 
   const { data: me, error: meErr } = await supa
     .from("profiles")
     .select("institution_id")
     .eq("id", user.id)
     .maybeSingle();
-  if (meErr) return NextResponse.json({ error: meErr.message }, { status: 400 });
+
+  if (meErr) {
+    return NextResponse.json({ error: meErr.message }, { status: 400 });
+  }
 
   const institution_id = (me?.institution_id as string) ?? null;
   if (!institution_id) return NextResponse.json({ items: [] });
 
   const { searchParams } = new URL(req.url);
+
   const class_id = String(searchParams.get("class_id") || "");
   const from = searchParams.get("from") || "";
   const to = searchParams.get("to") || "";
+
+  // ✅ Nouveaux paramètres, sans casser l’ancien fonctionnement.
+  // Si la page ne les envoie pas encore, on garde le calcul automatique classique.
+  const academic_year = String(searchParams.get("academic_year") || "").trim();
+  const period_code = String(
+    searchParams.get("period_code") || searchParams.get("period") || "",
+  ).trim();
+
   const hasDateFilter = !!from || !!to;
 
-  if (!class_id)
+  if (!class_id) {
     return NextResponse.json({ error: "class_id_required" }, { status: 400 });
+  }
 
   // Classe
   const { data: cls, error: clsErr } = await srv
@@ -284,26 +643,32 @@ export async function GET(req: NextRequest) {
     .select("id,label,institution_id")
     .eq("id", class_id)
     .maybeSingle();
-  if (clsErr) return NextResponse.json({ error: clsErr.message }, { status: 400 });
-  if (!cls || (cls as any).institution_id !== institution_id)
-    return NextResponse.json({ error: "invalid_class" }, { status: 400 });
 
-  // Chargement des réglages de conduite (ou défauts)
+  if (clsErr) {
+    return NextResponse.json({ error: clsErr.message }, { status: 400 });
+  }
+
+  if (!cls || (cls as any).institution_id !== institution_id) {
+    return NextResponse.json({ error: "invalid_class" }, { status: 400 });
+  }
+
+  // Chargement des réglages de conduite
   const conductSettings = await loadConductSettings(srv, institution_id);
   const RUBRIC_MAX = conductSettings.rubric_max;
 
-  // Durée de séance (fallback pour les retards en mode as_hours)
-  const defaultSessionMinutes = await loadDefaultSessionMinutes(srv, institution_id);
+  const totalMax =
+    RUBRIC_MAX.assiduite +
+    RUBRIC_MAX.tenue +
+    RUBRIC_MAX.moralite +
+    RUBRIC_MAX.discipline;
 
-  // ───────────────── Roster (inscriptions à la classe) ─────────────────
-  //
-  // ✅ Comportement inchangé si AUCUNE date n'est fournie :
-  //    → on ne prend que les élèves avec end_date IS NULL (inscrits actuellement).
-  //
-  // ✅ Si une période est fournie (from / to, donc année scolaire + trimestre) :
-  //    → on inclut aussi les élèves qui avaient encore la classe à cette date,
-  //       c'est-à-dire ceux dont end_date est NULL ou postérieure au début de la période.
-  //
+  // Durée de séance
+  const defaultSessionMinutes = await loadDefaultSessionMinutes(
+    srv,
+    institution_id,
+  );
+
+  // ───────────────── Roster ─────────────────
   let enrollQuery = srv
     .from("class_enrollments")
     .select(
@@ -313,20 +678,16 @@ export async function GET(req: NextRequest) {
     .eq("institution_id", institution_id);
 
   if (!hasDateFilter) {
-    // 🔁 Comportement historique : seulement les élèves encore inscrits
     enrollQuery = enrollQuery.is("end_date", null);
   } else if (from) {
-    // 🕒 Photo "historique" : tout élève dont la fin d'inscription
-    //     est postérieure au début de la période OU encore inscrit.
-    enrollQuery = enrollQuery.or(
-      `end_date.gte.${from},end_date.is.null`,
-    );
+    enrollQuery = enrollQuery.or(`end_date.gte.${from},end_date.is.null`);
   }
-  // Si seulement "to" est rempli, on ne change pas le filtrage par end_date
-  // (cas très rare, et on continue à inclure les élèves actifs).
 
   const { data: enroll, error: eErr } = await enrollQuery;
-  if (eErr) return NextResponse.json({ error: eErr.message }, { status: 400 });
+
+  if (eErr) {
+    return NextResponse.json({ error: eErr.message }, { status: 400 });
+  }
 
   const roster = (enroll ?? []).map((r: any) => {
     const s = r.students || {};
@@ -336,8 +697,90 @@ export async function GET(req: NextRequest) {
     };
   });
 
-  // Minutes d'absences + retards via route centralisée (qui exclut déjà les justifiées)
+  const studentIds = roster
+    .map((r) => r.student_id)
+    .filter((id): id is string => !!id);
+
+
+  // ───────────────── Politique spéciale de conduite par établissement ─────────────────
+  // Exemple : COURS SECONDAIRE CATHOLIQUE ABOISSO
+  // Conduite finale = moyenne pondérée de Conduite classique + LATIN + RELIGION.
+  // Si aucune politique n'est configurée, tout reste strictement comme avant.
+  const conductPolicy = await loadInstitutionConductPolicy(srv, institution_id);
+  const conductSubjectPolicies =
+    conductPolicy.mode === "conduct_plus_subjects"
+      ? await loadConductSubjectPolicies(srv, institution_id)
+      : [];
+
+  const conductSubjectAverageBySubject =
+    conductPolicy.mode === "conduct_plus_subjects" && conductSubjectPolicies.length > 0
+      ? await loadSubjectAveragesForConductPolicy(srv, {
+          class_id,
+          subject_ids: conductSubjectPolicies.map((p) => p.subject_id),
+          student_ids: studentIds,
+          from,
+          to,
+        })
+      : new Map<string, Map<string, number>>();
+
+  // ───────────────── Corrections officielles admin ─────────────────
+  //
+  // ✅ Une correction n’est appliquée que si elle est clairement rattachée à :
+  // institution + classe + élève + année scolaire + période.
+  //
+  // ✅ Si academic_year / period_code ne sont pas encore envoyés,
+  // aucun override n’est appliqué : l’ancien comportement reste intact.
+  const overridesByStudent = new Map<string, ConductOverride>();
+
+  if (academic_year && period_code && studentIds.length > 0) {
+    try {
+      const { data: overrideRows, error: overrideErr } = await srv
+        .from("conduct_average_overrides")
+        .select(
+          `
+          student_id,
+          override_total,
+          calculated_total,
+          reason,
+          updated_at,
+          edited_by
+        `,
+        )
+        .eq("institution_id", institution_id)
+        .eq("class_id", class_id)
+        .eq("academic_year", academic_year)
+        .eq("period_code", period_code)
+        .in("student_id", studentIds);
+
+      if (!overrideErr && Array.isArray(overrideRows)) {
+        for (const row of overrideRows as any[]) {
+          const sid = String(row.student_id || "");
+          const overrideTotal = Number(row.override_total);
+
+          if (!sid || !Number.isFinite(overrideTotal)) continue;
+
+          overridesByStudent.set(sid, {
+            student_id: sid,
+            override_total: Number(overrideTotal.toFixed(2)),
+            calculated_total:
+              row.calculated_total === null || row.calculated_total === undefined
+                ? null
+                : Number(row.calculated_total),
+            reason: row.reason ?? null,
+            updated_at: row.updated_at ?? null,
+            edited_by: row.edited_by ?? null,
+          });
+        }
+      }
+    } catch {
+      // Sécurité : si la table n'existe pas encore ou si une erreur survient,
+      // on n'empêche jamais le calcul automatique historique.
+    }
+  }
+
+  // Minutes d'absences + retards via route centralisée
   const minutesMap = new Map<string, MinutesRec>();
+
   try {
     const url = new URL("/api/admin/absences/by-class", req.url);
     url.searchParams.set("class_id", class_id);
@@ -346,11 +789,14 @@ export async function GET(req: NextRequest) {
     url.searchParams.set("unjustified", "1");
 
     const cookie = req.headers.get("cookie");
+
     const r = await fetch(url.toString(), {
       headers: cookie ? { cookie } : undefined,
       cache: "no-store",
     });
+
     const j = await r.json().catch(() => ({}));
+
     if (r.ok && Array.isArray(j.items)) {
       for (const it of j.items) {
         const abs = Number((it as any).absence_minutes ?? 0);
@@ -360,6 +806,7 @@ export async function GET(req: NextRequest) {
         const sid = String((it as any).student_id);
 
         if (!sid) continue;
+
         minutesMap.set(sid, {
           absenceMinutes: Number.isFinite(abs) ? abs : 0,
           absenceCount: Number.isFinite(absCount) ? absCount : 0,
@@ -385,15 +832,19 @@ export async function GET(req: NextRequest) {
       | "discipline_council";
     occurred_at: string;
   };
+
   let events: Ev[] = [];
+
   try {
     let q = srv
       .from("conduct_events")
       .select("student_id,rubric,event_type,occurred_at")
       .eq("institution_id", institution_id)
       .eq("class_id", class_id);
+
     if (from) q = q.gte("occurred_at", startISO(from));
     if (to) q = q.lte("occurred_at", endISO(to));
+
     const { data: ev } = await q;
     events = (ev ?? []) as Ev[];
   } catch {
@@ -401,13 +852,16 @@ export async function GET(req: NextRequest) {
   }
 
   const byStudent = new Map<string, Ev[]>();
+
   for (const ev of events) {
     const arr = byStudent.get(ev.student_id) ?? [];
     arr.push(ev);
     byStudent.set(ev.student_id, arr);
   }
-  for (const [, arr] of byStudent)
+
+  for (const [, arr] of byStudent) {
     arr.sort((a, b) => a.occurred_at.localeCompare(b.occurred_at));
+  }
 
   // Pénalités libres
   type Pen = {
@@ -416,22 +870,28 @@ export async function GET(req: NextRequest) {
     points: number;
     occurred_at: string;
   };
+
   let penalties: Pen[] = [];
+
   try {
     let qpen = srv
       .from("conduct_penalties")
       .select("student_id,rubric,points,occurred_at")
       .eq("institution_id", institution_id)
       .eq("class_id", class_id);
+
     if (from) qpen = qpen.gte("occurred_at", startISO(from));
     if (to) qpen = qpen.lte("occurred_at", endISO(to));
+
     const { data: pen } = await qpen;
+
     const raw = (pen || []) as Array<{
       student_id: string;
       rubric: string;
       points: number;
       occurred_at: string;
     }>;
+
     penalties = raw
       .filter(
         (p) =>
@@ -453,6 +913,7 @@ export async function GET(req: NextRequest) {
     string,
     { tenue: number; moralite: number; discipline: number }
   >();
+
   for (const p of penalties) {
     const cur =
       penByStudent.get(p.student_id) || {
@@ -460,8 +921,10 @@ export async function GET(req: NextRequest) {
         moralite: 0,
         discipline: 0,
       };
+
     (cur as any)[p.rubric] =
       Number((cur as any)[p.rubric] || 0) + Number(p.points || 0);
+
     penByStudent.set(p.student_id, cur);
   }
 
@@ -476,6 +939,7 @@ export async function GET(req: NextRequest) {
         tardyMinutes: 0,
         tardyCount: 0,
       };
+
       const absenceMinutes = Number(minutesRec.absenceMinutes || 0);
       const absenceCount = Number(minutesRec.absenceCount || 0);
       const tardyMinutes = Number(minutesRec.tardyMinutes || 0);
@@ -484,15 +948,6 @@ export async function GET(req: NextRequest) {
       const { rubric_max, rules } = conductSettings;
       const assRules = rules.assiduite;
 
-      // ───────────────── Heures effectives pour l’assiduité ─────────────────
-      //
-      // ✅ Absences : 1 absence injustifiée = 1 “heure” assiduité
-      // ✅ Retards (mode as_hours) : les minutes s’accumulent mais ne comptent
-      //    que par tranches complètes.
-      //    Exemple avec seuil 60 :
-      //      - 50 minutes  → 0 “heure”
-      //      - 75 minutes  → 1 “heure”
-      //      - 130 minutes → 2 “heures”
       const absenceUnits = Math.max(0, absenceCount);
 
       const latenessDivisor = Math.max(
@@ -503,21 +958,20 @@ export async function GET(req: NextRequest) {
       );
 
       let effectiveHours = 0;
+
       if (assRules.lateness_mode === "ignore") {
         effectiveHours = absenceUnits;
       } else if (assRules.lateness_mode === "as_hours") {
-        // ⚠️ Ici on prend uniquement les TRANCHES COMPLÈTES
         const tardyUnits = Math.floor(tardyMinutes / latenessDivisor);
         effectiveHours = absenceUnits + tardyUnits;
       } else {
-        // "direct_points"
         effectiveHours = absenceUnits;
       }
 
-      // Assiduité : barème dynamique
+      // Assiduité
       let assiduite: number;
+
       if (effectiveHours >= assRules.max_hours_before_zero) {
-        // ⚠️ À partir du seuil (>=), on applique directement la note définie
         const cap = clamp(
           assRules.note_after_threshold,
           0,
@@ -525,7 +979,6 @@ export async function GET(req: NextRequest) {
         );
         assiduite = cap;
       } else {
-        // Sous le seuil → décrément linéaire à partir du max
         assiduite = clamp(
           rubric_max.assiduite -
             assRules.penalty_per_hour * effectiveHours,
@@ -533,7 +986,6 @@ export async function GET(req: NextRequest) {
           rubric_max.assiduite,
         );
 
-        // Si mode "direct_points", on retire en plus des points par retard
         if (
           assRules.lateness_mode === "direct_points" &&
           tardyCount > 0 &&
@@ -552,6 +1004,7 @@ export async function GET(req: NextRequest) {
       const tenueWarn = evs.filter(
         (e) => e.event_type === "uniform_warning",
       ).length;
+
       let tenue = clamp(
         rubric_max.tenue -
           rules.tenue.warning_penalty * tenueWarn,
@@ -565,6 +1018,7 @@ export async function GET(req: NextRequest) {
           e.event_type === "cheating" ||
           e.event_type === "alcohol_or_drug",
       ).length;
+
       let moralite = clamp(
         rubric_max.moralite -
           rules.moralite.event_penalty * moralN,
@@ -576,7 +1030,9 @@ export async function GET(req: NextRequest) {
       const firstWarn = evs.find(
         (e) => e.event_type === "discipline_warning",
       );
+
       let discN = 0;
+
       if (firstWarn) {
         discN = evs.filter(
           (e) =>
@@ -584,6 +1040,7 @@ export async function GET(req: NextRequest) {
             e.occurred_at >= firstWarn.occurred_at,
         ).length;
       }
+
       let discipline = clamp(
         rubric_max.discipline -
           rules.discipline.offense_penalty * discN,
@@ -598,49 +1055,98 @@ export async function GET(req: NextRequest) {
           moralite: 0,
           discipline: 0,
         };
+
       tenue = clamp(tenue - p.tenue, 0, rubric_max.tenue);
+
       moralite = clamp(
         moralite - p.moralite,
         0,
         rubric_max.moralite,
       );
+
       discipline = clamp(
         discipline - p.discipline,
         0,
         rubric_max.discipline,
       );
 
-      // Total (+ plafond conseil)
-      let total = assiduite + tenue + moralite + discipline;
+      // Total automatique
+      let automaticTotal = assiduite + tenue + moralite + discipline;
+
       const hasCouncil = evs.some(
         (e) => e.event_type === "discipline_council",
       );
-      if (hasCouncil)
-        total = Math.min(
-          total,
+
+      if (hasCouncil) {
+        automaticTotal = Math.min(
+          automaticTotal,
           conductSettings.rules.discipline.council_cap,
         );
+      }
 
-      const appreciation = appreciationFromTotal(total);
+      const calculatedTotal = Number(automaticTotal.toFixed(2));
+
+      // ✅ Application de la moyenne finale officielle si l'admin a modifié.
+      const override = overridesByStudent.get(student_id);
+      const rawOverrideTotal = Number(override?.override_total);
+      const isOverridden =
+        !!override && Number.isFinite(rawOverrideTotal);
+
+      const classicFinalTotal = isOverridden
+        ? Number(clamp(rawOverrideTotal, 0, totalMax).toFixed(2))
+        : calculatedTotal;
+
+      const officialConduct = applyInstitutionConductPolicyToStudent({
+        student_id,
+        classic_total: classicFinalTotal,
+        total_max: totalMax,
+        conduct_policy: conductPolicy,
+        subject_policies: conductSubjectPolicies,
+        subject_averages: conductSubjectAverageBySubject,
+      });
+
+      const finalTotal = officialConduct.total;
+      const appreciation = appreciationFromTotal(officialConduct.avg20);
 
       return {
         student_id,
         full_name,
+
         breakdown: {
           assiduite: Number(assiduite.toFixed(2)),
           tenue: Number(tenue.toFixed(2)),
           moralite: Number(moralite.toFixed(2)),
           discipline: Number(discipline.toFixed(2)),
         },
-        total: Number(total.toFixed(2)),
+
+        // ✅ total reste le champ principal utilisé par les bulletins/exportations.
+        // Désormais : total = moyenne finale officielle.
+        total: finalTotal,
+
+        // ✅ Champs supplémentaires utiles pour la page admin.
+        calculated_total: calculatedTotal,
+        override_total: isOverridden ? classicFinalTotal : null,
+        is_overridden: isOverridden,
+        override_reason: override?.reason ?? null,
+        override_updated_at: override?.updated_at ?? null,
+        override_edited_by: override?.edited_by ?? null,
+
+        // ✅ Politique spéciale éventuelle : total reste le champ officiel final.
+        // Les champs ci-dessous permettent de contrôler le détail sans casser l'ancien front.
+        classic_total: officialConduct.classic_total,
+        classic_total_avg20: officialConduct.classic_avg20,
+        conduct_policy_mode: officialConduct.mode,
+        conduct_policy_applied: officialConduct.policy_applied,
+        conduct_final_avg20: officialConduct.avg20,
+        conduct_policy_components: officialConduct.components,
+
         appreciation,
-        // ➕ infos d’absences/retards pour le bulletin & autres vues
+
+        // Infos absences/retards existantes
         absence_count: absenceCount,
         tardy_count: tardyCount,
         absence_minutes: Number(absenceMinutes.toFixed(0)),
         tardy_minutes: Number(tardyMinutes.toFixed(0)),
-        // debug possible si besoin plus tard :
-        // raw: { absenceMinutes, absenceCount, tardyMinutes, tardyCount, effectiveHours }
       };
     })
     .sort((a, b) =>
@@ -651,27 +1157,20 @@ export async function GET(req: NextRequest) {
 
   const class_label = (cls as any).label ?? "";
 
-  // ───────────────── CSV branch (opt-in) ─────────────────
+  // ───────────────── CSV branch ─────────────────
   const wantsCSV =
     (searchParams.get("format") || "").toLowerCase() === "csv" ||
     (req.headers.get("accept") || "")
       .toLowerCase()
       .includes("text/csv");
 
-  const totalMax =
-    RUBRIC_MAX.assiduite +
-    RUBRIC_MAX.tenue +
-    RUBRIC_MAX.moralite +
-    RUBRIC_MAX.discipline;
-
   if (wantsCSV) {
-    // séparateur ; , décimales avec ,
     const sep = ";";
     const CRLF = "\r\n";
     const fmt = (n: number) => n.toFixed(2).replace(".", ",");
+
     const q = (s: string) => {
       const str = String(s ?? "");
-      // échapper les guillemets
       return `"${str.replace(/"/g, '""')}"`;
     };
 
@@ -687,6 +1186,7 @@ export async function GET(req: NextRequest) {
     ];
 
     const rows = [headers.join(sep)];
+
     for (const it of items) {
       rows.push(
         [
@@ -702,7 +1202,7 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    const bom = "\uFEFF"; // Excel-friendly
+    const bom = "\uFEFF";
     const body = bom + rows.join(CRLF) + CRLF;
 
     const labelSafe =
@@ -715,10 +1215,10 @@ export async function GET(req: NextRequest) {
       from && to
         ? `${from}_au_${to}`
         : from
-        ? `depuis_${from}`
-        : to
-        ? `jusqua_${to}`
-        : "toutes_dates";
+          ? `depuis_${from}`
+          : to
+            ? `jusqua_${to}`
+            : "toutes_dates";
 
     const filename = `conduite_${labelSafe}_${rangePart}.csv`;
 
@@ -732,11 +1232,27 @@ export async function GET(req: NextRequest) {
     });
   }
 
-  // JSON (comportement existant, intact)
   return NextResponse.json({
     class_label: class_label ?? "",
     rubric_max: RUBRIC_MAX,
     total_max: totalMax,
+
+    // Infos utiles pour vérifier que la page envoie bien la période.
+    academic_year: academic_year || null,
+    period_code: period_code || null,
+    overrides_enabled: !!academic_year && !!period_code,
+    conduct_policy: {
+      mode: conductPolicy.mode,
+      is_active: conductPolicy.is_active,
+      classic_conduct_weight: conductPolicy.classic_conduct_weight,
+      missing_subject_strategy: conductPolicy.missing_subject_strategy,
+      subjects: conductSubjectPolicies.map((p) => ({
+        subject_id: p.subject_id,
+        subject_name: p.subject_name,
+        conduct_weight: p.conduct_weight,
+      })),
+    },
+
     items,
   });
 }
