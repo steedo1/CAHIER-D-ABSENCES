@@ -161,6 +161,88 @@ type GradePeriod = {
   order_index: number;
 };
 
+
+function normalizePeriodText(value: string | null | undefined) {
+  return String(value || "")
+    .trim()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+}
+
+function printablePeriodLabel(period: GradePeriod | null | undefined) {
+  if (!period) return "";
+
+  const raw =
+    String(period.short_label || "").trim() ||
+    String(period.label || "").trim() ||
+    String(period.code || "").trim();
+
+  if (!raw) return "";
+
+  const normalized = normalizePeriodText(raw);
+  const combined = normalizePeriodText(
+    `${period.code || ""} ${period.label || ""} ${period.short_label || ""}`,
+  );
+
+  const numberMatch =
+    combined.match(/\b(?:trim(?:estre)?|trimestre|t)\s*0?([123])\b/i) ||
+    combined.match(/\b0?([123])(?:er|e|eme|ème|nd)?\s*(?:trim(?:estre)?|trimestre)\b/i) ||
+    combined.match(/\bt0?([123])\b/i);
+
+  if (numberMatch?.[1]) {
+    const n = Number(numberMatch[1]);
+    if (n === 1) return "1ER TRIMESTRE";
+    if (n === 2) return "2E TRIMESTRE";
+    if (n === 3) return "3E TRIMESTRE";
+  }
+
+  if (
+    normalized.includes("premier trimestre") ||
+    normalized.includes("1er trimestre") ||
+    normalized.includes("1e trimestre")
+  ) {
+    return "1ER TRIMESTRE";
+  }
+
+  if (
+    normalized.includes("deuxieme trimestre") ||
+    normalized.includes("second trimestre") ||
+    normalized.includes("2e trimestre")
+  ) {
+    return "2E TRIMESTRE";
+  }
+
+  if (
+    normalized.includes("troisieme trimestre") ||
+    normalized.includes("3e trimestre")
+  ) {
+    return "3E TRIMESTRE";
+  }
+
+  return raw.toUpperCase();
+}
+
+function sameYMD(a: string | null | undefined, b: string | null | undefined) {
+  const aa = String(a || "").slice(0, 10);
+  const bb = String(b || "").slice(0, 10);
+  return !!aa && !!bb && aa === bb;
+}
+
+function findMatchingPeriodByDates(
+  periods: GradePeriod[],
+  from: string,
+  to: string,
+) {
+  if (!from || !to) return null;
+
+  return (
+    periods.find(
+      (p) => sameYMD(p.start_date, from) && sameYMD(p.end_date, to),
+    ) || null
+  );
+}
+
 type InstitutionSettings = {
   institution_name?: string | null;
   institution_logo_url?: string | null;
@@ -664,20 +746,32 @@ export default function ConduitePage() {
         }),
       });
 
-      const j = await res.json().catch(() => ({}));
+      const raw = await res.text();
 
-      if (!res.ok || !j?.ok) {
-        throw new Error(
-          j?.message ||
-            j?.error ||
-            "Impossible d'enregistrer la moyenne finale.",
-        );
+      let j: any = {};
+      try {
+        j = raw ? JSON.parse(raw) : {};
+      } catch {
+        j = {};
       }
 
-      closeEditModal();
+      if (!res.ok || !j?.ok) {
+        const serverMessage =
+          j?.message ||
+          j?.error ||
+          raw ||
+          `Erreur HTTP ${res.status}`;
+
+        throw new Error(serverMessage);
+      }
+
+      setEditingItem(null);
+      setEditValue("");
+      setOverrideError(null);
       setNotice("Moyenne finale enregistrée.");
       await validate();
     } catch (e: any) {
+      console.error("[Conduite] Erreur enregistrement override", e);
       setOverrideError(
         e?.message || "Impossible d'enregistrer la moyenne finale.",
       );
@@ -789,24 +883,19 @@ export default function ConduitePage() {
 
     const academicYear = selectedAcademicYear || currentAcademicYear || "";
 
-    let periodLabel = "";
+    const selectedPeriod = selectedPeriodCode
+      ? periods.find((per) => per.code === selectedPeriodCode) || null
+      : null;
+
+    const matchedPeriod =
+      selectedPeriod || findMatchingPeriodByDates(periods, from, to);
+
+    let periodLabel = matchedPeriod ? printablePeriodLabel(matchedPeriod) : "";
     let periodRange = "";
-    if (selectedPeriodCode) {
-      const p = periods.find((per) => per.code === selectedPeriodCode);
-      if (p) {
-        periodLabel = p.short_label || p.label || p.code;
-        const start = formatDateFrSafe(p.start_date);
-        const end = formatDateFrSafe(p.end_date);
-        if (start || end) {
-          periodRange =
-            start && end
-              ? `${start} au ${end}`
-              : start
-                ? `Depuis le ${start}`
-                : `Jusqu'au ${end}`;
-        }
-      }
-    } else if (from || to) {
+
+    // Si les dates correspondent à une période configurée, on affiche le nom
+    // officiel de la période (ex. 1ER TRIMESTRE) au lieu du bloc "Du ... au ...".
+    if (!matchedPeriod && (from || to)) {
       const start = from ? formatDateFrSafe(from) : "";
       const end = to ? formatDateFrSafe(to) : "";
       periodLabel = "Plage de dates sélectionnée";
@@ -840,7 +929,7 @@ export default function ConduitePage() {
     if (className) subtitleParts.push(`Classe : ${className}`);
     if (academicYear) subtitleParts.push(`Année scolaire : ${academicYear}`);
     if (periodLabel) subtitleParts.push(`Période : ${periodLabel}`);
-    if (periodRange) subtitleParts.push(periodRange);
+    if (!matchedPeriod && periodRange) subtitleParts.push(periodRange);
     const subtitle = subtitleParts.join(" • ");
 
     const today = new Date().toLocaleDateString("fr-FR");
@@ -1261,9 +1350,27 @@ export default function ConduitePage() {
     .print-header,
     .summary-card,
     .subtitle,
-    .table-wrap,
     .signature-box {
       break-inside: avoid;
+      page-break-inside: avoid;
+    }
+
+    /*
+      IMPORTANT :
+      Ne jamais mettre break-inside: avoid sur .table-wrap.
+      Sinon Chrome pousse tout le tableau à la page suivante quand il estime
+      que la liste est trop haute, ce qui crée une énorme zone blanche
+      après l'en-tête et les cartes de synthèse.
+    */
+    .table-wrap {
+      break-inside: auto !important;
+      page-break-inside: auto !important;
+      overflow: visible !important;
+    }
+
+    table {
+      break-inside: auto !important;
+      page-break-inside: auto !important;
     }
 
     thead {
@@ -1272,6 +1379,7 @@ export default function ConduitePage() {
 
     tr {
       break-inside: avoid;
+      page-break-inside: avoid;
     }
   }
 </style>
@@ -1400,7 +1508,7 @@ export default function ConduitePage() {
 
   const selectedPeriodLabel = useMemo(() => {
     const p = periods.find((per) => per.code === selectedPeriodCode);
-    return p?.short_label || p?.label || selectedPeriodCode || "";
+    return p ? printablePeriodLabel(p) : selectedPeriodCode || "";
   }, [periods, selectedPeriodCode]);
 
   return (
@@ -1762,7 +1870,7 @@ export default function ConduitePage() {
                 type="button"
                 onClick={closeEditModal}
                 disabled={savingOverride}
-                className="bg-white text-slate-700 ring-1 ring-slate-200 hover:bg-slate-50"
+                className="!bg-white !text-slate-700 ring-1 ring-slate-200 hover:!bg-slate-50"
               >
                 Annuler
               </Button>
