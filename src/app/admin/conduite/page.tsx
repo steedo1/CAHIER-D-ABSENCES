@@ -746,32 +746,20 @@ export default function ConduitePage() {
         }),
       });
 
-      const raw = await res.text();
-
-      let j: any = {};
-      try {
-        j = raw ? JSON.parse(raw) : {};
-      } catch {
-        j = {};
-      }
+      const j = await res.json().catch(() => ({}));
 
       if (!res.ok || !j?.ok) {
-        const serverMessage =
+        throw new Error(
           j?.message ||
-          j?.error ||
-          raw ||
-          `Erreur HTTP ${res.status}`;
-
-        throw new Error(serverMessage);
+            j?.error ||
+            "Impossible d'enregistrer la moyenne finale.",
+        );
       }
 
-      setEditingItem(null);
-      setEditValue("");
-      setOverrideError(null);
+      closeEditModal();
       setNotice("Moyenne finale enregistrée.");
       await validate();
     } catch (e: any) {
-      console.error("[Conduite] Erreur enregistrement override", e);
       setOverrideError(
         e?.message || "Impossible d'enregistrer la moyenne finale.",
       );
@@ -1870,7 +1858,7 @@ export default function ConduitePage() {
                 type="button"
                 onClick={closeEditModal}
                 disabled={savingOverride}
-                className="!bg-white !text-slate-700 ring-1 ring-slate-200 hover:!bg-slate-50"
+                className="bg-white text-slate-700 ring-1 ring-slate-200 hover:bg-slate-50"
               >
                 Annuler
               </Button>
