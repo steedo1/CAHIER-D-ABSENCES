@@ -187,6 +187,102 @@ function formatDateFR(iso: string | null | undefined): string {
   return d.toLocaleDateString("fr-FR");
 }
 
+function sameYMD(a: string | null | undefined, b: string | null | undefined) {
+  if (!a || !b) return false;
+  return String(a).slice(0, 10) === String(b).slice(0, 10);
+}
+
+function normalizePeriodText(value: string) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+function periodFallbackLabel(p: GradePeriod) {
+  return (
+    p.label ||
+    p.short_label ||
+    p.code ||
+    `${formatDateFR(p.start_date)} → ${formatDateFR(p.end_date)}`
+  );
+}
+
+/**
+ * Libellé propre pour les PDF :
+ * - si la période est un trimestre : 1ER / 2E / 3E TRIMESTRE
+ * - sinon on garde le libellé configuré
+ */
+function printablePeriodLabel(p: GradePeriod | null | undefined) {
+  if (!p) return "";
+
+  const raw = [p.label, p.short_label, p.code]
+    .map((x) => String(x || "").trim())
+    .filter(Boolean)
+    .join(" ");
+
+  const n = normalizePeriodText(raw);
+
+  if (
+    /\bt\s*0?1\b/.test(n) ||
+    /\btrim(?:estre)?\s*0?1\b/.test(n) ||
+    /\b1\s*(?:er|ere|e)?\s*trim(?:estre)?\b/.test(n) ||
+    /\bpremier\s+trim(?:estre)?\b/.test(n)
+  ) {
+    return "1ER TRIMESTRE";
+  }
+
+  if (
+    /\bt\s*0?2\b/.test(n) ||
+    /\btrim(?:estre)?\s*0?2\b/.test(n) ||
+    /\b2\s*(?:eme|e)?\s*trim(?:estre)?\b/.test(n) ||
+    /\bdeuxieme\s+trim(?:estre)?\b/.test(n)
+  ) {
+    return "2E TRIMESTRE";
+  }
+
+  if (
+    /\bt\s*0?3\b/.test(n) ||
+    /\btrim(?:estre)?\s*0?3\b/.test(n) ||
+    /\b3\s*(?:eme|e)?\s*trim(?:estre)?\b/.test(n) ||
+    /\btroisieme\s+trim(?:estre)?\b/.test(n)
+  ) {
+    return "3E TRIMESTRE";
+  }
+
+  return periodFallbackLabel(p);
+}
+
+function findMatchingPeriodByDates(
+  periods: GradePeriod[],
+  from: string,
+  to: string,
+  academicYear?: string | null
+) {
+  if (!from || !to) return null;
+
+  const candidates = periods.filter((p) => {
+    if (academicYear && p.academic_year && p.academic_year !== academicYear) {
+      return false;
+    }
+
+    return sameYMD(p.start_date, from) && sameYMD(p.end_date, to);
+  });
+
+  return candidates[0] || null;
+}
+
+function fallbackDateRangeLabel(from: string, to: string) {
+  if (from && to) return `${formatDateFR(from)} → ${formatDateFR(to)}`;
+  if (from) return `À partir du ${formatDateFR(from)}`;
+  if (to) return `Jusqu’au ${formatDateFR(to)}`;
+  return "Toute la période";
+}
+
+
 function generatedAtLabel() {
   try {
     return new Date().toLocaleString("fr-FR", {
@@ -626,9 +722,27 @@ function openPdfPrintWindow({
 
       .print-header,
       .summary-card,
-      .subtitle,
-      .table-wrap {
+      .subtitle {
         break-inside: avoid;
+        page-break-inside: avoid;
+      }
+
+      /*
+        IMPORTANT :
+        Ne jamais mettre break-inside: avoid sur .table-wrap.
+        Sinon Chrome pousse tout le tableau à la page suivante quand il estime
+        que la matrice est trop haute, ce qui crée une énorme zone blanche
+        après l'en-tête.
+      */
+      .table-wrap {
+        break-inside: auto !important;
+        page-break-inside: auto !important;
+        overflow: visible !important;
+      }
+
+      table.matrix-table {
+        break-inside: auto !important;
+        page-break-inside: auto !important;
       }
 
       thead {
@@ -641,6 +755,7 @@ function openPdfPrintWindow({
 
       tr {
         break-inside: avoid;
+        page-break-inside: avoid;
       }
     }
   </style>
@@ -1203,19 +1318,19 @@ export default function AbsencesMatrixOnly() {
       ? periods.find((pp) => pp.id === selectedPeriodId)
       : null;
 
+    const matchedPeriod =
+      selectedPeriod ||
+      findMatchingPeriodByDates(
+        periods,
+        from,
+        to,
+        selectedAcademicYear || selectedClass?.academic_year || null
+      );
+
     const periodLabel = (() => {
-      if (selectedPeriod) {
-        return (
-          selectedPeriod.label ||
-          selectedPeriod.short_label ||
-          selectedPeriod.code ||
-          `${selectedPeriod.start_date} → ${selectedPeriod.end_date}`
-        );
-      }
+      if (matchedPeriod) return printablePeriodLabel(matchedPeriod);
 
-      if (from || to) return `${from || "début"} → ${to || "fin"}`;
-
-      return "Toute la période";
+      return fallbackDateRangeLabel(from, to);
     })();
 
     const classLabel = selectedClass
@@ -1230,7 +1345,7 @@ export default function AbsencesMatrixOnly() {
     const yearLabel =
       selectedAcademicYear ||
       selectedClass?.academic_year ||
-      selectedPeriod?.academic_year ||
+      matchedPeriod?.academic_year ||
       "—";
 
     const valueLabel = (min: number) =>
