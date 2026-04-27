@@ -291,7 +291,7 @@ function openPdfPrintWindow({
   <style>
     @page {
       size: A4 landscape;
-      margin: 9mm;
+      margin: 6mm;
     }
 
     * {
@@ -310,26 +310,26 @@ function openPdfPrintWindow({
     }
 
     body {
-      padding: 14px;
+      padding: 8px;
     }
 
     .sheet {
-      min-height: calc(100vh - 28px);
+      min-height: calc(100vh - 16px);
       background: #ffffff;
       border: 1px solid #dbe3ee;
-      border-radius: 18px;
-      padding: 14px;
-      box-shadow: 0 18px 55px rgba(15, 23, 42, 0.08);
+      border-radius: 14px;
+      padding: 8px;
+      box-shadow: 0 12px 35px rgba(15, 23, 42, 0.06);
     }
 
     .print-header {
       display: grid;
-      grid-template-columns: 88px 1fr 218px;
-      gap: 14px;
-      align-items: stretch;
-      padding: 12px;
+      grid-template-columns: 70px 1fr 190px;
+      gap: 10px;
+      align-items: center;
+      padding: 8px 10px;
       border: 1px solid #cbd5e1;
-      border-radius: 16px;
+      border-radius: 14px;
       background:
         linear-gradient(135deg, rgba(16, 185, 129, 0.10), rgba(15, 23, 42, 0.02)),
         #ffffff;
@@ -346,17 +346,17 @@ function openPdfPrintWindow({
     }
 
     .logo-box {
-      height: 76px;
-      width: 76px;
+      height: 58px;
+      width: 58px;
       border: 1px solid #cbd5e1;
-      border-radius: 14px;
+      border-radius: 12px;
       background: #ffffff;
       display: flex;
       align-items: center;
       justify-content: center;
       overflow: hidden;
       color: #94a3b8;
-      font-size: 10px;
+      font-size: 9px;
       font-weight: 700;
       text-transform: uppercase;
     }
@@ -376,8 +376,8 @@ function openPdfPrintWindow({
     }
 
     .institution-name {
-      font-size: 18px;
-      line-height: 1.1;
+      font-size: 15px;
+      line-height: 1.05;
       font-weight: 900;
       text-transform: uppercase;
       letter-spacing: 0.02em;
@@ -386,30 +386,30 @@ function openPdfPrintWindow({
     }
 
     .institution-meta {
-      margin-top: 4px;
-      font-size: 9.5px;
+      margin-top: 2px;
+      font-size: 8.5px;
       color: #475569;
-      line-height: 1.35;
+      line-height: 1.2;
     }
 
     .doc-title {
-      margin-top: 8px;
+      margin-top: 5px;
       display: inline-flex;
       width: fit-content;
       align-items: center;
       border-radius: 999px;
       background: #064e3b;
       color: #ffffff;
-      padding: 4px 10px;
-      font-size: 10px;
+      padding: 3px 8px;
+      font-size: 8.8px;
       font-weight: 800;
-      letter-spacing: 0.08em;
+      letter-spacing: 0.07em;
       text-transform: uppercase;
     }
 
     .brand-line {
-      margin-top: 6px;
-      font-size: 9.5px;
+      margin-top: 3px;
+      font-size: 8.8px;
       color: #334155;
     }
 
@@ -420,21 +420,21 @@ function openPdfPrintWindow({
 
     .header-side {
       border-left: 1px solid #cbd5e1;
-      padding-left: 12px;
+      padding-left: 9px;
       display: flex;
       flex-direction: column;
       justify-content: center;
-      gap: 5px;
-      font-size: 10px;
+      gap: 3px;
+      font-size: 8.8px;
       color: #334155;
     }
 
     .meta-row {
       display: flex;
       justify-content: space-between;
-      gap: 8px;
+      gap: 6px;
       border-bottom: 1px dashed #cbd5e1;
-      padding-bottom: 4px;
+      padding-bottom: 2px;
     }
 
     .meta-row:last-child {
@@ -454,27 +454,27 @@ function openPdfPrintWindow({
     }
 
     .subtitle {
-      margin: 10px 0 0;
-      padding: 8px 10px;
-      border-radius: 12px;
+      margin: 5px 0 0;
+      padding: 5px 8px;
+      border-radius: 10px;
       border: 1px solid #e2e8f0;
       background: #f8fafc;
       color: #334155;
-      font-size: 10.5px;
+      font-size: 9.5px;
       font-weight: 650;
     }
 
     .summary-grid {
-      margin-top: 10px;
+      margin-top: 5px;
       display: grid;
       grid-template-columns: repeat(4, 1fr);
-      gap: 8px;
+      gap: 6px;
     }
 
     .summary-card {
       border: 1px solid #dbeafe;
-      border-radius: 13px;
-      padding: 8px 9px;
+      border-radius: 10px;
+      padding: 5px 7px;
       background: linear-gradient(180deg, #ffffff, #f8fafc);
     }
 
@@ -487,22 +487,22 @@ function openPdfPrintWindow({
     }
 
     .summary-value {
-      margin-top: 3px;
-      font-size: 15px;
+      margin-top: 2px;
+      font-size: 13px;
       color: #0f172a;
       font-weight: 950;
     }
 
     .summary-note {
-      margin-top: 2px;
-      font-size: 8px;
+      margin-top: 1px;
+      font-size: 7.5px;
       color: #64748b;
     }
 
     .table-wrap {
-      margin-top: 10px;
+      margin-top: 5px;
       border: 1px solid #cbd5e1;
-      border-radius: 14px;
+      border-radius: 12px;
       overflow: hidden;
     }
 
@@ -589,15 +589,15 @@ function openPdfPrintWindow({
     }
 
     .footer {
-      margin-top: 10px;
+      margin-top: 6px;
       display: flex;
       justify-content: space-between;
       align-items: center;
-      gap: 12px;
+      gap: 10px;
       border-top: 1px solid #cbd5e1;
-      padding-top: 8px;
+      padding-top: 5px;
       color: #475569;
-      font-size: 9px;
+      font-size: 8.5px;
     }
 
     .footer strong {

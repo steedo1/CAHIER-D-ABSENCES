@@ -158,6 +158,26 @@ type PeriodLoadState = {
   message?: string;
 };
 
+type InstitutionSettings = {
+  institution_name?: string | null;
+  institution_logo_url?: string | null;
+  institution_phone?: string | null;
+  institution_email?: string | null;
+  institution_region?: string | null;
+  institution_postal_address?: string | null;
+  institution_status?: string | null;
+  institution_head_name?: string | null;
+  institution_head_title?: string | null;
+  country_name?: string | null;
+  country_motto?: string | null;
+  ministry_name?: string | null;
+  institution_code?: string | null;
+  settings_json?: any;
+};
+
+const BRAND_COMPANY = "Nexa Digital SARL";
+const BRAND_SITE = "www.mon-cahier.com";
+
 function clsLabel(c: ClassRow | null | undefined) {
   if (!c) return "";
   return c.label || c.name || "Classe";
@@ -199,13 +219,28 @@ function formatDateFR(value?: string | null) {
   return d.toLocaleDateString("fr-FR");
 }
 
-function escapeHtml(value: string) {
-  return value
+function generatedAtLabel() {
+  try {
+    return new Date().toLocaleString("fr-FR", {
+      dateStyle: "medium",
+      timeStyle: "short",
+    });
+  } catch {
+    return new Date().toLocaleString("fr-FR");
+  }
+}
+
+function escapeHtml(value: unknown) {
+  return String(value ?? "")
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/\"/g, "&quot;")
     .replace(/'/g, "&#39;");
+}
+
+function escapeAttr(value: unknown) {
+  return escapeHtml(value).replace(/`/g, "&#096;");
 }
 
 function csvCell(value: unknown) {
@@ -312,6 +347,66 @@ function buildRankMap(
   return map;
 }
 
+function normalizeInstitutionSettings(json: any): InstitutionSettings {
+  const raw = json?.institution || json?.settings || json?.item || json || {};
+  const settingsJson = raw?.settings_json || {};
+
+  return {
+    ...settingsJson,
+    ...raw,
+    institution_name:
+      raw?.institution_name ||
+      raw?.name ||
+      settingsJson?.institution_name ||
+      settingsJson?.name ||
+      null,
+    institution_logo_url:
+      raw?.institution_logo_url ||
+      raw?.logo_url ||
+      settingsJson?.institution_logo_url ||
+      settingsJson?.logo_url ||
+      null,
+    institution_phone:
+      raw?.institution_phone ||
+      raw?.phone ||
+      settingsJson?.institution_phone ||
+      settingsJson?.phone ||
+      null,
+    institution_email:
+      raw?.institution_email ||
+      raw?.email ||
+      settingsJson?.institution_email ||
+      settingsJson?.email ||
+      null,
+    institution_region:
+      raw?.institution_region ||
+      raw?.region ||
+      settingsJson?.institution_region ||
+      settingsJson?.region ||
+      null,
+    institution_postal_address:
+      raw?.institution_postal_address ||
+      raw?.postal_address ||
+      raw?.address ||
+      settingsJson?.institution_postal_address ||
+      settingsJson?.postal_address ||
+      settingsJson?.address ||
+      null,
+    institution_status:
+      raw?.institution_status ||
+      raw?.status ||
+      settingsJson?.institution_status ||
+      settingsJson?.status ||
+      null,
+    institution_code:
+      raw?.institution_code ||
+      raw?.code ||
+      settingsJson?.institution_code ||
+      settingsJson?.code ||
+      null,
+  };
+}
+
 function Button(
   props: React.ButtonHTMLAttributes<HTMLButtonElement> & {
     tone?: "emerald" | "slate" | "amber";
@@ -374,6 +469,8 @@ export default function AnnualMatrixPage() {
   const [selectedAcademicYear, setSelectedAcademicYear] = useState("");
   const [periods, setPeriods] = useState<GradePeriod[]>([]);
   const [periodsLoading, setPeriodsLoading] = useState(false);
+
+  const [institution, setInstitution] = useState<InstitutionSettings | null>(null);
 
   const [matrixRows, setMatrixRows] = useState<MatrixRow[]>([]);
   const [loadedPeriods, setLoadedPeriods] = useState<GradePeriod[]>([]);
@@ -474,6 +571,29 @@ export default function AnnualMatrixPage() {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadInstitutionSettings() {
+      try {
+        const res = await fetch("/api/admin/institution/settings", {
+          cache: "no-store",
+        });
+        if (!res.ok) return;
+        const json = await res.json().catch(() => ({}));
+        if (!cancelled) setInstitution(normalizeInstitutionSettings(json));
+      } catch (e) {
+        console.warn("[Matrice annuelle] paramètres établissement indisponibles", e);
+      }
+    }
+
+    loadInstitutionSettings();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
@@ -713,7 +833,16 @@ export default function AnnualMatrixPage() {
           num += avg * coeff;
           den += coeff;
           sourceCount += 1;
-
+          if (isPeriodAverageComplete({
+            student_id: row.student_id,
+            full_name: row.full_name,
+            matricule: row.matricule,
+            general_avg: avg,
+            general_avg_is_complete: cell.is_complete,
+            general_avg_status: cell.status,
+          })) {
+            completeCount += 1;
+          }
         }
 
         row.annual_source_period_count = sourceCount;
@@ -849,19 +978,40 @@ export default function AnnualMatrixPage() {
     }
 
     const className = clsLabel(selectedClass);
-    const title = `Matrice annuelle des moyennes — ${className}`;
-    const subtitle = `Année scolaire ${selectedAcademicYear || "—"}`;
+    const title = `Matrice annuelle des moyennes`;
+    const subtitle = `Classe : ${className || "—"} • Année scolaire : ${selectedAcademicYear || "—"}`;
+
+    const institutionName = institution?.institution_name || "ÉTABLISSEMENT";
+    const logoUrl = String(institution?.institution_logo_url || "").trim();
+
+    const institutionMetaParts = [
+      institution?.institution_postal_address,
+      institution?.institution_phone ? `Tél : ${institution.institution_phone}` : "",
+      institution?.institution_email,
+      institution?.institution_status,
+      institution?.institution_code ? `Code : ${institution.institution_code}` : "",
+    ]
+      .map((x) => String(x || "").trim())
+      .filter(Boolean);
+
+    const institutionMeta = institutionMetaParts.map(escapeHtml).join(" • ");
+
+    const logoHtml = logoUrl
+      ? `<img src="${escapeAttr(logoUrl)}" alt="Logo établissement" />`
+      : `<span>Logo</span>`;
 
     const periodHeader = loadedPeriods
       .map(
         (p) => `
-          <th colspan="2">${escapeHtml(periodLabel(p))}<br/><span>${escapeHtml(
+          <th colspan="2" class="period-head">${escapeHtml(periodLabel(p))}<br/><span>${escapeHtml(
           formatDateFR(p.start_date)
         )} — ${escapeHtml(formatDateFR(p.end_date))}</span></th>`
       )
       .join("");
 
-    const secondHeader = loadedPeriods.map(() => `<th>Moy.</th><th>Rang</th>`).join("");
+    const secondHeader = loadedPeriods
+      .map(() => `<th>Moy.</th><th>Rang</th>`)
+      .join("");
 
     const body = matrixRows
       .map((row, idx) => {
@@ -874,16 +1024,16 @@ export default function AnnualMatrixPage() {
               status: null,
             };
 
-            return `<td class="num">${formatNumber(cell.avg)}</td><td class="num">${
+            return `<td class="num">${escapeHtml(formatNumber(cell.avg))}</td><td class="num">${escapeHtml(
               displayCellRank(cell)
-            }</td>`;
+            )}</td>`;
           })
           .join("");
 
         return `<tr>
-          <td class="num">${idx + 1}</td>
-          <td>${escapeHtml(row.matricule || "")}</td>
-          <td>${escapeHtml(row.full_name)}</td>
+          <td class="num rank-col">${idx + 1}</td>
+          <td class="matricule-col">${escapeHtml(row.matricule || "")}</td>
+          <td class="student-col">${escapeHtml(row.full_name)}</td>
           ${periodCells}
           <td class="num strong">${escapeHtml(formatAnnualNumber(row))}</td>
           <td class="num strong">${escapeHtml(formatAnnualRank(row))}</td>
@@ -891,58 +1041,432 @@ export default function AnnualMatrixPage() {
       })
       .join("");
 
-    const footnote = "";
-
     const html = `<!doctype html>
 <html lang="fr">
 <head>
 <meta charset="utf-8" />
-<title>${escapeHtml(title)}</title>
+<title>${escapeHtml(title)} — ${escapeHtml(className || "Classe")}</title>
 <style>
-  @page { size: A4 landscape; margin: 10mm; }
-  * { box-sizing: border-box; }
-  body { font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #0f172a; margin: 0; }
-  h1 { font-size: 18px; margin: 0; text-transform: uppercase; }
-  .subtitle { margin-top: 4px; color: #475569; font-size: 12px; }
-  .meta { display: flex; gap: 12px; margin: 12px 0; font-size: 11px; color: #334155; flex-wrap: wrap; }
-  table { width: 100%; border-collapse: collapse; font-size: 10px; }
-  th, td { border: 1px solid #cbd5e1; padding: 5px 6px; vertical-align: middle; }
-  th { background: #e2e8f0; font-weight: 800; text-align: center; }
-  th span { font-size: 8px; color: #475569; font-weight: 600; }
-  td.num { text-align: right; white-space: nowrap; }
-  td.strong { font-weight: 800; background: #f8fafc; }
-  tr:nth-child(even) td { background: #f8fafc; }
-  .note { margin-top: 8px; font-size: 9px; color: #92400e; font-weight: 700; }
-  .footer { margin-top: 10px; font-size: 9px; color: #64748b; text-align: right; }
+  @page {
+    size: A4 landscape;
+    margin: 9mm;
+  }
+
+  * {
+    box-sizing: border-box;
+  }
+
+  html,
+  body {
+    margin: 0;
+    padding: 0;
+    color: #0f172a;
+    background: #f8fafc;
+    font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  body {
+    padding: 14px;
+  }
+
+  .sheet {
+    min-height: calc(100vh - 28px);
+    background: #ffffff;
+    border: 1px solid #dbe3ee;
+    border-radius: 18px;
+    padding: 14px;
+    box-shadow: 0 18px 55px rgba(15, 23, 42, 0.08);
+  }
+
+  .print-header {
+    display: grid;
+    grid-template-columns: 88px 1fr 218px;
+    gap: 14px;
+    align-items: stretch;
+    position: relative;
+    overflow: hidden;
+    padding: 12px;
+    border: 1px solid #cbd5e1;
+    border-radius: 16px;
+    background:
+      linear-gradient(135deg, rgba(16, 185, 129, 0.10), rgba(15, 23, 42, 0.02)),
+      #ffffff;
+  }
+
+  .print-header::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-top: 5px solid #059669;
+    pointer-events: none;
+  }
+
+  .logo-box {
+    width: 76px;
+    height: 76px;
+    border: 1px solid #cbd5e1;
+    border-radius: 14px;
+    background: #ffffff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    color: #94a3b8;
+    font-size: 10px;
+    font-weight: 900;
+    text-transform: uppercase;
+  }
+
+  .logo-box img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    padding: 5px;
+  }
+
+  .header-main {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    min-width: 0;
+  }
+
+  .institution-name {
+    margin: 0;
+    color: #0f172a;
+    font-size: 18px;
+    line-height: 1.12;
+    font-weight: 950;
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+  }
+
+  .institution-meta {
+    margin-top: 4px;
+    color: #475569;
+    font-size: 9.5px;
+    line-height: 1.35;
+  }
+
+  .doc-title {
+    width: fit-content;
+    margin-top: 8px;
+    padding: 4px 10px;
+    border-radius: 999px;
+    background: #064e3b;
+    color: #ffffff;
+    font-size: 10px;
+    font-weight: 900;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  .brand-line {
+    margin-top: 6px;
+    color: #334155;
+    font-size: 9.5px;
+  }
+
+  .brand-line strong {
+    color: #047857;
+    font-weight: 950;
+  }
+
+  .header-side {
+    border-left: 1px solid #cbd5e1;
+    padding-left: 12px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 5px;
+    color: #334155;
+    font-size: 9.5px;
+  }
+
+  .meta-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    border-bottom: 1px dashed #cbd5e1;
+    padding-bottom: 4px;
+  }
+
+  .meta-row:last-child {
+    border-bottom: none;
+    padding-bottom: 0;
+  }
+
+  .meta-row span:first-child {
+    color: #64748b;
+    font-weight: 800;
+  }
+
+  .meta-row span:last-child {
+    text-align: right;
+    color: #0f172a;
+    font-weight: 900;
+  }
+
+  .subtitle {
+    margin-top: 10px;
+    padding: 8px 10px;
+    border: 1px solid #e2e8f0;
+    border-radius: 12px;
+    background: #f8fafc;
+    color: #334155;
+    font-size: 10.5px;
+    font-weight: 650;
+  }
+
+  .summary-grid {
+    margin-top: 10px;
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 8px;
+  }
+
+  .summary-card {
+    border: 1px solid #dbeafe;
+    border-radius: 13px;
+    padding: 8px 9px;
+    background: linear-gradient(180deg, #ffffff, #f8fafc);
+  }
+
+  .summary-label {
+    color: #64748b;
+    font-size: 7.8px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-weight: 950;
+  }
+
+  .summary-value {
+    margin-top: 3px;
+    color: #0f172a;
+    font-size: 15px;
+    font-weight: 950;
+  }
+
+  .summary-note {
+    margin-top: 2px;
+    color: #64748b;
+    font-size: 8px;
+  }
+
+  .table-wrap {
+    margin-top: 10px;
+    border: 1px solid #cbd5e1;
+    border-radius: 14px;
+    overflow: hidden;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    table-layout: fixed;
+    background: #ffffff;
+    font-size: 9px;
+  }
+
+  th,
+  td {
+    border: 1px solid #cbd5e1;
+    padding: 4px 5px;
+    vertical-align: middle;
+  }
+
+  thead th {
+    background: #eafaf4;
+    color: #064e3b;
+    font-size: 8px;
+    font-weight: 950;
+    text-align: center;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+
+  th span {
+    color: #475569;
+    font-size: 7px;
+    font-weight: 700;
+    text-transform: none;
+    letter-spacing: 0;
+  }
+
+  tbody tr:nth-child(even) td {
+    background: #f8fafc;
+  }
+
+  .rank-col {
+    width: 34px;
+  }
+
+  .matricule-col {
+    width: 82px;
+  }
+
+  .student-col {
+    width: 190px;
+    font-weight: 800;
+    color: #0f172a;
+  }
+
+  .period-head {
+    min-width: 70px;
+  }
+
+  td.num {
+    text-align: right;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+  }
+
+  td.strong {
+    background: #fefce8 !important;
+    color: #0f172a;
+    font-weight: 950;
+  }
+
+  .footer {
+    margin-top: 10px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    border-top: 1px solid #cbd5e1;
+    padding-top: 8px;
+    color: #475569;
+    font-size: 9px;
+  }
+
+  .footer strong {
+    color: #047857;
+    font-weight: 950;
+  }
+
+  .footer-right {
+    text-align: right;
+    white-space: nowrap;
+  }
+
+  @media print {
+    body {
+      padding: 0;
+      background: #ffffff;
+    }
+
+    .sheet {
+      min-height: auto;
+      border: none;
+      border-radius: 0;
+      box-shadow: none;
+      padding: 0;
+    }
+
+    .print-header,
+    .summary-card,
+    .subtitle,
+    .table-wrap {
+      break-inside: avoid;
+    }
+
+    thead {
+      display: table-header-group;
+    }
+
+    tr {
+      break-inside: avoid;
+    }
+  }
 </style>
 </head>
 <body>
-  <h1>${escapeHtml(title)}</h1>
-  <div class="subtitle">${escapeHtml(subtitle)}</div>
-  <div class="meta">
-    <div><strong>Classe :</strong> ${escapeHtml(className || "—")}</div>
-    <div><strong>Élèves :</strong> ${matrixRows.length}</div>
-    <div><strong>Moyenne classe :</strong> ${escapeHtml(
-      formatMaybeStar(stats.classAvg, stats.hasStar)
-    )}</div>
-    <div><strong>Plus forte :</strong> ${escapeHtml(formatMaybeStar(stats.highest, stats.hasStar))}</div>
-    <div><strong>Plus faible :</strong> ${escapeHtml(formatMaybeStar(stats.lowest, stats.hasStar))}</div>
-  </div>
-  <table>
-    <thead>
-      <tr>
-        <th rowspan="2">N°</th>
-        <th rowspan="2">Matricule</th>
-        <th rowspan="2">Nom et prénoms</th>
-        ${periodHeader}
-        <th colspan="2">Annuel</th>
-      </tr>
-      <tr>${secondHeader}<th>Moy.</th><th>Rang</th></tr>
-    </thead>
-    <tbody>${body}</tbody>
-  </table>
-  ${footnote}
-  <div class="footer">Document généré depuis Mon Cahier — Nexa Digital SARL</div>
+  <main class="sheet">
+    <header class="print-header">
+      <div class="logo-box">${logoHtml}</div>
+
+      <div class="header-main">
+        <h1 class="institution-name">${escapeHtml(institutionName)}</h1>
+        ${institutionMeta ? `<div class="institution-meta">${institutionMeta}</div>` : ""}
+        <div class="doc-title">${escapeHtml(title)}</div>
+        <div class="brand-line">
+          <strong>${escapeHtml(BRAND_COMPANY)}</strong> • ${escapeHtml(BRAND_SITE)}
+        </div>
+      </div>
+
+      <aside class="header-side">
+        <div class="meta-row">
+          <span>Document</span>
+          <span>PDF</span>
+        </div>
+        <div class="meta-row">
+          <span>Généré le</span>
+          <span>${escapeHtml(generatedAtLabel())}</span>
+        </div>
+        <div class="meta-row">
+          <span>Solution</span>
+          <span>Mon Cahier</span>
+        </div>
+      </aside>
+    </header>
+
+    <section class="subtitle">${escapeHtml(subtitle)}</section>
+
+    <section class="summary-grid">
+      <div class="summary-card">
+        <div class="summary-label">Classe</div>
+        <div class="summary-value">${escapeHtml(className || "—")}</div>
+        <div class="summary-note">Classe sélectionnée</div>
+      </div>
+      <div class="summary-card">
+        <div class="summary-label">Année scolaire</div>
+        <div class="summary-value">${escapeHtml(selectedAcademicYear || "—")}</div>
+        <div class="summary-note">Référence annuelle</div>
+      </div>
+      <div class="summary-card">
+        <div class="summary-label">Élèves</div>
+        <div class="summary-value">${escapeHtml(matrixRows.length)}</div>
+        <div class="summary-note">Lignes affichées</div>
+      </div>
+      <div class="summary-card">
+        <div class="summary-label">Moyenne classe</div>
+        <div class="summary-value">${escapeHtml(formatMaybeStar(stats.classAvg, stats.hasStar))}</div>
+        <div class="summary-note">Synthèse annuelle</div>
+      </div>
+      <div class="summary-card">
+        <div class="summary-label">Périodes</div>
+        <div class="summary-value">${escapeHtml(loadedPeriods.length)}</div>
+        <div class="summary-note">Périodes exploitées</div>
+      </div>
+    </section>
+
+    <section class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th rowspan="2" class="rank-col">N°</th>
+            <th rowspan="2" class="matricule-col">Matricule</th>
+            <th rowspan="2" class="student-col">Nom et prénoms</th>
+            ${periodHeader}
+            <th colspan="2">Annuel</th>
+          </tr>
+          <tr>${secondHeader}<th>Moy.</th><th>Rang</th></tr>
+        </thead>
+        <tbody>${body}</tbody>
+      </table>
+    </section>
+
+    <footer class="footer">
+      <div>
+        Document généré automatiquement depuis <strong>Mon Cahier</strong>.
+      </div>
+      <div class="footer-right">
+        ${escapeHtml(BRAND_COMPANY)} • <strong>${escapeHtml(BRAND_SITE)}</strong>
+      </div>
+    </footer>
+  </main>
 </body>
 </html>`;
 

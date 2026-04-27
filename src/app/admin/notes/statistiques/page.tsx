@@ -142,6 +142,26 @@ type PeriodLoadState = {
   message?: string;
 };
 
+type InstitutionSettings = {
+  institution_name?: string | null;
+  institution_logo_url?: string | null;
+  institution_phone?: string | null;
+  institution_email?: string | null;
+  institution_region?: string | null;
+  institution_postal_address?: string | null;
+  institution_status?: string | null;
+  institution_head_name?: string | null;
+  institution_head_title?: string | null;
+  country_name?: string | null;
+  country_motto?: string | null;
+  ministry_name?: string | null;
+  institution_code?: string | null;
+  settings_json?: any;
+};
+
+const BRAND_COMPANY = "Nexa Digital SARL";
+const BRAND_SITE = "www.mon-cahier.com";
+
 function clsLabel(c: ClassRow | null | undefined) {
   if (!c) return "";
   return c.label || c.name || "Classe";
@@ -180,13 +200,88 @@ function formatDateFR(value?: string | null) {
   return d.toLocaleDateString("fr-FR");
 }
 
-function escapeHtml(value: string) {
-  return value
+function escapeHtml(value: unknown) {
+  return String(value ?? "")
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/\"/g, "&quot;")
     .replace(/'/g, "&#39;");
+}
+
+function escapeAttr(value: unknown) {
+  return escapeHtml(value).replace(/`/g, "&#096;");
+}
+
+function generatedAtLabel() {
+  try {
+    return new Date().toLocaleString("fr-FR", {
+      dateStyle: "medium",
+      timeStyle: "short",
+    });
+  } catch {
+    return new Date().toLocaleString("fr-FR");
+  }
+}
+
+function normalizeInstitutionSettings(json: any): InstitutionSettings {
+  const raw = json?.institution || json?.settings || json?.item || json || {};
+  const settingsJson = raw?.settings_json || {};
+
+  return {
+    ...settingsJson,
+    ...raw,
+    institution_name:
+      raw?.institution_name ||
+      raw?.name ||
+      settingsJson?.institution_name ||
+      settingsJson?.name ||
+      null,
+    institution_logo_url:
+      raw?.institution_logo_url ||
+      raw?.logo_url ||
+      settingsJson?.institution_logo_url ||
+      settingsJson?.logo_url ||
+      null,
+    institution_phone:
+      raw?.institution_phone ||
+      raw?.phone ||
+      settingsJson?.institution_phone ||
+      settingsJson?.phone ||
+      null,
+    institution_email:
+      raw?.institution_email ||
+      raw?.email ||
+      settingsJson?.institution_email ||
+      settingsJson?.email ||
+      null,
+    institution_region:
+      raw?.institution_region ||
+      raw?.region ||
+      settingsJson?.institution_region ||
+      settingsJson?.region ||
+      null,
+    institution_postal_address:
+      raw?.institution_postal_address ||
+      raw?.postal_address ||
+      raw?.address ||
+      settingsJson?.institution_postal_address ||
+      settingsJson?.postal_address ||
+      settingsJson?.address ||
+      null,
+    institution_status:
+      raw?.institution_status ||
+      raw?.status ||
+      settingsJson?.institution_status ||
+      settingsJson?.status ||
+      null,
+    institution_code:
+      raw?.institution_code ||
+      raw?.code ||
+      settingsJson?.institution_code ||
+      settingsJson?.code ||
+      null,
+  };
 }
 
 function csvCell(value: unknown) {
@@ -495,6 +590,7 @@ export default function AdminNotesStatsPage() {
   const [periodStates, setPeriodStates] = useState<PeriodLoadState[]>([]);
   const [loadingMatrix, setLoadingMatrix] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [institution, setInstitution] = useState<InstitutionSettings | null>(null);
 
   const selectedClass = useMemo(
     () => classes.find((c) => c.id === selectedClassId) || null,
@@ -599,6 +695,29 @@ export default function AdminNotesStatsPage() {
       lowest: Math.round(Math.min(...valid) * 100) / 100,
     };
   }, [matrixRows, periodsToDisplay, showAnnualColumns]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadInstitutionSettings() {
+      try {
+        const res = await fetch("/api/admin/institution/settings", {
+          cache: "no-store",
+        });
+        if (!res.ok) return;
+        const json = await res.json().catch(() => ({}));
+        if (!cancelled) setInstitution(normalizeInstitutionSettings(json));
+      } catch (e) {
+        console.warn("[Stats] paramètres établissement indisponibles", e);
+      }
+    }
+
+    loadInstitutionSettings();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -1165,7 +1284,28 @@ export default function AdminNotesStatsPage() {
     const className = clsLabel(selectedClass);
     const title = `Matrice matière — ${selectedSubjectName}`;
     const periodText = selectedPeriod ? periodLabel(selectedPeriod) : "Période";
-    const subtitle = `${className || "Classe"} — ${selectedAcademicYear || "—"} — ${periodText}`;
+    const subtitle = `${className || "Classe"} • ${selectedAcademicYear || "—"} • ${periodText}`;
+    const generatedAt = generatedAtLabel();
+
+    const institutionName = institution?.institution_name || "ÉTABLISSEMENT";
+    const logoUrl = String(institution?.institution_logo_url || "").trim();
+    const institutionMetaParts = [
+      institution?.institution_postal_address,
+      institution?.institution_phone ? `Tél : ${institution.institution_phone}` : "",
+      institution?.institution_email,
+      institution?.institution_status,
+      institution?.institution_code ? `Code : ${institution.institution_code}` : "",
+    ]
+      .map((x) => String(x || "").trim())
+      .filter(Boolean);
+
+    const institutionMeta = institutionMetaParts
+      .map((x) => escapeHtml(x))
+      .join(" • ");
+
+    const logoHtml = logoUrl
+      ? `<img src="${escapeAttr(logoUrl)}" alt="Logo établissement" />`
+      : `<span>Logo</span>`;
 
     const periodHeader = loadedPeriods
       .map(
@@ -1195,9 +1335,9 @@ export default function AdminNotesStatsPage() {
           .map((p) => {
             const cell = row.periods[p.id] || { avg: null, rank: null };
 
-            return `<td class="num">${formatNumber(cell.avg)}</td><td class="num">${formatRank(
+            return `<td class="num">${escapeHtml(formatNumber(cell.avg))}</td><td class="num">${escapeHtml(formatRank(
               cell.rank
-            )}</td>`;
+            ))}</td>`;
           })
           .join("");
 
@@ -1209,12 +1349,16 @@ export default function AdminNotesStatsPage() {
         return `<tr>
           <td class="num">${idx + 1}</td>
           <td>${escapeHtml(row.matricule || "")}</td>
-          <td>${escapeHtml(row.full_name)}</td>
+          <td class="student-name">${escapeHtml(row.full_name)}</td>
           ${periodCells}
           ${annualCells}
         </tr>`;
       })
       .join("");
+
+    const noteHtml = showAnnualColumns
+      ? '<div class="note">* Moyenne calculée sur les périodes publiées disponibles. Rang annuel NC tant que l’année matière est incomplète.</div>'
+      : "";
 
     const html = `<!doctype html>
 <html lang="fr">
@@ -1222,116 +1366,425 @@ export default function AdminNotesStatsPage() {
 <meta charset="utf-8" />
 <title>${escapeHtml(title)}</title>
 <style>
-  @page { size: A4 landscape; margin: 10mm; }
-  * { box-sizing: border-box; }
-  body {
-    font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-    color: #0f172a;
-    margin: 0;
+  @page {
+    size: A4 landscape;
+    margin: 9mm;
   }
-  h1 {
-    font-size: 18px;
+
+  * {
+    box-sizing: border-box;
+  }
+
+  html,
+  body {
     margin: 0;
+    padding: 0;
+    color: #0f172a;
+    background: #f8fafc;
+    font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  body {
+    padding: 14px;
+  }
+
+  .sheet {
+    min-height: calc(100vh - 28px);
+    background: #ffffff;
+    border: 1px solid #dbe3ee;
+    border-radius: 18px;
+    padding: 14px;
+    box-shadow: 0 18px 55px rgba(15, 23, 42, 0.08);
+  }
+
+  .print-header {
+    display: grid;
+    grid-template-columns: 88px 1fr 218px;
+    gap: 14px;
+    align-items: stretch;
+    position: relative;
+    overflow: hidden;
+    padding: 12px;
+    border: 1px solid #cbd5e1;
+    border-radius: 16px;
+    background:
+      linear-gradient(135deg, rgba(16, 185, 129, 0.10), rgba(15, 23, 42, 0.02)),
+      #ffffff;
+  }
+
+  .print-header::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-top: 5px solid #059669;
+    pointer-events: none;
+  }
+
+  .logo-box {
+    height: 76px;
+    width: 76px;
+    border: 1px solid #cbd5e1;
+    border-radius: 14px;
+    background: #ffffff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    color: #94a3b8;
+    font-size: 10px;
+    font-weight: 800;
     text-transform: uppercase;
   }
-  .subtitle {
+
+  .logo-box img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    padding: 5px;
+  }
+
+  .header-main {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    min-width: 0;
+  }
+
+  .institution-name {
+    margin: 0;
+    color: #0f172a;
+    font-size: 18px;
+    line-height: 1.1;
+    font-weight: 950;
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+  }
+
+  .institution-meta {
     margin-top: 4px;
     color: #475569;
-    font-size: 12px;
+    font-size: 9.5px;
+    line-height: 1.35;
   }
-  .meta {
-    display: flex;
-    gap: 12px;
-    margin: 12px 0;
-    font-size: 11px;
+
+  .doc-title {
+    width: fit-content;
+    margin-top: 8px;
+    padding: 4px 10px;
+    border-radius: 999px;
+    background: #064e3b;
+    color: #ffffff;
+    font-size: 10px;
+    font-weight: 900;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  .brand-line {
+    margin-top: 6px;
     color: #334155;
-    flex-wrap: wrap;
+    font-size: 9.5px;
   }
+
+  .brand-line strong {
+    color: #047857;
+    font-weight: 950;
+  }
+
+  .header-side {
+    border-left: 1px solid #cbd5e1;
+    padding-left: 12px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 5px;
+    color: #334155;
+    font-size: 10px;
+  }
+
+  .meta-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    border-bottom: 1px dashed #cbd5e1;
+    padding-bottom: 4px;
+  }
+
+  .meta-row:last-child {
+    border-bottom: none;
+    padding-bottom: 0;
+  }
+
+  .meta-row span:first-child {
+    color: #64748b;
+    font-weight: 800;
+  }
+
+  .meta-row span:last-child {
+    text-align: right;
+    color: #0f172a;
+    font-weight: 900;
+  }
+
+  .subtitle {
+    margin-top: 10px;
+    padding: 8px 10px;
+    border: 1px solid #e2e8f0;
+    border-radius: 12px;
+    background: #f8fafc;
+    color: #334155;
+    font-size: 10.5px;
+    font-weight: 650;
+  }
+
+  .summary-grid {
+    margin-top: 10px;
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 8px;
+  }
+
+  .summary-card {
+    border: 1px solid #dbeafe;
+    border-radius: 13px;
+    padding: 8px 9px;
+    background: linear-gradient(180deg, #ffffff, #f8fafc);
+  }
+
+  .summary-label {
+    color: #64748b;
+    font-size: 7.8px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-weight: 950;
+  }
+
+  .summary-value {
+    margin-top: 3px;
+    color: #0f172a;
+    font-size: 15px;
+    font-weight: 950;
+  }
+
+  .summary-note {
+    margin-top: 2px;
+    color: #64748b;
+    font-size: 8px;
+  }
+
+  .table-wrap {
+    margin-top: 10px;
+    border: 1px solid #cbd5e1;
+    border-radius: 14px;
+    overflow: hidden;
+  }
+
   table {
     width: 100%;
     border-collapse: collapse;
-    font-size: 10px;
+    table-layout: fixed;
+    background: #ffffff;
+    font-size: 9.5px;
   }
+
   th,
   td {
     border: 1px solid #cbd5e1;
-    padding: 5px 6px;
+    padding: 4px 5px;
     vertical-align: middle;
   }
-  th {
-    background: #e2e8f0;
-    font-weight: 800;
+
+  thead th {
+    background: #eafaf4;
+    color: #064e3b;
+    font-size: 8px;
+    font-weight: 950;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
     text-align: center;
   }
+
   th span {
-    font-size: 8px;
     color: #475569;
-    font-weight: 600;
+    font-size: 7.5px;
+    font-weight: 650;
+    text-transform: none;
+    letter-spacing: 0;
   }
+
+  tbody tr:nth-child(even) td {
+    background: #f8fafc;
+  }
+
+  .student-name {
+    font-weight: 750;
+    color: #0f172a;
+  }
+
   td.num {
     text-align: right;
     white-space: nowrap;
+    font-variant-numeric: tabular-nums;
   }
+
   td.strong {
-    font-weight: 800;
-    background: #ecfdf5;
+    font-weight: 950;
+    background: #ecfdf5 !important;
     color: #065f46;
   }
-  td.status {
-    font-weight: 800;
-    background: #fffbeb;
-    color: #92400e;
-  }
-  tr:nth-child(even) td {
-    background: #f8fafc;
-  }
-  tr:nth-child(even) td.strong {
-    background: #d1fae5;
-  }
+
   .note {
     margin-top: 8px;
-    font-size: 9px;
+    padding: 7px 9px;
+    border: 1px solid #fde68a;
+    border-radius: 11px;
+    background: #fffbeb;
     color: #92400e;
+    font-size: 9px;
+    font-weight: 800;
   }
+
   .footer {
     margin-top: 10px;
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    border-top: 1px solid #cbd5e1;
+    padding-top: 8px;
+    color: #475569;
     font-size: 9px;
-    color: #64748b;
+  }
+
+  .footer strong {
+    color: #047857;
+    font-weight: 950;
+  }
+
+  .footer-right {
     text-align: right;
+    white-space: nowrap;
+  }
+
+  @media print {
+    body {
+      padding: 0;
+      background: #ffffff;
+    }
+
+    .sheet {
+      min-height: auto;
+      border: none;
+      border-radius: 0;
+      box-shadow: none;
+      padding: 0;
+    }
+
+    .print-header,
+    .summary-card,
+    .subtitle,
+    .table-wrap {
+      break-inside: avoid;
+    }
+
+    thead {
+      display: table-header-group;
+    }
+
+    tr {
+      break-inside: avoid;
+    }
   }
 </style>
 </head>
 <body>
-  <h1>${escapeHtml(title)}</h1>
-  <div class="subtitle">${escapeHtml(subtitle)}</div>
+  <main class="sheet">
+    <header class="print-header">
+      <div class="logo-box">${logoHtml}</div>
 
-  <div class="meta">
-    <div><strong>Classe :</strong> ${escapeHtml(className || "—")}</div>
-    <div><strong>Matière :</strong> ${escapeHtml(selectedSubjectName)}</div>
-    <div><strong>Période :</strong> ${escapeHtml(periodText)}</div>
-    <div><strong>Élèves :</strong> ${matrixRows.length}</div>
-    <div><strong>Moyenne matière :</strong> ${formatNumber(stats.classAvg)}</div>
-    <div><strong>Plus forte :</strong> ${formatNumber(stats.highest)}</div>
-    <div><strong>Plus faible :</strong> ${formatNumber(stats.lowest)}</div>
-  </div>
+      <div class="header-main">
+        <h1 class="institution-name">${escapeHtml(institutionName)}</h1>
+        ${institutionMeta ? `<div class="institution-meta">${institutionMeta}</div>` : ""}
+        <div class="doc-title">${escapeHtml(title)}</div>
+        <div class="brand-line">
+          <strong>${escapeHtml(BRAND_COMPANY)}</strong> • ${escapeHtml(BRAND_SITE)}
+        </div>
+      </div>
 
-  <table>
-    <thead>
-      <tr>
-        <th rowspan="2">N°</th>
-        <th rowspan="2">Matricule</th>
-        <th rowspan="2">Nom et prénoms</th>
-        ${periodHeader}
-        ${annualHeader}
-      </tr>
-      <tr>${secondHeader}${annualSecondHeader}</tr>
-    </thead>
-    <tbody>${body}</tbody>
-  </table>
+      <aside class="header-side">
+        <div class="meta-row">
+          <span>Document</span>
+          <span>PDF</span>
+        </div>
+        <div class="meta-row">
+          <span>Généré le</span>
+          <span>${escapeHtml(generatedAt)}</span>
+        </div>
+        <div class="meta-row">
+          <span>Solution</span>
+          <span>Mon Cahier</span>
+        </div>
+      </aside>
+    </header>
 
-  ${showAnnualColumns ? '<div class="note">* Moyenne calculée sur les périodes publiées disponibles. Rang annuel NC tant que l’année matière est incomplète.</div>' : ''}
+    <section class="subtitle">${escapeHtml(subtitle)}</section>
 
-  <div class="footer">Document généré depuis Mon Cahier — Nexa Digital SARL</div>
+    <section class="summary-grid">
+      <div class="summary-card">
+        <div class="summary-label">Classe</div>
+        <div class="summary-value">${escapeHtml(className || "—")}</div>
+        <div class="summary-note">Classe concernée</div>
+      </div>
+      <div class="summary-card">
+        <div class="summary-label">Matière</div>
+        <div class="summary-value">${escapeHtml(selectedSubjectName)}</div>
+        <div class="summary-note">Discipline évaluée</div>
+      </div>
+      <div class="summary-card">
+        <div class="summary-label">Élèves</div>
+        <div class="summary-value">${escapeHtml(matrixRows.length)}</div>
+        <div class="summary-note">Lignes affichées</div>
+      </div>
+      <div class="summary-card">
+        <div class="summary-label">Moyenne matière</div>
+        <div class="summary-value">${escapeHtml(formatNumber(stats.classAvg))}</div>
+        <div class="summary-note">Sur la sélection</div>
+      </div>
+      <div class="summary-card">
+        <div class="summary-label">Plus forte / faible</div>
+        <div class="summary-value">${escapeHtml(formatNumber(stats.highest))} / ${escapeHtml(formatNumber(stats.lowest))}</div>
+        <div class="summary-note">Extrêmes observés</div>
+      </div>
+    </section>
+
+    <section class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th rowspan="2">N°</th>
+            <th rowspan="2">Matricule</th>
+            <th rowspan="2">Nom et prénoms</th>
+            ${periodHeader}
+            ${annualHeader}
+          </tr>
+          <tr>${secondHeader}${annualSecondHeader}</tr>
+        </thead>
+        <tbody>${body}</tbody>
+      </table>
+    </section>
+
+    ${noteHtml}
+
+    <footer class="footer">
+      <div>
+        Document généré automatiquement depuis <strong>Mon Cahier</strong>.
+      </div>
+      <div class="footer-right">
+        ${escapeHtml(BRAND_COMPANY)} • <strong>${escapeHtml(BRAND_SITE)}</strong>
+      </div>
+    </footer>
+  </main>
 </body>
 </html>`;
 

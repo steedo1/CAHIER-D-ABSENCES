@@ -883,8 +883,13 @@ export default function ConduitePage() {
       ? `<img src="${escapeAttr(logoUrl)}" alt="Logo établissement" />`
       : `<span>Logo</span>`;
 
-    const w = window.open("", "_blank", "noopener,noreferrer");
-    if (!w) return;
+    const w = window.open("", "_blank");
+    if (!w) {
+      alert(
+        "Impossible d’ouvrir la fenêtre d’impression. Vérifiez le blocage des fenêtres pop-up."
+      );
+      return;
+    }
 
     const doc = w.document;
     doc.title = title;
@@ -1375,11 +1380,6 @@ export default function ConduitePage() {
     </footer>
   </main>
 
-  <script>
-    window.addEventListener("load", function () {
-      window.print();
-    });
-  </script>
 </body>
 </html>`;
 
@@ -1388,6 +1388,14 @@ export default function ConduitePage() {
     doc.close();
 
     w.focus();
+
+    setTimeout(() => {
+      try {
+        w.print();
+      } catch {
+        // silencieux
+      }
+    }, 400);
   }
 
   const selectedPeriodLabel = useMemo(() => {
