@@ -75,10 +75,27 @@ type StudentRow = {
   matricule?: string | null;
 };
 
+type ScoreSource = "student_grades" | "grade_published_scores";
+
 type ScoreRow = {
+  evaluation_id: string;
   student_id: string;
   score: number | null;
   comment?: string | null;
+};
+
+type EvaluationStats = {
+  student_count: number;
+  graded_count: number;
+  missing_count: number;
+  average_score: number | null;
+  above_average_count: number;
+  below_average_count: number;
+  highest_score: number | null;
+  lowest_score: number | null;
+  success_rate: number | null;
+  pass_mark: number;
+  score_source: ScoreSource;
 };
 
 function bad(error: string, status = 400, extra?: Record<string, unknown>) {
@@ -136,6 +153,76 @@ function toFiniteNumber(value: unknown, fallback: number) {
   return Number.isFinite(n) ? n : fallback;
 }
 
+function round2(value: number) {
+  return Math.round(value * 100) / 100;
+}
+
+function scoreSourceForEvaluation(ev: EvaluationRow): ScoreSource {
+  return ev.is_published === true || normalizeStatus(ev.publication_status) === "published"
+    ? "grade_published_scores"
+    : "student_grades";
+}
+
+function computeEvaluationStats(params: {
+  scores: ScoreRow[];
+  scale: number;
+  studentCount: number;
+  source: ScoreSource;
+}): EvaluationStats {
+  const { scores, scale, studentCount, source } = params;
+
+  const safeScale = Number.isFinite(scale) && scale > 0 ? scale : 20;
+  const passMark = safeScale / 2;
+
+  const validScores = scores
+    .map((row) => {
+      const n = row.score === null || row.score === undefined ? NaN : Number(row.score);
+      return Number.isFinite(n) ? n : null;
+    })
+    .filter((n): n is number => n !== null);
+
+  const gradedCount = validScores.length;
+  const missingCount = Math.max(0, studentCount - gradedCount);
+
+  if (gradedCount === 0) {
+    return {
+      student_count: studentCount,
+      graded_count: 0,
+      missing_count: missingCount,
+      average_score: null,
+      above_average_count: 0,
+      below_average_count: 0,
+      highest_score: null,
+      lowest_score: null,
+      success_rate: null,
+      pass_mark: round2(passMark),
+      score_source: source,
+    };
+  }
+
+  const sum = validScores.reduce((acc, n) => acc + n, 0);
+  const average = sum / gradedCount;
+  const aboveAverage = validScores.filter((n) => n >= passMark).length;
+  const belowAverage = validScores.filter((n) => n < passMark).length;
+  const highest = Math.max(...validScores);
+  const lowest = Math.min(...validScores);
+  const successRate = (aboveAverage / gradedCount) * 100;
+
+  return {
+    student_count: studentCount,
+    graded_count: gradedCount,
+    missing_count: missingCount,
+    average_score: round2(average),
+    above_average_count: aboveAverage,
+    below_average_count: belowAverage,
+    highest_score: round2(highest),
+    lowest_score: round2(lowest),
+    success_rate: round2(successRate),
+    pass_mark: round2(passMark),
+    score_source: source,
+  };
+}
+
 async function getAdminContext() {
   const supabase = await getSupabaseServerClient();
 
@@ -160,7 +247,7 @@ async function getAdminContext() {
     .eq("id", user.id)
     .maybeSingle();
 
-  if (profileErr || !profile?.id || !profile?.institution_id) {
+  if (profileErr || !profile) {
     console.error(
       "[admin/grades/publication-requests] profile error",
       profileErr
@@ -173,11 +260,24 @@ async function getAdminContext() {
     };
   }
 
+  const profileRow = profile as unknown as {
+    id: string;
+    institution_id: string | null;
+  };
+
+  if (!profileRow.id || !profileRow.institution_id) {
+    return {
+      ok: false as const,
+      status: 403,
+      error: "PROFILE_OR_INSTITUTION_NOT_FOUND",
+    };
+  }
+
   const { data: roles, error: rolesErr } = await srv
     .from("user_roles")
     .select("role")
-    .eq("profile_id", profile.id)
-    .eq("institution_id", profile.institution_id);
+    .eq("profile_id", profileRow.id)
+    .eq("institution_id", profileRow.institution_id);
 
   if (rolesErr) {
     console.error(
@@ -208,8 +308,8 @@ async function getAdminContext() {
     ok: true as const,
     srv,
     userId: user.id,
-    profileId: String(profile.id),
-    institutionId: String(profile.institution_id),
+    profileId: String(profileRow.id),
+    institutionId: String(profileRow.institution_id),
     roles: roleSet,
   };
 }
@@ -378,6 +478,107 @@ async function fetchRosterStudentIds(
   return Array.from(new Set(fallbackIds.filter(Boolean)));
 }
 
+async function fetchRosterMap(
+  srv: ReturnType<typeof getSupabaseServiceClient>,
+  classIds: string[]
+) {
+  const uniqueClassIds = Array.from(new Set(classIds.filter(Boolean)));
+  const map = new Map<string, Set<string>>();
+
+  if (!uniqueClassIds.length) return map;
+
+  try {
+    const { data, error } = await srv
+      .from("class_students")
+      .select("class_id,student_id")
+      .in("class_id", uniqueClassIds);
+
+    if (error || !Array.isArray(data)) return map;
+
+    for (const row of data) {
+      const classId = String((row as any).class_id || "");
+      const studentId = String((row as any).student_id || "");
+
+      if (!classId || !studentId) continue;
+
+      if (!map.has(classId)) map.set(classId, new Set<string>());
+      map.get(classId)?.add(studentId);
+    }
+  } catch {
+    // fallback silencieux
+  }
+
+  return map;
+}
+
+async function fetchScoreRowsByEvaluation(
+  srv: ReturnType<typeof getSupabaseServiceClient>,
+  evaluations: EvaluationRow[]
+) {
+  const byEval = new Map<string, ScoreRow[]>();
+
+  for (const ev of evaluations) {
+    byEval.set(ev.id, []);
+  }
+
+  const workingIds = evaluations
+    .filter((ev) => scoreSourceForEvaluation(ev) === "student_grades")
+    .map((ev) => ev.id);
+
+  const officialIds = evaluations
+    .filter((ev) => scoreSourceForEvaluation(ev) === "grade_published_scores")
+    .map((ev) => ev.id);
+
+  if (workingIds.length) {
+    const { data, error } = await srv
+      .from("student_grades")
+      .select("evaluation_id,student_id,score,comment")
+      .in("evaluation_id", workingIds);
+
+    if (!error && Array.isArray(data)) {
+      for (const row of data) {
+        const item: ScoreRow = {
+          evaluation_id: String((row as any).evaluation_id),
+          student_id: String((row as any).student_id),
+          score:
+            (row as any).score === null || (row as any).score === undefined
+              ? null
+              : Number((row as any).score),
+          comment: (row as any).comment ?? null,
+        };
+
+        byEval.get(item.evaluation_id)?.push(item);
+      }
+    }
+  }
+
+  if (officialIds.length) {
+    const { data, error } = await srv
+      .from("grade_published_scores")
+      .select("evaluation_id,student_id,score")
+      .in("evaluation_id", officialIds)
+      .eq("is_current", true);
+
+    if (!error && Array.isArray(data)) {
+      for (const row of data) {
+        const item: ScoreRow = {
+          evaluation_id: String((row as any).evaluation_id),
+          student_id: String((row as any).student_id),
+          score:
+            (row as any).score === null || (row as any).score === undefined
+              ? null
+              : Number((row as any).score),
+          comment: null,
+        };
+
+        byEval.get(item.evaluation_id)?.push(item);
+      }
+    }
+  }
+
+  return byEval;
+}
+
 async function loadEvaluationOrFail(params: {
   srv: ReturnType<typeof getSupabaseServiceClient>;
   evaluationId: string;
@@ -462,29 +663,14 @@ async function buildRequestItems(params: {
     .flatMap((ev) => [ev.teacher_id, ev.submitted_by, ev.reviewed_by])
     .filter((x): x is string => !!x);
 
-  const [classMap, subjectMap, profileMap] = await Promise.all([
-    fetchClassMap(srv, institutionId, classIds),
-    fetchSubjectMap(srv, subjectIds),
-    fetchProfileMap(srv, profileIds),
-  ]);
-
-  const evalIds = evaluations.map((ev) => ev.id);
-
-  const scoreCounts = new Map<string, number>();
-
-  if (evalIds.length) {
-    const { data: scores, error: scoresErr } = await srv
-      .from("student_grades")
-      .select("evaluation_id")
-      .in("evaluation_id", evalIds);
-
-    if (!scoresErr) {
-      for (const row of scores ?? []) {
-        const evaluationId = String((row as any).evaluation_id);
-        scoreCounts.set(evaluationId, (scoreCounts.get(evaluationId) || 0) + 1);
-      }
-    }
-  }
+  const [classMap, subjectMap, profileMap, rosterMap, scoresByEval] =
+    await Promise.all([
+      fetchClassMap(srv, institutionId, classIds),
+      fetchSubjectMap(srv, subjectIds),
+      fetchProfileMap(srv, profileIds),
+      fetchRosterMap(srv, classIds),
+      fetchScoreRowsByEvaluation(srv, evaluations),
+    ]);
 
   return evaluations.map((ev) => {
     const cls = classMap.get(ev.class_id);
@@ -492,6 +678,22 @@ async function buildRequestItems(params: {
     const teacher = ev.teacher_id ? profileMap.get(ev.teacher_id) : null;
     const submittedBy = ev.submitted_by ? profileMap.get(ev.submitted_by) : null;
     const reviewedBy = ev.reviewed_by ? profileMap.get(ev.reviewed_by) : null;
+
+    const scoreRows = scoresByEval.get(ev.id) ?? [];
+    const rosterSet = rosterMap.get(ev.class_id);
+    const fallbackStudentCount = new Set(
+      scoreRows.map((row) => row.student_id).filter(Boolean)
+    ).size;
+
+    const studentCount = rosterSet?.size || fallbackStudentCount;
+    const source = scoreSourceForEvaluation(ev);
+
+    const stats = computeEvaluationStats({
+      scores: scoreRows,
+      scale: toFiniteNumber(ev.scale, 20),
+      studentCount,
+      source,
+    });
 
     return {
       id: ev.id,
@@ -526,7 +728,8 @@ async function buildRequestItems(params: {
       reviewed_by_name: reviewedBy ? pickProfileName(reviewedBy) : null,
       review_comment: ev.review_comment ?? null,
 
-      scores_count: scoreCounts.get(ev.id) || 0,
+      scores_count: stats.graded_count,
+      stats,
     };
   });
 }
@@ -538,25 +741,9 @@ async function buildEvaluationDetail(params: {
 }) {
   const { srv, evaluation } = params;
 
-  const { data: scoresRaw, error: scoresErr } = await srv
-    .from("student_grades")
-    .select("student_id,score,comment")
-    .eq("evaluation_id", evaluation.id);
-
-  if (scoresErr) {
-    console.error(
-      "[admin/grades/publication-requests] scores fetch error",
-      scoresErr
-    );
-    throw new Error("SCORES_FETCH_FAILED");
-  }
-
-  const scoreRows: ScoreRow[] = ((scoresRaw ?? []) as any[]).map((row) => ({
-    student_id: String(row.student_id),
-    score:
-      row.score === null || row.score === undefined ? null : Number(row.score),
-    comment: row.comment ?? null,
-  }));
+  const source = scoreSourceForEvaluation(evaluation);
+  const scoresByEval = await fetchScoreRowsByEvaluation(srv, [evaluation]);
+  const scoreRows = scoresByEval.get(evaluation.id) ?? [];
 
   const scoreByStudentId = new Map<string, ScoreRow>();
 
@@ -592,16 +779,28 @@ async function buildEvaluationDetail(params: {
       return an.localeCompare(bn, "fr");
     });
 
-  const filled = students.filter((s) => s.has_score && s.score !== null).length;
-  const missing = students.length - filled;
+  const stats = computeEvaluationStats({
+    scores: scoreRows,
+    scale: toFiniteNumber(evaluation.scale, 20),
+    studentCount: rosterIds.length,
+    source,
+  });
 
   return {
     students,
     summary: {
-      roster_count: students.length,
+      roster_count: stats.student_count,
       scores_count: scoreRows.length,
-      filled_scores_count: filled,
-      missing_scores_count: missing,
+      filled_scores_count: stats.graded_count,
+      missing_scores_count: stats.missing_count,
+      average_score: stats.average_score,
+      above_average_count: stats.above_average_count,
+      below_average_count: stats.below_average_count,
+      highest_score: stats.highest_score,
+      lowest_score: stats.lowest_score,
+      success_rate: stats.success_rate,
+      pass_mark: stats.pass_mark,
+      score_source: stats.score_source,
     },
   };
 }

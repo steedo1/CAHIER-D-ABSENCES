@@ -12,6 +12,8 @@ import {
   RefreshCw,
   Search,
   Send,
+  TrendingDown,
+  TrendingUp,
   Users,
   XCircle,
 } from "lucide-react";
@@ -22,6 +24,22 @@ type PublicationStatus =
   | "changes_requested"
   | "published"
   | string;
+
+type ScoreSource = "student_grades" | "grade_published_scores";
+
+type EvaluationStats = {
+  student_count: number;
+  graded_count: number;
+  missing_count: number;
+  average_score: number | null;
+  above_average_count: number;
+  below_average_count: number;
+  highest_score: number | null;
+  lowest_score: number | null;
+  success_rate: number | null;
+  pass_mark: number;
+  score_source: ScoreSource;
+};
 
 type RequestItem = {
   id: string;
@@ -59,6 +77,7 @@ type RequestItem = {
   review_comment?: string | null;
 
   scores_count?: number;
+  stats?: EvaluationStats;
 };
 
 type StudentScore = {
@@ -77,6 +96,14 @@ type Detail = {
     scores_count: number;
     filled_scores_count: number;
     missing_scores_count: number;
+    average_score: number | null;
+    above_average_count: number;
+    below_average_count: number;
+    highest_score: number | null;
+    lowest_score: number | null;
+    success_rate: number | null;
+    pass_mark: number;
+    score_source: ScoreSource;
   };
 };
 
@@ -180,6 +207,47 @@ function Select(props: React.SelectHTMLAttributes<HTMLSelectElement>) {
   );
 }
 
+function StatCard({
+  label,
+  value,
+  hint,
+  tone = "slate",
+  icon,
+}: {
+  label: string;
+  value: React.ReactNode;
+  hint?: string;
+  tone?: "slate" | "emerald" | "amber" | "red" | "blue";
+  icon?: React.ReactNode;
+}) {
+  const classes = {
+    slate: "border-slate-200 bg-slate-50 text-slate-900",
+    emerald: "border-emerald-200 bg-emerald-50 text-emerald-900",
+    amber: "border-amber-200 bg-amber-50 text-amber-950",
+    red: "border-red-200 bg-red-50 text-red-900",
+    blue: "border-blue-200 bg-blue-50 text-blue-900",
+  };
+
+  const labelClasses = {
+    slate: "text-slate-500",
+    emerald: "text-emerald-700",
+    amber: "text-amber-800",
+    red: "text-red-700",
+    blue: "text-blue-700",
+  };
+
+  return (
+    <div className={["rounded-2xl border p-3", classes[tone]].join(" ")}>
+      <div className={["flex items-center gap-2 text-xs", labelClasses[tone]].join(" ")}>
+        {icon}
+        {label}
+      </div>
+      <div className="mt-1 text-xl font-semibold">{value}</div>
+      {hint ? <div className="mt-1 text-[11px] opacity-75">{hint}</div> : null}
+    </div>
+  );
+}
+
 function formatDateFr(value?: string | null) {
   if (!value) return "—";
   try {
@@ -245,6 +313,19 @@ function scoreLabel(score: number | null, scale: number) {
   }
 
   return `${Number(score).toFixed(2).replace(/\.00$/, "")}/${scale}`;
+}
+
+function percentLabel(value: number | null) {
+  if (value === null || value === undefined || !Number.isFinite(Number(value))) {
+    return "—";
+  }
+
+  return `${Number(value).toFixed(1).replace(/\.0$/, "")}%`;
+}
+
+function sourceLabel(source?: ScoreSource) {
+  if (source === "grade_published_scores") return "Source officielle";
+  return "Source de travail";
 }
 
 export default function AdminGradePublicationRequestsPage() {
@@ -548,6 +629,8 @@ export default function AdminGradePublicationRequestsPage() {
             <div className="space-y-3">
               {filteredItems.map((item) => {
                 const active = selected?.evaluation_id === item.evaluation_id;
+                const average = item.stats?.average_score ?? null;
+                const successRate = item.stats?.success_rate ?? null;
 
                 return (
                   <button
@@ -593,6 +676,18 @@ export default function AdminGradePublicationRequestsPage() {
                         Notes :{" "}
                         <span className="font-medium text-slate-800">
                           {item.scores_count ?? 0}
+                        </span>
+                      </div>
+                      <div className="rounded-xl bg-emerald-50 px-2 py-1.5 text-emerald-800">
+                        Moyenne :{" "}
+                        <span className="font-semibold">
+                          {scoreLabel(average, item.scale)}
+                        </span>
+                      </div>
+                      <div className="rounded-xl bg-blue-50 px-2 py-1.5 text-blue-800">
+                        Réussite :{" "}
+                        <span className="font-semibold">
+                          {percentLabel(successRate)}
                         </span>
                       </div>
                     </div>
@@ -680,41 +775,81 @@ export default function AdminGradePublicationRequestsPage() {
               ) : detail ? (
                 <>
                   <div className="grid gap-3 md:grid-cols-4">
-                    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
-                      <div className="flex items-center gap-2 text-xs text-slate-500">
-                        <Users className="h-4 w-4" />
-                        Élèves
+                    <StatCard
+                      label="Élèves"
+                      value={detail.summary.roster_count}
+                      tone="slate"
+                      icon={<Users className="h-4 w-4" />}
+                    />
+
+                    <StatCard
+                      label="Notes saisies"
+                      value={detail.summary.filled_scores_count}
+                      tone="emerald"
+                    />
+
+                    <StatCard
+                      label="Sans note"
+                      value={detail.summary.missing_scores_count}
+                      tone="amber"
+                    />
+
+                    <StatCard
+                      label="Version"
+                      value={selected.publication_version || 0}
+                      tone="slate"
+                    />
+                  </div>
+
+                  <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                    <div className="mb-3 flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                      <div>
+                        <h3 className="text-sm font-semibold text-slate-900">
+                          Synthèse pédagogique de l’évaluation
+                        </h3>
+                        <p className="text-xs text-slate-500">
+                          Seules les notes réellement saisies sont prises en compte.
+                        </p>
                       </div>
-                      <div className="mt-1 text-xl font-semibold text-slate-900">
-                        {detail.summary.roster_count}
-                      </div>
+                      <span className="inline-flex w-fit rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-medium text-slate-600">
+                        {sourceLabel(detail.summary.score_source)}
+                      </span>
                     </div>
 
-                    <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-3">
-                      <div className="text-xs text-emerald-700">
-                        Notes saisies
-                      </div>
-                      <div className="mt-1 text-xl font-semibold text-emerald-900">
-                        {detail.summary.filled_scores_count}
-                      </div>
-                    </div>
+                    <div className="grid gap-3 md:grid-cols-5">
+                      <StatCard
+                        label="Moyenne évaluat."
+                        value={scoreLabel(detail.summary.average_score, selected.scale)}
+                        tone="blue"
+                      />
 
-                    <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3">
-                      <div className="text-xs text-amber-800">
-                        Sans note
-                      </div>
-                      <div className="mt-1 text-xl font-semibold text-amber-950">
-                        {detail.summary.missing_scores_count}
-                      </div>
-                    </div>
+                      <StatCard
+                        label="≥ moyenne"
+                        value={detail.summary.above_average_count}
+                        tone="emerald"
+                        hint={`Seuil : ${scoreLabel(detail.summary.pass_mark, selected.scale)}`}
+                        icon={<TrendingUp className="h-4 w-4" />}
+                      />
 
-                    <div className="rounded-2xl border border-slate-200 bg-white p-3">
-                      <div className="text-xs text-slate-500">
-                        Version
-                      </div>
-                      <div className="mt-1 text-xl font-semibold text-slate-900">
-                        {selected.publication_version || 0}
-                      </div>
+                      <StatCard
+                        label="< moyenne"
+                        value={detail.summary.below_average_count}
+                        tone="red"
+                        hint={percentLabel(detail.summary.success_rate)}
+                        icon={<TrendingDown className="h-4 w-4" />}
+                      />
+
+                      <StatCard
+                        label="Note max"
+                        value={scoreLabel(detail.summary.highest_score, selected.scale)}
+                        tone="emerald"
+                      />
+
+                      <StatCard
+                        label="Note min"
+                        value={scoreLabel(detail.summary.lowest_score, selected.scale)}
+                        tone="amber"
+                      />
                     </div>
                   </div>
 
@@ -748,7 +883,9 @@ export default function AdminGradePublicationRequestsPage() {
                                     "inline-flex rounded-full px-2 py-1 text-xs font-semibold",
                                     student.score === null
                                       ? "bg-amber-50 text-amber-800"
-                                      : "bg-emerald-50 text-emerald-800",
+                                      : Number(student.score) >= detail.summary.pass_mark
+                                        ? "bg-emerald-50 text-emerald-800"
+                                        : "bg-red-50 text-red-800",
                                   ].join(" ")}
                                 >
                                   {scoreLabel(student.score, selected.scale)}
