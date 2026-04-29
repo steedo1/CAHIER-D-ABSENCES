@@ -33,23 +33,22 @@ type Ctx =
       error: string;
     };
 
-type EvalRow = {
+type OfficialScoreRow = {
   id: string;
+  evaluation_id: string;
   class_id: string;
+  student_id: string;
   subject_id: string | null;
+  score: number | null;
   scale: number | null;
   published_at: string | null;
-};
-
-type GradeRow = {
-  evaluation_id: string;
-  student_id: string;
-  score: number | null;
 };
 
 type DigestGroup = {
   studentId: string;
   classId: string;
+  officialScoreIds: string[];
+  evaluationIds: string[];
   items: Array<{
     subject: string;
     score: number;
@@ -74,8 +73,10 @@ function isMissingRelationError(err: any) {
 function toIsoOrNull(value: unknown): string | null {
   const raw = String(value ?? "").trim();
   if (!raw) return null;
+
   const d = new Date(raw);
   if (Number.isNaN(d.getTime())) return null;
+
   return d.toISOString();
 }
 
@@ -127,7 +128,7 @@ function pickStudentName(row: any, fallback: string) {
       .join(" ")
   );
 
-  return full || combined || `Eleve`;
+  return full || combined || fallback || "Eleve";
 }
 
 function pickClassLabel(row: any, fallback: string) {
@@ -143,8 +144,14 @@ function pickSubjectLabel(row: any, fallback = "Matiere") {
   );
 }
 
+function toFiniteNumber(value: unknown, fallback: number) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
+
 async function getContext(): Promise<Ctx> {
   const supa = await getSupabaseServerClient();
+
   const {
     data: { user },
     error: authErr,
@@ -161,7 +168,10 @@ async function getContext(): Promise<Ctx> {
     .maybeSingle();
 
   if (profErr) {
-    console.error("[admin/notifications/grades-digest/send] profile error", profErr);
+    console.error(
+      "[admin/notifications/grades-digest/send] profile error",
+      profErr
+    );
     return { ok: false, status: 401, error: "profile_error" };
   }
 
@@ -172,6 +182,7 @@ async function getContext(): Promise<Ctx> {
   const srv = getSupabaseServiceClient();
 
   const roles = new Set<Role>();
+
   const { data: roleRows, error: rolesErr } = await srv
     .from("user_roles")
     .select("role")
@@ -179,7 +190,10 @@ async function getContext(): Promise<Ctx> {
     .eq("institution_id", profile.institution_id);
 
   if (rolesErr) {
-    console.error("[admin/notifications/grades-digest/send] user_roles error", rolesErr);
+    console.error(
+      "[admin/notifications/grades-digest/send] user_roles error",
+      rolesErr
+    );
   } else if (Array.isArray(roleRows)) {
     for (const r of roleRows) {
       roles.add(String((r as any).role) as Role);
@@ -291,7 +305,10 @@ async function completeRun(
     .eq("id", runId);
 
   if (error && !isMissingRelationError(error)) {
-    console.error("[admin/notifications/grades-digest/send] completeRun error", error);
+    console.error(
+      "[admin/notifications/grades-digest/send] completeRun error",
+      error
+    );
   }
 }
 
@@ -312,7 +329,10 @@ async function failRun(
     .eq("id", runId);
 
   if (error && !isMissingRelationError(error)) {
-    console.error("[admin/notifications/grades-digest/send] failRun error", error);
+    console.error(
+      "[admin/notifications/grades-digest/send] failRun error",
+      error
+    );
   }
 }
 
@@ -327,7 +347,10 @@ async function fetchInstitutionName(
     .maybeSingle();
 
   if (error) {
-    console.warn("[admin/notifications/grades-digest/send] institutions lookup error", error);
+    console.warn(
+      "[admin/notifications/grades-digest/send] institutions lookup error",
+      error
+    );
     return null;
   }
 
@@ -347,9 +370,11 @@ async function fetchClassRows(
       .maybeSingle();
 
     if (error) throw error;
+
     if (!data || (data as any).institution_id !== institutionId) {
       return [];
     }
+
     return [data];
   }
 
@@ -359,6 +384,7 @@ async function fetchClassRows(
     .eq("institution_id", institutionId);
 
   if (error) throw error;
+
   return data ?? [];
 }
 
@@ -367,6 +393,7 @@ async function fetchSubjectMap(
   subjectIds: string[]
 ) {
   const map = new Map<string, string>();
+
   if (!subjectIds.length) return map;
 
   const uniq = Array.from(new Set(subjectIds.filter(Boolean)));
@@ -387,10 +414,7 @@ async function fetchSubjectMap(
       broad.error
     );
 
-    const narrow = await srv
-      .from("subjects")
-      .select("id")
-      .in("id", uniq);
+    const narrow = await srv.from("subjects").select("id").in("id", uniq);
 
     if (!narrow.error) {
       rows = narrow.data ?? [];
@@ -409,6 +433,7 @@ async function fetchStudentMap(
   studentIds: string[]
 ) {
   const map = new Map<string, string>();
+
   if (!studentIds.length) return map;
 
   const uniq = Array.from(new Set(studentIds.filter(Boolean)));
@@ -446,11 +471,42 @@ async function fetchStudentMap(
   return map;
 }
 
+async function markOfficialScoresAsQueuedForSms(
+  srv: ReturnType<typeof getSupabaseServiceClient>,
+  scoreIds: string[],
+  runId: string | null
+) {
+  const uniq = Array.from(new Set(scoreIds.filter(Boolean)));
+
+  if (!uniq.length) return;
+
+  const patch: Record<string, any> = {
+    sms_digest_queued_at: new Date().toISOString(),
+  };
+
+  if (runId) {
+    patch.sms_digest_run_id = runId;
+  }
+
+  const { error } = await srv
+    .from("grade_published_scores")
+    .update(patch)
+    .in("id", uniq);
+
+  if (error) {
+    console.warn(
+      "[admin/notifications/grades-digest/send] markOfficialScoresAsQueuedForSms error",
+      error
+    );
+  }
+}
+
 export async function POST(req: NextRequest) {
   let runId: string | null = null;
 
   try {
     const ctx = await getContext();
+
     if (!ctx.ok) return bad(ctx.error, ctx.status);
 
     const { srv, profileId, institutionId, roles } = ctx;
@@ -492,6 +548,7 @@ export async function POST(req: NextRequest) {
 
     if (!periodStart) {
       const lastRun = await getLastCompletedRun(srv, institutionId);
+
       periodStart =
         String(lastRun?.period_end || "").trim() ||
         new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
@@ -532,7 +589,12 @@ export async function POST(req: NextRequest) {
       periodEnd,
     });
 
-    const classRows = await fetchClassRows(srv, institutionId, body.class_id || null);
+    const classRows = await fetchClassRows(
+      srv,
+      institutionId,
+      body.class_id || null
+    );
+
     const classIds = classRows.map((x: any) => String(x.id));
 
     if (!classIds.length) {
@@ -553,6 +615,7 @@ export async function POST(req: NextRequest) {
     }
 
     const classLabelById = new Map<string, string>();
+
     for (const row of classRows) {
       classLabelById.set(
         String((row as any).id),
@@ -560,31 +623,72 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const { data: evals, error: evalErr } = await srv
-      .from("grade_evaluations")
-      .select("id,class_id,subject_id,scale,published_at,is_published")
+    /*
+     * ✅ Nouvelle source officielle du digest SMS :
+     * public.grade_published_scores
+     *
+     * On ne lit plus student_grades.
+     * Donc :
+     * - une note soumise mais non validée ne peut jamais partir ;
+     * - une note en correction ne peut jamais partir ;
+     * - les SMS digest et les push lisent la même source officielle.
+     */
+    let officialQuery = srv
+      .from("grade_published_scores")
+      .select(
+        [
+          "id",
+          "evaluation_id",
+          "class_id",
+          "student_id",
+          "subject_id",
+          "score",
+          "scale",
+          "published_at",
+          "sms_digest_run_id",
+          "sms_digest_queued_at",
+        ].join(",")
+      )
+      .eq("institution_id", institutionId)
+      .eq("is_current", true)
       .in("class_id", classIds)
-      .eq("is_published", true)
       .gte("published_at", periodStart)
       .lt("published_at", periodEnd);
 
-    if (evalErr) {
-      throw evalErr;
+    /*
+     * Par défaut, on évite les doublons SMS :
+     * une note déjà incluse dans un digest ne repart pas.
+     *
+     * Si force=true, on autorise explicitement un renvoi sur la période.
+     */
+    if (!body.force) {
+      officialQuery = officialQuery
+        .is("sms_digest_run_id", null)
+        .is("sms_digest_queued_at", null);
     }
 
-    const evaluations = ((evals ?? []) as any[]).map(
-      (row) =>
-        ({
-          id: String(row.id),
-          class_id: String(row.class_id),
-          subject_id: row.subject_id ? String(row.subject_id) : null,
-          scale:
-            row.scale === null || row.scale === undefined ? 20 : Number(row.scale),
-          published_at: row.published_at ? String(row.published_at) : null,
-        }) as EvalRow
+    const { data: officialRowsRaw, error: officialErr } = await officialQuery;
+
+    if (officialErr) {
+      throw officialErr;
+    }
+
+    const officialRows: OfficialScoreRow[] = ((officialRowsRaw ?? []) as any[]).map(
+      (row) => ({
+        id: String(row.id),
+        evaluation_id: String(row.evaluation_id),
+        class_id: String(row.class_id),
+        student_id: String(row.student_id),
+        subject_id: row.subject_id ? String(row.subject_id) : null,
+        score:
+          row.score === null || row.score === undefined ? null : Number(row.score),
+        scale:
+          row.scale === null || row.scale === undefined ? 20 : Number(row.scale),
+        published_at: row.published_at ? String(row.published_at) : null,
+      })
     );
 
-    if (!evaluations.length) {
+    if (!officialRows.length) {
       await completeRun(srv, runId, {
         studentsCount: 0,
         notificationsCreated: 0,
@@ -597,56 +701,43 @@ export async function POST(req: NextRequest) {
         period_end: periodEnd,
         students_count: 0,
         notifications_created: 0,
-        reason: "NO_PUBLISHED_EVALUATIONS",
+        reason: "NO_OFFICIAL_PUBLISHED_SCORES",
       });
     }
 
-    const evalById = new Map<string, EvalRow>();
-    const evalIds: string[] = [];
-    const subjectIds: string[] = [];
+    const subjectIds = officialRows
+      .map((row) => row.subject_id)
+      .filter((x): x is string => !!x);
 
-    for (const ev of evaluations) {
-      evalById.set(ev.id, ev);
-      evalIds.push(ev.id);
-      if (ev.subject_id) subjectIds.push(ev.subject_id);
-    }
-
-    const { data: grades, error: gradesErr } = await srv
-      .from("student_grades")
-      .select("evaluation_id,student_id,score")
-      .in("evaluation_id", evalIds);
-
-    if (gradesErr) {
-      throw gradesErr;
-    }
-
-    const gradeRows = (grades ?? []) as GradeRow[];
     const subjectLabelById = await fetchSubjectMap(srv, subjectIds);
 
     const grouped = new Map<string, DigestGroup>();
 
-    for (const row of gradeRows) {
+    for (const row of officialRows) {
       if (row.score === null || row.score === undefined) continue;
-
-      const ev = evalById.get(String(row.evaluation_id));
-      if (!ev) continue;
 
       const score = Number(row.score);
       if (!Number.isFinite(score)) continue;
 
-      const key = `${row.student_id}::${ev.class_id}`;
+      const scale = toFiniteNumber(row.scale, 20);
+
+      const key = `${row.student_id}::${row.class_id}`;
       const existing =
         grouped.get(key) ||
         ({
-          studentId: String(row.student_id),
-          classId: ev.class_id,
+          studentId: row.student_id,
+          classId: row.class_id,
+          officialScoreIds: [],
+          evaluationIds: [],
           items: [],
         } as DigestGroup);
 
+      existing.officialScoreIds.push(row.id);
+      existing.evaluationIds.push(row.evaluation_id);
       existing.items.push({
-        subject: subjectLabelById.get(ev.subject_id || "") || "Matiere",
+        subject: subjectLabelById.get(row.subject_id || "") || "Matiere",
         score: Math.round(score * 100) / 100,
-        scale: Number.isFinite(Number(ev.scale)) ? Number(ev.scale) : 20,
+        scale,
       });
 
       grouped.set(key, existing);
@@ -665,25 +756,26 @@ export async function POST(req: NextRequest) {
         period_end: periodEnd,
         students_count: 0,
         notifications_created: 0,
-        reason: "NO_SCORES",
+        reason: "NO_OFFICIAL_SCORES",
       });
     }
 
     const studentIds = Array.from(
       new Set(Array.from(grouped.values()).map((g) => g.studentId))
     );
+
     const studentNameById = await fetchStudentMap(srv, studentIds);
     const institutionName = await fetchInstitutionName(srv, institutionId);
+
     const periodLabel =
       String(body.period_label || "").trim() ||
       buildPeriodLabel(periodStart, periodEnd);
 
     let notificationsCreated = 0;
+    const queuedOfficialScoreIds: string[] = [];
 
     for (const group of grouped.values()) {
-      const studentName =
-        studentNameById.get(group.studentId) ||
-        "Eleve";
+      const studentName = studentNameById.get(group.studentId) || "Eleve";
       const classLabel = classLabelById.get(group.classId) || group.classId;
 
       await enqueueNotesDigestSms({
@@ -701,10 +793,19 @@ export async function POST(req: NextRequest) {
         profileId: null,
         parentId: null,
         dispatch: false,
+
+        // Métadonnées officielles pour tracer précisément l'origine du digest.
+        source: "grade_published_scores",
+        digestRunId: runId,
+        officialScoreIds: group.officialScoreIds,
+        evaluationIds: group.evaluationIds,
       });
 
       notificationsCreated += 1;
+      queuedOfficialScoreIds.push(...group.officialScoreIds);
     }
+
+    await markOfficialScoresAsQueuedForSms(srv, queuedOfficialScoreIds, runId);
 
     if (notificationsCreated > 0) {
       await triggerSmsDispatch({
@@ -727,15 +828,21 @@ export async function POST(req: NextRequest) {
       period_end: periodEnd,
       students_count: grouped.size,
       notifications_created: notificationsCreated,
-      evaluations_count: evaluations.length,
+      official_scores_count: queuedOfficialScoreIds.length,
+      evaluations_count: new Set(
+        Array.from(grouped.values()).flatMap((g) => g.evaluationIds)
+      ).size,
+      source: "grade_published_scores",
     });
   } catch (e: any) {
     console.error("[admin/notifications/grades-digest/send] unexpected error", e);
+
     await failRun(
       getSupabaseServiceClient(),
       runId,
       String(e?.message || "INTERNAL_ERROR")
     );
+
     return bad(e?.message || "INTERNAL_ERROR", 500);
   }
 }

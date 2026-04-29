@@ -1,3 +1,4 @@
+// src/app/api/teacher/grades/averages/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
@@ -372,9 +373,24 @@ export async function GET(req: NextRequest) {
       evalCoeffsByComponent: Array.from(evalCoeffsByComponent.entries()),
     });
 
-    // 2) Notes associées
-    const { data: grades, error: gErr } = await supabase
-      .from("student_grades")
+    /*
+     * 2) Notes associées
+     *
+     * ✅ Changement contrôlé :
+     * - published_only=false : moyenne de travail depuis student_grades.
+     * - published_only=true  : moyenne officielle depuis v_grade_scores_official_for_reports.
+     *
+     * La vue officielle lit d’abord grade_published_scores, puis garde un fallback
+     * sur student_grades pour les anciennes évaluations publiées sans snapshot.
+     */
+    const gradesSource = published_only
+      ? "v_grade_scores_official_for_reports"
+      : "student_grades";
+
+    const gradesClient = published_only ? svc : supabase;
+
+    const { data: grades, error: gErr } = await gradesClient
+      .from(gradesSource)
       .select("evaluation_id, student_id, score")
       .in("evaluation_id", evaluationIds);
 
@@ -384,6 +400,8 @@ export async function GET(req: NextRequest) {
 
     console.log(LOG_PREFIX, "grades loaded", {
       count: gradesRows.length,
+      source: gradesSource,
+      published_only,
       sample: gradesRows.slice(0, 3),
     });
 
@@ -592,7 +610,9 @@ export async function GET(req: NextRequest) {
     // On conserve le classement sur les moyennes calculables.
     // Le front peut choisir d’afficher NC si is_complete=false.
     rows.sort((a, b) => sortKey(b) - sortKey(a));
+
     const ranks = denseRanks(rows.map(sortKey));
+
     rows.forEach((r, i) => {
       r.rank = ranks[i];
     });
@@ -619,6 +639,8 @@ export async function GET(req: NextRequest) {
         evaluations: totalEvals,
         notes_count: gradesRows.length,
         returned_students: rows.length,
+        grades_source: gradesSource,
+        official_scores_used: published_only,
         rule:
           "0 est une vraie note. null/vide est ignoré. Un élève sans moyenne calculable n’est pas renvoyé et doit être affiché NC côté front.",
       },

@@ -28,6 +28,38 @@ type GradePeriodRow = {
   is_active: boolean | null;
 };
 
+type EvaluationRow = {
+  id: string;
+  scale: number | null;
+  class_id: string;
+  is_published: boolean | null;
+  published_at: string | null;
+  publication_status: string | null;
+  submitted_at: string | null;
+  submitted_by: string | null;
+  reviewed_at: string | null;
+  reviewed_by: string | null;
+  review_comment: string | null;
+  publication_version: number | null;
+  grading_period_id: string | null;
+};
+
+type EvaluationLockRow = {
+  evaluation_id: string;
+  is_locked: boolean | null;
+  locked_at: string | null;
+  teacher_id: string | null;
+  locked_by: string | null;
+};
+
+type PublicationStatus =
+  | "draft"
+  | "submitted"
+  | "changes_requested"
+  | "published"
+  | string
+  | null;
+
 function bad(error: string, status = 400, extra?: Record<string, unknown>) {
   return NextResponse.json({ ok: false, error, ...(extra ?? {}) }, { status });
 }
@@ -45,8 +77,81 @@ function isClosedByEndDate(period: GradePeriodRow | null): boolean {
   return serverTodayIsoDate() > period.end_date;
 }
 
+function normalizePublicationStatus(value: unknown): PublicationStatus {
+  const v = String(value ?? "").trim();
+
+  if (!v) return "draft";
+
+  if (
+    v === "draft" ||
+    v === "submitted" ||
+    v === "changes_requested" ||
+    v === "published"
+  ) {
+    return v;
+  }
+
+  return v;
+}
+
+/**
+ * Verrou métier publication.
+ *
+ * Règle :
+ * - draft : saisie autorisée
+ * - changes_requested : correction autorisée
+ * - submitted : bloqué, l'admin doit valider ou demander correction
+ * - published : bloqué, car la note officielle existe déjà
+ */
+function assertEvaluationEditable(ge: EvaluationRow) {
+  const publicationStatus = normalizePublicationStatus(ge.publication_status);
+  const isPublished = ge.is_published === true;
+
+  if (isPublished || publicationStatus === "published") {
+    return {
+      ok: false as const,
+      error: "EVALUATION_ALREADY_PUBLISHED",
+      status: 423,
+      extra: {
+        editable: false,
+        evaluation_id: ge.id,
+        is_published: ge.is_published === true,
+        publication_status: publicationStatus,
+        published_at: ge.published_at ?? null,
+        publication_version: ge.publication_version ?? null,
+        message:
+          "Cette évaluation est déjà publiée officiellement. Utiliser le workflow de correction/republication.",
+      },
+    };
+  }
+
+  if (publicationStatus === "submitted") {
+    return {
+      ok: false as const,
+      error: "EVALUATION_SUBMITTED_FOR_PUBLICATION",
+      status: 423,
+      extra: {
+        editable: false,
+        evaluation_id: ge.id,
+        is_published: ge.is_published === true,
+        publication_status: publicationStatus,
+        submitted_at: ge.submitted_at ?? null,
+        submitted_by: ge.submitted_by ?? null,
+        message:
+          "Cette évaluation est soumise à publication. L’administration doit valider ou demander une correction avant toute modification.",
+      },
+    };
+  }
+
+  return {
+    ok: true as const,
+    publication_status: publicationStatus,
+  };
+}
+
 async function isPrivilegedUser(userId: string) {
   const svc = getSupabaseServiceClient();
+
   const { data, error } = await svc
     .from("user_roles")
     .select("role")
@@ -54,7 +159,10 @@ async function isPrivilegedUser(userId: string) {
 
   if (error) return false;
 
-  const roles = (data ?? []).map((r: any) => String(r.role || ""));
+  const roles = Array.isArray(data)
+    ? data.map((r: any) => String(r.role || ""))
+    : [];
+
   return (
     roles.includes("super_admin") ||
     roles.includes("admin") ||
@@ -66,11 +174,10 @@ export async function POST(req: NextRequest) {
   try {
     const supabase = await getSupabaseServerClient();
 
-    // Auth
     const { data: auth } = await supabase.auth.getUser();
+
     if (!auth?.user) return bad("UNAUTHENTICATED", 401);
 
-    // Payload
     const body = (await req.json().catch(() => ({}))) as {
       evaluation_id?: string;
       items?: Item[];
@@ -80,8 +187,8 @@ export async function POST(req: NextRequest) {
 
     const evaluation_id = String(body.evaluation_id || "").trim();
     const items: Item[] = Array.isArray(body.items) ? body.items : [];
-    const delete_if_null = body.delete_if_null ?? true; // défaut: on supprime si score=null
-    const strict = body.strict ?? true; // si true, on bloque sur 1 erreur
+    const delete_if_null = body.delete_if_null ?? true;
+    const strict = body.strict ?? true;
 
     if (!evaluation_id) return bad("evaluation_id requis");
 
@@ -95,28 +202,44 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // Lire l'évaluation (RLS protège l'accès côté prof)
-    const { data: ge, error: geErr } = await supabase
+    // Lire l'évaluation via Supabase RLS : si le prof n'a pas accès, la requête échoue.
+    const { data: geRaw, error: geErr } = await supabase
       .from("grade_evaluations")
-      .select("id, scale, class_id, is_published, grading_period_id")
+      .select(
+        [
+          "id",
+          "scale",
+          "class_id",
+          "is_published",
+          "published_at",
+          "publication_status",
+          "submitted_at",
+          "submitted_by",
+          "reviewed_at",
+          "reviewed_by",
+          "review_comment",
+          "publication_version",
+          "grading_period_id",
+        ].join(",")
+      )
       .eq("id", evaluation_id)
       .single();
 
-    if (geErr) {
-      // 404 si inexistante ou 403 si RLS bloque (non affecté)
+    if (geErr || !geRaw) {
       return bad(
-        geErr.message || "EVALUATION_NOT_FOUND_OR_FORBIDDEN",
-        (geErr as any).code === "PGRST116" ? 404 : 403
+        geErr?.message || "EVALUATION_NOT_FOUND_OR_FORBIDDEN",
+        (geErr as any)?.code === "PGRST116" ? 404 : 403
       );
     }
 
+    const ge = geRaw as unknown as EvaluationRow;
     const srv = getSupabaseServiceClient();
 
-    // ✅ CHECK CLOTURE PAR FIN DE PERIODE
+    // ✅ CHECK CLÔTURE PAR FIN DE PÉRIODE
     // On vérifie seulement pour les profils non privilégiés.
     const privileged = await isPrivilegedUser(auth.user.id);
 
-    if (!privileged && ge?.grading_period_id) {
+    if (!privileged && ge.grading_period_id) {
       const { data: periodRow, error: periodErr } = await srv
         .from("grade_periods")
         .select("id, end_date, is_active")
@@ -127,7 +250,7 @@ export async function POST(req: NextRequest) {
         return bad(periodErr.message || "GRADE_PERIOD_FETCH_FAILED", 500);
       }
 
-      const period = (periodRow ?? null) as GradePeriodRow | null;
+      const period = (periodRow ?? null) as unknown as GradePeriodRow | null;
 
       if (isClosedByEndDate(period)) {
         return bad("GRADING_PERIOD_CLOSED", 423, {
@@ -139,17 +262,21 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // ✅ CHECK LOCK (ULTRA IMPORTANT)
-    // On lit le lock via service client, car côté prof la RLS peut masquer la ligne.
-    // Sécurité: on ne fait cette lecture qu'après avoir validé l'accès à l'évaluation via RLS.
+    // ✅ Verrou métier publication AVANT toute écriture.
+    const editable = assertEvaluationEditable(ge);
+
+    if (!editable.ok) {
+      return bad(editable.error, editable.status, editable.extra);
+    }
+
+    // ✅ CHECK LOCK
     try {
-      const { data: lockRow, error: lockErr } = await srv
+      const { data: lockRaw, error: lockErr } = await srv
         .from("grade_evaluation_locks")
         .select("evaluation_id, is_locked, locked_at, teacher_id, locked_by")
         .eq("evaluation_id", evaluation_id)
         .maybeSingle();
 
-      // Si la table n'existe pas encore (migration pas faite), on ne casse rien
       if (lockErr) {
         const msg = String(lockErr.message || "");
         const looksLikeMissingTable =
@@ -160,6 +287,8 @@ export async function POST(req: NextRequest) {
           return bad(lockErr.message || "LOCK_CHECK_FAILED", 500);
         }
       }
+
+      const lockRow = (lockRaw ?? null) as unknown as EvaluationLockRow | null;
 
       if (lockRow?.is_locked) {
         return bad("EVALUATION_LOCKED", 423, {
@@ -174,10 +303,9 @@ export async function POST(req: NextRequest) {
       return bad(e?.message || "LOCK_CHECK_FAILED", 500);
     }
 
-    const scale = Number(ge?.scale || 20);
+    const scale = Number(ge.scale || 20);
     const violations: Violation[] = [];
 
-    // Valider & préparer
     const upserts: UpsertRow[] = [];
     const toDelete: string[] = [];
 
@@ -201,6 +329,7 @@ export async function POST(req: NextRequest) {
       }
 
       const n = Number(it.score);
+
       if (!Number.isFinite(n) || n < 0 || n > scale) {
         violations.push({
           student_id,
@@ -226,7 +355,6 @@ export async function POST(req: NextRequest) {
     let deleted = 0;
     const warnings: string[] = [];
 
-    // Upsert (RLS)
     if (upserts.length > 0) {
       const { data: upData, error: upErr } = await supabase
         .from("student_grades")
@@ -234,10 +362,10 @@ export async function POST(req: NextRequest) {
         .select("evaluation_id, student_id");
 
       if (upErr) return bad(upErr.message || "UPSERT_FAILED", 400);
-      upserted = upData?.length ?? 0;
+
+      upserted = Array.isArray(upData) ? upData.length : 0;
     }
 
-    // Delete (RLS)
     if (toDelete.length > 0) {
       const { count, error: delErr } = await supabase
         .from("student_grades")
@@ -246,6 +374,7 @@ export async function POST(req: NextRequest) {
         .in("student_id", toDelete);
 
       if (delErr) return bad(delErr.message || "DELETE_FAILED", 400);
+
       deleted = count ?? 0;
     }
 
@@ -259,6 +388,7 @@ export async function POST(req: NextRequest) {
       upserted,
       deleted,
       warnings,
+      publication_status: editable.publication_status,
     });
   } catch (e: any) {
     return bad(e?.message || "INTERNAL_ERROR", 500);

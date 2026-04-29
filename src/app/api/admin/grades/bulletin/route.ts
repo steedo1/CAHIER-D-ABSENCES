@@ -2224,7 +2224,7 @@ export async function GET(req: NextRequest) {
 
   const hasGroupConfig = subjectGroups.length > 0;
 
-  /* 7) Notes (si evals présentes) */
+  /* 7) Notes officielles publiées (si evals présentes) */
   const evalById = new Map<string, EvalRow>();
   for (const e of evals) evalById.set(e.id, e);
 
@@ -2233,7 +2233,7 @@ export async function GET(req: NextRequest) {
     const evalIds = evals.map((e) => e.id);
 
     const { data: scoreData, error: scoreErr } = await supabase
-      .from("student_grades")
+      .from("v_grade_scores_official_for_reports")
       .select("evaluation_id, student_id, score")
       .in("evaluation_id", evalIds)
       .in("student_id", studentIds);
@@ -2806,7 +2806,7 @@ export async function GET(req: NextRequest) {
       const evalIds = pevals.map((ev) => ev.id);
 
       const { data: sData, error: sErr } = await supabase
-        .from("student_grades")
+        .from("v_grade_scores_official_for_reports")
         .select("evaluation_id, student_id, score")
         .in("evaluation_id", evalIds)
         .in("student_id", studentIds);

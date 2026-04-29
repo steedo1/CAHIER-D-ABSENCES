@@ -171,11 +171,13 @@ function buildSmsBody(opts: {
 
   if (kept.length === 0) {
     const fallback = `${prefix} - +${notes.length} autres${suffix}`;
+
     if (fallback.length <= maxLength) {
       return fallback.replace(/\s+/g, " ").trim();
     }
 
     const minimal = `${prefix}${suffix}`;
+
     if (minimal.length <= maxLength) {
       return minimal.replace(/\s+/g, " ").trim();
     }
@@ -196,17 +198,31 @@ function buildSmsBody(opts: {
 export async function enqueueNotesDigestSms(opts: {
   srv: SupabaseClient;
   req?: Request;
+
   institutionId: string;
   studentId: string;
   studentName: string;
+
   classId?: string | null;
   classLabel?: string | null;
   institutionName?: string | null;
   periodLabel?: string | null;
   average?: number | string | null;
+
   items: NotesDigestQueueItem[];
+
   profileId?: string | null;
   parentId?: string | null;
+
+  /**
+   * ✅ Métadonnées optionnelles ajoutées pour la nouvelle source officielle.
+   * Elles ne cassent aucun ancien appel : tout est facultatif.
+   */
+  source?: "grade_published_scores" | "student_grades" | "notes_digest" | string;
+  digestRunId?: string | null;
+  officialScoreIds?: string[];
+  evaluationIds?: string[];
+
   dispatch?: boolean;
 }) {
   const {
@@ -223,12 +239,19 @@ export async function enqueueNotesDigestSms(opts: {
     items,
     profileId,
     parentId,
+
+    source = "grade_published_scores",
+    digestRunId = null,
+    officialScoreIds = [],
+    evaluationIds = [],
+
     dispatch = true,
   } = opts;
 
   if (!institutionId) throw new Error("institutionId manquant.");
   if (!studentId) throw new Error("studentId manquant.");
   if (!cleanText(studentName)) throw new Error("studentName manquant.");
+
   if (!Array.isArray(items) || items.length === 0) {
     throw new Error("Aucune note a envoyer.");
   }
@@ -246,13 +269,28 @@ export async function enqueueNotesDigestSms(opts: {
     throw new Error("Aucune note valide a envoyer.");
   }
 
+  const cleanOfficialScoreIds = Array.from(
+    new Set((officialScoreIds || []).map((x) => cleanText(x)).filter(Boolean))
+  );
+
+  const cleanEvaluationIds = Array.from(
+    new Set((evaluationIds || []).map((x) => cleanText(x)).filter(Boolean))
+  );
+
   const payload = {
     kind: "notes_digest",
     event: "notes_digest",
+
+    official_source: source,
+    digest_run_id: digestRunId || null,
+    official_score_ids: cleanOfficialScoreIds,
+    evaluation_ids: cleanEvaluationIds,
+
     student: {
       id: studentId,
       name: cleanText(studentName),
     },
+
     class:
       classId || classLabel
         ? {
@@ -260,6 +298,7 @@ export async function enqueueNotesDigestSms(opts: {
             label: classLabel || null,
           }
         : null,
+
     institution: institutionName
       ? {
           id: institutionId,
@@ -268,12 +307,14 @@ export async function enqueueNotesDigestSms(opts: {
       : {
           id: institutionId,
         },
+
     period_label: periodLabel || null,
     average: average ?? null,
     items: normalizedItems,
   };
 
   const title = `Mon Cahier - ${cleanText(studentName)}`;
+
   const body = buildSmsBody({
     studentName,
     institutionName,
@@ -286,16 +327,29 @@ export async function enqueueNotesDigestSms(opts: {
     .insert({
       institution_id: institutionId,
       student_id: studentId,
+
+      /**
+       * ✅ On garde l'ancien comportement :
+       * - si profileId/parentId sont fournis, le dispatcher cible directement ;
+       * - sinon, /api/sms/dispatch retrouve les parents via student_guardians.
+       */
       parent_id: parentId || null,
       profile_id: profileId || null,
+
       channels: ["sms"],
       title,
       body,
       payload,
       status: "pending",
       attempts: 0,
+
       meta: {
         source: "notes_digest",
+        official_source: source,
+        digest_run_id: digestRunId || null,
+        official_score_ids: cleanOfficialScoreIds,
+        evaluation_ids: cleanEvaluationIds,
+        generated_at: new Date().toISOString(),
       },
     })
     .select("id")

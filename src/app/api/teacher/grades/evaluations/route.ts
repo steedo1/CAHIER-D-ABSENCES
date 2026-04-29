@@ -1,7 +1,12 @@
+// src/app/api/teacher/grades/evaluations/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
-import { queueGradeNotificationsForEvaluation } from "@/lib/push/grades";
+import {
+  getGradePublicationSettings,
+  handleTeacherPublicationIntent,
+  unpublishEvaluationOfficially,
+} from "@/lib/grades/publication";
 import { computeAcademicYear } from "@/lib/academicYear";
 
 export const runtime = "nodejs";
@@ -15,6 +20,13 @@ type Role =
   | "teacher"
   | "parent"
   | "class_device"
+  | string;
+
+type PublicationStatus =
+  | "draft"
+  | "submitted"
+  | "changes_requested"
+  | "published"
   | string;
 
 type EvalRow = {
@@ -31,6 +43,13 @@ type EvalRow = {
   coeff: number;
   is_published: boolean;
   published_at?: string | null;
+  publication_status?: PublicationStatus | null;
+  submitted_at?: string | null;
+  submitted_by?: string | null;
+  reviewed_at?: string | null;
+  reviewed_by?: string | null;
+  review_comment?: string | null;
+  publication_version?: number | null;
 };
 
 type GradePeriodRow = {
@@ -60,8 +79,6 @@ type Ctx =
       error: string;
     };
 
-/* ───────── Context ───────── */
-
 async function getContext(): Promise<Ctx> {
   const supa = await getSupabaseServerClient();
   const {
@@ -84,7 +101,16 @@ async function getContext(): Promise<Ctx> {
     return { ok: false, supa, status: 401, error: "profile_error" };
   }
 
-  if (!profile?.id || !profile?.institution_id) {
+  if (!profile) {
+    return { ok: false, supa, status: 403, error: "no_institution" };
+  }
+
+  const profileRow = profile as unknown as {
+    id: string;
+    institution_id: string | null;
+  };
+
+  if (!profileRow.id || !profileRow.institution_id) {
     return { ok: false, supa, status: 403, error: "no_institution" };
   }
 
@@ -94,8 +120,8 @@ async function getContext(): Promise<Ctx> {
   const { data: roleRows, error: rolesErr } = await srv
     .from("user_roles")
     .select("role")
-    .eq("profile_id", profile.id)
-    .eq("institution_id", profile.institution_id);
+    .eq("profile_id", profileRow.id)
+    .eq("institution_id", profileRow.institution_id);
 
   if (rolesErr) {
     console.error("[teacher/grades/evaluations] user_roles error", rolesErr);
@@ -108,13 +134,11 @@ async function getContext(): Promise<Ctx> {
     supa,
     srv,
     userId: user.id,
-    profileId: profile.id,
-    institutionId: profile.institution_id,
+    profileId: profileRow.id,
+    institutionId: profileRow.institution_id,
     roles,
   };
 }
-
-/* ───────── Helpers ───────── */
 
 function isPrivileged(roles: Set<Role>) {
   return (
@@ -180,14 +204,17 @@ async function ensureClassInInstitution(
     });
     return false;
   }
-  return !!cls && cls.institution_id === institutionId;
+
+  if (!cls) return false;
+
+  const classRow = cls as unknown as {
+    id: string;
+    institution_id: string | null;
+  };
+
+  return classRow.institution_id === institutionId;
 }
 
-/**
- * - si subject_id est un subjects.id => globalId = subject_id
- * - si subject_id est un institution_subjects.id => globalId = subject_id lié
- * - si aucune correspondance => globalId = raw
- */
 async function resolveSubjectIds(
   srv: ReturnType<typeof getSupabaseServiceClient>,
   institutionId: string,
@@ -196,6 +223,7 @@ async function resolveSubjectIds(
   if (!rawSubjectId || rawSubjectId.trim() === "") {
     return { raw: null, globalId: null, instId: null };
   }
+
   const raw = rawSubjectId;
 
   const { data: subj } = await srv
@@ -204,15 +232,22 @@ async function resolveSubjectIds(
     .eq("id", raw)
     .maybeSingle();
 
-  if (subj?.id) {
+  const subjRow = subj as unknown as { id?: string } | null;
+
+  if (subjRow?.id) {
     const { data: instSub } = await srv
       .from("institution_subjects")
       .select("id,subject_id")
       .eq("institution_id", institutionId)
-      .eq("subject_id", subj.id)
+      .eq("subject_id", subjRow.id)
       .maybeSingle();
 
-    return { raw, globalId: subj.id, instId: instSub?.id ?? null };
+    const instSubRow = instSub as unknown as {
+      id?: string;
+      subject_id?: string | null;
+    } | null;
+
+    return { raw, globalId: subjRow.id, instId: instSubRow?.id ?? null };
   }
 
   const { data: instSub2 } = await srv
@@ -222,11 +257,16 @@ async function resolveSubjectIds(
     .eq("id", raw)
     .maybeSingle();
 
-  if (instSub2?.id) {
+  const instSub2Row = instSub2 as unknown as {
+    id?: string;
+    subject_id?: string | null;
+  } | null;
+
+  if (instSub2Row?.id) {
     return {
       raw,
-      globalId: (instSub2.subject_id as string | null) ?? raw,
-      instId: instSub2.id,
+      globalId: instSub2Row.subject_id ?? raw,
+      instId: instSub2Row.id,
     };
   }
 
@@ -251,7 +291,7 @@ async function teacherHasAccessToClass(
       .in("subject_id", subjectCandidates)
       .limit(1);
 
-    if (data && data.length > 0) return true;
+    if (Array.isArray(data) && data.length > 0) return true;
   }
 
   const { data: anyRow } = await srv
@@ -263,7 +303,7 @@ async function teacherHasAccessToClass(
     .is("end_date", null)
     .limit(1);
 
-  return !!(anyRow && anyRow.length > 0);
+  return !!(Array.isArray(anyRow) && anyRow.length > 0);
 }
 
 async function getGradePeriodById(
@@ -289,7 +329,7 @@ async function getGradePeriodById(
     return null;
   }
 
-  return (data as GradePeriodRow | null) ?? null;
+  return (data as unknown as GradePeriodRow | null) ?? null;
 }
 
 async function autoDetectGradePeriodId(
@@ -319,7 +359,9 @@ async function autoDetectGradePeriodId(
     return null;
   }
 
-  return data?.[0]?.id ?? null;
+  const row = Array.isArray(data) ? (data[0] as any) : null;
+
+  return row?.id ? String(row.id) : null;
 }
 
 async function validateExplicitGradePeriod(
@@ -328,10 +370,7 @@ async function validateExplicitGradePeriod(
   gradingPeriodId: string,
   evalDate: string,
   academicYear: string
-): Promise<
-  | { ok: true; period: GradePeriodRow }
-  | { ok: false; error: string }
-> {
+): Promise<{ ok: true; period: GradePeriodRow } | { ok: false; error: string }> {
   const period = await getGradePeriodById(srv, institutionId, gradingPeriodId);
 
   if (!period) {
@@ -375,43 +414,33 @@ async function getClosedPeriodResponseIfNeeded(
   return null;
 }
 
-/* ───────────────── Push dispatch immédiat ───────────────── */
+const EVALUATION_SELECT = [
+  "id",
+  "class_id",
+  "subject_id",
+  "subject_component_id",
+  "grading_period_id",
+  "academic_year",
+  "teacher_id",
+  "eval_date",
+  "eval_kind",
+  "scale",
+  "coeff",
+  "is_published",
+  "published_at",
+  "publication_status",
+  "submitted_at",
+  "submitted_by",
+  "reviewed_at",
+  "reviewed_by",
+  "review_comment",
+  "publication_version",
+].join(",");
 
-async function triggerImmediatePushDispatch(originHint?: string | null) {
-  try {
-    const base =
-      originHint ||
-      process.env.NEXT_PUBLIC_SITE_URL ||
-      process.env.SITE_URL ||
-      "";
-    if (!base) return;
-
-    const url = new URL("/api/push/dispatch", base).toString();
-    const headers: Record<string, string> = { "content-type": "application/json" };
-    if (process.env.PUSH_DISPATCH_SECRET) {
-      headers["x-push-dispatch-secret"] = process.env.PUSH_DISPATCH_SECRET;
-    }
-
-    await fetch(url, {
-      method: "POST",
-      headers,
-      body: JSON.stringify({ reason: "grades_publish" }),
-      cache: "no-store",
-    });
-  } catch (err) {
-    console.error(
-      "[teacher/grades/evaluations] triggerImmediatePushDispatch error",
-      err
-    );
-  }
-}
-
-/* ==========================================
-   GET
-========================================== */
 export async function GET(req: NextRequest) {
   try {
     const url = new URL(req.url);
+
     const classId = url.searchParams.get("class_id") || "";
     const rawSubjectId = url.searchParams.get("subject_id");
     const subjectParam =
@@ -420,6 +449,7 @@ export async function GET(req: NextRequest) {
     const subjectComponentRaw =
       url.searchParams.get("subject_component_id") ??
       url.searchParams.get("subjectComponentId");
+
     const subjectComponentId =
       subjectComponentRaw && subjectComponentRaw !== ""
         ? subjectComponentRaw
@@ -434,6 +464,7 @@ export async function GET(req: NextRequest) {
     }
 
     const ctx = await getContext();
+
     if (!ctx.ok) {
       return NextResponse.json({ items: [] as EvalRow[] }, { status: ctx.status });
     }
@@ -441,6 +472,7 @@ export async function GET(req: NextRequest) {
     const { srv, institutionId, profileId, roles } = ctx;
 
     const classOk = await ensureClassInInstitution(srv, classId, institutionId);
+
     if (!classOk) {
       return NextResponse.json({ items: [] as EvalRow[] }, { status: 403 });
     }
@@ -450,6 +482,7 @@ export async function GET(req: NextRequest) {
       institutionId,
       subjectParam
     );
+
     const subjectCandidates = [raw, globalId, instId].filter(
       (x): x is string => !!x
     );
@@ -470,6 +503,7 @@ export async function GET(req: NextRequest) {
 
     if (gradingPeriodId) {
       const period = await getGradePeriodById(srv, institutionId, gradingPeriodId);
+
       if (!period) {
         return NextResponse.json({ items: [] as EvalRow[] }, { status: 200 });
       }
@@ -477,9 +511,7 @@ export async function GET(req: NextRequest) {
 
     let q = srv
       .from("grade_evaluations")
-      .select(
-        "id,class_id,subject_id,subject_component_id,grading_period_id,academic_year,teacher_id,eval_date,eval_kind,scale,coeff,is_published,published_at"
-      )
+      .select(EVALUATION_SELECT)
       .eq("class_id", classId);
 
     if (!isPrivileged(roles)) {
@@ -505,22 +537,19 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ items: [] as EvalRow[] }, { status: 200 });
     }
 
-    return NextResponse.json(
-      { items: (data ?? []) as EvalRow[] },
-      { status: 200 }
-    );
+    const items = (data ?? []) as unknown as EvalRow[];
+
+    return NextResponse.json({ items }, { status: 200 });
   } catch (e) {
     console.error("[teacher/grades/evaluations] unexpected GET", e);
     return NextResponse.json({ items: [] as EvalRow[] }, { status: 500 });
   }
 }
 
-/* ==========================================
-   POST
-========================================== */
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json().catch(() => null);
+
     if (!body) {
       return NextResponse.json(
         { ok: false, error: "invalid_body" },
@@ -560,6 +589,7 @@ export async function POST(req: NextRequest) {
     }
 
     const ctx = await getContext();
+
     if (!ctx.ok) {
       return NextResponse.json(
         { ok: false, error: ctx.error },
@@ -570,6 +600,7 @@ export async function POST(req: NextRequest) {
     const { srv, institutionId, profileId, roles } = ctx;
 
     const classOk = await ensureClassInInstitution(srv, class_id, institutionId);
+
     if (!classOk) {
       return NextResponse.json(
         { ok: false, error: "forbidden" },
@@ -578,11 +609,13 @@ export async function POST(req: NextRequest) {
     }
 
     const subjRaw = subject_id && subject_id !== "" ? subject_id : null;
+
     const { raw, globalId, instId } = await resolveSubjectIds(
       srv,
       institutionId,
       subjRaw
     );
+
     const subjectCandidates = [raw, globalId, instId].filter(
       (x): x is string => !!x
     );
@@ -608,15 +641,16 @@ export async function POST(req: NextRequest) {
       typeof subjectComponentId === "string" && subjectComponentId.trim() !== ""
         ? subjectComponentId.trim()
         : typeof subject_component_id_raw === "string" &&
-          subject_component_id_raw.trim() !== ""
-        ? subject_component_id_raw.trim()
-        : null;
+            subject_component_id_raw.trim() !== ""
+          ? subject_component_id_raw.trim()
+          : null;
 
     const explicitGradingPeriodId =
       normalizeUuidLike(gradingPeriodId) ??
       normalizeUuidLike(grading_period_id_raw);
 
     let academic_year: string;
+
     try {
       academic_year = computeAcademicYearFromEvalDate(eval_date);
     } catch {
@@ -683,26 +717,27 @@ export async function POST(req: NextRequest) {
         coeff: typeof coeff === "number" ? coeff : 1,
         is_published: false,
         published_at: null,
+        publication_status: "draft",
+        publication_version: 0,
       })
-      .select(
-        "id,class_id,subject_id,subject_component_id,grading_period_id,academic_year,teacher_id,eval_date,eval_kind,scale,coeff,is_published,published_at"
-      )
+      .select(EVALUATION_SELECT)
       .single();
 
     if (error) {
       console.error("[teacher/grades/evaluations] POST error", error);
+
       return NextResponse.json(
         { ok: false, error: error.message },
         { status: 400 }
       );
     }
 
-    return NextResponse.json(
-      { ok: true, item: data as EvalRow },
-      { status: 200 }
-    );
+    const item = data as unknown as EvalRow;
+
+    return NextResponse.json({ ok: true, item }, { status: 200 });
   } catch (e: any) {
     console.error("[teacher/grades/evaluations] unexpected POST", e);
+
     return NextResponse.json(
       { ok: false, error: e?.message || "eval_create_failed" },
       { status: 500 }
@@ -710,12 +745,10 @@ export async function POST(req: NextRequest) {
   }
 }
 
-/* ==========================================
-   PATCH : publish/unpublish
-========================================== */
 export async function PATCH(req: NextRequest) {
   try {
     const body = await req.json().catch(() => null);
+
     if (!body) {
       return NextResponse.json(
         { ok: false, error: "invalid_body" },
@@ -736,6 +769,7 @@ export async function PATCH(req: NextRequest) {
     }
 
     const ctx = await getContext();
+
     if (!ctx.ok) {
       return NextResponse.json(
         { ok: false, error: ctx.error },
@@ -747,7 +781,9 @@ export async function PATCH(req: NextRequest) {
 
     const { data: evalRow, error: evErr } = await srv
       .from("grade_evaluations")
-      .select("id,class_id,subject_id,teacher_id,is_published,grading_period_id")
+      .select(
+        "id,class_id,subject_id,teacher_id,is_published,publication_status,grading_period_id"
+      )
       .eq("id", evaluation_id)
       .maybeSingle();
 
@@ -758,11 +794,22 @@ export async function PATCH(req: NextRequest) {
       );
     }
 
+    const ev = evalRow as unknown as {
+      id: string;
+      class_id: string;
+      subject_id: string | null;
+      teacher_id: string | null;
+      is_published: boolean;
+      publication_status: string | null;
+      grading_period_id: string | null;
+    };
+
     const classOk = await ensureClassInInstitution(
       srv,
-      evalRow.class_id,
+      ev.class_id,
       institutionId
     );
+
     if (!classOk) {
       return NextResponse.json(
         { ok: false, error: "forbidden" },
@@ -770,7 +817,7 @@ export async function PATCH(req: NextRequest) {
       );
     }
 
-    if (!isPrivileged(roles) && evalRow.teacher_id !== profileId) {
+    if (!isPrivileged(roles) && ev.teacher_id !== profileId) {
       return NextResponse.json(
         { ok: false, error: "forbidden" },
         { status: 403 }
@@ -781,48 +828,87 @@ export async function PATCH(req: NextRequest) {
       srv,
       institutionId,
       roles,
-      normalizeUuidLike((evalRow as any).grading_period_id)
+      normalizeUuidLike(ev.grading_period_id)
     );
+
     if (closedResp) return closedResp;
 
-    const patch: any = {};
-    if (typeof is_published === "boolean") {
-      patch.is_published = is_published;
-      patch.published_at = is_published ? new Date().toISOString() : null;
-    }
-
-    const wasPublished = !!evalRow.is_published;
-
-    const { data, error } = await srv
-      .from("grade_evaluations")
-      .update(patch)
-      .eq("id", evaluation_id)
-      .select(
-        "id,class_id,subject_id,subject_component_id,grading_period_id,academic_year,teacher_id,eval_date,eval_kind,scale,coeff,is_published,published_at"
-      )
-      .maybeSingle();
-
-    if (error) {
+    if (typeof is_published !== "boolean") {
       return NextResponse.json(
-        { ok: false, error: error.message },
+        { ok: false, error: "no_supported_patch_field" },
         { status: 400 }
       );
     }
 
-    if (typeof is_published === "boolean" && !wasPublished && is_published) {
-      queueGradeNotificationsForEvaluation(evaluation_id)
-        .then(() => triggerImmediatePushDispatch(req.headers.get("origin")))
-        .catch((e) =>
-          console.error("[teacher/grades/evaluations] push queue error", e)
+    let publicationResult;
+
+    if (is_published) {
+      publicationResult = await handleTeacherPublicationIntent({
+        evaluationId: evaluation_id,
+        actorProfileId: profileId,
+        comment: null,
+      });
+    } else {
+      const settings = await getGradePublicationSettings(institutionId);
+
+      if (
+        settings.require_admin_validation &&
+        !isPrivileged(roles) &&
+        ev.is_published === true
+      ) {
+        return NextResponse.json(
+          {
+            ok: false,
+            error: "teacher_cannot_unpublish_admin_validated_grade",
+          },
+          { status: 403 }
         );
+      }
+
+      publicationResult = await unpublishEvaluationOfficially({
+        evaluationId: evaluation_id,
+        actorProfileId: profileId,
+        comment: "Évaluation repassée en brouillon depuis l’interface enseignant.",
+      });
     }
 
+    if (!publicationResult.ok) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: publicationResult.error,
+          details: publicationResult.details ?? null,
+        },
+        { status: publicationResult.status ?? 400 }
+      );
+    }
+
+    const { data, error } = await srv
+      .from("grade_evaluations")
+      .select(EVALUATION_SELECT)
+      .eq("id", evaluation_id)
+      .maybeSingle();
+
+    if (error || !data) {
+      return NextResponse.json(
+        { ok: false, error: error?.message || "reload_failed" },
+        { status: 400 }
+      );
+    }
+
+    const item = data as unknown as EvalRow;
+
     return NextResponse.json(
-      { ok: true, item: data as EvalRow },
+      {
+        ok: true,
+        item,
+        publication: publicationResult,
+      },
       { status: 200 }
     );
   } catch (e: any) {
     console.error("[teacher/grades/evaluations] unexpected PATCH", e);
+
     return NextResponse.json(
       { ok: false, error: e?.message || "eval_update_failed" },
       { status: 500 }
@@ -830,12 +916,10 @@ export async function PATCH(req: NextRequest) {
   }
 }
 
-/* ==========================================
-   DELETE
-========================================== */
 export async function DELETE(req: NextRequest) {
   try {
     const body = await req.json().catch(() => null);
+
     if (!body) {
       return NextResponse.json(
         { ok: false, error: "invalid_body" },
@@ -844,6 +928,7 @@ export async function DELETE(req: NextRequest) {
     }
 
     const { evaluation_id } = body as { evaluation_id: string };
+
     if (!evaluation_id) {
       return NextResponse.json(
         { ok: false, error: "missing_id" },
@@ -852,6 +937,7 @@ export async function DELETE(req: NextRequest) {
     }
 
     const ctx = await getContext();
+
     if (!ctx.ok) {
       return NextResponse.json(
         { ok: false, error: ctx.error },
@@ -863,7 +949,19 @@ export async function DELETE(req: NextRequest) {
 
     const { data: evalRow, error: evErr } = await srv
       .from("grade_evaluations")
-      .select("id,class_id,subject_id,teacher_id,grading_period_id")
+      .select(
+        [
+          "id",
+          "class_id",
+          "subject_id",
+          "teacher_id",
+          "grading_period_id",
+          "is_published",
+          "publication_status",
+          "published_at",
+          "publication_version",
+        ].join(",")
+      )
       .eq("id", evaluation_id)
       .maybeSingle();
 
@@ -874,11 +972,46 @@ export async function DELETE(req: NextRequest) {
       );
     }
 
+    const ev = evalRow as unknown as {
+      id: string;
+      class_id: string;
+      subject_id: string | null;
+      teacher_id: string | null;
+      grading_period_id: string | null;
+      is_published: boolean;
+      publication_status: string | null;
+      published_at: string | null;
+      publication_version: number | null;
+    };
+
+    const publicationStatus = String(ev.publication_status || "draft").trim();
+
+    if (
+      ev.is_published === true ||
+      publicationStatus === "published" ||
+      publicationStatus === "submitted"
+    ) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "evaluation_not_deletable_after_submission_or_publication",
+          publication_status: publicationStatus,
+          is_published: ev.is_published === true,
+          published_at: ev.published_at ?? null,
+          publication_version: ev.publication_version ?? null,
+          message:
+            "Cette évaluation est soumise ou publiée. Elle ne peut plus être supprimée directement.",
+        },
+        { status: 423 }
+      );
+    }
+
     const classOk = await ensureClassInInstitution(
       srv,
-      evalRow.class_id,
+      ev.class_id,
       institutionId
     );
+
     if (!classOk) {
       return NextResponse.json(
         { ok: false, error: "forbidden" },
@@ -886,7 +1019,7 @@ export async function DELETE(req: NextRequest) {
       );
     }
 
-    if (!isPrivileged(roles) && evalRow.teacher_id !== profileId) {
+    if (!isPrivileged(roles) && ev.teacher_id !== profileId) {
       return NextResponse.json(
         { ok: false, error: "forbidden" },
         { status: 403 }
@@ -897,8 +1030,9 @@ export async function DELETE(req: NextRequest) {
       srv,
       institutionId,
       roles,
-      normalizeUuidLike((evalRow as any).grading_period_id)
+      normalizeUuidLike(ev.grading_period_id)
     );
+
     if (closedResp) return closedResp;
 
     const { error: delScoresErr } = await srv
@@ -928,6 +1062,7 @@ export async function DELETE(req: NextRequest) {
     return NextResponse.json({ ok: true }, { status: 200 });
   } catch (e: any) {
     console.error("[teacher/grades/evaluations] unexpected DELETE", e);
+
     return NextResponse.json(
       { ok: false, error: e?.message || "eval_delete_failed" },
       { status: 500 }

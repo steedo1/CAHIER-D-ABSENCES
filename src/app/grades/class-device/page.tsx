@@ -65,6 +65,14 @@ type RosterItem = { id: string; full_name: string; matricule: string | null };
 
 type EvalKind = "devoir" | "interro_ecrite" | "interro_orale";
 
+type PublicationStatus =
+  | "draft"
+  | "submitted"
+  | "changes_requested"
+  | "published"
+  | string
+  | null;
+
 type Evaluation = {
   id: string;
   class_id: string;
@@ -76,6 +84,15 @@ type Evaluation = {
   coeff: number;
   is_published: boolean;
   published_at?: string | null;
+
+  // ✅ Nouveau workflow officiel de publication
+  publication_status?: PublicationStatus;
+  submitted_at?: string | null;
+  submitted_by?: string | null;
+  reviewed_at?: string | null;
+  reviewed_by?: string | null;
+  review_comment?: string | null;
+  publication_version?: number | null;
 };
 
 type LockInfo = {
@@ -134,6 +151,83 @@ function isCollegeLevel(level?: string | null): boolean {
     s.startsWith("5") ||
     s.startsWith("4") ||
     s.startsWith("3")
+  );
+}
+
+function getPublicationStatus(ev: Evaluation | null | undefined):
+  | "draft"
+  | "submitted"
+  | "changes_requested"
+  | "published" {
+  const raw = String(ev?.publication_status || "").trim();
+
+  if (ev?.is_published === true || raw === "published") return "published";
+  if (raw === "submitted") return "submitted";
+  if (raw === "changes_requested") return "changes_requested";
+  return "draft";
+}
+
+function isEvaluationPublishedOfficial(ev: Evaluation | null | undefined) {
+  return getPublicationStatus(ev) === "published";
+}
+
+function isEvaluationLockedByPublication(ev: Evaluation | null | undefined) {
+  const status = getPublicationStatus(ev);
+  return status === "submitted" || status === "published";
+}
+
+function isEvaluationEditable(ev: Evaluation | null | undefined) {
+  return !isEvaluationLockedByPublication(ev);
+}
+
+function isEvaluationDeletable(ev: Evaluation | null | undefined) {
+  return !isEvaluationLockedByPublication(ev);
+}
+
+function publicationStatusLabel(ev: Evaluation | null | undefined) {
+  const status = getPublicationStatus(ev);
+  if (status === "published") return "Publié";
+  if (status === "submitted") return "En attente de validation";
+  if (status === "changes_requested") return "Correction demandée";
+  return "Brouillon";
+}
+
+function publicationBadgeClass(ev: Evaluation | null | undefined) {
+  const status = getPublicationStatus(ev);
+  if (status === "published") {
+    return "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200";
+  }
+  if (status === "submitted") {
+    return "bg-amber-50 text-amber-800 ring-1 ring-amber-200";
+  }
+  if (status === "changes_requested") {
+    return "bg-rose-50 text-rose-700 ring-1 ring-rose-200";
+  }
+  return "bg-slate-50 text-slate-600 ring-1 ring-slate-200";
+}
+
+function publicationActionLabel(ev: Evaluation | null | undefined) {
+  const status = getPublicationStatus(ev);
+  if (status === "submitted") return "Soumis";
+  if (status === "published") return "Repasser brouillon";
+  if (status === "changes_requested") return "Soumettre à nouveau";
+  return "Soumettre / publier";
+}
+
+function publicationActionTone(ev: Evaluation | null | undefined): "emerald" | "slate" {
+  const status = getPublicationStatus(ev);
+  if (status === "published") return "slate";
+  return "emerald";
+}
+
+function isPublicationWorkflowLockError(error: unknown) {
+  const e = String(error || "").trim();
+  return (
+    e === "EVALUATION_ALREADY_PUBLISHED" ||
+    e === "EVALUATION_SUBMITTED_FOR_PUBLICATION" ||
+    e === "evaluation_not_deletable_after_submission_or_publication" ||
+    e === "teacher_cannot_unpublish_admin_validated_grade" ||
+    e === "ADJUSTMENTS_LOCKED_BY_PUBLICATION_WORKFLOW"
   );
 }
 
@@ -808,6 +902,16 @@ export default function ClassDeviceNotesPage() {
         : Math.max(0, Math.min(scale, value));
     logInfo("setGrade ->", { evId, studentId, value, clamped: v, scale });
 
+    const ev = evaluations.find((x) => x.id === evId) || null;
+    if (!isEvaluationEditable(ev)) {
+      setMsg(
+        getPublicationStatus(ev) === "submitted"
+          ? "Cette évaluation est soumise à validation. Les notes sont bloquées en attendant la décision de l’administration."
+          : "Cette évaluation est déjà publiée officiellement. Les notes ne peuvent plus être modifiées directement."
+      );
+      return;
+    }
+
     const lock = lockByEvalId[evId];
     if (lock?.locked) {
       setMsg(
@@ -843,10 +947,19 @@ export default function ClassDeviceNotesPage() {
 
     const savedEvalIds: string[] = [];
     const lockedEvalIds: string[] = [];
+    const publicationLockedEvalIds: string[] = [];
 
     try {
       for (const [evaluation_id, per] of perEval) {
-        // Si on sait déjà que l’évaluation est verrouillée, on saute (et on affiche après)
+        const ev = evaluations.find((x) => x.id === evaluation_id) || null;
+
+        // Si l’évaluation est déjà soumise/publiée, on ne tente même pas l’écriture.
+        if (!isEvaluationEditable(ev)) {
+          publicationLockedEvalIds.push(evaluation_id);
+          continue;
+        }
+
+        // Si on sait déjà que l’évaluation est verrouillée par PIN, on saute.
         const knownLock = lockByEvalId[evaluation_id];
         if (knownLock?.locked) {
           lockedEvalIds.push(evaluation_id);
@@ -883,8 +996,14 @@ export default function ClassDeviceNotesPage() {
           logError("saveAllChanges -> JSON parse error", err);
         }
 
-        // 🧷 Verrouillage côté serveur (423)
-        if (r.status === 423 || j?.error === "EVALUATION_LOCKED") {
+        // 🧷 Verrouillage métier publication côté serveur
+        if (r.status === 423 && isPublicationWorkflowLockError(j?.error)) {
+          publicationLockedEvalIds.push(evaluation_id);
+          continue;
+        }
+
+        // 🧷 Verrouillage PIN côté serveur
+        if (j?.error === "EVALUATION_LOCKED") {
           lockedEvalIds.push(evaluation_id);
 
           setLockByEvalId((m) => ({
@@ -933,7 +1052,15 @@ export default function ClassDeviceNotesPage() {
         }
       }
 
-      if (lockedEvalIds.length > 0 && savedEvalIds.length > 0) {
+      if (publicationLockedEvalIds.length > 0 && savedEvalIds.length > 0) {
+        setMsg(
+          "Notes enregistrées ✅ (certaines évaluations soumises/publiées ont été ignorées)."
+        );
+      } else if (publicationLockedEvalIds.length > 0) {
+        setMsg(
+          "Certaines évaluations sont soumises ou publiées : les notes ne peuvent plus être modifiées directement."
+        );
+      } else if (lockedEvalIds.length > 0 && savedEvalIds.length > 0) {
         setMsg(
           "Notes enregistrées ✅ (certaines évaluations sont verrouillées 🔒)."
         );
@@ -945,7 +1072,11 @@ export default function ClassDeviceNotesPage() {
         setMsg("Notes enregistrées ✅");
       }
 
-      logInfo("saveAllChanges -> terminé", { savedEvalIds, lockedEvalIds });
+      logInfo("saveAllChanges -> terminé", {
+        savedEvalIds,
+        lockedEvalIds,
+        publicationLockedEvalIds,
+      });
     } catch (e: any) {
       logError("saveAllChanges -> exception", e);
       setMsg(e?.message || "Échec d’enregistrement des notes.");
@@ -1020,10 +1151,18 @@ export default function ClassDeviceNotesPage() {
 
   async function togglePublish(ev: Evaluation) {
     setMsg(null);
-    const next = !ev.is_published;
+
+    const status = getPublicationStatus(ev);
+    if (status === "submitted") {
+      setMsg("Cette évaluation est déjà soumise à validation administrative.");
+      return;
+    }
+
+    const next = status === "published" ? false : true;
     logInfo("togglePublish -> PATCH /api/grades/evaluations", {
       eval_id: ev.id,
       next,
+      status,
     });
     setPublishBusy((prev) => ({ ...prev, [ev.id]: true }));
     try {
@@ -1050,8 +1189,15 @@ export default function ClassDeviceNotesPage() {
       setEvaluations((prev) =>
         prev.map((e) => (e.id === updated.id ? updated : e))
       );
+
+      const action = String(j?.publication?.action || "");
+      const updatedStatus = getPublicationStatus(updated);
       setMsg(
-        next ? "Évaluation publiée ✅." : "Évaluation repassée en brouillon."
+        action === "submitted" || updatedStatus === "submitted"
+          ? "Évaluation soumise à validation ✅."
+          : updatedStatus === "published"
+          ? "Évaluation publiée officiellement ✅."
+          : "Évaluation repassée en brouillon."
       );
     } catch (e: any) {
       logError("togglePublish -> exception", e);
@@ -1067,6 +1213,14 @@ export default function ClassDeviceNotesPage() {
 
   async function deleteEvaluation(ev: Evaluation) {
     logInfo("deleteEvaluation -> demande de suppression", ev);
+
+    if (!isEvaluationDeletable(ev)) {
+      setMsg(
+        "Cette évaluation est soumise ou publiée. Elle ne peut plus être supprimée directement."
+      );
+      return;
+    }
+
     if (
       !window.confirm(
         "Supprimer définitivement cette colonne de notes ?\nToutes les notes associées seront perdues."
@@ -1214,8 +1368,8 @@ export default function ClassDeviceNotesPage() {
       perStudentComp = new Map<string, Record<string, CompAgg>>();
 
       for (const ev of evaluations) {
-        // On se cale sur la vue moyennes : uniquement les évaluations publiées
-        if (!ev.is_published) continue;
+        // On se cale sur la vue moyennes : uniquement les évaluations officiellement publiées
+        if (!isEvaluationPublishedOfficial(ev)) continue;
         const compId = ev.subject_component_id;
         if (!compId) continue;
 
@@ -1387,6 +1541,14 @@ export default function ClassDeviceNotesPage() {
       logInfo("saveBonuses -> aucun selected, on annule.");
       return;
     }
+
+    if (evaluations.some((ev) => isEvaluationLockedByPublication(ev))) {
+      setMsg(
+        "Des évaluations sont soumises ou publiées. Les bonus ne peuvent plus être modifiés directement."
+      );
+      return;
+    }
+
     setLoadingAvg(true);
     setMsg(null);
     try {
@@ -1572,7 +1734,7 @@ export default function ClassDeviceNotesPage() {
 
           row.push(raw == null ? "" : Number(raw));
 
-          if (raw != null && ev.is_published) {
+          if (raw != null && isEvaluationPublishedOfficial(ev)) {
             const normalized = (Number(raw) / ev.scale) * 20;
             const w = Number(ev.coeff || 1);
             num += normalized * w;
@@ -2012,6 +2174,9 @@ export default function ClassDeviceNotesPage() {
     return evaluations.find((ev) => ev.id === currentActiveEvalId) || null;
   }, [evaluations, currentActiveEvalId]);
 
+  const isCurrentEvalPublicationLocked =
+    isEvaluationLockedByPublication(currentActiveEval);
+
   // Recharge / précharge l’état de verrouillage (mobile: éval active, desktop: toutes visibles)
   useEffect(() => {
     if (!locksSupported) return;
@@ -2337,6 +2502,19 @@ export default function ClassDeviceNotesPage() {
             </div>
           )}
 
+          {isCurrentEvalPublicationLocked && currentActiveEval && (
+            <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+              <div className="font-semibold">
+                {publicationStatusLabel(currentActiveEval)}
+              </div>
+              <div className="text-xs leading-snug">
+                {getPublicationStatus(currentActiveEval) === "submitted"
+                  ? "Cette évaluation est en attente de validation administrative. La saisie est bloquée."
+                  : "Cette évaluation est publiée officiellement. Les notes ne peuvent plus être modifiées directement."}
+              </div>
+            </div>
+          )}
+
           {/* Bandeau de boutons DEVOIR1, DEVOIR2, IE1… sur mobile */}
           {isMobile && evaluations.length > 0 && (
             <div className="mb-3 flex flex-wrap gap-2">
@@ -2409,9 +2587,13 @@ export default function ClassDeviceNotesPage() {
                               <button
                                 type="button"
                                 onClick={() => deleteEvaluation(ev)}
-                                disabled={!!publishBusy[ev.id]}
+                                disabled={!!publishBusy[ev.id] || !isEvaluationDeletable(ev)}
                                 className="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-red-100 text-red-500 hover:bg-red-50 hover:text-red-700 focus:outline-none focus:ring-2 focus:ring-red-500/40 disabled:opacity-60"
-                                title="Supprimer cette colonne de notes"
+                                title={
+                                  isEvaluationDeletable(ev)
+                                    ? "Supprimer cette colonne de notes"
+                                    : "Évaluation soumise ou publiée : suppression bloquée"
+                                }
                               >
                                 <Trash2 className="h-3.5 w-3.5" />
                               </button>
@@ -2480,6 +2662,7 @@ export default function ClassDeviceNotesPage() {
                                 }}
                                 disabled={
                                   loading ||
+                                  isEvaluationLockedByPublication(ev) ||
                                   (!!lockByEvalId[ev.id]?.locked && locksSupported)
                                 }
                                 aria-label={`Note ${st.full_name}`}
@@ -2571,6 +2754,7 @@ export default function ClassDeviceNotesPage() {
                           }}
                           disabled={
                             loading ||
+                            isEvaluationLockedByPublication(ev) ||
                             (!!lockByEvalId[ev.id]?.locked && locksSupported)
                           }
                           aria-label={`Note ${st.full_name}`}
@@ -2921,8 +3105,8 @@ export default function ClassDeviceNotesPage() {
       )}
 
 {showPublishPanel && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-          <div className="w-full max-w-3xl rounded-2xl bg-white shadow-xl border border-slate-200 p-4 md:p-6">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-3">
+          <div className="w-full max-w-4xl rounded-2xl bg-white shadow-xl border border-slate-200 p-4 md:p-6">
             <div className="mb-3 flex items-center justify-between gap-2">
               <h2 className="text-base md:text-lg font-semibold">
                 Gérer la publication des évaluations
@@ -2936,10 +3120,10 @@ export default function ClassDeviceNotesPage() {
                 Fermer
               </GhostButton>
             </div>
+
             <p className="text-xs md:text-sm text-slate-600 mb-3">
-              Cochez les évaluations à publier pour les parents, ou supprimez
-              une colonne si besoin. Vous pouvez aussi générer une fiche
-              statistique PDF pour chaque évaluation.
+              Soumettez ou publiez les évaluations selon le mode configuré par l’établissement.
+              Une évaluation soumise ou publiée ne peut plus être modifiée directement.
             </p>
 
             {evaluations.length === 0 ? (
@@ -2954,9 +3138,8 @@ export default function ClassDeviceNotesPage() {
                       <th className="px-3 py-2">Date</th>
                       <th className="px-3 py-2">Type</th>
                       <th className="px-3 py-2">Détails</th>
-                      <th className="px-3 py-2 text-right">
-                        Publié pour les parents
-                      </th>
+                      <th className="px-3 py-2">État</th>
+                      <th className="px-3 py-2 text-right">Publication</th>
                       <th className="px-3 py-2 text-right">Actions</th>
                     </tr>
                   </thead>
@@ -2967,13 +3150,11 @@ export default function ClassDeviceNotesPage() {
                       const comp = ev.subject_component_id
                         ? componentById[ev.subject_component_id]
                         : undefined;
-                      const rubLabel =
-                        comp?.short_label || comp?.label || "";
+                      const rubLabel = comp?.short_label || comp?.label || "";
+                      const status = getPublicationStatus(ev);
+
                       return (
-                        <tr
-                          key={ev.id}
-                          className="hover:bg-slate-50/60"
-                        >
+                        <tr key={ev.id} className="hover:bg-slate-50/60">
                           <td className="px-3 py-2">
                             {formatDateFr(ev.eval_date)}
                           </td>
@@ -2994,25 +3175,40 @@ export default function ClassDeviceNotesPage() {
                             )}
                             {ev.published_at && (
                               <span className="ml-2 text-[11px] text-slate-400">
-                                {`(publié le ${formatDateFr(
-                                  ev.published_at
-                                )})`}
+                                {`(publié le ${formatDateFr(ev.published_at)})`}
                               </span>
                             )}
+                            {status === "changes_requested" && ev.review_comment && (
+                              <div className="mt-1 text-[11px] text-rose-700">
+                                Motif : {ev.review_comment}
+                              </div>
+                            )}
+                          </td>
+                          <td className="px-3 py-2">
+                            <span
+                              className={[
+                                "inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold",
+                                publicationBadgeClass(ev),
+                              ].join(" ")}
+                            >
+                              {publicationStatusLabel(ev)}
+                            </span>
                           </td>
                           <td className="px-3 py-2 text-right">
-                            <label className="inline-flex items-center gap-2 text-xs md:text-sm">
-                              <input
-                                type="checkbox"
-                                className="h-4 w-4 rounded border-slate-300 text-emerald-600"
-                                checked={!!ev.is_published}
-                                onChange={() => togglePublish(ev)}
-                                disabled={!!publishBusy[ev.id]}
-                              />
-                              <span className="text-slate-700">
-                                {ev.is_published ? "Publié" : "Brouillon"}
-                              </span>
-                            </label>
+                            <Button
+                              type="button"
+                              tone={publicationActionTone(ev)}
+                              onClick={() => togglePublish(ev)}
+                              disabled={!!publishBusy[ev.id] || status === "submitted"}
+                              className="px-3 py-1.5 text-xs"
+                              title={
+                                status === "submitted"
+                                  ? "En attente de validation administrative"
+                                  : undefined
+                              }
+                            >
+                              {publishBusy[ev.id] ? "Traitement…" : publicationActionLabel(ev)}
+                            </Button>
                           </td>
                           <td className="px-3 py-2 text-right">
                             <div className="flex flex-wrap justify-end gap-2">
@@ -3028,7 +3224,12 @@ export default function ClassDeviceNotesPage() {
                                 tone="red"
                                 type="button"
                                 onClick={() => deleteEvaluation(ev)}
-                                disabled={!!publishBusy[ev.id]}
+                                disabled={!!publishBusy[ev.id] || !isEvaluationDeletable(ev)}
+                                title={
+                                  isEvaluationDeletable(ev)
+                                    ? undefined
+                                    : "Évaluation soumise ou publiée : suppression bloquée"
+                                }
                               >
                                 Supprimer la note
                               </GhostButton>

@@ -38,6 +38,19 @@ type PendingAbsenceCountResponse =
       error?: string;
     };
 
+type PendingGradePublicationCountResponse =
+  | {
+      ok: true;
+      items?: Array<{ id?: string; evaluation_id?: string }>;
+      meta?: {
+        count?: number;
+      };
+    }
+  | {
+      ok: false;
+      error?: string;
+    };
+
 type Accent = "emerald" | "violet" | "sky" | "amber" | "cyan";
 
 const SIDEBAR_WIDTH_KEY = "mc_admin_sidebar_width";
@@ -318,6 +331,16 @@ const ABS_ITEMS: NavItem[] = [
 ========================= */
 const NOTES_ITEMS: NavItem[] = [
   { href: "/admin/notes", label: "Vue d’ensemble", Icon: NotebookPen },
+  {
+    href: "/admin/notes/publication-requests",
+    label: "Demandes de publication",
+    Icon: FileText,
+  },
+  {
+    href: "/admin/notes/publication-settings",
+    label: "Paramètres de publication",
+    Icon: Settings,
+  },
   { href: "/admin/notes/evaluations", label: "Stats évaluations", Icon: NotebookPen },
 ];
 
@@ -327,6 +350,7 @@ function NavLinkItem({
   currentTab,
   accent,
   pendingAbsenceCount = 0,
+  pendingGradePublicationCount = 0,
   topLevel = false,
 }: {
   item: NavItem;
@@ -334,12 +358,21 @@ function NavLinkItem({
   currentTab: string | null;
   accent: Accent;
   pendingAbsenceCount?: number;
+  pendingGradePublicationCount?: number;
   topLevel?: boolean;
 }) {
   const active = isPathActive(pathname, item, currentTab);
   const accentClasses = getAccentClasses(accent, active);
+
   const isAbsenceAuthorization = item.href === "/admin/autorisations";
-  const showPendingBadge = isAbsenceAuthorization && pendingAbsenceCount > 0;
+  const isGradePublicationRequests =
+    item.href === "/admin/notes/publication-requests";
+
+  const showPendingAbsenceBadge =
+    isAbsenceAuthorization && pendingAbsenceCount > 0;
+
+  const showPendingGradePublicationBadge =
+    isGradePublicationRequests && pendingGradePublicationCount > 0;
 
   return (
     <li key={item.href}>
@@ -391,8 +424,10 @@ function NavLinkItem({
           {item.label}
         </span>
 
-        {showPendingBadge ? (
+        {showPendingAbsenceBadge ? (
           <CountBadge count={pendingAbsenceCount} />
+        ) : showPendingGradePublicationBadge ? (
+          <CountBadge count={pendingGradePublicationCount} />
         ) : item.badge ? (
           <TextBadge text={item.badge} />
         ) : null}
@@ -412,6 +447,7 @@ function GroupSection({
   accent,
   badgeCount = 0,
   pendingAbsenceCount = 0,
+  pendingGradePublicationCount = 0,
 }: {
   title: string;
   Icon: React.ComponentType<React.SVGProps<SVGSVGElement>>;
@@ -423,6 +459,7 @@ function GroupSection({
   accent: Accent;
   badgeCount?: number;
   pendingAbsenceCount?: number;
+  pendingGradePublicationCount?: number;
 }) {
   const active = groupHasActiveItem(pathname, items, currentTab);
   const accentClasses = getAccentClasses(accent, active);
@@ -494,6 +531,7 @@ function GroupSection({
                   currentTab={currentTab}
                   accent={accent}
                   pendingAbsenceCount={pendingAbsenceCount}
+                  pendingGradePublicationCount={pendingGradePublicationCount}
                 />
               ))}
             </ul>
@@ -514,6 +552,8 @@ export default function SidebarNav() {
 
   const [role, setRole] = React.useState<AppRole | null>(null);
   const [pendingAbsenceCount, setPendingAbsenceCount] = React.useState<number>(0);
+  const [pendingGradePublicationCount, setPendingGradePublicationCount] =
+    React.useState<number>(0);
   const [sidebarWidth, setSidebarWidth] = React.useState<number>(DEFAULT_SIDEBAR_WIDTH);
 
   React.useEffect(() => {
@@ -638,6 +678,57 @@ export default function SidebarNav() {
 
     const timer = window.setInterval(() => {
       void loadPendingAbsenceCount();
+    }, 60000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, []);
+
+  React.useEffect(() => {
+    let cancelled = false;
+
+    async function loadPendingGradePublicationCount() {
+      try {
+        const res = await fetch(
+          "/api/admin/grades/publication-requests?status=submitted&limit=300",
+          { cache: "no-store" }
+        );
+
+        if (!res.ok) {
+          if (!cancelled) setPendingGradePublicationCount(0);
+          return;
+        }
+
+        const json = (await res.json().catch(() => null)) as
+          | PendingGradePublicationCountResponse
+          | null;
+
+        if (!json || !json.ok) {
+          if (!cancelled) setPendingGradePublicationCount(0);
+          return;
+        }
+
+        const count =
+          typeof json.meta?.count === "number"
+            ? json.meta.count
+            : Array.isArray(json.items)
+              ? json.items.length
+              : 0;
+
+        if (!cancelled) {
+          setPendingGradePublicationCount(count);
+        }
+      } catch {
+        if (!cancelled) setPendingGradePublicationCount(0);
+      }
+    }
+
+    void loadPendingGradePublicationCount();
+
+    const timer = window.setInterval(() => {
+      void loadPendingGradePublicationCount();
     }, 60000);
 
     return () => {
@@ -795,6 +886,7 @@ export default function SidebarNav() {
                 currentTab={currentTab}
                 accent="emerald"
                 pendingAbsenceCount={pendingAbsenceCount}
+                pendingGradePublicationCount={pendingGradePublicationCount}
                 topLevel
               />
             ))}
@@ -807,6 +899,7 @@ export default function SidebarNav() {
                 currentTab={currentTab}
                 accent="cyan"
                 pendingAbsenceCount={pendingAbsenceCount}
+                pendingGradePublicationCount={pendingGradePublicationCount}
                 topLevel
               />
             ))}
@@ -819,6 +912,7 @@ export default function SidebarNav() {
                 currentTab={currentTab}
                 accent="amber"
                 pendingAbsenceCount={pendingAbsenceCount}
+                pendingGradePublicationCount={pendingGradePublicationCount}
                 topLevel
               />
             ))}
@@ -871,6 +965,7 @@ export default function SidebarNav() {
               accent="amber"
               badgeCount={pendingAbsenceCount}
               pendingAbsenceCount={pendingAbsenceCount}
+              pendingGradePublicationCount={pendingGradePublicationCount}
             />
 
             <GroupSection
@@ -905,6 +1000,8 @@ export default function SidebarNav() {
                 open={notesOpen}
                 onToggle={() => setNotesOpen((v) => !v)}
                 accent="violet"
+                badgeCount={pendingGradePublicationCount}
+                pendingGradePublicationCount={pendingGradePublicationCount}
               />
             )}
 
@@ -926,7 +1023,9 @@ export default function SidebarNav() {
             <div>© {new Date().getFullYear()} Mon Cahier</div>
             <div className="mt-1 text-[10px] text-slate-500">
               Conçu et développé par{" "}
-              <span className="font-semibold text-slate-200">NEXA DIGITAL SARL</span>
+              <span className="font-semibold text-slate-200">
+                NEXA DIGITAL SARL
+              </span>
             </div>
           </div>
         </div>

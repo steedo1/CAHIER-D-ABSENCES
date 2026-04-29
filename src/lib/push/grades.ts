@@ -27,17 +27,23 @@ type GradeEvaluationRow = {
   } | null;
 };
 
-type StudentGradeRow = {
+type PublishedScoreRow = {
   id: string;
+  evaluation_id: string;
   student_id: string;
   score: number | null;
-  student: {
-    id: string;
-    first_name: string | null;
-    last_name: string | null;
-    full_name?: string | null;
-    matricule?: string | null;
-  };
+  scale: number;
+  coeff: number;
+  publication_version: number;
+  push_queued_at: string | null;
+};
+
+type StudentRow = {
+  id: string;
+  first_name: string | null;
+  last_name: string | null;
+  full_name?: string | null;
+  matricule?: string | null;
 };
 
 type GuardianRow = {
@@ -55,14 +61,17 @@ function normFullName(s: {
 }): string {
   const explicit = (s.full_name || "").trim();
   if (explicit) return explicit;
+
   const last = (s.last_name || "").trim();
   const first = (s.first_name || "").trim();
   const full = [last, first].filter(Boolean).join(" ").trim();
+
   return full || "Élève";
 }
 
 function formatDateFr(isoDate: string | null | undefined): string {
   if (!isoDate) return "";
+
   try {
     return new Date(isoDate).toLocaleDateString("fr-FR");
   } catch {
@@ -76,20 +85,39 @@ function evalKindLabel(kind: EvalKind): string {
   return "interrogation orale";
 }
 
+function toNumberOrNull(value: unknown): number | null {
+  if (value === null || value === undefined) return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function toFiniteNumber(value: unknown, fallback: number): number {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
+
 /**
  * Met en file d’attente des notifications de notes pour toutes les lignes
- * de student_grades d’une évaluation publiée.
+ * OFFICIELLES d’une évaluation publiée.
  *
- * 👉 Pour score != null : notif "note reçue"
- * 👉 Pour score == null : notif "a manqué le [type] du [date]"
+ * Source officielle :
+ *   public.grade_published_scores
  *
- * Appelé uniquement quand on passe is_published de false → true
- * dans /api/grades/evaluations (PATCH).
+ * Règle métier :
+ * - une note brouillon / soumise / correction demandée ne peut jamais partir en push ;
+ * - seuls les snapshots officiels is_current=true sont notifiables ;
+ * - les lignes déjà marquées push_queued_at ne sont pas renvoyées.
  */
 export async function queueGradeNotificationsForEvaluation(
   evaluationId: string
 ): Promise<void> {
   const srv = getSupabaseServiceClient();
+  const cleanEvaluationId = String(evaluationId || "").trim();
+
+  if (!cleanEvaluationId) {
+    console.warn("[push/grades] missing evaluationId");
+    return;
+  }
 
   // 1️⃣ Récupérer l’évaluation + classe + institution + matière
   const { data: ev, error: evErr } = await srv
@@ -104,6 +132,9 @@ export async function queueGradeNotificationsForEvaluation(
       eval_kind,
       scale,
       coeff,
+      is_published,
+      publication_status,
+      publication_version,
       class:classes!grade_evaluations_class_id_fkey (
         id,
         label,
@@ -116,27 +147,35 @@ export async function queueGradeNotificationsForEvaluation(
       )
     `
     )
-    .eq("id", evaluationId)
+    .eq("id", cleanEvaluationId)
     .maybeSingle();
 
   if (evErr || !ev) {
     console.error("[push/grades] évaluation introuvable", {
-      evaluationId,
+      evaluationId: cleanEvaluationId,
       error: evErr,
     });
     return;
   }
 
-  // Supabase typant souvent les relations comme des tableaux
+  if ((ev as any).is_published !== true) {
+    console.warn("[push/grades] évaluation non publiée — aucun push", {
+      evaluationId: cleanEvaluationId,
+      is_published: (ev as any).is_published,
+      publication_status: (ev as any).publication_status,
+    });
+    return;
+  }
+
   const rawClass: any = (ev as any).class;
   const rawSubject: any = (ev as any).subject;
 
   const klass = Array.isArray(rawClass) ? rawClass[0] : rawClass;
   const subj = Array.isArray(rawSubject) ? rawSubject[0] : rawSubject;
 
-  if (!klass) {
-    console.error("[push/grades] évaluation sans classe liée", {
-      evaluationId,
+  if (!klass?.institution_id) {
+    console.error("[push/grades] évaluation sans classe/institution liée", {
+      evaluationId: cleanEvaluationId,
       ev,
     });
     return;
@@ -149,11 +188,11 @@ export async function queueGradeNotificationsForEvaluation(
     subject_component_id: ev.subject_component_id,
     eval_date: ev.eval_date,
     eval_kind: ev.eval_kind,
-    scale: ev.scale,
-    coeff: ev.coeff,
+    scale: toFiniteNumber(ev.scale, 20),
+    coeff: toFiniteNumber(ev.coeff, 1),
     class: {
       id: klass.id,
-      label: klass.label,
+      label: klass.label || "Classe",
       level: klass.level ?? null,
       institution_id: klass.institution_id,
     },
@@ -161,78 +200,112 @@ export async function queueGradeNotificationsForEvaluation(
   };
 
   const institutionId = evalRow.class.institution_id;
-  const classLabel = evalRow.class.label;
+  const classLabel = evalRow.class.label || "Classe";
   const subjectName = evalRow.subject?.name || "Note";
   const evalDateFr = formatDateFr(evalRow.eval_date);
   const evalKindText = evalKindLabel(evalRow.eval_kind);
 
-  console.log("[push/grades] queue pour évaluation", {
-    evaluationId,
+  console.log("[push/grades] queue depuis snapshot officiel", {
+    evaluationId: cleanEvaluationId,
     institutionId,
     classLabel,
     subjectName,
   });
 
-  // 2️⃣ Récupérer toutes les lignes student_grades de cette évaluation
-  const { data: grades, error: gradesErr } = await srv
-    .from("student_grades")
+  // 2️⃣ Récupérer les notes OFFICIELLES publiées de cette évaluation
+  const { data: officialRowsRaw, error: officialErr } = await srv
+    .from("grade_published_scores")
     .select(
       `
       id,
+      evaluation_id,
       student_id,
       score,
-      student:students!student_grades_student_id_fkey (
-        id,
-        first_name,
-        last_name,
-        full_name,
-        matricule
-      )
+      scale,
+      coeff,
+      publication_version,
+      push_queued_at
     `
     )
-    .eq("evaluation_id", evaluationId);
+    .eq("evaluation_id", cleanEvaluationId)
+    .eq("is_current", true);
 
-  if (gradesErr) {
-    console.error("[push/grades] erreur chargement notes", gradesErr, {
-      evaluationId,
+  if (officialErr) {
+    console.error("[push/grades] erreur chargement grade_published_scores", {
+      evaluationId: cleanEvaluationId,
+      error: officialErr,
     });
     return;
   }
 
-  const gradeRows: StudentGradeRow[] = (grades || []).map((g: any) => ({
-    id: g.id,
-    student_id: g.student_id,
-    score: g.score,
-    student: {
-      id: g.student?.id,
-      first_name: g.student?.first_name ?? null,
-      last_name: g.student?.last_name ?? null,
-      full_name: g.student?.full_name ?? null,
-      matricule: g.student?.matricule ?? null,
-    },
-  }));
+  const officialRows: PublishedScoreRow[] = (officialRowsRaw || []).map(
+    (row: any) => ({
+      id: String(row.id),
+      evaluation_id: String(row.evaluation_id),
+      student_id: String(row.student_id),
+      score: toNumberOrNull(row.score),
+      scale: toFiniteNumber(row.scale, evalRow.scale),
+      coeff: toFiniteNumber(row.coeff, evalRow.coeff),
+      publication_version: toFiniteNumber(row.publication_version, 1),
+      push_queued_at: row.push_queued_at ?? null,
+    })
+  );
 
-  if (!gradeRows.length) {
-    console.log(
-      "[push/grades] aucune ligne student_grades pour cette évaluation — rien à notifier",
-      { evaluationId }
-    );
+  if (!officialRows.length) {
+    console.warn("[push/grades] aucun snapshot officiel pour cette évaluation", {
+      evaluationId: cleanEvaluationId,
+    });
+    return;
+  }
+
+  const rowsToNotify = officialRows.filter((row) => !row.push_queued_at);
+
+  if (!rowsToNotify.length) {
+    console.log("[push/grades] push déjà mis en file pour ce snapshot", {
+      evaluationId: cleanEvaluationId,
+      totalOfficialRows: officialRows.length,
+    });
     return;
   }
 
   const studentIds = Array.from(
-    new Set(gradeRows.map((g) => g.student_id).filter(Boolean))
+    new Set(rowsToNotify.map((row) => row.student_id).filter(Boolean))
   );
 
   if (!studentIds.length) {
-    console.log(
-      "[push/grades] aucune student_id exploitable dans les notes — abort",
-      { evaluationId }
-    );
+    console.log("[push/grades] aucune student_id exploitable — abort", {
+      evaluationId: cleanEvaluationId,
+    });
     return;
   }
 
-  // 3️⃣ Récupérer les responsables avec notifications activées
+  // 3️⃣ Récupérer les élèves séparément pour éviter de dépendre d’un nom de relation FK
+  const { data: studentsRaw, error: studentsErr } = await srv
+    .from("students")
+    .select("id, first_name, last_name, full_name, matricule")
+    .in("id", studentIds);
+
+  if (studentsErr) {
+    console.error("[push/grades] erreur chargement students", {
+      evaluationId: cleanEvaluationId,
+      error: studentsErr,
+    });
+    return;
+  }
+
+  const studentById = new Map<string, StudentRow>();
+
+  for (const s of studentsRaw || []) {
+    studentById.set(String((s as any).id), {
+      id: String((s as any).id),
+      first_name: (s as any).first_name ?? null,
+      last_name: (s as any).last_name ?? null,
+      full_name: (s as any).full_name ?? null,
+      matricule: (s as any).matricule ?? null,
+    });
+  }
+
+  // 4️⃣ Récupérer les responsables avec notifications activées
   const { data: guardians, error: guardErr } = await srv
     .from("student_guardians")
     .select(
@@ -248,67 +321,74 @@ export async function queueGradeNotificationsForEvaluation(
     .eq("notifications_enabled", true);
 
   if (guardErr) {
-    console.error(
-      "[push/grades] erreur chargement student_guardians",
-      guardErr,
-      { evaluationId }
-    );
+    console.error("[push/grades] erreur chargement student_guardians", {
+      evaluationId: cleanEvaluationId,
+      error: guardErr,
+    });
     return;
   }
 
   const guardianRows: GuardianRow[] = (guardians || []).map((g: any) => ({
-    id: g.id,
-    student_id: g.student_id,
+    id: String(g.id),
+    student_id: String(g.student_id),
     guardian_profile_id: g.guardian_profile_id ?? g.parent_id ?? null,
     parent_id: g.parent_id ?? g.guardian_profile_id ?? null,
-    notifications_enabled: !!g.notifications_enabled,
+    notifications_enabled: g.notifications_enabled === true,
   }));
 
-  // On garde uniquement ceux qui ont vraiment un profil parent
   const effectiveGuardians = guardianRows.filter(
     (g) => g.notifications_enabled && g.guardian_profile_id
   );
 
   if (!effectiveGuardians.length) {
-    console.log(
-      "[push/grades] aucun responsable avec notifications activées",
-      { evaluationId }
-    );
+    console.log("[push/grades] aucun responsable avec notifications activées", {
+      evaluationId: cleanEvaluationId,
+    });
     return;
   }
 
-  // 4️⃣ Construire les lignes à insérer dans notifications_queue
-  //    👉 Ici on cible la branche du CHECK:
-  //       (profile_id IS NOT NULL AND parent_id IS NULL)
+  // 5️⃣ Construire les lignes à insérer dans notifications_queue
   type QueueInsert = {
     institution_id: string;
     student_id: string;
-    target_profile_id: string; // profil parent
+    target_profile_id: string;
     channels: string[];
     payload: any;
     status: string;
     severity: "low" | "medium" | "high";
     title: string;
     body: string;
+    official_score_id: string;
   };
 
   const rowsToInsert: QueueInsert[] = [];
 
-  for (const grade of gradeRows) {
+  for (const official of rowsToNotify) {
     const guardiansForStudent = effectiveGuardians.filter(
-      (g) => g.student_id === grade.student_id
+      (g) => g.student_id === official.student_id
     );
+
     if (!guardiansForStudent.length) continue;
 
-    const studentName = normFullName(grade.student);
-    const matricule = grade.student.matricule || null;
+    const student =
+      studentById.get(official.student_id) ||
+      ({
+        id: official.student_id,
+        first_name: null,
+        last_name: null,
+        full_name: "Élève",
+        matricule: null,
+      } satisfies StudentRow);
 
-    const score = grade.score; // peut être null
-    const scale = evalRow.scale;
+    const studentName = normFullName(student);
+    const matricule = student.matricule || null;
+
+    const score = official.score;
+    const scale = official.scale;
+    const coeff = official.coeff;
 
     const isMissed = score == null;
 
-    // Texte court pour le push
     let title: string;
     let body: string;
 
@@ -334,7 +414,7 @@ export async function queueGradeNotificationsForEvaluation(
         ? { id: evalRow.subject.id, name: evalRow.subject.name }
         : null,
       student: {
-        id: grade.student_id,
+        id: official.student_id,
         name: studentName,
         matricule,
       },
@@ -343,18 +423,23 @@ export async function queueGradeNotificationsForEvaluation(
         date: evalRow.eval_date,
         kind: evalRow.eval_kind,
         scale,
-        coeff: evalRow.coeff,
+        coeff,
       },
-      score: score, // number | null
-      missed: isMissed, // true si score null
+      publication: {
+        score_id: official.id,
+        version: official.publication_version,
+        source: "grade_published_scores",
+      },
+      score,
+      missed: isMissed,
     };
 
-    for (const g of guardiansForStudent) {
-      const profileId = g.guardian_profile_id as string;
+    for (const guardian of guardiansForStudent) {
+      const profileId = guardian.guardian_profile_id as string;
 
       rowsToInsert.push({
         institution_id: institutionId,
-        student_id: grade.student_id,
+        student_id: official.student_id,
         target_profile_id: profileId,
         channels: ["inapp", "push"],
         payload: payloadBase,
@@ -362,42 +447,38 @@ export async function queueGradeNotificationsForEvaluation(
         severity: "medium",
         title,
         body,
+        official_score_id: official.id,
       });
     }
   }
 
   if (!rowsToInsert.length) {
-    console.log(
-      "[push/grades] pas de combinaison (note + parent) à notifier",
-      { evaluationId }
-    );
+    console.log("[push/grades] pas de combinaison note officielle + parent", {
+      evaluationId: cleanEvaluationId,
+    });
     return;
   }
 
-  // ⚖️ Sécurité : on ne garde que les lignes qui ont bien un profil cible et un élève
   const filteredRows = rowsToInsert.filter(
-    (row) => !!row.target_profile_id && !!row.student_id
+    (row) => !!row.target_profile_id && !!row.student_id && !!row.official_score_id
   );
 
   if (!filteredRows.length) {
-    console.log(
-      "[push/grades] toutes les lignes de notif sont invalides — rien à insérer",
-      { evaluationId }
-    );
+    console.log("[push/grades] toutes les lignes de notif sont invalides", {
+      evaluationId: cleanEvaluationId,
+    });
     return;
   }
 
-  // 5️⃣ Insertion en masse dans notifications_queue
-  //    IMPORTANT : on respecte strictement le CHECK:
-  //      (profile_id IS NOT NULL AND parent_id IS NULL)
+  // 6️⃣ Insertion dans notifications_queue
   const { error: insertErr } = await srv
     .from("notifications_queue")
     .insert(
       filteredRows.map((row) => ({
         institution_id: row.institution_id,
         student_id: row.student_id,
-        parent_id: null, // ✅ pour la 2e branche du CHECK
-        profile_id: row.target_profile_id, // ✅ non nul
+        parent_id: null,
+        profile_id: row.target_profile_id,
         channels: row.channels,
         payload: row.payload,
         title: row.title,
@@ -407,40 +488,62 @@ export async function queueGradeNotificationsForEvaluation(
         last_error: null,
         meta: JSON.stringify({
           source: "grades",
-          evaluation_id: evaluationId,
+          official_source: "grade_published_scores",
+          evaluation_id: cleanEvaluationId,
+          official_score_id: row.official_score_id,
         }),
         severity: row.severity,
       }))
     );
 
   if (insertErr) {
-    console.error(
-      "[push/grades] erreur lors de l’insert notifications_queue",
-      insertErr,
-      { evaluationId }
-    );
+    console.error("[push/grades] erreur insert notifications_queue", {
+      evaluationId: cleanEvaluationId,
+      error: insertErr,
+    });
     return;
   }
 
-  console.log("[push/grades] notifications de notes mises en file", {
-    evaluationId,
-    count: filteredRows.length,
+  // 7️⃣ Marquer uniquement les snapshots qui ont réellement généré au moins une notif
+  const notifiedScoreIds = Array.from(
+    new Set(filteredRows.map((row) => row.official_score_id).filter(Boolean))
+  );
+
+  if (notifiedScoreIds.length) {
+    const { error: markErr } = await srv
+      .from("grade_published_scores")
+      .update({ push_queued_at: new Date().toISOString() })
+      .in("id", notifiedScoreIds);
+
+    if (markErr) {
+      console.warn("[push/grades] impossible de marquer push_queued_at", {
+        evaluationId: cleanEvaluationId,
+        error: markErr,
+      });
+    }
+  }
+
+  console.log("[push/grades] notifications de notes officielles mises en file", {
+    evaluationId: cleanEvaluationId,
+    officialRows: notifiedScoreIds.length,
+    notifications: filteredRows.length,
   });
 
-  // 6️⃣ Déclenchement immédiat du worker /api/push/dispatch
+  // 8️⃣ Déclenchement immédiat du worker /api/push/dispatch
   try {
     const ok = await triggerPushDispatch({
-      reason: `grades:evaluation:${evaluationId}`,
+      reason: `grades:evaluation:${cleanEvaluationId}`,
       timeoutMs: 800,
       retries: 1,
     });
+
     console.log("[push/grades] triggerPushDispatch", {
-      evaluationId,
+      evaluationId: cleanEvaluationId,
       ok,
     });
   } catch (err: any) {
     console.warn("[push/grades] triggerPushDispatch_failed", {
-      evaluationId,
+      evaluationId: cleanEvaluationId,
       error: String(err?.message || err),
     });
   }

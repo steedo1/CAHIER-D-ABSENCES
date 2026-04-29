@@ -99,6 +99,13 @@ type RosterItem = { id: string; full_name: string; matricule: string | null };
 
 type EvalKind = "devoir" | "interro_ecrite" | "interro_orale";
 
+type PublicationStatus =
+  | "draft"
+  | "submitted"
+  | "changes_requested"
+  | "published"
+  | string;
+
 type Evaluation = {
   id: string;
   class_id: string;
@@ -111,6 +118,15 @@ type Evaluation = {
   coeff: number; // 0.25, 0.5, 1, 2, 3...
   is_published: boolean;
   published_at?: string | null;
+
+  // ✅ Nouveau workflow publication
+  publication_status?: PublicationStatus | null;
+  submitted_at?: string | null;
+  submitted_by?: string | null;
+  reviewed_at?: string | null;
+  reviewed_by?: string | null;
+  review_comment?: string | null;
+  publication_version?: number | null;
 };
 
 type EvalLock = {
@@ -182,6 +198,97 @@ function isCollegeLevel(level?: string | null): boolean {
     s.startsWith("3")
   );
 }
+
+function getPublicationStatus(ev: Evaluation): PublicationStatus {
+  const raw = String(ev.publication_status || "").trim();
+
+  if (
+    raw === "draft" ||
+    raw === "submitted" ||
+    raw === "changes_requested" ||
+    raw === "published"
+  ) {
+    return raw;
+  }
+
+  if (ev.is_published === true) return "published";
+
+  return "draft";
+}
+
+function isEvaluationSubmitted(ev: Evaluation) {
+  return getPublicationStatus(ev) === "submitted";
+}
+
+function isEvaluationPublished(ev: Evaluation) {
+  return ev.is_published === true || getPublicationStatus(ev) === "published";
+}
+
+function isEvaluationChangesRequested(ev: Evaluation) {
+  return getPublicationStatus(ev) === "changes_requested";
+}
+
+function isEvaluationEditableForTeacher(ev: Evaluation) {
+  const status = getPublicationStatus(ev);
+
+  return (
+    ev.is_published !== true &&
+    (status === "draft" || status === "changes_requested")
+  );
+}
+
+function isEvaluationDeletableForTeacher(ev: Evaluation) {
+  return isEvaluationEditableForTeacher(ev);
+}
+
+function publicationStatusLabel(ev: Evaluation) {
+  const status = getPublicationStatus(ev);
+
+  if (ev.is_published === true || status === "published") return "Publié";
+  if (status === "submitted") return "En attente de validation";
+  if (status === "changes_requested") return "Correction demandée";
+
+  return "Brouillon";
+}
+
+function publicationStatusClass(ev: Evaluation) {
+  const status = getPublicationStatus(ev);
+
+  if (ev.is_published === true || status === "published") {
+    return "border-emerald-200 bg-emerald-50 text-emerald-800";
+  }
+
+  if (status === "submitted") {
+    return "border-amber-200 bg-amber-50 text-amber-800";
+  }
+
+  if (status === "changes_requested") {
+    return "border-rose-200 bg-rose-50 text-rose-800";
+  }
+
+  return "border-slate-200 bg-slate-50 text-slate-700";
+}
+
+function publicationActionLabel(ev: Evaluation) {
+  if (isEvaluationPublished(ev)) return "Repasser brouillon";
+  if (isEvaluationSubmitted(ev)) return "Soumis";
+  if (isEvaluationChangesRequested(ev)) return "Soumettre à nouveau";
+
+  return "Soumettre / publier";
+}
+
+function publicationLockReason(ev: Evaluation) {
+  if (isEvaluationSubmitted(ev)) {
+    return "Évaluation soumise : l’administration doit valider ou demander une correction.";
+  }
+
+  if (isEvaluationPublished(ev)) {
+    return "Évaluation publiée officiellement : les notes sont verrouillées.";
+  }
+
+  return null;
+}
+
 
 /* =========================
    UI helpers
@@ -826,11 +933,17 @@ export default function TeacherNotesPage() {
     scale: number
   ) {
     if (selectedPeriodClosed) return;
+
+    const ev = evaluations.find((e) => e.id === evId);
+    if (ev && !isEvaluationEditableForTeacher(ev)) return;
+
     if (isEvalLocked(evId)) return;
+
     const v =
       value == null || Number.isNaN(value)
         ? null
         : Math.max(0, Math.min(scale, value));
+
     setChanged((prev) => ({
       ...prev,
       [evId]: { ...(prev[evId] || {}), [studentId]: v },
@@ -839,16 +952,43 @@ export default function TeacherNotesPage() {
 
   async function saveAllChanges() {
     if (!selected) return;
+
     if (selectedPeriodClosed) {
       setMsg("Cette période est clôturée. La saisie des notes est fermée.");
       return;
     }
+
     // Regrouper par évaluation
-    const perEvalAll = Object.entries(changed).filter(([, per]) => Object.keys(per).length > 0);
-    const perEval = perEvalAll.filter(([evaluation_id]) => !isEvalLocked(evaluation_id));
-    const lockedWithChanges = perEvalAll.filter(([evaluation_id]) => isEvalLocked(evaluation_id));
+    const perEvalAll = Object.entries(changed).filter(
+      ([, per]) => Object.keys(per).length > 0
+    );
+
+    const evaluationById = new Map(evaluations.map((ev) => [ev.id, ev]));
+    const lockedWithChanges = perEvalAll.filter(([evaluation_id]) =>
+      isEvalLocked(evaluation_id)
+    );
+    const blockedByPublication = perEvalAll.filter(([evaluation_id]) => {
+      const ev = evaluationById.get(evaluation_id);
+      return ev ? !isEvaluationEditableForTeacher(ev) : false;
+    });
+
+    const perEval = perEvalAll.filter(([evaluation_id]) => {
+      const ev = evaluationById.get(evaluation_id);
+      const editable = ev ? isEvaluationEditableForTeacher(ev) : true;
+      return editable && !isEvalLocked(evaluation_id);
+    });
+
+    if (blockedByPublication.length > 0 && perEval.length === 0) {
+      setMsg(
+        "Toutes les colonnes modifiées sont déjà soumises ou publiées. Aucune modification directe n’est autorisée."
+      );
+      return;
+    }
+
     if (lockedWithChanges.length > 0 && perEval.length === 0) {
-      setMsg("Toutes les colonnes modifiées sont verrouillées. Déverrouillez l’évaluation pour enregistrer.");
+      setMsg(
+        "Toutes les colonnes modifiées sont verrouillées. Déverrouillez l’évaluation pour enregistrer."
+      );
       return;
     }
 
@@ -856,14 +996,17 @@ export default function TeacherNotesPage() {
       setMsg("Aucun changement à enregistrer.");
       return;
     }
+
     setLoading(true);
     setMsg(null);
+
     try {
       for (const [evaluation_id, per] of perEval) {
         const items = Object.entries(per).map(([student_id, score]) => ({
           student_id,
           score: score == null ? null : Number(score),
         }));
+
         const r = await fetch("/api/teacher/grades/scores/bulk", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -874,24 +1017,54 @@ export default function TeacherNotesPage() {
             strict: false,
           }),
         });
+
         const j = await r.json().catch(() => ({}));
-        if (!r.ok || !j?.ok)
-          throw new Error(j?.error || "Échec d’enregistrement.");
+
+        if (!r.ok || !j?.ok) {
+          throw new Error(j?.message || j?.error || "Échec d’enregistrement.");
+        }
       }
 
-      // Merge local
+      const savedEvalIds = new Set(perEval.map(([evaluation_id]) => evaluation_id));
+
+      // Merge local uniquement pour les évaluations réellement enregistrées.
       setGrades((prev) => {
         const next = { ...prev };
-        for (const [evId, per] of Object.entries(changed)) {
+
+        for (const [evId, per] of perEval) {
           next[evId] = { ...(next[evId] || {}) };
-          for (const [sid, val] of Object.entries(per)) next[evId][sid] = val;
+          for (const [sid, val] of Object.entries(per)) {
+            next[evId][sid] = val;
+          }
         }
+
         return next;
       });
-      setChanged({});
+
+      // On retire seulement ce qui vient d’être sauvegardé.
+      setChanged((prev) => {
+        const next = { ...prev };
+
+        for (const evId of savedEvalIds) {
+          delete next[evId];
+        }
+
+        return next;
+      });
+
+      const notes: string[] = [];
+
+      if (lockedWithChanges.length > 0) {
+        notes.push("certaines colonnes verrouillées ont été ignorées");
+      }
+
+      if (blockedByPublication.length > 0) {
+        notes.push("certaines colonnes soumises/publiées ont été ignorées");
+      }
+
       setMsg(
-        lockedWithChanges.length > 0
-          ? "Notes enregistrées ✅ (certaines colonnes verrouillées ont été ignorées)"
+        notes.length > 0
+          ? `Notes enregistrées ✅ (${notes.join(" ; ")})`
           : "Notes enregistrées ✅"
       );
     } catch (e: any) {
@@ -960,9 +1133,20 @@ export default function TeacherNotesPage() {
       setMsg("Cette période est clôturée. Impossible de modifier la publication.");
       return;
     }
+
+    if (isEvaluationSubmitted(ev)) {
+      setMsg(
+        "Cette évaluation est déjà soumise. Attendez la validation de l’administration ou une demande de correction."
+      );
+      return;
+    }
+
     setMsg(null);
-    const next = !ev.is_published;
+
+    const next = !isEvaluationPublished(ev);
+
     setPublishBusy((prev) => ({ ...prev, [ev.id]: true }));
+
     try {
       const r = await fetch("/api/teacher/grades/evaluations", {
         method: "PATCH",
@@ -972,17 +1156,31 @@ export default function TeacherNotesPage() {
           is_published: next,
         }),
       });
+
       const j = await r.json().catch(() => ({}));
-      if (!r.ok || !j?.ok)
-        throw new Error(j?.error || "Échec de mise à jour.");
+
+      if (!r.ok || !j?.ok) {
+        throw new Error(j?.message || j?.error || "Échec de mise à jour.");
+      }
 
       const updated = j.item as Evaluation;
+
       setEvaluations((prev) =>
         prev.map((e) => (e.id === updated.id ? updated : e))
       );
-      setMsg(
-        next ? "Évaluation publiée ✅." : "Évaluation repassée en brouillon."
-      );
+
+      const resultAction = String(j?.publication?.action || "");
+      const updatedStatus = getPublicationStatus(updated);
+
+      if (resultAction === "submitted" || updatedStatus === "submitted") {
+        setMsg("Demande de publication envoyée ✅. En attente de validation administrative.");
+      } else if (updatedStatus === "published" || updated.is_published === true) {
+        setMsg("Évaluation publiée officiellement ✅.");
+      } else if (updatedStatus === "draft") {
+        setMsg("Évaluation repassée en brouillon.");
+      } else {
+        setMsg("Publication mise à jour ✅.");
+      }
     } catch (e: any) {
       setMsg(e?.message || "Échec de mise à jour de la publication.");
     } finally {
@@ -1000,6 +1198,14 @@ export default function TeacherNotesPage() {
       setMsg("Cette période est clôturée. Impossible de supprimer une colonne.");
       return;
     }
+
+    if (!isEvaluationDeletableForTeacher(ev)) {
+      setMsg(
+        "Cette évaluation est soumise ou publiée. Elle ne peut plus être supprimée directement."
+      );
+      return;
+    }
+
     if (
       !window.confirm(
         "Supprimer définitivement cette colonne de notes ?\nToutes les notes associées seront perdues."
@@ -1010,27 +1216,34 @@ export default function TeacherNotesPage() {
 
     setMsg(null);
     setPublishBusy((prev) => ({ ...prev, [ev.id]: true }));
+
     try {
       const r = await fetch("/api/teacher/grades/evaluations", {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ evaluation_id: ev.id }),
       });
+
       const j = await r.json().catch(() => ({}));
-      if (!r.ok || !j?.ok)
-        throw new Error(j?.error || "Échec de suppression.");
+
+      if (!r.ok || !j?.ok) {
+        throw new Error(j?.message || j?.error || "Échec de suppression.");
+      }
 
       setEvaluations((prev) => prev.filter((e) => e.id !== ev.id));
+
       setGrades((prev) => {
         const next = { ...prev };
         delete next[ev.id];
         return next;
       });
+
       setChanged((prev) => {
         const next = { ...prev };
         delete next[ev.id];
         return next;
       });
+
       setMsg("Colonne de note supprimée ✅");
     } catch (e: any) {
       setMsg(e?.message || "Échec de suppression de la colonne de note.");
@@ -2095,8 +2308,18 @@ export default function TeacherNotesPage() {
                     tone={locked ? "emerald" : "slate"}
                     onClick={() => openLockModal(ev, locked ? "unlock" : "lock")}
                     className="gap-2"
-                    disabled={selectedPeriodClosed || !!lockBusy[ev.id]}
-                    title={locked ? "Déverrouiller cette évaluation (PIN)" : "Verrouiller cette évaluation (PIN)"}
+                    disabled={
+                      selectedPeriodClosed ||
+                      !isEvaluationEditableForTeacher(ev) ||
+                      !!lockBusy[ev.id]
+                    }
+                    title={
+                      !isEvaluationEditableForTeacher(ev)
+                        ? publicationLockReason(ev) || "Évaluation non modifiable"
+                        : locked
+                        ? "Déverrouiller cette évaluation (PIN)"
+                        : "Verrouiller cette évaluation (PIN)"
+                    }
                   >
                     {locked ? (
                       <>
@@ -2157,6 +2380,16 @@ export default function TeacherNotesPage() {
                                   </>
                                 )}
                               </div>
+                              <div className="mt-1">
+                                <span
+                                  className={[
+                                    "inline-flex rounded-full border px-2 py-0.5 text-[10px] font-medium",
+                                    publicationStatusClass(ev),
+                                  ].join(" ")}
+                                >
+                                  {publicationStatusLabel(ev)}
+                                </span>
+                              </div>
                             </div>
                             <button
                               type="button"
@@ -2166,7 +2399,11 @@ export default function TeacherNotesPage() {
                                   isEvalLocked(ev.id) ? "unlock" : "lock"
                                 )
                               }
-                              disabled={selectedPeriodClosed || !!lockBusy[ev.id]}
+                              disabled={
+                                selectedPeriodClosed ||
+                                !isEvaluationEditableForTeacher(ev) ||
+                                !!lockBusy[ev.id]
+                              }
                               className={[
                                 "ml-1 inline-flex h-7 w-7 items-center justify-center rounded-lg border",
                                 isEvalLocked(ev.id)
@@ -2190,9 +2427,17 @@ export default function TeacherNotesPage() {
                             <button
                               type="button"
                               onClick={() => deleteEvaluation(ev)}
-                              disabled={selectedPeriodClosed || !!publishBusy[ev.id]}
+                              disabled={
+                                selectedPeriodClosed ||
+                                !isEvaluationDeletableForTeacher(ev) ||
+                                !!publishBusy[ev.id]
+                              }
                               className="ml-1 inline-flex h-7 w-7 items-center justify-center rounded-lg border border-red-100 text-red-500 hover:bg-red-50 hover:text-red-700 focus:outline-none focus:ring-2 focus:ring-red-500/40 disabled:opacity-60"
-                              title="Supprimer cette colonne de notes"
+                              title={
+                                !isEvaluationDeletableForTeacher(ev)
+                                  ? "Évaluation soumise ou publiée"
+                                  : "Supprimer cette colonne de notes"
+                              }
                             >
                               <Trash2 className="h-3.5 w-3.5" />
                             </button>
@@ -2249,8 +2494,20 @@ export default function TeacherNotesPage() {
                                 step="0.25"
                                 min={0}
                                 max={scale}
-                                disabled={selectedPeriodClosed || isEvalLocked(ev.id)}
-                                title={selectedPeriodClosed ? "Période clôturée" : isEvalLocked(ev.id) ? "Évaluation verrouillée" : undefined}
+                                disabled={
+                                  selectedPeriodClosed ||
+                                  isEvalLocked(ev.id) ||
+                                  !isEvaluationEditableForTeacher(ev)
+                                }
+                                title={
+                                  selectedPeriodClosed
+                                    ? "Période clôturée"
+                                    : isEvalLocked(ev.id)
+                                    ? "Évaluation verrouillée"
+                                    : !isEvaluationEditableForTeacher(ev)
+                                    ? publicationLockReason(ev) || "Évaluation non modifiable"
+                                    : undefined
+                                }
                                 value={current == null ? "" : String(current)}
                                 onChange={(e) => {
                                   const raw = e.target.value.trim();
@@ -2324,6 +2581,15 @@ export default function TeacherNotesPage() {
                               </span>
                             </>
                           )}
+                          <br />
+                          <span
+                            className={[
+                              "inline-flex rounded-full border px-2 py-0.5 text-[10px] font-medium",
+                              publicationStatusClass(ev),
+                            ].join(" ")}
+                          >
+                            {publicationStatusLabel(ev)}
+                          </span>
                         </div>
                       </div>
                       <div className="mt-1 text-sm font-medium text-slate-900">
@@ -2336,8 +2602,20 @@ export default function TeacherNotesPage() {
                           step="0.25"
                           min={0}
                           max={scale}
-                                disabled={selectedPeriodClosed || isEvalLocked(ev.id)}
-                                title={selectedPeriodClosed ? "Période clôturée" : isEvalLocked(ev.id) ? "Évaluation verrouillée" : undefined}
+                                disabled={
+                                  selectedPeriodClosed ||
+                                  isEvalLocked(ev.id) ||
+                                  !isEvaluationEditableForTeacher(ev)
+                                }
+                                title={
+                                  selectedPeriodClosed
+                                    ? "Période clôturée"
+                                    : isEvalLocked(ev.id)
+                                    ? "Évaluation verrouillée"
+                                    : !isEvaluationEditableForTeacher(ev)
+                                    ? publicationLockReason(ev) || "Évaluation non modifiable"
+                                    : undefined
+                                }
                                 value={current == null ? "" : String(current)}
                           onChange={(e) => {
                             const raw = e.target.value.trim();
@@ -2642,8 +2920,7 @@ export default function TeacherNotesPage() {
               </GhostButton>
             </div>
             <p className="text-xs md:text-sm text-slate-600 mb-3">
-              Cochez les évaluations à publier pour les parents, ou supprimez
-              une colonne si besoin.
+              Publiez ou soumettez les évaluations selon le mode choisi par l’établissement. Les notes soumises ou publiées ne sont plus modifiables directement.
             </p>
 
             {evaluations.length === 0 ? (
@@ -2659,7 +2936,7 @@ export default function TeacherNotesPage() {
                       <th className="px-3 py-2">Type</th>
                       <th className="px-3 py-2">Détails</th>
                       <th className="px-3 py-2 text-right">
-                        Publié pour les parents
+                        Statut / publication
                       </th>
                       <th className="px-3 py-2 text-right">Actions</th>
                     </tr>
@@ -2707,18 +2984,49 @@ export default function TeacherNotesPage() {
                             )}
                           </td>
                           <td className="px-3 py-2 text-right">
-                            <label className="inline-flex items-center gap-2 text-xs md:text-sm">
-                              <input
-                                type="checkbox"
-                                className="h-4 w-4 rounded border-slate-300 text-emerald-600"
-                                checked={!!ev.is_published}
-                                onChange={() => togglePublish(ev)}
-                                disabled={selectedPeriodClosed || !!publishBusy[ev.id]}
-                              />
-                              <span className="text-slate-700">
-                                {ev.is_published ? "Publié" : "Brouillon"}
+                            <div className="flex flex-col items-end gap-1">
+                              <span
+                                className={[
+                                  "inline-flex rounded-full border px-2 py-0.5 text-[11px] font-medium",
+                                  publicationStatusClass(ev),
+                                ].join(" ")}
+                              >
+                                {publicationStatusLabel(ev)}
                               </span>
-                            </label>
+
+                              {ev.review_comment && (
+                                <span className="max-w-[220px] text-right text-[11px] text-rose-600">
+                                  {ev.review_comment}
+                                </span>
+                              )}
+
+                              <Button
+                                type="button"
+                                tone={
+                                  isEvaluationPublished(ev)
+                                    ? "slate"
+                                    : isEvaluationChangesRequested(ev)
+                                    ? "amber"
+                                    : "emerald"
+                                }
+                                className="px-2 py-1 text-xs shadow-none"
+                                onClick={() => togglePublish(ev)}
+                                disabled={
+                                  selectedPeriodClosed ||
+                                  isEvaluationSubmitted(ev) ||
+                                  !!publishBusy[ev.id]
+                                }
+                                title={
+                                  isEvaluationSubmitted(ev)
+                                    ? "Déjà soumis : attente validation administrative"
+                                    : undefined
+                                }
+                              >
+                                {publishBusy[ev.id]
+                                  ? "Traitement…"
+                                  : publicationActionLabel(ev)}
+                              </Button>
+                            </div>
                           </td>
                           <td className="px-3 py-2 text-right">
                             <div className="flex justify-end gap-2">
@@ -2741,7 +3049,16 @@ export default function TeacherNotesPage() {
                                 tone="red"
                                 type="button"
                                 onClick={() => deleteEvaluation(ev)}
-                                disabled={selectedPeriodClosed || !!publishBusy[ev.id]}
+                                disabled={
+                                  selectedPeriodClosed ||
+                                  !isEvaluationDeletableForTeacher(ev) ||
+                                  !!publishBusy[ev.id]
+                                }
+                                title={
+                                  !isEvaluationDeletableForTeacher(ev)
+                                    ? "Évaluation soumise ou publiée"
+                                    : undefined
+                                }
                               >
                                 Supprimer la note
                               </GhostButton>

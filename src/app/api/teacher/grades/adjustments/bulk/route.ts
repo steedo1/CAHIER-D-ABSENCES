@@ -1,3 +1,4 @@
+// src/app/api/teacher/grades/adjustments/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
@@ -130,6 +131,7 @@ async function getAccessModeForClass(
 
   if (roleSet.has("class_device")) {
     const phone = profile.phone as string | null;
+
     if (
       phone &&
       (phone === cls.class_phone_e164 || phone === cls.device_phone_e164)
@@ -198,6 +200,96 @@ function applyNullishEq<T extends { eq: Function; is: Function }>(
     : (query.eq(column, value) as T);
 }
 
+/**
+ * Verrou métier publication pour les bonus.
+ *
+ * Règle :
+ * - admin : autorisé ;
+ * - teacher/class_device : interdit si une évaluation concernée est déjà
+ *   soumise ou publiée.
+ *
+ * Pourquoi :
+ * Les bonus modifient les moyennes. Donc ils ne doivent plus être changés
+ * librement après soumission/publication.
+ */
+async function assertAdjustmentsEditable(params: {
+  svc: SupabaseClient;
+  mode: AccessMode;
+  classId: string;
+  subjectId: string | null;
+  academicYear: string;
+  gradingPeriodId: string | null;
+}) {
+  const { svc, mode, classId, subjectId, academicYear, gradingPeriodId } = params;
+
+  if (mode === "admin") {
+    return { ok: true as const };
+  }
+
+  let q = svc
+    .from("grade_evaluations")
+    .select("id, publication_status, is_published, published_at")
+    .eq("class_id", classId)
+    .eq("academic_year", academicYear)
+    .or("is_published.eq.true,publication_status.eq.submitted,publication_status.eq.published")
+    .limit(1);
+
+  if (subjectId) {
+    q = q.eq("subject_id", subjectId);
+  }
+
+  if (gradingPeriodId) {
+    q = q.eq("grading_period_id", gradingPeriodId);
+  }
+
+  const { data, error } = await q;
+
+  if (error) {
+    console.error("[teacher/grades/adjustments] publication lock check error", {
+      error,
+      classId,
+      subjectId,
+      academicYear,
+      gradingPeriodId,
+      mode,
+    });
+
+    return {
+      ok: false as const,
+      status: 500,
+      error: "ADJUSTMENT_LOCK_CHECK_FAILED",
+      extra: {
+        message: "Impossible de vérifier le verrou de publication des bonus.",
+      },
+    };
+  }
+
+  const blockingRow = Array.isArray(data) && data.length > 0 ? data[0] : null;
+
+  if (blockingRow) {
+    return {
+      ok: false as const,
+      status: 423,
+      error: "ADJUSTMENTS_LOCKED_BY_PUBLICATION_WORKFLOW",
+      extra: {
+        editable: false,
+        class_id: classId,
+        subject_id: subjectId,
+        academic_year: academicYear,
+        grading_period_id: gradingPeriodId,
+        evaluation_id: String((blockingRow as any).id || ""),
+        publication_status: (blockingRow as any).publication_status ?? null,
+        is_published: (blockingRow as any).is_published === true,
+        published_at: (blockingRow as any).published_at ?? null,
+        message:
+          "Des évaluations sont déjà soumises ou publiées. Les bonus ne peuvent plus être modifiés par un enseignant ou un compte-classe.",
+      },
+    };
+  }
+
+  return { ok: true as const };
+}
+
 /* ==========================================
    POST : upsert manuel des bonus par élève
 ========================================== */
@@ -219,6 +311,7 @@ export async function POST(req: NextRequest) {
 
     const class_id = String(body.class_id || "").trim();
     const subject_id = toNullishSubjectId(body.subject_id);
+
     const requested_period_id =
       toNullishId(body.gradingPeriodId) ?? toNullishId(body.grading_period_id);
 
@@ -233,11 +326,13 @@ export async function POST(req: NextRequest) {
     const svc = getSupabaseServiceClient();
 
     const mode = await getAccessModeForClass(svc, auth.user.id, class_id);
+
     if (!mode) {
       return bad("FORBIDDEN", 403, { class_id });
     }
 
     const institutionId = await getInstitutionIdForClass(svc, class_id);
+
     if (!institutionId) {
       return bad("CLASS_OR_INSTITUTION_NOT_FOUND", 400, { class_id });
     }
@@ -274,13 +369,35 @@ export async function POST(req: NextRequest) {
       });
     }
 
+    /*
+     * ✅ Verrou publication avant modification des bonus.
+     *
+     * - Bonus matière : bloqué si cette matière a déjà une évaluation soumise/publiée.
+     * - Bonus général : bloqué si la classe/période contient déjà une évaluation soumise/publiée.
+     * - Admin : autorisé.
+     */
+    const editable = await assertAdjustmentsEditable({
+      svc,
+      mode,
+      classId: class_id,
+      subjectId: subject_id,
+      academicYear: academic_year,
+      gradingPeriodId: grading_period_id,
+    });
+
+    if (!editable.ok) {
+      return bad(editable.error, editable.status, editable.extra);
+    }
+
     let upserted = 0;
 
     for (const it of items) {
       const student_id = String(it?.student_id || "").trim();
+
       if (!student_id) continue;
 
       const rawBonus = it?.bonus;
+
       const n =
         rawBonus === "" || rawBonus === null || rawBonus === undefined
           ? 0
@@ -315,6 +432,7 @@ export async function POST(req: NextRequest) {
           academic_year,
           grading_period_id,
         });
+
         return bad(lookupErr.message || "LOOKUP_FAILED", 400, { student_id });
       }
 
@@ -344,6 +462,7 @@ export async function POST(req: NextRequest) {
             academic_year,
             grading_period_id,
           });
+
           return bad(updErr.message || "UPDATE_FAILED", 400, { student_id });
         }
       } else {
@@ -367,6 +486,7 @@ export async function POST(req: NextRequest) {
             academic_year,
             grading_period_id,
           });
+
           return bad(insErr.message || "INSERT_FAILED", 400, { student_id });
         }
       }
@@ -379,6 +499,7 @@ export async function POST(req: NextRequest) {
       upserted,
       academic_year,
       grading_period_id,
+      publication_workflow_locked: false,
     });
   } catch (e: any) {
     console.error("[teacher/grades/adjustments] unexpected error", e);
