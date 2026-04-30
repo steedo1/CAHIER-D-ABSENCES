@@ -190,6 +190,14 @@ export async function POST(req: NextRequest) {
     const delete_if_null = body.delete_if_null ?? true;
     const strict = body.strict ?? true;
 
+    console.log("[teacher/grades/scores/bulk] POST body", {
+      evaluation_id,
+      items_count: items.length,
+      delete_if_null,
+      strict,
+      user_id: auth.user.id,
+    });
+
     if (!evaluation_id) return bad("evaluation_id requis");
 
     if (!Array.isArray(items) || items.length === 0) {
@@ -202,7 +210,12 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // Lire l'évaluation via Supabase RLS : si le prof n'a pas accès, la requête échoue.
+    /*
+      Important :
+      On garde la lecture de l'évaluation avec le client utilisateur.
+      Cela permet à Supabase/RLS de confirmer que le professeur a bien accès
+      à cette évaluation avant toute écriture.
+    */
     const { data: geRaw, error: geErr } = await supabase
       .from("grade_evaluations")
       .select(
@@ -226,6 +239,11 @@ export async function POST(req: NextRequest) {
       .single();
 
     if (geErr || !geRaw) {
+      console.error("[teacher/grades/scores/bulk] evaluation fetch error", {
+        evaluation_id,
+        error: geErr,
+      });
+
       return bad(
         geErr?.message || "EVALUATION_NOT_FOUND_OR_FORBIDDEN",
         (geErr as any)?.code === "PGRST116" ? 404 : 403
@@ -247,6 +265,12 @@ export async function POST(req: NextRequest) {
         .maybeSingle();
 
       if (periodErr) {
+        console.error("[teacher/grades/scores/bulk] period fetch error", {
+          evaluation_id,
+          grading_period_id: ge.grading_period_id,
+          error: periodErr,
+        });
+
         return bad(periodErr.message || "GRADE_PERIOD_FETCH_FAILED", 500);
       }
 
@@ -266,10 +290,17 @@ export async function POST(req: NextRequest) {
     const editable = assertEvaluationEditable(ge);
 
     if (!editable.ok) {
+      console.warn("[teacher/grades/scores/bulk] evaluation not editable", {
+        evaluation_id,
+        error: editable.error,
+        publication_status: ge.publication_status,
+        is_published: ge.is_published,
+      });
+
       return bad(editable.error, editable.status, editable.extra);
     }
 
-    // ✅ CHECK LOCK
+    // ✅ CHECK LOCK PIN
     try {
       const { data: lockRaw, error: lockErr } = await srv
         .from("grade_evaluation_locks")
@@ -279,11 +310,19 @@ export async function POST(req: NextRequest) {
 
       if (lockErr) {
         const msg = String(lockErr.message || "");
+        const code = String((lockErr as any)?.code || "");
+
         const looksLikeMissingTable =
+          code === "42P01" ||
           msg.includes('relation "grade_evaluation_locks" does not exist') ||
-          msg.includes("42P01");
+          msg.includes("does not exist");
 
         if (!looksLikeMissingTable) {
+          console.error("[teacher/grades/scores/bulk] lock check error", {
+            evaluation_id,
+            error: lockErr,
+          });
+
           return bad(lockErr.message || "LOCK_CHECK_FAILED", 500);
         }
       }
@@ -300,6 +339,11 @@ export async function POST(req: NextRequest) {
         });
       }
     } catch (e: any) {
+      console.error("[teacher/grades/scores/bulk] lock check unexpected", {
+        evaluation_id,
+        error: e,
+      });
+
       return bad(e?.message || "LOCK_CHECK_FAILED", 500);
     }
 
@@ -323,6 +367,11 @@ export async function POST(req: NextRequest) {
         continue;
       }
 
+      /*
+        Élève sans note = NC.
+        On n'insère pas une fausse note.
+        Si delete_if_null=true, on supprime une éventuelle ancienne note.
+      */
       if (!hasScore) {
         if (delete_if_null) toDelete.push(student_id);
         continue;
@@ -348,6 +397,11 @@ export async function POST(req: NextRequest) {
     }
 
     if (strict && violations.length > 0) {
+      console.warn("[teacher/grades/scores/bulk] validation failed", {
+        evaluation_id,
+        violations,
+      });
+
       return bad("VALIDATION_FAILED", 422, { violations });
     }
 
@@ -355,25 +409,65 @@ export async function POST(req: NextRequest) {
     let deleted = 0;
     const warnings: string[] = [];
 
+    /*
+      ✅ CORRECTION IMPORTANTE :
+      On écrit student_grades avec le client service `srv`,
+      comme dans la route compte-classe/admin.
+      Cela évite que la sauvegarde échoue silencieusement ou partiellement
+      à cause des règles RLS sur les grandes classes.
+    */
     if (upserts.length > 0) {
-      const { data: upData, error: upErr } = await supabase
+      const { data: upData, error: upErr } = await srv
         .from("student_grades")
         .upsert(upserts, { onConflict: "evaluation_id,student_id" })
         .select("evaluation_id, student_id");
 
-      if (upErr) return bad(upErr.message || "UPSERT_FAILED", 400);
+      if (upErr) {
+        console.error("[teacher/grades/scores/bulk] upsert error", {
+          evaluation_id,
+          upserts_count: upserts.length,
+          error: upErr,
+        });
+
+        return bad(upErr.message || "UPSERT_FAILED", 400);
+      }
 
       upserted = Array.isArray(upData) ? upData.length : 0;
+
+      if (upserted !== upserts.length) {
+        warnings.push(
+          `Attention : ${upserted}/${upserts.length} note(s) confirmée(s) après enregistrement.`
+        );
+
+        console.warn("[teacher/grades/scores/bulk] upsert count mismatch", {
+          evaluation_id,
+          expected: upserts.length,
+          got: upserted,
+        });
+      }
     }
 
+    /*
+      ✅ Même correction pour les suppressions :
+      les élèves laissés vides doivent rester NC.
+      Si une ancienne note existait, elle est supprimée proprement.
+    */
     if (toDelete.length > 0) {
-      const { count, error: delErr } = await supabase
+      const { count, error: delErr } = await srv
         .from("student_grades")
         .delete({ count: "exact" })
         .eq("evaluation_id", evaluation_id)
         .in("student_id", toDelete);
 
-      if (delErr) return bad(delErr.message || "DELETE_FAILED", 400);
+      if (delErr) {
+        console.error("[teacher/grades/scores/bulk] delete error", {
+          evaluation_id,
+          to_delete_count: toDelete.length,
+          error: delErr,
+        });
+
+        return bad(delErr.message || "DELETE_FAILED", 400);
+      }
 
       deleted = count ?? 0;
     }
@@ -381,6 +475,17 @@ export async function POST(req: NextRequest) {
     if (!strict && violations.length > 0) {
       warnings.push(`${violations.length} ligne(s) ignorée(s) (validation)`);
     }
+
+    console.log("[teacher/grades/scores/bulk] done", {
+      evaluation_id,
+      received_items: items.length,
+      upserts_prepared: upserts.length,
+      deleted_requested: toDelete.length,
+      upserted,
+      deleted,
+      violations: violations.length,
+      publication_status: editable.publication_status,
+    });
 
     return NextResponse.json({
       ok: true,
@@ -391,6 +496,7 @@ export async function POST(req: NextRequest) {
       publication_status: editable.publication_status,
     });
   } catch (e: any) {
+    console.error("[teacher/grades/scores/bulk] unexpected error", e);
     return bad(e?.message || "INTERNAL_ERROR", 500);
   }
 }
