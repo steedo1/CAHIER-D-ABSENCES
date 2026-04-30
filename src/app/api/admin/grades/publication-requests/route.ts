@@ -73,6 +73,12 @@ type StudentRow = {
   matricule?: string | null;
 };
 
+type TeacherAssignmentRow = {
+  class_id: string;
+  subject_id: string | null;
+  teacher_id: string | null;
+};
+
 type ScoreSource = "student_grades" | "grade_published_scores";
 
 type ScoreRow = {
@@ -114,16 +120,22 @@ function isAdminRole(role: string) {
   return role === "super_admin" || role === "admin" || role === "educator";
 }
 
-function pickSubjectName(row?: SubjectRow | null) {
+function pickSubjectName(
+  row?: SubjectRow | null,
+  fallback = "Matière non renseignée"
+) {
   return (
     cleanText(row?.name) ||
     cleanText(row?.label) ||
     cleanText(row?.title) ||
-    "Matière"
+    fallback
   );
 }
 
-function pickProfileName(row?: ProfileRow | null) {
+function pickProfileName(
+  row?: ProfileRow | null,
+  fallback = "Utilisateur non renseigné"
+) {
   const explicit = cleanText(row?.full_name) || cleanText(row?.display_name);
   if (explicit) return explicit;
 
@@ -132,7 +144,7 @@ function pickProfileName(row?: ProfileRow | null) {
     .filter(Boolean)
     .join(" ");
 
-  return combined || cleanText(row?.email) || "Utilisateur";
+  return combined || cleanText(row?.email) || fallback;
 }
 
 function pickStudentName(row?: StudentRow | null) {
@@ -161,6 +173,12 @@ function scoreSourceForEvaluation(ev: EvaluationRow): ScoreSource {
     normalizeStatus(ev.publication_status) === "published"
     ? "grade_published_scores"
     : "student_grades";
+}
+
+function teacherKey(classId: unknown, subjectId: unknown) {
+  const cId = cleanText(classId);
+  const sId = cleanText(subjectId);
+  return cId && sId ? `${cId}::${sId}` : "";
 }
 
 function computeEvaluationStats(params: {
@@ -354,6 +372,7 @@ async function fetchClassMap(
 
 async function fetchSubjectMap(
   srv: ReturnType<typeof getSupabaseServiceClient>,
+  institutionId: string,
   subjectIds: string[]
 ) {
   const ids = Array.from(new Set(subjectIds.filter(Boolean)));
@@ -361,26 +380,128 @@ async function fetchSubjectMap(
 
   if (!ids.length) return map;
 
-  const { data, error } = await srv
-    .from("subjects")
-    .select("id,name,label,title")
-    .in("id", ids);
+  const resolvedIds = new Set<string>();
 
-  if (error) {
+  // Important : dans certaines anciennes données, grade_evaluations.subject_id peut
+  // contenir soit subjects.id, soit institution_subjects.id. On résout donc les deux.
+  try {
+    const instById = await srv
+      .from("institution_subjects")
+      .select("id,subject_id,custom_name,subjects(name)")
+      .in("id", ids)
+      .eq("institution_id", institutionId);
+
+    if (!instById.error && Array.isArray(instById.data)) {
+      for (const row of instById.data) {
+        const anyRow = row as any;
+        const subjectName =
+          cleanText(anyRow.custom_name) ||
+          cleanText(anyRow.subjects?.name) ||
+          "Matière non renseignée";
+
+        if (anyRow.id) {
+          map.set(String(anyRow.id), {
+            id: String(anyRow.id),
+            name: subjectName,
+          });
+          resolvedIds.add(String(anyRow.id));
+        }
+
+        if (anyRow.subject_id) {
+          map.set(String(anyRow.subject_id), {
+            id: String(anyRow.subject_id),
+            name: subjectName,
+          });
+          resolvedIds.add(String(anyRow.subject_id));
+        }
+      }
+    } else if (instById.error) {
+      console.warn(
+        "[admin/grades/publication-requests] institution_subjects by id warning",
+        {
+          error: instById.error.message,
+          details: instById.error,
+        }
+      );
+    }
+  } catch (e: any) {
     console.warn(
-      "[admin/grades/publication-requests] subjects fetch warning",
-      error
+      "[admin/grades/publication-requests] institution_subjects by id exception",
+      String(e?.message || e)
     );
-    return map;
   }
 
-  for (const row of data ?? []) {
-    map.set(String((row as any).id), {
-      id: String((row as any).id),
-      name: (row as any).name ?? null,
-      label: (row as any).label ?? null,
-      title: (row as any).title ?? null,
-    });
+  try {
+    const instBySubject = await srv
+      .from("institution_subjects")
+      .select("id,subject_id,custom_name,subjects(name)")
+      .in("subject_id", ids)
+      .eq("institution_id", institutionId);
+
+    if (!instBySubject.error && Array.isArray(instBySubject.data)) {
+      for (const row of instBySubject.data) {
+        const anyRow = row as any;
+        const subjectName =
+          cleanText(anyRow.custom_name) ||
+          cleanText(anyRow.subjects?.name) ||
+          "Matière non renseignée";
+
+        if (anyRow.id) {
+          map.set(String(anyRow.id), {
+            id: String(anyRow.id),
+            name: subjectName,
+          });
+          resolvedIds.add(String(anyRow.id));
+        }
+
+        if (anyRow.subject_id) {
+          map.set(String(anyRow.subject_id), {
+            id: String(anyRow.subject_id),
+            name: subjectName,
+          });
+          resolvedIds.add(String(anyRow.subject_id));
+        }
+      }
+    } else if (instBySubject.error) {
+      console.warn(
+        "[admin/grades/publication-requests] institution_subjects by subject_id warning",
+        {
+          error: instBySubject.error.message,
+          details: instBySubject.error,
+        }
+      );
+    }
+  } catch (e: any) {
+    console.warn(
+      "[admin/grades/publication-requests] institution_subjects by subject_id exception",
+      String(e?.message || e)
+    );
+  }
+
+  const leftoverIds = ids.filter((id) => !resolvedIds.has(id));
+
+  if (leftoverIds.length) {
+    const { data, error } = await srv
+      .from("subjects")
+      .select("id,name,label,title")
+      .in("id", leftoverIds);
+
+    if (error) {
+      console.warn(
+        "[admin/grades/publication-requests] subjects fetch warning",
+        error
+      );
+      return map;
+    }
+
+    for (const row of data ?? []) {
+      map.set(String((row as any).id), {
+        id: String((row as any).id),
+        name: (row as any).name ?? null,
+        label: (row as any).label ?? null,
+        title: (row as any).title ?? null,
+      });
+    }
   }
 
   return map;
@@ -395,23 +516,30 @@ async function fetchProfileMap(
 
   if (!ids.length) return map;
 
-  const broad = await srv
+  // Ne pas sélectionner full_name / first_name / last_name ici : selon ta base,
+  // ces colonnes peuvent ne pas exister. display_name est la source fiable.
+  const primary = await srv
     .from("profiles")
-    .select("id,full_name,display_name,first_name,last_name,email")
+    .select("id,display_name,email")
     .in("id", ids);
 
-  if (!broad.error) {
-    for (const row of broad.data ?? []) {
+  if (!primary.error) {
+    for (const row of primary.data ?? []) {
       map.set(String((row as any).id), row as unknown as ProfileRow);
     }
 
     return map;
   }
 
-  const narrow = await srv.from("profiles").select("id,email").in("id", ids);
+  console.warn("[admin/grades/publication-requests] profiles fetch warning", {
+    error: primary.error?.message,
+    details: primary.error,
+  });
 
-  if (!narrow.error) {
-    for (const row of narrow.data ?? []) {
+  const fallback = await srv.from("profiles").select("id,email").in("id", ids);
+
+  if (!fallback.error) {
+    for (const row of fallback.data ?? []) {
       map.set(String((row as any).id), row as unknown as ProfileRow);
     }
   }
@@ -450,6 +578,149 @@ async function fetchStudentMap(
   }
 
   return map;
+}
+
+function addTeacherAssignmentToMap(
+  map: Map<string, string>,
+  row: TeacherAssignmentRow,
+  overwrite = false
+) {
+  const key = teacherKey(row.class_id, row.subject_id);
+  const teacherId = cleanText(row.teacher_id);
+
+  if (!key || !teacherId) return;
+  if (!overwrite && map.has(key)) return;
+
+  map.set(key, teacherId);
+}
+
+async function fetchTeacherAssignmentMap(
+  srv: ReturnType<typeof getSupabaseServiceClient>,
+  institutionId: string,
+  evaluations: EvaluationRow[]
+) {
+  const classIds = Array.from(
+    new Set(evaluations.map((ev) => cleanText(ev.class_id)).filter(Boolean))
+  );
+
+  const subjectIds = Array.from(
+    new Set(evaluations.map((ev) => cleanText(ev.subject_id)).filter(Boolean))
+  );
+
+  const byClassSubject = new Map<string, string>();
+  const byEvaluation = new Map<string, string>();
+
+  if (!classIds.length || !subjectIds.length) {
+    return byEvaluation;
+  }
+
+  // 1) Source la plus directe pour l’affectation active : class_teachers.
+  try {
+    const active = await srv
+      .from("class_teachers")
+      .select("class_id,subject_id,teacher_id")
+      .eq("institution_id", institutionId)
+      .in("class_id", classIds)
+      .in("subject_id", subjectIds)
+      .is("end_date", null);
+
+    if (!active.error && Array.isArray(active.data)) {
+      for (const row of active.data) {
+        addTeacherAssignmentToMap(
+          byClassSubject,
+          row as unknown as TeacherAssignmentRow
+        );
+      }
+    } else if (active.error) {
+      console.warn(
+        "[admin/grades/publication-requests] class_teachers active fetch warning",
+        {
+          error: active.error.message,
+          details: active.error,
+        }
+      );
+    }
+  } catch (e: any) {
+    console.warn(
+      "[admin/grades/publication-requests] class_teachers active exception",
+      String(e?.message || e)
+    );
+  }
+
+  // 2) Fallback class_teachers sans filtre end_date, pour les anciennes données.
+  try {
+    const allClassTeachers = await srv
+      .from("class_teachers")
+      .select("class_id,subject_id,teacher_id")
+      .eq("institution_id", institutionId)
+      .in("class_id", classIds)
+      .in("subject_id", subjectIds);
+
+    if (!allClassTeachers.error && Array.isArray(allClassTeachers.data)) {
+      for (const row of allClassTeachers.data) {
+        addTeacherAssignmentToMap(
+          byClassSubject,
+          row as unknown as TeacherAssignmentRow
+        );
+      }
+    } else if (allClassTeachers.error) {
+      console.warn(
+        "[admin/grades/publication-requests] class_teachers fallback fetch warning",
+        {
+          error: allClassTeachers.error.message,
+          details: allClassTeachers.error,
+        }
+      );
+    }
+  } catch (e: any) {
+    console.warn(
+      "[admin/grades/publication-requests] class_teachers fallback exception",
+      String(e?.message || e)
+    );
+  }
+
+  // 3) Fallback emploi du temps / affectations pédagogiques : teacher_subjects.
+  try {
+    const teacherSubjects = await srv
+      .from("teacher_subjects")
+      .select("class_id,subject_id,teacher_id")
+      .eq("institution_id", institutionId)
+      .in("class_id", classIds)
+      .in("subject_id", subjectIds);
+
+    if (!teacherSubjects.error && Array.isArray(teacherSubjects.data)) {
+      for (const row of teacherSubjects.data) {
+        addTeacherAssignmentToMap(
+          byClassSubject,
+          row as unknown as TeacherAssignmentRow
+        );
+      }
+    } else if (teacherSubjects.error) {
+      console.warn(
+        "[admin/grades/publication-requests] teacher_subjects fetch warning",
+        {
+          error: teacherSubjects.error.message,
+          details: teacherSubjects.error,
+        }
+      );
+    }
+  } catch (e: any) {
+    console.warn(
+      "[admin/grades/publication-requests] teacher_subjects exception",
+      String(e?.message || e)
+    );
+  }
+
+  for (const ev of evaluations) {
+    const key = teacherKey(ev.class_id, ev.subject_id);
+    const teacherId = key ? byClassSubject.get(key) : null;
+
+    if (teacherId) {
+      byEvaluation.set(ev.id, teacherId);
+    }
+  }
+
+  return byEvaluation;
 }
 
 function addRosterRowToMap(
@@ -837,25 +1108,49 @@ async function buildRequestItems(params: {
     .map((ev) => ev.subject_id)
     .filter((x): x is string => !!x);
 
-  const profileIds = evaluations
-    .flatMap((ev) => [ev.teacher_id, ev.submitted_by, ev.reviewed_by])
-    .filter((x): x is string => !!x);
-
-  const [classMap, subjectMap, profileMap, rosterMap, scoresByEval] =
+  const [classMap, subjectMap, rosterMap, scoresByEval, teacherAssignmentMap] =
     await Promise.all([
       fetchClassMap(srv, institutionId, classIds),
-      fetchSubjectMap(srv, subjectIds),
-      fetchProfileMap(srv, profileIds),
+      fetchSubjectMap(srv, institutionId, subjectIds),
       fetchRosterMap(srv, classIds),
       fetchScoreRowsByEvaluation(srv, evaluations),
+      fetchTeacherAssignmentMap(srv, institutionId, evaluations),
     ]);
+
+  const profileIds = evaluations
+    .flatMap((ev) => [
+      ev.teacher_id,
+      teacherAssignmentMap.get(ev.id),
+      ev.submitted_by,
+      ev.reviewed_by,
+    ])
+    .filter((x): x is string => !!x);
+
+  const profileMap = await fetchProfileMap(srv, profileIds);
 
   return evaluations.map((ev) => {
     const cls = classMap.get(ev.class_id);
     const subject = ev.subject_id ? subjectMap.get(ev.subject_id) : null;
-    const teacher = ev.teacher_id ? profileMap.get(ev.teacher_id) : null;
+
+    const fallbackTeacherId = teacherAssignmentMap.get(ev.id) ?? null;
+    const directTeacher = ev.teacher_id ? profileMap.get(ev.teacher_id) : null;
+    const fallbackTeacher = fallbackTeacherId
+      ? profileMap.get(fallbackTeacherId)
+      : null;
+
     const submittedBy = ev.submitted_by ? profileMap.get(ev.submitted_by) : null;
     const reviewedBy = ev.reviewed_by ? profileMap.get(ev.reviewed_by) : null;
+
+    const directTeacherName = directTeacher
+      ? pickProfileName(directTeacher, "")
+      : "";
+    const fallbackTeacherName = fallbackTeacher
+      ? pickProfileName(fallbackTeacher, "")
+      : "";
+
+    const teacherName =
+      directTeacherName || fallbackTeacherName || "Enseignant non renseigné";
+    const resolvedTeacherId = ev.teacher_id || fallbackTeacherId || null;
 
     const scoreRows = scoresByEval.get(ev.id) ?? [];
     const rosterSet = rosterMap.get(ev.class_id);
@@ -882,11 +1177,13 @@ async function buildRequestItems(params: {
       class_level: cls?.level ?? null,
 
       subject_id: ev.subject_id,
-      subject_name: ev.subject_id ? pickSubjectName(subject) : "Matière",
+      subject_name: ev.subject_id
+        ? pickSubjectName(subject)
+        : "Matière non renseignée",
 
       subject_component_id: ev.subject_component_id,
-      teacher_id: ev.teacher_id,
-      teacher_name: pickProfileName(teacher),
+      teacher_id: resolvedTeacherId,
+      teacher_name: teacherName,
 
       eval_date: ev.eval_date,
       eval_kind: ev.eval_kind,
@@ -900,14 +1197,23 @@ async function buildRequestItems(params: {
 
       submitted_at: ev.submitted_at ?? null,
       submitted_by: ev.submitted_by ?? null,
-      submitted_by_name: submittedBy ? pickProfileName(submittedBy) : null,
+      submitted_by_name: submittedBy
+        ? pickProfileName(submittedBy, "Utilisateur non renseigné")
+        : null,
 
       reviewed_at: ev.reviewed_at ?? null,
       reviewed_by: ev.reviewed_by ?? null,
-      reviewed_by_name: reviewedBy ? pickProfileName(reviewedBy) : null,
+      reviewed_by_name: reviewedBy
+        ? pickProfileName(reviewedBy, "Utilisateur non renseigné")
+        : null,
       review_comment: ev.review_comment ?? null,
 
       scores_count: stats.graded_count,
+      students_count: stats.student_count,
+      graded_count: stats.graded_count,
+      missing_count: stats.missing_count,
+      success_count: stats.above_average_count,
+      below_average_count: stats.below_average_count,
       stats,
     };
   });
