@@ -452,29 +452,31 @@ async function fetchStudentMap(
   return map;
 }
 
-async function fetchRosterStudentIds(
-  srv: ReturnType<typeof getSupabaseServiceClient>,
-  classId: string,
-  fallbackIds: string[]
+function addRosterRowToMap(
+  map: Map<string, Set<string>>,
+  classId: unknown,
+  studentId: unknown
 ) {
-  try {
-    const { data, error } = await srv
-      .from("class_students")
-      .select("student_id")
-      .eq("class_id", classId);
+  const cId = String(classId || "").trim();
+  const sId = String(studentId || "").trim();
 
-    if (!error && Array.isArray(data) && data.length > 0) {
-      return Array.from(
-        new Set(data.map((row: any) => String(row.student_id)).filter(Boolean))
-      );
-    }
-  } catch {
-    // fallback silencieux
+  if (!cId || !sId) return;
+
+  if (!map.has(cId)) {
+    map.set(cId, new Set<string>());
   }
 
-  return Array.from(new Set(fallbackIds.filter(Boolean)));
+  map.get(cId)?.add(sId);
 }
 
+/**
+ * Roster robuste pour les demandes admin.
+ *
+ * Important :
+ * - On essaie d’abord class_enrollments, car c’est le roster réel des classes.
+ * - On garde class_students en fallback pour ne rien casser si une ancienne base l’utilise encore.
+ * - Les élèves sans note restent dans le roster : ils seront affichés comme NC / Non saisie.
+ */
 async function fetchRosterMap(
   srv: ReturnType<typeof getSupabaseServiceClient>,
   classIds: string[]
@@ -484,28 +486,118 @@ async function fetchRosterMap(
 
   if (!uniqueClassIds.length) return map;
 
+  // 1) Source principale : class_enrollments actifs
   try {
-    const { data, error } = await srv
+    const active = await srv
+      .from("class_enrollments")
+      .select("class_id,student_id")
+      .in("class_id", uniqueClassIds)
+      .is("end_date", null);
+
+    if (!active.error && Array.isArray(active.data) && active.data.length > 0) {
+      for (const row of active.data) {
+        addRosterRowToMap(map, (row as any).class_id, (row as any).student_id);
+      }
+
+      return map;
+    }
+
+    if (active.error) {
+      console.warn(
+        "[admin/grades/publication-requests] class_enrollments active fetch warning",
+        {
+          error: active.error.message,
+          details: active.error,
+        }
+      );
+    }
+  } catch (e: any) {
+    console.warn(
+      "[admin/grades/publication-requests] class_enrollments active exception",
+      String(e?.message || e)
+    );
+  }
+
+  // 2) Fallback class_enrollments sans end_date
+  try {
+    const allEnrollments = await srv
+      .from("class_enrollments")
+      .select("class_id,student_id")
+      .in("class_id", uniqueClassIds);
+
+    if (
+      !allEnrollments.error &&
+      Array.isArray(allEnrollments.data) &&
+      allEnrollments.data.length > 0
+    ) {
+      for (const row of allEnrollments.data) {
+        addRosterRowToMap(map, (row as any).class_id, (row as any).student_id);
+      }
+
+      return map;
+    }
+
+    if (allEnrollments.error) {
+      console.warn(
+        "[admin/grades/publication-requests] class_enrollments fallback fetch warning",
+        {
+          error: allEnrollments.error.message,
+          details: allEnrollments.error,
+        }
+      );
+    }
+  } catch (e: any) {
+    console.warn(
+      "[admin/grades/publication-requests] class_enrollments fallback exception",
+      String(e?.message || e)
+    );
+  }
+
+  // 3) Ancien fallback : class_students
+  try {
+    const legacy = await srv
       .from("class_students")
       .select("class_id,student_id")
       .in("class_id", uniqueClassIds);
 
-    if (error || !Array.isArray(data)) return map;
-
-    for (const row of data) {
-      const classId = String((row as any).class_id || "");
-      const studentId = String((row as any).student_id || "");
-
-      if (!classId || !studentId) continue;
-
-      if (!map.has(classId)) map.set(classId, new Set<string>());
-      map.get(classId)?.add(studentId);
+    if (!legacy.error && Array.isArray(legacy.data)) {
+      for (const row of legacy.data) {
+        addRosterRowToMap(map, (row as any).class_id, (row as any).student_id);
+      }
     }
-  } catch {
-    // fallback silencieux
+
+    if (legacy.error) {
+      console.warn(
+        "[admin/grades/publication-requests] class_students fallback fetch warning",
+        {
+          error: legacy.error.message,
+          details: legacy.error,
+        }
+      );
+    }
+  } catch (e: any) {
+    console.warn(
+      "[admin/grades/publication-requests] class_students fallback exception",
+      String(e?.message || e)
+    );
   }
 
   return map;
+}
+
+async function fetchRosterStudentIds(
+  srv: ReturnType<typeof getSupabaseServiceClient>,
+  classId: string,
+  fallbackIds: string[]
+) {
+  const rosterMap = await fetchRosterMap(srv, [classId]);
+  const rosterSet = rosterMap.get(classId);
+
+  if (rosterSet && rosterSet.size > 0) {
+    return Array.from(rosterSet);
+  }
+
+  return Array.from(new Set(fallbackIds.filter(Boolean)));
 }
 
 function mapScoreRows(
@@ -767,13 +859,13 @@ async function buildRequestItems(params: {
 
     const scoreRows = scoresByEval.get(ev.id) ?? [];
     const rosterSet = rosterMap.get(ev.class_id);
+
     const fallbackStudentCount = new Set(
       scoreRows.map((row) => row.student_id).filter(Boolean)
     ).size;
 
     const studentCount = rosterSet?.size || fallbackStudentCount;
-    const source =
-      scoreRows[0]?._source ?? scoreSourceForEvaluation(ev);
+    const source = scoreRows[0]?._source ?? scoreSourceForEvaluation(ev);
 
     const stats = computeEvaluationStats({
       scores: scoreRows,
@@ -857,6 +949,7 @@ async function buildEvaluationDetail(params: {
         score: score?.score ?? null,
         comment: score?.comment ?? null,
         has_score: scoreByStudentId.has(studentId),
+        score_status: scoreByStudentId.has(studentId) ? "graded" : "NC",
       };
     })
     .sort((a, b) => {
@@ -865,8 +958,7 @@ async function buildEvaluationDetail(params: {
       return an.localeCompare(bn, "fr");
     });
 
-  const source =
-    scoreRows[0]?._source ?? scoreSourceForEvaluation(evaluation);
+  const source = scoreRows[0]?._source ?? scoreSourceForEvaluation(evaluation);
 
   const stats = computeEvaluationStats({
     scores: scoreRows,
