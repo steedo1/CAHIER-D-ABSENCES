@@ -67,7 +67,6 @@ type ProfileRow = {
 type StudentRow = {
   id: string;
   full_name?: string | null;
-  display_name?: string | null;
   first_name?: string | null;
   last_name?: string | null;
   matricule?: string | null;
@@ -148,10 +147,10 @@ function pickProfileName(
 }
 
 function pickStudentName(row?: StudentRow | null) {
-  const explicit = cleanText(row?.full_name) || cleanText(row?.display_name);
+  const explicit = cleanText(row?.full_name);
   if (explicit) return explicit;
 
-  const combined = [row?.first_name, row?.last_name]
+  const combined = [row?.last_name, row?.first_name]
     .map((x) => cleanText(x))
     .filter(Boolean)
     .join(" ");
@@ -382,8 +381,6 @@ async function fetchSubjectMap(
 
   const resolvedIds = new Set<string>();
 
-  // Important : dans certaines anciennes données, grade_evaluations.subject_id peut
-  // contenir soit subjects.id, soit institution_subjects.id. On résout donc les deux.
   try {
     const instById = await srv
       .from("institution_subjects")
@@ -516,8 +513,6 @@ async function fetchProfileMap(
 
   if (!ids.length) return map;
 
-  // Ne pas sélectionner full_name / first_name / last_name ici : selon ta base,
-  // ces colonnes peuvent ne pas exister. display_name est la source fiable.
   const primary = await srv
     .from("profiles")
     .select("id,display_name,email")
@@ -556,23 +551,31 @@ async function fetchStudentMap(
 
   if (!ids.length) return map;
 
-  const broad = await srv
+  const { data, error } = await srv
     .from("students")
-    .select("id,full_name,display_name,first_name,last_name,matricule")
+    .select("id,full_name,first_name,last_name,matricule")
     .in("id", ids);
 
-  if (!broad.error) {
-    for (const row of broad.data ?? []) {
+  if (!error && Array.isArray(data)) {
+    for (const row of data) {
       map.set(String((row as any).id), row as unknown as StudentRow);
     }
 
     return map;
   }
 
-  const narrow = await srv.from("students").select("id,matricule").in("id", ids);
+  console.warn("[admin/grades/publication-requests] students fetch warning", {
+    error: error?.message,
+    details: error,
+  });
 
-  if (!narrow.error) {
-    for (const row of narrow.data ?? []) {
+  const fallback = await srv
+    .from("students")
+    .select("id,matricule")
+    .in("id", ids);
+
+  if (!fallback.error && Array.isArray(fallback.data)) {
+    for (const row of fallback.data) {
       map.set(String((row as any).id), row as unknown as StudentRow);
     }
   }
@@ -614,7 +617,6 @@ async function fetchTeacherAssignmentMap(
     return byEvaluation;
   }
 
-  // 1) Source la plus directe pour l’affectation active : class_teachers.
   try {
     const active = await srv
       .from("class_teachers")
@@ -647,7 +649,6 @@ async function fetchTeacherAssignmentMap(
     );
   }
 
-  // 2) Fallback class_teachers sans filtre end_date, pour les anciennes données.
   try {
     const allClassTeachers = await srv
       .from("class_teachers")
@@ -679,7 +680,6 @@ async function fetchTeacherAssignmentMap(
     );
   }
 
-  // 3) Fallback emploi du temps / affectations pédagogiques : teacher_subjects.
   try {
     const teacherSubjects = await srv
       .from("teacher_subjects")
@@ -740,14 +740,6 @@ function addRosterRowToMap(
   map.get(cId)?.add(sId);
 }
 
-/**
- * Roster robuste pour les demandes admin.
- *
- * Important :
- * - On essaie d’abord class_enrollments, car c’est le roster réel des classes.
- * - On garde class_students en fallback pour ne rien casser si une ancienne base l’utilise encore.
- * - Les élèves sans note restent dans le roster : ils seront affichés comme NC / Non saisie.
- */
 async function fetchRosterMap(
   srv: ReturnType<typeof getSupabaseServiceClient>,
   classIds: string[]
@@ -757,7 +749,6 @@ async function fetchRosterMap(
 
   if (!uniqueClassIds.length) return map;
 
-  // 1) Source principale : class_enrollments actifs
   try {
     const active = await srv
       .from("class_enrollments")
@@ -789,7 +780,6 @@ async function fetchRosterMap(
     );
   }
 
-  // 2) Fallback class_enrollments sans end_date
   try {
     const allEnrollments = await srv
       .from("class_enrollments")
@@ -824,7 +814,6 @@ async function fetchRosterMap(
     );
   }
 
-  // 3) Ancien fallback : class_students
   try {
     const legacy = await srv
       .from("class_students")
@@ -1292,12 +1281,6 @@ async function buildEvaluationDetail(params: {
   };
 }
 
-/* ==========================================
-   GET
-   - /api/admin/grades/publication-requests
-   - /api/admin/grades/publication-requests?status=submitted
-   - /api/admin/grades/publication-requests?evaluation_id=...
-========================================== */
 export async function GET(req: NextRequest) {
   try {
     const ctx = await getAdminContext();
@@ -1440,12 +1423,6 @@ export async function GET(req: NextRequest) {
   }
 }
 
-/* ==========================================
-   POST
-   Actions :
-   - approve / publish / validate
-   - request_changes / changes_requested / reject
-========================================== */
 export async function POST(req: NextRequest) {
   try {
     const ctx = await getAdminContext();
