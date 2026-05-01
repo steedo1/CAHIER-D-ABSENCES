@@ -75,7 +75,13 @@ type BulletinItem = {
   // Métadonnées renvoyées par l’API bulletin NC.
   coverage?: BulletinCoverage | null;
   general_avg_is_complete?: boolean | null;
-  general_avg_status?: "complete" | "partial" | "empty" | "admin_nc" | string | null;
+  general_avg_status?:
+    | "complete"
+    | "partial"
+    | "empty"
+    | "admin_nc"
+    | string
+    | null;
 
   // Décision NC admin centralisée via public.bulletin_nc_overrides.
   admin_forced_nc?: boolean | null;
@@ -207,7 +213,11 @@ function formatAnnualRank(row: Pick<MatrixRow, "annual_rank">) {
   return formatRank(row.annual_rank);
 }
 
-function formatMaybeStar(n: number | null | undefined, _hasStar: boolean, digits = 2) {
+function formatMaybeStar(
+  n: number | null | undefined,
+  _hasStar: boolean,
+  digits = 2,
+) {
   if (n === null || n === undefined || !Number.isFinite(Number(n))) return "—";
   return Number(n).toFixed(digits);
 }
@@ -260,8 +270,34 @@ function cleanRank(value: unknown): number | null {
   return Math.round(n);
 }
 
+function periodAverageStatus(item: BulletinItem): string | null {
+  return item.general_avg_status ?? item.coverage?.status ?? null;
+}
+
+function isBlockingAverageStatus(status: string | null | undefined): boolean {
+  const s = String(status || "")
+    .trim()
+    .toLowerCase();
+  return s === "empty" || s === "admin_nc" || s === "not_last_period";
+}
+
+function isPeriodAverageCalculable(item: BulletinItem): boolean {
+  if (isAdminForcedNc(item)) return false;
+
+  const avg = cleanAvg(item.general_avg);
+  if (avg === null) return false;
+
+  // Point métier CRITIQUE : une période sans vraie note académique publiée
+  // doit rester NC dans la matrice. La conduite seule ne doit jamais produire 0.00.
+  if (item.coverage?.has_academic_grade === false) return false;
+
+  if (isBlockingAverageStatus(periodAverageStatus(item))) return false;
+
+  return true;
+}
+
 function isPeriodAverageComplete(item: BulletinItem): boolean {
-  if (item.general_avg === null || item.general_avg === undefined) return false;
+  if (!isPeriodAverageCalculable(item)) return false;
 
   if (typeof item.general_avg_is_complete === "boolean") {
     return item.general_avg_is_complete;
@@ -276,18 +312,29 @@ function isPeriodAverageComplete(item: BulletinItem): boolean {
   return true;
 }
 
-function periodAverageStatus(item: BulletinItem): string | null {
-  return item.general_avg_status ?? item.coverage?.status ?? null;
+function isAnnualAverageCalculableFromApi(item: BulletinItem): boolean {
+  if (isAdminAnnualForcedNc(item)) return false;
+
+  const avg = cleanAvg(item.annual_avg);
+  if (avg === null) return false;
+
+  const status = item.annual_avg_status ?? item.annual_coverage?.status ?? null;
+  if (isBlockingAverageStatus(status)) return false;
+
+  return true;
 }
 
 function isAnnualAverageCompleteFromApi(item: BulletinItem): boolean | null {
-  if (item.annual_avg === null || item.annual_avg === undefined) return null;
+  if (!isAnnualAverageCalculableFromApi(item)) return null;
 
   if (typeof item.annual_avg_is_complete === "boolean") {
     return item.annual_avg_is_complete;
   }
 
-  if (item.annual_coverage && typeof item.annual_coverage.is_complete === "boolean") {
+  if (
+    item.annual_coverage &&
+    typeof item.annual_coverage.is_complete === "boolean"
+  ) {
     return item.annual_coverage.is_complete;
   }
 
@@ -296,12 +343,17 @@ function isAnnualAverageCompleteFromApi(item: BulletinItem): boolean | null {
 
 function isAdminForcedNc(item: BulletinItem | null | undefined): boolean {
   if (!item) return false;
-  return item.admin_forced_nc === true || item.general_avg_status === "admin_nc";
+  return (
+    item.admin_forced_nc === true || item.general_avg_status === "admin_nc"
+  );
 }
 
 function isAdminAnnualForcedNc(item: BulletinItem | null | undefined): boolean {
   if (!item) return false;
-  return item.admin_annual_forced_nc === true || item.annual_avg_status === "admin_nc";
+  return (
+    item.admin_annual_forced_nc === true ||
+    item.annual_avg_status === "admin_nc"
+  );
 }
 
 function displayCellRank(cell: MatrixCell | undefined) {
@@ -313,20 +365,20 @@ function displayCellRank(cell: MatrixCell | undefined) {
 function exportCellRank(cell: MatrixCell | undefined) {
   if (!cell) return "NC";
   if (cell.admin_forced_nc) return "NC";
-  return cell.avg !== null ? cell.rank ?? "" : "NC";
+  return cell.avg !== null ? (cell.rank ?? "") : "NC";
 }
 
 function buildRankMap(
-  rows: Array<{ student_id: string; avg: number | null; is_complete?: boolean }>
+  rows: Array<{
+    student_id: string;
+    avg: number | null;
+    is_complete?: boolean;
+  }>,
 ) {
   // Nouvelle règle : toute moyenne calculable est classable.
   // is_complete est conservé pour compatibilité, mais ne bloque plus le rang.
   const valid = rows
-    .filter(
-      (r) =>
-        typeof r.avg === "number" &&
-        Number.isFinite(r.avg)
-    )
+    .filter((r) => typeof r.avg === "number" && Number.isFinite(r.avg))
     .map((r) => ({ student_id: r.student_id, avg: Number(r.avg) }))
     .sort((a, b) => b.avg - a.avg);
 
@@ -410,14 +462,15 @@ function normalizeInstitutionSettings(json: any): InstitutionSettings {
 function Button(
   props: React.ButtonHTMLAttributes<HTMLButtonElement> & {
     tone?: "emerald" | "slate" | "amber";
-  }
+  },
 ) {
   const { tone = "emerald", className = "", ...rest } = props;
   const tones = {
     emerald:
       "bg-emerald-600 text-white hover:bg-emerald-700 focus:ring-emerald-500/30",
     slate: "bg-slate-900 text-white hover:bg-slate-800 focus:ring-slate-500/30",
-    amber: "bg-amber-500 text-slate-950 hover:bg-amber-600 focus:ring-amber-500/30",
+    amber:
+      "bg-amber-500 text-slate-950 hover:bg-amber-600 focus:ring-amber-500/30",
   } as const;
 
   return (
@@ -470,7 +523,9 @@ export default function AnnualMatrixPage() {
   const [periods, setPeriods] = useState<GradePeriod[]>([]);
   const [periodsLoading, setPeriodsLoading] = useState(false);
 
-  const [institution, setInstitution] = useState<InstitutionSettings | null>(null);
+  const [institution, setInstitution] = useState<InstitutionSettings | null>(
+    null,
+  );
 
   const [matrixRows, setMatrixRows] = useState<MatrixRow[]>([]);
   const [loadedPeriods, setLoadedPeriods] = useState<GradePeriod[]>([]);
@@ -480,7 +535,7 @@ export default function AnnualMatrixPage() {
 
   const selectedClass = useMemo(
     () => classes.find((c) => c.id === selectedClassId) || null,
-    [classes, selectedClassId]
+    [classes, selectedClassId],
   );
 
   const academicYears = useMemo(() => {
@@ -493,7 +548,10 @@ export default function AnnualMatrixPage() {
   const matrixPeriods = useMemo(() => {
     return periods
       .filter((p) => p.is_active !== false)
-      .filter((p) => !selectedAcademicYear || p.academic_year === selectedAcademicYear)
+      .filter(
+        (p) =>
+          !selectedAcademicYear || p.academic_year === selectedAcademicYear,
+      )
       .filter((p) => !!p.start_date && !!p.end_date)
       .slice()
       .sort((a, b) => {
@@ -547,8 +605,8 @@ export default function AnnualMatrixPage() {
         const items: ClassRow[] = Array.isArray(json)
           ? json
           : Array.isArray(json?.items)
-          ? json.items
-          : [];
+            ? json.items
+            : [];
 
         if (cancelled) return;
 
@@ -556,10 +614,12 @@ export default function AnnualMatrixPage() {
 
         if (!selectedClassId && items.length) {
           setSelectedClassId(items[0].id);
-          if (items[0].academic_year) setSelectedAcademicYear(items[0].academic_year);
+          if (items[0].academic_year)
+            setSelectedAcademicYear(items[0].academic_year);
         }
       } catch (e: any) {
-        if (!cancelled) setErrorMsg(e?.message || "Impossible de charger les classes.");
+        if (!cancelled)
+          setErrorMsg(e?.message || "Impossible de charger les classes.");
       } finally {
         if (!cancelled) setClassesLoading(false);
       }
@@ -585,7 +645,10 @@ export default function AnnualMatrixPage() {
         const json = await res.json().catch(() => ({}));
         if (!cancelled) setInstitution(normalizeInstitutionSettings(json));
       } catch (e) {
-        console.warn("[Matrice annuelle] paramètres établissement indisponibles", e);
+        console.warn(
+          "[Matrice annuelle] paramètres établissement indisponibles",
+          e,
+        );
       }
     }
 
@@ -610,7 +673,8 @@ export default function AnnualMatrixPage() {
 
       try {
         const params = new URLSearchParams();
-        if (selectedAcademicYear) params.set("academic_year", selectedAcademicYear);
+        if (selectedAcademicYear)
+          params.set("academic_year", selectedAcademicYear);
 
         const url = `/api/admin/institution/grading-periods${
           params.toString() ? `?${params.toString()}` : ""
@@ -623,8 +687,8 @@ export default function AnnualMatrixPage() {
         const items: GradePeriod[] = Array.isArray(json)
           ? json
           : Array.isArray(json?.items)
-          ? json.items
-          : [];
+            ? json.items
+            : [];
 
         if (cancelled) return;
 
@@ -670,7 +734,9 @@ export default function AnnualMatrixPage() {
       throw new Error(text || `Erreur bulletin ${res.status}`);
     }
 
-    const json = (await res.json().catch(() => null)) as BulletinResponse | null;
+    const json = (await res
+      .json()
+      .catch(() => null)) as BulletinResponse | null;
     if (!json?.ok) throw new Error("Réponse bulletin invalide.");
 
     return json;
@@ -687,7 +753,9 @@ export default function AnnualMatrixPage() {
     }
 
     if (!matrixPeriods.length) {
-      setErrorMsg("Aucune période active avec dates n’est configurée pour cette année scolaire.");
+      setErrorMsg(
+        "Aucune période active avec dates n’est configurée pour cette année scolaire.",
+      );
       return;
     }
 
@@ -697,7 +765,7 @@ export default function AnnualMatrixPage() {
         period_id: p.id,
         label: periodLabel(p),
         status: "pending",
-      }))
+      })),
     );
 
     try {
@@ -715,8 +783,9 @@ export default function AnnualMatrixPage() {
           const items = Array.isArray(res.items) ? res.items : [];
 
           const periodRowsForRank = items.map((it) => {
-            const forcedNc = isAdminForcedNc(it);
-            const avg = forcedNc ? null : cleanAvg(it.general_avg);
+            const avg = isPeriodAverageCalculable(it)
+              ? cleanAvg(it.general_avg)
+              : null;
             const hasAverage = avg !== null;
 
             return {
@@ -729,7 +798,9 @@ export default function AnnualMatrixPage() {
           const ranks = buildRankMap(periodRowsForRank);
           periodResults.push({ period, items, ranks });
 
-          const avgCount = periodRowsForRank.filter((row) => row.avg !== null).length;
+          const avgCount = periodRowsForRank.filter(
+            (row) => row.avg !== null,
+          ).length;
 
           for (const it of items) {
             if (!students.has(it.student_id)) {
@@ -750,7 +821,9 @@ export default function AnnualMatrixPage() {
 
             const row = students.get(it.student_id)!;
             const forcedNc = isAdminForcedNc(it);
-            const avg = forcedNc ? null : cleanAvg(it.general_avg);
+            const avg = isPeriodAverageCalculable(it)
+              ? cleanAvg(it.general_avg)
+              : null;
             const hasAverage = avg !== null;
             const annualForcedNc = isAdminAnnualForcedNc(it);
 
@@ -759,7 +832,7 @@ export default function AnnualMatrixPage() {
 
             row.periods[period.id] = {
               avg,
-              rank: hasAverage ? ranks.get(it.student_id) ?? null : null,
+              rank: hasAverage ? (ranks.get(it.student_id) ?? null) : null,
               is_complete: hasAverage,
               status: forcedNc ? "admin_nc" : periodAverageStatus(it),
               admin_forced_nc: forcedNc,
@@ -772,7 +845,9 @@ export default function AnnualMatrixPage() {
               row.annual_is_complete = false;
               row.annual_has_star = false;
             } else {
-              const apiAnnualAvg = cleanAvg(it.annual_avg);
+              const apiAnnualAvg = isAnnualAverageCalculableFromApi(it)
+                ? cleanAvg(it.annual_avg)
+                : null;
               if (apiAnnualAvg !== null) {
                 row.annual_avg = apiAnnualAvg;
                 const apiAnnualComplete = isAnnualAverageCompleteFromApi(it);
@@ -799,16 +874,16 @@ export default function AnnualMatrixPage() {
                       ? `${avgCount} moyenne(s) calculable(s)`
                       : "Aucune moyenne publiée",
                   }
-                : s
-            )
+                : s,
+            ),
           );
         } catch (e: any) {
           setPeriodStates((prev) =>
             prev.map((s) =>
               s.period_id === period.id
                 ? { ...s, status: "error", message: e?.message || "Erreur" }
-                : s
-            )
+                : s,
+            ),
           );
         }
       }
@@ -825,22 +900,26 @@ export default function AnnualMatrixPage() {
           const cell = row.periods[period.id];
           const avg = cell?.avg ?? null;
 
-          if (avg === null || avg === undefined || !Number.isFinite(avg)) continue;
+          if (avg === null || avg === undefined || !Number.isFinite(avg))
+            continue;
 
           const coeffRaw = Number(period.coeff ?? 1);
-          const coeff = Number.isFinite(coeffRaw) && coeffRaw > 0 ? coeffRaw : 1;
+          const coeff =
+            Number.isFinite(coeffRaw) && coeffRaw > 0 ? coeffRaw : 1;
 
           num += avg * coeff;
           den += coeff;
           sourceCount += 1;
-          if (isPeriodAverageComplete({
-            student_id: row.student_id,
-            full_name: row.full_name,
-            matricule: row.matricule,
-            general_avg: avg,
-            general_avg_is_complete: cell.is_complete,
-            general_avg_status: cell.status,
-          })) {
+          if (
+            isPeriodAverageComplete({
+              student_id: row.student_id,
+              full_name: row.full_name,
+              matricule: row.matricule,
+              general_avg: avg,
+              general_avg_is_complete: cell.is_complete,
+              general_avg_status: cell.status,
+            })
+          ) {
             completeCount += 1;
           }
         }
@@ -859,7 +938,8 @@ export default function AnnualMatrixPage() {
 
         // Nouvelle règle : dès qu’une moyenne annuelle est calculable, elle est classable.
         // On conserve annual_is_complete comme info technique, mais elle ne bloque plus le rang.
-        row.annual_is_complete = row.annual_avg !== null && !row.admin_annual_forced_nc;
+        row.annual_is_complete =
+          row.annual_avg !== null && !row.admin_annual_forced_nc;
         row.annual_has_star = false;
       }
 
@@ -868,25 +948,21 @@ export default function AnnualMatrixPage() {
           student_id: r.student_id,
           avg: r.admin_annual_forced_nc ? null : r.annual_avg,
           is_complete: r.annual_avg !== null && !r.admin_annual_forced_nc,
-        }))
+        })),
       );
 
       rows.forEach((r) => {
         r.annual_rank =
           r.annual_avg !== null && !r.admin_annual_forced_nc
-            ? r.annual_rank ?? annualRanks.get(r.student_id) ?? null
+            ? (r.annual_rank ?? annualRanks.get(r.student_id) ?? null)
             : null;
       });
 
       rows.sort((a, b) => {
         const ar =
-          a.annual_rank !== null
-            ? a.annual_rank
-            : Number.POSITIVE_INFINITY;
+          a.annual_rank !== null ? a.annual_rank : Number.POSITIVE_INFINITY;
         const br =
-          b.annual_rank !== null
-            ? b.annual_rank
-            : Number.POSITIVE_INFINITY;
+          b.annual_rank !== null ? b.annual_rank : Number.POSITIVE_INFINITY;
 
         if (ar !== br) return ar - br;
 
@@ -904,7 +980,9 @@ export default function AnnualMatrixPage() {
       setMatrixRows(rows);
 
       if (!rows.length) {
-        setErrorMsg("Aucun élève ou aucune moyenne n’a été trouvé pour cette sélection.");
+        setErrorMsg(
+          "Aucun élève ou aucune moyenne n’a été trouvé pour cette sélection.",
+        );
       }
     } finally {
       setLoadingMatrix(false);
@@ -945,7 +1023,7 @@ export default function AnnualMatrixPage() {
 
         cells.push(
           cell.avg !== null ? cell.avg.toFixed(2) : "",
-          exportCellRank(cell)
+          exportCellRank(cell),
         );
       }
 
@@ -958,7 +1036,10 @@ export default function AnnualMatrixPage() {
     const url = URL.createObjectURL(blob);
 
     const safeClass = clsLabel(selectedClass).replace(/[^a-z0-9_-]+/gi, "_");
-    const safeYear = (selectedAcademicYear || "annee").replace(/[^a-z0-9_-]+/gi, "_");
+    const safeYear = (selectedAcademicYear || "annee").replace(
+      /[^a-z0-9_-]+/gi,
+      "_",
+    );
 
     const a = document.createElement("a");
     a.href = url;
@@ -986,10 +1067,14 @@ export default function AnnualMatrixPage() {
 
     const institutionMetaParts = [
       institution?.institution_postal_address,
-      institution?.institution_phone ? `Tél : ${institution.institution_phone}` : "",
+      institution?.institution_phone
+        ? `Tél : ${institution.institution_phone}`
+        : "",
       institution?.institution_email,
       institution?.institution_status,
-      institution?.institution_code ? `Code : ${institution.institution_code}` : "",
+      institution?.institution_code
+        ? `Code : ${institution.institution_code}`
+        : "",
     ]
       .map((x) => String(x || "").trim())
       .filter(Boolean);
@@ -1004,8 +1089,8 @@ export default function AnnualMatrixPage() {
       .map(
         (p) => `
           <th colspan="2" class="period-head">${escapeHtml(periodLabel(p))}<br/><span>${escapeHtml(
-          formatDateFR(p.start_date)
-        )} — ${escapeHtml(formatDateFR(p.end_date))}</span></th>`
+            formatDateFR(p.start_date),
+          )} — ${escapeHtml(formatDateFR(p.end_date))}</span></th>`,
       )
       .join("");
 
@@ -1025,7 +1110,7 @@ export default function AnnualMatrixPage() {
             };
 
             return `<td class="num">${escapeHtml(formatNumber(cell.avg))}</td><td class="num">${escapeHtml(
-              displayCellRank(cell)
+              displayCellRank(cell),
             )}</td>`;
           })
           .join("");
@@ -1474,7 +1559,7 @@ export default function AnnualMatrixPage() {
 
     if (!win) {
       setErrorMsg(
-        "Impossible d’ouvrir la fenêtre d’impression. Vérifiez le blocage des popups."
+        "Impossible d’ouvrir la fenêtre d’impression. Vérifiez le blocage des popups.",
       );
       return;
     }
@@ -1507,8 +1592,9 @@ export default function AnnualMatrixPage() {
             </h1>
 
             <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-200">
-              Les périodes sans notes publiées restent NC. Dès qu’une moyenne est calculable,
-              le rang est autorisé, sauf décision NC validée par l’administration.
+              Les périodes sans notes publiées restent NC. Dès qu’une moyenne
+              est calculable, le rang est autorisé, sauf décision NC validée par
+              l’administration.
             </p>
           </div>
 
@@ -1517,7 +1603,9 @@ export default function AnnualMatrixPage() {
               <div className="text-[10px] uppercase tracking-wide text-slate-400">
                 Élèves
               </div>
-              <div className="mt-1 text-xl font-bold text-white">{stats.count}</div>
+              <div className="mt-1 text-xl font-bold text-white">
+                {stats.count}
+              </div>
             </div>
 
             <div className="rounded-2xl border border-white/10 bg-white/8 p-3">
@@ -1584,7 +1672,10 @@ export default function AnnualMatrixPage() {
           </div>
 
           <div className="flex flex-wrap gap-2 lg:col-span-4 lg:justify-end">
-            <Button onClick={loadMatrix} disabled={!selectedClassId || loadingMatrix}>
+            <Button
+              onClick={loadMatrix}
+              disabled={!selectedClassId || loadingMatrix}
+            >
               {loadingMatrix ? (
                 <RefreshCw className="h-4 w-4 animate-spin" />
               ) : (
@@ -1631,14 +1722,18 @@ export default function AnnualMatrixPage() {
                   s.status === "ok"
                     ? "border-emerald-200 bg-emerald-50 text-emerald-800"
                     : s.status === "error"
-                    ? "border-red-200 bg-red-50 text-red-700"
-                    : s.status === "empty"
-                    ? "border-amber-200 bg-amber-50 text-amber-800"
-                    : "border-slate-200 bg-slate-50 text-slate-600",
+                      ? "border-red-200 bg-red-50 text-red-700"
+                      : s.status === "empty"
+                        ? "border-amber-200 bg-amber-50 text-amber-800"
+                        : "border-slate-200 bg-slate-50 text-slate-600",
                 ].join(" ")}
               >
                 <div className="font-semibold">{s.label}</div>
-                <div>{s.status === "pending" ? "En attente…" : s.message || s.status}</div>
+                <div>
+                  {s.status === "pending"
+                    ? "En attente…"
+                    : s.message || s.status}
+                </div>
               </div>
             ))}
           </div>
@@ -1654,10 +1749,14 @@ export default function AnnualMatrixPage() {
       <section className="rounded-3xl border border-slate-200 bg-white shadow-sm">
         <div className="flex flex-col gap-2 border-b border-slate-100 px-5 py-4 md:flex-row md:items-center md:justify-between">
           <div>
-            <h2 className="text-base font-bold text-slate-900">Tableau annuel</h2>
+            <h2 className="text-base font-bold text-slate-900">
+              Tableau annuel
+            </h2>
             <p className="text-sm text-slate-500">
-              {selectedClass ? clsLabel(selectedClass) : "Aucune classe sélectionnée"} •{" "}
-              {selectedAcademicYear || "année courante"}
+              {selectedClass
+                ? clsLabel(selectedClass)
+                : "Aucune classe sélectionnée"}{" "}
+              • {selectedAcademicYear || "année courante"}
             </p>
           </div>
 

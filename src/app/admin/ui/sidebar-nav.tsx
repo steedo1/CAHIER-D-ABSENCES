@@ -304,7 +304,11 @@ const SETTINGS_ITEMS: NavItem[] = [
    Groupe : Contrôle des appels
 ========================= */
 const CALLS_CONTROL_ITEMS: NavItem[] = [
-  { href: "/admin/absences/appels", label: "Surveillance des appels", Icon: BarChart3 },
+  {
+    href: "/admin/absences/appels",
+    label: "Surveillance des appels",
+    Icon: BarChart3,
+  },
   {
     href: "/admin/absences/appels-matrice",
     label: "Vue par créneau",
@@ -318,7 +322,11 @@ const CALLS_CONTROL_ITEMS: NavItem[] = [
 ========================= */
 const ABS_ITEMS: NavItem[] = [
   { href: "/admin/absences", label: "Matrice des absences", Icon: Ban },
-  { href: "/admin/assiduite", label: "Assiduité & justifications", Icon: UserRoundCheck },
+  {
+    href: "/admin/assiduite",
+    label: "Assiduité & justifications",
+    Icon: UserRoundCheck,
+  },
   {
     href: "/admin/absences/appel-administratif",
     label: "Appel administratif",
@@ -381,44 +389,60 @@ function NavLinkItem({
         prefetch={false}
         aria-current={active ? "page" : undefined}
         className={[
-          "group relative flex items-center gap-3 overflow-hidden rounded-xl border px-3 py-2.5 text-sm",
-          "transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-emerald-500/30",
+          "group relative flex items-center gap-3 overflow-hidden border transition-all duration-200",
+          "focus:outline-none focus:ring-2 focus:ring-emerald-500/30",
+          topLevel
+            ? "min-h-[48px] rounded-xl px-3 py-2.5 text-sm"
+            : "min-h-[40px] rounded-lg px-2.5 py-2 text-[13px]",
           active
-            ? [
-                "border-white/10 text-white",
-                accentClasses.activeBg,
-                accentClasses.activeRing,
-              ].join(" ")
-            : [
-                "border-transparent text-slate-300",
-                "hover:border-white/8 hover:bg-white/[0.04] hover:text-white",
-              ].join(" "),
-          topLevel ? "min-h-[48px]" : "min-h-[44px]",
+            ? topLevel
+              ? [
+                  "border-white/10 text-white",
+                  accentClasses.activeBg,
+                  accentClasses.activeRing,
+                ].join(" ")
+              : [
+                  "border-white/8 bg-white/[0.055] text-white",
+                  "shadow-[inset_3px_0_0_rgba(255,255,255,0.10)]",
+                ].join(" ")
+            : topLevel
+              ? [
+                  "border-transparent text-slate-300",
+                  "hover:border-white/8 hover:bg-white/[0.04] hover:text-white",
+                ].join(" ")
+              : [
+                  "border-transparent text-slate-400",
+                  "hover:bg-white/[0.045] hover:text-white",
+                ].join(" "),
         ].join(" ")}
       >
         <span
           className={[
             "absolute left-0 top-1/2 -translate-y-1/2 rounded-r-full transition-all",
-            topLevel ? "h-8 w-1.5" : "h-7 w-1",
+            topLevel ? "h-8 w-1.5" : "h-6 w-1",
             accentClasses.bar,
           ].join(" ")}
         />
 
         <span
           className={[
-            "inline-flex shrink-0 items-center justify-center rounded-lg",
-            topLevel ? "h-9 w-9" : "h-8 w-8",
-            active ? accentClasses.dot : "bg-white/5 text-slate-300 ring-1 ring-white/8",
-            "transition-all duration-200 group-hover:bg-white/10 group-hover:text-white",
+            "inline-flex shrink-0 items-center justify-center rounded-lg transition-all duration-200",
+            topLevel ? "h-9 w-9" : "h-7 w-7",
+            active
+              ? accentClasses.dot
+              : topLevel
+                ? "bg-white/5 text-slate-300 ring-1 ring-white/8"
+                : "bg-white/[0.035] text-slate-400 ring-1 ring-white/6",
+            "group-hover:bg-white/10 group-hover:text-white",
           ].join(" ")}
         >
-          <item.Icon className={topLevel ? "h-5 w-5" : "h-4 w-4"} />
+          <item.Icon className={topLevel ? "h-5 w-5" : "h-3.5 w-3.5"} />
         </span>
 
         <span
           className={[
             "min-w-0 flex-1 pr-2 whitespace-normal break-words leading-snug",
-            topLevel ? "font-medium" : "font-normal",
+            topLevel ? "font-medium" : "font-medium",
           ].join(" ")}
         >
           {item.label}
@@ -464,14 +488,30 @@ function GroupSection({
   const active = groupHasActiveItem(pathname, items, currentTab);
   const accentClasses = getAccentClasses(accent, active);
 
+  const railClass: Record<Accent, string> = {
+    emerald: "bg-emerald-400",
+    violet: "bg-violet-400",
+    sky: "bg-sky-400",
+    amber: "bg-amber-400",
+    cyan: "bg-cyan-400",
+  };
+
+  const labelClass: Record<Accent, string> = {
+    emerald: "text-emerald-300",
+    violet: "text-violet-300",
+    sky: "text-sky-300",
+    amber: "text-amber-300",
+    cyan: "text-cyan-300",
+  };
+
   return (
-    <li className="mt-3">
+    <li className="mt-4">
       <div
         className={[
-          "overflow-hidden rounded-2xl border backdrop-blur-sm",
+          "overflow-hidden rounded-2xl border backdrop-blur-sm transition-all duration-200",
           active
-            ? "border-white/12 bg-white/[0.045] shadow-[0_10px_30px_rgba(0,0,0,0.20)]"
-            : "border-white/8 bg-white/[0.025]",
+            ? "border-white/14 bg-white/[0.055] shadow-[0_14px_34px_rgba(0,0,0,0.24)]"
+            : "border-white/8 bg-white/[0.022]",
         ].join(" ")}
       >
         <button
@@ -479,23 +519,46 @@ function GroupSection({
           onClick={onToggle}
           aria-expanded={open}
           className={[
-            "group flex w-full items-center gap-3 px-3 py-3 text-left text-sm",
+            "group relative flex w-full items-center gap-3 px-3 py-3 text-left text-sm",
             "transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-emerald-500/30",
-            active ? "text-white" : "text-slate-200 hover:bg-white/[0.03]",
+            active ? "text-white" : "text-slate-200 hover:bg-white/[0.035]",
           ].join(" ")}
         >
           <span
             className={[
-              "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-xl transition-all",
-              active ? accentClasses.dot : "bg-white/5 text-slate-300 ring-1 ring-white/8",
+              "absolute bottom-3 left-0 top-3 w-1 rounded-r-full transition-all",
+              active ? railClass[accent] : "bg-white/10",
+            ].join(" ")}
+            aria-hidden
+          />
+
+          <span
+            className={[
+              "inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl transition-all",
+              active
+                ? accentClasses.dot
+                : "bg-white/5 text-slate-300 ring-1 ring-white/8",
             ].join(" ")}
           >
             <Icon className="h-4 w-4" />
           </span>
 
           <span className="min-w-0 flex-1 pr-2">
-            <span className="block whitespace-normal break-words leading-snug font-semibold tracking-[0.01em]">
+            <span
+              className={[
+                "mb-0.5 block text-[9px] font-black uppercase tracking-[0.22em]",
+                active ? labelClass[accent] : "text-slate-500",
+              ].join(" ")}
+            >
+              Module
+            </span>
+
+            <span className="block whitespace-normal break-words text-[14px] font-bold leading-snug tracking-[0.01em]">
               {title}
+            </span>
+
+            <span className="mt-0.5 block text-[11px] font-medium text-slate-500">
+              {items.length} rubrique{items.length > 1 ? "s" : ""}
             </span>
           </span>
 
@@ -522,19 +585,29 @@ function GroupSection({
 
         {open && (
           <div className="border-t border-white/6 px-2 pb-2 pt-2">
-            <ul className="space-y-1.5">
-              {items.map((item) => (
-                <NavLinkItem
-                  key={item.href}
-                  item={item}
-                  pathname={pathname}
-                  currentTab={currentTab}
-                  accent={accent}
-                  pendingAbsenceCount={pendingAbsenceCount}
-                  pendingGradePublicationCount={pendingGradePublicationCount}
-                />
-              ))}
-            </ul>
+            <div className="relative pl-5">
+              <span
+                className={[
+                  "absolute bottom-2 left-[10px] top-2 w-px rounded-full",
+                  active ? "bg-white/16" : "bg-white/10",
+                ].join(" ")}
+                aria-hidden
+              />
+
+              <ul className="space-y-1.5">
+                {items.map((item) => (
+                  <NavLinkItem
+                    key={item.href}
+                    item={item}
+                    pathname={pathname}
+                    currentTab={currentTab}
+                    accent={accent}
+                    pendingAbsenceCount={pendingAbsenceCount}
+                    pendingGradePublicationCount={pendingGradePublicationCount}
+                  />
+                ))}
+              </ul>
+            </div>
           </div>
         )}
       </div>
@@ -554,7 +627,8 @@ export default function SidebarNav() {
   const [pendingAbsenceCount, setPendingAbsenceCount] = React.useState<number>(0);
   const [pendingGradePublicationCount, setPendingGradePublicationCount] =
     React.useState<number>(0);
-  const [sidebarWidth, setSidebarWidth] = React.useState<number>(DEFAULT_SIDEBAR_WIDTH);
+  const [sidebarWidth, setSidebarWidth] =
+    React.useState<number>(DEFAULT_SIDEBAR_WIDTH);
 
   React.useEffect(() => {
     try {
@@ -583,7 +657,11 @@ export default function SidebarNav() {
       if (!isResizingRef.current || !wrapperRef.current) return;
 
       const left = wrapperRef.current.getBoundingClientRect().left;
-      const nextWidth = clamp(event.clientX - left, MIN_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH);
+      const nextWidth = clamp(
+        event.clientX - left,
+        MIN_SIDEBAR_WIDTH,
+        MAX_SIDEBAR_WIDTH
+      );
       setSidebarWidth(nextWidth);
     }
 
@@ -606,13 +684,16 @@ export default function SidebarNav() {
     };
   }, []);
 
-  const startResize = React.useCallback((event: React.MouseEvent<HTMLDivElement>) => {
-    event.preventDefault();
+  const startResize = React.useCallback(
+    (event: React.MouseEvent<HTMLDivElement>) => {
+      event.preventDefault();
 
-    isResizingRef.current = true;
-    document.body.style.cursor = "col-resize";
-    document.body.style.userSelect = "none";
-  }, []);
+      isResizingRef.current = true;
+      document.body.style.cursor = "col-resize";
+      document.body.style.userSelect = "none";
+    },
+    []
+  );
 
   const resetWidth = React.useCallback(() => {
     setSidebarWidth(DEFAULT_SIDEBAR_WIDTH);
@@ -761,14 +842,17 @@ export default function SidebarNav() {
 
   const fileCorrespondenceItems = React.useMemo(
     () =>
-      FILE_CORRESPONDENCE_ITEMS.filter((item) => {
+      FILE_CORRESPONDENCE_ITEMS.filter(() => {
         if (isEducator) return false;
         return true;
       }),
     [isEducator]
   );
 
-  const conductManagementItems = React.useMemo(() => CONDUCT_MANAGEMENT_ITEMS, []);
+  const conductManagementItems = React.useMemo(
+    () => CONDUCT_MANAGEMENT_ITEMS,
+    []
+  );
 
   const organisationItems = React.useMemo(() => ORGANISATION_ITEMS, []);
 
@@ -796,31 +880,56 @@ export default function SidebarNav() {
   const settingsItems = React.useMemo(() => SETTINGS_ITEMS, []);
 
   const fileCorrespondenceActive =
-    !isEducator && groupHasActiveItem(pathname, fileCorrespondenceItems, currentTab);
+    !isEducator &&
+    groupHasActiveItem(pathname, fileCorrespondenceItems, currentTab);
+
   const conductManagementActive = groupHasActiveItem(
     pathname,
     conductManagementItems,
     currentTab
   );
-  const organisationActive = groupHasActiveItem(pathname, organisationItems, currentTab);
+
+  const organisationActive = groupHasActiveItem(
+    pathname,
+    organisationItems,
+    currentTab
+  );
+
   const adminActive = groupHasActiveItem(pathname, adminItems, currentTab);
-  const callsControlActive = groupHasActiveItem(pathname, callsControlItems, currentTab);
+
+  const callsControlActive = groupHasActiveItem(
+    pathname,
+    callsControlItems,
+    currentTab
+  );
+
   const absActive = groupHasActiveItem(pathname, absItems, currentTab);
-  const notesActive = !isEducator && groupHasActiveItem(pathname, notesItems, currentTab);
+
+  const notesActive =
+    !isEducator && groupHasActiveItem(pathname, notesItems, currentTab);
+
   const settingsActive = groupHasActiveItem(pathname, settingsItems, currentTab);
 
   const [fileCorrespondenceOpen, setFileCorrespondenceOpen] =
     React.useState<boolean>(fileCorrespondenceActive);
+
   const [conductManagementOpen, setConductManagementOpen] =
     React.useState<boolean>(conductManagementActive);
+
   const [organisationOpen, setOrganisationOpen] =
     React.useState<boolean>(organisationActive);
+
   const [adminOpen, setAdminOpen] = React.useState<boolean>(adminActive);
+
   const [callsControlOpen, setCallsControlOpen] =
     React.useState<boolean>(callsControlActive);
+
   const [absOpen, setAbsOpen] = React.useState<boolean>(absActive);
+
   const [notesOpen, setNotesOpen] = React.useState<boolean>(notesActive);
-  const [settingsOpen, setSettingsOpen] = React.useState<boolean>(settingsActive);
+
+  const [settingsOpen, setSettingsOpen] =
+    React.useState<boolean>(settingsActive);
 
   React.useEffect(() => {
     if (fileCorrespondenceActive) setFileCorrespondenceOpen(true);
@@ -869,7 +978,9 @@ export default function SidebarNav() {
             <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">
               Navigation
             </div>
-            <div className="mt-1 text-sm font-semibold text-white">Mon Cahier</div>
+            <div className="mt-1 text-sm font-semibold text-white">
+              Mon Cahier
+            </div>
             <div className="text-xs leading-snug text-slate-400">
               Pilotage scolaire & suivi en temps réel
             </div>
