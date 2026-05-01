@@ -69,25 +69,50 @@ type NotesOverviewOk = {
 
 type NotesOverviewErr = { ok: false; error: string };
 
+type SmsDigestDecision = {
+  allowed?: boolean;
+  reason?: string | null;
+  message?: string | null;
+  last_sent_at?: string | null;
+  next_allowed_at?: string | null;
+  monthly_count?: number | null;
+  monthly_limit?: number | null;
+  min_interval_days?: number | null;
+};
+
+type GradeDigestPolicy = {
+  smsPremiumEnabled?: boolean;
+  smsProvider?: string | null;
+  smsNotesDigestEnabled?: boolean;
+};
+
 type GradeDigestSendResult =
   | {
       ok: true;
+      batch_id?: string | null;
       run_id?: string | null;
-      period_start?: string;
-      period_end?: string;
-      students_count?: number;
-      notifications_created?: number;
-      evaluations_count?: number;
-      reason?: string;
+      period_start?: string | null;
+      period_end?: string | null;
+      students_count?: number | null;
+      notifications_created?: number | null;
+      official_scores_count?: number | null;
+      evaluations_count?: number | null;
+      dispatch_ok?: boolean | null;
+      reason?: string | null;
+      source?: string | null;
+      rule?: {
+        min_interval_days?: number;
+        monthly_limit?: number;
+        force_does_not_bypass_frequency_lock?: boolean;
+      };
     }
   | {
       ok: false;
       error: string;
-      policy?: {
-        smsPremiumEnabled?: boolean;
-        smsProvider?: string | null;
-        smsNotesDigestEnabled?: boolean;
-      };
+      blocked?: boolean;
+      batch_id?: string | null;
+      decision?: SmsDigestDecision | null;
+      policy?: GradeDigestPolicy | null;
     };
 
 type DaysRange = 7 | 30 | 90;
@@ -228,6 +253,66 @@ function QuickLink({
   );
 }
 
+function digestSendErrorLabel(result: GradeDigestSendResult | null) {
+  if (!result || result.ok) return "";
+
+  const error = result.error || result.decision?.reason || "";
+
+  if (error === "SMS_DIGEST_DISABLED_IN_PUBLICATION_SETTINGS") {
+    return "Le digest SMS des notes est désactivé dans les paramètres de publication.";
+  }
+
+  if (error === "SMS_DIGEST_AUTO_MODE_NOT_ENABLED") {
+    return "Le mode automatique n’est pas activé pour cet établissement.";
+  }
+
+  if (error === "SMS_NOTES_DIGEST_DISABLED") {
+    return "Le SMS premium pour le digest des notes n’est pas activé pour cet établissement.";
+  }
+
+  if (error === "too_early") {
+    return "Le délai minimum de 7 jours entre deux envois SMS de notes n’est pas encore atteint.";
+  }
+
+  if (error === "monthly_limit_reached") {
+    return "La limite mensuelle de 4 envois SMS de notes est déjà atteinte.";
+  }
+
+  if (error === "batch_already_running") {
+    return "Un lot SMS de notes est déjà en préparation ou en cours d’envoi.";
+  }
+
+  if (error === "DIGEST_ALREADY_SENT_FOR_PERIOD") {
+    return "Un digest a déjà été envoyé pour cette période.";
+  }
+
+  if (error === "FORBIDDEN") {
+    return "Accès non autorisé.";
+  }
+
+  if (error === "NETWORK_ERROR") {
+    return "Erreur réseau.";
+  }
+
+  return error || "Erreur inconnue.";
+}
+
+function digestSuccessReasonLabel(reason?: string | null) {
+  if (reason === "NO_CLASSES") {
+    return "Aucune classe trouvée pour préparer le digest.";
+  }
+
+  if (reason === "NO_OFFICIAL_PUBLISHED_SCORES") {
+    return "Aucune note officielle publiée n’est disponible pour cette période.";
+  }
+
+  if (reason === "NO_OFFICIAL_SCORES") {
+    return "Aucune note officielle exploitable n’est disponible pour cette période.";
+  }
+
+  return reason || "";
+}
+
 /* Page principale */
 export default function AdminNotesOverviewPage() {
   const [data, setData] = useState<NotesOverviewOk | NotesOverviewErr | null>(null);
@@ -275,21 +360,27 @@ export default function AdminNotesOverviewPage() {
           "Content-Type": "application/json",
         },
         cache: "no-store",
-        body: JSON.stringify({}),
+        body: JSON.stringify({
+          trigger_type: "manual",
+        }),
       });
 
-      const json = (await res.json().catch(() => ({}))) as GradeDigestSendResult;
+      const json = (await res.json().catch(() => ({}))) as GradeDigestSendResult | any;
 
-      if (!res.ok) {
+      if (!res.ok || !json?.ok) {
         setGradeDigestResult({
           ok: false,
-          error: (json as any)?.error || `HTTP_${res.status}`,
-          policy: (json as any)?.policy,
+          error: json?.error || json?.decision?.reason || `HTTP_${res.status}`,
+          blocked: json?.blocked === true,
+          batch_id: json?.batch_id || null,
+          decision: json?.decision || null,
+          policy: json?.policy || null,
         });
         return;
       }
 
-      setGradeDigestResult(json);
+      setGradeDigestResult(json as GradeDigestSendResult);
+      await load(days);
     } catch (e: any) {
       console.error("[admin.notes] sendGradeDigest error", e);
       setGradeDigestResult({
@@ -363,6 +454,10 @@ export default function AdminNotesOverviewPage() {
   }
 
   const hasError = !!data && "ok" in data && !data.ok;
+  const digestOkNoSmsReason =
+    gradeDigestResult?.ok === true
+      ? digestSuccessReasonLabel(gradeDigestResult.reason)
+      : "";
 
   return (
     <div className="space-y-6">
@@ -405,10 +500,10 @@ export default function AdminNotesOverviewPage() {
               <button
                 type="button"
                 onClick={() => load(days)}
-                disabled={refreshing}
+                disabled={refreshing || sendingGradeDigest}
                 className={[
                   "inline-flex items-center justify-center gap-2 rounded-full border border-white/40 bg-white/10 px-3 py-1.5 text-xs font-medium",
-                  refreshing ? "opacity-70" : "hover:bg-white/20",
+                  refreshing || sendingGradeDigest ? "opacity-70" : "hover:bg-white/20",
                 ].join(" ")}
               >
                 <RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
@@ -418,7 +513,7 @@ export default function AdminNotesOverviewPage() {
               <button
                 type="button"
                 onClick={sendGradeDigest}
-                disabled={sendingGradeDigest}
+                disabled={sendingGradeDigest || refreshing}
                 className={[
                   "inline-flex items-center justify-center gap-2 rounded-full px-4 py-2 text-sm font-semibold shadow-sm transition",
                   sendingGradeDigest
@@ -454,25 +549,62 @@ export default function AdminNotesOverviewPage() {
         )}
 
         {gradeDigestResult?.ok && (
-          <div className="relative z-10 mt-4 rounded-2xl border border-emerald-300/60 bg-emerald-50/95 px-4 py-3 text-sm text-emerald-900 shadow-sm">
+          <div
+            className={[
+              "relative z-10 mt-4 rounded-2xl px-4 py-3 text-sm shadow-sm",
+              digestOkNoSmsReason
+                ? "border border-amber-300/70 bg-amber-50/95 text-amber-950"
+                : "border border-emerald-300/60 bg-emerald-50/95 text-emerald-900",
+            ].join(" ")}
+          >
             <div className="flex items-start gap-2">
-              <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
+              {digestOkNoSmsReason ? (
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+              ) : (
+                <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
+              )}
+
               <div>
-                <div className="font-semibold">Résumé SMS lancé avec succès.</div>
-                <div className="mt-1 text-xs text-emerald-800">
-                  {gradeDigestResult.notifications_created ?? 0} notification(s) créée(s)
-                  {" · "}
-                  {gradeDigestResult.students_count ?? 0} élève(s) concerné(s)
-                  {typeof gradeDigestResult.evaluations_count === "number" && (
+                <div className="font-semibold">
+                  {digestOkNoSmsReason
+                    ? "Demande traitée, aucun SMS préparé."
+                    : "Résumé SMS lancé avec succès."}
+                </div>
+
+                <div className="mt-1 text-xs opacity-90">
+                  {digestOkNoSmsReason ? (
+                    digestOkNoSmsReason
+                  ) : (
                     <>
+                      {gradeDigestResult.notifications_created ?? 0} notification(s) créée(s)
                       {" · "}
-                      {gradeDigestResult.evaluations_count} évaluation(s)
+                      {gradeDigestResult.students_count ?? 0} élève(s) concerné(s)
+                      {typeof gradeDigestResult.evaluations_count === "number" && (
+                        <>
+                          {" · "}
+                          {gradeDigestResult.evaluations_count} évaluation(s)
+                        </>
+                      )}
+                      {typeof gradeDigestResult.official_scores_count === "number" && (
+                        <>
+                          {" · "}
+                          {gradeDigestResult.official_scores_count} note(s) officielle(s)
+                        </>
+                      )}
                     </>
                   )}
                 </div>
-                {gradeDigestResult.reason && (
-                  <div className="mt-1 text-xs text-emerald-800">
-                    Motif : {gradeDigestResult.reason}
+
+                {gradeDigestResult.batch_id && (
+                  <div className="mt-1 text-[11px] opacity-80">
+                    Lot SMS :{" "}
+                    <span className="font-semibold">{gradeDigestResult.batch_id}</span>
+                  </div>
+                )}
+
+                {gradeDigestResult.dispatch_ok === false && !digestOkNoSmsReason && (
+                  <div className="mt-1 text-xs opacity-90">
+                    Le digest a été préparé, mais le déclenchement immédiat du dispatcher SMS n’a pas confirmé l’envoi.
                   </div>
                 )}
               </div>
@@ -487,16 +619,39 @@ export default function AdminNotesOverviewPage() {
               <div>
                 <div className="font-semibold">Impossible d’envoyer le résumé SMS.</div>
                 <div className="mt-1 text-xs text-red-800">
-                  {gradeDigestResult.error === "SMS_NOTES_DIGEST_DISABLED"
-                    ? "Le SMS premium pour le digest des notes n’est pas activé pour cet établissement."
-                    : gradeDigestResult.error === "DIGEST_ALREADY_SENT_FOR_PERIOD"
-                    ? "Un digest a déjà été envoyé pour cette période."
-                    : gradeDigestResult.error === "FORBIDDEN"
-                    ? "Accès non autorisé."
-                    : gradeDigestResult.error === "NETWORK_ERROR"
-                    ? "Erreur réseau."
-                    : gradeDigestResult.error}
+                  {digestSendErrorLabel(gradeDigestResult)}
                 </div>
+
+                {gradeDigestResult.decision?.message && (
+                  <div className="mt-1 text-xs text-red-800">
+                    {gradeDigestResult.decision.message}
+                  </div>
+                )}
+
+                {gradeDigestResult.decision?.next_allowed_at && (
+                  <div className="mt-1 text-xs text-red-800">
+                    Prochain envoi possible :{" "}
+                    {new Date(gradeDigestResult.decision.next_allowed_at).toLocaleString("fr-FR", {
+                      dateStyle: "short",
+                      timeStyle: "short",
+                    })}
+                  </div>
+                )}
+
+                {typeof gradeDigestResult.decision?.monthly_count === "number" &&
+                  typeof gradeDigestResult.decision?.monthly_limit === "number" && (
+                    <div className="mt-1 text-xs text-red-800">
+                      Envois ce mois-ci : {gradeDigestResult.decision.monthly_count} /{" "}
+                      {gradeDigestResult.decision.monthly_limit}
+                    </div>
+                  )}
+
+                {gradeDigestResult.batch_id && (
+                  <div className="mt-1 text-[11px] text-red-800">
+                    Lot SMS :{" "}
+                    <span className="font-semibold">{gradeDigestResult.batch_id}</span>
+                  </div>
+                )}
 
                 {gradeDigestResult.policy && (
                   <div className="mt-2 text-[11px] text-red-800">

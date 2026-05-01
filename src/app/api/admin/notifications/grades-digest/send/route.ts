@@ -1,4 +1,4 @@
-//src/app/api/admin/notifications/grades-digest/send/route.ts
+// src/app/api/admin/notifications/grades-digest/send/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
@@ -17,6 +17,8 @@ type Role =
   | "parent"
   | "class_device"
   | string;
+
+type SmsDigestMode = "manual" | "weekly" | "disabled";
 
 type Ctx =
   | {
@@ -56,6 +58,20 @@ type DigestGroup = {
   }>;
 };
 
+type StartBatchResult = {
+  ok?: boolean;
+  allowed?: boolean;
+  blocked?: boolean;
+  batch_id?: string | null;
+  reason?: string | null;
+  message?: string | null;
+  last_sent_at?: string | null;
+  next_allowed_at?: string | null;
+  monthly_count?: number | null;
+  monthly_limit?: number | null;
+  min_interval_days?: number | null;
+};
+
 function bad(error: string, status = 400, extra?: Record<string, unknown>) {
   return NextResponse.json({ ok: false, error, ...(extra ?? {}) }, { status });
 }
@@ -78,6 +94,19 @@ function toIsoOrNull(value: unknown): string | null {
   if (Number.isNaN(d.getTime())) return null;
 
   return d.toISOString();
+}
+
+function toStringOrNull(value: unknown): string | null {
+  const raw = String(value ?? "").trim();
+  return raw || null;
+}
+
+function asSmsDigestMode(value: unknown): SmsDigestMode {
+  if (value === "manual" || value === "weekly" || value === "disabled") {
+    return value;
+  }
+
+  return "weekly";
 }
 
 function formatDateShort(iso: string): string {
@@ -210,6 +239,114 @@ async function getContext(): Promise<Ctx> {
   };
 }
 
+async function getSmsDigestMode(
+  srv: ReturnType<typeof getSupabaseServiceClient>,
+  institutionId: string
+): Promise<SmsDigestMode> {
+  const { data, error } = await srv
+    .from("grade_publication_settings")
+    .select("sms_digest_mode")
+    .eq("institution_id", institutionId)
+    .maybeSingle();
+
+  if (error) {
+    console.warn("[admin/notifications/grades-digest/send] settings error", {
+      institutionId,
+      error: error.message,
+    });
+
+    return "weekly";
+  }
+
+  return asSmsDigestMode((data as any)?.sms_digest_mode);
+}
+
+async function startControlledBatch(
+  srv: ReturnType<typeof getSupabaseServiceClient>,
+  input: {
+    institutionId: string;
+    profileId: string;
+    triggerType: "manual" | "auto";
+    metadata?: Record<string, unknown>;
+  }
+): Promise<StartBatchResult> {
+  const { data, error } = await srv.rpc("start_grade_sms_digest_batch", {
+    p_institution_id: input.institutionId,
+    p_trigger_type: input.triggerType,
+    p_created_by: input.profileId,
+    p_min_interval_days: 7,
+    p_monthly_limit: 4,
+    p_metadata: input.metadata || {},
+  });
+
+  if (error) {
+    throw new Error(
+      error.message || "Impossible de créer le lot SMS digest contrôlé."
+    );
+  }
+
+  return (data || {}) as StartBatchResult;
+}
+
+async function markControlledBatchSent(
+  srv: ReturnType<typeof getSupabaseServiceClient>,
+  input: {
+    batchId: string | null;
+    totalParents: number;
+    totalStudents: number;
+    totalGrades: number;
+    totalSms: number;
+    metadata?: Record<string, unknown>;
+  }
+) {
+  if (!input.batchId) return null;
+
+  const { data, error } = await srv.rpc("mark_grade_sms_digest_batch_sent", {
+    p_batch_id: input.batchId,
+    p_total_parents: input.totalParents,
+    p_total_students: input.totalStudents,
+    p_total_grades: input.totalGrades,
+    p_total_sms: input.totalSms,
+    p_metadata: input.metadata || {},
+  });
+
+  if (error) {
+    console.warn("[admin/notifications/grades-digest/send] mark batch sent error", {
+      batchId: input.batchId,
+      error: error.message,
+    });
+    return null;
+  }
+
+  return data;
+}
+
+async function markControlledBatchFailed(
+  srv: ReturnType<typeof getSupabaseServiceClient>,
+  batchId: string | null,
+  reason: string,
+  metadata?: Record<string, unknown>
+) {
+  if (!batchId) return null;
+
+  const { data, error } = await srv.rpc("mark_grade_sms_digest_batch_failed", {
+    p_batch_id: batchId,
+    p_reason: reason,
+    p_metadata: metadata || {},
+  });
+
+  if (error) {
+    console.warn("[admin/notifications/grades-digest/send] mark batch failed error", {
+      batchId,
+      reason,
+      error: error.message,
+    });
+    return null;
+  }
+
+  return data;
+}
+
 async function getLastCompletedRun(
   srv: ReturnType<typeof getSupabaseServiceClient>,
   institutionId: string
@@ -280,7 +417,7 @@ async function createRun(
     throw error;
   }
 
-  return String(data?.id || "");
+  return String(data?.id || "") || null;
 }
 
 async function completeRun(
@@ -503,6 +640,7 @@ async function markOfficialScoresAsQueuedForSms(
 
 export async function POST(req: NextRequest) {
   let runId: string | null = null;
+  let batchId: string | null = null;
 
   try {
     const ctx = await getContext();
@@ -521,7 +659,25 @@ export async function POST(req: NextRequest) {
       class_id?: string;
       period_label?: string;
       force?: boolean;
+      trigger_type?: "manual" | "auto";
     };
+
+    const triggerType: "manual" | "auto" =
+      body.trigger_type === "auto" ? "auto" : "manual";
+
+    const smsDigestMode = await getSmsDigestMode(srv, institutionId);
+
+    if (smsDigestMode === "disabled") {
+      return bad("SMS_DIGEST_DISABLED_IN_PUBLICATION_SETTINGS", 409, {
+        sms_digest_mode: smsDigestMode,
+      });
+    }
+
+    if (triggerType === "auto" && smsDigestMode !== "weekly") {
+      return bad("SMS_DIGEST_AUTO_MODE_NOT_ENABLED", 409, {
+        sms_digest_mode: smsDigestMode,
+      });
+    }
 
     const { allowed, policy } = await shouldSendSmsForInstitutionEvent({
       srv,
@@ -539,6 +695,29 @@ export async function POST(req: NextRequest) {
       });
     }
 
+    const batchStart = await startControlledBatch(srv, {
+      institutionId,
+      profileId,
+      triggerType,
+      metadata: {
+        source: "admin_notifications_grades_digest_send",
+        requested_class_id: body.class_id || null,
+        requested_period_start: body.period_start || null,
+        requested_period_end: body.period_end || null,
+        requested_force: body.force === true,
+      },
+    });
+
+    batchId = toStringOrNull(batchStart.batch_id);
+
+    if (!batchStart.allowed) {
+      return bad(String(batchStart.reason || "SMS_DIGEST_BLOCKED"), 409, {
+        blocked: true,
+        batch_id: batchId,
+        decision: batchStart,
+      });
+    }
+
     const nowIso = new Date().toISOString();
     const explicitStart = toIsoOrNull(body.period_start);
     const explicitEnd = toIsoOrNull(body.period_end);
@@ -550,6 +729,7 @@ export async function POST(req: NextRequest) {
       const lastRun = await getLastCompletedRun(srv, institutionId);
 
       periodStart =
+        toIsoOrNull(batchStart.last_sent_at) ||
         String(lastRun?.period_end || "").trim() ||
         new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
     }
@@ -559,7 +739,13 @@ export async function POST(req: NextRequest) {
     }
 
     if (new Date(periodStart).getTime() >= new Date(periodEnd).getTime()) {
+      await markControlledBatchFailed(srv, batchId, "invalid_period", {
+        period_start: periodStart,
+        period_end: periodEnd,
+      });
+
       return bad("INVALID_PERIOD", 400, {
+        batch_id: batchId,
         period_start: periodStart,
         period_end: periodEnd,
       });
@@ -574,7 +760,14 @@ export async function POST(req: NextRequest) {
       );
 
       if (exists?.id) {
+        await markControlledBatchFailed(srv, batchId, "digest_already_sent_for_period", {
+          run_id: exists.id,
+          period_start: periodStart,
+          period_end: periodEnd,
+        });
+
         return bad("DIGEST_ALREADY_SENT_FOR_PERIOD", 409, {
+          batch_id: batchId,
           run_id: exists.id,
           period_start: periodStart,
           period_end: periodEnd,
@@ -603,8 +796,15 @@ export async function POST(req: NextRequest) {
         notificationsCreated: 0,
       });
 
+      await markControlledBatchFailed(srv, batchId, "no_classes", {
+        run_id: runId,
+        period_start: periodStart,
+        period_end: periodEnd,
+      });
+
       return NextResponse.json({
         ok: true,
+        batch_id: batchId,
         run_id: runId,
         period_start: periodStart,
         period_end: periodEnd,
@@ -624,10 +824,10 @@ export async function POST(req: NextRequest) {
     }
 
     /*
-     * ✅ Nouvelle source officielle du digest SMS :
+     * Source officielle du digest SMS :
      * public.grade_published_scores
      *
-     * On ne lit plus student_grades.
+     * On ne lit pas student_grades.
      * Donc :
      * - une note soumise mais non validée ne peut jamais partir ;
      * - une note en correction ne peut jamais partir ;
@@ -659,7 +859,8 @@ export async function POST(req: NextRequest) {
      * Par défaut, on évite les doublons SMS :
      * une note déjà incluse dans un digest ne repart pas.
      *
-     * Si force=true, on autorise explicitement un renvoi sur la période.
+     * force=true peut seulement autoriser un renvoi de période.
+     * Il ne contourne jamais le verrou 7 jours / 4 envois par mois.
      */
     if (!body.force) {
       officialQuery = officialQuery
@@ -694,8 +895,15 @@ export async function POST(req: NextRequest) {
         notificationsCreated: 0,
       });
 
+      await markControlledBatchFailed(srv, batchId, "no_official_published_scores", {
+        run_id: runId,
+        period_start: periodStart,
+        period_end: periodEnd,
+      });
+
       return NextResponse.json({
         ok: true,
+        batch_id: batchId,
         run_id: runId,
         period_start: periodStart,
         period_end: periodEnd,
@@ -749,8 +957,15 @@ export async function POST(req: NextRequest) {
         notificationsCreated: 0,
       });
 
+      await markControlledBatchFailed(srv, batchId, "no_official_scores", {
+        run_id: runId,
+        period_start: periodStart,
+        period_end: periodEnd,
+      });
+
       return NextResponse.json({
         ok: true,
+        batch_id: batchId,
         run_id: runId,
         period_start: periodStart,
         period_end: periodEnd,
@@ -799,7 +1014,8 @@ export async function POST(req: NextRequest) {
         digestRunId: runId,
         officialScoreIds: group.officialScoreIds,
         evaluationIds: group.evaluationIds,
-      });
+        smsDigestBatchId: batchId,
+      } as any);
 
       notificationsCreated += 1;
       queuedOfficialScoreIds.push(...group.officialScoreIds);
@@ -807,8 +1023,10 @@ export async function POST(req: NextRequest) {
 
     await markOfficialScoresAsQueuedForSms(srv, queuedOfficialScoreIds, runId);
 
+    let dispatchOk = false;
+
     if (notificationsCreated > 0) {
-      await triggerSmsDispatch({
+      dispatchOk = await triggerSmsDispatch({
         req,
         reason: "notes_digest",
         timeoutMs: 8000,
@@ -821,8 +1039,25 @@ export async function POST(req: NextRequest) {
       notificationsCreated,
     });
 
+    await markControlledBatchSent(srv, {
+      batchId,
+      totalParents: notificationsCreated,
+      totalStudents: grouped.size,
+      totalGrades: queuedOfficialScoreIds.length,
+      totalSms: notificationsCreated,
+      metadata: {
+        run_id: runId,
+        dispatch_ok: dispatchOk,
+        period_start: periodStart,
+        period_end: periodEnd,
+        period_label: periodLabel,
+        source: "grade_published_scores",
+      },
+    });
+
     return NextResponse.json({
       ok: true,
+      batch_id: batchId,
       run_id: runId,
       period_start: periodStart,
       period_end: periodEnd,
@@ -832,15 +1067,29 @@ export async function POST(req: NextRequest) {
       evaluations_count: new Set(
         Array.from(grouped.values()).flatMap((g) => g.evaluationIds)
       ).size,
+      dispatch_ok: dispatchOk,
       source: "grade_published_scores",
+      rule: {
+        min_interval_days: 7,
+        monthly_limit: 4,
+        force_does_not_bypass_frequency_lock: true,
+      },
     });
   } catch (e: any) {
     console.error("[admin/notifications/grades-digest/send] unexpected error", e);
 
-    await failRun(
-      getSupabaseServiceClient(),
-      runId,
-      String(e?.message || "INTERNAL_ERROR")
+    const srv = getSupabaseServiceClient();
+
+    await failRun(srv, runId, String(e?.message || "INTERNAL_ERROR"));
+
+    await markControlledBatchFailed(
+      srv,
+      batchId,
+      "unexpected_error",
+      {
+        run_id: runId,
+        error: String(e?.message || "INTERNAL_ERROR"),
+      }
     );
 
     return bad(e?.message || "INTERNAL_ERROR", 500);
