@@ -335,6 +335,32 @@ type CurrentAffectationItem = {
   }>;
 };
 
+type AdminStudentPayloadRow = {
+  id?: string | null;
+  student_id?: string | null;
+  class_id?: string | null;
+  current_class_id?: string | null;
+  enrollment_class_id?: string | null;
+  end_date?: string | null;
+  enrollment_end_date?: string | null;
+  is_active?: boolean | null;
+  active?: boolean | null;
+  status?: string | null;
+  student?: {
+    id?: string | null;
+    end_date?: string | null;
+    is_active?: boolean | null;
+  } | null;
+  enrollment?: {
+    class_id?: string | null;
+    end_date?: string | null;
+  } | null;
+  class_enrollment?: {
+    class_id?: string | null;
+    end_date?: string | null;
+  } | null;
+};
+
 /* ───────── Helpers ───────── */
 
 function round2(n: number): number {
@@ -686,6 +712,143 @@ function subjectLabelsMatch(a: string | null | undefined, b: string | null | und
   return false;
 }
 
+function extractRowsFromPayload(payload: any): any[] {
+  if (Array.isArray(payload)) return payload;
+
+  const directKeys = ["items", "students", "rows", "results", "data"];
+  for (const key of directKeys) {
+    const value = payload?.[key];
+    if (Array.isArray(value)) return value;
+  }
+
+  const nestedKeys = ["items", "students", "rows", "results"];
+  for (const parentKey of ["data", "payload"]) {
+    const parent = payload?.[parentKey];
+    if (!parent || typeof parent !== "object") continue;
+    for (const key of nestedKeys) {
+      const value = parent?.[key];
+      if (Array.isArray(value)) return value;
+    }
+  }
+
+  return [];
+}
+
+function readStudentIdFromAdminRow(row: AdminStudentPayloadRow | any): string {
+  return String(row?.student_id || row?.student?.id || row?.id || "").trim();
+}
+
+function adminStudentRowMatchesClass(row: AdminStudentPayloadRow | any, classId: string): boolean {
+  const classValues = [
+    row?.class_id,
+    row?.current_class_id,
+    row?.enrollment_class_id,
+    row?.enrollment?.class_id,
+    row?.class_enrollment?.class_id,
+  ]
+    .map((value) => String(value || "").trim())
+    .filter(Boolean);
+
+  // Si l'API /api/admin/students filtre déjà par class_id et ne renvoie pas la classe
+  // dans chaque ligne, on fait confiance à la réponse.
+  if (classValues.length === 0) return true;
+
+  return classValues.includes(classId);
+}
+
+function adminStudentRowIsActive(row: AdminStudentPayloadRow | any): boolean {
+  const endDate =
+    row?.end_date ??
+    row?.enrollment_end_date ??
+    row?.student?.end_date ??
+    row?.enrollment?.end_date ??
+    row?.class_enrollment?.end_date ??
+    null;
+
+  if (endDate !== null && endDate !== undefined && String(endDate).trim() !== "") {
+    return false;
+  }
+
+  if (row?.is_active === false || row?.active === false || row?.student?.is_active === false) {
+    return false;
+  }
+
+  const status = normalizeLabelForMatch(row?.status);
+  if (status.includes("retire") || status.includes("transfere") || status.includes("archive")) {
+    return false;
+  }
+
+  return true;
+}
+
+function extractActiveStudentIds(payload: any, classId: string): string[] {
+  const rows = extractRowsFromPayload(payload);
+  const ids = rows
+    .filter((row) => adminStudentRowMatchesClass(row, classId))
+    .filter(adminStudentRowIsActive)
+    .map(readStudentIdFromAdminRow)
+    .filter(Boolean);
+
+  return Array.from(new Set(ids));
+}
+
+async function fetchActiveStudentIdsForClass(classId: string): Promise<Set<string> | null> {
+  const encodedClassId = encodeURIComponent(classId);
+  const urls = [
+    `/api/admin/students?class_id=${encodedClassId}&page=1&page_size=5000&pageSize=5000&limit=5000&per_page=5000`,
+    `/api/admin/students?classId=${encodedClassId}&page=1&page_size=5000&pageSize=5000&limit=5000&per_page=5000`,
+    `/api/admin/classes/${encodedClassId}/students?active=true&page=1&page_size=5000&pageSize=5000&limit=5000&per_page=5000`,
+  ];
+
+  for (const url of urls) {
+    try {
+      const res = await fetch(url, { cache: "no-store" });
+      if (!res.ok) continue;
+
+      const payload = await res.json().catch(() => null);
+      if (!payload) continue;
+
+      const rows = extractRowsFromPayload(payload);
+      if (!Array.isArray(rows)) continue;
+
+      const ids = extractActiveStudentIds(payload, classId);
+      return new Set(ids);
+    } catch (err) {
+      console.warn("[ConseilClasse] lecture roster actif impossible", url, err);
+    }
+  }
+
+  return null;
+}
+
+function filterBulletinByActiveStudents(
+  bulletin: BulletinResponse,
+  activeStudentIds: Set<string> | null
+): BulletinResponse {
+  if (!activeStudentIds) return bulletin;
+
+  return {
+    ...bulletin,
+    items: (bulletin.items ?? []).filter((item) =>
+      activeStudentIds.has(String(item.student_id || ""))
+    ),
+  };
+}
+
+function filterConductByActiveStudents(
+  conduct: ConductSummaryResponse,
+  activeStudentIds: Set<string> | null
+): ConductSummaryResponse {
+  if (!activeStudentIds) return conduct;
+
+  return {
+    ...conduct,
+    items: (conduct.items ?? []).filter((item) =>
+      activeStudentIds.has(String(item.student_id || ""))
+    ),
+  };
+}
+
 /* ───────── Page ───────── */
 
 export default function ConseilClassePage() {
@@ -719,6 +882,7 @@ export default function ConseilClassePage() {
   const [previewOpen, setPreviewOpen] = useState(false);
   const [yearPeriodBulletins, setYearPeriodBulletins] = useState<Record<string, EnrichedBulletin>>({});
   const [yearRecapLoading, setYearRecapLoading] = useState(false);
+  const [activeStudentIds, setActiveStudentIds] = useState<string[]>([]);
 
   useEffect(() => {
     const run = async () => {
@@ -848,12 +1012,16 @@ export default function ConseilClassePage() {
       params.set("from", dateFrom);
       params.set("to", dateTo);
       params.set("published", "true");
+      params.set("active_only", "true");
 
-      const [resBulletin, resConduct, resAffectations] = await Promise.all([
+      const [activeIdsForClass, resBulletin, resConduct, resAffectations] = await Promise.all([
+        fetchActiveStudentIdsForClass(selectedClassId),
         fetch(`/api/admin/grades/bulletin?${params.toString()}`, { cache: "no-store" }),
         fetch(`/api/admin/conduite/averages?${params.toString()}`, { cache: "no-store" }),
         fetch(`/api/admin/affectations/current`, { cache: "no-store" }),
       ]);
+
+      setActiveStudentIds(activeIdsForClass ? Array.from(activeIdsForClass) : []);
 
       if (!resBulletin.ok) {
         const txt = await resBulletin.text().catch(() => "");
@@ -862,16 +1030,17 @@ export default function ConseilClassePage() {
         );
       }
 
-      const json = (await resBulletin.json()) as BulletinResponse;
-      if (!json.ok) throw new Error("Réponse bulletin invalide.");
+      const rawBulletin = (await resBulletin.json()) as BulletinResponse;
+      if (!rawBulletin.ok) throw new Error("Réponse bulletin invalide.");
 
+      const json = filterBulletinByActiveStudents(rawBulletin, activeIdsForClass);
       setBulletinRaw(json);
 
       if (resConduct.ok) {
         try {
           const conductJson = (await resConduct.json()) as ConductSummaryResponse;
           if (conductJson && Array.isArray(conductJson.items)) {
-            setConductSummary(conductJson);
+            setConductSummary(filterConductByActiveStudents(conductJson, activeIdsForClass));
           }
         } catch (err) {
           console.warn("[ConseilClasse] lecture conduite impossible", err);
@@ -922,14 +1091,16 @@ export default function ConseilClassePage() {
               p.set("from", period.start_date);
               p.set("to", period.end_date);
               p.set("published", "true");
+              p.set("active_only", "true");
 
               try {
                 const res = await fetch(`/api/admin/grades/bulletin?${p.toString()}`, {
                   cache: "no-store",
                 });
                 if (!res.ok) return [period.id, null] as const;
-                const js = (await res.json()) as BulletinResponse;
-                if (!js?.ok) return [period.id, null] as const;
+                const rawPeriodBulletin = (await res.json()) as BulletinResponse;
+                if (!rawPeriodBulletin?.ok) return [period.id, null] as const;
+                const js = filterBulletinByActiveStudents(rawPeriodBulletin, activeIdsForClass);
                 return [period.id, computeRanksAndStats(js)] as const;
               } catch (err) {
                 console.warn("[ConseilClasse] bulletin période ignoré", period.id, err);
@@ -1959,6 +2130,12 @@ export default function ConseilClassePage() {
             </div>
           </div>
 
+          {activeStudentIds.length > 0 ? (
+            <div className="mt-3 rounded-2xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-xs text-emerald-700">
+              Élèves actifs pris en compte : {activeStudentIds.length}.
+            </div>
+          ) : null}
+
           {errorMsg ? (
             <div className="mt-3 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
               {errorMsg}
@@ -2439,7 +2616,7 @@ export default function ConseilClassePage() {
                     <div className="pv-ruled p-3 text-[11px] leading-6">
                       {yearRecapLoading
                         ? "Calcul du récapitulatif annuel en cours…"
-                        : "Cette fiche récapitulative est ajoutée au conseil du dernier trimestre afin d’afficher toutes les périodes et la moyenne annuelle."}
+                        : ""}
                     </div>
                   </div>
                 </div>

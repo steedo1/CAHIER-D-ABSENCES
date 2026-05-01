@@ -1420,7 +1420,23 @@ export async function GET(req: NextRequest) {
       : null,
   };
 
-  /* 2) Récupérer les élèves */
+  /* 2) Récupérer les élèves
+   *
+   * ✅ Règle métier Mon Cahier :
+   * Pour le bulletin actuel, le PV du conseil de classe, les statistiques et
+   * la fiche annuelle, la liste de classe doit être la même que dans le cahier
+   * des notes : uniquement les inscriptions actives.
+   *
+   * Les élèves retirés restent dans class_enrollments pour l’historique, mais
+   * ils ne doivent plus entrer dans les effectifs, rangs, tops, PV, conduite,
+   * QR/bulletins générés depuis la classe courante.
+   *
+   * Option non cassante : si un jour on veut volontairement sortir un bulletin
+   * historique d’élèves présents sur une ancienne période, on pourra appeler
+   * cette API avec active_only=false. Par défaut : active_only=true.
+   */
+  const activeOnlyParam = String(searchParams.get("active_only") || "").trim().toLowerCase();
+  const activeOnly = !(activeOnlyParam === "false" || activeOnlyParam === "0" || activeOnlyParam === "no");
   const hasDateFilter = !!dateFrom || !!dateTo;
 
   let enrollQuery = supabase
@@ -1428,6 +1444,8 @@ export async function GET(req: NextRequest) {
     .select(
       `
       student_id,
+      start_date,
+      end_date,
       students(
         matricule,
         first_name,
@@ -1447,8 +1465,15 @@ export async function GET(req: NextRequest) {
     )
     .eq("class_id", classId);
 
-  if (!hasDateFilter) enrollQuery = enrollQuery.is("end_date", null);
-  else if (dateFrom) enrollQuery = enrollQuery.or(`end_date.gte.${dateFrom},end_date.is.null`);
+  if (activeOnly) {
+    enrollQuery = enrollQuery.is("end_date", null);
+  } else if (!hasDateFilter) {
+    enrollQuery = enrollQuery.is("end_date", null);
+  } else {
+    // Mode historique explicite : présent au moins une partie de la période.
+    if (dateFrom) enrollQuery = enrollQuery.or(`end_date.gte.${dateFrom},end_date.is.null`);
+    if (dateTo) enrollQuery = enrollQuery.lte("start_date", dateTo);
+  }
 
   enrollQuery = enrollQuery.order("student_id", { ascending: true });
 
@@ -1458,7 +1483,16 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ ok: false, error: "CLASS_STUDENTS_ERROR" }, { status: 500 });
   }
 
-  const classStudents = (csData || []) as ClassStudentRow[];
+  // ✅ Déduplication défensive : évite les doublons si une correction d’import
+  // a laissé plusieurs lignes d’inscription pour le même élève.
+  const classStudentMap = new Map<string, ClassStudentRow>();
+  for (const row of (csData || []) as ClassStudentRow[]) {
+    const sid = String(row.student_id || "").trim();
+    if (!sid) continue;
+    if (!classStudentMap.has(sid)) classStudentMap.set(sid, row);
+  }
+
+  const classStudents = Array.from(classStudentMap.values());
   const studentIds = classStudents.map((cs) => cs.student_id);
 
   const bulletinAcademicYear =
