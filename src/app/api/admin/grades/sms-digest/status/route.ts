@@ -6,24 +6,11 @@ import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-type SmsDigestMode = "manual" | "weekly" | "disabled";
-
 type UserRoleRow = {
   profile_id: string;
   institution_id: string | null;
   role: string;
 };
-
-type PublicationSettingsRow = {
-  institution_id: string;
-  require_admin_validation: boolean | null;
-  auto_push_on_publish: boolean | null;
-  sms_digest_mode: SmsDigestMode | null;
-  created_at?: string | null;
-  updated_at?: string | null;
-};
-
-const SETTINGS_TABLE = "grade_publication_settings";
 
 const ADMIN_ROLES = new Set([
   "admin",
@@ -35,10 +22,6 @@ const ADMIN_ROLES = new Set([
 
 function json(status: number, body: Record<string, any>) {
   return NextResponse.json(body, { status });
-}
-
-function isSmsDigestMode(value: unknown): value is SmsDigestMode {
-  return value === "manual" || value === "weekly" || value === "disabled";
 }
 
 function safeIso(value: any): string | null {
@@ -137,38 +120,29 @@ async function getAdminContext(req: NextRequest) {
   };
 }
 
-async function getPublicationSettings(
-  srv: ReturnType<typeof getSupabaseServiceClient>,
-  institutionId: string
-) {
-  const { data, error } = await srv
-    .from(SETTINGS_TABLE)
-    .select(
-      "institution_id,require_admin_validation,auto_push_on_publish,sms_digest_mode,created_at,updated_at"
-    )
-    .eq("institution_id", institutionId)
-    .maybeSingle();
-
-  if (error) {
-    throw new Error(
-      error.message ||
-        "Impossible de charger les paramètres de publication des notes."
-    );
-  }
-
-  const row = data as PublicationSettingsRow | null;
-
-  const mode: SmsDigestMode = isSmsDigestMode(row?.sms_digest_mode)
-    ? row!.sms_digest_mode
-    : "weekly";
-
+function getFixedSmsSettings(institutionId: string) {
   return {
     institution_id: institutionId,
-    require_admin_validation: Boolean(row?.require_admin_validation),
-    auto_push_on_publish: row?.auto_push_on_publish !== false,
-    sms_digest_mode: mode,
-    created_at: row?.created_at || null,
-    updated_at: row?.updated_at || null,
+
+    /**
+     * Pour l’instant, le digest SMS des notes reste uniquement en mode manuel contrôlé.
+     * On ne dépend pas d’une table de réglages absente.
+     */
+    sms_digest_mode: "manual",
+
+    /**
+     * Ces deux champs sont conservés uniquement pour ne pas casser l’interface
+     * si la page les lit encore dans l’objet settings.
+     */
+    require_admin_validation: false,
+    auto_push_on_publish: true,
+
+    min_interval_days: 7,
+    monthly_limit: 4,
+    official_grades_only: true,
+
+    created_at: null,
+    updated_at: null,
   };
 }
 
@@ -187,9 +161,7 @@ async function getLatestBatch(
     .maybeSingle();
 
   if (error) {
-    throw new Error(
-      error.message || "Impossible de charger le dernier lot SMS."
-    );
+    throw new Error(error.message || "Impossible de charger le dernier lot SMS.");
   }
 
   return data || null;
@@ -209,9 +181,7 @@ async function getOpenBatch(
     .maybeSingle();
 
   if (error) {
-    throw new Error(
-      error.message || "Impossible de vérifier les lots SMS en cours."
-    );
+    throw new Error(error.message || "Impossible de vérifier les lots SMS en cours.");
   }
 
   return data || null;
@@ -232,9 +202,7 @@ async function getMonthlySentCount(
     .lt("sent_at", monthEndIso);
 
   if (error) {
-    throw new Error(
-      error.message || "Impossible de compter les envois SMS du mois."
-    );
+    throw new Error(error.message || "Impossible de compter les envois SMS du mois.");
   }
 
   return count || 0;
@@ -251,33 +219,14 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    const settings = await getPublicationSettings(ctx.srv, ctx.institutionId);
+    const settings = getFixedSmsSettings(ctx.institutionId);
+
     const latestBatch = await getLatestBatch(ctx.srv, ctx.institutionId);
     const openBatch = await getOpenBatch(ctx.srv, ctx.institutionId);
     const monthlySentCount = await getMonthlySentCount(
       ctx.srv,
       ctx.institutionId
     );
-
-    if (settings.sms_digest_mode === "disabled") {
-      return json(200, {
-        ok: true,
-        institution_id: ctx.institutionId,
-        settings,
-        decision: {
-          allowed: false,
-          reason: "sms_disabled",
-          message: "Le digest SMS des notes est désactivé pour cet établissement.",
-          last_sent_at: safeIso(latestBatch?.sent_at),
-          next_allowed_at: null,
-          monthly_count: monthlySentCount,
-          monthly_limit: 4,
-          min_interval_days: 7,
-        },
-        latest_batch: latestBatch,
-        open_batch: openBatch,
-      });
-    }
 
     const { data: decision, error: decisionError } = await ctx.srv.rpc(
       "can_create_grade_sms_digest_batch",
@@ -299,7 +248,16 @@ export async function GET(req: NextRequest) {
       ok: true,
       institution_id: ctx.institutionId,
       settings,
-      decision,
+      decision: decision || {
+        allowed: false,
+        reason: "unknown",
+        message: "Décision serveur indisponible.",
+        last_sent_at: safeIso(latestBatch?.sent_at),
+        next_allowed_at: null,
+        monthly_count: monthlySentCount,
+        monthly_limit: 4,
+        min_interval_days: 7,
+      },
       latest_batch: latestBatch,
       open_batch: openBatch,
     });
