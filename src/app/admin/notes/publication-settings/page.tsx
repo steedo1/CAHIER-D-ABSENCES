@@ -197,10 +197,6 @@ function smsDigestModeLabel() {
   return "Manuel contrôlé";
 }
 
-function smsDigestModeDescription() {
-  return "L’administration peut demander l’envoi depuis le tableau de bord des notes, mais le serveur bloque automatiquement si les 7 jours ne sont pas atteints ou si la limite mensuelle est dépassée.";
-}
-
 function smsDecisionReasonLabel(reason?: string | null) {
   if (reason === "ok") return "Envoi autorisé";
   if (reason === "sms_disabled") return "SMS désactivé";
@@ -218,12 +214,6 @@ function batchStatusLabel(status?: string | null) {
   if (status === "sent") return "Envoyé";
   if (status === "failed") return "Échec";
   if (status === "blocked") return "Bloqué";
-  return "—";
-}
-
-function triggerTypeLabel(triggerType?: string | null) {
-  if (triggerType === "auto") return "Automatique";
-  if (triggerType === "manual") return "Manuel";
   return "—";
 }
 
@@ -282,11 +272,8 @@ function SmsDigestStatusCard({
             <h2 className="text-base font-semibold text-slate-900">
               Statut serveur du digest SMS
             </h2>
-            <p className="mt-1 max-w-3xl text-sm leading-relaxed text-slate-600">
-              Ce bloc affiche la vraie décision du serveur. L’envoi SMS des
-              notes reste manuel, mais il est strictement contrôlé : minimum{" "}
-              {minIntervalDays} jours entre deux envois et maximum{" "}
-              {monthlyLimit} envois par mois.
+            <p className="mt-1 text-sm text-slate-600">
+              Décision serveur en temps réel pour l’envoi manuel des SMS de notes.
             </p>
           </div>
         </div>
@@ -365,53 +352,6 @@ function SmsDigestStatusCard({
                 {batchStatusLabel(openBatch.status)}
               </span>{" "}
               depuis {formatDateTimeFr(openBatch.created_at)}.
-            </div>
-          )}
-
-          {latestBatch && (
-            <div className="mt-4 rounded-2xl border border-slate-200 bg-white px-4 py-3">
-              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                Dernier lot connu
-              </div>
-
-              <div className="mt-2 grid gap-3 md:grid-cols-4">
-                <div>
-                  <div className="text-xs text-slate-500">Statut</div>
-                  <div className="text-sm font-semibold text-slate-900">
-                    {batchStatusLabel(latestBatch.status)}
-                  </div>
-                </div>
-
-                <div>
-                  <div className="text-xs text-slate-500">Déclenchement</div>
-                  <div className="text-sm font-semibold text-slate-900">
-                    {triggerTypeLabel(latestBatch.trigger_type)}
-                  </div>
-                </div>
-
-                <div>
-                  <div className="text-xs text-slate-500">Créé le</div>
-                  <div className="text-sm font-semibold text-slate-900">
-                    {formatDateTimeFr(latestBatch.created_at)}
-                  </div>
-                </div>
-
-                <div>
-                  <div className="text-xs text-slate-500">SMS</div>
-                  <div className="text-sm font-semibold text-slate-900">
-                    {Number(latestBatch.total_sms ?? 0)}
-                  </div>
-                </div>
-              </div>
-
-              {latestBatch.blocked_reason && (
-                <div className="mt-3 text-xs text-slate-500">
-                  Raison du blocage :{" "}
-                  <span className="font-semibold text-slate-700">
-                    {smsDecisionReasonLabel(latestBatch.blocked_reason)}
-                  </span>
-                </div>
-              )}
             </div>
           )}
         </>
@@ -561,8 +501,7 @@ export default function AdminGradePublicationSettingsPage() {
               Paramètres de publication
             </h1>
             <p className="mt-2 max-w-3xl text-sm text-indigo-100/85">
-              Définissez comment les notes deviennent officielles, puis comment
-              les notifications push et SMS sont préparées pour les parents.
+              Réglez la publication des notes et les notifications envoyées aux parents.
             </p>
           </div>
 
@@ -630,7 +569,7 @@ export default function AdminGradePublicationSettingsPage() {
               tone="amber"
               icon={<ShieldCheck className="h-5 w-5" />}
               title="Validation administrative obligatoire"
-              description="Quand ce mode est activé, l’enseignant soumet les notes. L’administration doit valider avant publication officielle et notification aux parents."
+              description="L’enseignant soumet les notes. L’administration valide avant publication officielle."
             />
 
             <ToggleCard
@@ -641,7 +580,7 @@ export default function AdminGradePublicationSettingsPage() {
               tone="emerald"
               icon={<Send className="h-5 w-5" />}
               title="Publication directe par les enseignants"
-              description="Quand ce mode est actif, l’enseignant peut publier directement les notes officielles sans validation préalable."
+              description="L’enseignant publie directement les notes officielles, sans validation préalable."
             />
 
             <ToggleCard
@@ -650,7 +589,7 @@ export default function AdminGradePublicationSettingsPage() {
               tone="emerald"
               icon={<BellRing className="h-5 w-5" />}
               title="Push automatique après publication officielle"
-              description="Après validation ou publication directe, Mon Cahier prépare automatiquement les notifications push des notes officielles."
+              description="Après publication, Mon Cahier prépare automatiquement les notifications push."
             />
 
             <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
@@ -663,83 +602,31 @@ export default function AdminGradePublicationSettingsPage() {
                   <h2 className="text-sm font-semibold text-slate-900">
                     SMS digest manuel contrôlé
                   </h2>
+
                   <p className="mt-1 text-sm leading-relaxed text-slate-600">
-                    Les SMS regroupent uniquement les notes officiellement
-                    publiées. Pour le moment, Mon Cahier ne propose que l’envoi
-                    manuel contrôlé : l’administration clique sur{" "}
-                    <span className="font-semibold text-slate-800">
-                      Envoyer les notes
-                    </span>
-                    , mais le serveur applique toujours les limites.
+                    Envoi manuel depuis le tableau de bord des notes. Le serveur
+                    applique automatiquement les limites.
                   </p>
 
-                  <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
-                    <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                      Mode conservé
-                    </div>
-                    <div className="mt-1 text-sm font-semibold text-slate-900">
-                      {smsDigestModeLabel()}
-                    </div>
-                    <p className="mt-1 text-xs leading-relaxed text-slate-600">
-                      {smsDigestModeDescription()}
-                    </p>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-700">
+                      7 jours minimum
+                    </span>
+                    <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-700">
+                      4 envois / mois
+                    </span>
+                    <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-700">
+                      Notes officielles
+                    </span>
                   </div>
 
                   {settings?.sms_digest_mode !== "manual" && (
                     <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-900">
-                      Une ancienne valeur SMS a été détectée dans la base. Cliquez
-                      sur <span className="font-semibold">Enregistrer</span> pour
+                      Ancienne valeur SMS détectée. Cliquez sur{" "}
+                      <span className="font-semibold">Enregistrer</span> pour
                       revenir au mode manuel contrôlé.
                     </div>
                   )}
-                </div>
-              </div>
-            </div>
-          </section>
-
-          <section className="rounded-2xl border border-amber-200 bg-amber-50 p-5 shadow-sm">
-            <div className="flex items-start gap-3">
-              <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-amber-100 text-amber-800">
-                <Clock3 className="h-5 w-5" />
-              </span>
-
-              <div className="min-w-0 flex-1">
-                <h2 className="text-base font-semibold text-amber-950">
-                  Règle SMS obligatoire
-                </h2>
-                <p className="mt-2 text-sm leading-relaxed text-amber-900">
-                  En mode manuel contrôlé, Mon Cahier empêche tout envoi SMS si
-                  la dernière campagne de notes date de moins de 7 jours ou si
-                  l’établissement a déjà atteint 4 envois dans le mois.
-                </p>
-
-                <div className="mt-4 grid gap-3 md:grid-cols-3">
-                  <div className="rounded-2xl border border-amber-200 bg-white/70 p-3">
-                    <div className="text-xs text-amber-700">
-                      Délai minimum
-                    </div>
-                    <div className="mt-1 text-sm font-semibold text-amber-950">
-                      7 jours
-                    </div>
-                  </div>
-
-                  <div className="rounded-2xl border border-amber-200 bg-white/70 p-3">
-                    <div className="text-xs text-amber-700">
-                      Limite mensuelle
-                    </div>
-                    <div className="mt-1 text-sm font-semibold text-amber-950">
-                      4 envois maximum
-                    </div>
-                  </div>
-
-                  <div className="rounded-2xl border border-amber-200 bg-white/70 p-3">
-                    <div className="text-xs text-amber-700">
-                      Notes concernées
-                    </div>
-                    <div className="mt-1 text-sm font-semibold text-amber-950">
-                      Officielles uniquement
-                    </div>
-                  </div>
                 </div>
               </div>
             </div>
@@ -774,20 +661,11 @@ export default function AdminGradePublicationSettingsPage() {
                   Résumé de la règle active
                 </h2>
 
-                {draft.require_admin_validation ? (
-                  <p className="mt-2 text-sm leading-relaxed text-slate-600">
-                    Les enseignants ne publieront pas directement les notes. Ils
-                    feront une demande de publication. L’administration verra la
-                    demande, consultera la liste des élèves et des notes, puis
-                    pourra valider ou demander une correction.
-                  </p>
-                ) : (
-                  <p className="mt-2 text-sm leading-relaxed text-slate-600">
-                    Les enseignants peuvent publier directement. Les notes
-                    deviennent officielles dès publication et peuvent déclencher
-                    les notifications selon les réglages actifs.
-                  </p>
-                )}
+                <p className="mt-2 text-sm leading-relaxed text-slate-600">
+                  {draft.require_admin_validation
+                    ? "Les enseignants soumettent les notes à l’administration avant publication officielle."
+                    : "Les enseignants publient directement les notes officielles."}
+                </p>
 
                 <div className="mt-4 grid gap-3 md:grid-cols-3">
                   <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
@@ -814,8 +692,8 @@ export default function AdminGradePublicationSettingsPage() {
 
                 <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-900">
                   <CheckCircle2 className="mr-2 inline h-4 w-4" />
-                  Les SMS de notes sont en mode manuel contrôlé : minimum 7
-                  jours entre deux envois et 4 envois maximum par mois.
+                  SMS notes : manuel contrôlé · 7 jours min · 4 envois max/mois ·
+                  notes officielles uniquement.
                 </div>
 
                 {changed && (
