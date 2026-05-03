@@ -51,6 +51,7 @@ type DigestGroup = {
   classId: string;
   officialScoreIds: string[];
   evaluationIds: string[];
+  itemKeys: Set<string>;
   items: Array<{
     subject: string;
     score: number;
@@ -101,14 +102,6 @@ function toStringOrNull(value: unknown): string | null {
   return raw || null;
 }
 
-function asSmsDigestMode(value: unknown): SmsDigestMode {
-  if (value === "manual" || value === "weekly" || value === "disabled") {
-    return value;
-  }
-
-  return "weekly";
-}
-
 function formatDateShort(iso: string): string {
   try {
     return new Date(iso).toLocaleDateString("fr-FR", {
@@ -129,10 +122,18 @@ function cleanText(value: unknown) {
   return String(value ?? "").replace(/\s+/g, " ").trim();
 }
 
+function looksLikeUuid(value: unknown) {
+  const v = cleanText(value);
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+    v
+  );
+}
+
 function looksLikeStudentCode(value: unknown) {
   const v = cleanText(value);
   if (!v) return false;
   if (v.includes(" ")) return false;
+  if (looksLikeUuid(v)) return true;
 
   return (
     /^\d{4,}[A-Za-z0-9-]*$/.test(v) ||
@@ -147,28 +148,36 @@ function safeHumanName(value: unknown) {
   return v;
 }
 
-function pickStudentName(row: any, fallback: string) {
+function pickStudentName(row: any, fallback = "Eleve") {
   const full = safeHumanName(row?.full_name || row?.display_name);
 
-  const combined = safeHumanName(
+  const combinedLastFirst = safeHumanName(
+    [row?.last_name, row?.first_name]
+      .map((x) => String(x || "").trim())
+      .filter(Boolean)
+      .join(" ")
+  );
+
+  const combinedFirstLast = safeHumanName(
     [row?.first_name, row?.last_name]
       .map((x) => String(x || "").trim())
       .filter(Boolean)
       .join(" ")
   );
 
-  return full || combined || fallback || "Eleve";
+  return full || combinedLastFirst || combinedFirstLast || fallback || "Eleve";
 }
 
 function pickClassLabel(row: any, fallback: string) {
   return String(row?.label || "").trim() || fallback;
 }
 
-function pickSubjectLabel(row: any, fallback = "Matiere") {
+function pickSubjectLabel(row: any, fallback = "Note") {
   return (
-    String(row?.name || "").trim() ||
-    String(row?.label || "").trim() ||
-    String(row?.title || "").trim() ||
+    cleanText(row?.custom_name) ||
+    cleanText(row?.name) ||
+    cleanText(row?.label) ||
+    cleanText(row?.title) ||
     fallback
   );
 }
@@ -176,6 +185,31 @@ function pickSubjectLabel(row: any, fallback = "Matiere") {
 function toFiniteNumber(value: unknown, fallback: number) {
   const n = Number(value);
   return Number.isFinite(n) ? n : fallback;
+}
+
+function registerSubjectLabel(
+  map: Map<string, string>,
+  resolved: Set<string>,
+  key: unknown,
+  label: unknown
+) {
+  const cleanKey = cleanText(key);
+  const cleanLabel = cleanText(label);
+
+  if (!cleanKey || !cleanLabel) return;
+
+  map.set(cleanKey, cleanLabel);
+  resolved.add(cleanKey);
+}
+
+function extractRelatedSubject(row: any) {
+  const related = row?.subjects;
+
+  if (Array.isArray(related)) {
+    return related[0] || null;
+  }
+
+  return related || null;
 }
 
 async function getContext(): Promise<Ctx> {
@@ -240,25 +274,16 @@ async function getContext(): Promise<Ctx> {
 }
 
 async function getSmsDigestMode(
-  srv: ReturnType<typeof getSupabaseServiceClient>,
-  institutionId: string
+  _srv: ReturnType<typeof getSupabaseServiceClient>,
+  _institutionId: string
 ): Promise<SmsDigestMode> {
-  const { data, error } = await srv
-    .from("grade_publication_settings")
-    .select("sms_digest_mode")
-    .eq("institution_id", institutionId)
-    .maybeSingle();
-
-  if (error) {
-    console.warn("[admin/notifications/grades-digest/send] settings error", {
-      institutionId,
-      error: error.message,
-    });
-
-    return "weekly";
-  }
-
-  return asSmsDigestMode((data as any)?.sms_digest_mode);
+  /*
+   * Mode stabilisé :
+   * - plus de dépendance à public.grade_publication_settings ;
+   * - plus de mode automatique SMS ;
+   * - SMS digest uniquement en manuel contrôlé.
+   */
+  return "manual";
 }
 
 async function startControlledBatch(
@@ -527,39 +552,102 @@ async function fetchClassRows(
 
 async function fetchSubjectMap(
   srv: ReturnType<typeof getSupabaseServiceClient>,
+  institutionId: string,
   subjectIds: string[]
 ) {
   const map = new Map<string, string>();
-
-  if (!subjectIds.length) return map;
+  const resolved = new Set<string>();
 
   const uniq = Array.from(new Set(subjectIds.filter(Boolean)));
   if (!uniq.length) return map;
 
-  let rows: any[] = [];
+  try {
+    const instById = await srv
+      .from("institution_subjects")
+      .select("id,subject_id,custom_name,subjects(name)")
+      .eq("institution_id", institutionId)
+      .in("id", uniq);
 
-  const broad = await srv
-    .from("subjects")
-    .select("id,name,label,title")
-    .in("id", uniq);
+    if (!instById.error && Array.isArray(instById.data)) {
+      for (const row of instById.data) {
+        const anyRow = row as any;
+        const related = extractRelatedSubject(anyRow);
+        const label = cleanText(anyRow.custom_name) || pickSubjectLabel(related, "");
 
-  if (!broad.error) {
-    rows = broad.data ?? [];
-  } else {
-    console.warn(
-      "[admin/notifications/grades-digest/send] broad subjects lookup failed",
-      broad.error
-    );
-
-    const narrow = await srv.from("subjects").select("id").in("id", uniq);
-
-    if (!narrow.error) {
-      rows = narrow.data ?? [];
+        registerSubjectLabel(map, resolved, anyRow.id, label);
+        registerSubjectLabel(map, resolved, anyRow.subject_id, label);
+      }
+    } else if (instById.error) {
+      console.warn(
+        "[admin/notifications/grades-digest/send] institution_subjects by id warning",
+        {
+          error: instById.error.message,
+          details: instById.error,
+        }
+      );
     }
+  } catch (e: any) {
+    console.warn(
+      "[admin/notifications/grades-digest/send] institution_subjects by id exception",
+      String(e?.message || e)
+    );
   }
 
-  for (const row of rows) {
-    map.set(String(row.id), pickSubjectLabel(row));
+  try {
+    const instBySubject = await srv
+      .from("institution_subjects")
+      .select("id,subject_id,custom_name,subjects(name)")
+      .eq("institution_id", institutionId)
+      .in("subject_id", uniq);
+
+    if (!instBySubject.error && Array.isArray(instBySubject.data)) {
+      for (const row of instBySubject.data) {
+        const anyRow = row as any;
+        const related = extractRelatedSubject(anyRow);
+        const label = cleanText(anyRow.custom_name) || pickSubjectLabel(related, "");
+
+        registerSubjectLabel(map, resolved, anyRow.id, label);
+        registerSubjectLabel(map, resolved, anyRow.subject_id, label);
+      }
+    } else if (instBySubject.error) {
+      console.warn(
+        "[admin/notifications/grades-digest/send] institution_subjects by subject_id warning",
+        {
+          error: instBySubject.error.message,
+          details: instBySubject.error,
+        }
+      );
+    }
+  } catch (e: any) {
+    console.warn(
+      "[admin/notifications/grades-digest/send] institution_subjects by subject_id exception",
+      String(e?.message || e)
+    );
+  }
+
+  const leftoverIds = uniq.filter((id) => !resolved.has(id));
+
+  if (leftoverIds.length) {
+    const broad = await srv
+      .from("subjects")
+      .select("id,name,label,title")
+      .in("id", leftoverIds);
+
+    if (!broad.error && Array.isArray(broad.data)) {
+      for (const row of broad.data) {
+        registerSubjectLabel(
+          map,
+          resolved,
+          (row as any).id,
+          pickSubjectLabel(row, "")
+        );
+      }
+    } else if (broad.error) {
+      console.warn(
+        "[admin/notifications/grades-digest/send] subjects lookup warning",
+        broad.error
+      );
+    }
   }
 
   return map;
@@ -570,8 +658,6 @@ async function fetchStudentMap(
   studentIds: string[]
 ) {
   const map = new Map<string, string>();
-
-  if (!studentIds.length) return map;
 
   const uniq = Array.from(new Set(studentIds.filter(Boolean)));
   if (!uniq.length) return map;
@@ -593,7 +679,7 @@ async function fetchStudentMap(
 
     const narrow = await srv
       .from("students")
-      .select("id,matricule")
+      .select("id,first_name,last_name,full_name,matricule")
       .in("id", uniq);
 
     if (!narrow.error) {
@@ -602,7 +688,7 @@ async function fetchStudentMap(
   }
 
   for (const row of rows) {
-    map.set(String(row.id), pickStudentName(row, String(row.id)));
+    map.set(String(row.id), pickStudentName(row, "Eleve"));
   }
 
   return map;
@@ -673,9 +759,10 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    if (triggerType === "auto" && smsDigestMode !== "weekly") {
-      return bad("SMS_DIGEST_AUTO_MODE_NOT_ENABLED", 409, {
+    if (triggerType === "auto") {
+      return bad("SMS_DIGEST_AUTO_MODE_REMOVED", 409, {
         sms_digest_mode: smsDigestMode,
+        message: "Le digest SMS des notes est uniquement en mode manuel contrôlé.",
       });
     }
 
@@ -823,16 +910,6 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    /*
-     * Source officielle du digest SMS :
-     * public.grade_published_scores
-     *
-     * On ne lit pas student_grades.
-     * Donc :
-     * - une note soumise mais non validée ne peut jamais partir ;
-     * - une note en correction ne peut jamais partir ;
-     * - les SMS digest et les push lisent la même source officielle.
-     */
     let officialQuery = srv
       .from("grade_published_scores")
       .select(
@@ -855,13 +932,6 @@ export async function POST(req: NextRequest) {
       .gte("published_at", periodStart)
       .lt("published_at", periodEnd);
 
-    /*
-     * Par défaut, on évite les doublons SMS :
-     * une note déjà incluse dans un digest ne repart pas.
-     *
-     * force=true peut seulement autoriser un renvoi de période.
-     * Il ne contourne jamais le verrou 7 jours / 4 envois par mois.
-     */
     if (!body.force) {
       officialQuery = officialQuery
         .is("sms_digest_run_id", null)
@@ -917,7 +987,7 @@ export async function POST(req: NextRequest) {
       .map((row) => row.subject_id)
       .filter((x): x is string => !!x);
 
-    const subjectLabelById = await fetchSubjectMap(srv, subjectIds);
+    const subjectLabelById = await fetchSubjectMap(srv, institutionId, subjectIds);
 
     const grouped = new Map<string, DigestGroup>();
 
@@ -928,6 +998,8 @@ export async function POST(req: NextRequest) {
       if (!Number.isFinite(score)) continue;
 
       const scale = toFiniteNumber(row.scale, 20);
+      const roundedScore = Math.round(score * 100) / 100;
+      const subjectLabel = subjectLabelById.get(row.subject_id || "") || "Note";
 
       const key = `${row.student_id}::${row.class_id}`;
       const existing =
@@ -937,16 +1009,28 @@ export async function POST(req: NextRequest) {
           classId: row.class_id,
           officialScoreIds: [],
           evaluationIds: [],
+          itemKeys: new Set<string>(),
           items: [],
         } as DigestGroup);
 
       existing.officialScoreIds.push(row.id);
       existing.evaluationIds.push(row.evaluation_id);
-      existing.items.push({
-        subject: subjectLabelById.get(row.subject_id || "") || "Matiere",
-        score: Math.round(score * 100) / 100,
-        scale,
-      });
+
+      const itemKey = [
+        row.evaluation_id,
+        cleanText(subjectLabel).toLowerCase(),
+        String(roundedScore),
+        String(scale),
+      ].join("::");
+
+      if (!existing.itemKeys.has(itemKey)) {
+        existing.itemKeys.add(itemKey);
+        existing.items.push({
+          subject: subjectLabel,
+          score: roundedScore,
+          scale,
+        });
+      }
 
       grouped.set(key, existing);
     }
@@ -993,6 +1077,9 @@ export async function POST(req: NextRequest) {
       const studentName = studentNameById.get(group.studentId) || "Eleve";
       const classLabel = classLabelById.get(group.classId) || group.classId;
 
+      const officialScoreIds = Array.from(new Set(group.officialScoreIds));
+      const evaluationIds = Array.from(new Set(group.evaluationIds));
+
       await enqueueNotesDigestSms({
         srv,
         req,
@@ -1009,16 +1096,15 @@ export async function POST(req: NextRequest) {
         parentId: null,
         dispatch: false,
 
-        // Métadonnées officielles pour tracer précisément l'origine du digest.
         source: "grade_published_scores",
         digestRunId: runId,
-        officialScoreIds: group.officialScoreIds,
-        evaluationIds: group.evaluationIds,
+        officialScoreIds,
+        evaluationIds,
         smsDigestBatchId: batchId,
       } as any);
 
       notificationsCreated += 1;
-      queuedOfficialScoreIds.push(...group.officialScoreIds);
+      queuedOfficialScoreIds.push(...officialScoreIds);
     }
 
     await markOfficialScoresAsQueuedForSms(srv, queuedOfficialScoreIds, runId);
@@ -1043,7 +1129,7 @@ export async function POST(req: NextRequest) {
       batchId,
       totalParents: notificationsCreated,
       totalStudents: grouped.size,
-      totalGrades: queuedOfficialScoreIds.length,
+      totalGrades: Array.from(new Set(queuedOfficialScoreIds)).length,
       totalSms: notificationsCreated,
       metadata: {
         run_id: runId,
@@ -1063,7 +1149,7 @@ export async function POST(req: NextRequest) {
       period_end: periodEnd,
       students_count: grouped.size,
       notifications_created: notificationsCreated,
-      official_scores_count: queuedOfficialScoreIds.length,
+      official_scores_count: Array.from(new Set(queuedOfficialScoreIds)).length,
       evaluations_count: new Set(
         Array.from(grouped.values()).flatMap((g) => g.evaluationIds)
       ).size,
