@@ -55,6 +55,18 @@ type ScoreRow = {
   score: number | null;
 };
 
+type GradeAdjustmentBonusRow = {
+  student_id: string;
+  subject_id: string | null;
+  grading_period_id?: string | null;
+  bonus: number | string | null;
+};
+
+type AdjustmentBonusMaps = {
+  subjectBonusByStudent: Map<string, Map<string, number>>;
+  generalBonusByStudent: Map<string, number>;
+};
+
 type ClassStudentRow = {
   student_id: string;
   students?:
@@ -168,6 +180,12 @@ function cleanCoeff(c: any): number {
   const n = Number(c);
   if (!Number.isFinite(n) || n < 0) return 0;
   return Number(n.toFixed(2));
+}
+
+function clampAverage20(value: any): number | null {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return null;
+  return Math.max(0, Math.min(20, n));
 }
 
 function isUuid(v: string): boolean {
@@ -1320,6 +1338,7 @@ export async function GET(req: NextRequest) {
 
   /* 1bis) Retrouver éventuellement la période de bulletin (grade_periods) + son coeff */
   let periodMeta: {
+    id?: string | null;
     from: string | null;
     to: string | null;
     code?: string | null;
@@ -1327,7 +1346,7 @@ export async function GET(req: NextRequest) {
     short_label?: string | null;
     academic_year?: string | null;
     coeff?: number | null;
-  } = { from: dateFrom, to: dateTo };
+  } = { id: null, from: dateFrom, to: dateTo };
 
   if (dateFrom && dateTo) {
     // ⚠️ évite maybeSingle() (erreur si doublons) -> on prend le 1er match
@@ -1346,6 +1365,7 @@ export async function GET(req: NextRequest) {
       // ignore
     } else if (gp) {
       periodMeta = {
+        id: gp.id ?? null,
         from: dateFrom,
         to: dateTo,
         code: gp.code ?? null,
@@ -2279,6 +2299,132 @@ export async function GET(req: NextRequest) {
     scores = (scoreData || []) as ScoreRow[];
   }
 
+  /* 7bis) Bonus pédagogiques officiels pour le bulletin
+   *
+   * Règle métier Mon Cahier :
+   * - la publication verrouille les notes brutes ;
+   * - elle ne verrouille pas les bonus pédagogiques ;
+   * - les bulletins, rangs et QR doivent utiliser les moyennes finales bonus inclus.
+   *
+   * Compatibilité : on accepte les anciennes lignes sans grading_period_id
+   * et les nouvelles lignes rattachées à une période. Si les deux existent,
+   * la ligne de la période courante est prioritaire.
+   */
+  async function loadAdjustmentBonusMaps(params: {
+    academicYear: string | null | undefined;
+    periodId?: string | null;
+  }): Promise<AdjustmentBonusMaps> {
+    const empty: AdjustmentBonusMaps = {
+      subjectBonusByStudent: new Map(),
+      generalBonusByStudent: new Map(),
+    };
+
+    const academicYear = String(params.academicYear || "").trim();
+    if (!academicYear || !studentIds.length) return empty;
+
+    const selectedByKey = new Map<
+      string,
+      { student_id: string; subject_id: string | null; bonus: number; priority: number }
+    >();
+
+    const ingest = (rows: GradeAdjustmentBonusRow[], hasPeriodColumn: boolean) => {
+      for (const row of rows || []) {
+        const sid = String(row.student_id || "").trim();
+        if (!sid) continue;
+
+        const rawBonus = Number(row.bonus ?? 0);
+        if (!Number.isFinite(rawBonus)) continue;
+
+        const subjectId = row.subject_id ? String(row.subject_id) : null;
+        const rowPeriodId = hasPeriodColumn
+          ? row.grading_period_id
+            ? String(row.grading_period_id)
+            : null
+          : null;
+
+        // Si une période est connue :
+        // - on garde les bonus de cette période ;
+        // - on garde aussi les anciens bonus sans période ;
+        // - on ignore les bonus d'une autre période.
+        let priority = 1;
+        if (params.periodId) {
+          if (rowPeriodId === params.periodId) priority = 2;
+          else if (!rowPeriodId) priority = 1;
+          else continue;
+        }
+
+        const key = `${sid}__${subjectId ?? "__GENERAL__"}`;
+        const existing = selectedByKey.get(key);
+        if (!existing || priority >= existing.priority) {
+          selectedByKey.set(key, {
+            student_id: sid,
+            subject_id: subjectId,
+            bonus: Number(rawBonus.toFixed(2)),
+            priority,
+          });
+        }
+      }
+    };
+
+    try {
+      // Requête moderne : tient compte de grading_period_id quand la colonne existe.
+      const { data, error } = await srvClient
+        .from("grade_adjustments")
+        .select("student_id, subject_id, grading_period_id, bonus")
+        .eq("class_id", classRow.id)
+        .eq("academic_year", academicYear)
+        .in("student_id", studentIds);
+
+      if (error) throw error;
+      ingest((data || []) as GradeAdjustmentBonusRow[], true);
+    } catch (error: any) {
+      // Non cassant : si la migration grading_period_id n'est pas encore disponible,
+      // on retombe sur l'ancien format de table.
+      try {
+        const { data, error: fallbackError } = await srvClient
+          .from("grade_adjustments")
+          .select("student_id, subject_id, bonus")
+          .eq("class_id", classRow.id)
+          .eq("academic_year", academicYear)
+          .in("student_id", studentIds);
+
+        if (fallbackError) throw fallbackError;
+        ingest((data || []) as GradeAdjustmentBonusRow[], false);
+      } catch (fallbackError) {
+        console.warn("[bulletin] bonus indisponibles pour le bulletin", {
+          academicYear,
+          periodId: params.periodId ?? null,
+          error: fallbackError,
+        });
+      }
+    }
+
+    const out: AdjustmentBonusMaps = {
+      subjectBonusByStudent: new Map(),
+      generalBonusByStudent: new Map(),
+    };
+
+    for (const row of selectedByKey.values()) {
+      if (row.subject_id) {
+        let bySubject = out.subjectBonusByStudent.get(row.student_id);
+        if (!bySubject) {
+          bySubject = new Map();
+          out.subjectBonusByStudent.set(row.student_id, bySubject);
+        }
+        bySubject.set(row.subject_id, row.bonus);
+      } else {
+        out.generalBonusByStudent.set(row.student_id, row.bonus);
+      }
+    }
+
+    return out;
+  }
+
+  const currentBonusMaps = await loadAdjustmentBonusMaps({
+    academicYear: bulletinAcademicYear,
+    periodId: periodMeta.id ?? null,
+  });
+
   /* 8) Maps calcul */
   const perStudentSubject = new Map<string, Map<string, { sumWeighted: number; sumCoeff: number }>>();
 
@@ -2402,11 +2548,27 @@ export async function GET(req: NextRequest) {
         }
       }
 
+      const rawAvg20 = avg20;
+      const subjectBonus =
+        currentBonusMaps.subjectBonusByStudent
+          .get(cs.student_id)
+          ?.get(String(s.subject_id)) ?? 0;
+
+      if (avg20 !== null && avg20 !== undefined && Number.isFinite(Number(avg20))) {
+        const adjusted = clampAverage20(Number(avg20) + subjectBonus);
+        avg20 = adjusted === null ? null : cleanNumber(adjusted, 4);
+      }
+
       const hasGrade = avg20 !== null && avg20 !== undefined && Number.isFinite(Number(avg20));
 
       return {
         subject_id: s.subject_id,
         avg20,
+
+        // ✅ Bonus matière appliqué au bulletin sans casser l'ancien front.
+        // avg20 = moyenne finale matière ; avg20_before_bonus garde la trace brute.
+        bonus: Number(subjectBonus.toFixed(2)),
+        avg20_before_bonus: rawAvg20,
 
         // ✅ Métadonnées NC : ne cassent pas le front existant, mais permettent
         // aux bulletins/matrices d'afficher clairement NC / — sans confondre avec 0.
@@ -2522,6 +2684,14 @@ export async function GET(req: NextRequest) {
       }
     }
 
+    const generalAvgBeforeBonus = general_avg;
+    const generalBonus = currentBonusMaps.generalBonusByStudent.get(cs.student_id) ?? 0;
+
+    if (general_avg !== null && general_avg !== undefined && Number.isFinite(Number(general_avg))) {
+      const adjustedGeneral = clampAverage20(Number(general_avg) + generalBonus);
+      general_avg = adjustedGeneral === null ? null : cleanNumber(adjustedGeneral, 4);
+    }
+
     const expectedAverageSubjects = subjectsForReport.filter((s) => {
       if (s.include_in_average === false) return false;
       const coeffSub = Number(s.coeff_bulletin ?? 0);
@@ -2582,6 +2752,8 @@ export async function GET(req: NextRequest) {
       per_subject,
       per_group,
       general_avg,
+      general_bonus: Number(generalBonus.toFixed(2)),
+      general_avg_before_bonus: generalAvgBeforeBonus,
       rank: null as number | null,
 
       // ✅ Couverture pédagogique : on conserve les matières manquantes pour informer l’admin.
@@ -2812,7 +2984,8 @@ export async function GET(req: NextRequest) {
       subjectsList: { subject_id: string; coeff_bulletin: number | null; include_in_average: boolean }[],
       compsMap: Map<string, BulletinSubjectComponent[]>,
       compByIdMap: Map<string, BulletinSubjectComponent>,
-      conductMap?: Map<string, number | null> | null
+      conductMap?: Map<string, number | null> | null,
+      periodId?: string | null
     ): Promise<Map<string, number | null>> => {
       const out = new Map<string, number | null>();
       studentIds.forEach((sid) => out.set(sid, null));
@@ -2821,6 +2994,11 @@ export async function GET(req: NextRequest) {
       for (const s of subjectsList) {
         if (isConductSubjectId(String(s.subject_id))) conductSubjectIds.add(String(s.subject_id));
       }
+
+      const rangeBonusMaps = await loadAdjustmentBonusMaps({
+        academicYear: academicYearForPeriods ?? classRow.academic_year ?? periodMeta.academic_year ?? null,
+        periodId: periodId ?? null,
+      });
 
       // evals publiées sur la période
       const { data: eData, error: eErr } = await supabase
@@ -2949,6 +3127,12 @@ export async function GET(req: NextRequest) {
           if (subAvg === null || subAvg === undefined) continue;
           if (!Number.isFinite(subAvg)) continue;
 
+          const subjectBonus =
+            rangeBonusMaps.subjectBonusByStudent.get(sid)?.get(String(s.subject_id)) ?? 0;
+          const adjustedSubjectAvg = clampAverage20(Number(subAvg) + subjectBonus);
+          if (adjustedSubjectAvg === null) continue;
+          subAvg = adjustedSubjectAvg;
+
           const isConduct = conductSubjectIds.has(String(s.subject_id));
           if (isConduct) {
             conductAlreadyCounted = true;
@@ -2974,7 +3158,14 @@ export async function GET(req: NextRequest) {
 
           const sumGen = academicSumGen + conductSumGen;
           const sumCoeffGen = academicSumCoeffGen + conductSumCoeffGen;
-          const g = sumCoeffGen > 0 ? cleanNumber(sumGen / sumCoeffGen, 4) : null;
+          let g = sumCoeffGen > 0 ? cleanNumber(sumGen / sumCoeffGen, 4) : null;
+
+          const generalBonus = rangeBonusMaps.generalBonusByStudent.get(sid) ?? 0;
+          if (g !== null && g !== undefined && Number.isFinite(Number(g))) {
+            const adjustedGeneral = clampAverage20(Number(g) + generalBonus);
+            g = adjustedGeneral === null ? null : cleanNumber(adjustedGeneral, 4);
+          }
+
           out.set(sid, g);
         } else {
           out.set(sid, null);
@@ -3023,7 +3214,8 @@ export async function GET(req: NextRequest) {
         annualSubjectsForReport,
         annualCompsBySubject,
         annualSubjectComponentById,
-        conductMapForPeriod
+        conductMapForPeriod,
+        p.id ?? null
       );
       periodMaps.push({ w, period: p, map });
     }

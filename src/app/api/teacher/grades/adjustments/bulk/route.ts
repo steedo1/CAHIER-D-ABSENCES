@@ -1,4 +1,4 @@
-// src/app/api/teacher/grades/adjustments/route.ts
+// src/app/api/teacher/grades/adjustments/bulk/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
@@ -7,6 +7,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+const LOG_PREFIX = "[teacher/grades/adjustments]";
 
 function bad(error: string, status = 400, extra?: Record<string, unknown>) {
   return NextResponse.json({ ok: false, error, ...(extra ?? {}) }, { status });
@@ -72,10 +74,7 @@ async function getAccessModeForClass(
     .maybeSingle();
 
   if (pErr || !profile?.institution_id) {
-    console.error(
-      "[teacher/grades/adjustments] profile error in getAccessModeForClass",
-      pErr
-    );
+    console.error(LOG_PREFIX, "profile error in getAccessModeForClass", pErr);
     return null;
   }
 
@@ -86,10 +85,7 @@ async function getAccessModeForClass(
     .maybeSingle();
 
   if (cErr || !cls) {
-    console.error(
-      "[teacher/grades/adjustments] class error in getAccessModeForClass",
-      cErr
-    );
+    console.error(LOG_PREFIX, "class error in getAccessModeForClass", cErr);
     return null;
   }
 
@@ -104,13 +100,12 @@ async function getAccessModeForClass(
     .eq("institution_id", profile.institution_id);
 
   if (rErr) {
-    console.error(
-      "[teacher/grades/adjustments] roles error in getAccessModeForClass",
-      rErr
-    );
+    console.error(LOG_PREFIX, "roles error in getAccessModeForClass", rErr);
   }
 
-  const roleSet = new Set<string>((roles ?? []).map((r: any) => r.role as string));
+  const roleSet = new Set<string>(
+    (roles ?? []).map((r: any) => r.role as string)
+  );
 
   if (roleSet.has("super_admin") || roleSet.has("admin")) {
     return "admin";
@@ -154,10 +149,7 @@ async function getInstitutionIdForClass(
     .maybeSingle();
 
   if (error) {
-    console.error(
-      "[teacher/grades/adjustments] getInstitutionIdForClass error",
-      error
-    );
+    console.error(LOG_PREFIX, "getInstitutionIdForClass error", error);
     return null;
   }
 
@@ -179,7 +171,7 @@ async function getGradePeriodById(
     .maybeSingle();
 
   if (error) {
-    console.error("[teacher/grades/adjustments] getGradePeriodById error", {
+    console.error(LOG_PREFIX, "getGradePeriodById error", {
       institutionId,
       gradingPeriodId,
       error,
@@ -200,99 +192,16 @@ function applyNullishEq<T extends { eq: Function; is: Function }>(
     : (query.eq(column, value) as T);
 }
 
-/**
- * Verrou métier publication pour les bonus.
- *
- * Règle :
- * - admin : autorisé ;
- * - teacher/class_device : interdit si une évaluation concernée est déjà
- *   soumise ou publiée.
- *
- * Pourquoi :
- * Les bonus modifient les moyennes. Donc ils ne doivent plus être changés
- * librement après soumission/publication.
- */
-async function assertAdjustmentsEditable(params: {
-  svc: SupabaseClient;
-  mode: AccessMode;
-  classId: string;
-  subjectId: string | null;
-  academicYear: string;
-  gradingPeriodId: string | null;
-}) {
-  const { svc, mode, classId, subjectId, academicYear, gradingPeriodId } = params;
-
-  if (mode === "admin") {
-    return { ok: true as const };
-  }
-
-  let q = svc
-    .from("grade_evaluations")
-    .select("id, publication_status, is_published, published_at")
-    .eq("class_id", classId)
-    .eq("academic_year", academicYear)
-    .or("is_published.eq.true,publication_status.eq.submitted,publication_status.eq.published")
-    .limit(1);
-
-  if (subjectId) {
-    q = q.eq("subject_id", subjectId);
-  }
-
-  if (gradingPeriodId) {
-    q = q.eq("grading_period_id", gradingPeriodId);
-  }
-
-  const { data, error } = await q;
-
-  if (error) {
-    console.error("[teacher/grades/adjustments] publication lock check error", {
-      error,
-      classId,
-      subjectId,
-      academicYear,
-      gradingPeriodId,
-      mode,
-    });
-
-    return {
-      ok: false as const,
-      status: 500,
-      error: "ADJUSTMENT_LOCK_CHECK_FAILED",
-      extra: {
-        message: "Impossible de vérifier le verrou de publication des bonus.",
-      },
-    };
-  }
-
-  const blockingRow = Array.isArray(data) && data.length > 0 ? data[0] : null;
-
-  if (blockingRow) {
-    return {
-      ok: false as const,
-      status: 423,
-      error: "ADJUSTMENTS_LOCKED_BY_PUBLICATION_WORKFLOW",
-      extra: {
-        editable: false,
-        class_id: classId,
-        subject_id: subjectId,
-        academic_year: academicYear,
-        grading_period_id: gradingPeriodId,
-        evaluation_id: String((blockingRow as any).id || ""),
-        publication_status: (blockingRow as any).publication_status ?? null,
-        is_published: (blockingRow as any).is_published === true,
-        published_at: (blockingRow as any).published_at ?? null,
-        message:
-          "Des évaluations sont déjà soumises ou publiées. Les bonus ne peuvent plus être modifiés par un enseignant ou un compte-classe.",
-      },
-    };
-  }
-
-  return { ok: true as const };
-}
-
 /* ==========================================
    POST : upsert manuel des bonus par élève
+
+   Règle métier retenue :
+   - la publication verrouille les notes brutes ;
+   - la publication ne verrouille pas les bonus pédagogiques ;
+   - l’enseignant / compte-classe peut modifier les bonus tant que la période n’est pas close ;
+   - l’admin reste autorisé selon ses droits.
 ========================================== */
+
 export async function POST(req: NextRequest) {
   try {
     const supabase = await getSupabaseServerClient();
@@ -359,34 +268,20 @@ export async function POST(req: NextRequest) {
       grading_period_id = period.id;
     }
 
-    // ✅ blocage côté prof / class_device si la période est déjà close
-    if ((mode === "teacher" || mode === "class_device") && period && isClosedByEndDate(period)) {
+    // ✅ Seul vrai verrou métier ici :
+    // les enseignants / comptes-classe ne peuvent plus modifier les bonus
+    // si la période configurée est déjà close.
+    if (
+      (mode === "teacher" || mode === "class_device") &&
+      period &&
+      isClosedByEndDate(period)
+    ) {
       return bad("GRADING_PERIOD_CLOSED", 423, {
         class_id,
         grading_period_id: period.id,
         period_end_date: period.end_date,
         today: serverTodayIsoDate(),
       });
-    }
-
-    /*
-     * ✅ Verrou publication avant modification des bonus.
-     *
-     * - Bonus matière : bloqué si cette matière a déjà une évaluation soumise/publiée.
-     * - Bonus général : bloqué si la classe/période contient déjà une évaluation soumise/publiée.
-     * - Admin : autorisé.
-     */
-    const editable = await assertAdjustmentsEditable({
-      svc,
-      mode,
-      classId: class_id,
-      subjectId: subject_id,
-      academicYear: academic_year,
-      gradingPeriodId: grading_period_id,
-    });
-
-    if (!editable.ok) {
-      return bad(editable.error, editable.status, editable.extra);
     }
 
     let upserted = 0;
@@ -425,7 +320,7 @@ export async function POST(req: NextRequest) {
       const { data: existingRows, error: lookupErr } = await lookup;
 
       if (lookupErr) {
-        console.error("[teacher/grades/adjustments] lookup error", lookupErr, {
+        console.error(LOG_PREFIX, "lookup error", lookupErr, {
           student_id,
           class_id,
           subject_id,
@@ -454,7 +349,7 @@ export async function POST(req: NextRequest) {
           .eq("id", existingId);
 
         if (updErr) {
-          console.error("[teacher/grades/adjustments] update error", updErr, {
+          console.error(LOG_PREFIX, "update error", updErr, {
             existingId,
             student_id,
             class_id,
@@ -479,7 +374,7 @@ export async function POST(req: NextRequest) {
           });
 
         if (insErr) {
-          console.error("[teacher/grades/adjustments] insert error", insErr, {
+          console.error(LOG_PREFIX, "insert error", insErr, {
             student_id,
             class_id,
             subject_id,
@@ -500,9 +395,10 @@ export async function POST(req: NextRequest) {
       academic_year,
       grading_period_id,
       publication_workflow_locked: false,
+      locked_by_publication_workflow: false,
     });
   } catch (e: any) {
-    console.error("[teacher/grades/adjustments] unexpected error", e);
+    console.error(LOG_PREFIX, "unexpected error", e);
     return bad(e?.message || "INTERNAL_ERROR", 500);
   }
 }

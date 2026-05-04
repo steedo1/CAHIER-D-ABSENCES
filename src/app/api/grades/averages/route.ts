@@ -31,7 +31,6 @@ function roundTo(value: number, step: number) {
 }
 
 function denseRanks(values: number[]) {
-  // Valeurs déjà triées DESC ; renvoie le rang dense : 1, 1, 2, 3…
   const ranks: number[] = [];
   let rank = 0;
   let prev: number | null = null;
@@ -61,11 +60,18 @@ function isLyceeLevel(level?: string | null): boolean {
   return lvl === "seconde" || lvl === "premiere" || lvl === "terminale";
 }
 
+function normalizeUuidLike(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const v = value.trim();
+  return v ? v : null;
+}
+
 type EvaluationRow = {
   id: string;
   class_id: string;
-  subject_id: string | null; // ✅ subjects.id canonique
+  subject_id: string | null;
   subject_component_id?: string | null;
+  grading_period_id?: string | null;
   is_published: boolean;
   scale: number;
   coeff: number;
@@ -80,25 +86,29 @@ type GradeRow = {
 type BonusRow = {
   student_id: string;
   bonus: number;
+  subject_id: string | null;
+  grading_period_id: string | null;
+};
+
+type GradePeriodRow = {
+  id: string;
+  institution_id: string;
+  academic_year: string;
+  start_date: string | null;
+  end_date: string | null;
+  is_active: boolean | null;
+  order_index: number | null;
 };
 
 type Row = {
   student_id: string;
-
-  // count_evals = nombre d’évaluations avec une vraie note.
-  // total_evals = nombre total d’évaluations considérées.
   count_evals: number;
   total_evals: number;
-
-  // 0 = vraie moyenne calculée avec une vraie note 0.
-  // absence de ligne pour un élève = aucune moyenne calculable / NC côté front.
   average_raw: number;
   bonus: number;
   average: number;
   average_rounded: number;
   rank: number;
-
-  // Champs explicites pour les interfaces.
   has_average: boolean;
   is_complete: boolean;
   status: "complete" | "partial";
@@ -163,9 +173,10 @@ async function resolveSubjectIdToGlobal(
         return instSub.subject_id as string;
       }
     } catch (err) {
-      logError("resolveSubjectIdToGlobal instSub error", err, {
+      logError("resolveSubjectIdToGlobal instSub error", {
         institutionId,
         sid,
+        err,
       });
     }
   }
@@ -174,6 +185,77 @@ async function resolveSubjectIdToGlobal(
     institutionId,
     rawSubjectId: sid,
   });
+
+  return null;
+}
+
+async function getGradePeriodById(
+  svc: ReturnType<typeof getSupabaseServiceClient>,
+  institutionId: string,
+  gradingPeriodId: string
+): Promise<GradePeriodRow | null> {
+  const { data, error } = await svc
+    .from("grade_periods")
+    .select(
+      "id,institution_id,academic_year,start_date,end_date,is_active,order_index"
+    )
+    .eq("id", gradingPeriodId)
+    .eq("institution_id", institutionId)
+    .maybeSingle();
+
+  if (error) {
+    logError("getGradePeriodById error", {
+      gradingPeriodId,
+      institutionId,
+      error,
+    });
+    return null;
+  }
+
+  return (data as GradePeriodRow | null) ?? null;
+}
+
+/**
+ * Priorité bonus :
+ * 1. bonus matière de la période
+ * 2. bonus général de la période
+ * 3. ancien bonus matière sans période
+ * 4. ancien bonus général sans période
+ */
+function getBonusPriority(
+  row: BonusRow,
+  hasSubjectFilter: boolean,
+  effectiveSubjectId: string | null,
+  gradingPeriodId: string | null
+): number | null {
+  const rowSubj = row.subject_id ?? null;
+  const rowPeriod = row.grading_period_id ?? null;
+
+  const periodExact = gradingPeriodId
+    ? rowPeriod === gradingPeriodId
+    : rowPeriod === null;
+
+  const periodLegacy = gradingPeriodId ? rowPeriod === null : false;
+
+  if (hasSubjectFilter) {
+    if (!effectiveSubjectId) return null;
+
+    const subjectExact = rowSubj === effectiveSubjectId;
+    const subjectGeneral = rowSubj === null;
+
+    if (subjectExact && periodExact) return 1;
+    if (subjectGeneral && periodExact) return 2;
+    if (subjectExact && periodLegacy) return 3;
+    if (subjectGeneral && periodLegacy) return 4;
+
+    return null;
+  }
+
+  // Moyenne générale : seulement les bonus généraux subject_id NULL
+  if (rowSubj !== null) return null;
+
+  if (periodExact) return 1;
+  if (periodLegacy) return 2;
 
   return null;
 }
@@ -201,12 +283,20 @@ export async function GET(req: NextRequest) {
     const { searchParams } = new URL(req.url);
 
     const class_id = String(searchParams.get("class_id") || "").trim();
+
     const subjectIdRaw = searchParams.get("subject_id");
     const subject_id = subjectIdRaw ? String(subjectIdRaw).trim() || null : null;
 
-    const academic_year =
-      String(searchParams.get("academic_year") || "").trim() ||
-      computeAcademicYear(new Date());
+    const grading_period_id =
+      normalizeUuidLike(searchParams.get("grading_period_id")) ??
+      normalizeUuidLike(searchParams.get("gradingPeriodId"));
+
+    const academic_year_param = String(
+      searchParams.get("academic_year") || ""
+    ).trim();
+
+    let academic_year =
+      academic_year_param || computeAcademicYear(new Date());
 
     // Compatibilité : on conserve le défaut historique à 0.
     // Les écrans officiels peuvent forcer published_only=1.
@@ -249,7 +339,8 @@ export async function GET(req: NextRequest) {
     logInfo("incoming params", {
       class_id,
       rawSubject: subject_id,
-      academic_year,
+      grading_period_id,
+      academic_year_param,
       published_only,
       missing,
       round_to_raw,
@@ -292,6 +383,28 @@ export async function GET(req: NextRequest) {
       institution_id,
     });
 
+    if (grading_period_id) {
+      if (!institution_id) {
+        return bad("CLASS_OR_INSTITUTION_NOT_FOUND", 400);
+      }
+
+      const period = await getGradePeriodById(
+        svc,
+        institution_id,
+        grading_period_id
+      );
+
+      if (!period) {
+        return bad("INVALID_GRADING_PERIOD", 400);
+      }
+
+      if (period.is_active === false) {
+        return bad("GRADING_PERIOD_INACTIVE", 400);
+      }
+
+      academic_year = period.academic_year;
+    }
+
     // 🧠 subject_id GLOBAL pour grade_evaluations & grade_adjustments
     const effectiveSubjectId = await resolveSubjectIdToGlobal(
       svc,
@@ -299,11 +412,37 @@ export async function GET(req: NextRequest) {
       subject_id
     );
 
+    if (subject_id && !effectiveSubjectId) {
+      logError("subject_id provided but not resolved", {
+        subject_id,
+        institution_id,
+      });
+
+      return NextResponse.json({
+        ok: true,
+        params: {
+          class_id,
+          subject_id,
+          grading_period_id,
+          academic_year,
+          published_only,
+          missing,
+          round_to: round_to ?? "none",
+          rank_by,
+        },
+        items: [],
+        meta: {
+          evaluations: 0,
+          note: "Matière introuvable. Aucun calcul effectué.",
+        },
+      });
+    }
+
     // 1) Évaluations concernées
     let qEvals = svc
       .from("grade_evaluations")
       .select(
-        "id, scale, coeff, class_id, subject_id, subject_component_id, is_published"
+        "id, scale, coeff, class_id, subject_id, subject_component_id, grading_period_id, is_published"
       )
       .eq("class_id", class_id)
       .eq("academic_year", academic_year);
@@ -311,6 +450,10 @@ export async function GET(req: NextRequest) {
     // ⚠️ On filtre grade_evaluations sur le subjects.id global.
     if (effectiveSubjectId) {
       qEvals = qEvals.eq("subject_id", effectiveSubjectId);
+    }
+
+    if (grading_period_id) {
+      qEvals = qEvals.eq("grading_period_id", grading_period_id);
     }
 
     if (published_only) qEvals = qEvals.eq("is_published", true);
@@ -325,6 +468,8 @@ export async function GET(req: NextRequest) {
     logInfo("evals loaded", {
       count: evaluations.length,
       evaluationIds,
+      grading_period_id,
+      academic_year,
       published_only,
     });
 
@@ -333,6 +478,7 @@ export async function GET(req: NextRequest) {
         class_id,
         subjectIdRaw: subject_id,
         effectiveSubjectId,
+        grading_period_id,
         academic_year,
       });
 
@@ -341,6 +487,7 @@ export async function GET(req: NextRequest) {
         params: {
           class_id,
           subject_id,
+          grading_period_id,
           academic_year,
           published_only,
           missing,
@@ -453,11 +600,19 @@ export async function GET(req: NextRequest) {
       sample: gradesRows.slice(0, 3),
     });
 
-    // 3) Bonus — subject_id = subjects.id canonique
+    /*
+     * 3) Bonus
+     *
+     * ✅ grading_period_id fourni :
+     * - priorité aux bonus de la période ;
+     * - fallback sur les anciens bonus sans période.
+     *
+     * ✅ grading_period_id absent :
+     * - compatibilité historique : uniquement les bonus sans période.
+     */
     let bonusRows: BonusRow[] = [];
 
     if (subject_id && !effectiveSubjectId) {
-      // Impossible de résoudre la matière → aucun bonus possible
       bonusRows = [];
 
       logError("no effectiveSubjectId while subject_id provided", {
@@ -466,16 +621,12 @@ export async function GET(req: NextRequest) {
     } else {
       let qBonus = svc
         .from("grade_adjustments")
-        .select("student_id, bonus")
+        .select("student_id, bonus, subject_id, grading_period_id")
         .eq("class_id", class_id)
         .eq("academic_year", academic_year);
 
-      if (subject_id) {
-        // Matière précise → filtre sur subjects.id canonique
-        qBonus = qBonus.eq("subject_id", effectiveSubjectId as string);
-      } else {
-        // Moyenne générale → bonus avec subject_id NULL
-        qBonus = qBonus.is("subject_id", null);
+      if (!grading_period_id) {
+        qBonus = qBonus.is("grading_period_id", null);
       }
 
       const { data: bonuses, error: bErr } = await qBonus;
@@ -486,22 +637,53 @@ export async function GET(req: NextRequest) {
 
       logInfo("raw bonuses", {
         count: bonusRows.length,
-        sample: bonusRows.slice(0, 3),
+        sample: bonusRows.slice(0, 10),
         subject_id_in_query: subject_id,
         effectiveSubjectId,
+        grading_period_id,
       });
     }
 
-    const bonusMap = new Map<string, number>();
+    const bonusChoiceMap = new Map<
+      string,
+      {
+        priority: number;
+        bonus: number;
+      }
+    >();
 
     for (const r of bonusRows) {
       const b = Number(r.bonus || 0);
       if (!r.student_id || !Number.isFinite(b)) continue;
-      bonusMap.set(r.student_id, b);
+
+      const priority = getBonusPriority(
+        r,
+        !!subject_id,
+        effectiveSubjectId,
+        grading_period_id
+      );
+
+      if (priority === null) continue;
+
+      const existing = bonusChoiceMap.get(r.student_id);
+
+      if (!existing || priority < existing.priority) {
+        bonusChoiceMap.set(r.student_id, {
+          priority,
+          bonus: b,
+        });
+      }
+    }
+
+    const bonusMap = new Map<string, number>();
+
+    for (const [studentId, choice] of bonusChoiceMap.entries()) {
+      bonusMap.set(studentId, choice.bonus);
     }
 
     logInfo("bonusMap built", {
-      entries: Array.from(bonusMap.entries()).slice(0, 5),
+      entries: Array.from(bonusMap.entries()).slice(0, 10),
+      priorities: Array.from(bonusChoiceMap.entries()).slice(0, 10),
     });
 
     // 4) Calcul des moyennes
@@ -520,7 +702,10 @@ export async function GET(req: NextRequest) {
 
     // Pour le modèle 2 étages : par élève + par rubrique
     type PerComponentAgg = { num: number; denPresent: number };
-    const perStudentComponent = new Map<string, Record<string, PerComponentAgg>>();
+    const perStudentComponent = new Map<
+      string,
+      Record<string, PerComponentAgg>
+    >();
 
     // Pass 1 : accumuler les contributions des notes existantes
     for (const g of gradesRows) {
@@ -609,9 +794,7 @@ export async function GET(req: NextRequest) {
           const moyComp = compAgg.num / denomComp;
 
           const wComp =
-            compKey === "__none__"
-              ? 1
-              : componentCoeffMap.get(compKey) ?? 1;
+            compKey === "__none__" ? 1 : componentCoeffMap.get(compKey) ?? 1;
 
           numSubject += moyComp * wComp;
           denSubject += wComp;
@@ -675,6 +858,7 @@ export async function GET(req: NextRequest) {
       params: {
         class_id,
         subject_id,
+        grading_period_id,
         academic_year,
         published_only,
         missing,
@@ -690,6 +874,9 @@ export async function GET(req: NextRequest) {
         official_scores_used: published_only,
         rule:
           "0 est une vraie note. null/vide est ignoré. Un élève sans moyenne calculable n’est pas renvoyé et doit être affiché NC côté front.",
+        bonus_rule: grading_period_id
+          ? "Bonus de période prioritaires, fallback sur anciens bonus sans période."
+          : "Compatibilité historique : bonus sans période uniquement.",
       },
     });
   } catch (e: any) {

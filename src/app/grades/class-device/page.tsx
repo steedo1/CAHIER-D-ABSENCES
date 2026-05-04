@@ -14,6 +14,7 @@ import {
   Lock,
   Unlock,
   KeyRound,
+  FileText,
 } from "lucide-react";
 
 /* =========================
@@ -78,6 +79,7 @@ type Evaluation = {
   class_id: string;
   subject_id: string | null;
   subject_component_id?: string | null;
+  grading_period_id?: string | null;
   eval_date: string; // yyyy-mm-dd
   eval_kind: EvalKind;
   scale: 5 | 10 | 20 | 40 | 60;
@@ -133,6 +135,18 @@ type AverageApiRow = {
   has_average?: boolean | null;
   is_complete?: boolean | null;
   status?: "complete" | "partial" | string | null;
+};
+
+type GradePeriod = {
+  id: string;
+  academic_year: string | null;
+  code: string | null;
+  label: string | null;
+  short_label: string | null;
+  start_date: string;
+  end_date: string;
+  coeff?: number | null;
+  is_active?: boolean | null;
 };
 
 /* =========================
@@ -502,6 +516,36 @@ export default function ClassDeviceNotesPage() {
     [classOptions, selKey]
   );
 
+  const [gradePeriods, setGradePeriods] = useState<GradePeriod[]>([]);
+  const [loadingPeriods, setLoadingPeriods] = useState(false);
+  const [selectedPeriodId, setSelectedPeriodId] = useState<string>("");
+
+  const selectedPeriod = useMemo(
+    () => gradePeriods.find((p) => p.id === selectedPeriodId) || null,
+    [gradePeriods, selectedPeriodId]
+  );
+
+  function todayIsoDate() {
+    return new Date().toISOString().slice(0, 10);
+  }
+
+  function isPeriodClosed(period: GradePeriod | null) {
+    if (!period?.end_date) return false;
+    return todayIsoDate() > period.end_date;
+  }
+
+  const selectedPeriodClosed = useMemo(
+    () => isPeriodClosed(selectedPeriod),
+    [selectedPeriod]
+  );
+
+  function appendSelectedPeriod(params: URLSearchParams) {
+    if (selectedPeriodId) {
+      params.set("grading_period_id", selectedPeriodId);
+    }
+    return params;
+  }
+
   /* -------- Données -------- */
   const [roster, setRoster] = useState<RosterItem[]>([]);
   const [evaluations, setEvaluations] = useState<Evaluation[]>([]);
@@ -601,6 +645,87 @@ export default function ClassDeviceNotesPage() {
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  /* ==========================================
+     Chargement des périodes configurées
+  ========================================== */
+  useEffect(() => {
+    let cancelled = false;
+
+    (async () => {
+      try {
+        setLoadingPeriods(true);
+
+        const params = new URLSearchParams();
+        if (academicYearLabel) {
+          params.set("academic_year", academicYearLabel);
+        }
+
+        const candidates = [
+          `/api/admin/institution/grading-periods${
+            params.toString() ? `?${params.toString()}` : ""
+          }`,
+          `/api/institution/grading-periods${
+            params.toString() ? `?${params.toString()}` : ""
+          }`,
+          `/api/teacher/institution/grading-periods${
+            params.toString() ? `?${params.toString()}` : ""
+          }`,
+        ];
+
+        let arr: GradePeriod[] = [];
+
+        for (const url of candidates) {
+          try {
+            logInfo("useEffect[periods] -> fetch", url);
+            const r = await fetch(url, { cache: "no-store" });
+            logInfo("useEffect[periods] -> status", url, r.status);
+            if (!r.ok) continue;
+
+            const j = await r.json().catch((err) => {
+              logError("useEffect[periods] -> JSON parse error", url, err);
+              return {};
+            });
+
+            const items = Array.isArray(j?.items) ? (j.items as GradePeriod[]) : [];
+            if (items.length) {
+              arr = items;
+              break;
+            }
+          } catch (err) {
+            logError("useEffect[periods] -> endpoint failed", url, err);
+          }
+        }
+
+        if (cancelled) return;
+
+        setGradePeriods(arr);
+        setSelectedPeriodId((prev) => {
+          if (prev && arr.some((p) => p.id === prev)) return prev;
+          const today = todayIsoDate();
+          const periodForToday = arr.find(
+            (p) =>
+              p.is_active !== false &&
+              (!p.start_date || p.start_date <= today) &&
+              (!p.end_date || p.end_date >= today)
+          );
+          const firstActive = arr.find((p) => p.is_active !== false);
+          return periodForToday?.id || firstActive?.id || arr[0]?.id || "";
+        });
+      } catch (err) {
+        if (cancelled) return;
+        logError("useEffect[periods] -> échec général", err);
+        setGradePeriods([]);
+        setSelectedPeriodId("");
+      } finally {
+        if (!cancelled) setLoadingPeriods(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [academicYearLabel]);
 
   /* ==========================================
      Chargement des sous-matières (collège)
@@ -706,9 +831,15 @@ export default function ClassDeviceNotesPage() {
         setRoster(ros);
 
         // 2) Évaluations
-        const evalsUrl = `/api/grades/evaluations?class_id=${encodeURIComponent(
-          selected.class_id
-        )}&subject_id=${encodeURIComponent(selected.subject_id ?? "")}`;
+        const evalParams = new URLSearchParams({
+          class_id: selected.class_id,
+        });
+        if (selected.subject_id) {
+          evalParams.set("subject_id", selected.subject_id);
+        }
+        appendSelectedPeriod(evalParams);
+
+        const evalsUrl = `/api/grades/evaluations?${evalParams.toString()}`;
         logInfo("useEffect[data] -> fetch evaluations", evalsUrl);
         const rEvals = await fetch(evalsUrl, { cache: "no-store" });
         logInfo("useEffect[data] -> evaluations status", rEvals.status);
@@ -764,7 +895,7 @@ export default function ClassDeviceNotesPage() {
         setLoading(false);
       }
     })();
-  }, [selected?.class_id, selected?.subject_id]);
+  }, [selected?.class_id, selected?.subject_id, selectedPeriodId]);
 
   /* ==========================================
      Actions
@@ -896,6 +1027,11 @@ export default function ClassDeviceNotesPage() {
     value: number | null,
     scale: number
   ) {
+    if (selectedPeriodClosed) {
+      setMsg("Cette période est clôturée. La saisie des notes est fermée.");
+      return;
+    }
+
     const v =
       value == null || Number.isNaN(value)
         ? null
@@ -929,6 +1065,11 @@ export default function ClassDeviceNotesPage() {
     async function saveAllChanges() {
     if (!selected) {
       logInfo("saveAllChanges -> aucun selected, on annule.");
+      return;
+    }
+
+    if (selectedPeriodClosed) {
+      setMsg("Cette période est clôturée. La saisie des notes est fermée.");
       return;
     }
 
@@ -1092,6 +1233,11 @@ export default function ClassDeviceNotesPage() {
       return;
     }
 
+    if (selectedPeriodClosed) {
+      setMsg("Cette période est clôturée. Impossible d’ajouter une nouvelle note.");
+      return;
+    }
+
     if (hasComponents && !selectedComponentId) {
       logInfo(
         "addEvaluation -> sous-rubriques présentes mais aucune sélectionnée."
@@ -1107,6 +1253,7 @@ export default function ClassDeviceNotesPage() {
         class_id: selected.class_id,
         subject_id: selected?.subject_id ?? null,
         subject_component_id: hasComponents ? selectedComponentId : null,
+        grading_period_id: selectedPeriodId || null,
         eval_date: newDate,
         eval_kind: newType,
         scale: newScale,
@@ -1151,6 +1298,11 @@ export default function ClassDeviceNotesPage() {
 
   async function togglePublish(ev: Evaluation) {
     setMsg(null);
+
+    if (selectedPeriodClosed) {
+      setMsg("Cette période est clôturée. Impossible de modifier la publication.");
+      return;
+    }
 
     const status = getPublicationStatus(ev);
     if (status === "submitted") {
@@ -1213,6 +1365,11 @@ export default function ClassDeviceNotesPage() {
 
   async function deleteEvaluation(ev: Evaluation) {
     logInfo("deleteEvaluation -> demande de suppression", ev);
+
+    if (selectedPeriodClosed) {
+      setMsg("Cette période est clôturée. Impossible de supprimer une colonne.");
+      return;
+    }
 
     if (!isEvaluationDeletable(ev)) {
       setMsg(
@@ -1511,6 +1668,7 @@ export default function ClassDeviceNotesPage() {
       if (academicYearLabel) {
         params.set("academic_year", academicYearLabel);
       }
+      appendSelectedPeriod(params);
       const url = `/api/grades/averages?${params.toString()}`;
       logInfo("openAverages -> fetch", url);
       const r = await fetch(url, { cache: "no-store" });
@@ -1542,10 +1700,8 @@ export default function ClassDeviceNotesPage() {
       return;
     }
 
-    if (evaluations.some((ev) => isEvaluationLockedByPublication(ev))) {
-      setMsg(
-        "Des évaluations sont soumises ou publiées. Les bonus ne peuvent plus être modifiés directement."
-      );
+    if (selectedPeriodClosed) {
+      setMsg("Cette période est clôturée. Impossible de modifier les bonus.");
       return;
     }
 
@@ -1559,6 +1715,7 @@ export default function ClassDeviceNotesPage() {
       logInfo("saveBonuses -> POST /api/grades/adjustments/bulk", {
         class_id: selected.class_id,
         subject_id: selected.subject_id,
+        grading_period_id: selectedPeriodId || null,
         items,
       });
       const r = await fetch("/api/grades/adjustments/bulk", {
@@ -1567,6 +1724,7 @@ export default function ClassDeviceNotesPage() {
         body: JSON.stringify({
           class_id: selected.class_id,
           subject_id: selected.subject_id,
+          grading_period_id: selectedPeriodId || null,
           items,
         }),
       });
@@ -1594,6 +1752,7 @@ export default function ClassDeviceNotesPage() {
       if (academicYearLabel) {
         params.set("academic_year", academicYearLabel);
       }
+      appendSelectedPeriod(params);
       const url2 = `/api/grades/averages?${params.toString()}`;
       logInfo("saveBonuses -> refetch", url2);
       const r2 = await fetch(url2, { cache: "no-store" });
@@ -1680,6 +1839,7 @@ export default function ClassDeviceNotesPage() {
         if (academicYearLabel) {
           params.set("academic_year", academicYearLabel);
         }
+        appendSelectedPeriod(params);
         const url = `/api/grades/averages?${params.toString()}`;
         logInfo("exportToCsv -> fetch moyennes", url);
         const r = await fetch(url, { cache: "no-store" });
@@ -2250,7 +2410,7 @@ export default function ClassDeviceNotesPage() {
 
       {/* Sélection + création NOTE */}
       <section className="rounded-2xl border border-emerald-200 bg-gradient-to-b from-emerald-50/60 to-white p-5 space-y-4 ring-1 ring-emerald-100">
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
           <div>
             <div className="mb-1 flex items-center gap-2 text-xs text-slate-500">
               <Users className="h-3.5 w-3.5" />
@@ -2279,6 +2439,41 @@ export default function ClassDeviceNotesPage() {
             </div>
           </div>
 
+          <div>
+            <div className="mb-1 flex items-center gap-2 text-xs text-slate-500">
+              <FileText className="h-3.5 w-3.5" />
+              Période configurée
+            </div>
+            <Select
+              value={selectedPeriodId}
+              onChange={(e) => {
+                logInfo("UI -> changement période", e.target.value);
+                setSelectedPeriodId(e.target.value);
+              }}
+              aria-label="Période configurée"
+              disabled={loadingPeriods || gradePeriods.length === 0}
+            >
+              {gradePeriods.length === 0 ? (
+                <option value="">— Aucune période configurée —</option>
+              ) : (
+                gradePeriods.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.label || p.short_label || p.code || "Période"}
+                  </option>
+                ))
+              )}
+            </Select>
+            <div className="mt-1 text-[11px] text-slate-500">
+              {loadingPeriods
+                ? "Chargement des périodes…"
+                : selectedPeriod
+                ? `Du ${formatDateFr(selectedPeriod.start_date)} au ${formatDateFr(
+                    selectedPeriod.end_date
+                  )}${selectedPeriodClosed ? " • clôturée" : ""}`
+                : "Bonus et notes restent compatibles avec l’année scolaire."}
+            </div>
+          </div>
+
           {/* Création NOTE */}
           <div className="md:col-span-2">
             <div
@@ -2298,6 +2493,7 @@ export default function ClassDeviceNotesPage() {
                     setNewDate(e.target.value);
                   }}
                   aria-label="Date"
+                  disabled={selectedPeriodClosed}
                 />
               </div>
               <div>
@@ -2311,6 +2507,7 @@ export default function ClassDeviceNotesPage() {
                     setNewType(e.target.value as EvalKind);
                   }}
                   aria-label="Type d’évaluation"
+                  disabled={selectedPeriodClosed}
                 >
                   <option value="devoir">Devoir</option>
                   <option value="interro_ecrite">Interrogation écrite</option>
@@ -2330,6 +2527,7 @@ export default function ClassDeviceNotesPage() {
                       setSelectedComponentId(e.target.value);
                     }}
                     aria-label="Sous-rubrique"
+                    disabled={selectedPeriodClosed}
                   >
                     <option value="">—-- Sous-rubrique --—</option>
                     {components.map((c) => (
@@ -2357,6 +2555,7 @@ export default function ClassDeviceNotesPage() {
                     setNewScale(Number(e.target.value) as 5 | 10 | 20);
                   }}
                   aria-label="Échelle"
+                  disabled={selectedPeriodClosed}
                 >
                   {[5, 10, 20].map((s) => (
                     <option key={s} value={s}>
@@ -2376,6 +2575,7 @@ export default function ClassDeviceNotesPage() {
                     setNewCoeff(Number(e.target.value));
                   }}
                   aria-label="Coefficient"
+                  disabled={selectedPeriodClosed}
                 >
                   {[0.25, 0.5, 1, 2, 3].map((c) => (
                     <option key={c} value={c}>
@@ -2386,7 +2586,7 @@ export default function ClassDeviceNotesPage() {
               </div>
             </div>
             <div className="mt-2">
-              <Button onClick={addEvaluation} disabled={!selected || creating}>
+              <Button onClick={addEvaluation} disabled={!selected || creating || selectedPeriodClosed}>
                 <Plus className="h-4 w-4" />
                 {creating ? "Ajout…" : "Ajouter une note"}
               </Button>
@@ -2451,7 +2651,7 @@ export default function ClassDeviceNotesPage() {
               </GhostButton>
               <Button
                 onClick={saveAllChanges}
-                disabled={loading || totalChanges === 0}
+                disabled={loading || totalChanges === 0 || selectedPeriodClosed}
               >
                 <Save className="h-4 w-4" /> Enregistrer
               </Button>
@@ -2754,6 +2954,7 @@ export default function ClassDeviceNotesPage() {
                           }}
                           disabled={
                             loading ||
+                            selectedPeriodClosed ||
                             isEvaluationLockedByPublication(ev) ||
                             (!!lockByEvalId[ev.id]?.locked && locksSupported)
                           }
@@ -2781,7 +2982,7 @@ export default function ClassDeviceNotesPage() {
               </div>
             </div>
             <div className="flex items-center gap-2">
-              <Button onClick={saveBonuses} disabled={loadingAvg}>
+              <Button onClick={saveBonuses} disabled={loadingAvg || selectedPeriodClosed}>
                 <Save className="h-4 w-4" /> Enregistrer bonus
               </Button>
             </div>

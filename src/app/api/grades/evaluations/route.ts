@@ -6,6 +6,7 @@ import {
   handleTeacherPublicationIntent,
   unpublishEvaluationOfficially,
 } from "@/lib/grades/publication";
+import { computeAcademicYear } from "@/lib/academicYear";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -24,6 +25,8 @@ type EvalRow = {
   class_id: string;
   subject_id: string | null; // ⇐ toujours un subjects.id en DB
   subject_component_id: string | null;
+  grading_period_id: string | null;
+  academic_year?: string | null;
   teacher_id: string | null;
   eval_date: string;
   eval_kind: EvalKind;
@@ -41,6 +44,18 @@ type EvalRow = {
   review_comment?: string | null;
   publication_version?: number | null;
 };
+
+type GradePeriodRow = {
+  id: string;
+  institution_id: string;
+  academic_year: string;
+  start_date: string | null;
+  end_date: string | null;
+  is_active: boolean | null;
+  order_index: number | null;
+};
+
+type UserRole = "super_admin" | "admin" | "educator" | "teacher" | "class_device" | string;
 
 /* ───────── Contexte user / établissement ───────── */
 
@@ -104,6 +119,43 @@ async function ensureClassAccess(
   }
 
   return ok;
+}
+
+async function getUserRoles(
+  srv: ReturnType<typeof getSupabaseServiceClient>,
+  profileId: string,
+  institutionId: string
+): Promise<Set<UserRole>> {
+  const roles = new Set<UserRole>();
+
+  const { data, error } = await srv
+    .from("user_roles")
+    .select("role")
+    .eq("profile_id", profileId)
+    .eq("institution_id", institutionId);
+
+  if (error) {
+    console.error("[grades/evaluations] getUserRoles error", error, {
+      profileId,
+      institutionId,
+    });
+    return roles;
+  }
+
+  for (const row of data ?? []) {
+    const role = String((row as any).role || "").trim();
+    if (role) roles.add(role);
+  }
+
+  return roles;
+}
+
+function isPrivileged(roles: Set<UserRole>) {
+  return (
+    roles.has("super_admin") ||
+    roles.has("admin") ||
+    roles.has("educator")
+  );
 }
 
 /**
@@ -313,11 +365,161 @@ function normalizePublicationStatus(value: unknown): string {
   return v || "draft";
 }
 
+function normalizeUuidLike(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const v = value.trim();
+  return v ? v : null;
+}
+
+function computeAcademicYearFromEvalDate(evalDate: string): string {
+  const safe = /^\d{4}-\d{2}-\d{2}$/.test(evalDate)
+    ? new Date(`${evalDate}T12:00:00.000Z`)
+    : new Date(evalDate);
+
+  if (Number.isNaN(safe.getTime())) {
+    throw new Error("invalid_eval_date");
+  }
+
+  return computeAcademicYear(safe);
+}
+
+function serverTodayIsoDate(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function isGradePeriodClosed(period: GradePeriodRow | null): boolean {
+  if (!period?.end_date) return false;
+  return serverTodayIsoDate() > period.end_date;
+}
+
+function closedPeriodResponse(period: GradePeriodRow) {
+  return NextResponse.json(
+    {
+      ok: false,
+      error: "GRADING_PERIOD_CLOSED",
+      grading_period_id: period.id,
+      period_end_date: period.end_date,
+      today: serverTodayIsoDate(),
+      message: "Cette période est clôturée. La modification n’est plus autorisée.",
+    },
+    { status: 423 }
+  );
+}
+
+async function getGradePeriodById(
+  srv: ReturnType<typeof getSupabaseServiceClient>,
+  institutionId: string,
+  gradingPeriodId: string
+): Promise<GradePeriodRow | null> {
+  const { data, error } = await srv
+    .from("grade_periods")
+    .select(
+      "id,institution_id,academic_year,start_date,end_date,is_active,order_index"
+    )
+    .eq("id", gradingPeriodId)
+    .eq("institution_id", institutionId)
+    .maybeSingle();
+
+  if (error) {
+    console.error("[grades/evaluations] getGradePeriodById error", {
+      gradingPeriodId,
+      institutionId,
+      error,
+    });
+    return null;
+  }
+
+  return (data as GradePeriodRow | null) ?? null;
+}
+
+async function autoDetectGradePeriodId(
+  srv: ReturnType<typeof getSupabaseServiceClient>,
+  institutionId: string,
+  academicYear: string,
+  evalDate: string
+): Promise<string | null> {
+  const { data, error } = await srv
+    .from("grade_periods")
+    .select("id")
+    .eq("institution_id", institutionId)
+    .eq("academic_year", academicYear)
+    .eq("is_active", true)
+    .lte("start_date", evalDate)
+    .gte("end_date", evalDate)
+    .order("order_index", { ascending: true })
+    .limit(1);
+
+  if (error) {
+    console.error("[grades/evaluations] autoDetectGradePeriodId error", {
+      institutionId,
+      academicYear,
+      evalDate,
+      error,
+    });
+    return null;
+  }
+
+  const row = Array.isArray(data) ? (data[0] as any) : null;
+  return row?.id ? String(row.id) : null;
+}
+
+async function validateExplicitGradePeriod(
+  srv: ReturnType<typeof getSupabaseServiceClient>,
+  institutionId: string,
+  gradingPeriodId: string,
+  evalDate: string,
+  academicYear: string
+): Promise<{ ok: true; period: GradePeriodRow } | { ok: false; error: string }> {
+  const period = await getGradePeriodById(srv, institutionId, gradingPeriodId);
+
+  if (!period) {
+    return { ok: false, error: "INVALID_GRADING_PERIOD" };
+  }
+
+  if (period.is_active === false) {
+    return { ok: false, error: "GRADING_PERIOD_INACTIVE" };
+  }
+
+  if (period.academic_year !== academicYear) {
+    return { ok: false, error: "GRADING_PERIOD_ACADEMIC_YEAR_MISMATCH" };
+  }
+
+  if (period.start_date && evalDate < period.start_date) {
+    return { ok: false, error: "EVAL_DATE_OUTSIDE_GRADING_PERIOD" };
+  }
+
+  if (period.end_date && evalDate > period.end_date) {
+    return { ok: false, error: "EVAL_DATE_OUTSIDE_GRADING_PERIOD" };
+  }
+
+  return { ok: true, period };
+}
+
+async function getClosedPeriodResponseIfNeeded(
+  srv: ReturnType<typeof getSupabaseServiceClient>,
+  institutionId: string,
+  roles: Set<UserRole>,
+  gradingPeriodId: string | null
+): Promise<NextResponse | null> {
+  if (isPrivileged(roles) || !gradingPeriodId) return null;
+
+  const period = await getGradePeriodById(srv, institutionId, gradingPeriodId);
+  if (!period) return null;
+
+  if (isGradePeriodClosed(period)) {
+    return closedPeriodResponse(period);
+  }
+
+  return null;
+}
+
 const EVALUATION_SELECT = [
   "id",
   "class_id",
   "subject_id",
   "subject_component_id",
+  "grading_period_id",
+  "academic_year",
   "teacher_id",
   "eval_date",
   "eval_kind",
@@ -345,6 +547,10 @@ export async function GET(req: NextRequest) {
     const subjectRaw = url.searchParams.get("subject_id");
     const subjectParam = subjectRaw && subjectRaw !== "" ? subjectRaw : null;
 
+    const gradingPeriodId =
+      normalizeUuidLike(url.searchParams.get("grading_period_id")) ??
+      normalizeUuidLike(url.searchParams.get("gradingPeriodId"));
+
     // 🔹 sous-matière éventuelle (snake_case OU camelCase)
     const subjectComponentRaw =
       url.searchParams.get("subject_component_id") ??
@@ -367,6 +573,7 @@ export async function GET(req: NextRequest) {
         classId,
         subjectParam,
         subjectComponentId,
+        gradingPeriodId,
       });
 
       return NextResponse.json({ items: [] as EvalRow[] }, { status: 401 });
@@ -376,6 +583,7 @@ export async function GET(req: NextRequest) {
       classId,
       subjectParam,
       subjectComponentId,
+      gradingPeriodId,
       profileId: profile.id,
       institutionId: profile.institution_id,
     });
@@ -395,6 +603,24 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ items: [] as EvalRow[] }, { status: 200 });
     }
 
+    if (gradingPeriodId) {
+      const period = await getGradePeriodById(
+        srv,
+        profile.institution_id,
+        gradingPeriodId
+      );
+
+      if (!period) {
+        console.warn("[grades/evaluations] GET invalid grading period", {
+          classId,
+          gradingPeriodId,
+          institutionId: profile.institution_id,
+        });
+
+        return NextResponse.json({ items: [] as EvalRow[] }, { status: 200 });
+      }
+    }
+
     // 🔁 On normalise toujours vers un subjects.id pour filtrer la table
     let effectiveSubjectId: string | null = null;
 
@@ -410,6 +636,10 @@ export async function GET(req: NextRequest) {
       .from("grade_evaluations")
       .select(EVALUATION_SELECT)
       .eq("class_id", classId);
+
+    if (gradingPeriodId) {
+      q = q.eq("grading_period_id", gradingPeriodId);
+    }
 
     // 🔹 Priorité à la sous-matière si présente
     if (subjectComponentId) {
@@ -428,6 +658,7 @@ export async function GET(req: NextRequest) {
         subjectParam,
         effectiveSubjectId,
         subjectComponentId,
+        gradingPeriodId,
       });
 
       return NextResponse.json({ items: [] as EvalRow[] }, { status: 200 });
@@ -459,6 +690,8 @@ export async function POST(req: NextRequest) {
       subject_id,
       subject_component_id: subject_component_id_raw,
       subjectComponentId,
+      grading_period_id: grading_period_id_raw,
+      gradingPeriodId,
       eval_date,
       eval_kind,
       scale,
@@ -468,6 +701,8 @@ export async function POST(req: NextRequest) {
       subject_id?: string | null;
       subject_component_id?: string | null;
       subjectComponentId?: string | null;
+      grading_period_id?: string | null;
+      gradingPeriodId?: string | null;
       eval_date: string;
       eval_kind: EvalKind;
       scale: number;
@@ -542,6 +777,65 @@ export async function POST(req: NextRequest) {
       resolvedSubjectId
     );
 
+    const explicitGradingPeriodId =
+      normalizeUuidLike(gradingPeriodId) ??
+      normalizeUuidLike(grading_period_id_raw);
+
+    let academic_year: string;
+
+    try {
+      academic_year = computeAcademicYearFromEvalDate(eval_date);
+    } catch {
+      return NextResponse.json(
+        { ok: false, error: "INVALID_EVAL_DATE" },
+        { status: 400 }
+      );
+    }
+
+    let grading_period_id: string | null = null;
+    let resolvedPeriod: GradePeriodRow | null = null;
+
+    if (explicitGradingPeriodId) {
+      const validated = await validateExplicitGradePeriod(
+        srv,
+        profile.institution_id,
+        explicitGradingPeriodId,
+        eval_date,
+        academic_year
+      );
+
+      if (!validated.ok) {
+        return NextResponse.json(
+          { ok: false, error: validated.error },
+          { status: 400 }
+        );
+      }
+
+      grading_period_id = validated.period.id;
+      resolvedPeriod = validated.period;
+    } else {
+      grading_period_id = await autoDetectGradePeriodId(
+        srv,
+        profile.institution_id,
+        academic_year,
+        eval_date
+      );
+
+      if (grading_period_id) {
+        resolvedPeriod = await getGradePeriodById(
+          srv,
+          profile.institution_id,
+          grading_period_id
+        );
+      }
+    }
+
+    const roles = await getUserRoles(srv, profile.id, profile.institution_id);
+
+    if (!isPrivileged(roles) && resolvedPeriod && isGradePeriodClosed(resolvedPeriod)) {
+      return closedPeriodResponse(resolvedPeriod);
+    }
+
     console.log("[grades/evaluations] POST resolved", {
       class_id,
       rawSubjectId: subjRaw,
@@ -550,6 +844,8 @@ export async function POST(req: NextRequest) {
       subjectComponentId,
       subject_component_id_raw,
       teacher_id: teacherId,
+      grading_period_id,
+      academic_year,
     });
 
     const { data, error } = await srv
@@ -558,6 +854,8 @@ export async function POST(req: NextRequest) {
         class_id,
         subject_id: resolvedSubjectId,
         subject_component_id: subjectComponentIdNorm,
+        grading_period_id,
+        academic_year,
         teacher_id: teacherId,
         eval_date,
         eval_kind,
@@ -579,6 +877,8 @@ export async function POST(req: NextRequest) {
         resolvedSubjectId,
         teacherId,
         subjectComponentIdNorm,
+        grading_period_id,
+        academic_year,
       });
 
       return NextResponse.json(
@@ -642,7 +942,7 @@ export async function PATCH(req: NextRequest) {
 
     const { data: evalRow, error: evErr } = await srv
       .from("grade_evaluations")
-      .select("id,class_id,is_published,publication_status")
+      .select("id,class_id,is_published,publication_status,grading_period_id")
       .eq("id", evaluation_id)
       .maybeSingle();
 
@@ -673,6 +973,17 @@ export async function PATCH(req: NextRequest) {
         { status: 403 }
       );
     }
+
+    const roles = await getUserRoles(srv, profile.id, profile.institution_id);
+
+    const closedResp = await getClosedPeriodResponseIfNeeded(
+      srv,
+      profile.institution_id,
+      roles,
+      normalizeUuidLike((evalRow as any).grading_period_id)
+    );
+
+    if (closedResp) return closedResp;
 
     if (typeof is_published !== "boolean") {
       return NextResponse.json(
@@ -785,6 +1096,7 @@ export async function DELETE(req: NextRequest) {
           "publication_status",
           "published_at",
           "publication_version",
+          "grading_period_id",
         ].join(",")
       )
       .eq("id", evaluation_id)
@@ -841,6 +1153,17 @@ export async function DELETE(req: NextRequest) {
         { status: 403 }
       );
     }
+
+    const roles = await getUserRoles(srv, profile.id, profile.institution_id);
+
+    const closedResp = await getClosedPeriodResponseIfNeeded(
+      srv,
+      profile.institution_id,
+      roles,
+      normalizeUuidLike((evalRow as any).grading_period_id)
+    );
+
+    if (closedResp) return closedResp;
 
     // 1️⃣ Supprimer d'abord les notes de travail associées
     const { error: delScoresErr } = await srv

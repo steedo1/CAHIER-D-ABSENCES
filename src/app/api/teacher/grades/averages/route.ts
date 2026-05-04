@@ -405,7 +405,15 @@ export async function GET(req: NextRequest) {
       sample: gradesRows.slice(0, 3),
     });
 
-    // 3) Bonus filtrés aussi par période
+    // 3) Bonus filtrés aussi par période, avec compatibilité historique.
+    //
+    // Règle :
+    // - si grading_period_id est fourni, on charge les bonus de cette période
+    //   ET les anciens bonus sans période (fallback) ;
+    // - le bonus de période est toujours prioritaire ;
+    // - le bonus matière est prioritaire sur le bonus général ;
+    // - si grading_period_id est absent, on garde le comportement historique
+    //   avec les bonus sans période uniquement.
     let qBonuses = svc
       .from("grade_adjustments")
       .select(
@@ -415,7 +423,9 @@ export async function GET(req: NextRequest) {
       .eq("academic_year", academic_year);
 
     if (grading_period_id) {
-      qBonuses = qBonuses.eq("grading_period_id", grading_period_id);
+      qBonuses = qBonuses.or(
+        `grading_period_id.eq.${grading_period_id},grading_period_id.is.null`
+      );
     } else {
       qBonuses = qBonuses.is("grading_period_id", null);
     }
@@ -435,27 +445,39 @@ export async function GET(req: NextRequest) {
     });
 
     const bonusMap = new Map<string, number>();
+    const bonusPriorityMap = new Map<string, number>();
 
     for (const r of (bonuses ?? []) as unknown as BonusRow[]) {
-      const sid = r.student_id;
+      const sid = String((r as any).student_id || "").trim();
       const b = Number((r as any).bonus ?? 0);
-      const rowSubj = r.subject_id;
+      const rowSubj = (r as any).subject_id ?? null;
+      const rowPeriod = (r as any).grading_period_id ?? null;
 
       if (!sid || !Number.isFinite(b)) continue;
 
-      if (!subject_id) {
-        if (rowSubj === null) {
-          bonusMap.set(sid, b);
-        }
-        continue;
+      const isPeriodSpecific =
+        !!grading_period_id && String(rowPeriod || "") === grading_period_id;
+      const isLegacy = rowPeriod === null || rowPeriod === undefined;
+
+      if (grading_period_id && !isPeriodSpecific && !isLegacy) continue;
+
+      let priority = -1;
+
+      if (subject_id) {
+        if (rowSubj === subject_id && isPeriodSpecific) priority = 40;
+        else if (rowSubj === null && isPeriodSpecific) priority = 30;
+        else if (rowSubj === subject_id && isLegacy) priority = 20;
+        else if (rowSubj === null && isLegacy) priority = 10;
+      } else {
+        if (rowSubj === null && isPeriodSpecific) priority = 20;
+        else if (rowSubj === null && isLegacy) priority = 10;
       }
 
-      if (rowSubj === subject_id) {
-        bonusMap.set(sid, b);
-        continue;
-      }
+      if (priority < 0) continue;
 
-      if (rowSubj === null && !bonusMap.has(sid)) {
+      const previousPriority = bonusPriorityMap.get(sid) ?? -1;
+      if (priority > previousPriority) {
+        bonusPriorityMap.set(sid, priority);
         bonusMap.set(sid, b);
       }
     }

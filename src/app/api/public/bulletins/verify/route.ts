@@ -22,6 +22,12 @@ function cleanCoeff(c: any): number {
   return Number(n.toFixed(2));
 }
 
+function clampAverage20(value: any): number | null {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return null;
+  return Math.max(0, Math.min(20, n));
+}
+
 function isUuid(v: string): boolean {
   return /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(
     v
@@ -441,6 +447,18 @@ type ScoreRow = {
   score: number | null;
 };
 
+type GradeAdjustmentBonusRow = {
+  student_id: string;
+  subject_id: string | null;
+  grading_period_id?: string | null;
+  bonus: number | string | null;
+};
+
+type AdjustmentBonusMaps = {
+  subjectBonusByStudent: Map<string, Map<string, number>>;
+  generalBonusByStudent: Map<string, number>;
+};
+
 type ClassStudentRow = {
   student_id: string;
   students?:
@@ -681,6 +699,7 @@ async function computeStudentGeneralAvgForRange(opts: {
   conductSubjectIds: Set<string>;
   subjectComponentsBySubject: Map<string, BulletinSubjectComponent[]>;
   subjectComponentById: Map<string, BulletinSubjectComponent>;
+  bonusMaps?: AdjustmentBonusMaps | null;
 }): Promise<number | null> {
   const {
     srv,
@@ -693,6 +712,7 @@ async function computeStudentGeneralAvgForRange(opts: {
     conductSubjectIds,
     subjectComponentsBySubject,
     subjectComponentById,
+    bonusMaps,
   } = opts;
 
   let evalQuery = srv
@@ -795,9 +815,22 @@ async function computeStudentGeneralAvgForRange(opts: {
       }
     }
 
+    const rawAvg20 = avg20;
+    const subjectBonus =
+      bonusMaps?.subjectBonusByStudent
+        .get(studentId)
+        ?.get(String(s.subject_id)) ?? 0;
+
+    if (avg20 !== null && avg20 !== undefined && Number.isFinite(Number(avg20))) {
+      const adjusted = clampAverage20(Number(avg20) + subjectBonus);
+      avg20 = adjusted === null ? null : cleanNumber(adjusted, 4);
+    }
+
     return {
       subject_id: s.subject_id,
       avg20,
+      bonus: Number(subjectBonus.toFixed(2)),
+      avg20_before_bonus: rawAvg20,
     };
   });
 
@@ -836,7 +869,12 @@ async function computeStudentGeneralAvgForRange(opts: {
     }
   }
 
-  return sumCoeffGen > 0 ? cleanNumber(sumGen / sumCoeffGen, 4) : null;
+  const generalBeforeBonus = sumCoeffGen > 0 ? cleanNumber(sumGen / sumCoeffGen, 4) : null;
+  if (generalBeforeBonus === null) return null;
+
+  const generalBonus = bonusMaps?.generalBonusByStudent.get(studentId) ?? 0;
+  const adjusted = clampAverage20(generalBeforeBonus + generalBonus);
+  return adjusted === null ? null : cleanNumber(adjusted, 4);
 }
 
 /* ───────── Route GET ───────── */
@@ -954,6 +992,7 @@ export async function GET(req: NextRequest) {
   const bulletinLevel = normalizeBulletinLevel(classRow.level);
 
   let periodMeta: {
+    id?: string | null;
     from: string | null;
     to: string | null;
     code?: string | null;
@@ -1018,6 +1057,7 @@ export async function GET(req: NextRequest) {
 
     if (!gpErr && gp) {
       periodMeta = {
+        id: gp.id ?? null,
         from: dateFrom,
         to: dateTo,
         code: gp.code ?? null,
@@ -1069,6 +1109,7 @@ export async function GET(req: NextRequest) {
         dateTo = String(fuzzy.end_date);
 
         periodMeta = {
+          id: fuzzy.id ?? null,
           from: dateFrom,
           to: dateTo,
           code: fuzzy.code ?? periodCodeToken ?? null,
@@ -1244,6 +1285,117 @@ export async function GET(req: NextRequest) {
   }
 
   const studentIds = classStudents.map((cs) => cs.student_id).filter(Boolean);
+
+  /* ───────── Bonus pédagogiques officiels pour la vérification publique ─────────
+   *
+   * Même règle que le bulletin admin :
+   * - bonus matière appliqué à la moyenne matière ;
+   * - bonus général appliqué à la moyenne générale ;
+   * - si grading_period_id existe, la ligne de la période demandée est prioritaire ;
+   * - les anciennes lignes sans période restent compatibles.
+   */
+  async function loadAdjustmentBonusMaps(params: {
+    academicYear: string | null | undefined;
+    periodId?: string | null;
+  }): Promise<AdjustmentBonusMaps> {
+    const empty: AdjustmentBonusMaps = {
+      subjectBonusByStudent: new Map(),
+      generalBonusByStudent: new Map(),
+    };
+
+    const academicYear = String(params.academicYear || "").trim();
+    if (!academicYear || !studentIds.length) return empty;
+
+    const selectedByKey = new Map<
+      string,
+      { student_id: string; subject_id: string | null; bonus: number; priority: number }
+    >();
+
+    const ingest = (rows: GradeAdjustmentBonusRow[], hasPeriodColumn: boolean) => {
+      for (const row of rows || []) {
+        const sid = String(row.student_id || "").trim();
+        if (!sid) continue;
+
+        const rawBonus = Number(row.bonus ?? 0);
+        if (!Number.isFinite(rawBonus)) continue;
+
+        const subjectId = row.subject_id ? String(row.subject_id) : null;
+        const rowPeriodId = hasPeriodColumn
+          ? row.grading_period_id
+            ? String(row.grading_period_id)
+            : null
+          : null;
+
+        let priority = 1;
+        if (params.periodId) {
+          if (rowPeriodId === params.periodId) priority = 2;
+          else if (!rowPeriodId) priority = 1;
+          else continue;
+        }
+
+        const key = `${sid}__${subjectId ?? "__GENERAL__"}`;
+        const existing = selectedByKey.get(key);
+        if (!existing || priority >= existing.priority) {
+          selectedByKey.set(key, {
+            student_id: sid,
+            subject_id: subjectId,
+            bonus: Number(rawBonus.toFixed(2)),
+            priority,
+          });
+        }
+      }
+    };
+
+    try {
+      const { data, error } = await srv
+        .from("grade_adjustments")
+        .select("student_id, subject_id, grading_period_id, bonus")
+        .eq("class_id", classIdStr)
+        .eq("academic_year", academicYear)
+        .in("student_id", studentIds);
+
+      if (error) throw error;
+      ingest((data || []) as GradeAdjustmentBonusRow[], true);
+    } catch (error: any) {
+      try {
+        const { data, error: fallbackError } = await srv
+          .from("grade_adjustments")
+          .select("student_id, subject_id, bonus")
+          .eq("class_id", classIdStr)
+          .eq("academic_year", academicYear)
+          .in("student_id", studentIds);
+
+        if (fallbackError) throw fallbackError;
+        ingest((data || []) as GradeAdjustmentBonusRow[], false);
+      } catch (fallbackError) {
+        console.warn("[public/bulletins/verify] bonus indisponibles", {
+          academicYear,
+          periodId: params.periodId ?? null,
+          error: fallbackError,
+        });
+      }
+    }
+
+    const out: AdjustmentBonusMaps = {
+      subjectBonusByStudent: new Map(),
+      generalBonusByStudent: new Map(),
+    };
+
+    for (const row of selectedByKey.values()) {
+      if (row.subject_id) {
+        let bySubject = out.subjectBonusByStudent.get(row.student_id);
+        if (!bySubject) {
+          bySubject = new Map();
+          out.subjectBonusByStudent.set(row.student_id, bySubject);
+        }
+        bySubject.set(row.subject_id, row.bonus);
+      } else {
+        out.generalBonusByStudent.set(row.student_id, row.bonus);
+      }
+    }
+
+    return out;
+  }
 
   async function fetchConductAverageMap(
     from: string,
@@ -1563,6 +1715,11 @@ export async function GET(req: NextRequest) {
       conductByPeriodKey.set(key, await fetchConductAverageMap(ps, pe));
     }
   }
+
+  const currentBonusMaps = await loadAdjustmentBonusMaps({
+    academicYear: periodMeta.academic_year ?? academicYearToken ?? classRow.academic_year ?? null,
+    periodId: periodMeta.id ?? null,
+  });
 
   const { data: coeffAllData } = await srv
     .from("institution_subject_coeffs")
@@ -2097,9 +2254,22 @@ export async function GET(req: NextRequest) {
         }
       }
 
+      const rawAvg20 = avg20;
+      const subjectBonus =
+        currentBonusMaps.subjectBonusByStudent
+          .get(cs.student_id)
+          ?.get(String(s.subject_id)) ?? 0;
+
+      if (avg20 !== null && avg20 !== undefined && Number.isFinite(Number(avg20))) {
+        const adjusted = clampAverage20(Number(avg20) + subjectBonus);
+        avg20 = adjusted === null ? null : cleanNumber(adjusted, 4);
+      }
+
       return {
         subject_id: s.subject_id,
         avg20,
+        bonus: Number(subjectBonus.toFixed(2)),
+        avg20_before_bonus: rawAvg20,
       };
     });
 
@@ -2147,6 +2317,9 @@ export async function GET(req: NextRequest) {
     }
 
     let general_avg: number | null = null;
+    let generalAvgBeforeBonus: number | null = null;
+    const generalBonus = currentBonusMaps.generalBonusByStudent.get(cs.student_id) ?? 0;
+
     {
       let sumGen = 0;
       let sumCoeffGen = 0;
@@ -2183,7 +2356,15 @@ export async function GET(req: NextRequest) {
           }
         }
 
-        general_avg = sumCoeffGen > 0 ? cleanNumber(sumGen / sumCoeffGen, 4) : null;
+        generalAvgBeforeBonus =
+          sumCoeffGen > 0 ? cleanNumber(sumGen / sumCoeffGen, 4) : null;
+
+        if (generalAvgBeforeBonus !== null) {
+          const adjusted = clampAverage20(generalAvgBeforeBonus + generalBonus);
+          general_avg = adjusted === null ? null : cleanNumber(adjusted, 4);
+        } else {
+          general_avg = null;
+        }
       } else {
         general_avg = null;
       }
@@ -2205,6 +2386,8 @@ export async function GET(req: NextRequest) {
       per_subject,
       per_group,
       general_avg,
+      general_bonus: Number(generalBonus.toFixed(2)),
+      general_avg_before_bonus: generalAvgBeforeBonus,
       per_subject_components,
     };
   });
@@ -2255,6 +2438,11 @@ export async function GET(req: NextRequest) {
         const conductNote =
           conductByPeriodKey.get(key)?.get(studentIdStr) ?? null;
 
+        const periodBonusMaps = await loadAdjustmentBonusMaps({
+          academicYear: yearForAnnual ?? periodMeta.academic_year ?? academicYearToken ?? classRow.academic_year ?? null,
+          periodId: p?.id ? String(p.id) : null,
+        });
+
         periodAvg = await computeStudentGeneralAvgForRange({
           srv,
           classId: classIdStr,
@@ -2266,6 +2454,7 @@ export async function GET(req: NextRequest) {
           conductSubjectIds,
           subjectComponentsBySubject: compsBySubject,
           subjectComponentById,
+          bonusMaps: periodBonusMaps,
         });
       }
 

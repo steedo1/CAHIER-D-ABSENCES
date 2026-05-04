@@ -30,12 +30,44 @@ type PublicationStatus =
   | string
   | null;
 
+type GradePeriodRow = {
+  id: string;
+  end_date: string | null;
+  is_active: boolean | null;
+};
+
+type EvaluationRow = {
+  id: string;
+  scale: number | null;
+  class_id: string;
+  subject_id: string | null;
+  grading_period_id: string | null;
+  is_published: boolean | null;
+  published_at: string | null;
+  publication_status: string | null;
+  submitted_at: string | null;
+  submitted_by: string | null;
+  reviewed_at: string | null;
+  reviewed_by: string | null;
+  review_comment: string | null;
+  publication_version: number | null;
+};
+
 function bad(error: string, status = 400, extra?: Record<string, unknown>) {
   return NextResponse.json({ ok: false, error, ...(extra ?? {}) }, { status });
 }
 
 function round2(n: number) {
   return Math.round(n * 100) / 100;
+}
+
+function serverTodayIsoDate() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function isClosedByEndDate(period: GradePeriodRow | null): boolean {
+  if (!period?.end_date) return false;
+  return serverTodayIsoDate() > period.end_date;
 }
 
 function normalizePublicationStatus(value: unknown): PublicationStatus {
@@ -66,7 +98,11 @@ function isMissingTableError(error: any, tableName: string) {
   );
 }
 
-/* -------- Contexte (user + profil + service client) -------- */
+function isPrivilegedRole(role: string) {
+  return role === "super_admin" || role === "admin" || role === "educator";
+}
+
+/* -------- Contexte user + profil + service client -------- */
 async function getContext() {
   const supa = await getSupabaseServerClient();
   const {
@@ -119,6 +155,34 @@ async function ensureClassAccess(
   return !!cls && cls.institution_id === institutionId;
 }
 
+async function isPrivilegedUser(
+  srv: ReturnType<typeof getSupabaseServiceClient>,
+  profileId: string,
+  institutionId: string
+): Promise<boolean> {
+  const { data, error } = await srv
+    .from("user_roles")
+    .select("role")
+    .eq("profile_id", profileId)
+    .eq("institution_id", institutionId);
+
+  if (error) {
+    console.error("[grades/scores/bulk] user_roles error", {
+      profile_id: profileId,
+      institution_id: institutionId,
+      error,
+    });
+
+    return false;
+  }
+
+  const roles = Array.isArray(data)
+    ? data.map((r: any) => String(r.role || ""))
+    : [];
+
+  return roles.some(isPrivilegedRole);
+}
+
 /**
  * Verrou métier publication.
  *
@@ -128,7 +192,7 @@ async function ensureClassAccess(
  * - submitted : bloqué, car l’admin doit d’abord traiter la demande
  * - published : bloqué, car la note officielle existe déjà
  */
-function assertEvaluationEditable(ge: any) {
+function assertEvaluationEditable(ge: EvaluationRow) {
   const publicationStatus = normalizePublicationStatus(ge?.publication_status);
   const isPublished = ge?.is_published === true;
 
@@ -174,7 +238,13 @@ function assertEvaluationEditable(ge: any) {
 
 /* ==========================================
    POST : upsert des notes pour une évaluation
-   (compte classe / admin, aligné sur la route prof)
+   compte-classe / admin, aligné sur la route prof
+
+   Règle :
+   - notes publiées/soumises : bloquées ;
+   - évaluation verrouillée par PIN : bloquée ;
+   - période clôturée : bloquée pour les non privilégiés ;
+   - admin / super_admin / educator : autorisés selon rôle.
 ========================================== */
 export async function POST(req: NextRequest) {
   try {
@@ -217,8 +287,8 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // Lire l'évaluation pour récupérer scale + class_id + état publication.
-    const { data: ge, error: geErr } = await srv
+    // Lire l'évaluation pour récupérer scale + class_id + état publication + période.
+    const { data: geRaw, error: geErr } = await srv
       .from("grade_evaluations")
       .select(
         [
@@ -226,6 +296,7 @@ export async function POST(req: NextRequest) {
           "scale",
           "class_id",
           "subject_id",
+          "grading_period_id",
           "is_published",
           "published_at",
           "publication_status",
@@ -240,13 +311,15 @@ export async function POST(req: NextRequest) {
       .eq("id", evaluation_id)
       .maybeSingle();
 
-    if (geErr || !ge) {
+    if (geErr || !geRaw) {
       console.error("[grades/scores/bulk] grade_evaluations error", geErr, {
         evaluation_id,
       });
 
       return bad(geErr?.message || "EVALUATION_NOT_FOUND_OR_FORBIDDEN", 404);
     }
+
+    const ge = geRaw as unknown as EvaluationRow;
 
     // Vérifier que la classe de cette évaluation appartient bien à l'établissement.
     const allowed = await ensureClassAccess(
@@ -265,6 +338,43 @@ export async function POST(req: NextRequest) {
       return bad("FORBIDDEN", 403);
     }
 
+    // ✅ Verrou période avant toute écriture.
+    // On bloque seulement les non privilégiés.
+    const privileged = await isPrivilegedUser(
+      srv,
+      profile.id,
+      profile.institution_id
+    );
+
+    if (!privileged && ge.grading_period_id) {
+      const { data: periodRow, error: periodErr } = await srv
+        .from("grade_periods")
+        .select("id, end_date, is_active")
+        .eq("id", ge.grading_period_id)
+        .maybeSingle();
+
+      if (periodErr) {
+        console.error("[grades/scores/bulk] period fetch error", {
+          evaluation_id,
+          grading_period_id: ge.grading_period_id,
+          error: periodErr,
+        });
+
+        return bad(periodErr.message || "GRADE_PERIOD_FETCH_FAILED", 500);
+      }
+
+      const period = (periodRow ?? null) as unknown as GradePeriodRow | null;
+
+      if (isClosedByEndDate(period)) {
+        return bad("GRADING_PERIOD_CLOSED", 423, {
+          evaluation_id,
+          grading_period_id: ge.grading_period_id,
+          period_end_date: period?.end_date ?? null,
+          today: serverTodayIsoDate(),
+        });
+      }
+    }
+
     // ✅ Verrou métier publication AVANT toute écriture.
     const editable = assertEvaluationEditable(ge);
 
@@ -279,7 +389,7 @@ export async function POST(req: NextRequest) {
       return bad(editable.error, editable.status, editable.extra);
     }
 
-    // ✅ Bloquer l'écriture si l'évaluation est verrouillée (PIN).
+    // ✅ Bloquer l'écriture si l'évaluation est verrouillée par PIN.
     try {
       const { data: lockRow, error: lockErr } = await srv
         .from("grade_evaluation_locks")
@@ -403,6 +513,7 @@ export async function POST(req: NextRequest) {
       deleted,
       violations: violations.length,
       publication_status: editable.publication_status,
+      grading_period_id: ge.grading_period_id,
     });
 
     return NextResponse.json({
@@ -412,6 +523,7 @@ export async function POST(req: NextRequest) {
       deleted,
       warnings,
       publication_status: editable.publication_status,
+      grading_period_id: ge.grading_period_id,
     });
   } catch (e: any) {
     console.error("[grades/scores/bulk] unexpected error", e);
