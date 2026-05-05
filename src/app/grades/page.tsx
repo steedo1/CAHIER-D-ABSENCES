@@ -537,6 +537,35 @@ export default function TeacherNotesPage() {
     return params;
   }
 
+  function buildAverageParams() {
+    const params = new URLSearchParams({
+      class_id: selected?.class_id || "",
+      missing: "ignore",
+      round_to: "none",
+      rank_by: "average",
+    });
+
+    if (selected?.subject_id) {
+      params.set("subject_id", selected.subject_id);
+    }
+
+    if (selectedPeriod?.academic_year) {
+      params.set("academic_year", selectedPeriod.academic_year);
+    } else if (academicYearLabel) {
+      params.set("academic_year", academicYearLabel);
+    }
+
+    appendSelectedPeriod(params);
+
+    // Dès qu'une évaluation est publiée, l'affichage des moyennes doit être
+    // aligné sur le bulletin et le compte-classe : on lit donc la source officielle.
+    // Tant qu'aucune évaluation n'est publiée, on garde une moyenne de travail.
+    const hasPublishedEvaluation = evaluations.some((ev) => isEvaluationPublished(ev));
+    params.set("published_only", hasPublishedEvaluation ? "1" : "0");
+
+    return params;
+  }
+
   /* -------- État & message -------- */
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
@@ -1462,13 +1491,7 @@ export default function TeacherNotesPage() {
     setLoadingAvg(true);
     setMsg(null);
     try {
-      const params = new URLSearchParams({
-        class_id: selected.class_id,
-      });
-      if (selected.subject_id) {
-        params.set("subject_id", selected.subject_id);
-      }
-      appendSelectedPeriod(params);
+      const params = buildAverageParams();
       const r = await fetch(
         `/api/teacher/grades/averages?${params.toString()}`,
         { cache: "no-store" }
@@ -1515,13 +1538,7 @@ export default function TeacherNotesPage() {
         throw new Error(j?.error || "Échec d’enregistrement des bonus.");
 
       // On relit les moyennes pour refléter les bonus stockés en base
-      const params = new URLSearchParams({
-        class_id: selected.class_id,
-      });
-      if (selected.subject_id) {
-        params.set("subject_id", selected.subject_id);
-      }
-      appendSelectedPeriod(params);
+      const params = buildAverageParams();
       const r2 = await fetch(
         `/api/teacher/grades/averages?${params.toString()}`,
         { cache: "no-store" }
@@ -1809,13 +1826,7 @@ export default function TeacherNotesPage() {
       // On tente de récupérer les moyennes consolidées
       let avgByStudent = new Map<string, AverageApiRow>();
       try {
-        const params = new URLSearchParams({
-          class_id: selected.class_id,
-        });
-        if (selected.subject_id) {
-          params.set("subject_id", selected.subject_id);
-        }
-        appendSelectedPeriod(params);
+        const params = buildAverageParams();
         const r = await fetch(
           `/api/teacher/grades/averages?${params.toString()}`,
           { cache: "no-store" }
