@@ -42,7 +42,7 @@ async function guardAdmin() {
     return {
       ok: false as const,
       response: NextResponse.json(
-        { ok: false, error: "unauthorized", message: "Utilisateur non connecté." },
+        { ok: false, error: "unauthorized", message: "Utilisateur non connectÃ©." },
         { status: 401 }
       ),
     };
@@ -73,7 +73,7 @@ async function guardAdmin() {
         {
           ok: false,
           error: "no_institution",
-          message: "Aucune institution associée à ce compte.",
+          message: "Aucune institution associÃ©e Ã  ce compte.",
         },
         { status: 400 }
       ),
@@ -106,7 +106,7 @@ async function guardAdmin() {
         {
           ok: false,
           error: "forbidden",
-          message: "Droits insuffisants pour accéder au montage emploi du temps.",
+          message: "Droits insuffisants pour accÃ©der au montage emploi du temps.",
         },
         { status: 403 }
       ),
@@ -137,7 +137,7 @@ export async function GET() {
     ] = await Promise.all([
       srv
         .from("institutions")
-        .select("id,name,acronym,tz,default_session_minutes")
+        .select("id,name,code_unique,code,tz,default_session_minutes")
         .eq("id", institutionId)
         .maybeSingle(),
 
@@ -215,7 +215,7 @@ export async function GET() {
 
       return {
         id: String(item.id),
-        label: cleanLabel(item.custom_name || base || "Matière"),
+        label: cleanLabel(item.custom_name || base || "MatiÃ¨re"),
       };
     });
 
@@ -229,7 +229,7 @@ export async function GET() {
         teacher_id: String(row.teacher_id || teacher?.id || ""),
         teacher_name: cleanLabel(teacher?.display_name || "Enseignant"),
         subject_id: row.subject_id ? String(row.subject_id) : instsub?.id ? String(instsub.id) : null,
-        subject_label: cleanLabel(instsub?.custom_name || subj?.name || "Matière"),
+        subject_label: cleanLabel(instsub?.custom_name || subj?.name || "MatiÃ¨re"),
         class_id: String(row.class_id || cls?.id || ""),
         class_label: cleanLabel(cls?.label || "Classe"),
       };
@@ -260,7 +260,7 @@ export async function GET() {
       id: String(item.id),
       weekday: Number(item.weekday ?? 0),
       period_no: Number(item.period_no ?? 0),
-      label: cleanLabel(item.label || `Séance ${item.period_no ?? ""}`),
+      label: cleanLabel(item.label || `SÃ©ance ${item.period_no ?? ""}`),
       start_time: hhmm(item.start_time),
       end_time: hhmm(item.end_time),
       duration_min: Number(item.duration_min ?? institution?.default_session_minutes ?? 60),
@@ -269,19 +269,19 @@ export async function GET() {
     const warnings: string[] = [];
 
     if (classes.length === 0) {
-      warnings.push("Aucune classe détectée.");
+      warnings.push("Aucune classe dÃ©tectÃ©e.");
     }
 
     if (subjects.length === 0) {
-      warnings.push("Aucune matière détectée.");
+      warnings.push("Aucune matiÃ¨re dÃ©tectÃ©e.");
     }
 
     if (periods.length === 0) {
-      warnings.push("Aucun créneau horaire détecté.");
+      warnings.push("Aucun crÃ©neau horaire dÃ©tectÃ©.");
     }
 
     if (affectations.length === 0) {
-      warnings.push("Aucune affectation active enseignant-matière-classe détectée.");
+      warnings.push("Aucune affectation active enseignant-matiÃ¨re-classe dÃ©tectÃ©e.");
     }
 
     return NextResponse.json({
@@ -289,7 +289,7 @@ export async function GET() {
       institution: {
         id: institution?.id ? String(institution.id) : institutionId,
         name: institution?.name ?? null,
-        acronym: institution?.acronym ?? null,
+        acronym: institution?.code_unique ?? institution?.code ?? null,
         tz: institution?.tz ?? "Africa/Abidjan",
         default_session_minutes: Number(institution?.default_session_minutes ?? 60),
       },
