@@ -145,7 +145,7 @@ export function buildSchedulerContextFromSnapshot(
     .sort(([a], [b]) => a - b)
     .map(([periodIndex, period]) => ({
       periodIndex,
-      label: clean(period.label, `Séance ${periodIndex}`),
+      label: clean(period.label, `SÃ©ance ${periodIndex}`),
       startTime: clean(period.start_time, "00:00"),
       endTime: clean(period.end_time, "00:00"),
       halfDay: inferHalfDay(period.start_time),
@@ -177,7 +177,7 @@ export function buildSchedulerContextFromSnapshot(
     classId: schoolClass.id,
     roomId: rooms.find((room) => room.id === `room_${schoolClass.id}`)?.id || rooms[0]?.id || "",
     priority: 1,
-    usageType: "main",
+    usageType: "main" as const,
     isAllowed: true,
   })).filter((item) => item.roomId);
 
@@ -200,7 +200,7 @@ export function buildSchedulerContextFromSnapshot(
     if (!weeklyUnits || !splitPattern) {
       diagnostics.push({
         level: "error",
-        message: `Service incomplet : ${clean(item.class_label, "Classe")} — ${clean(item.subject_label, "Matière")} — ${clean(item.teacher_name, "Enseignant")}.`,
+        message: `Service incomplet : ${clean(item.class_label, "Classe")} â€” ${clean(item.subject_label, "MatiÃ¨re")} â€” ${clean(item.teacher_name, "Enseignant")}.`,
       });
       continue;
     }
@@ -237,11 +237,11 @@ export function buildSchedulerContextFromSnapshot(
     .filter((item) => item.teacherId && item.dayIndex >= 1 && item.dayIndex <= 7);
 
   if (classes.length === 0) diagnostics.push({ level: "error", message: "Aucune classe disponible." });
-  if (periods.length === 0) diagnostics.push({ level: "error", message: "Aucun créneau officiel disponible." });
+  if (periods.length === 0) diagnostics.push({ level: "error", message: "Aucun crÃ©neau officiel disponible." });
   if (serviceAssignments.length === 0) {
     diagnostics.push({
       level: "error",
-      message: "Aucun service HoraClasse prêt. Vérifie Référentiel & services puis Affectation professeurs.",
+      message: "Aucun service HoraClasse prÃªt. VÃ©rifie RÃ©fÃ©rentiel & services puis Affectation professeurs.",
     });
   }
 
