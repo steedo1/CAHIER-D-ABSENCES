@@ -163,11 +163,41 @@ const TOP_LEVEL_ITEMS: NavItem[] = [
   { href: "/admin/dashboard", label: "Tableau de bord", Icon: LayoutDashboard },
 ];
 
-const MONTAGE_TIMETABLE_ITEMS: NavItem[] = [
+const MONTAGE_EDT_ITEMS: NavItem[] = [
   {
     href: "/admin/montage-emploi-du-temps",
-    label: "Montage emploi du temps",
+    label: "Vue d’ensemble",
     Icon: CalendarDays,
+  },
+  {
+    href: "/admin/montage-emploi-du-temps/volumes",
+    label: "Volumes horaires",
+    Icon: FileSpreadsheet,
+  },
+  {
+    href: "/admin/montage-emploi-du-temps/regles-terrain",
+    label: "Règles terrain",
+    Icon: Settings,
+  },
+  {
+    href: "/admin/montage-emploi-du-temps/indisponibilites",
+    label: "Indisponibilités",
+    Icon: Users,
+  },
+  {
+    href: "/admin/montage-emploi-du-temps/ressources",
+    label: "Salles & ressources",
+    Icon: School,
+  },
+  {
+    href: "/admin/montage-emploi-du-temps/generation",
+    label: "Brouillons & génération",
+    Icon: BarChart3,
+  },
+  {
+    href: "/admin/montage-emploi-du-temps/publication",
+    label: "Publication",
+    Icon: ShieldCheck,
   },
 ];
 
@@ -183,7 +213,7 @@ const PREDICTION_ITEMS: NavItem[] = [
 const NON_CLASSES_ITEMS: NavItem[] = [
   {
     href: "/admin/notes/non-classes",
-    label: "Elèves non classés",
+    label: "Élèves non classés",
     Icon: UserRoundCheck,
   },
 ];
@@ -225,7 +255,7 @@ const FILE_CORRESPONDENCE_ITEMS: NavItem[] = [
 const CONDUCT_MANAGEMENT_ITEMS: NavItem[] = [
   {
     href: "/admin/regles-conduite",
-    label: "RÃ¨gles de conduite",
+    label: "Règles de conduite",
     Icon: ShieldCheck,
   },
   {
@@ -239,8 +269,8 @@ const CONDUCT_MANAGEMENT_ITEMS: NavItem[] = [
    Groupe : Organisation scolaire
 ========================= */
 const ORGANISATION_ITEMS: NavItem[] = [
-  { href: "/admin/classes", label: "CrÃ©er vos classes", Icon: School },
-  { href: "/admin/users", label: "Utilisateurs & rÃ´les", Icon: Users },
+  { href: "/admin/classes", label: "Créer vos classes", Icon: School },
+  { href: "/admin/users", label: "Utilisateurs & rôles", Icon: Users },
   { href: "/admin/affectations", label: "Attribution des classes", Icon: Puzzle },
   { href: "/admin/parents", label: "Liste des classes", Icon: UserRoundCheck },
   {
@@ -267,50 +297,50 @@ const ADMIN_ITEMS: NavItem[] = [
   },
   {
     href: "/admin/finance",
-    label: "Gestion financiÃ¨re",
+    label: "Gestion financière",
     Icon: FileSpreadsheet,
     badge: "PRO",
   },
 ];
 
 /* =========================
-   Groupe : ParamÃ¨tres
+   Groupe : Paramètres
 ========================= */
 const SETTINGS_ITEMS: NavItem[] = [
   {
     href: "/admin/parametres?tab=security",
-    label: "AccÃ¨s & sÃ©curitÃ©",
+    label: "Accès & sécurité",
     Icon: ShieldCheck,
     matchTab: "security",
   },
   {
     href: "/admin/parametres?tab=school",
-    label: "Ã‰tablissement & horaires",
+    label: "Établissement & horaires",
     Icon: School,
     matchTab: "school",
   },
   {
     href: "/admin/parametres?tab=academic-years",
-    label: "AnnÃ©es scolaires",
+    label: "Années scolaires",
     Icon: NotebookPen,
     matchTab: "academic-years",
   },
   {
     href: "/admin/parametres?tab=grading-periods",
-    label: "PÃ©riodes dâ€™Ã©valuation",
+    label: "Périodes d’évaluation",
     Icon: FileText,
     matchTab: "grading-periods",
   },
   {
     href: "/admin/parametres?tab=coefficients",
-    label: "Coefficients & sous-matiÃ¨res",
+    label: "Coefficients & sous-matières",
     Icon: FileSpreadsheet,
     matchTab: "coefficients",
   },
 ];
 
 /* =========================
-   Groupe : ContrÃ´le des appels
+   Groupe : Contrôle des appels
 ========================= */
 const CALLS_CONTROL_ITEMS: NavItem[] = [
   {
@@ -320,10 +350,10 @@ const CALLS_CONTROL_ITEMS: NavItem[] = [
   },
   {
     href: "/admin/absences/appels-matrice",
-    label: "Vue par crÃ©neau",
+    label: "Vue par créneau",
     Icon: BarChart3,
   },
-  { href: "/admin/statistiques", label: "ContrÃ´le enseignants", Icon: BarChart3 },
+  { href: "/admin/statistiques", label: "Contrôle enseignants", Icon: BarChart3 },
 ];
 
 /* =========================
@@ -333,7 +363,7 @@ const ABS_ITEMS: NavItem[] = [
   { href: "/admin/absences", label: "Matrice des absences", Icon: Ban },
   {
     href: "/admin/assiduite",
-    label: "AssiduitÃ© & justifications",
+    label: "Assiduité & justifications",
     Icon: UserRoundCheck,
   },
   {
@@ -347,7 +377,7 @@ const ABS_ITEMS: NavItem[] = [
    Groupe : Cahier de notes
 ========================= */
 const NOTES_ITEMS: NavItem[] = [
-  { href: "/admin/notes", label: "Vue dâ€™ensemble", Icon: NotebookPen },
+  { href: "/admin/notes", label: "Vue d’ensemble", Icon: NotebookPen },
   {
     href: "/admin/notes/publication-requests",
     label: "Demandes de publication",
@@ -355,10 +385,10 @@ const NOTES_ITEMS: NavItem[] = [
   },
   {
     href: "/admin/notes/publication-settings",
-    label: "ParamÃ¨tres de publication",
+    label: "Paramètres de publication",
     Icon: Settings,
   },
-  { href: "/admin/notes/evaluations", label: "Stats Ã©valuations", Icon: NotebookPen },
+  { href: "/admin/notes/evaluations", label: "Stats évaluations", Icon: NotebookPen },
 ];
 
 function NavLinkItem({
@@ -831,12 +861,8 @@ export default function SidebarNav() {
 
   const topLevelItems = React.useMemo(() => TOP_LEVEL_ITEMS, []);
 
-  const montageTimetableItems = React.useMemo(
-    () =>
-      MONTAGE_TIMETABLE_ITEMS.filter(() => {
-        if (isEducator) return false;
-        return true;
-      }),
+  const montageEdtItems = React.useMemo(
+    () => MONTAGE_EDT_ITEMS.filter(() => !isEducator),
     [isEducator]
   );
   const predictionItems = React.useMemo(
@@ -912,6 +938,9 @@ export default function SidebarNav() {
     currentTab
   );
 
+  const montageEdtActive =
+    !isEducator && groupHasActiveItem(pathname, montageEdtItems, currentTab);
+
   const adminActive = groupHasActiveItem(pathname, adminItems, currentTab);
 
   const callsControlActive = groupHasActiveItem(
@@ -936,6 +965,9 @@ export default function SidebarNav() {
   const [organisationOpen, setOrganisationOpen] =
     React.useState<boolean>(organisationActive);
 
+  const [montageEdtOpen, setMontageEdtOpen] =
+    React.useState<boolean>(montageEdtActive);
+
   const [adminOpen, setAdminOpen] = React.useState<boolean>(adminActive);
 
   const [callsControlOpen, setCallsControlOpen] =
@@ -959,6 +991,10 @@ export default function SidebarNav() {
   React.useEffect(() => {
     if (organisationActive) setOrganisationOpen(true);
   }, [organisationActive]);
+
+  React.useEffect(() => {
+    if (montageEdtActive) setMontageEdtOpen(true);
+  }, [montageEdtActive]);
 
   React.useEffect(() => {
     if (adminActive) setAdminOpen(true);
@@ -999,7 +1035,7 @@ export default function SidebarNav() {
               Mon Cahier
             </div>
             <div className="text-xs leading-snug text-slate-400">
-              Pilotage scolaire & suivi en temps rÃ©el
+              Pilotage scolaire & suivi en temps réel
             </div>
           </div>
         </div>
@@ -1013,18 +1049,6 @@ export default function SidebarNav() {
                 pathname={pathname}
                 currentTab={currentTab}
                 accent="emerald"
-                pendingAbsenceCount={pendingAbsenceCount}
-                pendingGradePublicationCount={pendingGradePublicationCount}
-                topLevel
-              />
-            ))}
-            {montageTimetableItems.map((item) => (
-              <NavLinkItem
-                key={item.href}
-                item={item}
-                pathname={pathname}
-                currentTab={currentTab}
-                accent="sky"
                 pendingAbsenceCount={pendingAbsenceCount}
                 pendingGradePublicationCount={pendingGradePublicationCount}
                 topLevel
@@ -1094,6 +1118,19 @@ export default function SidebarNav() {
               accent="sky"
             />
 
+            {!isEducator && montageEdtItems.length > 0 && (
+              <GroupSection
+                title="Montage emploi du temps"
+                Icon={CalendarDays}
+                items={montageEdtItems}
+                pathname={pathname}
+                currentTab={currentTab}
+                open={montageEdtOpen}
+                onToggle={() => setMontageEdtOpen((v) => !v)}
+                accent="sky"
+              />
+            )}
+
             <GroupSection
               title="Administration & services"
               Icon={Settings}
@@ -1109,7 +1146,7 @@ export default function SidebarNav() {
             />
 
             <GroupSection
-              title="ContrÃ´le des appels"
+              title="Contrôle des appels"
               Icon={BarChart3}
               items={callsControlItems}
               pathname={pathname}
@@ -1146,7 +1183,7 @@ export default function SidebarNav() {
             )}
 
             <GroupSection
-              title="ParamÃ¨tres"
+              title="Paramètres"
               Icon={Settings}
               items={settingsItems}
               pathname={pathname}
@@ -1160,9 +1197,9 @@ export default function SidebarNav() {
 
         <div className="shrink-0 border-t border-white/6 px-4 py-4">
           <div className="rounded-2xl border border-white/8 bg-white/[0.03] px-3 py-3 text-[11px] text-slate-400">
-            <div>Â© {new Date().getFullYear()} Mon Cahier</div>
+            <div>© {new Date().getFullYear()} Mon Cahier</div>
             <div className="mt-1 text-[10px] text-slate-500">
-              ConÃ§u et dÃ©veloppÃ© par{" "}
+              Conçu et développé par{" "}
               <span className="font-semibold text-slate-200">
                 NEXA DIGITAL SARL
               </span>
@@ -1175,7 +1212,7 @@ export default function SidebarNav() {
         onMouseDown={startResize}
         onDoubleClick={resetWidth}
         className="absolute right-[-8px] top-1/2 z-30 hidden h-24 w-4 -translate-y-1/2 cursor-col-resize items-center justify-center lg:flex"
-        title="Glisser pour redimensionner â€¢ Double-clic pour rÃ©initialiser"
+        title="Glisser pour redimensionner • Double-clic pour réinitialiser"
         aria-hidden
       >
         <div className="flex h-20 w-3 items-center justify-center rounded-full border border-white/10 bg-slate-900/80 shadow-lg backdrop-blur">
