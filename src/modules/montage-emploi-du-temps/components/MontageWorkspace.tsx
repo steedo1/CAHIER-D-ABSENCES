@@ -10,6 +10,7 @@ import {
   FileSpreadsheet,
   GraduationCap,
   Loader2,
+  PlayCircle,
   PlusCircle,
   RefreshCw,
   School,
@@ -17,18 +18,52 @@ import {
 } from "lucide-react";
 import type { MontageBootstrapResponse } from "../types";
 
+type EngineSummary = {
+  classes_count?: number;
+  subjects_count?: number;
+  teachers_count?: number;
+  periods_count?: number;
+  affectations_count?: number;
+  assignments_count?: number;
+  unplaced_count?: number;
+  score?: number;
+};
+
+type EngineResult = {
+  status?: string;
+  generated_at?: string;
+  summary?: EngineSummary;
+  assignments?: unknown[];
+  unplaced?: unknown[];
+  diagnostics?: unknown[];
+};
+
 type MontageProject = {
   id: string;
   name: string;
   status: "draft" | "ready" | "published" | "archived";
   created_at: string;
   updated_at: string;
+  engine_result?: EngineResult | null;
 };
 
 type ProjectsResponse =
   | {
       ok: true;
       items: MontageProject[];
+    }
+  | {
+      ok: false;
+      error: string;
+      message?: string;
+    };
+
+type GenerateResponse =
+  | {
+      ok: true;
+      item: MontageProject;
+      result: EngineResult;
+      message?: string;
     }
   | {
       ok: false;
@@ -81,12 +116,27 @@ function formatDate(value: string) {
   }
 }
 
+function getProjectSummary(project: MontageProject): EngineSummary | null {
+  const summary = project.engine_result?.summary;
+  if (!summary || typeof summary !== "object") return null;
+  return summary;
+}
+
+function getStatusLabel(status: MontageProject["status"]) {
+  if (status === "draft") return "DRAFT";
+  if (status === "ready") return "READY";
+  if (status === "published") return "PUBLIÉ";
+  if (status === "archived") return "ARCHIVÉ";
+  return status;
+}
+
 export default function MontageWorkspace() {
   const [data, setData] = React.useState<MontageBootstrapResponse | null>(null);
   const [projects, setProjects] = React.useState<MontageProject[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [projectsLoading, setProjectsLoading] = React.useState(false);
   const [creatingDraft, setCreatingDraft] = React.useState(false);
+  const [generatingId, setGeneratingId] = React.useState<string | null>(null);
   const [successMessage, setSuccessMessage] = React.useState<string | null>(null);
   const [projectError, setProjectError] = React.useState<string | null>(null);
 
@@ -250,6 +300,54 @@ export default function MontageWorkspace() {
       setCreatingDraft(false);
     }
   }, [data, loadProjects]);
+
+  const generateProject = React.useCallback(
+    async (project: MontageProject) => {
+      setGeneratingId(project.id);
+      setSuccessMessage(null);
+      setProjectError(null);
+
+      try {
+        const res = await fetch(
+          `/api/admin/montage-emploi-du-temps/projects/${project.id}/generate`,
+          {
+            method: "POST",
+          }
+        );
+
+        const json = (await res.json().catch(() => null)) as GenerateResponse | null;
+
+        if (!json) {
+          setProjectError("Réponse serveur invalide pendant la génération.");
+          return;
+        }
+
+        if (!json.ok) {
+          setProjectError(json.message || json.error);
+          return;
+        }
+
+        const score = json.result?.summary?.score;
+        const placed = json.result?.summary?.assignments_count;
+        const unplaced = json.result?.summary?.unplaced_count;
+
+        setSuccessMessage(
+          `Pré-montage généré avec succès : ${placed ?? 0} cours placés, ${unplaced ?? 0} non placés, score ${score ?? 0}%.`
+        );
+
+        await loadProjects();
+      } catch (error) {
+        setProjectError(
+          error instanceof Error
+            ? error.message
+            : "Impossible de générer le pré-montage."
+        );
+      } finally {
+        setGeneratingId(null);
+      }
+    },
+    [loadProjects]
+  );
 
   const isReady = data?.ok === true;
 
@@ -448,7 +546,7 @@ export default function MontageWorkspace() {
                     <div>
                       <h2 className="text-lg font-black">Prochaine étape</h2>
                       <p className="text-sm text-slate-500">
-                        Brancher le moteur de montage puis publier uniquement après
+                        Générer le pré-montage puis publier uniquement après
                         validation administrative.
                       </p>
                     </div>
@@ -474,8 +572,8 @@ export default function MontageWorkspace() {
                     <div className="rounded-2xl bg-slate-50 p-4">
                       <p className="font-bold text-slate-900">3. Génération</p>
                       <p className="mt-1 text-slate-600">
-                        Le moteur sera intégré dans un module isolé, sans toucher aux
-                        tables sensibles.
+                        Le moteur produit un pré-montage enregistré dans le brouillon,
+                        sans modifier les appels.
                       </p>
                     </div>
                   </div>
@@ -502,25 +600,69 @@ export default function MontageWorkspace() {
                   </div>
 
                   <div className="mt-5 space-y-3">
-                    {projects.slice(0, 6).map((project) => (
-                      <div
-                        key={project.id}
-                        className="rounded-2xl border border-slate-200 bg-slate-50 p-4"
-                      >
-                        <div className="flex items-start justify-between gap-3">
-                          <div>
-                            <p className="font-bold text-slate-950">{project.name}</p>
-                            <p className="mt-1 text-xs text-slate-500">
-                              Modifié le {formatDate(project.updated_at)}
-                            </p>
+                    {projects.slice(0, 6).map((project) => {
+                      const summary = getProjectSummary(project);
+                      const canGenerate = project.status !== "published";
+
+                      return (
+                        <div
+                          key={project.id}
+                          className="rounded-2xl border border-slate-200 bg-slate-50 p-4"
+                        >
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <p className="font-bold text-slate-950">{project.name}</p>
+                              <p className="mt-1 text-xs text-slate-500">
+                                Modifié le {formatDate(project.updated_at)}
+                              </p>
+                            </div>
+
+                            <span className="rounded-full bg-white px-3 py-1 text-xs font-black uppercase tracking-wide text-slate-600 ring-1 ring-slate-200">
+                              {getStatusLabel(project.status)}
+                            </span>
                           </div>
 
-                          <span className="rounded-full bg-white px-3 py-1 text-xs font-black uppercase tracking-wide text-slate-600 ring-1 ring-slate-200">
-                            {project.status}
-                          </span>
+                          {summary && (
+                            <div className="mt-4 grid grid-cols-3 gap-2 text-center text-xs">
+                              <div className="rounded-xl bg-white px-2 py-2 ring-1 ring-slate-200">
+                                <p className="font-black text-slate-950">
+                                  {summary.assignments_count ?? 0}
+                                </p>
+                                <p className="text-slate-500">Placés</p>
+                              </div>
+                              <div className="rounded-xl bg-white px-2 py-2 ring-1 ring-slate-200">
+                                <p className="font-black text-slate-950">
+                                  {summary.unplaced_count ?? 0}
+                                </p>
+                                <p className="text-slate-500">Non placés</p>
+                              </div>
+                              <div className="rounded-xl bg-white px-2 py-2 ring-1 ring-slate-200">
+                                <p className="font-black text-slate-950">
+                                  {summary.score ?? 0}%
+                                </p>
+                                <p className="text-slate-500">Score</p>
+                              </div>
+                            </div>
+                          )}
+
+                          <button
+                            type="button"
+                            onClick={() => void generateProject(project)}
+                            disabled={!canGenerate || generatingId === project.id}
+                            className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-slate-950 px-4 py-3 text-sm font-black text-white shadow-sm transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                            {generatingId === project.id ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <PlayCircle className="h-4 w-4" />
+                            )}
+                            {project.status === "ready"
+                              ? "Regénérer le pré-montage"
+                              : "Générer le pré-montage"}
+                          </button>
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
 
                     {projects.length === 0 && (
                       <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-5 text-center text-sm text-slate-500">
