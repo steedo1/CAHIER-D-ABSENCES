@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import {
   LayoutDashboard,
+  CalendarDays,
   Ban,
   School,
   Users,
@@ -162,10 +163,18 @@ const TOP_LEVEL_ITEMS: NavItem[] = [
   { href: "/admin/dashboard", label: "Tableau de bord", Icon: LayoutDashboard },
 ];
 
+const MONTAGE_TIMETABLE_ITEMS: NavItem[] = [
+  {
+    href: "/admin/montage-emploi-du-temps",
+    label: "Montage emploi du temps",
+    Icon: CalendarDays,
+  },
+];
+
 const PREDICTION_ITEMS: NavItem[] = [
   {
     href: "/admin/notes/predictions",
-    label: "Prédictions de réussite",
+    label: "PrÃ©dictions de rÃ©ussite",
     Icon: BarChart3,
     badge: "IA",
   },
@@ -174,7 +183,7 @@ const PREDICTION_ITEMS: NavItem[] = [
 const NON_CLASSES_ITEMS: NavItem[] = [
   {
     href: "/admin/notes/non-classes",
-    label: "Élèves non classés",
+    label: "Ã‰lÃ¨ves non classÃ©s",
     Icon: UserRoundCheck,
   },
 ];
@@ -205,7 +214,7 @@ const FILE_CORRESPONDENCE_ITEMS: NavItem[] = [
   },
   {
     href: "/admin/notes/statistiques",
-    label: "Matrice matière",
+    label: "Matrice matiÃ¨re",
     Icon: BarChart3,
   },
 ];
@@ -216,7 +225,7 @@ const FILE_CORRESPONDENCE_ITEMS: NavItem[] = [
 const CONDUCT_MANAGEMENT_ITEMS: NavItem[] = [
   {
     href: "/admin/regles-conduite",
-    label: "Règles de conduite",
+    label: "RÃ¨gles de conduite",
     Icon: ShieldCheck,
   },
   {
@@ -230,8 +239,8 @@ const CONDUCT_MANAGEMENT_ITEMS: NavItem[] = [
    Groupe : Organisation scolaire
 ========================= */
 const ORGANISATION_ITEMS: NavItem[] = [
-  { href: "/admin/classes", label: "Créer vos classes", Icon: School },
-  { href: "/admin/users", label: "Utilisateurs & rôles", Icon: Users },
+  { href: "/admin/classes", label: "CrÃ©er vos classes", Icon: School },
+  { href: "/admin/users", label: "Utilisateurs & rÃ´les", Icon: Users },
   { href: "/admin/affectations", label: "Attribution des classes", Icon: Puzzle },
   { href: "/admin/parents", label: "Liste des classes", Icon: UserRoundCheck },
   {
@@ -258,50 +267,50 @@ const ADMIN_ITEMS: NavItem[] = [
   },
   {
     href: "/admin/finance",
-    label: "Gestion financière",
+    label: "Gestion financiÃ¨re",
     Icon: FileSpreadsheet,
     badge: "PRO",
   },
 ];
 
 /* =========================
-   Groupe : Paramètres
+   Groupe : ParamÃ¨tres
 ========================= */
 const SETTINGS_ITEMS: NavItem[] = [
   {
     href: "/admin/parametres?tab=security",
-    label: "Accès & sécurité",
+    label: "AccÃ¨s & sÃ©curitÃ©",
     Icon: ShieldCheck,
     matchTab: "security",
   },
   {
     href: "/admin/parametres?tab=school",
-    label: "Établissement & horaires",
+    label: "Ã‰tablissement & horaires",
     Icon: School,
     matchTab: "school",
   },
   {
     href: "/admin/parametres?tab=academic-years",
-    label: "Années scolaires",
+    label: "AnnÃ©es scolaires",
     Icon: NotebookPen,
     matchTab: "academic-years",
   },
   {
     href: "/admin/parametres?tab=grading-periods",
-    label: "Périodes d’évaluation",
+    label: "PÃ©riodes dâ€™Ã©valuation",
     Icon: FileText,
     matchTab: "grading-periods",
   },
   {
     href: "/admin/parametres?tab=coefficients",
-    label: "Coefficients & sous-matières",
+    label: "Coefficients & sous-matiÃ¨res",
     Icon: FileSpreadsheet,
     matchTab: "coefficients",
   },
 ];
 
 /* =========================
-   Groupe : Contrôle des appels
+   Groupe : ContrÃ´le des appels
 ========================= */
 const CALLS_CONTROL_ITEMS: NavItem[] = [
   {
@@ -311,10 +320,10 @@ const CALLS_CONTROL_ITEMS: NavItem[] = [
   },
   {
     href: "/admin/absences/appels-matrice",
-    label: "Vue par créneau",
+    label: "Vue par crÃ©neau",
     Icon: BarChart3,
   },
-  { href: "/admin/statistiques", label: "Contrôle enseignants", Icon: BarChart3 },
+  { href: "/admin/statistiques", label: "ContrÃ´le enseignants", Icon: BarChart3 },
 ];
 
 /* =========================
@@ -324,7 +333,7 @@ const ABS_ITEMS: NavItem[] = [
   { href: "/admin/absences", label: "Matrice des absences", Icon: Ban },
   {
     href: "/admin/assiduite",
-    label: "Assiduité & justifications",
+    label: "AssiduitÃ© & justifications",
     Icon: UserRoundCheck,
   },
   {
@@ -338,7 +347,7 @@ const ABS_ITEMS: NavItem[] = [
    Groupe : Cahier de notes
 ========================= */
 const NOTES_ITEMS: NavItem[] = [
-  { href: "/admin/notes", label: "Vue d’ensemble", Icon: NotebookPen },
+  { href: "/admin/notes", label: "Vue dâ€™ensemble", Icon: NotebookPen },
   {
     href: "/admin/notes/publication-requests",
     label: "Demandes de publication",
@@ -346,10 +355,10 @@ const NOTES_ITEMS: NavItem[] = [
   },
   {
     href: "/admin/notes/publication-settings",
-    label: "Paramètres de publication",
+    label: "ParamÃ¨tres de publication",
     Icon: Settings,
   },
-  { href: "/admin/notes/evaluations", label: "Stats évaluations", Icon: NotebookPen },
+  { href: "/admin/notes/evaluations", label: "Stats Ã©valuations", Icon: NotebookPen },
 ];
 
 function NavLinkItem({
@@ -822,6 +831,14 @@ export default function SidebarNav() {
 
   const topLevelItems = React.useMemo(() => TOP_LEVEL_ITEMS, []);
 
+  const montageTimetableItems = React.useMemo(
+    () =>
+      MONTAGE_TIMETABLE_ITEMS.filter(() => {
+        if (isEducator) return false;
+        return true;
+      }),
+    [isEducator]
+  );
   const predictionItems = React.useMemo(
     () =>
       PREDICTION_ITEMS.filter((item) => {
@@ -982,7 +999,7 @@ export default function SidebarNav() {
               Mon Cahier
             </div>
             <div className="text-xs leading-snug text-slate-400">
-              Pilotage scolaire & suivi en temps réel
+              Pilotage scolaire & suivi en temps rÃ©el
             </div>
           </div>
         </div>
@@ -996,6 +1013,18 @@ export default function SidebarNav() {
                 pathname={pathname}
                 currentTab={currentTab}
                 accent="emerald"
+                pendingAbsenceCount={pendingAbsenceCount}
+                pendingGradePublicationCount={pendingGradePublicationCount}
+                topLevel
+              />
+            ))}
+            {montageTimetableItems.map((item) => (
+              <NavLinkItem
+                key={item.href}
+                item={item}
+                pathname={pathname}
+                currentTab={currentTab}
+                accent="sky"
                 pendingAbsenceCount={pendingAbsenceCount}
                 pendingGradePublicationCount={pendingGradePublicationCount}
                 topLevel
@@ -1080,7 +1109,7 @@ export default function SidebarNav() {
             />
 
             <GroupSection
-              title="Contrôle des appels"
+              title="ContrÃ´le des appels"
               Icon={BarChart3}
               items={callsControlItems}
               pathname={pathname}
@@ -1117,7 +1146,7 @@ export default function SidebarNav() {
             )}
 
             <GroupSection
-              title="Paramètres"
+              title="ParamÃ¨tres"
               Icon={Settings}
               items={settingsItems}
               pathname={pathname}
@@ -1131,9 +1160,9 @@ export default function SidebarNav() {
 
         <div className="shrink-0 border-t border-white/6 px-4 py-4">
           <div className="rounded-2xl border border-white/8 bg-white/[0.03] px-3 py-3 text-[11px] text-slate-400">
-            <div>© {new Date().getFullYear()} Mon Cahier</div>
+            <div>Â© {new Date().getFullYear()} Mon Cahier</div>
             <div className="mt-1 text-[10px] text-slate-500">
-              Conçu et développé par{" "}
+              ConÃ§u et dÃ©veloppÃ© par{" "}
               <span className="font-semibold text-slate-200">
                 NEXA DIGITAL SARL
               </span>
@@ -1146,7 +1175,7 @@ export default function SidebarNav() {
         onMouseDown={startResize}
         onDoubleClick={resetWidth}
         className="absolute right-[-8px] top-1/2 z-30 hidden h-24 w-4 -translate-y-1/2 cursor-col-resize items-center justify-center lg:flex"
-        title="Glisser pour redimensionner • Double-clic pour réinitialiser"
+        title="Glisser pour redimensionner â€¢ Double-clic pour rÃ©initialiser"
         aria-hidden
       >
         <div className="flex h-20 w-3 items-center justify-center rounded-full border border-white/10 bg-slate-900/80 shadow-lg backdrop-blur">
