@@ -5,15 +5,36 @@ import {
   AlertTriangle,
   CalendarDays,
   CheckCircle2,
+  Clock3,
   Database,
   FileSpreadsheet,
   GraduationCap,
   Loader2,
+  PlusCircle,
   RefreshCw,
   School,
   Users,
 } from "lucide-react";
 import type { MontageBootstrapResponse } from "../types";
+
+type MontageProject = {
+  id: string;
+  name: string;
+  status: "draft" | "ready" | "published" | "archived";
+  created_at: string;
+  updated_at: string;
+};
+
+type ProjectsResponse =
+  | {
+      ok: true;
+      items: MontageProject[];
+    }
+  | {
+      ok: false;
+      error: string;
+      message?: string;
+    };
 
 function StatCard({
   label,
@@ -49,12 +70,63 @@ function StatCard({
   );
 }
 
+function formatDate(value: string) {
+  try {
+    return new Intl.DateTimeFormat("fr-FR", {
+      dateStyle: "short",
+      timeStyle: "short",
+    }).format(new Date(value));
+  } catch {
+    return value;
+  }
+}
+
 export default function MontageWorkspace() {
   const [data, setData] = React.useState<MontageBootstrapResponse | null>(null);
+  const [projects, setProjects] = React.useState<MontageProject[]>([]);
   const [loading, setLoading] = React.useState(true);
+  const [projectsLoading, setProjectsLoading] = React.useState(false);
+  const [creatingDraft, setCreatingDraft] = React.useState(false);
+  const [successMessage, setSuccessMessage] = React.useState<string | null>(null);
+  const [projectError, setProjectError] = React.useState<string | null>(null);
+
+  const loadProjects = React.useCallback(async () => {
+    setProjectsLoading(true);
+    setProjectError(null);
+
+    try {
+      const res = await fetch("/api/admin/montage-emploi-du-temps/projects", {
+        cache: "no-store",
+      });
+
+      const json = (await res.json().catch(() => null)) as ProjectsResponse | null;
+
+      if (!json) {
+        setProjectError("Réponse serveur invalide pendant le chargement des brouillons.");
+        return;
+      }
+
+      if (!json.ok) {
+        setProjectError(json.message || json.error);
+        return;
+      }
+
+      setProjects(Array.isArray(json.items) ? json.items : []);
+    } catch (error) {
+      setProjectError(
+        error instanceof Error
+          ? error.message
+          : "Impossible de charger les brouillons."
+      );
+    } finally {
+      setProjectsLoading(false);
+    }
+  }, []);
 
   const load = React.useCallback(async () => {
     setLoading(true);
+    setSuccessMessage(null);
+    setProjectError(null);
 
     try {
       const res = await fetch("/api/admin/montage-emploi-du-temps/bootstrap", {
@@ -73,6 +145,10 @@ export default function MontageWorkspace() {
       }
 
       setData(json);
+
+      if (json.ok) {
+        await loadProjects();
+      }
     } catch (error) {
       setData({
         ok: false,
@@ -85,11 +161,95 @@ export default function MontageWorkspace() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [loadProjects]);
 
   React.useEffect(() => {
     void load();
   }, [load]);
+
+  const createDraft = React.useCallback(async () => {
+    if (!data?.ok) return;
+
+    setCreatingDraft(true);
+    setSuccessMessage(null);
+    setProjectError(null);
+
+    try {
+      const now = new Date();
+
+      const sourceSnapshot = {
+        institution: data.institution,
+        classes: data.classes,
+        subjects: data.subjects,
+        teachers: data.teachers,
+        periods: data.periods,
+        affectations: data.affectations,
+        saved_at: now.toISOString(),
+      };
+
+      const res = await fetch("/api/admin/montage-emploi-du-temps/projects", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          name: `Brouillon montage emploi du temps - ${now.toLocaleDateString("fr-FR")}`,
+          status: "draft",
+          source_snapshot: sourceSnapshot,
+          engine_input: {
+            source: "mon_cahier_bootstrap",
+            classes_count: data.classes.length,
+            subjects_count: data.subjects.length,
+            teachers_count: data.teachers.length,
+            periods_count: data.periods.length,
+            affectations_count: data.affectations.length,
+          },
+          engine_result: {
+            status: "not_generated_yet",
+            assignments: [],
+          },
+          diagnostics: data.warnings.map((message) => ({
+            level: "warning",
+            message,
+          })),
+        }),
+      });
+
+      const json = (await res.json().catch(() => null)) as
+        | {
+            ok: true;
+            item: MontageProject;
+            message?: string;
+          }
+        | {
+            ok: false;
+            error: string;
+            message?: string;
+          }
+        | null;
+
+      if (!json) {
+        setProjectError("Réponse serveur invalide pendant la création du brouillon.");
+        return;
+      }
+
+      if (!json.ok) {
+        setProjectError(json.message || json.error);
+        return;
+      }
+
+      setSuccessMessage(json.message || "Brouillon créé avec succès.");
+      await loadProjects();
+    } catch (error) {
+      setProjectError(
+        error instanceof Error
+          ? error.message
+          : "Impossible de créer le brouillon."
+      );
+    } finally {
+      setCreatingDraft(false);
+    }
+  }, [data, loadProjects]);
 
   const isReady = data?.ok === true;
 
@@ -117,19 +277,35 @@ export default function MontageWorkspace() {
                 </p>
               </div>
 
-              <button
-                type="button"
-                onClick={() => void load()}
-                disabled={loading}
-                className="inline-flex items-center justify-center gap-2 rounded-2xl bg-white px-5 py-3 text-sm font-bold text-slate-950 shadow-lg transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-70"
-              >
-                {loading ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <RefreshCw className="h-4 w-4" />
-                )}
-                Recharger les données
-              </button>
+              <div className="flex flex-col gap-3 sm:flex-row lg:flex-col xl:flex-row">
+                <button
+                  type="button"
+                  onClick={() => void load()}
+                  disabled={loading}
+                  className="inline-flex items-center justify-center gap-2 rounded-2xl bg-white px-5 py-3 text-sm font-bold text-slate-950 shadow-lg transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-70"
+                >
+                  {loading ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <RefreshCw className="h-4 w-4" />
+                  )}
+                  Recharger les données
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => void createDraft()}
+                  disabled={!isReady || creatingDraft}
+                  className="inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-500 px-5 py-3 text-sm font-black text-white shadow-lg shadow-emerald-950/20 transition hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {creatingDraft ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <PlusCircle className="h-4 w-4" />
+                  )}
+                  Créer un brouillon
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -138,6 +314,30 @@ export default function MontageWorkspace() {
           <div className="flex items-center gap-3 rounded-3xl border border-slate-200 bg-white p-5 text-sm font-semibold text-slate-700 shadow-sm">
             <Loader2 className="h-5 w-5 animate-spin" />
             Chargement des données de l’établissement...
+          </div>
+        )}
+
+        {successMessage && (
+          <div className="rounded-3xl border border-emerald-200 bg-emerald-50 p-5 text-emerald-950 shadow-sm">
+            <div className="flex items-start gap-3">
+              <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0" />
+              <div>
+                <p className="font-black">Action réussie</p>
+                <p className="mt-1 text-sm">{successMessage}</p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {projectError && (
+          <div className="rounded-3xl border border-red-200 bg-red-50 p-5 text-red-950 shadow-sm">
+            <div className="flex items-start gap-3">
+              <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" />
+              <div>
+                <p className="font-black">Erreur brouillon</p>
+                <p className="mt-1 text-sm">{projectError}</p>
+              </div>
+            </div>
           </div>
         )}
 
@@ -239,43 +439,95 @@ export default function MontageWorkspace() {
                 </div>
               </div>
 
-              <div className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
-                <div className="flex items-center gap-3">
-                  <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-sky-50 text-sky-700 ring-1 ring-sky-100">
-                    <FileSpreadsheet className="h-6 w-6" />
+              <div className="space-y-6">
+                <div className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
+                  <div className="flex items-center gap-3">
+                    <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-sky-50 text-sky-700 ring-1 ring-sky-100">
+                      <FileSpreadsheet className="h-6 w-6" />
+                    </div>
+                    <div>
+                      <h2 className="text-lg font-black">Prochaine étape</h2>
+                      <p className="text-sm text-slate-500">
+                        Brancher le moteur de montage puis publier uniquement après
+                        validation administrative.
+                      </p>
+                    </div>
                   </div>
-                  <div>
-                    <h2 className="text-lg font-black">Prochaine étape</h2>
-                    <p className="text-sm text-slate-500">
-                      Brancher le moteur de montage puis publier uniquement après
-                      validation administrative.
-                    </p>
+
+                  <div className="mt-6 space-y-3 text-sm">
+                    <div className="rounded-2xl bg-slate-50 p-4">
+                      <p className="font-bold text-slate-900">1. Bootstrap</p>
+                      <p className="mt-1 text-slate-600">
+                        Chargement des classes, enseignants, matières, créneaux et
+                        affectations.
+                      </p>
+                    </div>
+
+                    <div className="rounded-2xl bg-slate-50 p-4">
+                      <p className="font-bold text-slate-900">2. Brouillons</p>
+                      <p className="mt-1 text-slate-600">
+                        Création d’un brouillon sauvegardé dans Supabase sans toucher
+                        aux emplois du temps officiels.
+                      </p>
+                    </div>
+
+                    <div className="rounded-2xl bg-slate-50 p-4">
+                      <p className="font-bold text-slate-900">3. Génération</p>
+                      <p className="mt-1 text-slate-600">
+                        Le moteur sera intégré dans un module isolé, sans toucher aux
+                        tables sensibles.
+                      </p>
+                    </div>
                   </div>
                 </div>
 
-                <div className="mt-6 space-y-3 text-sm">
-                  <div className="rounded-2xl bg-slate-50 p-4">
-                    <p className="font-bold text-slate-900">1. Bootstrap</p>
-                    <p className="mt-1 text-slate-600">
-                      Chargement des classes, enseignants, matières, créneaux et
-                      affectations.
-                    </p>
+                <div className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-3">
+                      <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-amber-50 text-amber-700 ring-1 ring-amber-100">
+                        <Clock3 className="h-6 w-6" />
+                      </div>
+                      <div>
+                        <h2 className="text-lg font-black">Brouillons récents</h2>
+                        <p className="text-sm text-slate-500">
+                          {projects.length} brouillon{projects.length > 1 ? "s" : ""} enregistré
+                          {projects.length > 1 ? "s" : ""}
+                        </p>
+                      </div>
+                    </div>
+
+                    {projectsLoading && (
+                      <Loader2 className="h-5 w-5 animate-spin text-slate-400" />
+                    )}
                   </div>
 
-                  <div className="rounded-2xl bg-slate-50 p-4">
-                    <p className="font-bold text-slate-900">2. Génération</p>
-                    <p className="mt-1 text-slate-600">
-                      Le moteur sera intégré dans un module isolé, sans toucher aux
-                      tables sensibles.
-                    </p>
-                  </div>
+                  <div className="mt-5 space-y-3">
+                    {projects.slice(0, 6).map((project) => (
+                      <div
+                        key={project.id}
+                        className="rounded-2xl border border-slate-200 bg-slate-50 p-4"
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <p className="font-bold text-slate-950">{project.name}</p>
+                            <p className="mt-1 text-xs text-slate-500">
+                              Modifié le {formatDate(project.updated_at)}
+                            </p>
+                          </div>
 
-                  <div className="rounded-2xl bg-slate-50 p-4">
-                    <p className="font-bold text-slate-900">3. Publication</p>
-                    <p className="mt-1 text-slate-600">
-                      Le résultat validé alimentera ensuite les emplois du temps
-                      officiels de Mon Cahier.
-                    </p>
+                          <span className="rounded-full bg-white px-3 py-1 text-xs font-black uppercase tracking-wide text-slate-600 ring-1 ring-slate-200">
+                            {project.status}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+
+                    {projects.length === 0 && (
+                      <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-5 text-center text-sm text-slate-500">
+                        Aucun brouillon pour le moment. Clique sur “Créer un brouillon”
+                        pour tester la sauvegarde.
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>

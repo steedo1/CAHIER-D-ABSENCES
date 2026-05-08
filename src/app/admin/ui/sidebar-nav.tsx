@@ -174,7 +174,7 @@ const MONTAGE_TIMETABLE_ITEMS: NavItem[] = [
 const PREDICTION_ITEMS: NavItem[] = [
   {
     href: "/admin/notes/predictions",
-    label: "PrÃ©dictions de rÃ©ussite",
+    label: "Prédiction de réussite",
     Icon: BarChart3,
     badge: "IA",
   },
@@ -183,7 +183,7 @@ const PREDICTION_ITEMS: NavItem[] = [
 const NON_CLASSES_ITEMS: NavItem[] = [
   {
     href: "/admin/notes/non-classes",
-    label: "Ã‰lÃ¨ves non classÃ©s",
+    label: "Elèves non classés",
     Icon: UserRoundCheck,
   },
 ];
@@ -214,7 +214,7 @@ const FILE_CORRESPONDENCE_ITEMS: NavItem[] = [
   },
   {
     href: "/admin/notes/statistiques",
-    label: "Matrice matiÃ¨re",
+    label: "Matrice matière",
     Icon: BarChart3,
   },
 ];
