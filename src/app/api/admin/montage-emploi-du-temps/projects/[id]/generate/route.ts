@@ -110,13 +110,14 @@ async function guardAdmin() {
 
 export async function POST(
   _req: NextRequest,
-  context: { params: { id: string } }
+  context: { params: Promise<{ id: string }> }
 ) {
   try {
     const guard = await guardAdmin();
     if (!guard.ok) return guard.response;
 
-    const projectId = String(context.params.id || "").trim();
+    const { id } = await context.params;
+    const projectId = String(id || "").trim();
 
     if (!projectId) {
       return NextResponse.json(

@@ -2,10 +2,12 @@ import MontageProjectPreview from "@/modules/montage-emploi-du-temps/components/
 
 export const dynamic = "force-dynamic";
 
-export default function MontageProjectPreviewPage({
+export default async function MontageProjectPreviewPage({
   params,
 }: {
-  params: { id: string };
+  params: Promise<{ id: string }>;
 }) {
-  return <MontageProjectPreview projectId={params.id} />;
+  const { id } = await params;
+
+  return <MontageProjectPreview projectId={id} />;
 }
