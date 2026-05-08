@@ -1,5 +1,7 @@
 "use client";
 
+import Link from "next/link";
+
 import React from "react";
 import {
   AlertTriangle,
@@ -125,8 +127,8 @@ function getProjectSummary(project: MontageProject): EngineSummary | null {
 function getStatusLabel(status: MontageProject["status"]) {
   if (status === "draft") return "DRAFT";
   if (status === "ready") return "READY";
-  if (status === "published") return "PUBLIÉ";
-  if (status === "archived") return "ARCHIVÉ";
+  if (status === "published") return "PUBLIÃ‰";
+  if (status === "archived") return "ARCHIVÃ‰";
   return status;
 }
 
@@ -152,7 +154,7 @@ export default function MontageWorkspace() {
       const json = (await res.json().catch(() => null)) as ProjectsResponse | null;
 
       if (!json) {
-        setProjectError("Réponse serveur invalide pendant le chargement des brouillons.");
+        setProjectError("RÃ©ponse serveur invalide pendant le chargement des brouillons.");
         return;
       }
 
@@ -189,7 +191,7 @@ export default function MontageWorkspace() {
         setData({
           ok: false,
           error: "invalid_response",
-          message: "Réponse serveur invalide.",
+          message: "RÃ©ponse serveur invalide.",
         });
         return;
       }
@@ -206,7 +208,7 @@ export default function MontageWorkspace() {
         message:
           error instanceof Error
             ? error.message
-            : "Impossible de charger les données.",
+            : "Impossible de charger les donnÃ©es.",
       });
     } finally {
       setLoading(false);
@@ -279,7 +281,7 @@ export default function MontageWorkspace() {
         | null;
 
       if (!json) {
-        setProjectError("Réponse serveur invalide pendant la création du brouillon.");
+        setProjectError("RÃ©ponse serveur invalide pendant la crÃ©ation du brouillon.");
         return;
       }
 
@@ -288,13 +290,13 @@ export default function MontageWorkspace() {
         return;
       }
 
-      setSuccessMessage(json.message || "Brouillon créé avec succès.");
+      setSuccessMessage(json.message || "Brouillon crÃ©Ã© avec succÃ¨s.");
       await loadProjects();
     } catch (error) {
       setProjectError(
         error instanceof Error
           ? error.message
-          : "Impossible de créer le brouillon."
+          : "Impossible de crÃ©er le brouillon."
       );
     } finally {
       setCreatingDraft(false);
@@ -318,7 +320,7 @@ export default function MontageWorkspace() {
         const json = (await res.json().catch(() => null)) as GenerateResponse | null;
 
         if (!json) {
-          setProjectError("Réponse serveur invalide pendant la génération.");
+          setProjectError("RÃ©ponse serveur invalide pendant la gÃ©nÃ©ration.");
           return;
         }
 
@@ -332,7 +334,7 @@ export default function MontageWorkspace() {
         const unplaced = json.result?.summary?.unplaced_count;
 
         setSuccessMessage(
-          `Pré-montage généré avec succès : ${placed ?? 0} cours placés, ${unplaced ?? 0} non placés, score ${score ?? 0}%.`
+          `PrÃ©-montage gÃ©nÃ©rÃ© avec succÃ¨s : ${placed ?? 0} cours placÃ©s, ${unplaced ?? 0} non placÃ©s, score ${score ?? 0}%.`
         );
 
         await loadProjects();
@@ -340,7 +342,7 @@ export default function MontageWorkspace() {
         setProjectError(
           error instanceof Error
             ? error.message
-            : "Impossible de générer le pré-montage."
+            : "Impossible de gÃ©nÃ©rer le prÃ©-montage."
         );
       } finally {
         setGeneratingId(null);
@@ -370,8 +372,8 @@ export default function MontageWorkspace() {
                 </h1>
 
                 <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-300 sm:text-base">
-                  Préparation du nouveau module de montage intelligent connecté aux données
-                  de Mon Cahier : classes, enseignants, matières, affectations et créneaux.
+                  PrÃ©paration du nouveau module de montage intelligent connectÃ© aux donnÃ©es
+                  de Mon Cahier : classes, enseignants, matiÃ¨res, affectations et crÃ©neaux.
                 </p>
               </div>
 
@@ -387,7 +389,7 @@ export default function MontageWorkspace() {
                   ) : (
                     <RefreshCw className="h-4 w-4" />
                   )}
-                  Recharger les données
+                  Recharger les donnÃ©es
                 </button>
 
                 <button
@@ -401,7 +403,7 @@ export default function MontageWorkspace() {
                   ) : (
                     <PlusCircle className="h-4 w-4" />
                   )}
-                  Créer un brouillon
+                  CrÃ©er un brouillon
                 </button>
               </div>
             </div>
@@ -411,7 +413,7 @@ export default function MontageWorkspace() {
         {loading && (
           <div className="flex items-center gap-3 rounded-3xl border border-slate-200 bg-white p-5 text-sm font-semibold text-slate-700 shadow-sm">
             <Loader2 className="h-5 w-5 animate-spin" />
-            Chargement des données de l’établissement...
+            Chargement des donnÃ©es de lâ€™Ã©tablissement...
           </div>
         )}
 
@@ -420,7 +422,7 @@ export default function MontageWorkspace() {
             <div className="flex items-start gap-3">
               <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0" />
               <div>
-                <p className="font-black">Action réussie</p>
+                <p className="font-black">Action rÃ©ussie</p>
                 <p className="mt-1 text-sm">{successMessage}</p>
               </div>
             </div>
@@ -461,7 +463,7 @@ export default function MontageWorkspace() {
                 tone="sky"
               />
               <StatCard
-                label="Matières"
+                label="MatiÃ¨res"
                 value={data.subjects.length}
                 icon={GraduationCap}
                 tone="violet"
@@ -473,7 +475,7 @@ export default function MontageWorkspace() {
                 tone="emerald"
               />
               <StatCard
-                label="Créneaux"
+                label="CrÃ©neaux"
                 value={data.periods.length}
                 icon={CalendarDays}
                 tone="amber"
@@ -494,10 +496,10 @@ export default function MontageWorkspace() {
                   </div>
                   <div>
                     <h2 className="text-lg font-black">
-                      Données Mon Cahier détectées
+                      DonnÃ©es Mon Cahier dÃ©tectÃ©es
                     </h2>
                     <p className="text-sm text-slate-500">
-                      Le module lit les données existantes sans modifier les appels,
+                      Le module lit les donnÃ©es existantes sans modifier les appels,
                       les absences ou les notes.
                     </p>
                   </div>
@@ -506,7 +508,7 @@ export default function MontageWorkspace() {
                 <div className="mt-6 overflow-hidden rounded-2xl border border-slate-200">
                   <div className="grid grid-cols-3 bg-slate-50 px-4 py-3 text-xs font-black uppercase tracking-wide text-slate-500">
                     <div>Enseignant</div>
-                    <div>Matière</div>
+                    <div>MatiÃ¨re</div>
                     <div>Classe</div>
                   </div>
 
@@ -530,7 +532,7 @@ export default function MontageWorkspace() {
 
                     {data.affectations.length === 0 && (
                       <div className="px-4 py-8 text-center text-sm text-slate-500">
-                        Aucune affectation active détectée pour le moment.
+                        Aucune affectation active dÃ©tectÃ©e pour le moment.
                       </div>
                     )}
                   </div>
@@ -544,9 +546,9 @@ export default function MontageWorkspace() {
                       <FileSpreadsheet className="h-6 w-6" />
                     </div>
                     <div>
-                      <h2 className="text-lg font-black">Prochaine étape</h2>
+                      <h2 className="text-lg font-black">Prochaine Ã©tape</h2>
                       <p className="text-sm text-slate-500">
-                        Générer le pré-montage puis publier uniquement après
+                        GÃ©nÃ©rer le prÃ©-montage puis publier uniquement aprÃ¨s
                         validation administrative.
                       </p>
                     </div>
@@ -556,7 +558,7 @@ export default function MontageWorkspace() {
                     <div className="rounded-2xl bg-slate-50 p-4">
                       <p className="font-bold text-slate-900">1. Bootstrap</p>
                       <p className="mt-1 text-slate-600">
-                        Chargement des classes, enseignants, matières, créneaux et
+                        Chargement des classes, enseignants, matiÃ¨res, crÃ©neaux et
                         affectations.
                       </p>
                     </div>
@@ -564,15 +566,15 @@ export default function MontageWorkspace() {
                     <div className="rounded-2xl bg-slate-50 p-4">
                       <p className="font-bold text-slate-900">2. Brouillons</p>
                       <p className="mt-1 text-slate-600">
-                        Création d’un brouillon sauvegardé dans Supabase sans toucher
+                        CrÃ©ation dâ€™un brouillon sauvegardÃ© dans Supabase sans toucher
                         aux emplois du temps officiels.
                       </p>
                     </div>
 
                     <div className="rounded-2xl bg-slate-50 p-4">
-                      <p className="font-bold text-slate-900">3. Génération</p>
+                      <p className="font-bold text-slate-900">3. GÃ©nÃ©ration</p>
                       <p className="mt-1 text-slate-600">
-                        Le moteur produit un pré-montage enregistré dans le brouillon,
+                        Le moteur produit un prÃ©-montage enregistrÃ© dans le brouillon,
                         sans modifier les appels.
                       </p>
                     </div>
@@ -586,9 +588,9 @@ export default function MontageWorkspace() {
                         <Clock3 className="h-6 w-6" />
                       </div>
                       <div>
-                        <h2 className="text-lg font-black">Brouillons récents</h2>
+                        <h2 className="text-lg font-black">Brouillons rÃ©cents</h2>
                         <p className="text-sm text-slate-500">
-                          {projects.length} brouillon{projects.length > 1 ? "s" : ""} enregistré
+                          {projects.length} brouillon{projects.length > 1 ? "s" : ""} enregistrÃ©
                           {projects.length > 1 ? "s" : ""}
                         </p>
                       </div>
@@ -613,7 +615,7 @@ export default function MontageWorkspace() {
                             <div className="min-w-0">
                               <p className="font-bold text-slate-950">{project.name}</p>
                               <p className="mt-1 text-xs text-slate-500">
-                                Modifié le {formatDate(project.updated_at)}
+                                ModifiÃ© le {formatDate(project.updated_at)}
                               </p>
                             </div>
 
@@ -628,13 +630,13 @@ export default function MontageWorkspace() {
                                 <p className="font-black text-slate-950">
                                   {summary.assignments_count ?? 0}
                                 </p>
-                                <p className="text-slate-500">Placés</p>
+                                <p className="text-slate-500">PlacÃ©s</p>
                               </div>
                               <div className="rounded-xl bg-white px-2 py-2 ring-1 ring-slate-200">
                                 <p className="font-black text-slate-950">
                                   {summary.unplaced_count ?? 0}
                                 </p>
-                                <p className="text-slate-500">Non placés</p>
+                                <p className="text-slate-500">Non placÃ©s</p>
                               </div>
                               <div className="rounded-xl bg-white px-2 py-2 ring-1 ring-slate-200">
                                 <p className="font-black text-slate-950">
@@ -657,16 +659,22 @@ export default function MontageWorkspace() {
                               <PlayCircle className="h-4 w-4" />
                             )}
                             {project.status === "ready"
-                              ? "Regénérer le pré-montage"
-                              : "Générer le pré-montage"}
+                              ? "RegÃ©nÃ©rer le prÃ©-montage"
+                              : "GÃ©nÃ©rer le prÃ©-montage"}
                           </button>
+                          <Link
+                            href={`/admin/montage-emploi-du-temps/projets/${project.id}`}
+                            className="mt-3 inline-flex w-full items-center justify-center rounded-2xl bg-emerald-600 px-4 py-3 text-sm font-black text-white shadow-sm transition hover:bg-emerald-700"
+                          >
+                            Voir l’emploi du temps
+                          </Link>
                         </div>
                       );
                     })}
 
                     {projects.length === 0 && (
                       <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-5 text-center text-sm text-slate-500">
-                        Aucun brouillon pour le moment. Clique sur “Créer un brouillon”
+                        Aucun brouillon pour le moment. Clique sur â€œCrÃ©er un brouillonâ€
                         pour tester la sauvegarde.
                       </div>
                     )}
