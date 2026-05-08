@@ -145,7 +145,7 @@ export function buildSchedulerContextFromSnapshot(
     .sort(([a], [b]) => a - b)
     .map(([periodIndex, period]) => ({
       periodIndex,
-      label: clean(period.label, `SÃ©ance ${periodIndex}`),
+      label: clean(period.label, `SÃƒÂ©ance ${periodIndex}`),
       startTime: clean(period.start_time, "00:00"),
       endTime: clean(period.end_time, "00:00"),
       halfDay: inferHalfDay(period.start_time),
@@ -200,7 +200,7 @@ export function buildSchedulerContextFromSnapshot(
     if (!weeklyUnits || !splitPattern) {
       diagnostics.push({
         level: "error",
-        message: `Service incomplet : ${clean(item.class_label, "Classe")} â€” ${clean(item.subject_label, "MatiÃ¨re")} â€” ${clean(item.teacher_name, "Enseignant")}.`,
+        message: `Service incomplet : ${clean(item.class_label, "Classe")} Ã¢â‚¬â€ ${clean(item.subject_label, "MatiÃƒÂ¨re")} Ã¢â‚¬â€ ${clean(item.teacher_name, "Enseignant")}.`,
       });
       continue;
     }
@@ -230,18 +230,18 @@ export function buildSchedulerContextFromSnapshot(
       halfDay: item.half_day || item.halfDay || null,
       constraintType:
         item.constraint_type === "preference" || item.constraintType === "preference"
-          ? "preference"
-          : "strict",
+          ? ("preference" as const)
+          : ("strict" as const),
       reason: item.reason ? clean(item.reason) : null,
     }))
     .filter((item) => item.teacherId && item.dayIndex >= 1 && item.dayIndex <= 7);
 
   if (classes.length === 0) diagnostics.push({ level: "error", message: "Aucune classe disponible." });
-  if (periods.length === 0) diagnostics.push({ level: "error", message: "Aucun crÃ©neau officiel disponible." });
+  if (periods.length === 0) diagnostics.push({ level: "error", message: "Aucun crÃƒÂ©neau officiel disponible." });
   if (serviceAssignments.length === 0) {
     diagnostics.push({
       level: "error",
-      message: "Aucun service HoraClasse prÃªt. VÃ©rifie RÃ©fÃ©rentiel & services puis Affectation professeurs.",
+      message: "Aucun service HoraClasse prÃƒÂªt. VÃƒÂ©rifie RÃƒÂ©fÃƒÂ©rentiel & services puis Affectation professeurs.",
     });
   }
 
