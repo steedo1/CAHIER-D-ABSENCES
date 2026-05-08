@@ -1,4 +1,9 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
+import {
+  defaultLevels,
+  defaultSubjectHours,
+  defaultSubjects,
+} from "@/modules/montage-emploi-du-temps/catalog";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -6,18 +11,16 @@ export const dynamic = "force-dynamic";
 export async function GET() {
   return NextResponse.json({
     ok: true,
-    items: [],
-    message: "Configuration des volumes horaires non activée. La table SQL dédiée sera ajoutée à l’étape suivante.",
-  });
-}
-
-export async function POST(_req: NextRequest) {
-  return NextResponse.json(
-    {
-      ok: false,
-      error: "volumes_not_ready",
-      message: "Configuration des volumes horaires non activée. La table SQL dédiée sera ajoutée à l’étape suivante.",
+    source: "horaclasse_default_catalog",
+    levels: defaultLevels,
+    subjects: defaultSubjects,
+    subjectHours: defaultSubjectHours,
+    totals: {
+      levels: defaultLevels.length,
+      subjects: defaultSubjects.length,
+      subjectHours: defaultSubjectHours.length,
     },
-    { status: 501 }
-  );
+    message:
+      "Référentiel HoraClasse chargé : volumes horaires et découpages prédéfinis par défaut.",
+  });
 }

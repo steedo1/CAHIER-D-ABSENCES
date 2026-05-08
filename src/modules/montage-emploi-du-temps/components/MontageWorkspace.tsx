@@ -1,7 +1,6 @@
 "use client";
 
 import Link from "next/link";
-
 import React from "react";
 import {
   AlertTriangle,
@@ -21,11 +20,7 @@ import {
 import type { MontageBootstrapResponse } from "../types";
 
 type EngineSummary = {
-  classes_count?: number;
-  subjects_count?: number;
-  teachers_count?: number;
-  periods_count?: number;
-  affectations_count?: number;
+  placements_count?: number;
   assignments_count?: number;
   unplaced_count?: number;
   score?: number;
@@ -50,28 +45,12 @@ type MontageProject = {
 };
 
 type ProjectsResponse =
-  | {
-      ok: true;
-      items: MontageProject[];
-    }
-  | {
-      ok: false;
-      error: string;
-      message?: string;
-    };
+  | { ok: true; items: MontageProject[] }
+  | { ok: false; error: string; message?: string };
 
 type GenerateResponse =
-  | {
-      ok: true;
-      item: MontageProject;
-      result: EngineResult;
-      message?: string;
-    }
-  | {
-      ok: false;
-      error: string;
-      message?: string;
-    };
+  | { ok: true; item: MontageProject; result: EngineResult; message?: string }
+  | { ok: false; error: string; message?: string };
 
 function StatCard({
   label,
@@ -109,26 +88,17 @@ function StatCard({
 
 function formatDate(value: string) {
   try {
-    return new Intl.DateTimeFormat("fr-FR", {
-      dateStyle: "short",
-      timeStyle: "short",
-    }).format(new Date(value));
+    return new Intl.DateTimeFormat("fr-FR", { dateStyle: "short", timeStyle: "short" }).format(new Date(value));
   } catch {
     return value;
   }
 }
 
-function getProjectSummary(project: MontageProject): EngineSummary | null {
-  const summary = project.engine_result?.summary;
-  if (!summary || typeof summary !== "object") return null;
-  return summary;
-}
-
 function getStatusLabel(status: MontageProject["status"]) {
   if (status === "draft") return "DRAFT";
   if (status === "ready") return "READY";
-  if (status === "published") return "PUBLIÃ‰";
-  if (status === "archived") return "ARCHIVÃ‰";
+  if (status === "published") return "PUBLIÉ";
+  if (status === "archived") return "ARCHIVÉ";
   return status;
 }
 
@@ -145,31 +115,20 @@ export default function MontageWorkspace() {
   const loadProjects = React.useCallback(async () => {
     setProjectsLoading(true);
     setProjectError(null);
-
     try {
-      const res = await fetch("/api/admin/montage-emploi-du-temps/projects", {
-        cache: "no-store",
-      });
-
+      const res = await fetch("/api/admin/montage-emploi-du-temps/projects", { cache: "no-store" });
       const json = (await res.json().catch(() => null)) as ProjectsResponse | null;
-
       if (!json) {
-        setProjectError("RÃ©ponse serveur invalide pendant le chargement des brouillons.");
+        setProjectError("Réponse serveur invalide pendant le chargement des brouillons.");
         return;
       }
-
       if (!json.ok) {
         setProjectError(json.message || json.error);
         return;
       }
-
       setProjects(Array.isArray(json.items) ? json.items : []);
     } catch (error) {
-      setProjectError(
-        error instanceof Error
-          ? error.message
-          : "Impossible de charger les brouillons."
-      );
+      setProjectError(error instanceof Error ? error.message : "Impossible de charger les brouillons.");
     } finally {
       setProjectsLoading(false);
     }
@@ -179,37 +138,17 @@ export default function MontageWorkspace() {
     setLoading(true);
     setSuccessMessage(null);
     setProjectError(null);
-
     try {
-      const res = await fetch("/api/admin/montage-emploi-du-temps/bootstrap", {
-        cache: "no-store",
-      });
-
+      const res = await fetch("/api/admin/montage-emploi-du-temps/bootstrap", { cache: "no-store" });
       const json = (await res.json().catch(() => null)) as MontageBootstrapResponse | null;
-
       if (!json) {
-        setData({
-          ok: false,
-          error: "invalid_response",
-          message: "RÃ©ponse serveur invalide.",
-        });
+        setData({ ok: false, error: "invalid_response", message: "Réponse serveur invalide." });
         return;
       }
-
       setData(json);
-
-      if (json.ok) {
-        await loadProjects();
-      }
+      if (json.ok) await loadProjects();
     } catch (error) {
-      setData({
-        ok: false,
-        error: "network_error",
-        message:
-          error instanceof Error
-            ? error.message
-            : "Impossible de charger les donnÃ©es.",
-      });
+      setData({ ok: false, error: "network_error", message: error instanceof Error ? error.message : "Impossible de charger les données." });
     } finally {
       setLoading(false);
     }
@@ -221,14 +160,12 @@ export default function MontageWorkspace() {
 
   const createDraft = React.useCallback(async () => {
     if (!data?.ok) return;
-
     setCreatingDraft(true);
     setSuccessMessage(null);
     setProjectError(null);
 
     try {
       const now = new Date();
-
       const sourceSnapshot = {
         institution: data.institution,
         classes: data.classes,
@@ -236,122 +173,83 @@ export default function MontageWorkspace() {
         teachers: data.teachers,
         periods: data.periods,
         affectations: data.affectations,
+        service_assignments: data.service_assignments,
+        terrain_rules: data.terrain_rules,
+        rooms: data.rooms,
+        teacher_unavailability: data.teacher_unavailability,
         saved_at: now.toISOString(),
       };
 
       const res = await fetch("/api/admin/montage-emploi-du-temps/projects", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          name: `Brouillon montage emploi du temps - ${now.toLocaleDateString("fr-FR")}`,
+          name: `Brouillon HoraClasse - ${now.toLocaleDateString("fr-FR")}`,
           status: "draft",
           source_snapshot: sourceSnapshot,
           engine_input: {
-            source: "mon_cahier_bootstrap",
-            classes_count: data.classes.length,
-            subjects_count: data.subjects.length,
-            teachers_count: data.teachers.length,
-            periods_count: data.periods.length,
-            affectations_count: data.affectations.length,
+            source: "horaclasse_model_bootstrap",
+            services_count: data.service_assignments.length,
+            ready_services_count: data.service_assignments.filter((item) => item.is_ready).length,
           },
-          engine_result: {
-            status: "not_generated_yet",
-            assignments: [],
-          },
-          diagnostics: data.warnings.map((message) => ({
-            level: "warning",
-            message,
-          })),
+          engine_result: { status: "not_generated_yet", assignments: [] },
+          diagnostics: data.warnings.map((message) => ({ level: "warning", message })),
         }),
       });
 
       const json = (await res.json().catch(() => null)) as
-        | {
-            ok: true;
-            item: MontageProject;
-            message?: string;
-          }
-        | {
-            ok: false;
-            error: string;
-            message?: string;
-          }
+        | { ok: true; item: MontageProject; message?: string }
+        | { ok: false; error: string; message?: string }
         | null;
 
       if (!json) {
-        setProjectError("RÃ©ponse serveur invalide pendant la crÃ©ation du brouillon.");
+        setProjectError("Réponse serveur invalide pendant la création du brouillon.");
         return;
       }
-
       if (!json.ok) {
         setProjectError(json.message || json.error);
         return;
       }
 
-      setSuccessMessage(json.message || "Brouillon crÃ©Ã© avec succÃ¨s.");
+      setSuccessMessage(json.message || "Brouillon créé avec succès.");
       await loadProjects();
     } catch (error) {
-      setProjectError(
-        error instanceof Error
-          ? error.message
-          : "Impossible de crÃ©er le brouillon."
-      );
+      setProjectError(error instanceof Error ? error.message : "Impossible de créer le brouillon.");
     } finally {
       setCreatingDraft(false);
     }
   }, [data, loadProjects]);
 
-  const generateProject = React.useCallback(
-    async (project: MontageProject) => {
-      setGeneratingId(project.id);
-      setSuccessMessage(null);
-      setProjectError(null);
-
-      try {
-        const res = await fetch(
-          `/api/admin/montage-emploi-du-temps/projects/${project.id}/generate`,
-          {
-            method: "POST",
-          }
-        );
-
-        const json = (await res.json().catch(() => null)) as GenerateResponse | null;
-
-        if (!json) {
-          setProjectError("RÃ©ponse serveur invalide pendant la gÃ©nÃ©ration.");
-          return;
-        }
-
-        if (!json.ok) {
-          setProjectError(json.message || json.error);
-          return;
-        }
-
-        const score = json.result?.summary?.score;
-        const placed = json.result?.summary?.assignments_count;
-        const unplaced = json.result?.summary?.unplaced_count;
-
-        setSuccessMessage(
-          `PrÃ©-montage gÃ©nÃ©rÃ© avec succÃ¨s : ${placed ?? 0} cours placÃ©s, ${unplaced ?? 0} non placÃ©s, score ${score ?? 0}%.`
-        );
-
-        await loadProjects();
-      } catch (error) {
-        setProjectError(
-          error instanceof Error
-            ? error.message
-            : "Impossible de gÃ©nÃ©rer le prÃ©-montage."
-        );
-      } finally {
-        setGeneratingId(null);
+  const generateProject = React.useCallback(async (project: MontageProject) => {
+    setGeneratingId(project.id);
+    setSuccessMessage(null);
+    setProjectError(null);
+    try {
+      const res = await fetch(`/api/admin/montage-emploi-du-temps/projects/${project.id}/generate`, { method: "POST" });
+      const json = (await res.json().catch(() => null)) as GenerateResponse | null;
+      if (!json) {
+        setProjectError("Réponse serveur invalide pendant la génération.");
+        return;
       }
-    },
-    [loadProjects]
-  );
+      if (!json.ok) {
+        setProjectError(json.message || json.error);
+        return;
+      }
+      const score = json.result?.summary?.score;
+      const placed = json.result?.summary?.assignments_count;
+      const unplaced = json.result?.summary?.unplaced_count;
+      setSuccessMessage(`Génération HoraClasse terminée : ${placed ?? 0} ligne(s) placée(s), ${unplaced ?? 0} bloc(s) non placé(s), score ${score ?? 0}%.`);
+      await loadProjects();
+    } catch (error) {
+      setProjectError(error instanceof Error ? error.message : "Impossible de générer l’emploi du temps.");
+    } finally {
+      setGeneratingId(null);
+    }
+  }, [loadProjects]);
 
   const isReady = data?.ok === true;
+  const serviceCount = data?.ok ? data.service_assignments.length : 0;
+  const readyServiceCount = data?.ok ? data.service_assignments.filter((item) => item.is_ready).length : 0;
 
   return (
     <main className="min-h-screen bg-slate-50 px-4 py-6 text-slate-950 sm:px-6 lg:px-8">
@@ -359,325 +257,93 @@ export default function MontageWorkspace() {
         <div className="overflow-hidden rounded-[32px] border border-slate-200 bg-slate-950 shadow-xl">
           <div className="relative p-6 sm:p-8">
             <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(56,189,248,0.22),transparent_34%),radial-gradient(circle_at_bottom_left,rgba(16,185,129,0.18),transparent_32%)]" />
-
             <div className="relative flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
               <div className="max-w-3xl">
                 <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/10 px-3 py-1 text-xs font-bold uppercase tracking-[0.18em] text-sky-100">
                   <CalendarDays className="h-4 w-4" />
-                  Module intelligent
+                  Modèle HoraClasse
                 </div>
-
-                <h1 className="mt-5 text-3xl font-black tracking-tight text-white sm:text-4xl">
-                  Montage emploi du temps
-                </h1>
-
+                <h1 className="mt-5 text-3xl font-black tracking-tight text-white sm:text-4xl">Montage emploi du temps</h1>
                 <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-300 sm:text-base">
-                  PrÃ©paration du nouveau module de montage intelligent connectÃ© aux donnÃ©es
-                  de Mon Cahier : classes, enseignants, matiÃ¨res, affectations et crÃ©neaux.
+                  Référentiel HoraClasse, services, règles terrain, génération et diagnostics intégrés dans Mon Cahier.
                 </p>
               </div>
-
               <div className="flex flex-col gap-3 sm:flex-row lg:flex-col xl:flex-row">
-                <button
-                  type="button"
-                  onClick={() => void load()}
-                  disabled={loading}
-                  className="inline-flex items-center justify-center gap-2 rounded-2xl bg-white px-5 py-3 text-sm font-bold text-slate-950 shadow-lg transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-70"
-                >
-                  {loading ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <RefreshCw className="h-4 w-4" />
-                  )}
-                  Recharger les donnÃ©es
+                <button type="button" onClick={() => void load()} disabled={loading} className="inline-flex items-center justify-center gap-2 rounded-2xl bg-white px-5 py-3 text-sm font-bold text-slate-950 shadow-lg transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-70">
+                  {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                  Recharger
                 </button>
-
-                <button
-                  type="button"
-                  onClick={() => void createDraft()}
-                  disabled={!isReady || creatingDraft}
-                  className="inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-500 px-5 py-3 text-sm font-black text-white shadow-lg shadow-emerald-950/20 transition hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  {creatingDraft ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <PlusCircle className="h-4 w-4" />
-                  )}
-                  CrÃ©er un brouillon
+                <button type="button" onClick={() => void createDraft()} disabled={!isReady || creatingDraft || readyServiceCount === 0} className="inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-500 px-5 py-3 text-sm font-black text-white shadow-lg shadow-emerald-950/20 transition hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-60">
+                  {creatingDraft ? <Loader2 className="h-4 w-4 animate-spin" /> : <PlusCircle className="h-4 w-4" />}
+                  Créer un brouillon
                 </button>
               </div>
             </div>
           </div>
         </div>
 
-        {loading && (
-          <div className="flex items-center gap-3 rounded-3xl border border-slate-200 bg-white p-5 text-sm font-semibold text-slate-700 shadow-sm">
-            <Loader2 className="h-5 w-5 animate-spin" />
-            Chargement des donnÃ©es de lâ€™Ã©tablissement...
-          </div>
-        )}
+        {loading && <div className="flex items-center gap-3 rounded-3xl border border-slate-200 bg-white p-5 text-sm font-semibold text-slate-700 shadow-sm"><Loader2 className="h-5 w-5 animate-spin" /> Chargement des données HoraClasse...</div>}
 
-        {successMessage && (
-          <div className="rounded-3xl border border-emerald-200 bg-emerald-50 p-5 text-emerald-950 shadow-sm">
-            <div className="flex items-start gap-3">
-              <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0" />
-              <div>
-                <p className="font-black">Action rÃ©ussie</p>
-                <p className="mt-1 text-sm">{successMessage}</p>
-              </div>
-            </div>
-          </div>
-        )}
+        {successMessage && <div className="rounded-3xl border border-emerald-200 bg-emerald-50 p-5 text-emerald-950 shadow-sm"><div className="flex items-start gap-3"><CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0" /><div><p className="font-black">Action réussie</p><p className="mt-1 text-sm">{successMessage}</p></div></div></div>}
+        {projectError && <div className="rounded-3xl border border-red-200 bg-red-50 p-5 text-red-950 shadow-sm"><div className="flex items-start gap-3"><AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" /><div><p className="font-black">Erreur</p><p className="mt-1 text-sm">{projectError}</p></div></div></div>}
 
-        {projectError && (
-          <div className="rounded-3xl border border-red-200 bg-red-50 p-5 text-red-950 shadow-sm">
-            <div className="flex items-start gap-3">
-              <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" />
-              <div>
-                <p className="font-black">Erreur brouillon</p>
-                <p className="mt-1 text-sm">{projectError}</p>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {!loading && data && !data.ok && (
-          <div className="rounded-3xl border border-red-200 bg-red-50 p-5 text-red-950 shadow-sm">
-            <div className="flex items-start gap-3">
-              <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" />
-              <div>
-                <p className="font-black">Impossible de charger le module.</p>
-                <p className="mt-1 text-sm">{data.message || data.error}</p>
-              </div>
-            </div>
-          </div>
-        )}
+        {!loading && data && !data.ok && <div className="rounded-3xl border border-red-200 bg-red-50 p-5 text-red-950 shadow-sm"><div className="flex items-start gap-3"><AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" /><div><p className="font-black">Impossible de charger le module.</p><p className="mt-1 text-sm">{data.message || data.error}</p></div></div></div>}
 
         {isReady && (
           <>
             <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
-              <StatCard
-                label="Classes"
-                value={data.classes.length}
-                icon={School}
-                tone="sky"
-              />
-              <StatCard
-                label="MatiÃ¨res"
-                value={data.subjects.length}
-                icon={GraduationCap}
-                tone="violet"
-              />
-              <StatCard
-                label="Enseignants"
-                value={data.teachers.length}
-                icon={Users}
-                tone="emerald"
-              />
-              <StatCard
-                label="CrÃ©neaux"
-                value={data.periods.length}
-                icon={CalendarDays}
-                tone="amber"
-              />
-              <StatCard
-                label="Affectations"
-                value={data.affectations.length}
-                icon={Database}
-                tone="slate"
-              />
+              <StatCard label="Classes" value={data.classes.length} icon={School} tone="sky" />
+              <StatCard label="Matières" value={data.subjects.length} icon={GraduationCap} tone="violet" />
+              <StatCard label="Enseignants" value={data.teachers.length} icon={Users} tone="emerald" />
+              <StatCard label="Créneaux" value={data.periods.length} icon={CalendarDays} tone="amber" />
+              <StatCard label="Services prêts" value={`${readyServiceCount}/${serviceCount}`} icon={Database} tone="slate" />
             </div>
 
             <div className="grid gap-6 lg:grid-cols-[1.2fr_0.8fr]">
               <div className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
-                <div className="flex items-center gap-3">
-                  <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-700 ring-1 ring-emerald-100">
-                    <CheckCircle2 className="h-6 w-6" />
-                  </div>
-                  <div>
-                    <h2 className="text-lg font-black">
-                      DonnÃ©es Mon Cahier dÃ©tectÃ©es
-                    </h2>
-                    <p className="text-sm text-slate-500">
-                      Le module lit les donnÃ©es existantes sans modifier les appels,
-                      les absences ou les notes.
-                    </p>
-                  </div>
-                </div>
-
+                <div className="flex items-center gap-3"><div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-700 ring-1 ring-emerald-100"><CheckCircle2 className="h-6 w-6" /></div><div><h2 className="text-lg font-black">Services HoraClasse détectés</h2><p className="text-sm text-slate-500">Les services viennent du référentiel par défaut et des affectations Mon Cahier.</p></div></div>
                 <div className="mt-6 overflow-hidden rounded-2xl border border-slate-200">
-                  <div className="grid grid-cols-3 bg-slate-50 px-4 py-3 text-xs font-black uppercase tracking-wide text-slate-500">
-                    <div>Enseignant</div>
-                    <div>MatiÃ¨re</div>
-                    <div>Classe</div>
-                  </div>
-
-                  <div className="max-h-[360px] divide-y divide-slate-100 overflow-auto">
-                    {data.affectations.slice(0, 80).map((item, index) => (
-                      <div
-                        key={`${item.teacher_id}-${item.subject_id}-${item.class_id}-${index}`}
-                        className="grid grid-cols-3 gap-3 px-4 py-3 text-sm"
-                      >
-                        <div className="truncate font-semibold text-slate-900">
-                          {item.teacher_name}
-                        </div>
-                        <div className="truncate text-slate-600">
-                          {item.subject_label}
-                        </div>
-                        <div className="truncate font-semibold text-slate-700">
-                          {item.class_label}
-                        </div>
+                  <div className="grid grid-cols-4 bg-slate-50 px-4 py-3 text-xs font-black uppercase tracking-wide text-slate-500"><div>Classe</div><div>Matière</div><div>Enseignant</div><div>Volume</div></div>
+                  <div className="max-h-[420px] divide-y divide-slate-100 overflow-auto">
+                    {data.service_assignments.slice(0, 120).map((item, index) => (
+                      <div key={`${item.class_id}-${item.subject_id}-${item.teacher_id}-${index}`} className="grid grid-cols-4 gap-3 px-4 py-3 text-sm">
+                        <div className="truncate font-semibold text-slate-900">{item.class_label}</div>
+                        <div className="truncate text-slate-600">{item.subject_label}</div>
+                        <div className="truncate text-slate-700">{item.teacher_name}</div>
+                        <div className={item.is_ready ? "font-black text-emerald-700" : "font-black text-red-700"}>{item.weekly_units ? `${item.weekly_units}h / ${item.split_pattern}` : "À vérifier"}</div>
                       </div>
                     ))}
-
-                    {data.affectations.length === 0 && (
-                      <div className="px-4 py-8 text-center text-sm text-slate-500">
-                        Aucune affectation active dÃ©tectÃ©e pour le moment.
-                      </div>
-                    )}
+                    {data.service_assignments.length === 0 && <div className="px-4 py-8 text-center text-sm text-slate-500">Aucun service HoraClasse détecté.</div>}
                   </div>
                 </div>
               </div>
 
               <div className="space-y-6">
                 <div className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
-                  <div className="flex items-center gap-3">
-                    <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-sky-50 text-sky-700 ring-1 ring-sky-100">
-                      <FileSpreadsheet className="h-6 w-6" />
-                    </div>
-                    <div>
-                      <h2 className="text-lg font-black">Prochaine Ã©tape</h2>
-                      <p className="text-sm text-slate-500">
-                        GÃ©nÃ©rer le prÃ©-montage puis publier uniquement aprÃ¨s
-                        validation administrative.
-                      </p>
-                    </div>
-                  </div>
-
+                  <div className="flex items-center gap-3"><div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-sky-50 text-sky-700 ring-1 ring-sky-100"><FileSpreadsheet className="h-6 w-6" /></div><div><h2 className="text-lg font-black">Flux HoraClasse</h2><p className="text-sm text-slate-500">Référentiel → services → règles terrain → génération → diagnostics.</p></div></div>
                   <div className="mt-6 space-y-3 text-sm">
-                    <div className="rounded-2xl bg-slate-50 p-4">
-                      <p className="font-bold text-slate-900">1. Bootstrap</p>
-                      <p className="mt-1 text-slate-600">
-                        Chargement des classes, enseignants, matiÃ¨res, crÃ©neaux et
-                        affectations.
-                      </p>
-                    </div>
-
-                    <div className="rounded-2xl bg-slate-50 p-4">
-                      <p className="font-bold text-slate-900">2. Brouillons</p>
-                      <p className="mt-1 text-slate-600">
-                        CrÃ©ation dâ€™un brouillon sauvegardÃ© dans Supabase sans toucher
-                        aux emplois du temps officiels.
-                      </p>
-                    </div>
-
-                    <div className="rounded-2xl bg-slate-50 p-4">
-                      <p className="font-bold text-slate-900">3. GÃ©nÃ©ration</p>
-                      <p className="mt-1 text-slate-600">
-                        Le moteur produit un prÃ©-montage enregistrÃ© dans le brouillon,
-                        sans modifier les appels.
-                      </p>
-                    </div>
+                    <Link href="/admin/montage-emploi-du-temps/volumes" className="block rounded-2xl bg-slate-50 p-4 font-bold text-slate-900 hover:bg-slate-100">Référentiel & services</Link>
+                    <Link href="/admin/montage-emploi-du-temps/regles-terrain" className="block rounded-2xl bg-slate-50 p-4 font-bold text-slate-900 hover:bg-slate-100">Règles terrain HoraClasse</Link>
+                    <Link href="/admin/montage-emploi-du-temps/generation" className="block rounded-2xl bg-slate-50 p-4 font-bold text-slate-900 hover:bg-slate-100">Services & génération</Link>
                   </div>
                 </div>
 
                 <div className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="flex items-center gap-3">
-                      <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-amber-50 text-amber-700 ring-1 ring-amber-100">
-                        <Clock3 className="h-6 w-6" />
-                      </div>
-                      <div>
-                        <h2 className="text-lg font-black">Brouillons rÃ©cents</h2>
-                        <p className="text-sm text-slate-500">
-                          {projects.length} brouillon{projects.length > 1 ? "s" : ""} enregistrÃ©
-                          {projects.length > 1 ? "s" : ""}
-                        </p>
-                      </div>
-                    </div>
-
-                    {projectsLoading && (
-                      <Loader2 className="h-5 w-5 animate-spin text-slate-400" />
-                    )}
-                  </div>
-
+                  <div className="flex items-center justify-between gap-3"><div className="flex items-center gap-3"><div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-amber-50 text-amber-700 ring-1 ring-amber-100"><Clock3 className="h-6 w-6" /></div><div><h2 className="text-lg font-black">Brouillons récents</h2><p className="text-sm text-slate-500">{projects.length} brouillon{projects.length > 1 ? "s" : ""} enregistré{projects.length > 1 ? "s" : ""}</p></div></div>{projectsLoading && <Loader2 className="h-5 w-5 animate-spin text-slate-400" />}</div>
                   <div className="mt-5 space-y-3">
                     {projects.slice(0, 6).map((project) => {
-                      const summary = getProjectSummary(project);
+                      const summary = project.engine_result?.summary;
                       const canGenerate = project.status !== "published";
-
                       return (
-                        <div
-                          key={project.id}
-                          className="rounded-2xl border border-slate-200 bg-slate-50 p-4"
-                        >
-                          <div className="flex items-start justify-between gap-3">
-                            <div className="min-w-0">
-                              <p className="font-bold text-slate-950">{project.name}</p>
-                              <p className="mt-1 text-xs text-slate-500">
-                                ModifiÃ© le {formatDate(project.updated_at)}
-                              </p>
-                            </div>
-
-                            <span className="rounded-full bg-white px-3 py-1 text-xs font-black uppercase tracking-wide text-slate-600 ring-1 ring-slate-200">
-                              {getStatusLabel(project.status)}
-                            </span>
-                          </div>
-
-                          {summary && (
-                            <div className="mt-4 grid grid-cols-3 gap-2 text-center text-xs">
-                              <div className="rounded-xl bg-white px-2 py-2 ring-1 ring-slate-200">
-                                <p className="font-black text-slate-950">
-                                  {summary.assignments_count ?? 0}
-                                </p>
-                                <p className="text-slate-500">PlacÃ©s</p>
-                              </div>
-                              <div className="rounded-xl bg-white px-2 py-2 ring-1 ring-slate-200">
-                                <p className="font-black text-slate-950">
-                                  {summary.unplaced_count ?? 0}
-                                </p>
-                                <p className="text-slate-500">Non placÃ©s</p>
-                              </div>
-                              <div className="rounded-xl bg-white px-2 py-2 ring-1 ring-slate-200">
-                                <p className="font-black text-slate-950">
-                                  {summary.score ?? 0}%
-                                </p>
-                                <p className="text-slate-500">Score</p>
-                              </div>
-                            </div>
-                          )}
-
-                          <button
-                            type="button"
-                            onClick={() => void generateProject(project)}
-                            disabled={!canGenerate || generatingId === project.id}
-                            className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-slate-950 px-4 py-3 text-sm font-black text-white shadow-sm transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
-                          >
-                            {generatingId === project.id ? (
-                              <Loader2 className="h-4 w-4 animate-spin" />
-                            ) : (
-                              <PlayCircle className="h-4 w-4" />
-                            )}
-                            {project.status === "ready"
-                              ? "RegÃ©nÃ©rer le prÃ©-montage"
-                              : "GÃ©nÃ©rer le prÃ©-montage"}
-                          </button>
-                          <Link
-                            href={`/admin/montage-emploi-du-temps/projets/${project.id}`}
-                            className="mt-3 inline-flex w-full items-center justify-center rounded-2xl bg-emerald-600 px-4 py-3 text-sm font-black text-white shadow-sm transition hover:bg-emerald-700"
-                          >
-                            Voir l’emploi du temps
-                          </Link>
+                        <div key={project.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                          <div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="font-bold text-slate-950">{project.name}</p><p className="mt-1 text-xs text-slate-500">Modifié le {formatDate(project.updated_at)}</p></div><span className="rounded-full bg-white px-3 py-1 text-xs font-black uppercase tracking-wide text-slate-600 ring-1 ring-slate-200">{getStatusLabel(project.status)}</span></div>
+                          {summary && <div className="mt-4 grid grid-cols-3 gap-2 text-center text-xs"><div className="rounded-xl bg-white px-2 py-2 ring-1 ring-slate-200"><p className="font-black text-slate-950">{summary.assignments_count ?? 0}</p><p className="text-slate-500">Lignes</p></div><div className="rounded-xl bg-white px-2 py-2 ring-1 ring-slate-200"><p className="font-black text-slate-950">{summary.unplaced_count ?? 0}</p><p className="text-slate-500">Non placés</p></div><div className="rounded-xl bg-white px-2 py-2 ring-1 ring-slate-200"><p className="font-black text-slate-950">{summary.score ?? 0}%</p><p className="text-slate-500">Score</p></div></div>}
+                          <button type="button" onClick={() => void generateProject(project)} disabled={!canGenerate || generatingId === project.id} className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-slate-950 px-4 py-3 text-sm font-black text-white shadow-sm transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60">{generatingId === project.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <PlayCircle className="h-4 w-4" />}{project.status === "ready" ? "Regénérer avec HoraClasse" : "Générer avec HoraClasse"}</button>
+                          <Link href={`/admin/montage-emploi-du-temps/projets/${project.id}`} className="mt-3 inline-flex w-full items-center justify-center rounded-2xl bg-emerald-600 px-4 py-3 text-sm font-black text-white shadow-sm transition hover:bg-emerald-700">Voir l’emploi du temps</Link>
                         </div>
                       );
                     })}
-
-                    {projects.length === 0 && (
-                      <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-5 text-center text-sm text-slate-500">
-                        Aucun brouillon pour le moment. Clique sur â€œCrÃ©er un brouillonâ€
-                        pour tester la sauvegarde.
-                      </div>
-                    )}
+                    {projects.length === 0 && <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-5 text-center text-sm text-slate-500">Aucun brouillon. Crée un brouillon quand les services HoraClasse sont prêts.</div>}
                   </div>
                 </div>
               </div>

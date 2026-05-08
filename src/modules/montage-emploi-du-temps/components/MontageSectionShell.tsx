@@ -6,7 +6,7 @@ import {
   ArrowLeft,
   CheckCircle2,
   Clock3,
-  Construction,
+  Info,
   Settings2,
 } from "lucide-react";
 
@@ -17,18 +17,22 @@ type Card = {
 
 export default function MontageSectionShell({
   eyebrow = "Montage emploi du temps",
+  badge,
   title,
   description,
-  status = "Préparation V1",
+  status = "Modèle HoraClasse",
   cards,
   children,
+  note,
 }: {
   eyebrow?: string;
+  badge?: string;
   title: string;
   description: string;
   status?: string;
   cards?: Card[];
   children?: React.ReactNode;
+  note?: string;
 }) {
   return (
     <main className="min-h-screen bg-slate-50 px-4 py-6 text-slate-950 sm:px-6 lg:px-8">
@@ -48,7 +52,7 @@ export default function MontageSectionShell({
             <div className="relative">
               <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/10 px-3 py-1 text-xs font-black uppercase tracking-[0.18em] text-sky-100">
                 <Settings2 className="h-4 w-4" />
-                {eyebrow}
+                {badge || eyebrow}
               </div>
 
               <h1 className="mt-5 text-3xl font-black tracking-tight text-white sm:text-4xl">
@@ -91,19 +95,17 @@ export default function MontageSectionShell({
           </div>
         )}
 
-        <div className="rounded-[28px] border border-amber-200 bg-amber-50 p-6 text-amber-950 shadow-sm">
-          <div className="flex items-start gap-3">
-            <Construction className="mt-0.5 h-5 w-5 shrink-0" />
-            <div>
-              <h2 className="font-black">Module en préparation</h2>
-              <p className="mt-1 text-sm leading-6">
-                Cette page est une coque propre. Elle évite les erreurs 404 et
-                prépare l’intégration progressive du vrai moteur de montage,
-                sans modifier les emplois du temps officiels.
-              </p>
+        {note && (
+          <div className="rounded-[28px] border border-sky-200 bg-sky-50 p-6 text-sky-950 shadow-sm">
+            <div className="flex items-start gap-3">
+              <Info className="mt-0.5 h-5 w-5 shrink-0" />
+              <div>
+                <h2 className="font-black">Principe HoraClasse</h2>
+                <p className="mt-1 text-sm leading-6">{note}</p>
+              </div>
             </div>
           </div>
-        </div>
+        )}
 
         {children}
       </section>

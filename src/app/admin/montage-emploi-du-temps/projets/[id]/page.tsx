@@ -8,6 +8,5 @@ export default async function MontageProjectPreviewPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-
   return <MontageProjectPreview projectId={id} />;
 }

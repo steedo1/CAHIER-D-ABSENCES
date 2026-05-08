@@ -1,25 +1,21 @@
 param(
-  [string]$Message = "Met à jour module montage emploi du temps",
-  [string]$Branch = "test/notif-admin-v1"
+  [string]$Message = "Mise a jour montage emploi du temps"
 )
 
 $ErrorActionPreference = "Stop"
 
-git checkout $Branch
+git checkout test/notif-admin-v1
+git config --local core.safecrlf false
 
-git add "src/app/admin/ui/sidebar-nav.tsx"
-git add "src/app/admin/montage-emploi-du-temps"
-git add "src/app/api/admin/montage-emploi-du-temps"
-git add "src/modules/montage-emploi-du-temps"
-git add "scripts/commit-montage-edt.ps1"
+git add "src/app/admin/ui/sidebar-nav.tsx" 2>$null
+git add "src/app/admin/montage-emploi-du-temps" 2>$null
+git add "src/app/api/admin/montage-emploi-du-temps" 2>$null
+git add "src/modules/montage-emploi-du-temps" 2>$null
+git add "sql/montage_edt_horaclasse_complete_v3.sql" 2>$null
+git add "scripts/commit-montage-edt.ps1" 2>$null
 
 git status
 
-$pending = git status --porcelain
-if ([string]::IsNullOrWhiteSpace($pending)) {
-  Write-Host "Aucun changement à commiter." -ForegroundColor Yellow
-  exit 0
-}
-
 git commit -m $Message
-git push origin $Branch
+
+git push origin test/notif-admin-v1

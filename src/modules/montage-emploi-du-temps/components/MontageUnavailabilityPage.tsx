@@ -6,11 +6,22 @@ export default function MontageUnavailabilityPage() {
   return (
     <MontageSectionShell
       title="Indisponibilités"
-      description="Préparer la gestion des indisponibilités strictes et préférences des enseignants."
+      description="Préparer l’intégration du modèle HoraClasse des indisponibilités enseignants : contrainte stricte ou préférence."
+      status="Modèle HoraClasse"
+      note="Les indisponibilités doivent alimenter teacherUnavailability dans SchedulerContext. Une contrainte stricte bloque le placement ; une préférence oriente le score."
       cards={[
-        { title: "Indisponibilité stricte", description: "Empêcher le moteur de placer un professeur sur un créneau interdit." },
-    { title: "Préférence", description: "Permettre une contrainte souple qui influence le score sans bloquer totalement." },
-    { title: "Récurrence", description: "Préparer les cas matin, après-midi, jour complet ou période donnée." }
+        {
+          title: "Contraintes strictes",
+          description: "Le professeur ne peut jamais être placé sur ce jour, demi-journée ou créneau.",
+        },
+        {
+          title: "Préférences",
+          description: "Le moteur peut éviter ces périodes sans bloquer totalement la génération.",
+        },
+        {
+          title: "Données moteur",
+          description: "Chaque indisponibilité devient teacherId, dayIndex, periodIndex ou halfDay, constraintType et reason.",
+        },
       ]}
     />
   );

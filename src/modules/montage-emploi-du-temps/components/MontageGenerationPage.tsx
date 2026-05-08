@@ -5,12 +5,23 @@ import MontageSectionShell from "./MontageSectionShell";
 export default function MontageGenerationPage() {
   return (
     <MontageSectionShell
-      title="Brouillons & génération"
-      description="Créer, générer, régénérer et contrôler les brouillons d’emploi du temps."
+      title="Services & génération"
+      description="Respecter le flux HoraClasse : référentiel → services → affectation professeurs → génération → diagnostics."
+      status="Flux HoraClasse"
+      note="La génération doit appeler le vrai scheduler HoraClasse, pas le moteur provisoire. Le résultat attendu contient placements, unplacedBlocks, warnings et globalScore."
       cards={[
-        { title: "Brouillon", description: "Sauvegarder une copie des données Mon Cahier avant génération." },
-    { title: "Génération", description: "Appeler le vrai moteur métier quand les volumes et règles sont prêts." },
-    { title: "Diagnostics", description: "Afficher les cours non placés, avertissements et erreurs bloquantes." }
+        {
+          title: "Services",
+          description: "Les volumes par défaut deviennent des services à affecter à des professeurs.",
+        },
+        {
+          title: "Affectation",
+          description: "Les professeurs sont associés aux services selon leurs matières et charges disponibles.",
+        },
+        {
+          title: "Diagnostics",
+          description: "Le moteur retourne les placements, blocs non placés, alertes et score global.",
+        },
       ]}
     />
   );

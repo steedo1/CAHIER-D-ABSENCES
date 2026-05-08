@@ -6,11 +6,22 @@ export default function MontagePublicationPage() {
   return (
     <MontageSectionShell
       title="Publication"
-      description="Préparer la publication officielle vers les emplois du temps utilisés par les appels."
+      description="Publier uniquement après validation du vrai résultat HoraClasse et sauvegarde de l’ancien emploi du temps officiel."
+      status="Sécurité Mon Cahier"
+      note="La publication ne doit pas se déclencher tant que le moteur réel, les diagnostics et l’aperçu officiel ne sont pas validés."
       cards={[
-        { title: "Validation", description: "Publier seulement après vérification des conflits et volumes horaires." },
-    { title: "Sauvegarde", description: "Créer un backup automatique avant remplacement de l’ancien EDT." },
-    { title: "Sécurité", description: "Ne jamais toucher aux appels, notes ou absences pendant la génération brouillon." }
+        {
+          title: "Validation obligatoire",
+          description: "Aucun conflit classe/professeur/salle et aucun champ obligatoire manquant.",
+        },
+        {
+          title: "Sauvegarde automatique",
+          description: "L’ancien teacher_timetables est sauvegardé avant remplacement.",
+        },
+        {
+          title: "Écriture officielle",
+          description: "Seule la publication écrit dans teacher_timetables et alimente les appels.",
+        },
       ]}
     />
   );

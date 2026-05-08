@@ -1,0 +1,1209 @@
+import type {
+  CandidateSlot,
+  LessonBlock,
+  Placement,
+  SchedulerContext,
+  SchedulerResult,
+} from "./types";
+import { findCandidateSlots } from "./findCandidateSlots";
+import {
+  breakCutsBlock,
+  canFitDuration,
+  hasClassConflict,
+  hasRoomConflict,
+  hasTeacherConflict,
+  respectsHardRules,
+  teacherIsStrictlyUnavailable,
+} from "./hardRules";
+import {
+  getOrdinaryFallbackRoomsForClass,
+  getRoomSearchGroupsForBlock,
+  getRoomsByType,
+} from "./roomSelection";
+import { generateLessonBlocks } from "./generateLessonBlocks";
+import {
+  chooseBestCandidate,
+  countSingleHourReturnsInPlacements,
+  countStudentGapsInPlacements,
+  scoreCandidate,
+} from "./scoreCandidate";
+import {
+  candidateHitsClosedSchoolPeriod,
+  canUseOrdinaryRoomFallback,
+  getTerrainRules,
+  isEpsBlock,
+  isOrdinaryFallbackRoom,
+  withDefaultTerrainRules,
+} from "./terrainRules";
+import {
+  canPairAsPcSvtTandem,
+  getPcSvtTandemPlacementDuration,
+  isPcSvtBlock,
+  isPcSvtTandemPlacementPair,
+} from "./tandemScience";
+import { createId } from "./utils";
+import { computeGlobalScore, validateSchedule } from "./validateSchedule";
+
+type BlockOrderStrategy =
+  | "difficulty"
+  | "class_spread"
+  | "subject_spread"
+  | "duration_first";
+
+type GenerationAttempt = {
+  seed: number;
+  strategy: BlockOrderStrategy;
+};
+
+type TandemCandidatePair = {
+  first: CandidateSlot;
+  second: CandidateSlot;
+  score: number;
+};
+
+function hashText(value: string): number {
+  let hash = 2166136261;
+
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+
+  return Math.abs(hash >>> 0);
+}
+
+function classSharesMainRoom(
+  classId: string,
+  context: SchedulerContext,
+): boolean {
+  const mainRoomIds = context.roomPreferences
+    .filter(
+      (preference) =>
+        preference.classId === classId &&
+        preference.usageType === "main" &&
+        preference.isAllowed,
+    )
+    .map((preference) => preference.roomId);
+
+  if (mainRoomIds.length === 0) {
+    return false;
+  }
+
+  return context.roomPreferences.some(
+    (preference) =>
+      preference.classId !== classId &&
+      preference.usageType === "main" &&
+      preference.isAllowed &&
+      mainRoomIds.includes(preference.roomId),
+  );
+}
+
+function countTeacherStrictUnavailability(
+  teacherId: string,
+  context: SchedulerContext,
+): number {
+  return context.teacherUnavailability.filter(
+    (item) =>
+      item.teacherId === teacherId && item.constraintType === "strict",
+  ).length;
+}
+
+function getBlockDifficulty(
+  block: LessonBlock,
+  context: SchedulerContext,
+): number {
+  let score = 0;
+
+  if (block.roomTypeRequired) {
+    score += 70;
+  }
+
+  if (block.blockType === "tp" || block.blockType === "tandem") {
+    score += 70;
+  }
+
+  if (block.blockType === "eps") {
+    // EPS dispose de plages très limitées : avant 10h le matin ou après 15h.
+    // On le place tôt dans l’ordre de génération pour éviter qu’il soit repoussé
+    // vers les créneaux chauds.
+    score += 260;
+  }
+
+  if (block.durationUnits >= 2) {
+    score += 55;
+  }
+
+  if (block.durationUnits > 1 && block.durationUnits < 2) {
+    score += 35;
+  }
+
+  // P.C/SVT sont très contraints à cause des laboratoires et des tandems.
+  // On les place avant les matières plus souples pour respecter les espaces réels.
+  if (isPcSvtBlock(block)) {
+    score += getTerrainRules(context).enablePcSvtTandem ? 180 : 95;
+  }
+
+  if (classSharesMainRoom(block.classId, context)) {
+    score += 35;
+  }
+
+  score += countTeacherStrictUnavailability(block.teacherId, context) * 12;
+
+  return score;
+}
+
+function getClassOrder(classId: string, context: SchedulerContext): number {
+  return (
+    context.classes.find((schoolClass) => schoolClass.id === classId)
+      ?.displayOrder ?? 999
+  );
+}
+
+function getSubjectOrder(subjectId: string, context: SchedulerContext): number {
+  return (
+    context.subjects.findIndex((subject) => subject.id === subjectId) + 1 || 999
+  );
+}
+
+function compareWithSeed(
+  a: LessonBlock,
+  b: LessonBlock,
+  context: SchedulerContext,
+  attempt: GenerationAttempt,
+): number {
+  const difficultyDelta =
+    getBlockDifficulty(b, context) - getBlockDifficulty(a, context);
+
+  if (attempt.strategy === "difficulty" && difficultyDelta !== 0) {
+    return difficultyDelta;
+  }
+
+  if (attempt.strategy === "duration_first") {
+    const durationDelta = b.durationUnits - a.durationUnits;
+    if (durationDelta !== 0) return durationDelta;
+    if (difficultyDelta !== 0) return difficultyDelta;
+  }
+
+  if (attempt.strategy === "class_spread") {
+    const classDelta = getClassOrder(a.classId, context) - getClassOrder(b.classId, context);
+    if (classDelta !== 0) return classDelta;
+    if (difficultyDelta !== 0) return difficultyDelta;
+  }
+
+  if (attempt.strategy === "subject_spread") {
+    const subjectDelta = getSubjectOrder(a.subjectId, context) - getSubjectOrder(b.subjectId, context);
+    if (subjectDelta !== 0) return subjectDelta;
+    if (difficultyDelta !== 0) return difficultyDelta;
+  }
+
+  const aHash = hashText(`${attempt.seed}:${a.classId}:${a.subjectId}:${a.blockOrder}`);
+  const bHash = hashText(`${attempt.seed}:${b.classId}:${b.subjectId}:${b.blockOrder}`);
+
+  return aHash - bHash;
+}
+
+function sortBlocksForAttempt(
+  blocks: LessonBlock[],
+  context: SchedulerContext,
+  attempt: GenerationAttempt,
+): LessonBlock[] {
+  return [...blocks].sort((a, b) => compareWithSeed(a, b, context, attempt));
+}
+
+function createPlacement(
+  block: LessonBlock,
+  candidate: CandidateSlot,
+  extra: Partial<Placement> = {},
+): Placement {
+  return {
+    id: createId("placement"),
+    lessonBlockId: block.id,
+    classId: block.classId,
+    teacherId: block.teacherId,
+    subjectId: block.subjectId,
+    roomId: candidate.roomId ?? null,
+    dayIndex: candidate.dayIndex,
+    startPeriodIndex: candidate.startPeriodIndex,
+    durationUnits: candidate.durationUnits,
+    placedBy: "auto",
+    ...extra,
+  };
+}
+
+function getScienceTandemRole(block: LessonBlock): "pc" | "svt" {
+  return block.subjectId.toLowerCase() === "svt" ? "svt" : "pc";
+}
+
+function findCandidateSlotsWithDuration(
+  block: LessonBlock,
+  durationUnits: number,
+  context: SchedulerContext,
+  placements: Placement[],
+): CandidateSlot[] {
+  const roomGroups = getRoomSearchGroupsForBlock(block, context);
+
+  if (roomGroups.length === 0) {
+    return [];
+  }
+
+  const enabledDays = context.days.filter((day) => day.isEnabled);
+  const teachingPeriods = context.periods
+    .filter((period) => period.isTeachingPeriod)
+    .sort((a, b) => a.periodIndex - b.periodIndex);
+
+  for (const group of roomGroups) {
+    const candidates: CandidateSlot[] = [];
+
+    for (const day of enabledDays) {
+      for (const period of teachingPeriods) {
+        if (!canFitDuration(period.periodIndex, durationUnits, context)) {
+          continue;
+        }
+
+        for (const room of group.rooms) {
+          const candidate: CandidateSlot = {
+            dayIndex: day.dayIndex,
+            startPeriodIndex: period.periodIndex,
+            durationUnits,
+            roomId: room.id,
+          };
+
+          if (respectsHardRules(block, candidate, context, placements)) {
+            candidates.push(candidate);
+          }
+        }
+      }
+    }
+
+    if (candidates.length > 0) {
+      return candidates;
+    }
+  }
+
+  return [];
+}
+
+function sameStartAndDuration(a: CandidateSlot, b: CandidateSlot): boolean {
+  return (
+    a.dayIndex === b.dayIndex &&
+    a.startPeriodIndex === b.startPeriodIndex &&
+    Math.abs(a.durationUnits - b.durationUnits) < 0.01
+  );
+}
+
+function sameRoom(a: CandidateSlot, b: CandidateSlot): boolean {
+  return Boolean(a.roomId && b.roomId && a.roomId === b.roomId);
+}
+
+function findTandemPartner(
+  block: LessonBlock,
+  orderedBlocks: LessonBlock[],
+  consumedBlockIds: Set<string>,
+  context: SchedulerContext,
+): LessonBlock | null {
+  if (!isPcSvtBlock(block)) {
+    return null;
+  }
+
+  return (
+    orderedBlocks.find(
+      (candidate) =>
+        candidate.id !== block.id &&
+        !consumedBlockIds.has(candidate.id) &&
+        canPairAsPcSvtTandem(block, candidate, context),
+    ) ?? null
+  );
+}
+
+function chooseBestTandemPair(
+  firstBlock: LessonBlock,
+  secondBlock: LessonBlock,
+  context: SchedulerContext,
+  placements: Placement[],
+  seed: number,
+): TandemCandidatePair | null {
+  const tandemDuration = getPcSvtTandemPlacementDuration(firstBlock, secondBlock, context);
+  const firstCandidates = findCandidateSlotsWithDuration(
+    firstBlock,
+    tandemDuration,
+    context,
+    placements,
+  );
+  const secondCandidates = findCandidateSlotsWithDuration(
+    secondBlock,
+    tandemDuration,
+    context,
+    placements,
+  );
+  const pairs: TandemCandidatePair[] = [];
+
+  for (const first of firstCandidates) {
+    for (const second of secondCandidates) {
+      if (!sameStartAndDuration(first, second)) {
+        continue;
+      }
+
+      if (sameRoom(first, second)) {
+        continue;
+      }
+
+      const firstPlacement = createPlacement(firstBlock, first);
+      const secondPlacement = createPlacement(secondBlock, second);
+
+      if (!isPcSvtTandemPlacementPair(firstPlacement, secondPlacement, context)) {
+        continue;
+      }
+
+      const score =
+        scoreCandidate(firstBlock, first, context, placements, { seed }) +
+        scoreCandidate(secondBlock, second, context, placements, { seed }) -
+        1800;
+
+      pairs.push({ first, second, score });
+    }
+  }
+
+  if (pairs.length === 0) {
+    return null;
+  }
+
+  return pairs.sort((a, b) => {
+    if (a.score !== b.score) {
+      return a.score - b.score;
+    }
+
+    const aKey = `${seed}:${a.first.dayIndex}:${a.first.startPeriodIndex}:${a.first.roomId ?? ""}:${a.second.roomId ?? ""}`;
+    const bKey = `${seed}:${b.first.dayIndex}:${b.first.startPeriodIndex}:${b.first.roomId ?? ""}:${b.second.roomId ?? ""}`;
+
+    return hashText(aKey) - hashText(bKey);
+  })[0];
+}
+
+function getBlockById(
+  blockId: string,
+  lessonBlocks: LessonBlock[],
+): LessonBlock | null {
+  return lessonBlocks.find((block) => block.id === blockId) ?? null;
+}
+
+function sameCandidateAsPlacement(
+  placement: Placement,
+  candidate: CandidateSlot,
+): boolean {
+  return (
+    placement.dayIndex === candidate.dayIndex &&
+    placement.startPeriodIndex === candidate.startPeriodIndex &&
+    Math.abs(placement.durationUnits - candidate.durationUnits) < 0.01 &&
+    (placement.roomId ?? null) === (candidate.roomId ?? null)
+  );
+}
+
+function movePlacementToCandidate(
+  placement: Placement,
+  candidate: CandidateSlot,
+): Placement {
+  return {
+    ...placement,
+    roomId: candidate.roomId ?? null,
+    dayIndex: candidate.dayIndex,
+    startPeriodIndex: candidate.startPeriodIndex,
+    durationUnits: candidate.durationUnits,
+    score: candidate.roomId ? placement.score : placement.score,
+  };
+}
+
+function compactStudentGaps(
+  placements: Placement[],
+  context: SchedulerContext,
+  lessonBlocks: LessonBlock[],
+  seed: number,
+): Placement[] {
+  if (!getTerrainRules(context).avoidStudentGaps || placements.length <= 1) {
+    return placements;
+  }
+
+  let currentPlacements = [...placements];
+  let currentGapCount = countStudentGapsInPlacements(currentPlacements, context);
+
+  if (currentGapCount === 0) {
+    return currentPlacements;
+  }
+
+  // Petite passe de réparation après le montage glouton : on déplace seulement
+  // les blocs qui peuvent réellement réduire les trous, sans casser classe,
+  // professeur, salle, labo, terrain EPS, indisponibilités ni récréations.
+  for (let pass = 0; pass < 4; pass += 1) {
+    let improvedThisPass = false;
+
+    for (const placement of [...currentPlacements]) {
+      if (placement.tandemGroupId) {
+        continue;
+      }
+
+      const block = getBlockById(placement.lessonBlockId, lessonBlocks);
+
+      if (!block) {
+        continue;
+      }
+
+      const remainingPlacements = currentPlacements.filter(
+        (item) => item.id !== placement.id,
+      );
+      const candidates = findCandidateSlotsWithDuration(
+        block,
+        placement.durationUnits,
+        context,
+        remainingPlacements,
+      );
+
+      let bestMove: Placement | null = null;
+      let bestGapCount = currentGapCount;
+      let bestMoveScore = Number.POSITIVE_INFINITY;
+
+      for (const candidate of candidates) {
+        if (sameCandidateAsPlacement(placement, candidate)) {
+          continue;
+        }
+
+        const movedPlacement = movePlacementToCandidate(placement, candidate);
+        const projectedPlacements = [...remainingPlacements, movedPlacement];
+        const projectedGapCount = countStudentGapsInPlacements(
+          projectedPlacements,
+          context,
+        );
+
+        if (projectedGapCount > bestGapCount) {
+          continue;
+        }
+
+        const candidateScore = scoreCandidate(
+          block,
+          candidate,
+          context,
+          remainingPlacements,
+          { seed },
+        );
+
+        if (
+          projectedGapCount < bestGapCount ||
+          (projectedGapCount === bestGapCount && candidateScore < bestMoveScore)
+        ) {
+          bestMove = movedPlacement;
+          bestGapCount = projectedGapCount;
+          bestMoveScore = candidateScore;
+        }
+      }
+
+      if (bestMove && bestGapCount < currentGapCount) {
+        currentPlacements = [...remainingPlacements, bestMove];
+        currentGapCount = bestGapCount;
+        improvedThisPass = true;
+
+        if (currentGapCount === 0) {
+          return currentPlacements;
+        }
+      }
+    }
+
+    if (!improvedThisPass) {
+      break;
+    }
+  }
+
+  return currentPlacements;
+}
+
+function getPeriodHalfDay(
+  periodIndex: number,
+  context: SchedulerContext,
+): string | null {
+  return context.periods.find((period) => period.periodIndex === periodIndex)?.halfDay ?? null;
+}
+
+function getPlacementPeriodIndexes(placement: Placement): number[] {
+  const indexes: number[] = [];
+
+  for (let offset = 0; offset < Math.ceil(placement.durationUnits); offset += 1) {
+    indexes.push(placement.startPeriodIndex + offset);
+  }
+
+  return indexes;
+}
+
+function getClassHalfDayUnitCount(
+  classId: string,
+  dayIndex: number,
+  halfDay: string,
+  placements: Placement[],
+  context: SchedulerContext,
+): number {
+  const indexes = new Set<number>();
+
+  for (const placement of placements) {
+    if (placement.classId !== classId || placement.dayIndex !== dayIndex) {
+      continue;
+    }
+
+    if (getPeriodHalfDay(placement.startPeriodIndex, context) !== halfDay) {
+      continue;
+    }
+
+    for (const periodIndex of getPlacementPeriodIndexes(placement)) {
+      indexes.add(periodIndex);
+    }
+  }
+
+  return indexes.size;
+}
+
+function getCandidateHalfDay(
+  candidate: CandidateSlot,
+  context: SchedulerContext,
+): string | null {
+  return getPeriodHalfDay(candidate.startPeriodIndex, context);
+}
+
+function isSingleHourReturnPlacement(
+  placement: Placement,
+  placements: Placement[],
+  context: SchedulerContext,
+): boolean {
+  if (placement.durationUnits > 1) {
+    return false;
+  }
+
+  const halfDay = getPeriodHalfDay(placement.startPeriodIndex, context);
+
+  if (!halfDay) {
+    return false;
+  }
+
+  return getClassHalfDayUnitCount(
+    placement.classId,
+    placement.dayIndex,
+    halfDay,
+    placements,
+    context,
+  ) === 1;
+}
+
+function compactSingleHourReturns(
+  placements: Placement[],
+  context: SchedulerContext,
+  lessonBlocks: LessonBlock[],
+  seed: number,
+): Placement[] {
+  if (!getTerrainRules(context).avoidSingleHourReturn || placements.length <= 1) {
+    return placements;
+  }
+
+  let currentPlacements = [...placements];
+  let currentSingleHourCount = countSingleHourReturnsInPlacements(currentPlacements, context);
+  let currentGapCount = countStudentGapsInPlacements(currentPlacements, context);
+
+  if (currentSingleHourCount === 0) {
+    return currentPlacements;
+  }
+
+  for (let pass = 0; pass < 4; pass += 1) {
+    let improvedThisPass = false;
+
+    for (const placement of [...currentPlacements]) {
+      if (placement.tandemGroupId || !isSingleHourReturnPlacement(placement, currentPlacements, context)) {
+        continue;
+      }
+
+      const block = getBlockById(placement.lessonBlockId, lessonBlocks);
+
+      if (!block) {
+        continue;
+      }
+
+      const remainingPlacements = currentPlacements.filter(
+        (item) => item.id !== placement.id,
+      );
+      const candidates = findCandidateSlotsWithDuration(
+        block,
+        placement.durationUnits,
+        context,
+        remainingPlacements,
+      );
+
+      let bestMove: Placement | null = null;
+      let bestSingleHourCount = currentSingleHourCount;
+      let bestGapCount = currentGapCount;
+      let bestMoveScore = Number.POSITIVE_INFINITY;
+
+      for (const candidate of candidates) {
+        if (sameCandidateAsPlacement(placement, candidate)) {
+          continue;
+        }
+
+        const candidateHalfDay = getCandidateHalfDay(candidate, context);
+
+        if (!candidateHalfDay) {
+          continue;
+        }
+
+        // Objectif terrain : déplacer la seule heure vers une demi-journée où
+        // la classe vient déjà, au lieu de créer une présence isolée.
+        if (
+          getClassHalfDayUnitCount(
+            placement.classId,
+            candidate.dayIndex,
+            candidateHalfDay,
+            remainingPlacements,
+            context,
+          ) === 0
+        ) {
+          continue;
+        }
+
+        const movedPlacement = movePlacementToCandidate(placement, candidate);
+        const projectedPlacements = [...remainingPlacements, movedPlacement];
+        const projectedSingleHourCount = countSingleHourReturnsInPlacements(
+          projectedPlacements,
+          context,
+        );
+        const projectedGapCount = countStudentGapsInPlacements(projectedPlacements, context);
+
+        if (projectedSingleHourCount > bestSingleHourCount) {
+          continue;
+        }
+
+        if (projectedGapCount > bestGapCount) {
+          continue;
+        }
+
+        const candidateScore = scoreCandidate(
+          block,
+          candidate,
+          context,
+          remainingPlacements,
+          { seed },
+        );
+
+        if (
+          projectedSingleHourCount < bestSingleHourCount ||
+          (projectedSingleHourCount === bestSingleHourCount &&
+            (projectedGapCount < bestGapCount || candidateScore < bestMoveScore))
+        ) {
+          bestMove = movedPlacement;
+          bestSingleHourCount = projectedSingleHourCount;
+          bestGapCount = projectedGapCount;
+          bestMoveScore = candidateScore;
+        }
+      }
+
+      if (bestMove && bestSingleHourCount < currentSingleHourCount) {
+        currentPlacements = [...remainingPlacements, bestMove];
+        currentSingleHourCount = bestSingleHourCount;
+        currentGapCount = bestGapCount;
+        improvedThisPass = true;
+
+        if (currentSingleHourCount === 0) {
+          return currentPlacements;
+        }
+      }
+    }
+
+    if (!improvedThisPass) {
+      break;
+    }
+  }
+
+  return currentPlacements;
+}
+
+function runGenerationAttempt(
+  context: SchedulerContext,
+  lessonBlocks: LessonBlock[],
+  attempt: GenerationAttempt,
+  options: { repairGaps?: boolean } = {},
+): SchedulerResult {
+  const orderedBlocks = sortBlocksForAttempt(lessonBlocks, context, attempt);
+
+  const placements: Placement[] = [];
+  const unplacedBlocks: LessonBlock[] = [];
+  const consumedBlockIds = new Set<string>();
+
+  for (const block of orderedBlocks) {
+    if (consumedBlockIds.has(block.id)) {
+      continue;
+    }
+
+    const tandemPartner = findTandemPartner(
+      block,
+      orderedBlocks,
+      consumedBlockIds,
+      context,
+    );
+
+    if (tandemPartner) {
+      const tandemPair = chooseBestTandemPair(
+        block,
+        tandemPartner,
+        context,
+        placements,
+        attempt.seed,
+      );
+
+      if (tandemPair) {
+        const tandemGroupId = createId("tandem_pc_svt");
+
+        const tandemMode = getTerrainRules(context).pcSvtTandemMode;
+
+        placements.push(
+          createPlacement(block, tandemPair.first, {
+            tandemGroupId,
+            tandemRole: getScienceTandemRole(block),
+            tandemMode,
+            tandemPhaseDurationUnits: block.durationUnits,
+          }),
+        );
+        placements.push(
+          createPlacement(tandemPartner, tandemPair.second, {
+            tandemGroupId,
+            tandemRole: getScienceTandemRole(tandemPartner),
+            tandemMode,
+            tandemPhaseDurationUnits: tandemPartner.durationUnits,
+          }),
+        );
+        consumedBlockIds.add(block.id);
+        consumedBlockIds.add(tandemPartner.id);
+        continue;
+      }
+    }
+
+    const candidates = findCandidateSlots(block, context, placements);
+    const bestCandidate = chooseBestCandidate(
+      block,
+      candidates,
+      context,
+      placements,
+      { seed: attempt.seed },
+    );
+
+    if (!bestCandidate) {
+      unplacedBlocks.push({
+        ...block,
+        status: "unplaced",
+      });
+      consumedBlockIds.add(block.id);
+      continue;
+    }
+
+    placements.push(createPlacement(block, bestCandidate));
+    consumedBlockIds.add(block.id);
+  }
+
+  const finalPlacements = options.repairGaps
+    ? compactStudentGaps(placements, context, lessonBlocks, attempt.seed)
+    : placements;
+  const warnings = validateSchedule(
+    finalPlacements,
+    unplacedBlocks,
+    context,
+    lessonBlocks,
+  );
+  const globalScore = computeGlobalScore(warnings, finalPlacements, context);
+
+  return {
+    placements: finalPlacements,
+    unplacedBlocks,
+    warnings,
+    globalScore,
+  };
+}
+
+function buildAttempts(context: SchedulerContext): GenerationAttempt[] {
+  const rules = getTerrainRules(context);
+  const strategies: BlockOrderStrategy[] = [
+    "difficulty",
+    "duration_first",
+    "class_spread",
+  ];
+
+  const seedCount =
+    rules.enablePcSvtTandem ||
+    rules.avoidStudentGaps ||
+    rules.avoidSameSubjectSameDay ||
+    rules.avoidSingleHourReturn ||
+    rules.balanceHalfDays
+      ? 18
+      : 10;
+
+  const attempts: GenerationAttempt[] = [];
+
+  for (const strategy of strategies) {
+    for (let seed = 0; seed < seedCount; seed += 1) {
+      attempts.push({ strategy, seed });
+    }
+  }
+
+  return attempts;
+}
+
+function countBlockingWarnings(result: SchedulerResult): number {
+  return result.warnings.filter(
+    (warning) => warning.severity === "critical" || warning.severity === "error",
+  ).length;
+}
+
+function isBetterResult(
+  candidate: SchedulerResult,
+  currentBest: SchedulerResult | null,
+  context: SchedulerContext,
+): boolean {
+  if (!currentBest) {
+    return true;
+  }
+
+  // Priorité terrain : un montage qui place plus de cours est toujours meilleur
+  // qu’un montage seulement plus joli sur le papier. Le score de qualité ne doit
+  // jamais faire gagner une tentative qui laisse davantage de cours dehors.
+  if (candidate.unplacedBlocks.length !== currentBest.unplacedBlocks.length) {
+    return candidate.unplacedBlocks.length < currentBest.unplacedBlocks.length;
+  }
+
+  const candidateBlockingWarnings = countBlockingWarnings(candidate);
+  const currentBlockingWarnings = countBlockingWarnings(currentBest);
+
+  if (candidateBlockingWarnings !== currentBlockingWarnings) {
+    return candidateBlockingWarnings < currentBlockingWarnings;
+  }
+
+  if (getTerrainRules(context).avoidStudentGaps) {
+    const candidateGapCount = countStudentGapsInPlacements(candidate.placements, context);
+    const currentGapCount = countStudentGapsInPlacements(currentBest.placements, context);
+
+    if (candidateGapCount !== currentGapCount) {
+      return candidateGapCount < currentGapCount;
+    }
+  }
+
+  if (getTerrainRules(context).avoidSingleHourReturn) {
+    const candidateSingleHourReturns = countSingleHourReturnsInPlacements(
+      candidate.placements,
+      context,
+    );
+    const currentSingleHourReturns = countSingleHourReturnsInPlacements(
+      currentBest.placements,
+      context,
+    );
+
+    if (candidateSingleHourReturns !== currentSingleHourReturns) {
+      return candidateSingleHourReturns < currentSingleHourReturns;
+    }
+  }
+
+  if (candidate.globalScore !== currentBest.globalScore) {
+    return candidate.globalScore < currentBest.globalScore;
+  }
+
+  return candidate.placements.length > currentBest.placements.length;
+}
+
+
+
+function getEmergencyRoomsForBlock(
+  block: LessonBlock,
+  context: SchedulerContext,
+): string[] {
+  const roomIds: string[] = [];
+
+  function pushRooms(rooms: { id: string }[]): void {
+    for (const room of rooms) {
+      if (!roomIds.includes(room.id)) {
+        roomIds.push(room.id);
+      }
+    }
+  }
+
+  // On conserve l’ordre normal : labo/terrain d’abord, puis fallback.
+  pushRooms(getRoomSearchGroupsForBlock(block, context).flatMap((group) => group.rooms));
+
+  // Secours EPS : si le terrain existe, on le garde toujours comme espace possible.
+  // Le terrain est partageable ; la surcharge se colore au lieu de laisser le cours dehors.
+  if (isEpsBlock(block, context)) {
+    pushRooms(getRoomsByType("sports_field", context));
+
+    if (canUseOrdinaryRoomFallback("sports_field", context)) {
+      pushRooms(getOrdinaryFallbackRoomsForClass(block.classId, context));
+    }
+  }
+
+  // Secours P.C/SVT : si la ressource spécialisée est absente/saturée, on tente la salle ordinaire
+  // seulement comme dernier filet de sécurité. Si aucun labo n’existe, c’est un fonctionnement normal.
+  if (block.roomTypeRequired === "pc_lab" || block.roomTypeRequired === "svt_lab") {
+    if (canUseOrdinaryRoomFallback(block.roomTypeRequired, context)) {
+      pushRooms(getOrdinaryFallbackRoomsForClass(block.classId, context));
+    }
+  }
+
+  if (roomIds.length > 0) {
+    return roomIds;
+  }
+
+  pushRooms(context.rooms.filter((room) => isOrdinaryFallbackRoom(room.roomType)));
+  return roomIds;
+}
+
+function respectsEmergencyPlacementRules(
+  block: LessonBlock,
+  candidate: CandidateSlot,
+  context: SchedulerContext,
+  placements: Placement[],
+): boolean {
+  const terrainRules = getTerrainRules(context);
+
+  if (candidateHitsClosedSchoolPeriod(candidate, context)) {
+    return false;
+  }
+
+  if (hasClassConflict(block.classId, candidate, placements)) {
+    return false;
+  }
+
+  if (hasTeacherConflict(block.teacherId, candidate, placements)) {
+    return false;
+  }
+
+  if (teacherIsStrictlyUnavailable(block.teacherId, candidate, context)) {
+    return false;
+  }
+
+  if (
+    terrainRules.avoidBreakInsideMultiPeriodBlock &&
+    breakCutsBlock(candidate, context)
+  ) {
+    return false;
+  }
+
+  if (candidate.roomId && hasRoomConflict(candidate.roomId, candidate, placements, context)) {
+    return false;
+  }
+
+  return true;
+}
+
+function findEmergencyCandidateSlots(
+  block: LessonBlock,
+  context: SchedulerContext,
+  placements: Placement[],
+): CandidateSlot[] {
+  const roomIds = getEmergencyRoomsForBlock(block, context);
+  const enabledDays = context.days.filter((day) => day.isEnabled);
+  const teachingPeriods = context.periods
+    .filter((period) => period.isTeachingPeriod)
+    .sort((a, b) => a.periodIndex - b.periodIndex);
+  const candidates: CandidateSlot[] = [];
+
+  for (const day of enabledDays) {
+    for (const period of teachingPeriods) {
+      if (!canFitDuration(period.periodIndex, block.durationUnits, context)) {
+        continue;
+      }
+
+      for (const roomId of roomIds) {
+        const candidate: CandidateSlot = {
+          dayIndex: day.dayIndex,
+          startPeriodIndex: period.periodIndex,
+          durationUnits: block.durationUnits,
+          roomId,
+        };
+
+        if (respectsEmergencyPlacementRules(block, candidate, context, placements)) {
+          candidates.push(candidate);
+        }
+      }
+    }
+  }
+
+  return candidates;
+}
+
+function placeRemainingMandatoryBlocks(
+  placements: Placement[],
+  unplacedBlocks: LessonBlock[],
+  context: SchedulerContext,
+  seed: number,
+): { placements: Placement[]; unplacedBlocks: LessonBlock[] } {
+  const placed = [...placements];
+  const stillUnplaced: LessonBlock[] = [];
+
+  // Les blocs les plus sensibles sont secourus en premier.
+  const ordered = [...unplacedBlocks].sort((a, b) => {
+    const aPriority = isEpsBlock(a, context) ? 0 : isPcSvtBlock(a) ? 1 : 2;
+    const bPriority = isEpsBlock(b, context) ? 0 : isPcSvtBlock(b) ? 1 : 2;
+
+    if (aPriority !== bPriority) return aPriority - bPriority;
+    return b.durationUnits - a.durationUnits;
+  });
+
+  for (const block of ordered) {
+    const candidates = findEmergencyCandidateSlots(block, context, placed);
+    const bestCandidate = chooseBestCandidate(block, candidates, context, placed, { seed });
+
+    if (!bestCandidate) {
+      stillUnplaced.push(block);
+      continue;
+    }
+
+    placed.push(createPlacement(block, bestCandidate));
+  }
+
+  return { placements: placed, unplacedBlocks: stillUnplaced };
+}
+
+function finalizeBestResult(
+  result: SchedulerResult | null,
+  context: SchedulerContext,
+  lessonBlocks: LessonBlock[],
+): SchedulerResult {
+  if (!result) {
+    return {
+      placements: [],
+      unplacedBlocks: lessonBlocks.map((block) => ({ ...block, status: "unplaced" })),
+      warnings: validateSchedule([], lessonBlocks, context, lessonBlocks),
+      globalScore: 999999,
+    };
+  }
+
+  const rescuedResult = placeRemainingMandatoryBlocks(
+    result.placements,
+    result.unplacedBlocks,
+    context,
+    0,
+  );
+
+  const gapRepairedPlacements = compactStudentGaps(
+    rescuedResult.placements,
+    context,
+    lessonBlocks,
+    0,
+  );
+  const repairedPlacements = compactSingleHourReturns(
+    gapRepairedPlacements,
+    context,
+    lessonBlocks,
+    0,
+  );
+  const warnings = validateSchedule(
+    repairedPlacements,
+    rescuedResult.unplacedBlocks,
+    context,
+    lessonBlocks,
+  );
+
+  return {
+    placements: repairedPlacements,
+    unplacedBlocks: rescuedResult.unplacedBlocks,
+    warnings,
+    globalScore: computeGlobalScore(warnings, repairedPlacements, context),
+  };
+}
+
+export function generateTimetable(context: SchedulerContext): SchedulerResult {
+  const normalizedContext = withDefaultTerrainRules(context);
+  const lessonBlocks = generateLessonBlocks(normalizedContext);
+  const attempts = buildAttempts(normalizedContext);
+
+  let bestResult: SchedulerResult | null = null;
+
+  for (const attempt of attempts) {
+    const attemptResult = runGenerationAttempt(
+      normalizedContext,
+      lessonBlocks,
+      attempt,
+    );
+
+    if (isBetterResult(attemptResult, bestResult, normalizedContext)) {
+      bestResult = attemptResult;
+    }
+  }
+
+  return finalizeBestResult(bestResult, normalizedContext, lessonBlocks);
+}
+
+export type GenerationProgress = {
+  completedAttempts: number;
+  totalAttempts: number;
+  currentStrategy: BlockOrderStrategy;
+  bestPlacedCount: number;
+  bestUnplacedCount: number;
+  bestScore: number;
+};
+
+export type GenerateTimetableAsyncOptions = {
+  yieldEveryAttempts?: number;
+  onProgress?: (progress: GenerationProgress) => void;
+  signal?: AbortSignal;
+};
+
+function waitForUiFrame(): Promise<void> {
+  return new Promise((resolve) => {
+    if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
+      window.requestAnimationFrame(() => {
+        window.setTimeout(resolve, 0);
+      });
+      return;
+    }
+
+    setTimeout(resolve, 0);
+  });
+}
+
+function assertNotAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) {
+    throw new Error("Génération annulée.");
+  }
+}
+
+export async function generateTimetableAsync(
+  context: SchedulerContext,
+  options: GenerateTimetableAsyncOptions = {},
+): Promise<SchedulerResult> {
+  const normalizedContext = withDefaultTerrainRules(context);
+  const lessonBlocks = generateLessonBlocks(normalizedContext);
+  const attempts = buildAttempts(normalizedContext);
+  const yieldEveryAttempts = Math.max(1, options.yieldEveryAttempts ?? 3);
+
+  let bestResult: SchedulerResult | null = null;
+
+  await waitForUiFrame();
+
+  for (let index = 0; index < attempts.length; index += 1) {
+    assertNotAborted(options.signal);
+
+    const attempt = attempts[index];
+    const attemptResult = runGenerationAttempt(
+      normalizedContext,
+      lessonBlocks,
+      attempt,
+    );
+
+    if (isBetterResult(attemptResult, bestResult, normalizedContext)) {
+      bestResult = attemptResult;
+    }
+
+    const completedAttempts = index + 1;
+
+    if (options.onProgress && bestResult) {
+      options.onProgress({
+        completedAttempts,
+        totalAttempts: attempts.length,
+        currentStrategy: attempt.strategy,
+        bestPlacedCount: bestResult.placements.length,
+        bestUnplacedCount: bestResult.unplacedBlocks.length,
+        bestScore: bestResult.globalScore,
+      });
+    }
+
+    if (completedAttempts % yieldEveryAttempts === 0) {
+      await waitForUiFrame();
+    }
+  }
+
+  return finalizeBestResult(bestResult, normalizedContext, lessonBlocks);
+}
