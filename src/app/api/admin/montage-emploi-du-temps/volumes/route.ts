@@ -136,7 +136,7 @@ function makeSubjectPayload(item: any) {
     id: String(item.id),
     label,
     code,
-    catalog_subject_id: inferCatalogSubjectId({ code, label, fallbackId: item.id }),
+    catalog_subject_id: inferCatalogSubjectId({ code, label, fallbackId: "" }),
   };
 }
 
@@ -156,7 +156,7 @@ function makeAffectationPayload(row: any) {
     subject_id: row.subject_id ? String(row.subject_id) : instsub?.id ? String(instsub.id) : "",
     subject_label: subjectLabel,
     subject_code: subjectCode,
-    catalog_subject_id: inferCatalogSubjectId({ code: subjectCode, label: subjectLabel, fallbackId: row.subject_id }),
+    catalog_subject_id: inferCatalogSubjectId({ code: subjectCode, label: subjectLabel, fallbackId: "" }),
     class_id: String(row.class_id || cls?.id || ""),
     class_label: classLabel,
     level_code: levelCode,
@@ -211,9 +211,7 @@ async function loadVolumeContext(guard: GuardOk) {
   ]);
 
   const firstError = institutionRes.error || classesRes.error || subjectsRes.error || affectationsRes.error || volumesRes.error;
-  if (firstError) {
-    throw new Error(firstError.message);
-  }
+  if (firstError) throw new Error(firstError.message);
 
   const institution = institutionRes.data;
   const classes = (classesRes.data || []).map(makeClassPayload);
@@ -259,6 +257,7 @@ export async function GET() {
       subjects: context.subjects,
       affectations: context.affectations,
       service_assignments: context.serviceBuild.service_assignments,
+      subject_hour_rows: context.serviceBuild.subject_hour_rows,
       overrides: context.overrides,
       levels: defaultLevels,
       catalog_subjects: defaultSubjects,
@@ -280,11 +279,7 @@ export async function GET() {
   }
 }
 
-async function findOrCreateSubject(input: {
-  srv: GuardOk["srv"];
-  name: string;
-  code: string;
-}) {
+async function findOrCreateSubject(input: { srv: GuardOk["srv"]; name: string; code: string }) {
   const { srv, name, code } = input;
   const { data: allSubjects, error: listErr } = await srv
     .from("subjects")
@@ -338,11 +333,7 @@ async function syncMissingCatalogSubjects(guard: GuardOk) {
     const catalogSubject = defaultSubjects.find((subject) => subject.id === item.catalog_subject_id);
     if (!catalogSubject) continue;
 
-    const subject = await findOrCreateSubject({
-      srv,
-      name: catalogSubject.name,
-      code: catalogSubject.code,
-    });
+    const subject = await findOrCreateSubject({ srv, name: catalogSubject.name, code: catalogSubject.code });
 
     const { data: instSub, error: upErr } = await srv
       .from("institution_subjects")
@@ -371,17 +362,10 @@ async function syncMissingCatalogSubjects(guard: GuardOk) {
   return added;
 }
 
-function normalizeOverrideBody(body: Record<string, any>) {
-  const class_id = clean(body.class_id);
-  const subject_id = clean(body.subject_id);
-  const teacher_id = clean(body.teacher_id);
+function normalizeVolumeFields(body: Record<string, any>) {
   const weekly_units = Number(String(body.weekly_units ?? "").replace(",", "."));
   const split_pattern = clean(body.split_pattern);
   const room_type_required = clean(body.room_type_required) || null;
-
-  if (!class_id || !subject_id || !teacher_id) {
-    throw new Error("Classe, matière et enseignant sont obligatoires.");
-  }
 
   if (!Number.isFinite(weekly_units) || weekly_units <= 0) {
     throw new Error("Le volume horaire doit être un nombre positif.");
@@ -391,7 +375,104 @@ function normalizeOverrideBody(body: Record<string, any>) {
     throw new Error("Le découpage est obligatoire. Exemple : 1+1+1 ou 2+1.");
   }
 
-  return { class_id, subject_id, teacher_id, weekly_units, split_pattern, room_type_required };
+  return { weekly_units, split_pattern, room_type_required };
+}
+
+function normalizeServiceOverrideBody(body: Record<string, any>) {
+  const class_id = clean(body.class_id);
+  const subject_id = clean(body.subject_id);
+  const teacher_id = clean(body.teacher_id);
+
+  if (!class_id || !subject_id || !teacher_id) {
+    throw new Error("Classe, matière et enseignant sont obligatoires.");
+  }
+
+  return { class_id, subject_id, teacher_id, ...normalizeVolumeFields(body) };
+}
+
+async function saveSubjectLevelVolume(guard: GuardOk, body: Record<string, any>) {
+  const context = await loadVolumeContext(guard);
+  const level_code = clean(body.level_code);
+  const subject_id = clean(body.subject_id);
+  const catalog_subject_id = clean(body.catalog_subject_id);
+  const fields = normalizeVolumeFields(body);
+
+  if (!level_code || (!subject_id && !catalog_subject_id)) {
+    throw new Error("Niveau et matière sont obligatoires.");
+  }
+
+  const services = context.serviceBuild.service_assignments.filter((service) => {
+    const sameLevel = service.level_code === level_code;
+    const sameSubject = subject_id ? service.subject_id === subject_id : service.catalog_subject_id === catalog_subject_id;
+    return sameLevel && sameSubject && service.class_id && service.subject_id && service.teacher_id;
+  });
+
+  if (services.length === 0) {
+    throw new Error("Aucun service Mon Cahier correspondant à ce niveau et cette matière.");
+  }
+
+  for (const service of services) {
+    const { error: delErr } = await guard.srv
+      .from("montage_timetable_subject_hours")
+      .delete()
+      .eq("institution_id", guard.institutionId)
+      .eq("class_id", service.class_id)
+      .eq("subject_id", service.subject_id)
+      .eq("teacher_id", service.teacher_id);
+
+    if (delErr) throw new Error(delErr.message);
+  }
+
+  const rows = services.map((service) => ({
+    institution_id: guard.institutionId,
+    class_id: service.class_id,
+    subject_id: service.subject_id,
+    teacher_id: service.teacher_id,
+    weekly_units: fields.weekly_units,
+    split_pattern: fields.split_pattern,
+    room_type_required: fields.room_type_required,
+    created_by: guard.userId,
+    updated_by: guard.userId,
+  }));
+
+  const { error: insErr } = await guard.srv
+    .from("montage_timetable_subject_hours")
+    .insert(rows);
+
+  if (insErr) throw new Error(insErr.message);
+
+  return services.length;
+}
+
+async function resetSubjectLevelVolume(guard: GuardOk, body: Record<string, any>) {
+  const context = await loadVolumeContext(guard);
+  const level_code = clean(body.level_code);
+  const subject_id = clean(body.subject_id);
+  const catalog_subject_id = clean(body.catalog_subject_id);
+
+  if (!level_code || (!subject_id && !catalog_subject_id)) {
+    throw new Error("Niveau et matière sont obligatoires.");
+  }
+
+  const services = context.serviceBuild.service_assignments.filter((service) => {
+    const sameLevel = service.level_code === level_code;
+    const sameSubject = subject_id ? service.subject_id === subject_id : service.catalog_subject_id === catalog_subject_id;
+    return sameLevel && sameSubject && service.class_id && service.subject_id && service.teacher_id;
+  });
+
+  for (const service of services) {
+    const { error } = await guard.srv
+      .from("montage_timetable_subject_hours")
+      .delete()
+      .eq("institution_id", guard.institutionId)
+      .eq("class_id", service.class_id)
+      .eq("subject_id", service.subject_id)
+      .eq("teacher_id", service.teacher_id);
+
+    if (error) throw new Error(error.message);
+  }
+
+  return services.length;
 }
 
 export async function POST(req: NextRequest) {
@@ -400,7 +481,7 @@ export async function POST(req: NextRequest) {
     if (guard.ok !== true) return guard.response;
 
     const body = (await req.json().catch(() => ({}))) as Record<string, any>;
-    const action = clean(body.action, "save_override");
+    const action = clean(body.action, "save_subject_level_volume");
 
     if (action === "sync_missing_subjects") {
       const added = await syncMissingCatalogSubjects(guard);
@@ -411,12 +492,41 @@ export async function POST(req: NextRequest) {
         added,
         added_count: added.length,
         service_assignments: context.serviceBuild.service_assignments,
+        subject_hour_rows: context.serviceBuild.subject_hour_rows,
         catalog_coverage: context.serviceBuild.catalog_coverage,
         missing_catalog_subjects: context.serviceBuild.missing_catalog_subjects,
         totals: context.serviceBuild.totals,
         message: added.length
           ? `${added.length} matière(s) HoraClasse ajoutée(s) dans les matières Mon Cahier.`
           : "Aucune matière à ajouter : Mon Cahier est déjà aligné avec HoraClasse.",
+      });
+    }
+
+    if (action === "save_subject_level_volume") {
+      const affected = await saveSubjectLevelVolume(guard, body);
+      const context = await loadVolumeContext(guard);
+      return NextResponse.json({
+        ok: true,
+        action,
+        affected_count: affected,
+        subject_hour_rows: context.serviceBuild.subject_hour_rows,
+        service_assignments: context.serviceBuild.service_assignments,
+        totals: context.serviceBuild.totals,
+        message: `Volume appliqué à ${affected} service(s) Mon Cahier pour ce niveau et cette matière.`,
+      });
+    }
+
+    if (action === "reset_subject_level_volume") {
+      const affected = await resetSubjectLevelVolume(guard, body);
+      const context = await loadVolumeContext(guard);
+      return NextResponse.json({
+        ok: true,
+        action,
+        affected_count: affected,
+        subject_hour_rows: context.serviceBuild.subject_hour_rows,
+        service_assignments: context.serviceBuild.service_assignments,
+        totals: context.serviceBuild.totals,
+        message: `Personnalisation retirée pour ${affected} service(s). Le référentiel HoraClasse reprend la main.`,
       });
     }
 
@@ -445,42 +555,51 @@ export async function POST(req: NextRequest) {
         ok: true,
         action,
         service_assignments: context.serviceBuild.service_assignments,
+        subject_hour_rows: context.serviceBuild.subject_hour_rows,
         totals: context.serviceBuild.totals,
         message: "Personnalisation supprimée. Le référentiel HoraClasse reprend la main.",
       });
     }
 
-    const payload = normalizeOverrideBody(body);
+    if (action === "save_override") {
+      const payload = normalizeServiceOverrideBody(body);
 
-    // Sans supposer que la contrainte unique existe déjà partout, on supprime
-    // d’abord l’ancienne ligne puis on réinsère la personnalisation proprement.
-    const { error: delErr } = await guard.srv
-      .from("montage_timetable_subject_hours")
-      .delete()
-      .eq("institution_id", guard.institutionId)
-      .eq("class_id", payload.class_id)
-      .eq("subject_id", payload.subject_id)
-      .eq("teacher_id", payload.teacher_id);
+      const { error: delErr } = await guard.srv
+        .from("montage_timetable_subject_hours")
+        .delete()
+        .eq("institution_id", guard.institutionId)
+        .eq("class_id", payload.class_id)
+        .eq("subject_id", payload.subject_id)
+        .eq("teacher_id", payload.teacher_id);
 
-    if (delErr) throw new Error(delErr.message);
+      if (delErr) throw new Error(delErr.message);
 
-    const { error: insErr } = await guard.srv
-      .from("montage_timetable_subject_hours")
-      .insert({
-        institution_id: guard.institutionId,
-        ...payload,
+      const { error: insErr } = await guard.srv
+        .from("montage_timetable_subject_hours")
+        .insert({
+          institution_id: guard.institutionId,
+          ...payload,
+          created_by: guard.userId,
+          updated_by: guard.userId,
+        });
+
+      if (insErr) throw new Error(insErr.message);
+
+      const context = await loadVolumeContext(guard);
+      return NextResponse.json({
+        ok: true,
+        action,
+        service_assignments: context.serviceBuild.service_assignments,
+        subject_hour_rows: context.serviceBuild.subject_hour_rows,
+        totals: context.serviceBuild.totals,
+        message: "Volume personnalisé enregistré pour ce service Mon Cahier.",
       });
+    }
 
-    if (insErr) throw new Error(insErr.message);
-
-    const context = await loadVolumeContext(guard);
-    return NextResponse.json({
-      ok: true,
-      action: "save_override",
-      service_assignments: context.serviceBuild.service_assignments,
-      totals: context.serviceBuild.totals,
-      message: "Volume personnalisé enregistré pour ce service Mon Cahier.",
-    });
+    return NextResponse.json(
+      { ok: false, error: "unknown_action", message: "Action volumes inconnue." },
+      { status: 400 },
+    );
   } catch (error) {
     return NextResponse.json(
       {

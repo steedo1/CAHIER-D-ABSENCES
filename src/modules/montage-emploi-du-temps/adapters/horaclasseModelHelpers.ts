@@ -106,20 +106,25 @@ export function inferCatalogSubjectId(input: {
   const value = `${code} ${label}`.trim();
 
   if (/\bMATHS?\b|MATHEMATIQUE/.test(value)) return "maths";
-  if (/\bPC\b|PHYSIQUE|CHIMIE|P C/.test(value)) return "pc";
+
+  // IMPORTANT : EPS avant P.C.
+  // “Éducation Physique et Sportive” contient PHYSIQUE, mais ce n’est jamais P.C.
+  if (/\bEPS\b|SPORT|PHYSIQUE ET SPORTIVE|EDUCATION PHYSIQUE/.test(value)) return "eps";
+
+  if (/\bPC\b|\bP C\b|PHYSIQUE CHIMIE|SCIENCES PHYSIQUES|CHIMIE/.test(value)) return "pc";
   if (/\bSVT\b|SCIENCES DE LA VIE|VIE ET DE LA TERRE/.test(value)) return "svt";
   if (/\bFR\b|FRANCAIS|FRANCAISE/.test(value)) return "francais";
   if (/\bHG\b|HISTOIRE|GEOGRAPHIE/.test(value)) return "hg";
   if (/\bANG\b|ANGLAIS/.test(value)) return "anglais";
-  if (/\bLV2\b|ESPAGNOL|ALLEMAND|ESP\b|ALL\b/.test(value)) return "lv2";
+  if (/\bLV2\b|ESPAGNOL|ALLEMAND|\bESP\b|\bALL\b/.test(value)) return "lv2";
   if (/PHILO/.test(value)) return "philo";
-  if (/\bEPS\b|SPORT|PHYSIQUE ET SPORTIVE/.test(value)) return "eps";
   if (/\bEDHC\b|CITOYENNETE|DROITS DE L HOMME/.test(value)) return "edhc";
-  if (/ART|PLASTIQUE/.test(value)) return "ap";
+  if (/ARTS? PLASTIQUES?|PLASTIQUE/.test(value)) return "ap";
   if (/MUSIQUE|MUSICAL/.test(value)) return "musique";
-  if (/INFO|TICE|INFORMATIQUE/.test(value)) return "informatique";
+  if (/\bTICE\b|INFORMATIQUE|TECHNOLOGIES DE L INFORMATION/.test(value)) return "informatique";
   if (/ENTREPRENE/.test(value)) return "entrepreneuriat";
 
+  // Règle finale : on ne devine pas. Une matière non reconnue reste à compléter.
   return fallback;
 }
 
@@ -127,10 +132,7 @@ export function getCatalogSubject(catalogSubjectId: string): SubjectDefinition |
   return defaultSubjects.find((item) => item.id === catalogSubjectId) || null;
 }
 
-export function findDefaultSubjectHour(
-  levelCode: string,
-  catalogSubjectId: string,
-): DefaultSubjectHour | null {
+export function findDefaultSubjectHour(levelCode: string, catalogSubjectId: string): DefaultSubjectHour | null {
   return (
     defaultSubjectHours.find(
       (item) => item.levelCode === levelCode && item.subjectId === catalogSubjectId,

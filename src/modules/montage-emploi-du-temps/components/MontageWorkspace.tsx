@@ -265,7 +265,7 @@ export default function MontageWorkspace() {
                 </div>
                 <h1 className="mt-5 text-3xl font-black tracking-tight text-white sm:text-4xl">Montage emploi du temps</h1>
                 <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-300 sm:text-base">
-                  Référentiel HoraClasse, services, règles terrain, génération et diagnostics intégrés dans Mon Cahier.
+                  HoraClasse intégré à Mon Cahier sans recréer les données : matières et heures, services enseignants, règles terrain, génération et diagnostics.
                 </p>
               </div>
               <div className="flex flex-col gap-3 sm:flex-row lg:flex-col xl:flex-row">
@@ -301,7 +301,7 @@ export default function MontageWorkspace() {
 
             <div className="grid gap-6 lg:grid-cols-[1.2fr_0.8fr]">
               <div className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
-                <div className="flex items-center gap-3"><div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-700 ring-1 ring-emerald-100"><CheckCircle2 className="h-6 w-6" /></div><div><h2 className="text-lg font-black">Services HoraClasse détectés</h2><p className="text-sm text-slate-500">Les services viennent du référentiel par défaut et des affectations Mon Cahier.</p></div></div>
+                <div className="flex items-center gap-3"><div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-700 ring-1 ring-emerald-100"><CheckCircle2 className="h-6 w-6" /></div><div><h2 className="text-lg font-black">Services HoraClasse détectés</h2><p className="text-sm text-slate-500">Les services viennent uniquement des affectations déjà créées dans Mon Cahier.</p></div></div>
                 <div className="mt-6 overflow-hidden rounded-2xl border border-slate-200">
                   <div className="grid grid-cols-4 bg-slate-50 px-4 py-3 text-xs font-black uppercase tracking-wide text-slate-500"><div>Classe</div><div>Matière</div><div>Enseignant</div><div>Volume</div></div>
                   <div className="max-h-[420px] divide-y divide-slate-100 overflow-auto">
@@ -322,7 +322,8 @@ export default function MontageWorkspace() {
                 <div className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
                   <div className="flex items-center gap-3"><div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-sky-50 text-sky-700 ring-1 ring-sky-100"><FileSpreadsheet className="h-6 w-6" /></div><div><h2 className="text-lg font-black">Flux HoraClasse</h2><p className="text-sm text-slate-500">Référentiel → services → règles terrain → génération → diagnostics.</p></div></div>
                   <div className="mt-6 space-y-3 text-sm">
-                    <Link href="/admin/montage-emploi-du-temps/volumes" className="block rounded-2xl bg-slate-50 p-4 font-bold text-slate-900 hover:bg-slate-100">Référentiel & services</Link>
+                    <Link href="/admin/montage-emploi-du-temps/volumes" className="block rounded-2xl bg-slate-50 p-4 font-bold text-slate-900 hover:bg-slate-100">Matières et heures</Link>
+                    <Link href="/admin/montage-emploi-du-temps/services" className="block rounded-2xl bg-slate-50 p-4 font-bold text-slate-900 hover:bg-slate-100">Services enseignants</Link>
                     <Link href="/admin/montage-emploi-du-temps/regles-terrain" className="block rounded-2xl bg-slate-50 p-4 font-bold text-slate-900 hover:bg-slate-100">Règles terrain HoraClasse</Link>
                     <Link href="/admin/montage-emploi-du-temps/generation" className="block rounded-2xl bg-slate-50 p-4 font-bold text-slate-900 hover:bg-slate-100">Services & génération</Link>
                   </div>

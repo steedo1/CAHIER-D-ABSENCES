@@ -116,7 +116,7 @@ export default function MontageTerrainRulesPage() {
       cards={[
         { title: "Tandem P.C / SVT", description: "Activation optionnelle, portée toutes classes ou classes sélectionnées, mode parallèle ou rotation." },
         { title: "Ressources terrain", description: "Laboratoires P.C/SVT, terrain EPS, salle informatique et fallback en salle ordinaire selon configuration." },
-        { title: "Qualité HoraClasse", description: "Trous élèves/profs, retours inutiles, matières lourdes successives et équilibre des demi-journées." },
+        { title: "Qualité HoraClasse", description: "Trous élèves/profs, retours inutiles, matières lourdes successives, reprises séparées d’une même matière et équilibre des demi-journées." },
       ]}
     >
       <div className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
@@ -169,7 +169,10 @@ export default function MontageTerrainRulesPage() {
             <Toggle label="Éviter les trous professeurs" checked={rules.avoidTeacherGaps} onChange={(v) => patch({ avoidTeacherGaps: v })} />
             <Toggle label="Éviter le retour professeur pour une seule heure" checked={rules.avoidSingleHourReturn} onChange={(v) => patch({ avoidSingleHourReturn: v })} />
             <Toggle label="Éviter les matières lourdes successives" checked={rules.avoidHeavySubjectsBackToBack} onChange={(v) => patch({ avoidHeavySubjectsBackToBack: v })} />
-            <Toggle label="Éviter la même matière le même jour" checked={rules.avoidSameSubjectSameDay} onChange={(v) => patch({ avoidSameSubjectSameDay: v })} />
+            <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
+              <Toggle label="Éviter une reprise séparée de la même matière" checked={rules.avoidSameSubjectSameDay} onChange={(v) => patch({ avoidSameSubjectSameDay: v })} />
+              <p className="mt-2 px-1 text-xs font-semibold leading-5 text-slate-500">Deux heures consécutives sont autorisées. Ce qu’on évite, c’est 1h de matière, puis d’autres matières, puis le retour de cette même matière plus tard dans la journée.</p>
+            </div>
             <Toggle label="Équilibrer les demi-journées" checked={rules.balanceHalfDays} onChange={(v) => patch({ balanceHalfDays: v })} />
             <Toggle label="Préférer la salle principale de la classe" checked={rules.preferMainClassRoom} onChange={(v) => patch({ preferMainClassRoom: v })} />
           </div>

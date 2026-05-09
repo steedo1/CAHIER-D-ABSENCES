@@ -3,28 +3,24 @@
 import React from "react";
 import {
   AlertTriangle,
-  BookOpenCheck,
   CheckCircle2,
   DatabaseZap,
+  Layers3,
   Loader2,
   RefreshCw,
+  RotateCcw,
   Save,
+  Search,
   SlidersHorizontal,
-  Trash2,
-  X,
 } from "lucide-react";
 import MontageSectionShell from "./MontageSectionShell";
 
 type Level = { code: string; label: string; cycle: string; displayOrder: number };
-type CatalogSubject = { id: string; code: string; name: string; shortName: string; isHeavy: boolean };
 
-type ServiceAssignment = {
-  class_id: string;
-  class_label: string;
+type SubjectHourRow = {
+  key: string;
   level_code: string;
-  series_code: string | null;
-  teacher_id: string;
-  teacher_name: string;
+  level_label: string;
   subject_id: string;
   subject_label: string;
   subject_code: string | null;
@@ -35,6 +31,11 @@ type ServiceAssignment = {
   room_type_required: string | null;
   source: "default_catalog" | "override" | "manual_missing_catalog";
   is_ready: boolean;
+  has_mixed_values: boolean;
+  services_count: number;
+  classes_count: number;
+  teachers_count: number;
+  class_labels: string[];
   missing_reason: string | null;
 };
 
@@ -57,61 +58,120 @@ type VolumesTotals = {
   mon_cahier_subjects: number;
   catalog_subjects: number;
   catalog_subjects_missing_in_mon_cahier: number;
+  subject_hour_rows: number;
+  subject_hour_rows_ready: number;
+  subject_hour_rows_missing: number;
 };
 
 type VolumesResponse =
   | {
       ok: true;
-      source: string;
       message: string;
       levels: Level[];
-      catalog_subjects: CatalogSubject[];
-      service_assignments: ServiceAssignment[];
-      catalog_coverage: CatalogCoverageSubject[];
+      subject_hour_rows: SubjectHourRow[];
       missing_catalog_subjects: CatalogCoverageSubject[];
       totals: VolumesTotals;
       warnings: string[];
     }
   | { ok: false; error: string; message?: string };
 
-type EditState = {
-  key: string;
+type Draft = {
   weekly_units: string;
   split_pattern: string;
   room_type_required: string;
 };
 
-function serviceKey(row: ServiceAssignment) {
-  return `${row.class_id}:${row.subject_id}:${row.teacher_id}`;
+type DraftsByKey = Record<string, Draft>;
+
+function toDraft(row: SubjectHourRow): Draft {
+  return {
+    weekly_units: row.weekly_units ? String(row.weekly_units).replace(".", ",") : "",
+    split_pattern: row.split_pattern || "",
+    room_type_required: row.room_type_required || "",
+  };
+}
+
+function buildDrafts(rows: SubjectHourRow[]): DraftsByKey {
+  return rows.reduce<DraftsByKey>((acc, row) => {
+    acc[row.key] = toDraft(row);
+    return acc;
+  }, {});
 }
 
 function formatHours(value: number | null) {
   if (value === null || value === undefined) return "À compléter";
-  if (Number.isInteger(value)) return `${value}h`;
-  return `${String(value).replace(".", ",")}h`;
+
+  const hours = Math.floor(value);
+  const minutes = Math.round((value - hours) * 60);
+
+  if (minutes === 0) return `${hours}h`;
+  if (hours === 0) return `${minutes} min`;
+  return `${hours}h${String(minutes).padStart(2, "0")}`;
 }
 
-function sourceLabel(source: ServiceAssignment["source"]) {
-  if (source === "override") return "Personnalisé Mon Cahier";
-  if (source === "default_catalog") return "Référentiel HoraClasse";
-  return "Manuel requis";
+function formatSplitPattern(pattern: string | null) {
+  if (!pattern) return "—";
+
+  return pattern
+    .split("+")
+    .map((part) => {
+      const value = Number(part.trim().replace(",", "."));
+      if (!Number.isFinite(value)) return part.trim();
+      return formatHours(value);
+    })
+    .join(" + ");
 }
 
-function sourceClass(source: ServiceAssignment["source"]) {
-  if (source === "override") return "bg-indigo-50 text-indigo-700 border-indigo-100";
-  if (source === "default_catalog") return "bg-emerald-50 text-emerald-700 border-emerald-100";
-  return "bg-amber-50 text-amber-700 border-amber-100";
+function sourceLabel(row: SubjectHourRow) {
+  if (row.source === "override") return row.has_mixed_values ? "Personnalisé mixte" : "Personnalisé";
+  if (row.source === "default_catalog") return "Référentiel";
+  return "À compléter";
+}
+
+function sourceClass(row: SubjectHourRow) {
+  if (row.source === "override") return "bg-indigo-50 text-indigo-700 ring-indigo-100";
+  if (row.source === "default_catalog") return "bg-emerald-50 text-emerald-700 ring-emerald-100";
+  return "bg-amber-50 text-amber-700 ring-amber-100";
+}
+
+function isDraftChanged(row: SubjectHourRow, draft?: Draft) {
+  if (!draft) return false;
+  const original = toDraft(row);
+  return (
+    draft.weekly_units.trim() !== original.weekly_units.trim() ||
+    draft.split_pattern.trim() !== original.split_pattern.trim() ||
+    draft.room_type_required.trim() !== original.room_type_required.trim()
+  );
+}
+
+function StatCard({ label, value, tone }: { label: string; value: string | number; tone: "slate" | "emerald" | "amber" | "indigo" | "rose" }) {
+  const tones: Record<typeof tone, string> = {
+    slate: "border-slate-200 bg-slate-50 text-slate-950",
+    emerald: "border-emerald-100 bg-emerald-50 text-emerald-800",
+    amber: "border-amber-100 bg-amber-50 text-amber-800",
+    indigo: "border-indigo-100 bg-indigo-50 text-indigo-800",
+    rose: "border-rose-100 bg-rose-50 text-rose-800",
+  };
+
+  return (
+    <div className={`rounded-3xl border p-4 ${tones[tone]}`}>
+      <p className="text-xs font-black uppercase tracking-wide opacity-70">{label}</p>
+      <p className="mt-1 text-2xl font-black">{value}</p>
+    </div>
+  );
 }
 
 export default function MontageVolumesPage() {
   const [data, setData] = React.useState<Extract<VolumesResponse, { ok: true }> | null>(null);
-  const [classFilter, setClassFilter] = React.useState("all");
+  const [levelFilter, setLevelFilter] = React.useState("all");
   const [statusFilter, setStatusFilter] = React.useState<"all" | "ready" | "missing" | "override">("all");
+  const [query, setQuery] = React.useState("");
+  const [drafts, setDrafts] = React.useState<DraftsByKey>({});
   const [loading, setLoading] = React.useState(true);
-  const [saving, setSaving] = React.useState(false);
+  const [savingKey, setSavingKey] = React.useState<string | null>(null);
+  const [savingAction, setSavingAction] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [notice, setNotice] = React.useState<string | null>(null);
-  const [edit, setEdit] = React.useState<EditState | null>(null);
 
   const load = React.useCallback(async () => {
     setLoading(true);
@@ -132,9 +192,10 @@ export default function MontageVolumesPage() {
       }
 
       setData(json);
-      setClassFilter((current) => current || "all");
+      setDrafts(buildDrafts(json.subject_hour_rows || []));
+      setLevelFilter((current) => current || "all");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Impossible de charger les volumes.");
+      setError(err instanceof Error ? err.message : "Impossible de charger les matières et heures.");
     } finally {
       setLoading(false);
     }
@@ -144,43 +205,47 @@ export default function MontageVolumesPage() {
     void load();
   }, [load]);
 
-  const classes = React.useMemo(() => {
-    const map = new Map<string, string>();
-    for (const row of data?.service_assignments || []) {
-      map.set(row.class_id, row.class_label);
-    }
-    return Array.from(map.entries()).sort((a, b) => a[1].localeCompare(b[1], "fr"));
-  }, [data?.service_assignments]);
-
   const rows = React.useMemo(() => {
-    let next = [...(data?.service_assignments || [])];
+    let next = [...(data?.subject_hour_rows || [])];
+    const q = query.trim().toLowerCase();
 
-    if (classFilter !== "all") {
-      next = next.filter((row) => row.class_id === classFilter);
-    }
-
+    if (levelFilter !== "all") next = next.filter((row) => row.level_code === levelFilter);
     if (statusFilter === "ready") next = next.filter((row) => row.is_ready);
     if (statusFilter === "missing") next = next.filter((row) => !row.is_ready);
     if (statusFilter === "override") next = next.filter((row) => row.source === "override");
+    if (q) {
+      next = next.filter((row) => {
+        return [row.subject_label, row.subject_code, row.catalog_subject_label, row.level_label]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase()
+          .includes(q);
+      });
+    }
 
-    return next.sort((a, b) => {
-      const classDelta = a.class_label.localeCompare(b.class_label, "fr");
-      if (classDelta !== 0) return classDelta;
-      return a.subject_label.localeCompare(b.subject_label, "fr");
-    });
-  }, [classFilter, data?.service_assignments, statusFilter]);
+    return next;
+  }, [data?.subject_hour_rows, levelFilter, query, statusFilter]);
 
-  function beginEdit(row: ServiceAssignment) {
-    setEdit({
-      key: serviceKey(row),
-      weekly_units: row.weekly_units ? String(row.weekly_units).replace(".", ",") : "",
-      split_pattern: row.split_pattern || "",
-      room_type_required: row.room_type_required || "",
-    });
+  const availableLevels = React.useMemo(() => {
+    const used = new Set((data?.subject_hour_rows || []).map((row) => row.level_code));
+    return (data?.levels || []).filter((level) => used.has(level.code));
+  }, [data?.levels, data?.subject_hour_rows]);
+
+  function updateDraft(key: string, patch: Partial<Draft>) {
+    setDrafts((current) => ({
+      ...current,
+      [key]: {
+        weekly_units: current[key]?.weekly_units || "",
+        split_pattern: current[key]?.split_pattern || "",
+        room_type_required: current[key]?.room_type_required || "",
+        ...patch,
+      },
+    }));
   }
 
-  async function postAction(payload: Record<string, unknown>) {
-    setSaving(true);
+  async function postAction(payload: Record<string, unknown>, key?: string) {
+    if (key) setSavingKey(key);
+    else setSavingAction(true);
     setError(null);
     setNotice(null);
 
@@ -192,40 +257,44 @@ export default function MontageVolumesPage() {
       });
       const json = (await res.json().catch(() => null)) as { ok?: boolean; message?: string; error?: string } | null;
 
-      if (!json?.ok) {
-        throw new Error(json?.message || json?.error || "Action impossible.");
-      }
+      if (!json?.ok) throw new Error(json?.message || json?.error || "Action impossible.");
 
       setNotice(json.message || "Action effectuée.");
-      setEdit(null);
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Action impossible.");
     } finally {
-      setSaving(false);
+      if (key) setSavingKey(null);
+      else setSavingAction(false);
     }
   }
 
-  async function saveEdit(row: ServiceAssignment) {
-    if (!edit) return;
-    await postAction({
-      action: "save_override",
-      class_id: row.class_id,
-      subject_id: row.subject_id,
-      teacher_id: row.teacher_id,
-      weekly_units: edit.weekly_units,
-      split_pattern: edit.split_pattern,
-      room_type_required: edit.room_type_required || null,
-    });
+  async function saveRow(row: SubjectHourRow) {
+    const draft = drafts[row.key] || toDraft(row);
+    await postAction(
+      {
+        action: "save_subject_level_volume",
+        level_code: row.level_code,
+        subject_id: row.subject_id,
+        catalog_subject_id: row.catalog_subject_id,
+        weekly_units: draft.weekly_units,
+        split_pattern: draft.split_pattern,
+        room_type_required: draft.room_type_required || null,
+      },
+      row.key,
+    );
   }
 
-  async function deleteOverride(row: ServiceAssignment) {
-    await postAction({
-      action: "delete_override",
-      class_id: row.class_id,
-      subject_id: row.subject_id,
-      teacher_id: row.teacher_id,
-    });
+  async function resetRow(row: SubjectHourRow) {
+    await postAction(
+      {
+        action: "reset_subject_level_volume",
+        level_code: row.level_code,
+        subject_id: row.subject_id,
+        catalog_subject_id: row.catalog_subject_id,
+      },
+      row.key,
+    );
   }
 
   async function syncMissingSubjects() {
@@ -241,33 +310,25 @@ export default function MontageVolumesPage() {
 
   return (
     <MontageSectionShell
-      title="Référentiel & services"
-      description="Mon Cahier garde ses matières officielles. HoraClasse reconnaît ces matières, complète les volumes horaires et signale uniquement ce qui doit être renseigné."
-      badge="Mon Cahier + HoraClasse"
-      status="Source officielle : Mon Cahier"
-      note="Aucune deuxième vérité : classes, matières, enseignants et affectations viennent de Mon Cahier. Le référentiel HoraClasse sert seulement à enrichir les volumes, découpages et règles métier."
+      title="Matières et heures"
+      description="Écran fidèle à HoraClasse : niveau, matière, volume actuel, nouveau volume, découpage, type et action. Aucun enseignant ici."
+      badge="Matières et heures"
+      status="Mon Cahier source officielle"
+      note="Les matières affichées viennent des matières et affectations existantes de Mon Cahier. Cette page règle les volumes par niveau et matière ; les professeurs restent dans Services enseignants."
       cards={[
-        {
-          title: "Matières officielles",
-          description: "Les matières créées par l’admin dans Mon Cahier restent prioritaires.",
-        },
-        {
-          title: "Reconnaissance silencieuse",
-          description: "Mathématiques, PC, SVT, FR, HG, ANG, EPS, EDHC, Philo, LV2, Arts, Musique, TICE sont reconnus automatiquement.",
-        },
-        {
-          title: "Volumes maîtrisés",
-          description: "Un volume personnalisé Mon Cahier écrase le volume par défaut HoraClasse pour le service concerné.",
-        },
+        { title: "Pas d’enseignants ici", description: "Comme dans HoraClasse, cette page ne mélange pas les volumes avec les affectations professeurs." },
+        { title: "Volumes par niveau", description: "Une modification s’applique aux services existants du niveau et de la matière concernés." },
+        { title: "Mapping strict", description: "EPS reste EPS, P.C reste P.C. Si une matière n’est pas reconnue, elle passe en À compléter." },
       ]}
     >
       <div className="space-y-5">
-        <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div className="rounded-[30px] border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
             <div>
-              <h2 className="text-xl font-black text-slate-950">Services réels de Mon Cahier</h2>
+              <p className="text-xs font-black uppercase tracking-[0.18em] text-emerald-600">Référentiel HoraClasse</p>
+              <h2 className="mt-1 text-2xl font-black tracking-tight text-slate-950">Volumes par niveau et matière</h2>
               <p className="mt-1 max-w-3xl text-sm leading-6 text-slate-500">
-                Cette page ne montre plus un catalogue isolé. Elle vérifie les vrais couples classe–matière–enseignant de Mon Cahier et leur applique la logique HoraClasse.
+                On affiche la matière, le volume actuel, le nouveau volume et le découpage. Les enseignants ne sont pas affichés ici.
               </p>
             </div>
 
@@ -275,18 +336,18 @@ export default function MontageVolumesPage() {
               <button
                 type="button"
                 onClick={() => void syncMissingSubjects()}
-                disabled={saving || loading || !data?.missing_catalog_subjects.length}
-                className="inline-flex items-center justify-center gap-2 rounded-2xl bg-slate-950 px-4 py-3 text-sm font-black text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-40"
+                disabled={savingAction || loading || !data?.missing_catalog_subjects.length}
+                className="inline-flex items-center justify-center gap-2 rounded-2xl bg-slate-950 px-4 py-3 text-sm font-black text-white shadow-sm transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-40"
               >
-                {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <DatabaseZap className="h-4 w-4" />}
-                Compléter les matières
+                {savingAction ? <Loader2 className="h-4 w-4 animate-spin" /> : <DatabaseZap className="h-4 w-4" />}
+                Compléter matières manquantes
               </button>
 
               <button
                 type="button"
                 onClick={() => void load()}
-                disabled={loading || saving}
-                className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-black text-slate-700 transition hover:bg-slate-50 disabled:opacity-60"
+                disabled={loading || savingAction || Boolean(savingKey)}
+                className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-black text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:opacity-60"
               >
                 {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
                 Recharger
@@ -296,261 +357,168 @@ export default function MontageVolumesPage() {
 
           {totals ? (
             <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-              <div className="rounded-3xl bg-slate-50 p-4">
-                <p className="text-xs font-black uppercase tracking-wide text-slate-400">Services</p>
-                <p className="mt-1 text-2xl font-black text-slate-950">{totals.services}</p>
-              </div>
-              <div className="rounded-3xl bg-emerald-50 p-4">
-                <p className="text-xs font-black uppercase tracking-wide text-emerald-600">Prêts</p>
-                <p className="mt-1 text-2xl font-black text-emerald-800">{totals.ready}</p>
-              </div>
-              <div className="rounded-3xl bg-amber-50 p-4">
-                <p className="text-xs font-black uppercase tracking-wide text-amber-600">À compléter</p>
-                <p className="mt-1 text-2xl font-black text-amber-800">{totals.missing}</p>
-              </div>
-              <div className="rounded-3xl bg-indigo-50 p-4">
-                <p className="text-xs font-black uppercase tracking-wide text-indigo-600">Personnalisés</p>
-                <p className="mt-1 text-2xl font-black text-indigo-800">{totals.customized}</p>
-              </div>
-              <div className="rounded-3xl bg-rose-50 p-4">
-                <p className="text-xs font-black uppercase tracking-wide text-rose-600">Matières manquantes</p>
-                <p className="mt-1 text-2xl font-black text-rose-800">{totals.catalog_subjects_missing_in_mon_cahier}</p>
-              </div>
+              <StatCard label="Matières/niveaux" value={totals.subject_hour_rows} tone="slate" />
+              <StatCard label="Prêts" value={totals.subject_hour_rows_ready} tone="emerald" />
+              <StatCard label="À compléter" value={totals.subject_hour_rows_missing} tone="amber" />
+              <StatCard label="Services liés" value={totals.services} tone="indigo" />
+              <StatCard label="Matières à ajouter" value={totals.catalog_subjects_missing_in_mon_cahier} tone="rose" />
             </div>
           ) : null}
 
+          <div className="mt-5 grid gap-3 rounded-3xl border border-slate-200 bg-slate-50/70 p-4 lg:grid-cols-[1fr_1fr_1.4fr]">
+            <label className="text-sm font-black text-slate-700">
+              <span className="mb-2 flex items-center gap-2"><SlidersHorizontal className="h-4 w-4" /> Niveau à afficher</span>
+              <select
+                value={levelFilter}
+                onChange={(event) => setLevelFilter(event.target.value)}
+                className="h-12 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm font-bold text-slate-700 outline-none transition focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100"
+              >
+                <option value="all">Tous les niveaux</option>
+                {availableLevels.map((level) => (
+                  <option key={level.code} value={level.code}>{level.label}</option>
+                ))}
+              </select>
+            </label>
+
+            <label className="text-sm font-black text-slate-700">
+              <span className="mb-2 block">Statut</span>
+              <select
+                value={statusFilter}
+                onChange={(event) => setStatusFilter(event.target.value as typeof statusFilter)}
+                className="h-12 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm font-bold text-slate-700 outline-none transition focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100"
+              >
+                <option value="all">Tous les statuts</option>
+                <option value="ready">Prêts</option>
+                <option value="missing">À compléter</option>
+                <option value="override">Personnalisés</option>
+              </select>
+            </label>
+
+            <label className="text-sm font-black text-slate-700">
+              <span className="mb-2 flex items-center gap-2"><Search className="h-4 w-4" /> Rechercher une matière</span>
+              <input
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="Maths, EPS, Français..."
+                className="h-12 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm font-bold text-slate-700 outline-none transition placeholder:text-slate-400 focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100"
+              />
+            </label>
+          </div>
+
           {notice && (
             <div className="mt-5 rounded-3xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-bold text-emerald-800">
-              <div className="flex gap-3">
-                <CheckCircle2 className="h-5 w-5 shrink-0" />
-                <p>{notice}</p>
-              </div>
+              <div className="flex gap-3"><CheckCircle2 className="h-5 w-5 shrink-0" /><p>{notice}</p></div>
             </div>
           )}
 
           {error && (
-            <div className="mt-5 rounded-3xl border border-red-200 bg-red-50 p-5 text-red-950">
-              <div className="flex gap-3">
-                <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" />
-                <div>
-                  <p className="font-black">Erreur</p>
-                  <p className="text-sm">{error}</p>
-                </div>
-              </div>
+            <div className="mt-5 rounded-3xl border border-red-200 bg-red-50 p-4 text-sm font-bold text-red-800">
+              <div className="flex gap-3"><AlertTriangle className="h-5 w-5 shrink-0" /><p>{error}</p></div>
             </div>
           )}
 
-          {data?.warnings?.length ? (
-            <div className="mt-5 rounded-3xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
-              <p className="font-black">Points à vérifier</p>
-              <ul className="mt-2 list-disc space-y-1 pl-5">
-                {data.warnings.map((warning) => (
-                  <li key={warning}>{warning}</li>
-                ))}
-              </ul>
-            </div>
-          ) : null}
-        </div>
-
-        <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-            <div className="flex items-center gap-2">
-              <SlidersHorizontal className="h-5 w-5 text-slate-500" />
-              <h3 className="font-black text-slate-950">Filtrer les services</h3>
-            </div>
-
-            <div className="flex flex-col gap-2 sm:flex-row">
-              <select
-                value={classFilter}
-                onChange={(event) => setClassFilter(event.target.value)}
-                className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-bold text-slate-700 outline-none focus:border-slate-400"
-              >
-                <option value="all">Toutes les classes</option>
-                {classes.map(([id, label]) => (
-                  <option key={id} value={id}>
-                    {label}
-                  </option>
-                ))}
-              </select>
-
-              <select
-                value={statusFilter}
-                onChange={(event) => setStatusFilter(event.target.value as typeof statusFilter)}
-                className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-bold text-slate-700 outline-none focus:border-slate-400"
-              >
-                <option value="all">Tous les statuts</option>
-                <option value="ready">Services prêts</option>
-                <option value="missing">À compléter</option>
-                <option value="override">Personnalisés</option>
-              </select>
-            </div>
-          </div>
-
           {loading ? (
-            <div className="mt-6 flex items-center gap-3 rounded-3xl bg-slate-50 p-5 text-sm font-semibold text-slate-600">
-              <Loader2 className="h-5 w-5 animate-spin" />
-              Chargement des services Mon Cahier enrichis par HoraClasse...
-            </div>
-          ) : rows.length === 0 ? (
-            <div className="mt-6 rounded-3xl bg-slate-50 p-5 text-sm font-semibold text-slate-500">
-              Aucun service ne correspond au filtre actuel.
+            <div className="mt-6 flex items-center gap-3 rounded-3xl border border-slate-200 bg-slate-50 p-6 text-sm font-bold text-slate-600">
+              <Loader2 className="h-5 w-5 animate-spin" /> Chargement des matières et heures...
             </div>
           ) : (
-            <div className="mt-6 overflow-hidden rounded-3xl border border-slate-200">
-              <div className="hidden grid-cols-[1fr_1fr_1.1fr_120px_140px_170px_150px] gap-3 border-b border-slate-200 bg-slate-50 px-4 py-3 text-xs font-black uppercase tracking-wide text-slate-500 xl:grid">
-                <div>Classe</div>
-                <div>Matière Mon Cahier</div>
-                <div>Enseignant</div>
-                <div>Volume</div>
+            <div className="mt-6 overflow-hidden rounded-[28px] border border-slate-200 bg-white">
+              <div className="grid grid-cols-[1.3fr_1fr_1fr_1.1fr_1.1fr_1fr] gap-3 bg-slate-950 px-4 py-3 text-xs font-black uppercase tracking-wide text-white">
+                <div>Matière</div>
+                <div>Volume actuel</div>
+                <div>Nouveau volume</div>
                 <div>Découpage</div>
-                <div>Origine</div>
-                <div>Action</div>
+                <div>Type / statut</div>
+                <div className="text-right">Action</div>
               </div>
 
               <div className="divide-y divide-slate-100">
                 {rows.map((row) => {
-                  const key = serviceKey(row);
-                  const isEditing = edit?.key === key;
+                  const draft = drafts[row.key] || toDraft(row);
+                  const changed = isDraftChanged(row, draft);
+                  const saving = savingKey === row.key;
 
                   return (
-                    <div key={key} className="grid gap-3 px-4 py-4 text-sm xl:grid-cols-[1fr_1fr_1.1fr_120px_140px_170px_150px] xl:items-center">
-                      <div>
-                        <p className="text-xs font-black uppercase text-slate-400 xl:hidden">Classe</p>
-                        <p className="font-black text-slate-950">{row.class_label}</p>
-                        <p className="text-xs font-semibold text-slate-400">{row.level_code}</p>
-                      </div>
-
-                      <div>
-                        <p className="text-xs font-black uppercase text-slate-400 xl:hidden">Matière</p>
-                        <div className="flex items-center gap-2 font-bold text-slate-950">
-                          <BookOpenCheck className="h-4 w-4 text-emerald-600" />
-                          <span>{row.subject_label}</span>
+                    <div key={row.key} className="grid grid-cols-[1.3fr_1fr_1fr_1.1fr_1.1fr_1fr] items-center gap-3 px-4 py-4 text-sm hover:bg-slate-50/70">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-700 ring-1 ring-emerald-100">
+                            <Layers3 className="h-4 w-4" />
+                          </div>
+                          <div className="min-w-0">
+                            <p className="truncate font-black text-slate-950">{row.subject_label}</p>
+                            <p className="truncate text-xs font-bold text-slate-500">{row.level_label} · {row.services_count} service(s) · {row.classes_count} classe(s)</p>
+                          </div>
                         </div>
-                        <p className="mt-1 text-xs font-semibold text-slate-400">
-                          Reconnu HoraClasse : {row.catalog_subject_label}
-                        </p>
                       </div>
 
                       <div>
-                        <p className="text-xs font-black uppercase text-slate-400 xl:hidden">Enseignant</p>
-                        <p className="font-bold text-slate-700">{row.teacher_name}</p>
+                        <p className="font-black text-slate-950">{formatHours(row.weekly_units)}</p>
+                        <p className="mt-1 text-xs font-bold text-slate-500">{formatSplitPattern(row.split_pattern)}</p>
                       </div>
 
+                      <input
+                        value={draft.weekly_units}
+                        onChange={(event) => updateDraft(row.key, { weekly_units: event.target.value })}
+                        placeholder="Ex. 4 ou 1,5"
+                        className="h-11 rounded-2xl border border-slate-200 bg-white px-3 text-sm font-bold text-slate-800 outline-none transition focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100"
+                      />
+
+                      <input
+                        value={draft.split_pattern}
+                        onChange={(event) => updateDraft(row.key, { split_pattern: event.target.value })}
+                        placeholder="Ex. 2+1+1"
+                        className="h-11 rounded-2xl border border-slate-200 bg-white px-3 text-sm font-bold text-slate-800 outline-none transition focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100"
+                      />
+
                       <div>
-                        <p className="text-xs font-black uppercase text-slate-400 xl:hidden">Volume</p>
-                        {isEditing ? (
-                          <input
-                            value={edit.weekly_units}
-                            onChange={(event) => setEdit({ ...edit, weekly_units: event.target.value })}
-                            placeholder="ex: 4"
-                            className="w-full rounded-2xl border border-slate-200 px-3 py-2 font-bold outline-none focus:border-slate-400"
-                          />
-                        ) : (
-                          <p className={row.is_ready ? "font-black text-slate-950" : "font-black text-amber-700"}>
-                            {formatHours(row.weekly_units)}
-                          </p>
+                        <span className={`inline-flex rounded-full px-3 py-1 text-xs font-black ring-1 ${sourceClass(row)}`}>{sourceLabel(row)}</span>
+                        {row.has_mixed_values && <p className="mt-1 text-xs font-bold text-amber-700">Valeurs différentes selon services</p>}
+                        {!row.is_ready && <p className="mt-1 text-xs font-bold text-red-700">À compléter</p>}
+                      </div>
+
+                      <div className="flex justify-end gap-2">
+                        {row.source === "override" && (
+                          <button
+                            type="button"
+                            onClick={() => void resetRow(row)}
+                            disabled={saving || savingAction}
+                            className="inline-flex h-10 w-10 items-center justify-center rounded-2xl border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 disabled:opacity-50"
+                            title="Revenir au référentiel"
+                          >
+                            <RotateCcw className="h-4 w-4" />
+                          </button>
                         )}
+
+                        <button
+                          type="button"
+                          onClick={() => void saveRow(row)}
+                          disabled={saving || savingAction || !changed}
+                          className="inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-4 py-2 text-sm font-black text-white shadow-sm hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-45"
+                        >
+                          {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                          Enregistrer
+                        </button>
                       </div>
 
-                      <div>
-                        <p className="text-xs font-black uppercase text-slate-400 xl:hidden">Découpage</p>
-                        {isEditing ? (
-                          <input
-                            value={edit.split_pattern}
-                            onChange={(event) => setEdit({ ...edit, split_pattern: event.target.value })}
-                            placeholder="ex: 2+1+1"
-                            className="w-full rounded-2xl border border-slate-200 px-3 py-2 font-bold outline-none focus:border-slate-400"
-                          />
-                        ) : (
-                          <p className="font-bold text-slate-700">{row.split_pattern || "—"}</p>
-                        )}
-                      </div>
-
-                      <div>
-                        <p className="text-xs font-black uppercase text-slate-400 xl:hidden">Origine</p>
-                        <span className={["inline-flex rounded-full border px-3 py-1 text-xs font-black", sourceClass(row.source)].join(" ")}>
-                          {sourceLabel(row.source)}
-                        </span>
-                        {row.missing_reason ? <p className="mt-2 text-xs font-semibold text-amber-700">{row.missing_reason}</p> : null}
-                        {isEditing ? (
-                          <input
-                            value={edit.room_type_required}
-                            onChange={(event) => setEdit({ ...edit, room_type_required: event.target.value })}
-                            placeholder="Salle spéciale optionnelle"
-                            className="mt-2 w-full rounded-2xl border border-slate-200 px-3 py-2 text-xs font-bold outline-none focus:border-slate-400"
-                          />
-                        ) : null}
-                      </div>
-
-                      <div className="flex flex-wrap gap-2">
-                        {isEditing ? (
-                          <>
-                            <button
-                              type="button"
-                              onClick={() => void saveEdit(row)}
-                              disabled={saving}
-                              className="inline-flex items-center gap-2 rounded-2xl bg-emerald-600 px-3 py-2 text-xs font-black text-white disabled:opacity-50"
-                            >
-                              {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-                              OK
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setEdit(null)}
-                              disabled={saving}
-                              className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 px-3 py-2 text-xs font-black text-slate-600 disabled:opacity-50"
-                            >
-                              <X className="h-4 w-4" />
-                              Annuler
-                            </button>
-                          </>
-                        ) : (
-                          <>
-                            <button
-                              type="button"
-                              onClick={() => beginEdit(row)}
-                              disabled={saving}
-                              className="rounded-2xl border border-slate-200 px-3 py-2 text-xs font-black text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
-                            >
-                              Modifier
-                            </button>
-                            {row.source === "override" ? (
-                              <button
-                                type="button"
-                                onClick={() => void deleteOverride(row)}
-                                disabled={saving}
-                                className="inline-flex items-center gap-1 rounded-2xl border border-red-100 bg-red-50 px-3 py-2 text-xs font-black text-red-700 disabled:opacity-50"
-                              >
-                                <Trash2 className="h-3.5 w-3.5" />
-                                Reset
-                              </button>
-                            ) : null}
-                          </>
-                        )}
-                      </div>
+                      {row.missing_reason && (
+                        <div className="col-span-6 rounded-2xl border border-amber-100 bg-amber-50 px-4 py-2 text-xs font-bold text-amber-800">
+                          {row.missing_reason}
+                        </div>
+                      )}
                     </div>
                   );
                 })}
+
+                {rows.length === 0 && (
+                  <div className="px-4 py-12 text-center text-sm font-bold text-slate-500">
+                    Aucune ligne matière/heure à afficher pour ces filtres.
+                  </div>
+                )}
               </div>
             </div>
           )}
         </div>
-
-        {data?.missing_catalog_subjects?.length ? (
-          <div className="rounded-[28px] border border-rose-100 bg-rose-50 p-5 text-rose-950">
-            <h3 className="font-black">Matières HoraClasse pas encore activées dans Mon Cahier</h3>
-            <p className="mt-1 text-sm text-rose-800">
-              Elles peuvent être ajoutées sans modifier les matières déjà utilisées par les notes, absences et emplois du temps.
-            </p>
-            <div className="mt-4 flex flex-wrap gap-2">
-              {data.missing_catalog_subjects.map((item) => (
-                <span key={item.catalog_subject_id} className="rounded-full bg-white px-3 py-1 text-xs font-black text-rose-700 shadow-sm">
-                  {item.short_name || item.name}
-                </span>
-              ))}
-            </div>
-          </div>
-        ) : null}
       </div>
     </MontageSectionShell>
   );

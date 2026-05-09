@@ -1,13 +1,17 @@
-import { defaultSubjectHours, defaultSubjects } from "../catalog/defaultCatalog";
+import {
+  defaultLevels,
+  defaultSubjectHours,
+  defaultSubjects,
+} from "../catalog/defaultCatalog";
 import type { DefaultSubjectHour, SubjectDefinition } from "../catalog/types";
 import {
   clean,
-  findDefaultSubjectHour,
-  getCatalogSubject,
   inferCatalogSubjectId,
   inferLevelCode,
   inferSeriesCode,
   normalizeText,
+  getCatalogSubject,
+  findDefaultSubjectHour,
   type HoraclasseServiceMeta,
 } from "./horaclasseModelHelpers";
 
@@ -59,8 +63,31 @@ export type CatalogCoverageSubject = {
   institution_subject_code: string | null;
 };
 
+export type SubjectHourRow = {
+  key: string;
+  level_code: string;
+  level_label: string;
+  subject_id: string;
+  subject_label: string;
+  subject_code: string | null;
+  catalog_subject_id: string;
+  catalog_subject_label: string;
+  weekly_units: number | null;
+  split_pattern: string | null;
+  room_type_required: string | null;
+  source: "default_catalog" | "override" | "manual_missing_catalog";
+  is_ready: boolean;
+  has_mixed_values: boolean;
+  services_count: number;
+  classes_count: number;
+  teachers_count: number;
+  class_labels: string[];
+  missing_reason: string | null;
+};
+
 export type HoraclasseServicesBuildResult = {
   service_assignments: HoraclasseServiceMeta[];
+  subject_hour_rows: SubjectHourRow[];
   catalog_coverage: CatalogCoverageSubject[];
   missing_catalog_subjects: CatalogCoverageSubject[];
   totals: {
@@ -71,6 +98,9 @@ export type HoraclasseServicesBuildResult = {
     mon_cahier_subjects: number;
     catalog_subjects: number;
     catalog_subjects_missing_in_mon_cahier: number;
+    subject_hour_rows: number;
+    subject_hour_rows_ready: number;
+    subject_hour_rows_missing: number;
   };
   warnings: string[];
 };
@@ -93,25 +123,49 @@ function makeSubjectLevelKey(levelCode: string, catalogSubjectId: string): strin
   return `${clean(levelCode)}:${clean(catalogSubjectId)}`;
 }
 
+function makeFallbackHour(levelCode: string, catalogSubjectId: string): DefaultSubjectHour | null {
+  const fallbackBySubject: Partial<
+    Record<string, Pick<DefaultSubjectHour, "weeklyUnits" | "splitPattern" | "roomTypeRequired" | "notes">>
+  > = {
+    edhc: { weeklyUnits: 1, splitPattern: "1", notes: "Base HoraClasse : matière transversale, volume ajustable par l’admin." },
+    ap: { weeklyUnits: 1, splitPattern: "1", notes: "Base HoraClasse : volume ajustable par l’admin." },
+    musique: { weeklyUnits: 1, splitPattern: "1", notes: "Base HoraClasse : volume ajustable par l’admin." },
+    informatique: { weeklyUnits: 1, splitPattern: "1", roomTypeRequired: "computer_lab", notes: "Base HoraClasse : volume ajustable par l’admin." },
+    entrepreneuriat: { weeklyUnits: 1, splitPattern: "1", notes: "Base HoraClasse : volume ajustable par l’admin." },
+  };
+
+  const fallback = fallbackBySubject[catalogSubjectId];
+  if (!fallback) return null;
+
+  return {
+    levelCode,
+    subjectId: catalogSubjectId,
+    weeklyUnits: fallback.weeklyUnits,
+    splitPattern: fallback.splitPattern,
+    roomTypeRequired: fallback.roomTypeRequired ?? null,
+    notes: fallback.notes,
+  };
+}
+
 function findHourForLevel(levelCode: string, catalogSubjectId: string): DefaultSubjectHour | null {
   const exact = findDefaultSubjectHour(levelCode, catalogSubjectId);
   if (exact) return exact;
 
-  // Mon Cahier stocke souvent seulement "seconde", "première", "terminale".
-  // Si la série n’est pas connue, on prend une valeur raisonnable dans le même cycle
-  // au lieu de bloquer inutilement l’admin.
   const candidates = defaultSubjectHours.filter((item) => item.subjectId === catalogSubjectId);
+
   if (levelCode === "2A" || levelCode === "2C") {
-    return candidates.find((item) => item.levelCode === "2A") || candidates.find((item) => item.levelCode === "2C") || null;
-  }
-  if (levelCode === "1A" || levelCode === "1C" || levelCode === "1D") {
-    return candidates.find((item) => item.levelCode === levelCode) || candidates.find((item) => item.levelCode === "1A") || null;
-  }
-  if (levelCode === "TleA" || levelCode === "TleC" || levelCode === "TleD") {
-    return candidates.find((item) => item.levelCode === levelCode) || candidates.find((item) => item.levelCode === "TleA") || null;
+    return candidates.find((item) => item.levelCode === levelCode) || candidates.find((item) => item.levelCode === "2A") || makeFallbackHour(levelCode, catalogSubjectId);
   }
 
-  return null;
+  if (levelCode === "1A" || levelCode === "1C" || levelCode === "1D") {
+    return candidates.find((item) => item.levelCode === levelCode) || candidates.find((item) => item.levelCode === "1A") || makeFallbackHour(levelCode, catalogSubjectId);
+  }
+
+  if (levelCode === "TleA" || levelCode === "TleC" || levelCode === "TleD") {
+    return candidates.find((item) => item.levelCode === levelCode) || candidates.find((item) => item.levelCode === "TleA") || makeFallbackHour(levelCode, catalogSubjectId);
+  }
+
+  return makeFallbackHour(levelCode, catalogSubjectId);
 }
 
 function subjectMatchesCatalog(subject: MonCahierSubjectLike, catalogSubject: SubjectDefinition): boolean {
@@ -129,11 +183,10 @@ function subjectMatchesCatalog(subject: MonCahierSubjectLike, catalogSubject: Su
   const catalogName = normalizeText(catalogSubject.name);
   const catalogShortName = normalizeText(catalogSubject.shortName);
 
+  // Mapping strict : on évite les correspondances floues qui provoquent EPS -> P.C.
   return Boolean(
     (code && code === catalogCode) ||
-      (label && (label === catalogName || label === catalogShortName)) ||
-      (catalogShortName && label.includes(catalogShortName)) ||
-      (catalogName && label.includes(catalogName)),
+      (label && (label === catalogName || label === catalogShortName)),
   );
 }
 
@@ -154,6 +207,69 @@ export function buildCatalogCoverage(subjects: MonCahierSubjectLike[]): CatalogC
       } satisfies CatalogCoverageSubject;
     })
     .sort((a, b) => a.name.localeCompare(b.name, "fr"));
+}
+
+function valuesDiffer<T>(values: T[]): boolean {
+  const cleaned = values.map((value) => String(value ?? ""));
+  return new Set(cleaned).size > 1;
+}
+
+export function buildSubjectHourRows(serviceAssignments: HoraclasseServiceMeta[]): SubjectHourRow[] {
+  const levelLabelByCode = new Map(defaultLevels.map((item) => [item.code, item.label]));
+  const groups = new Map<string, HoraclasseServiceMeta[]>();
+
+  for (const item of serviceAssignments) {
+    const key = `${item.level_code}::${item.subject_id || item.catalog_subject_id}`;
+    groups.set(key, [...(groups.get(key) || []), item]);
+  }
+
+  return Array.from(groups.values())
+    .map((rows) => {
+      const first = rows[0];
+      const weeklyValues = rows.map((row) => row.weekly_units ?? null);
+      const splitValues = rows.map((row) => row.split_pattern ?? "");
+      const roomValues = rows.map((row) => row.room_type_required ?? "");
+      const sourceValues = rows.map((row) => row.source);
+      const classLabels = Array.from(new Set(rows.map((row) => row.class_label).filter(Boolean))).sort((a, b) => a.localeCompare(b, "fr"));
+      const teacherIds = Array.from(new Set(rows.map((row) => row.teacher_id).filter(Boolean)));
+
+      const hasMixedValues = valuesDiffer(weeklyValues) || valuesDiffer(splitValues) || valuesDiffer(roomValues);
+      const isReady = rows.every((row) => row.is_ready);
+      const hasOverride = sourceValues.includes("override");
+      const hasMissing = sourceValues.includes("manual_missing_catalog") || !isReady;
+
+      return {
+        key: `${first.level_code}:${first.subject_id || first.catalog_subject_id}`,
+        level_code: first.level_code,
+        level_label: levelLabelByCode.get(first.level_code) || first.level_code || "Niveau",
+        subject_id: first.subject_id,
+        subject_label: first.subject_label,
+        subject_code: first.subject_code,
+        catalog_subject_id: first.catalog_subject_id,
+        catalog_subject_label: first.catalog_subject_label,
+        weekly_units: first.weekly_units,
+        split_pattern: first.split_pattern,
+        room_type_required: first.room_type_required,
+        source: hasOverride ? "override" : hasMissing ? "manual_missing_catalog" : "default_catalog",
+        is_ready: isReady,
+        has_mixed_values: hasMixedValues,
+        services_count: rows.length,
+        classes_count: classLabels.length,
+        teachers_count: teacherIds.length,
+        class_labels: classLabels,
+        missing_reason: !isReady
+          ? `${rows.filter((row) => !row.is_ready).length} service(s) à compléter pour ${first.subject_label} en ${levelLabelByCode.get(first.level_code) || first.level_code}.`
+          : hasMixedValues
+            ? "Des valeurs différentes existent déjà selon les classes/services. Une sauvegarde ici uniformise ce niveau et cette matière."
+            : null,
+      } satisfies SubjectHourRow;
+    })
+    .sort((a, b) => {
+      const levelA = defaultLevels.find((level) => level.code === a.level_code)?.displayOrder ?? 999;
+      const levelB = defaultLevels.find((level) => level.code === b.level_code)?.displayOrder ?? 999;
+      if (levelA !== levelB) return levelA - levelB;
+      return a.subject_label.localeCompare(b.subject_label, "fr");
+    });
 }
 
 export function buildHoraclasseServiceAssignments(input: {
@@ -205,11 +321,11 @@ export function buildHoraclasseServiceAssignments(input: {
       inferCatalogSubjectId({
         code: subjectCode,
         label: subjectLabel,
-        fallbackId: subjectId,
+        fallbackId: "",
       });
 
-    const defaultHour = findHourForLevel(levelCode, catalogSubjectId);
-    const subject = getCatalogSubject(catalogSubjectId);
+    const defaultHour = catalogSubjectId ? findHourForLevel(levelCode, catalogSubjectId) : null;
+    const subject = catalogSubjectId ? getCatalogSubject(catalogSubjectId) : null;
     const override = exactOverrideMap.get(makeExactOverrideKey(classId, subjectId, teacherId)) ||
       classSubjectOverrideMap.get(makeClassSubjectOverrideKey(classId, subjectId));
 
@@ -234,8 +350,8 @@ export function buildHoraclasseServiceAssignments(input: {
       subject_id: subjectId,
       subject_label: subjectLabel,
       subject_code: subjectCode ? clean(subjectCode) : null,
-      catalog_subject_id: catalogSubjectId,
-      catalog_subject_label: subject?.shortName || subject?.name || subjectLabel || catalogSubjectId,
+      catalog_subject_id: catalogSubjectId || subjectId,
+      catalog_subject_label: subject?.shortName || subject?.name || subjectLabel,
       weekly_units: weeklyUnits,
       split_pattern: splitPattern,
       room_type_required: roomTypeRequired,
@@ -245,11 +361,13 @@ export function buildHoraclasseServiceAssignments(input: {
     } satisfies HoraclasseServiceMeta;
   });
 
+  const subject_hour_rows = buildSubjectHourRows(service_assignments);
   const catalog_coverage = buildCatalogCoverage(subjects);
   const missing_catalog_subjects = catalog_coverage.filter((item) => !item.exists_in_mon_cahier);
 
   const missingServices = service_assignments.filter((item) => !item.is_ready).length;
   const customized = service_assignments.filter((item) => item.source === "override").length;
+  const missingSubjectRows = subject_hour_rows.filter((item) => !item.is_ready).length;
 
   if (classes.length === 0) warnings.push("Aucune classe Mon Cahier détectée.");
   if (subjects.length === 0) warnings.push("Aucune matière Mon Cahier détectée.");
@@ -261,6 +379,7 @@ export function buildHoraclasseServiceAssignments(input: {
 
   return {
     service_assignments,
+    subject_hour_rows,
     catalog_coverage,
     missing_catalog_subjects,
     totals: {
@@ -271,6 +390,9 @@ export function buildHoraclasseServiceAssignments(input: {
       mon_cahier_subjects: subjects.length,
       catalog_subjects: defaultSubjects.length,
       catalog_subjects_missing_in_mon_cahier: missing_catalog_subjects.length,
+      subject_hour_rows: subject_hour_rows.length,
+      subject_hour_rows_ready: subject_hour_rows.length - missingSubjectRows,
+      subject_hour_rows_missing: missingSubjectRows,
     },
     warnings,
   };
