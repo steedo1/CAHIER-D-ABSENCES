@@ -324,6 +324,7 @@ export default function MontageWorkspace() {
                   <div className="mt-6 space-y-3 text-sm">
                     <Link href="/admin/montage-emploi-du-temps/volumes" className="block rounded-2xl bg-slate-50 p-4 font-bold text-slate-900 hover:bg-slate-100">Matières et heures</Link>
                     <Link href="/admin/montage-emploi-du-temps/services" className="block rounded-2xl bg-slate-50 p-4 font-bold text-slate-900 hover:bg-slate-100">Services enseignants</Link>
+                    <Link href="/admin/montage-emploi-du-temps/creneaux" className="block rounded-2xl bg-slate-50 p-4 font-bold text-slate-900 hover:bg-slate-100">Créneaux officiels</Link>
                     <Link href="/admin/montage-emploi-du-temps/regles-terrain" className="block rounded-2xl bg-slate-50 p-4 font-bold text-slate-900 hover:bg-slate-100">Règles terrain HoraClasse</Link>
                     <Link href="/admin/montage-emploi-du-temps/generation" className="block rounded-2xl bg-slate-50 p-4 font-bold text-slate-900 hover:bg-slate-100">Services & génération</Link>
                   </div>
