@@ -85,6 +85,21 @@ export type MontageBootstrapResponse =
       terrain_rules: MontageTerrainRules | null;
       rooms: MontageRoom[];
       teacher_unavailability: MontageTeacherUnavailability[];
+      catalog?: {
+        default_subjects_count: number;
+        default_subject_hours_count: number;
+        coverage?: Array<{
+          catalog_subject_id: string;
+          code: string;
+          name: string;
+          short_name: string;
+          exists_in_mon_cahier: boolean;
+          institution_subject_id: string | null;
+          institution_subject_label: string | null;
+          institution_subject_code: string | null;
+        }>;
+        missing_subjects?: Array<Record<string, unknown>>;
+      };
       warnings: string[];
     }
   | {

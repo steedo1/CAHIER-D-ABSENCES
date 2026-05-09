@@ -4,13 +4,11 @@ import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { defaultSubjectHours, defaultSubjects } from "@/modules/montage-emploi-du-temps/catalog/defaultCatalog";
 import {
   clean,
-  findDefaultSubjectHour,
-  getCatalogSubject,
   inferCatalogSubjectId,
   inferLevelCode,
   inferSeriesCode,
-  type HoraclasseServiceMeta,
 } from "@/modules/montage-emploi-du-temps/adapters/horaclasseModelHelpers";
+import { buildHoraclasseServiceAssignments } from "@/modules/montage-emploi-du-temps/adapters/buildHoraclasseServices";
 import { DEFAULT_TERRAIN_RULES } from "@/modules/montage-emploi-du-temps/scheduler/terrainRules";
 
 export const runtime = "nodejs";
@@ -124,60 +122,6 @@ async function guardAdmin() {
     userId: user.id,
     institutionId,
   };
-}
-
-function buildServiceAssignments(input: {
-  affectations: any[];
-  volumeOverrides: any[];
-}): HoraclasseServiceMeta[] {
-  const volumeMap = new Map<string, any>();
-  for (const item of input.volumeOverrides || []) {
-    volumeMap.set(`${item.class_id}:${item.subject_id}:${item.teacher_id}`, item);
-  }
-
-  return input.affectations.map((row) => {
-    const classId = clean(row.class_id);
-    const classLabel = clean(row.class_label, "Classe");
-    const levelCode = clean(row.level_code) || inferLevelCode(classLabel);
-    const seriesCode = clean(row.series_code) || inferSeriesCode(levelCode);
-    const catalogSubjectId = clean(row.catalog_subject_id) || inferCatalogSubjectId({
-      code: row.subject_code,
-      label: row.subject_label,
-      fallbackId: row.subject_id,
-    });
-    const defaultHour = findDefaultSubjectHour(levelCode, catalogSubjectId);
-    const subject = getCatalogSubject(catalogSubjectId);
-    const override = volumeMap.get(`${classId}:${row.subject_id}:${row.teacher_id}`);
-
-    const weeklyUnits = override?.weekly_units ?? defaultHour?.weeklyUnits ?? null;
-    const splitPattern = override?.split_pattern ?? defaultHour?.splitPattern ?? null;
-    const roomTypeRequired =
-      override?.room_type_required ?? defaultHour?.roomTypeRequired ?? subject?.defaultRoomType ?? null;
-
-    const missingReason = !weeklyUnits || !splitPattern
-      ? `Référentiel HoraClasse introuvable pour ${classLabel} / ${clean(row.subject_label, "Matière")}.`
-      : null;
-
-    return {
-      class_id: classId,
-      class_label: classLabel,
-      level_code: levelCode,
-      series_code: seriesCode,
-      teacher_id: clean(row.teacher_id),
-      teacher_name: clean(row.teacher_name, "Enseignant"),
-      subject_id: clean(row.subject_id),
-      subject_label: clean(row.subject_label, "Matière"),
-      subject_code: row.subject_code ? clean(row.subject_code) : null,
-      catalog_subject_id: catalogSubjectId,
-      catalog_subject_label: subject?.shortName || subject?.name || catalogSubjectId,
-      weekly_units: weeklyUnits === null ? null : Number(weeklyUnits),
-      split_pattern: splitPattern,
-      room_type_required: roomTypeRequired,
-      source: override ? "override" : defaultHour ? "default_catalog" : "manual_missing_catalog",
-      is_ready: Boolean(weeklyUnits && splitPattern),
-      missing_reason: missingReason,
-    } satisfies HoraclasseServiceMeta;
-  });
 }
 
 export async function GET() {
@@ -319,10 +263,14 @@ export async function GET() {
         .eq("institution_id", institutionId),
     ]);
 
-    const serviceAssignments = buildServiceAssignments({
+    const serviceBuild = buildHoraclasseServiceAssignments({
+      classes,
+      subjects,
       affectations,
       volumeOverrides: volumesRes.data || [],
     });
+
+    const serviceAssignments = serviceBuild.service_assignments;
 
     const teacherMap = new Map<string, { id: string; display_name: string; email: string | null; phone: string | null }>();
     for (const row of affectationsRes.data || []) {
@@ -347,13 +295,12 @@ export async function GET() {
       duration_min: Number(item.duration_min ?? institution?.default_session_minutes ?? 60),
     }));
 
-    const warnings: string[] = [];
-    if (classes.length === 0) warnings.push("Aucune classe détectée.");
-    if (subjects.length === 0) warnings.push("Aucune matière détectée.");
-    if (periods.length === 0) warnings.push("Aucun créneau horaire détecté.");
-    if (affectations.length === 0) warnings.push("Aucune affectation active enseignant-matière-classe détectée.");
-    const missingServices = serviceAssignments.filter((item) => !item.is_ready).length;
-    if (missingServices > 0) warnings.push(`${missingServices} service(s) sans correspondance complète dans le référentiel HoraClasse.`);
+    const warnings = Array.from(
+      new Set([
+        ...(periods.length === 0 ? ["Aucun créneau horaire détecté."] : []),
+        ...serviceBuild.warnings,
+      ]),
+    );
 
     return NextResponse.json({
       ok: true,
@@ -376,6 +323,8 @@ export async function GET() {
       catalog: {
         default_subjects_count: defaultSubjects.length,
         default_subject_hours_count: defaultSubjectHours.length,
+        coverage: serviceBuild.catalog_coverage,
+        missing_subjects: serviceBuild.missing_catalog_subjects,
       },
       warnings,
     });
