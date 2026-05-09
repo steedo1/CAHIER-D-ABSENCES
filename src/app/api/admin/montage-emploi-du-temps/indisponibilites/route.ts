@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+﻿import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 
@@ -70,7 +70,7 @@ async function guardAdmin() {
   if (!user) {
     return {
       ok: false as const,
-      response: NextResponse.json({ ok: false, error: "unauthorized", message: "Utilisateur non connecté." }, { status: 401 }),
+      response: NextResponse.json({ ok: false, error: "unauthorized", message: "Utilisateur non connectÃ©." }, { status: 401 }),
     };
   }
 
@@ -91,7 +91,7 @@ async function guardAdmin() {
   if (!institutionId) {
     return {
       ok: false as const,
-      response: NextResponse.json({ ok: false, error: "no_institution", message: "Aucune institution associée à ce compte." }, { status: 400 }),
+      response: NextResponse.json({ ok: false, error: "no_institution", message: "Aucune institution associÃ©e Ã  ce compte." }, { status: 400 }),
     };
   }
 
@@ -124,7 +124,7 @@ function teacherName(teacher: any) {
 }
 
 function subjectLabel(instsub: any, subj: any) {
-  return clean(instsub?.custom_name || subj?.name || subj?.code, "Matière");
+  return clean(instsub?.custom_name || subj?.name || subj?.code, "MatiÃ¨re");
 }
 
 export async function GET() {
@@ -201,7 +201,7 @@ export async function GET() {
       id: String(period.id),
       weekday: Number(period.weekday || 0),
       period_no: Number(period.period_no || 0),
-      label: clean(period.label, `Créneau ${period.period_no || ""}`),
+      label: clean(period.label, `CrÃ©neau ${period.period_no || ""}`),
       start_time: period.start_time || null,
       end_time: period.end_time || null,
       duration_min: period.duration_min == null ? null : Number(period.duration_min),
@@ -225,7 +225,7 @@ export async function GET() {
     return NextResponse.json({
       ok: true,
       source: "mon_cahier_affectations_and_official_periods",
-      message: "Les indisponibilités utilisent les enseignants déjà affectés dans Mon Cahier et les créneaux officiels institution_periods.",
+      message: "Les indisponibilitÃ©s utilisent les enseignants dÃ©jÃ  affectÃ©s dans Mon Cahier et les crÃ©neaux officiels institution_periods.",
       subjects,
       teachers,
       periods,
@@ -237,8 +237,8 @@ export async function GET() {
         items: items.length,
       },
       warnings: [
-        ...(teachers.length === 0 ? ["Aucun enseignant affecté détecté dans Mon Cahier."] : []),
-        ...(periods.length === 0 ? ["Aucun créneau officiel configuré dans Mon Cahier."] : []),
+        ...(teachers.length === 0 ? ["Aucun enseignant affectÃ© dÃ©tectÃ© dans Mon Cahier."] : []),
+        ...(periods.length === 0 ? ["Aucun crÃ©neau officiel configurÃ© dans Mon Cahier."] : []),
       ],
     });
   } catch (error) {
@@ -291,7 +291,7 @@ export async function POST(req: NextRequest) {
         .single();
 
       if (error) return NextResponse.json({ ok: false, error: "save_failed", message: error.message }, { status: 400 });
-      return NextResponse.json({ ok: true, item: data, inserted_count: 0, skipped_count: 0, message: "Indisponibilité mise à jour." });
+      return NextResponse.json({ ok: true, item: data, inserted_count: 0, skipped_count: 0, message: "IndisponibilitÃ© mise Ã  jour." });
     }
 
     let targetRows: Array<{
@@ -317,7 +317,7 @@ export async function POST(req: NextRequest) {
         .maybeSingle();
 
       if (periodErr) return NextResponse.json({ ok: false, error: "period_fetch_failed", message: periodErr.message }, { status: 400 });
-      if (!period) return NextResponse.json({ ok: false, error: "period_not_found", message: "Créneau officiel introuvable." }, { status: 404 });
+      if (!period) return NextResponse.json({ ok: false, error: "period_not_found", message: "CrÃ©neau officiel introuvable." }, { status: 404 });
 
       targetRows = [
         {
@@ -346,7 +346,7 @@ export async function POST(req: NextRequest) {
         weekday,
         period_id: null,
         period_no: null,
-        half_day,
+        half_day: halfDay,
         constraint_type: constraintType,
         reason,
         is_active: isActive,
@@ -373,7 +373,7 @@ export async function POST(req: NextRequest) {
     });
 
     if (rowsToInsert.length === 0) {
-      return NextResponse.json({ ok: true, inserted_count: 0, skipped_count: targetRows.length, message: "Cette indisponibilité existe déjà." });
+      return NextResponse.json({ ok: true, inserted_count: 0, skipped_count: targetRows.length, message: "Cette indisponibilitÃ© existe dÃ©jÃ ." });
     }
 
     const { data, error } = await guard.srv
@@ -388,7 +388,7 @@ export async function POST(req: NextRequest) {
       items: data || [],
       inserted_count: rowsToInsert.length,
       skipped_count: targetRows.length - rowsToInsert.length,
-      message: `${rowsToInsert.length} indisponibilité(s) sauvegardée(s).`,
+      message: `${rowsToInsert.length} indisponibilitÃ©(s) sauvegardÃ©e(s).`,
     });
   } catch (error) {
     return NextResponse.json({ ok: false, error: "server_error", message: error instanceof Error ? error.message : "Erreur serveur." }, { status: 500 });
@@ -413,7 +413,7 @@ export async function DELETE(req: NextRequest) {
         .eq("institution_id", guard.institutionId);
 
       if (error) return NextResponse.json({ ok: false, error: "delete_failed", message: error.message }, { status: 400 });
-      return NextResponse.json({ ok: true, message: "Indisponibilité supprimée." });
+      return NextResponse.json({ ok: true, message: "IndisponibilitÃ© supprimÃ©e." });
     }
 
     if (allForTeacher && teacherId) {
@@ -424,7 +424,7 @@ export async function DELETE(req: NextRequest) {
         .eq("teacher_id", teacherId);
 
       if (error) return NextResponse.json({ ok: false, error: "delete_failed", message: error.message }, { status: 400 });
-      return NextResponse.json({ ok: true, message: "Toutes les indisponibilités du professeur ont été supprimées." });
+      return NextResponse.json({ ok: true, message: "Toutes les indisponibilitÃ©s du professeur ont Ã©tÃ© supprimÃ©es." });
     }
 
     return NextResponse.json({ ok: false, error: "missing_id", message: "Identifiant manquant." }, { status: 400 });
@@ -432,3 +432,4 @@ export async function DELETE(req: NextRequest) {
     return NextResponse.json({ ok: false, error: "server_error", message: error instanceof Error ? error.message : "Erreur serveur." }, { status: 500 });
   }
 }
+
