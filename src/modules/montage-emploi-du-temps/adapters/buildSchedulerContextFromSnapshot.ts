@@ -172,14 +172,34 @@ export function buildSchedulerContextFromSnapshot(
     .filter((room) => room.id && room.name);
 
   const rooms: Room[] = roomsFromSnapshot.length > 0 ? roomsFromSnapshot : defaultRoomsForClasses(classes);
+  const roomIds = new Set(rooms.map((room) => room.id));
+  const classIds = new Set(classes.map((schoolClass) => schoolClass.id));
 
-  const roomPreferences: ClassRoomPreference[] = classes.map((schoolClass) => ({
-    classId: schoolClass.id,
-    roomId: rooms.find((room) => room.id === `room_${schoolClass.id}`)?.id || rooms[0]?.id || "",
-    priority: 1,
-    usageType: "main" as const,
-    isAllowed: true,
-  })).filter((item) => item.roomId);
+  const savedRoomPreferences: ClassRoomPreference[] = asArray(snapshot.room_preferences || snapshot.roomPreferences)
+    .map((item) => {
+      const classId = clean(item.class_id || item.classId);
+      const roomId = clean(item.resource_id || item.room_id || item.roomId);
+      const rawUsage = clean(item.usage_type || item.usageType || "main");
+      const usageType = rawUsage === "main" ? "main" : rawUsage === "specialized" ? "specialized" : "alternative";
+      return {
+        classId,
+        roomId,
+        priority: toNumber(item.priority, usageType === "main" ? 1 : 2),
+        usageType: usageType as ClassRoomPreference["usageType"],
+        isAllowed: item.is_allowed === false || item.isAllowed === false || rawUsage === "forbidden" ? false : true,
+      };
+    })
+    .filter((item) => item.classId && item.roomId && item.isAllowed && classIds.has(item.classId) && roomIds.has(item.roomId));
+
+  const roomPreferences: ClassRoomPreference[] = savedRoomPreferences.length > 0
+    ? savedRoomPreferences
+    : classes.map((schoolClass) => ({
+        classId: schoolClass.id,
+        roomId: rooms.find((room) => room.id === `room_${schoolClass.id}`)?.id || rooms[0]?.id || "",
+        priority: 1,
+        usageType: "main" as const,
+        isAllowed: true,
+      })).filter((item) => item.roomId);
 
   const serviceAssignments: ServiceAssignment[] = [];
   const serviceMetaByPlacementKey: Record<string, HoraclasseServiceMeta> = {};
@@ -238,6 +258,8 @@ export function buildSchedulerContextFromSnapshot(
 
   if (classes.length === 0) diagnostics.push({ level: "error", message: "Aucune classe disponible." });
   if (periods.length === 0) diagnostics.push({ level: "error", message: "Aucun créneau officiel disponible." });
+  if (roomsFromSnapshot.length === 0) diagnostics.push({ level: "warning", message: "Aucune salle HoraClasse configurée : le moteur utilisera des salles par défaut temporaires." });
+  if (savedRoomPreferences.length === 0 && classes.length > 0) diagnostics.push({ level: "info", message: "Aucune affectation salle-classe enregistrée : le moteur appliquera une affectation automatique." });
   if (serviceAssignments.length === 0) {
     diagnostics.push({
       level: "error",

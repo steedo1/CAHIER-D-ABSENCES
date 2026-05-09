@@ -176,6 +176,7 @@ export default function MontageWorkspace() {
         service_assignments: data.service_assignments,
         terrain_rules: data.terrain_rules,
         rooms: data.rooms,
+        room_preferences: data.room_preferences || [],
         teacher_unavailability: data.teacher_unavailability,
         saved_at: now.toISOString(),
       };
@@ -325,7 +326,9 @@ export default function MontageWorkspace() {
                     <Link href="/admin/montage-emploi-du-temps/volumes" className="block rounded-2xl bg-slate-50 p-4 font-bold text-slate-900 hover:bg-slate-100">Matières et heures</Link>
                     <Link href="/admin/montage-emploi-du-temps/services" className="block rounded-2xl bg-slate-50 p-4 font-bold text-slate-900 hover:bg-slate-100">Services enseignants</Link>
                     <Link href="/admin/montage-emploi-du-temps/creneaux" className="block rounded-2xl bg-slate-50 p-4 font-bold text-slate-900 hover:bg-slate-100">Créneaux officiels</Link>
+                    <Link href="/admin/montage-emploi-du-temps/ressources" className="block rounded-2xl bg-slate-50 p-4 font-bold text-slate-900 hover:bg-slate-100">Salles & ressources</Link>
                     <Link href="/admin/montage-emploi-du-temps/regles-terrain" className="block rounded-2xl bg-slate-50 p-4 font-bold text-slate-900 hover:bg-slate-100">Règles terrain HoraClasse</Link>
+                    <Link href="/admin/montage-emploi-du-temps/indisponibilites" className="block rounded-2xl bg-slate-50 p-4 font-bold text-slate-900 hover:bg-slate-100">Indisponibilités enseignants</Link>
                     <Link href="/admin/montage-emploi-du-temps/generation" className="block rounded-2xl bg-slate-50 p-4 font-bold text-slate-900 hover:bg-slate-100">Services & génération</Link>
                   </div>
                 </div>

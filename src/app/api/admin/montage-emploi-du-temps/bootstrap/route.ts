@@ -243,7 +243,7 @@ export async function GET() {
       };
     });
 
-    const [volumesRes, rulesRes, roomsRes, unavRes] = await Promise.all([
+    const [volumesRes, rulesRes, roomsRes, roomPrefsRes, unavRes] = await Promise.all([
       srv
         .from("montage_timetable_subject_hours")
         .select("*")
@@ -255,6 +255,10 @@ export async function GET() {
         .maybeSingle(),
       srv
         .from("montage_timetable_resources")
+        .select("*")
+        .eq("institution_id", institutionId),
+      srv
+        .from("montage_timetable_class_room_preferences")
         .select("*")
         .eq("institution_id", institutionId),
       srv
@@ -298,6 +302,7 @@ export async function GET() {
     const warnings = Array.from(
       new Set([
         ...(periods.length === 0 ? ["Aucun créneau horaire détecté."] : []),
+        ...((roomsRes.data || []).length === 0 ? ["Aucune salle ou ressource HoraClasse détectée."] : []),
         ...serviceBuild.warnings,
       ]),
     );
@@ -319,6 +324,7 @@ export async function GET() {
       service_assignments: serviceAssignments,
       terrain_rules: rulesRes.data?.rules || DEFAULT_TERRAIN_RULES,
       rooms: roomsRes.data || [],
+      room_preferences: roomPrefsRes.data || [],
       teacher_unavailability: unavRes.data || [],
       catalog: {
         default_subjects_count: defaultSubjects.length,
