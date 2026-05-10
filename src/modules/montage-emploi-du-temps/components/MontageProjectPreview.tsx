@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import Link from "next/link";
 import React from "react";
@@ -118,7 +118,7 @@ const WEEKDAYS: Record<number, string> = {
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function formatDate(value?: string) {
-  if (!value) return "—";
+  if (!value) return "â€”";
 
   try {
     return new Intl.DateTimeFormat("fr-FR", {
@@ -130,7 +130,7 @@ function formatDate(value?: string) {
   }
 }
 
-function clean(value: unknown, fallback = "—") {
+function clean(value: unknown, fallback = "â€”") {
   const text = String(value ?? "").trim();
   return text || fallback;
 }
@@ -218,7 +218,7 @@ function getSnapshotPeriods(snapshot?: SourceSnapshot | null): PeriodRow[] {
     byNo.set(periodNo, {
       type: "period",
       period_no: periodNo,
-      label: clean(item.label, `Séance ${periodNo}`),
+      label: clean(item.label, `SÃ©ance ${periodNo}`),
       start_time: emptyToBlank(item.start_time || item.startTime),
       end_time: emptyToBlank(item.end_time || item.endTime),
     });
@@ -255,7 +255,7 @@ function getPeriods(items: Assignment[], snapshot?: SourceSnapshot | null) {
       .map((item) => ({
         type: "period" as const,
         period_no: Number(item.period_no || 0),
-        label: item.period_label || `Séance ${item.period_no}`,
+        label: item.period_label || `SÃ©ance ${item.period_no}`,
         start_time: emptyToBlank(item.start_time),
         end_time: emptyToBlank(item.end_time),
       })),
@@ -284,7 +284,7 @@ function buildRows(periods: PeriodRow[]): TimetableRow[] {
       rows.push({
         type: isInterclass ? "interclass" : "break",
         key: `${period.period_no}-${next.period_no}-${gap}`,
-        label: isInterclass ? "INTERCLASSE" : "R É C R É A T I O N",
+        label: isInterclass ? "INTERCLASSE" : "R Ã‰ C R Ã‰ A T I O N",
       });
     }
   });
@@ -382,7 +382,7 @@ function CourseBlock({ item, mode, roomMap }: { item: Assignment; mode: ViewMode
   return (
     <div className="flex h-full min-h-[58px] flex-col items-center justify-center px-1 py-1 text-center leading-tight">
       <strong className="block max-w-full truncate text-[13px] font-black text-slate-950">
-        {clean(item.subject_label, "Matière")}
+        {clean(item.subject_label, "MatiÃ¨re")}
       </strong>
       <span className="mt-1 block max-w-full truncate text-[11px] font-bold text-slate-800">
         {getSecondaryLabel(item, mode)}
@@ -419,7 +419,7 @@ function OfficialTimetableGrid({
   if (days.length === 0 || periods.length === 0) {
     return (
       <div className="rounded-3xl border border-dashed border-slate-300 bg-slate-50 p-6 text-center text-sm font-semibold text-slate-500">
-        Impossible de construire la grille : jours ou créneaux officiels manquants.
+        Impossible de construire la grille : jours ou crÃ©neaux officiels manquants.
       </div>
     );
   }
@@ -451,21 +451,23 @@ function OfficialTimetableGrid({
               );
             }
 
+            const period = row as PeriodRow;
+
             return (
-              <tr key={row.period_no} className="align-middle">
+              <tr key={period.period_no} className="align-middle">
                 <th className="border border-slate-900 bg-white px-2 py-3 text-center text-[12px] font-black">
-                  {timeLabel(row)}
+                  {timeLabel(period)}
                 </th>
                 {days.map((day) => {
-                  if (isCoveredByPrevious(items, blockStartMap, day, row.period_no)) {
+                  if (isCoveredByPrevious(items, blockStartMap, day, period.period_no)) {
                     return null;
                   }
 
-                  const cellItems = getCellItems(items, blockStartMap, day, row.period_no);
+                  const cellItems = getCellItems(items, blockStartMap, day, period.period_no);
                   const rowSpan = Math.max(1, ...cellItems.map(getSpan));
 
                   return (
-                    <td key={`${day}-${row.period_no}`} rowSpan={rowSpan} className="h-[76px] border border-slate-900 bg-white p-1 text-center align-middle">
+                    <td key={`${day}-${period.period_no}`} rowSpan={rowSpan} className="h-[76px] border border-slate-900 bg-white p-1 text-center align-middle">
                       {cellItems.length === 0 ? null : (
                         <div className="flex h-full flex-col items-center justify-center gap-1">
                           {cellItems.map((item, index) => (
@@ -489,7 +491,7 @@ function buildTeacherRows(items: Assignment[]) {
   const map = new Map<string, string>();
 
   for (const item of items) {
-    const subject = clean(item.subject_label, "Matière");
+    const subject = clean(item.subject_label, "MatiÃ¨re");
     const teacher = clean(item.teacher_name, "Enseignant");
     if (!map.has(subject)) map.set(subject, teacher);
   }
@@ -518,10 +520,10 @@ function OfficialClassSheet({
       <div className="border-b border-slate-200 bg-white px-4 py-4 print:border-0 print:pb-2">
         <div className="hidden print:block">
           <div className="mb-3 flex flex-wrap gap-8 text-[11px] text-black">
-            <span>Établissement : ....................................</span>
-            <span>Année scolaire : 20.... / 20......</span>
+            <span>Ã‰tablissement : ....................................</span>
+            <span>AnnÃ©e scolaire : 20.... / 20......</span>
             <span>BP : ............</span>
-            <span>Tél : ............</span>
+            <span>TÃ©l : ............</span>
             <span>Fax : ............</span>
             <span>Email : ....................</span>
           </div>
@@ -551,7 +553,7 @@ function OfficialClassSheet({
           <aside className="rounded-2xl border border-slate-900 bg-white p-0 print:rounded-none">
             <div className="border-b border-slate-900 px-2 py-2 text-center">
               <h4 className="text-sm font-black uppercase text-slate-950">PROFESSEURS DE LA CLASSE</h4>
-              <p className="text-[10px] font-semibold text-slate-600">Ou équipe pédagogique</p>
+              <p className="text-[10px] font-semibold text-slate-600">Ou Ã©quipe pÃ©dagogique</p>
             </div>
             <table className="w-full border-collapse text-[11px]">
               <tbody>
@@ -573,14 +575,14 @@ function OfficialClassSheet({
           <table className="w-full border-collapse text-[11px]">
             <thead>
               <tr>
-                <th className="border border-black py-1 text-center font-black">PERSONNEL D’ENCADREMENT</th>
-                <th className="border border-black py-1 text-center font-black">TÉLÉPHONE</th>
+                <th className="border border-black py-1 text-center font-black">PERSONNEL Dâ€™ENCADREMENT</th>
+                <th className="border border-black py-1 text-center font-black">TÃ‰LÃ‰PHONE</th>
               </tr>
             </thead>
             <tbody>
-              <tr><td className="border border-black px-2 py-1">Inspecteur d’Éducation</td><td className="border border-black" /></tr>
-              <tr><td className="border border-black px-2 py-1">Éducateur</td><td className="border border-black" /></tr>
-              <tr><td className="border border-black px-2 py-1">PP (chef équipe péda.)</td><td className="border border-black" /></tr>
+              <tr><td className="border border-black px-2 py-1">Inspecteur dâ€™Ã‰ducation</td><td className="border border-black" /></tr>
+              <tr><td className="border border-black px-2 py-1">Ã‰ducateur</td><td className="border border-black" /></tr>
+              <tr><td className="border border-black px-2 py-1">PP (chef Ã©quipe pÃ©da.)</td><td className="border border-black" /></tr>
             </tbody>
           </table>
         </div>
@@ -608,7 +610,7 @@ function ListView({ groups, mode, snapshot }: { groups: Array<{ label: string; i
                 <tr className="text-left text-xs font-black uppercase tracking-wide text-slate-500">
                   <th className="px-4 py-3">Jour</th>
                   <th className="px-4 py-3">Horaire</th>
-                  <th className="px-4 py-3">Matière</th>
+                  <th className="px-4 py-3">MatiÃ¨re</th>
                   <th className="px-4 py-3">{mode === "class" ? "Professeur" : "Classe"}</th>
                   <th className="px-4 py-3">Salle</th>
                 </tr>
@@ -617,10 +619,10 @@ function ListView({ groups, mode, snapshot }: { groups: Array<{ label: string; i
                 {sortAssignments(group.items).map((item, index) => (
                   <tr key={`${item.id || index}-list`}>
                     <td className="px-4 py-3 font-bold text-slate-900">{dayLabel(Number(item.weekday || 0))}</td>
-                    <td className="px-4 py-3 text-slate-600">{item.start_time && item.end_time ? `${shortTime(item.start_time)}-${shortTime(item.end_time)}` : item.period_label || `Séance ${item.period_no || "?"}`}</td>
-                    <td className="px-4 py-3 font-black text-slate-950">{clean(item.subject_label, "Matière")}</td>
+                    <td className="px-4 py-3 text-slate-600">{item.start_time && item.end_time ? `${shortTime(item.start_time)}-${shortTime(item.end_time)}` : item.period_label || `SÃ©ance ${item.period_no || "?"}`}</td>
+                    <td className="px-4 py-3 font-black text-slate-950">{clean(item.subject_label, "MatiÃ¨re")}</td>
                     <td className="px-4 py-3 text-slate-700">{getSecondaryLabel(item, mode)}</td>
-                    <td className="px-4 py-3 text-slate-700">{getRoomName(item, roomMap) || "—"}</td>
+                    <td className="px-4 py-3 text-slate-700">{getRoomName(item, roomMap) || "â€”"}</td>
                   </tr>
                 ))}
               </tbody>
@@ -729,17 +731,17 @@ export default function MontageProjectPreview({ projectId }: { projectId: string
                 Grille HoraClasse officielle
               </div>
               <h1 className="mt-5 text-3xl font-black tracking-tight text-white sm:text-4xl">
-                {project?.name || "Emploi du temps généré"}
+                {project?.name || "Emploi du temps gÃ©nÃ©rÃ©"}
               </h1>
               <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-300 sm:text-base">
-                Présentation rapprochée du rendu HoraClasse : grille administrative, blocs fusionnés sur 2h, pas d’UUID affiché, tableau des professeurs pour les classes.
+                PrÃ©sentation rapprochÃ©e du rendu HoraClasse : grille administrative, blocs fusionnÃ©s sur 2h, pas dâ€™UUID affichÃ©, tableau des professeurs pour les classes.
               </p>
               {project && (
                 <div className="mt-5 flex flex-wrap gap-2 text-xs font-bold">
                   <span className="rounded-full bg-white px-3 py-1 text-slate-950">Statut : {project.status}</span>
-                  <span className="rounded-full bg-white/10 px-3 py-1 text-slate-200 ring-1 ring-white/10">Modifié le {formatDate(project.updated_at)}</span>
+                  <span className="rounded-full bg-white/10 px-3 py-1 text-slate-200 ring-1 ring-white/10">ModifiÃ© le {formatDate(project.updated_at)}</span>
                   {result?.generated_at ? (
-                    <span className="rounded-full bg-white/10 px-3 py-1 text-slate-200 ring-1 ring-white/10">Généré le {formatDate(result.generated_at)}</span>
+                    <span className="rounded-full bg-white/10 px-3 py-1 text-slate-200 ring-1 ring-white/10">GÃ©nÃ©rÃ© le {formatDate(result.generated_at)}</span>
                   ) : null}
                 </div>
               )}
@@ -750,7 +752,7 @@ export default function MontageProjectPreview({ projectId }: { projectId: string
         {loading && (
           <div className="flex items-center gap-3 rounded-3xl border border-slate-200 bg-white p-5 text-sm font-semibold text-slate-700 shadow-sm print:hidden">
             <Loader2 className="h-5 w-5 animate-spin" />
-            Chargement de l’aperçu...
+            Chargement de lâ€™aperÃ§u...
           </div>
         )}
 
@@ -759,7 +761,7 @@ export default function MontageProjectPreview({ projectId }: { projectId: string
             <div className="flex items-start gap-3">
               <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" />
               <div>
-                <p className="font-black">Impossible de charger l’aperçu</p>
+                <p className="font-black">Impossible de charger lâ€™aperÃ§u</p>
                 <p className="mt-1 text-sm">{error}</p>
               </div>
             </div>
@@ -769,8 +771,8 @@ export default function MontageProjectPreview({ projectId }: { projectId: string
         {!loading && project && (
           <>
             <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4 print:hidden">
-              <StatBox label="Cours placés" value={result?.summary?.assignments_count ?? assignments.length} />
-              <StatBox label="Blocs non placés" value={result?.summary?.unplaced_count ?? unplaced.length} />
+              <StatBox label="Cours placÃ©s" value={result?.summary?.assignments_count ?? assignments.length} />
+              <StatBox label="Blocs non placÃ©s" value={result?.summary?.unplaced_count ?? unplaced.length} />
               <StatBox label="Score" value={`${result?.summary?.score ?? 0}%`} />
               <StatBox label="Moteur" value={result?.status === "generated_real_scheduler" ? "HoraClasse" : "En attente"} />
             </div>
@@ -780,8 +782,8 @@ export default function MontageProjectPreview({ projectId }: { projectId: string
                 <div className="flex items-start gap-3">
                   <Clock3 className="mt-0.5 h-5 w-5 shrink-0" />
                   <div>
-                    <p className="font-black">Aucun emploi du temps généré</p>
-                    <p className="mt-1 text-sm">Retourne sur la page Montage emploi du temps, puis clique sur “Générer avec HoraClasse”.</p>
+                    <p className="font-black">Aucun emploi du temps gÃ©nÃ©rÃ©</p>
+                    <p className="mt-1 text-sm">Retourne sur la page Montage emploi du temps, puis clique sur â€œGÃ©nÃ©rer avec HoraClasseâ€.</p>
                   </div>
                 </div>
               </div>
@@ -791,10 +793,10 @@ export default function MontageProjectPreview({ projectId }: { projectId: string
                   <div>
                     <h2 className="flex items-center gap-2 text-xl font-black">
                       <Grid3X3 className="h-5 w-5 text-slate-500" />
-                      Aperçu emploi du temps
+                      AperÃ§u emploi du temps
                     </h2>
                     <p className="mt-1 text-sm text-slate-500">
-                      Grille officielle : les blocs de 2h sont fusionnés et les salles affichent leur nom, jamais leur identifiant technique.
+                      Grille officielle : les blocs de 2h sont fusionnÃ©s et les salles affichent leur nom, jamais leur identifiant technique.
                     </p>
                   </div>
 
@@ -888,10 +890,10 @@ export default function MontageProjectPreview({ projectId }: { projectId: string
                     <h2 className="font-black">Diagnostics HoraClasse</h2>
                     <div className="mt-3 space-y-2 text-sm">
                       {diagnostics.map((item, index) => (
-                        <p key={`diagnostic-${index}`}>• {item.message || "Alerte sans message"}</p>
+                        <p key={`diagnostic-${index}`}>â€¢ {item.message || "Alerte sans message"}</p>
                       ))}
                       {unplaced.map((item, index) => (
-                        <p key={`unplaced-${index}`}>• Non placé : {clean(item.class_label, "Classe")} — {clean(item.subject_label, "Matière")} — {clean(item.teacher_name, "Enseignant")}</p>
+                        <p key={`unplaced-${index}`}>â€¢ Non placÃ© : {clean(item.class_label, "Classe")} â€” {clean(item.subject_label, "MatiÃ¨re")} â€” {clean(item.teacher_name, "Enseignant")}</p>
                       ))}
                     </div>
                   </div>
@@ -904,3 +906,4 @@ export default function MontageProjectPreview({ projectId }: { projectId: string
     </main>
   );
 }
+
