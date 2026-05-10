@@ -130,7 +130,8 @@ const WEEKDAYS: Record<number, string> = {
   7: "DIMANCHE",
 };
 
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function formatDate(value?: string) {
   if (!value) return "—";
@@ -208,7 +209,9 @@ function sortAssignments(items: Assignment[]) {
     const bp = getNumeric(b.period_no);
     if (ap !== bp) return ap - bp;
 
-    return clean(a.subject_label).localeCompare(clean(b.subject_label), "fr", { numeric: true });
+    return clean(a.subject_label).localeCompare(clean(b.subject_label), "fr", {
+      numeric: true,
+    });
   });
 }
 
@@ -222,11 +225,15 @@ function uniqueBy<T>(items: T[], getKey: (item: T) => string) {
 }
 
 function getTargetLabel(item: Assignment, mode: ViewMode) {
-  return mode === "class" ? clean(item.class_label, "Classe") : clean(item.teacher_name, "Enseignant");
+  return mode === "class"
+    ? clean(item.class_label, "Classe")
+    : clean(item.teacher_name, "Enseignant");
 }
 
 function getSecondaryLabel(item: Assignment, mode: ViewMode) {
-  return mode === "class" ? clean(item.teacher_name, "Enseignant") : clean(item.class_label, "Classe");
+  return mode === "class"
+    ? clean(item.teacher_name, "Enseignant")
+    : clean(item.class_label, "Classe");
 }
 
 function groupTargets(items: Assignment[], mode: ViewMode) {
@@ -249,7 +256,9 @@ function getSnapshotPeriods(snapshot?: SourceSnapshot | null): PeriodRow[] {
   const byKey = new Map<string, PeriodRow>();
 
   for (const item of raw) {
-    const periodNo = getNumeric(item.period_no || item.periodNo || item.no || item.index);
+    const periodNo = getNumeric(
+      item.period_no || item.periodNo || item.no || item.index,
+    );
     const start = emptyToBlank(item.start_time || item.startTime || item.start);
     const end = emptyToBlank(item.end_time || item.endTime || item.end);
     const key = periodNo ? `no-${periodNo}` : `${start}-${end}`;
@@ -259,7 +268,10 @@ function getSnapshotPeriods(snapshot?: SourceSnapshot | null): PeriodRow[] {
     byKey.set(key, {
       type: "period",
       period_no: periodNo || byKey.size + 1,
-      label: clean(item.label || item.name, periodNo ? `Séance ${periodNo}` : `Créneau ${byKey.size + 1}`),
+      label: clean(
+        item.label || item.name,
+        periodNo ? `Séance ${periodNo}` : `Créneau ${byKey.size + 1}`,
+      ),
       start_time: start,
       end_time: end,
     });
@@ -271,7 +283,12 @@ function getSnapshotPeriods(snapshot?: SourceSnapshot | null): PeriodRow[] {
 function getDays(items: Assignment[], snapshot?: SourceSnapshot | null) {
   const fromSnapshot = uniqueBy(
     (Array.isArray(snapshot?.periods) ? snapshot?.periods || [] : [])
-      .flatMap((item) => [item.weekday, item.day, item.day_index, item.dayIndex])
+      .flatMap((item) => [
+        item.weekday,
+        item.day,
+        item.day_index,
+        item.dayIndex,
+      ])
       .map((day) => getNumeric(day))
       .filter((day) => day >= 1 && day <= 7),
     (day) => String(day),
@@ -306,7 +323,10 @@ function getPeriods(items: Assignment[], snapshot?: SourceSnapshot | null) {
     byKey.set(key, {
       type: "period",
       period_no: periodNo || byKey.size + 1,
-      label: clean(item.period_label, periodNo ? `Séance ${periodNo}` : `Créneau ${byKey.size + 1}`),
+      label: clean(
+        item.period_label,
+        periodNo ? `Séance ${periodNo}` : `Créneau ${byKey.size + 1}`,
+      ),
       start_time: start,
       end_time: end,
     });
@@ -329,7 +349,8 @@ function buildRows(periods: PeriodRow[]): TimetableRow[] {
     const gap = start && end ? start - end : 0;
 
     if (gap >= 8) {
-      const isInterclass = gap >= 35 || (end <= 13 * 60 + 30 && start >= 13 * 60 + 30);
+      const isInterclass =
+        gap >= 35 || (end <= 13 * 60 + 30 && start >= 13 * 60 + 30);
       rows.push({
         type: isInterclass ? "interclass" : "break",
         key: `${period.period_no}-${next.period_no}-${gap}`,
@@ -349,11 +370,16 @@ function normalizeRoomName(value: string) {
   if (lower.startsWith("room_") || lower.startsWith("room-")) return "";
   if (lower.includes("-02c035c") || lower.includes("-97f1-")) return "";
 
-  if (["pc_lab_default", "pc lab default", "pclabdefault"].includes(lower)) return "Labo P.C";
-  if (["svt_lab_default", "svt lab default", "svtlabdefault"].includes(lower)) return "Labo SVT";
-  if (["computer_lab_default", "computer lab default"].includes(lower)) return "Salle informatique";
-  if (["sports_field_default", "sports field default"].includes(lower)) return "Terrain EPS";
-  if (["ordinary", "ordinary_default", "ordinary room"].includes(lower)) return "Salle ordinaire";
+  if (["pc_lab_default", "pc lab default", "pclabdefault"].includes(lower))
+    return "Labo P.C";
+  if (["svt_lab_default", "svt lab default", "svtlabdefault"].includes(lower))
+    return "Labo SVT";
+  if (["computer_lab_default", "computer lab default"].includes(lower))
+    return "Salle informatique";
+  if (["sports_field_default", "sports field default"].includes(lower))
+    return "Terrain EPS";
+  if (["ordinary", "ordinary_default", "ordinary room"].includes(lower))
+    return "Salle ordinaire";
 
   return text;
 }
@@ -364,7 +390,9 @@ function makeRoomMap(snapshot?: SourceSnapshot | null) {
 
   for (const room of rooms) {
     const id = emptyToBlank(room.id || room.room_id || room.resource_id);
-    const name = normalizeRoomName(emptyToBlank(room.name || room.label || room.room_label));
+    const name = normalizeRoomName(
+      emptyToBlank(room.name || room.label || room.room_label),
+    );
     if (id && name) map.set(id, name);
   }
 
@@ -416,10 +444,20 @@ function makeBlockMetaMap(items: Assignment[]) {
       .sort((a, b) => a - b);
 
     const start = periods[0] || 0;
-    const durationSlots = Math.max(...values.map((item) => getNumeric(item.duration_slots)), 0);
-    const durationUnits = Math.max(...values.map((item) => getNumeric(item.duration_units)), 0);
-    const inferredSpan = periods.length > 0 ? periods[periods.length - 1] - periods[0] + 1 : 1;
-    const span = Math.max(1, Math.ceil(durationSlots || durationUnits || inferredSpan));
+    const durationSlots = Math.max(
+      ...values.map((item) => getNumeric(item.duration_slots)),
+      0,
+    );
+    const durationUnits = Math.max(
+      ...values.map((item) => getNumeric(item.duration_units)),
+      0,
+    );
+    const inferredSpan =
+      periods.length > 0 ? periods[periods.length - 1] - periods[0] + 1 : 1;
+    const span = Math.max(
+      1,
+      Math.ceil(durationSlots || durationUnits || inferredSpan),
+    );
 
     meta.set(key, { start, span });
   }
@@ -427,7 +465,12 @@ function makeBlockMetaMap(items: Assignment[]) {
   return meta;
 }
 
-function getCellItems(items: Assignment[], blockMeta: Map<string, BlockMeta>, day: number, periodNo: number) {
+function getCellItems(
+  items: Assignment[],
+  blockMeta: Map<string, BlockMeta>,
+  day: number,
+  periodNo: number,
+) {
   const seen = new Set<string>();
   const values: Assignment[] = [];
 
@@ -447,7 +490,12 @@ function getCellItems(items: Assignment[], blockMeta: Map<string, BlockMeta>, da
   return sortAssignments(values);
 }
 
-function isCoveredByPrevious(items: Assignment[], blockMeta: Map<string, BlockMeta>, day: number, periodNo: number) {
+function isCoveredByPrevious(
+  items: Assignment[],
+  blockMeta: Map<string, BlockMeta>,
+  day: number,
+  periodNo: number,
+) {
   return items.some((item) => {
     if (getNumeric(item.weekday) !== day) return false;
 
@@ -467,8 +515,12 @@ function getInstitutionInfo(snapshot?: SourceSnapshot | null): InstitutionInfo {
   const source = snapshot?.institution || snapshot?.establishment || {};
 
   return {
-    name: emptyToBlank(source.name || source.school_name || source.institution_name),
-    academicYear: emptyToBlank(source.academic_year || source.academicYear || source.school_year),
+    name: emptyToBlank(
+      source.name || source.school_name || source.institution_name,
+    ),
+    academicYear: emptyToBlank(
+      source.academic_year || source.academicYear || source.school_year,
+    ),
     bp: emptyToBlank(source.bp || source.postal_box),
     phone: emptyToBlank(source.phone || source.tel || source.telephone),
     fax: emptyToBlank(source.fax),
@@ -480,30 +532,102 @@ function StatBox({ label, value }: { label: string; value: number | string }) {
   return (
     <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
       <p className="text-sm font-semibold text-slate-500">{label}</p>
-      <p className="mt-2 text-3xl font-black tracking-tight text-slate-950">{value}</p>
+      <p className="mt-2 text-3xl font-black tracking-tight text-slate-950">
+        {value}
+      </p>
     </div>
   );
 }
 
-function CourseBlock({ item, mode, roomMap }: { item: Assignment; mode: ViewMode; roomMap: Map<string, string> }) {
+function getCellDedupeKey(item: Assignment) {
+  return [
+    item.class_id || item.class_label || "class",
+    item.teacher_id || item.teacher_name || "teacher",
+    item.subject_id || item.subject_label || "subject",
+    item.room_id || item.room_label || "room",
+  ].join("|");
+}
+
+function getAssignmentStart(item: Assignment) {
+  return getNumeric(item.period_no);
+}
+
+function getAssignmentSpan(item: Assignment) {
+  const span = Math.ceil(
+    getNumeric(item.duration_slots) || getNumeric(item.duration_units) || 1,
+  );
+  return Math.max(1, span);
+}
+
+function getItemsForCell(items: Assignment[], day: number, periodNo: number) {
+  const values: Assignment[] = [];
+  const seen = new Set<string>();
+
+  for (const item of items) {
+    if (getNumeric(item.weekday) !== day) continue;
+
+    const start = getAssignmentStart(item);
+    if (!start) continue;
+
+    const baseKey = getCellDedupeKey(item);
+    const hasExplicitCourseAtThisPeriod = items.some((other) => {
+      return (
+        other !== item &&
+        getNumeric(other.weekday) === day &&
+        getCellDedupeKey(other) === baseKey &&
+        getAssignmentStart(other) === periodNo
+      );
+    });
+
+    const isExplicitStart = start === periodNo;
+    const isCoveredByDuration =
+      start < periodNo && periodNo < start + getAssignmentSpan(item);
+
+    if (
+      !isExplicitStart &&
+      (!isCoveredByDuration || hasExplicitCourseAtThisPeriod)
+    )
+      continue;
+    if (seen.has(baseKey)) continue;
+
+    seen.add(baseKey);
+    values.push(item);
+  }
+
+  return sortAssignments(values);
+}
+
+function CourseBlock({
+  item,
+  mode,
+  roomMap,
+}: {
+  item: Assignment;
+  mode: ViewMode;
+  roomMap: Map<string, string>;
+}) {
   const roomName = getRoomName(item, roomMap);
-  const isTandem = Boolean(item.tandem_group_id || item.tandem_role || item.tandem_mode);
+  const isTandem = Boolean(
+    item.tandem_group_id || item.tandem_role || item.tandem_mode,
+  );
+  const subject = clean(item.subject_label, "Matière");
+  const secondary = getSecondaryLabel(item, mode);
 
   return (
-    <div className="mx-auto flex max-w-full flex-col items-center justify-center px-1 text-center leading-tight">
-      <strong className="block max-w-full truncate text-[11px] font-black text-black print:text-[9px]">
-        {clean(item.subject_label, "Matière")}
+    <div className="mx-auto flex h-full w-full flex-col items-center justify-center px-1 text-center leading-[1.15] text-black">
+      <strong className="block w-full whitespace-normal break-words text-[10px] font-black uppercase text-black print:text-[7.4px]">
+        {subject}
       </strong>
-      <span className="mt-0.5 block max-w-full truncate text-[9.5px] font-bold text-black print:text-[8px]">
-        {getSecondaryLabel(item, mode)}
+      <span className="mt-1 block w-full whitespace-normal break-words text-[8.8px] font-bold text-black print:text-[6.8px]">
+        {secondary}
       </span>
       {roomName ? (
-        <em className="mt-0.5 block max-w-full truncate text-[8.5px] font-bold not-italic text-black print:text-[7.5px]">
+        <em className="mt-1 block w-full whitespace-normal break-words text-[8px] font-bold not-italic text-black print:text-[6.2px]">
           {roomName}
         </em>
       ) : null}
       {isTandem ? (
-        <small className="mt-1 rounded-full bg-violet-50 px-1.5 py-0.5 text-[8px] font-black text-violet-700 print:hidden">
+        <small className="mt-1 text-[7px] font-black uppercase tracking-wide text-black print:text-[5.8px]">
           Tandem {item.tandem_mode || ""}
         </small>
       ) : null}
@@ -524,26 +648,29 @@ function OfficialTimetableGrid({
   const periods = getPeriods(items, snapshot);
   const rows = buildRows(periods);
   const roomMap = React.useMemo(() => makeRoomMap(snapshot), [snapshot]);
-  const blockMeta = React.useMemo(() => makeBlockMetaMap(items), [items]);
 
   if (days.length === 0 || periods.length === 0) {
     return (
       <div className="rounded-3xl border border-dashed border-slate-300 bg-slate-50 p-6 text-center text-sm font-semibold text-slate-500">
-        Impossible de construire la grille : jours ou créneaux officiels manquants.
+        Impossible de construire la grille : jours ou créneaux officiels
+        manquants.
       </div>
     );
   }
 
   return (
-    <div className="w-full overflow-hidden bg-white">
-      <table className="w-full table-fixed border-collapse text-black">
+    <div className="w-full overflow-x-auto bg-white print:overflow-visible">
+      <table className="w-full min-w-[780px] table-fixed border-collapse text-black print:min-w-0">
         <thead>
           <tr>
-            <th className="w-[74px] border border-black bg-white px-1 py-2 text-center text-[9.5px] font-black uppercase print:w-[24mm] print:text-[8px]">
+            <th className="w-[86px] border border-black bg-white px-1 py-2 text-center text-[9px] font-black uppercase print:w-[20mm] print:text-[6.8px]">
               HORAIRES
             </th>
             {days.map((day) => (
-              <th key={day} className="border border-black bg-white px-1 py-2 text-center text-[9.5px] font-black uppercase print:text-[8px]">
+              <th
+                key={day}
+                className="border border-black bg-white px-1 py-2 text-center text-[9px] font-black uppercase print:text-[6.8px]"
+              >
                 {dayLabel(day)}
               </th>
             ))}
@@ -554,7 +681,10 @@ function OfficialTimetableGrid({
             if (row.type === "break" || row.type === "interclass") {
               return (
                 <tr key={row.key}>
-                  <td colSpan={days.length + 1} className="border border-black bg-sky-100 py-0.5 text-center text-[9px] font-black uppercase tracking-[0.42em] print:text-[7px]">
+                  <td
+                    colSpan={days.length + 1}
+                    className="border border-black bg-sky-100 py-0.5 text-center text-[8px] font-black uppercase tracking-[0.48em] print:text-[5.8px] print:tracking-[0.34em]"
+                  >
                     {row.label}
                   </td>
                 </tr>
@@ -565,27 +695,30 @@ function OfficialTimetableGrid({
 
             return (
               <tr key={period.period_no} className="align-middle">
-                <th className="border border-black bg-white px-1 py-2 text-center text-[9px] font-black print:text-[7px]">
+                <th className="border border-black bg-white px-1 py-2 text-center text-[8px] font-black leading-tight print:text-[6.2px]">
                   {timeLabel(period)}
                 </th>
                 {days.map((day) => {
-                  if (isCoveredByPrevious(items, blockMeta, day, period.period_no)) {
-                    return null;
-                  }
-
-                  const cellItems = getCellItems(items, blockMeta, day, period.period_no);
-                  const rowSpan = Math.max(1, ...cellItems.map((item) => getItemSpan(item, blockMeta)));
+                  const cellItems = getItemsForCell(
+                    items,
+                    day,
+                    period.period_no,
+                  );
 
                   return (
                     <td
                       key={`${day}-${period.period_no}`}
-                      rowSpan={rowSpan}
-                      className="h-[62px] border border-black bg-white px-1 py-1 text-center align-middle print:h-[12mm] print:px-0.5 print:py-0.5"
+                      className="h-[76px] border border-black bg-white px-1 py-1 text-center align-middle print:h-[12mm] print:px-0.5 print:py-0.5"
                     >
                       {cellItems.length === 0 ? null : (
                         <div className="flex h-full flex-col items-center justify-center gap-1">
                           {cellItems.map((item, index) => (
-                            <CourseBlock key={`${getBlockKey(item)}-${index}`} item={item} mode={mode} roomMap={roomMap} />
+                            <CourseBlock
+                              key={`${getCellDedupeKey(item)}-${period.period_no}-${index}`}
+                              item={item}
+                              mode={mode}
+                              roomMap={roomMap}
+                            />
                           ))}
                         </div>
                       )}
@@ -610,7 +743,9 @@ function buildTeacherRows(items: Assignment[]) {
     if (!map.has(subject)) map.set(subject, teacher);
   }
 
-  const rows = Array.from(map.entries()).sort((a, b) => a[0].localeCompare(b[0], "fr", { numeric: true }));
+  const rows = Array.from(map.entries()).sort((a, b) =>
+    a[0].localeCompare(b[0], "fr", { numeric: true }),
+  );
   while (rows.length < 14) rows.push(["", ""]);
   return rows;
 }
@@ -631,40 +766,63 @@ function OfficialClassSheet({
   const info = getInstitutionInfo(snapshot);
 
   return (
-    <section className="overflow-hidden rounded-[18px] border border-slate-300 bg-white shadow-sm print:break-after-page print:rounded-none print:border-0 print:shadow-none">
+    <section className="min-w-[1120px] overflow-x-auto rounded-[18px] border border-slate-300 bg-white shadow-sm print:min-w-0 print:break-after-page print:overflow-visible print:rounded-none print:border-0 print:shadow-none">
       <div className="bg-white px-3 pb-2 pt-3 print:px-0 print:pt-0">
         <div className="mb-2 flex flex-wrap gap-x-6 gap-y-1 text-[10px] text-black print:text-[8px]">
-          <span>Établissement : {info.name || "...................................."}</span>
-          <span>Année scolaire : {info.academicYear || "20.... / 20......"}</span>
+          <span>
+            Établissement :{" "}
+            {info.name || "...................................."}
+          </span>
+          <span>
+            Année scolaire : {info.academicYear || "20.... / 20......"}
+          </span>
           <span>BP : {info.bp || "............"}</span>
           <span>Tél : {info.phone || "............"}</span>
           <span>Fax : {info.fax || "............"}</span>
           <span>Email : {info.email || "...................."}</span>
         </div>
         <div className="mx-auto mb-2 w-fit border-2 border-black px-8 py-1 text-center text-lg font-black uppercase tracking-wide text-black print:text-[14px]">
-          {isClassMode ? "EMPLOI DU TEMPS DE CLASSE" : "EMPLOI DU TEMPS PROFESSEUR"}
+          {isClassMode
+            ? "EMPLOI DU TEMPS DE CLASSE"
+            : "EMPLOI DU TEMPS PROFESSEUR"}
         </div>
         <p className="text-center text-sm font-black text-black print:text-[10px]">
           {isClassMode ? `Classe : ${label}` : `Professeur : ${label}`}
         </p>
       </div>
 
-      <div className={isClassMode ? "grid gap-3 px-3 pb-3 xl:grid-cols-[minmax(0,1fr)_250px] print:grid-cols-[minmax(0,1fr)_56mm] print:gap-3 print:px-0 print:pb-0" : "px-3 pb-3 print:px-0 print:pb-0"}>
+      <div
+        className={
+          isClassMode
+            ? "grid gap-3 px-3 pb-3 xl:grid-cols-[minmax(780px,1fr)_300px] print:grid-cols-[minmax(0,1fr)_54mm] print:gap-3 print:px-0 print:pb-0"
+            : "px-3 pb-3 print:px-0 print:pb-0"
+        }
+      >
         <OfficialTimetableGrid items={items} mode={mode} snapshot={snapshot} />
 
         {isClassMode ? (
-          <aside className="overflow-hidden rounded-xl border border-black bg-white print:rounded-none">
+          <aside className="overflow-hidden rounded-none border border-black bg-white print:rounded-none">
             <div className="border-b border-black px-2 py-2 text-center">
-              <h4 className="text-[11px] font-black uppercase text-black print:text-[8px]">PROFESSEURS DE LA CLASSE</h4>
-              <p className="text-[9px] font-semibold text-black print:text-[7px]">Ou équipe pédagogique</p>
+              <h4 className="text-[11px] font-black uppercase text-black print:text-[8px]">
+                PROFESSEURS DE LA CLASSE
+              </h4>
+              <p className="text-[9px] font-semibold text-black print:text-[7px]">
+                Ou équipe pédagogique
+              </p>
             </div>
             <table className="w-full border-collapse text-[9px] text-black print:text-[7px]">
               <tbody>
                 {teacherRows.map(([subject, teacher], index) => (
                   <tr key={`${subject}-${teacher}-${index}`}>
-                    <td className="w-7 border border-black px-1 py-1 text-center">{index + 1}</td>
-                    <td className="border border-black px-1 py-1 font-black">{subject}</td>
-                    <td className="border border-black px-1 py-1">{teacher}</td>
+                    <td className="w-7 border border-black px-1 py-1 text-center">
+                      {index + 1}
+                    </td>
+                    <td className="border border-black px-1 py-1 font-black leading-tight">
+                      {subject}
+                    </td>
+                    <td className="border border-black px-1 py-1 leading-tight">
+                      {teacher}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -678,14 +836,31 @@ function OfficialClassSheet({
           <table className="w-full border-collapse text-[10px] text-black print:text-[8px]">
             <thead>
               <tr>
-                <th className="border border-black py-1 text-center font-black">PERSONNEL D’ENCADREMENT</th>
-                <th className="w-[30%] border border-black py-1 text-center font-black">TÉLÉPHONE</th>
+                <th className="border border-black py-1 text-center font-black">
+                  PERSONNEL D’ENCADREMENT
+                </th>
+                <th className="w-[30%] border border-black py-1 text-center font-black">
+                  TÉLÉPHONE
+                </th>
               </tr>
             </thead>
             <tbody>
-              <tr><td className="border border-black px-2 py-1">Inspecteur d’Éducation</td><td className="border border-black" /></tr>
-              <tr><td className="border border-black px-2 py-1">Éducateur</td><td className="border border-black" /></tr>
-              <tr><td className="border border-black px-2 py-1">PP (chef équipe péda.)</td><td className="border border-black" /></tr>
+              <tr>
+                <td className="border border-black px-2 py-1">
+                  Inspecteur d’Éducation
+                </td>
+                <td className="border border-black" />
+              </tr>
+              <tr>
+                <td className="border border-black px-2 py-1">Éducateur</td>
+                <td className="border border-black" />
+              </tr>
+              <tr>
+                <td className="border border-black px-2 py-1">
+                  PP (chef équipe péda.)
+                </td>
+                <td className="border border-black" />
+              </tr>
             </tbody>
           </table>
         </div>
@@ -694,13 +869,24 @@ function OfficialClassSheet({
   );
 }
 
-function ListView({ groups, mode, snapshot }: { groups: Array<{ label: string; items: Assignment[] }>; mode: ViewMode; snapshot?: SourceSnapshot | null }) {
+function ListView({
+  groups,
+  mode,
+  snapshot,
+}: {
+  groups: Array<{ label: string; items: Assignment[] }>;
+  mode: ViewMode;
+  snapshot?: SourceSnapshot | null;
+}) {
   const roomMap = React.useMemo(() => makeRoomMap(snapshot), [snapshot]);
 
   return (
     <div className="space-y-5">
       {groups.map((group) => (
-        <div key={group.label} className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+        <div
+          key={group.label}
+          className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm"
+        >
           <div className="border-b border-slate-200 bg-slate-50 px-4 py-3">
             <p className="font-black text-slate-950">{group.label}</p>
             <p className="text-xs font-semibold text-slate-500">
@@ -714,20 +900,33 @@ function ListView({ groups, mode, snapshot }: { groups: Array<{ label: string; i
                   <th className="px-4 py-3">Jour</th>
                   <th className="px-4 py-3">Horaire</th>
                   <th className="px-4 py-3">Matière</th>
-                  <th className="px-4 py-3">{mode === "class" ? "Professeur" : "Classe"}</th>
+                  <th className="px-4 py-3">
+                    {mode === "class" ? "Professeur" : "Classe"}
+                  </th>
                   <th className="px-4 py-3">Salle</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {sortAssignments(group.items).map((item, index) => (
                   <tr key={`${item.id || index}-list`}>
-                    <td className="px-4 py-3 font-bold text-slate-900">{dayLabel(getNumeric(item.weekday))}</td>
-                    <td className="px-4 py-3 text-slate-600">
-                      {item.start_time && item.end_time ? `${shortTime(item.start_time)}-${shortTime(item.end_time)}` : item.period_label || `Séance ${item.period_no || "?"}`}
+                    <td className="px-4 py-3 font-bold text-slate-900">
+                      {dayLabel(getNumeric(item.weekday))}
                     </td>
-                    <td className="px-4 py-3 font-black text-slate-950">{clean(item.subject_label, "Matière")}</td>
-                    <td className="px-4 py-3 text-slate-700">{getSecondaryLabel(item, mode)}</td>
-                    <td className="px-4 py-3 text-slate-700">{getRoomName(item, roomMap) || "—"}</td>
+                    <td className="px-4 py-3 text-slate-600">
+                      {item.start_time && item.end_time
+                        ? `${shortTime(item.start_time)}-${shortTime(item.end_time)}`
+                        : item.period_label ||
+                          `Séance ${item.period_no || "?"}`}
+                    </td>
+                    <td className="px-4 py-3 font-black text-slate-950">
+                      {clean(item.subject_label, "Matière")}
+                    </td>
+                    <td className="px-4 py-3 text-slate-700">
+                      {getSecondaryLabel(item, mode)}
+                    </td>
+                    <td className="px-4 py-3 text-slate-700">
+                      {getRoomName(item, roomMap) || "—"}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -739,7 +938,11 @@ function ListView({ groups, mode, snapshot }: { groups: Array<{ label: string; i
   );
 }
 
-export default function MontageProjectPreview({ projectId }: { projectId: string }) {
+export default function MontageProjectPreview({
+  projectId,
+}: {
+  projectId: string;
+}) {
   const [project, setProject] = React.useState<Project | null>(null);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
@@ -752,16 +955,27 @@ export default function MontageProjectPreview({ projectId }: { projectId: string
     setError(null);
 
     try {
-      const res = await fetch(`/api/admin/montage-emploi-du-temps/projects/${projectId}`, { cache: "no-store" });
+      const res = await fetch(
+        `/api/admin/montage-emploi-du-temps/projects/${projectId}`,
+        { cache: "no-store" },
+      );
       const data = (await res.json()) as ProjectResponse;
 
       if (!res.ok || !data.ok) {
-        throw new Error(data.ok ? "Erreur inconnue." : data.message || "Impossible de charger le brouillon.");
+        throw new Error(
+          data.ok
+            ? "Erreur inconnue."
+            : data.message || "Impossible de charger le brouillon.",
+        );
       }
 
       setProject(data.item);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Impossible de charger le brouillon.");
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Impossible de charger le brouillon.",
+      );
     } finally {
       setLoading(false);
     }
@@ -773,7 +987,9 @@ export default function MontageProjectPreview({ projectId }: { projectId: string
   }, [projectId]);
 
   const result = project?.engine_result || null;
-  const assignments = Array.isArray(result?.assignments) ? result.assignments : [];
+  const assignments = Array.isArray(result?.assignments)
+    ? result.assignments
+    : [];
   const unplaced = Array.isArray(result?.unplaced) ? result.unplaced : [];
   const diagnostics = Array.isArray(result?.diagnostics)
     ? result.diagnostics
@@ -782,7 +998,10 @@ export default function MontageProjectPreview({ projectId }: { projectId: string
       : [];
   const snapshot = project?.source_snapshot || null;
 
-  const groups = React.useMemo(() => groupTargets(assignments, mode), [assignments, mode]);
+  const groups = React.useMemo(
+    () => groupTargets(assignments, mode),
+    [assignments, mode],
+  );
 
   React.useEffect(() => {
     setSelectedTarget("all");
@@ -790,7 +1009,11 @@ export default function MontageProjectPreview({ projectId }: { projectId: string
 
   const visibleItems = React.useMemo(() => {
     if (selectedTarget === "all") return sortAssignments(assignments);
-    return sortAssignments(assignments.filter((item) => getTargetLabel(item, mode) === selectedTarget));
+    return sortAssignments(
+      assignments.filter(
+        (item) => getTargetLabel(item, mode) === selectedTarget,
+      ),
+    );
   }, [assignments, mode, selectedTarget]);
 
   function handlePrint() {
@@ -799,17 +1022,24 @@ export default function MontageProjectPreview({ projectId }: { projectId: string
 
   return (
     <main className="min-h-screen bg-slate-100 px-3 py-5 text-slate-950 print:bg-white print:px-0 print:py-0">
-      <style dangerouslySetInnerHTML={{ __html: `
+      <style
+        dangerouslySetInnerHTML={{
+          __html: `
         @page { size: A4 landscape; margin: 7mm; }
         @media print {
           body { background: #fff !important; }
           .print\\:break-after-page { break-after: page; page-break-after: always; }
         }
-      ` }} />
+      `,
+        }}
+      />
 
       <section className="mx-auto max-w-[1760px] space-y-5 print:max-w-none print:space-y-0">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between print:hidden">
-          <Link href="/admin/montage-emploi-du-temps" className="inline-flex items-center gap-2 text-sm font-bold text-slate-600 transition hover:text-slate-950">
+          <Link
+            href="/admin/montage-emploi-du-temps"
+            className="inline-flex items-center gap-2 text-sm font-bold text-slate-600 transition hover:text-slate-950"
+          >
             <ArrowLeft className="h-4 w-4" />
             Retour au montage
           </Link>
@@ -829,7 +1059,11 @@ export default function MontageProjectPreview({ projectId }: { projectId: string
               disabled={loading}
               className="inline-flex items-center justify-center gap-2 rounded-2xl bg-slate-950 px-4 py-3 text-sm font-black text-white shadow-sm transition hover:bg-slate-800 disabled:opacity-60"
             >
-              {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+              {loading ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <RefreshCw className="h-4 w-4" />
+              )}
               Recharger
             </button>
           </div>
@@ -847,14 +1081,23 @@ export default function MontageProjectPreview({ projectId }: { projectId: string
                 {project?.name || "Emploi du temps généré"}
               </h1>
               <p className="mt-3 max-w-4xl text-sm leading-6 text-slate-300 sm:text-base">
-                Rendu administratif : grille officielle, bordures nettes, blocs consécutifs fusionnés, horaires réels, professeurs de la classe à droite et aucun identifiant technique affiché dans les cellules.
+                Rendu administratif : grille officielle, bordures nettes, blocs
+                consécutifs fusionnés, horaires réels, professeurs de la classe
+                à droite et aucun identifiant technique affiché dans les
+                cellules.
               </p>
               {project && (
                 <div className="mt-5 flex flex-wrap gap-2 text-xs font-bold">
-                  <span className="rounded-full bg-white px-3 py-1 text-slate-950">Statut : {project.status}</span>
-                  <span className="rounded-full bg-white/10 px-3 py-1 text-slate-200 ring-1 ring-white/10">Modifié le {formatDate(project.updated_at)}</span>
+                  <span className="rounded-full bg-white px-3 py-1 text-slate-950">
+                    Statut : {project.status}
+                  </span>
+                  <span className="rounded-full bg-white/10 px-3 py-1 text-slate-200 ring-1 ring-white/10">
+                    Modifié le {formatDate(project.updated_at)}
+                  </span>
                   {result?.generated_at ? (
-                    <span className="rounded-full bg-white/10 px-3 py-1 text-slate-200 ring-1 ring-white/10">Généré le {formatDate(result.generated_at)}</span>
+                    <span className="rounded-full bg-white/10 px-3 py-1 text-slate-200 ring-1 ring-white/10">
+                      Généré le {formatDate(result.generated_at)}
+                    </span>
                   ) : null}
                 </div>
               )}
@@ -884,10 +1127,26 @@ export default function MontageProjectPreview({ projectId }: { projectId: string
         {!loading && project && (
           <>
             <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4 print:hidden">
-              <StatBox label="Cours placés" value={result?.summary?.assignments_count ?? assignments.length} />
-              <StatBox label="Blocs non placés" value={result?.summary?.unplaced_count ?? unplaced.length} />
-              <StatBox label="Score" value={`${result?.summary?.score ?? 0}%`} />
-              <StatBox label="Moteur" value={result?.status === "generated_real_scheduler" ? "HoraClasse" : "En attente"} />
+              <StatBox
+                label="Cours placés"
+                value={result?.summary?.assignments_count ?? assignments.length}
+              />
+              <StatBox
+                label="Blocs non placés"
+                value={result?.summary?.unplaced_count ?? unplaced.length}
+              />
+              <StatBox
+                label="Score"
+                value={`${result?.summary?.score ?? 0}%`}
+              />
+              <StatBox
+                label="Moteur"
+                value={
+                  result?.status === "generated_real_scheduler"
+                    ? "HoraClasse"
+                    : "En attente"
+                }
+              />
             </div>
 
             {assignments.length === 0 ? (
@@ -896,7 +1155,10 @@ export default function MontageProjectPreview({ projectId }: { projectId: string
                   <Clock3 className="mt-0.5 h-5 w-5 shrink-0" />
                   <div>
                     <p className="font-black">Aucun emploi du temps généré</p>
-                    <p className="mt-1 text-sm">Retourne sur la page Montage emploi du temps, puis clique sur “Générer avec HoraClasse”.</p>
+                    <p className="mt-1 text-sm">
+                      Retourne sur la page Montage emploi du temps, puis clique
+                      sur “Générer avec HoraClasse”.
+                    </p>
                   </div>
                 </div>
               </div>
@@ -909,14 +1171,17 @@ export default function MontageProjectPreview({ projectId }: { projectId: string
                       Aperçu officiel
                     </h2>
                     <p className="mt-1 text-sm text-slate-500">
-                      Grille calée sur HoraClasse : tableau compact, complet et imprimable.
+                      Grille calée sur HoraClasse : tableau compact, complet et
+                      imprimable.
                     </p>
                   </div>
 
                   <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
                     <select
                       value={selectedTarget}
-                      onChange={(event) => setSelectedTarget(event.target.value)}
+                      onChange={(event) =>
+                        setSelectedTarget(event.target.value)
+                      }
                       className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-black text-slate-700 outline-none transition focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100"
                     >
                       <option value="all">Tous</option>
@@ -933,7 +1198,9 @@ export default function MontageProjectPreview({ projectId }: { projectId: string
                         onClick={() => setMode("class")}
                         className={[
                           "inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-black transition",
-                          mode === "class" ? "bg-white text-slate-950 shadow-sm" : "text-slate-500 hover:text-slate-950",
+                          mode === "class"
+                            ? "bg-white text-slate-950 shadow-sm"
+                            : "text-slate-500 hover:text-slate-950",
                         ].join(" ")}
                       >
                         <School className="h-4 w-4" />
@@ -944,7 +1211,9 @@ export default function MontageProjectPreview({ projectId }: { projectId: string
                         onClick={() => setMode("teacher")}
                         className={[
                           "inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-black transition",
-                          mode === "teacher" ? "bg-white text-slate-950 shadow-sm" : "text-slate-500 hover:text-slate-950",
+                          mode === "teacher"
+                            ? "bg-white text-slate-950 shadow-sm"
+                            : "text-slate-500 hover:text-slate-950",
                         ].join(" ")}
                       >
                         <UserRound className="h-4 w-4" />
@@ -958,7 +1227,9 @@ export default function MontageProjectPreview({ projectId }: { projectId: string
                         onClick={() => setDisplay("grid")}
                         className={[
                           "rounded-xl px-4 py-2 text-sm font-black transition",
-                          display === "grid" ? "bg-white text-slate-950 shadow-sm" : "text-slate-500 hover:text-slate-950",
+                          display === "grid"
+                            ? "bg-white text-slate-950 shadow-sm"
+                            : "text-slate-500 hover:text-slate-950",
                         ].join(" ")}
                       >
                         Grille
@@ -968,7 +1239,9 @@ export default function MontageProjectPreview({ projectId }: { projectId: string
                         onClick={() => setDisplay("list")}
                         className={[
                           "rounded-xl px-4 py-2 text-sm font-black transition",
-                          display === "list" ? "bg-white text-slate-950 shadow-sm" : "text-slate-500 hover:text-slate-950",
+                          display === "list"
+                            ? "bg-white text-slate-950 shadow-sm"
+                            : "text-slate-500 hover:text-slate-950",
                         ].join(" ")}
                       >
                         Liste
@@ -982,14 +1255,33 @@ export default function MontageProjectPreview({ projectId }: { projectId: string
                     selectedTarget === "all" ? (
                       <div className="space-y-6 print:space-y-0">
                         {groups.map((group) => (
-                          <OfficialClassSheet key={group.label} label={group.label} items={group.items} mode={mode} snapshot={snapshot} />
+                          <OfficialClassSheet
+                            key={group.label}
+                            label={group.label}
+                            items={group.items}
+                            mode={mode}
+                            snapshot={snapshot}
+                          />
                         ))}
                       </div>
                     ) : (
-                      <OfficialClassSheet label={selectedTarget} items={visibleItems} mode={mode} snapshot={snapshot} />
+                      <OfficialClassSheet
+                        label={selectedTarget}
+                        items={visibleItems}
+                        mode={mode}
+                        snapshot={snapshot}
+                      />
                     )
                   ) : (
-                    <ListView groups={selectedTarget === "all" ? groups : groupTargets(visibleItems, mode)} mode={mode} snapshot={snapshot} />
+                    <ListView
+                      groups={
+                        selectedTarget === "all"
+                          ? groups
+                          : groupTargets(visibleItems, mode)
+                      }
+                      mode={mode}
+                      snapshot={snapshot}
+                    />
                   )}
                 </div>
               </div>
@@ -1003,10 +1295,16 @@ export default function MontageProjectPreview({ projectId }: { projectId: string
                     <h2 className="font-black">Diagnostics HoraClasse</h2>
                     <div className="mt-3 space-y-2 text-sm">
                       {diagnostics.map((item, index) => (
-                        <p key={`diagnostic-${index}`}>• {item.message || "Alerte sans message"}</p>
+                        <p key={`diagnostic-${index}`}>
+                          • {item.message || "Alerte sans message"}
+                        </p>
                       ))}
                       {unplaced.map((item, index) => (
-                        <p key={`unplaced-${index}`}>• Non placé : {clean(item.class_label, "Classe")} — {clean(item.subject_label, "Matière")} — {clean(item.teacher_name, "Enseignant")}</p>
+                        <p key={`unplaced-${index}`}>
+                          • Non placé : {clean(item.class_label, "Classe")} —{" "}
+                          {clean(item.subject_label, "Matière")} —{" "}
+                          {clean(item.teacher_name, "Enseignant")}
+                        </p>
                       ))}
                     </div>
                   </div>
