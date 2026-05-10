@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import Link from "next/link";
 import React from "react";
@@ -6,7 +6,6 @@ import {
   AlertTriangle,
   ArrowLeft,
   CalendarDays,
-  CheckCircle2,
   Clock3,
   Grid3X3,
   Loader2,
@@ -68,6 +67,8 @@ type SourceSnapshot = {
   teachers?: AnyRecord[];
   subjects?: AnyRecord[];
   service_assignments?: AnyRecord[];
+  institution?: AnyRecord | null;
+  establishment?: AnyRecord | null;
 };
 
 type Project = {
@@ -105,6 +106,20 @@ type SeparatorRow = {
 
 type TimetableRow = PeriodRow | SeparatorRow;
 
+type BlockMeta = {
+  start: number;
+  span: number;
+};
+
+type InstitutionInfo = {
+  name: string;
+  academicYear: string;
+  bp: string;
+  phone: string;
+  fax: string;
+  email: string;
+};
+
 const WEEKDAYS: Record<number, string> = {
   1: "LUNDI",
   2: "MARDI",
@@ -118,7 +133,7 @@ const WEEKDAYS: Record<number, string> = {
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function formatDate(value?: string) {
-  if (!value) return "â€”";
+  if (!value) return "—";
 
   try {
     return new Intl.DateTimeFormat("fr-FR", {
@@ -130,14 +145,13 @@ function formatDate(value?: string) {
   }
 }
 
-function clean(value: unknown, fallback = "â€”") {
+function clean(value: unknown, fallback = "—") {
   const text = String(value ?? "").trim();
   return text || fallback;
 }
 
 function emptyToBlank(value: unknown) {
-  const text = String(value ?? "").trim();
-  return text;
+  return String(value ?? "").trim();
 }
 
 function dayLabel(value?: number) {
@@ -145,33 +159,56 @@ function dayLabel(value?: number) {
   return WEEKDAYS[day] || `JOUR ${day || "?"}`;
 }
 
-function shortTime(value: string) {
+function shortTime(value?: string | null) {
   const text = emptyToBlank(value);
   return text ? text.replace(":", "H") : "";
 }
 
 function timeLabel(period: PeriodRow) {
-  if (period.start_time && period.end_time) return `${shortTime(period.start_time)}-${shortTime(period.end_time)}`;
-  return period.label;
+  if (period.start_time && period.end_time) {
+    return `${shortTime(period.start_time)}-${shortTime(period.end_time)}`;
+  }
+
+  return period.label || `Séance ${period.period_no}`;
 }
 
-function timeToMinutes(value: string) {
+function timeToMinutes(value?: string | null) {
   const match = emptyToBlank(value).match(/^(\d{1,2}):(\d{2})/);
   if (!match) return 0;
   return Number(match[1]) * 60 + Number(match[2]);
 }
 
+function getNumeric(value: unknown) {
+  const n = Number(value || 0);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function sortPeriods(periods: PeriodRow[]) {
+  return [...periods].sort((a, b) => {
+    const aStart = timeToMinutes(a.start_time);
+    const bStart = timeToMinutes(b.start_time);
+
+    if (aStart && bStart && aStart !== bStart) return aStart - bStart;
+    if (a.period_no !== b.period_no) return a.period_no - b.period_no;
+    return a.label.localeCompare(b.label, "fr", { numeric: true });
+  });
+}
+
 function sortAssignments(items: Assignment[]) {
   return [...items].sort((a, b) => {
-    const aw = Number(a.weekday || 0);
-    const bw = Number(b.weekday || 0);
+    const aw = getNumeric(a.weekday);
+    const bw = getNumeric(b.weekday);
     if (aw !== bw) return aw - bw;
 
-    const ap = Number(a.period_no || 0);
-    const bp = Number(b.period_no || 0);
+    const at = timeToMinutes(a.start_time);
+    const bt = timeToMinutes(b.start_time);
+    if (at && bt && at !== bt) return at - bt;
+
+    const ap = getNumeric(a.period_no);
+    const bp = getNumeric(b.period_no);
     if (ap !== bp) return ap - bp;
 
-    return clean(a.subject_label).localeCompare(clean(b.subject_label));
+    return clean(a.subject_label).localeCompare(clean(b.subject_label), "fr", { numeric: true });
   });
 }
 
@@ -209,61 +246,73 @@ function groupTargets(items: Assignment[], mode: ViewMode) {
 
 function getSnapshotPeriods(snapshot?: SourceSnapshot | null): PeriodRow[] {
   const raw = Array.isArray(snapshot?.periods) ? snapshot?.periods || [] : [];
-  const byNo = new Map<number, PeriodRow>();
+  const byKey = new Map<string, PeriodRow>();
 
   for (const item of raw) {
-    const periodNo = Number(item.period_no || item.periodNo || 0);
-    if (!periodNo || byNo.has(periodNo)) continue;
+    const periodNo = getNumeric(item.period_no || item.periodNo || item.no || item.index);
+    const start = emptyToBlank(item.start_time || item.startTime || item.start);
+    const end = emptyToBlank(item.end_time || item.endTime || item.end);
+    const key = periodNo ? `no-${periodNo}` : `${start}-${end}`;
 
-    byNo.set(periodNo, {
+    if (!key || byKey.has(key)) continue;
+
+    byKey.set(key, {
       type: "period",
-      period_no: periodNo,
-      label: clean(item.label, `SÃ©ance ${periodNo}`),
-      start_time: emptyToBlank(item.start_time || item.startTime),
-      end_time: emptyToBlank(item.end_time || item.endTime),
+      period_no: periodNo || byKey.size + 1,
+      label: clean(item.label || item.name, periodNo ? `Séance ${periodNo}` : `Créneau ${byKey.size + 1}`),
+      start_time: start,
+      end_time: end,
     });
   }
 
-  return Array.from(byNo.values()).sort((a, b) => a.period_no - b.period_no);
+  return sortPeriods(Array.from(byKey.values()));
 }
 
 function getDays(items: Assignment[], snapshot?: SourceSnapshot | null) {
-  const snapshotDays = uniqueBy(
+  const fromSnapshot = uniqueBy(
     (Array.isArray(snapshot?.periods) ? snapshot?.periods || [] : [])
-      .map((item) => Number(item.weekday || 0))
+      .flatMap((item) => [item.weekday, item.day, item.day_index, item.dayIndex])
+      .map((day) => getNumeric(day))
       .filter((day) => day >= 1 && day <= 7),
     (day) => String(day),
   ).sort((a, b) => a - b);
 
-  if (snapshotDays.length > 0) return snapshotDays;
+  if (fromSnapshot.length > 0) return fromSnapshot;
 
-  return uniqueBy(
+  const fromAssignments = uniqueBy(
     items
-      .filter((item) => Number(item.weekday || 0) >= 1)
-      .map((item) => Number(item.weekday)),
+      .map((item) => getNumeric(item.weekday))
+      .filter((day) => day >= 1 && day <= 7),
     (day) => String(day),
   ).sort((a, b) => a - b);
+
+  return fromAssignments.length > 0 ? fromAssignments : [1, 2, 3, 4, 5];
 }
 
 function getPeriods(items: Assignment[], snapshot?: SourceSnapshot | null) {
   const snapshotPeriods = getSnapshotPeriods(snapshot);
   if (snapshotPeriods.length > 0) return snapshotPeriods;
 
-  return uniqueBy(
-    items
-      .filter((item) => Number(item.period_no || 0) > 0)
-      .map((item) => ({
-        type: "period" as const,
-        period_no: Number(item.period_no || 0),
-        label: item.period_label || `SÃ©ance ${item.period_no}`,
-        start_time: emptyToBlank(item.start_time),
-        end_time: emptyToBlank(item.end_time),
-      })),
-    (item) => String(item.period_no),
-  ).sort((a, b) => {
-    if (a.period_no !== b.period_no) return a.period_no - b.period_no;
-    return a.start_time.localeCompare(b.start_time);
-  });
+  const byKey = new Map<string, PeriodRow>();
+
+  for (const item of items) {
+    const periodNo = getNumeric(item.period_no);
+    const start = emptyToBlank(item.start_time);
+    const end = emptyToBlank(item.end_time);
+    const key = periodNo ? `no-${periodNo}` : `${start}-${end}`;
+
+    if (!key || byKey.has(key)) continue;
+
+    byKey.set(key, {
+      type: "period",
+      period_no: periodNo || byKey.size + 1,
+      label: clean(item.period_label, periodNo ? `Séance ${periodNo}` : `Créneau ${byKey.size + 1}`),
+      start_time: start,
+      end_time: end,
+    });
+  }
+
+  return sortPeriods(Array.from(byKey.values()));
 }
 
 function buildRows(periods: PeriodRow[]): TimetableRow[] {
@@ -277,19 +326,36 @@ function buildRows(periods: PeriodRow[]): TimetableRow[] {
 
     const end = timeToMinutes(period.end_time);
     const start = timeToMinutes(next.start_time);
-    const gap = start - end;
+    const gap = start && end ? start - end : 0;
 
-    if (gap >= 10) {
-      const isInterclass = gap >= 40 || (end <= 13 * 60 + 30 && start >= 13 * 60 + 30);
+    if (gap >= 8) {
+      const isInterclass = gap >= 35 || (end <= 13 * 60 + 30 && start >= 13 * 60 + 30);
       rows.push({
         type: isInterclass ? "interclass" : "break",
         key: `${period.period_no}-${next.period_no}-${gap}`,
-        label: isInterclass ? "INTERCLASSE" : "R Ã‰ C R Ã‰ A T I O N",
+        label: isInterclass ? "INTERCLASSE" : "R É C R É A T I O N",
       });
     }
   });
 
   return rows;
+}
+
+function normalizeRoomName(value: string) {
+  const text = value.trim();
+  const lower = text.toLowerCase();
+
+  if (!text || UUID_RE.test(text)) return "";
+  if (lower.startsWith("room_") || lower.startsWith("room-")) return "";
+  if (lower.includes("-02c035c") || lower.includes("-97f1-")) return "";
+
+  if (["pc_lab_default", "pc lab default", "pclabdefault"].includes(lower)) return "Labo P.C";
+  if (["svt_lab_default", "svt lab default", "svtlabdefault"].includes(lower)) return "Labo SVT";
+  if (["computer_lab_default", "computer lab default"].includes(lower)) return "Salle informatique";
+  if (["sports_field_default", "sports field default"].includes(lower)) return "Terrain EPS";
+  if (["ordinary", "ordinary_default", "ordinary room"].includes(lower)) return "Salle ordinaire";
+
+  return text;
 }
 
 function makeRoomMap(snapshot?: SourceSnapshot | null) {
@@ -298,7 +364,7 @@ function makeRoomMap(snapshot?: SourceSnapshot | null) {
 
   for (const room of rooms) {
     const id = emptyToBlank(room.id || room.room_id || room.resource_id);
-    const name = emptyToBlank(room.name || room.label || room.room_label);
+    const name = normalizeRoomName(emptyToBlank(room.name || room.label || room.room_label));
     if (id && name) map.set(id, name);
   }
 
@@ -306,64 +372,108 @@ function makeRoomMap(snapshot?: SourceSnapshot | null) {
 }
 
 function getRoomName(item: Assignment, roomMap: Map<string, string>) {
-  const label = emptyToBlank(item.room_label);
-  if (label && !UUID_RE.test(label)) return label;
+  const label = normalizeRoomName(emptyToBlank(item.room_label));
+  if (label) return label;
 
   const id = emptyToBlank(item.room_id);
   if (!id) return "";
 
-  const mapped = roomMap.get(id);
+  const mapped = normalizeRoomName(roomMap.get(id) || "");
   if (mapped) return mapped;
 
-  // Surtout ne jamais afficher un UUID brut dans la grille officielle.
-  return UUID_RE.test(id) ? "" : id;
+  return normalizeRoomName(id);
 }
 
 function getBlockKey(item: Assignment) {
-  return emptyToBlank(item.block_id || item.lesson_block_id || item.id || `${item.class_id}-${item.teacher_id}-${item.subject_id}-${item.weekday}-${item.period_no}`);
+  const explicit = emptyToBlank(item.block_id || item.lesson_block_id);
+  if (explicit) return explicit;
+
+  return [
+    item.class_id || item.class_label || "class",
+    item.teacher_id || item.teacher_name || "teacher",
+    item.subject_id || item.subject_label || "subject",
+    item.weekday || "day",
+    item.room_id || item.room_label || "room",
+  ].join("|");
 }
 
-function getSpan(item: Assignment) {
-  const durationSlots = Number(item.duration_slots || 0);
-  if (durationSlots > 0) return Math.max(1, Math.ceil(durationSlots));
-
-  const durationUnits = Number(item.duration_units || 0);
-  if (durationUnits > 0) return Math.max(1, Math.ceil(durationUnits));
-
-  return 1;
-}
-
-function makeBlockStartMap(items: Assignment[]) {
-  const map = new Map<string, number>();
+function makeBlockMetaMap(items: Assignment[]) {
+  const grouped = new Map<string, Assignment[]>();
 
   for (const item of items) {
     const key = getBlockKey(item);
-    const periodNo = Number(item.period_no || 0);
-    if (!key || !periodNo) continue;
-
-    const current = map.get(key);
-    if (!current || periodNo < current) map.set(key, periodNo);
+    const current = grouped.get(key) || [];
+    current.push(item);
+    grouped.set(key, current);
   }
 
-  return map;
+  const meta = new Map<string, BlockMeta>();
+
+  for (const [key, values] of grouped.entries()) {
+    const periods = values
+      .map((item) => getNumeric(item.period_no))
+      .filter((period) => period > 0)
+      .sort((a, b) => a - b);
+
+    const start = periods[0] || 0;
+    const durationSlots = Math.max(...values.map((item) => getNumeric(item.duration_slots)), 0);
+    const durationUnits = Math.max(...values.map((item) => getNumeric(item.duration_units)), 0);
+    const inferredSpan = periods.length > 0 ? periods[periods.length - 1] - periods[0] + 1 : 1;
+    const span = Math.max(1, Math.ceil(durationSlots || durationUnits || inferredSpan));
+
+    meta.set(key, { start, span });
+  }
+
+  return meta;
 }
 
-function getCellItems(items: Assignment[], blockStartMap: Map<string, number>, day: number, periodNo: number) {
-  return items.filter((item) => {
-    if (Number(item.weekday || 0) !== day) return false;
+function getCellItems(items: Assignment[], blockMeta: Map<string, BlockMeta>, day: number, periodNo: number) {
+  const seen = new Set<string>();
+  const values: Assignment[] = [];
+
+  for (const item of items) {
+    if (getNumeric(item.weekday) !== day) continue;
+
     const key = getBlockKey(item);
-    return (blockStartMap.get(key) || Number(item.period_no || 0)) === periodNo;
-  });
+    const meta = blockMeta.get(key);
+    const start = meta?.start || getNumeric(item.period_no);
+
+    if (start !== periodNo || seen.has(key)) continue;
+
+    seen.add(key);
+    values.push(item);
+  }
+
+  return sortAssignments(values);
 }
 
-function isCoveredByPrevious(items: Assignment[], blockStartMap: Map<string, number>, day: number, periodNo: number) {
+function isCoveredByPrevious(items: Assignment[], blockMeta: Map<string, BlockMeta>, day: number, periodNo: number) {
   return items.some((item) => {
-    if (Number(item.weekday || 0) !== day) return false;
-    const key = getBlockKey(item);
-    const start = blockStartMap.get(key) || Number(item.period_no || 0);
-    const span = getSpan(item);
+    if (getNumeric(item.weekday) !== day) return false;
+
+    const meta = blockMeta.get(getBlockKey(item));
+    const start = meta?.start || getNumeric(item.period_no);
+    const span = meta?.span || 1;
+
     return start < periodNo && periodNo < start + span;
   });
+}
+
+function getItemSpan(item: Assignment, blockMeta: Map<string, BlockMeta>) {
+  return Math.max(1, blockMeta.get(getBlockKey(item))?.span || 1);
+}
+
+function getInstitutionInfo(snapshot?: SourceSnapshot | null): InstitutionInfo {
+  const source = snapshot?.institution || snapshot?.establishment || {};
+
+  return {
+    name: emptyToBlank(source.name || source.school_name || source.institution_name),
+    academicYear: emptyToBlank(source.academic_year || source.academicYear || source.school_year),
+    bp: emptyToBlank(source.bp || source.postal_box),
+    phone: emptyToBlank(source.phone || source.tel || source.telephone),
+    fax: emptyToBlank(source.fax),
+    email: emptyToBlank(source.email),
+  };
 }
 
 function StatBox({ label, value }: { label: string; value: number | string }) {
@@ -380,20 +490,20 @@ function CourseBlock({ item, mode, roomMap }: { item: Assignment; mode: ViewMode
   const isTandem = Boolean(item.tandem_group_id || item.tandem_role || item.tandem_mode);
 
   return (
-    <div className="flex h-full min-h-[58px] flex-col items-center justify-center px-1 py-1 text-center leading-tight">
-      <strong className="block max-w-full truncate text-[13px] font-black text-slate-950">
-        {clean(item.subject_label, "MatiÃ¨re")}
+    <div className="mx-auto flex max-w-full flex-col items-center justify-center px-1 text-center leading-tight">
+      <strong className="block max-w-full truncate text-[11px] font-black text-black print:text-[9px]">
+        {clean(item.subject_label, "Matière")}
       </strong>
-      <span className="mt-1 block max-w-full truncate text-[11px] font-bold text-slate-800">
+      <span className="mt-0.5 block max-w-full truncate text-[9.5px] font-bold text-black print:text-[8px]">
         {getSecondaryLabel(item, mode)}
       </span>
       {roomName ? (
-        <em className="mt-1 block max-w-full truncate text-[10px] font-bold not-italic text-slate-700">
+        <em className="mt-0.5 block max-w-full truncate text-[8.5px] font-bold not-italic text-black print:text-[7.5px]">
           {roomName}
         </em>
       ) : null}
       {isTandem ? (
-        <small className="mt-1 rounded-full bg-violet-50 px-2 py-0.5 text-[9px] font-black text-violet-700">
+        <small className="mt-1 rounded-full bg-violet-50 px-1.5 py-0.5 text-[8px] font-black text-violet-700 print:hidden">
           Tandem {item.tandem_mode || ""}
         </small>
       ) : null}
@@ -414,26 +524,26 @@ function OfficialTimetableGrid({
   const periods = getPeriods(items, snapshot);
   const rows = buildRows(periods);
   const roomMap = React.useMemo(() => makeRoomMap(snapshot), [snapshot]);
-  const blockStartMap = React.useMemo(() => makeBlockStartMap(items), [items]);
+  const blockMeta = React.useMemo(() => makeBlockMetaMap(items), [items]);
 
   if (days.length === 0 || periods.length === 0) {
     return (
       <div className="rounded-3xl border border-dashed border-slate-300 bg-slate-50 p-6 text-center text-sm font-semibold text-slate-500">
-        Impossible de construire la grille : jours ou crÃ©neaux officiels manquants.
+        Impossible de construire la grille : jours ou créneaux officiels manquants.
       </div>
     );
   }
 
   return (
-    <div className="overflow-x-auto bg-white">
-      <table className="w-full min-w-[940px] border-collapse text-[12px] text-slate-950">
+    <div className="w-full overflow-hidden bg-white">
+      <table className="w-full table-fixed border-collapse text-black">
         <thead>
           <tr>
-            <th className="w-[130px] border border-slate-900 bg-white px-2 py-3 text-center text-[12px] font-black uppercase">
+            <th className="w-[74px] border border-black bg-white px-1 py-2 text-center text-[9.5px] font-black uppercase print:w-[24mm] print:text-[8px]">
               HORAIRES
             </th>
             {days.map((day) => (
-              <th key={day} className="min-w-[150px] border border-slate-900 bg-white px-2 py-3 text-center text-[12px] font-black uppercase">
+              <th key={day} className="border border-black bg-white px-1 py-2 text-center text-[9.5px] font-black uppercase print:text-[8px]">
                 {dayLabel(day)}
               </th>
             ))}
@@ -444,7 +554,7 @@ function OfficialTimetableGrid({
             if (row.type === "break" || row.type === "interclass") {
               return (
                 <tr key={row.key}>
-                  <td colSpan={days.length + 1} className="border border-slate-900 bg-sky-100 py-1 text-center text-[11px] font-black uppercase tracking-[0.35em]">
+                  <td colSpan={days.length + 1} className="border border-black bg-sky-100 py-0.5 text-center text-[9px] font-black uppercase tracking-[0.42em] print:text-[7px]">
                     {row.label}
                   </td>
                 </tr>
@@ -455,19 +565,23 @@ function OfficialTimetableGrid({
 
             return (
               <tr key={period.period_no} className="align-middle">
-                <th className="border border-slate-900 bg-white px-2 py-3 text-center text-[12px] font-black">
+                <th className="border border-black bg-white px-1 py-2 text-center text-[9px] font-black print:text-[7px]">
                   {timeLabel(period)}
                 </th>
                 {days.map((day) => {
-                  if (isCoveredByPrevious(items, blockStartMap, day, period.period_no)) {
+                  if (isCoveredByPrevious(items, blockMeta, day, period.period_no)) {
                     return null;
                   }
 
-                  const cellItems = getCellItems(items, blockStartMap, day, period.period_no);
-                  const rowSpan = Math.max(1, ...cellItems.map(getSpan));
+                  const cellItems = getCellItems(items, blockMeta, day, period.period_no);
+                  const rowSpan = Math.max(1, ...cellItems.map((item) => getItemSpan(item, blockMeta)));
 
                   return (
-                    <td key={`${day}-${period.period_no}`} rowSpan={rowSpan} className="h-[76px] border border-slate-900 bg-white p-1 text-center align-middle">
+                    <td
+                      key={`${day}-${period.period_no}`}
+                      rowSpan={rowSpan}
+                      className="h-[62px] border border-black bg-white px-1 py-1 text-center align-middle print:h-[12mm] print:px-0.5 print:py-0.5"
+                    >
                       {cellItems.length === 0 ? null : (
                         <div className="flex h-full flex-col items-center justify-center gap-1">
                           {cellItems.map((item, index) => (
@@ -491,7 +605,7 @@ function buildTeacherRows(items: Assignment[]) {
   const map = new Map<string, string>();
 
   for (const item of items) {
-    const subject = clean(item.subject_label, "MatiÃ¨re");
+    const subject = clean(item.subject_label, "Matière");
     const teacher = clean(item.teacher_name, "Enseignant");
     if (!map.has(subject)) map.set(subject, teacher);
   }
@@ -514,54 +628,43 @@ function OfficialClassSheet({
 }) {
   const teacherRows = buildTeacherRows(items);
   const isClassMode = mode === "class";
+  const info = getInstitutionInfo(snapshot);
 
   return (
-    <section className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-sm print:rounded-none print:border-0 print:shadow-none">
-      <div className="border-b border-slate-200 bg-white px-4 py-4 print:border-0 print:pb-2">
-        <div className="hidden print:block">
-          <div className="mb-3 flex flex-wrap gap-8 text-[11px] text-black">
-            <span>Ã‰tablissement : ....................................</span>
-            <span>AnnÃ©e scolaire : 20.... / 20......</span>
-            <span>BP : ............</span>
-            <span>TÃ©l : ............</span>
-            <span>Fax : ............</span>
-            <span>Email : ....................</span>
-          </div>
-          <div className="mx-auto mb-2 w-fit border-2 border-black px-8 py-1 text-center text-xl font-black uppercase tracking-wide">
-            {isClassMode ? "EMPLOI DU TEMPS DE CLASSE" : "EMPLOI DU TEMPS PROFESSEUR"}
-          </div>
-          <p className="text-center text-sm font-black">{isClassMode ? `Classe : ${label}` : `Professeur : ${label}`}</p>
+    <section className="overflow-hidden rounded-[18px] border border-slate-300 bg-white shadow-sm print:break-after-page print:rounded-none print:border-0 print:shadow-none">
+      <div className="bg-white px-3 pb-2 pt-3 print:px-0 print:pt-0">
+        <div className="mb-2 flex flex-wrap gap-x-6 gap-y-1 text-[10px] text-black print:text-[8px]">
+          <span>Établissement : {info.name || "...................................."}</span>
+          <span>Année scolaire : {info.academicYear || "20.... / 20......"}</span>
+          <span>BP : {info.bp || "............"}</span>
+          <span>Tél : {info.phone || "............"}</span>
+          <span>Fax : {info.fax || "............"}</span>
+          <span>Email : {info.email || "...................."}</span>
         </div>
-
-        <div className="flex items-center justify-between gap-3 print:hidden">
-          <div>
-            <p className="text-xs font-black uppercase tracking-[0.18em] text-slate-500">
-              {isClassMode ? "Emploi du temps de classe" : "Emploi du temps professeur"}
-            </p>
-            <h3 className="mt-1 text-xl font-black text-slate-950">{label}</h3>
-          </div>
-          <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-black text-emerald-700 ring-1 ring-emerald-100">
-            {items.length} cours
-          </span>
+        <div className="mx-auto mb-2 w-fit border-2 border-black px-8 py-1 text-center text-lg font-black uppercase tracking-wide text-black print:text-[14px]">
+          {isClassMode ? "EMPLOI DU TEMPS DE CLASSE" : "EMPLOI DU TEMPS PROFESSEUR"}
         </div>
+        <p className="text-center text-sm font-black text-black print:text-[10px]">
+          {isClassMode ? `Classe : ${label}` : `Professeur : ${label}`}
+        </p>
       </div>
 
-      <div className={isClassMode ? "grid gap-4 p-4 xl:grid-cols-[minmax(0,1fr)_288px] print:grid-cols-[minmax(0,1fr)_72mm] print:gap-4 print:p-0" : "p-4 print:p-0"}>
+      <div className={isClassMode ? "grid gap-3 px-3 pb-3 xl:grid-cols-[minmax(0,1fr)_250px] print:grid-cols-[minmax(0,1fr)_56mm] print:gap-3 print:px-0 print:pb-0" : "px-3 pb-3 print:px-0 print:pb-0"}>
         <OfficialTimetableGrid items={items} mode={mode} snapshot={snapshot} />
 
         {isClassMode ? (
-          <aside className="rounded-2xl border border-slate-900 bg-white p-0 print:rounded-none">
-            <div className="border-b border-slate-900 px-2 py-2 text-center">
-              <h4 className="text-sm font-black uppercase text-slate-950">PROFESSEURS DE LA CLASSE</h4>
-              <p className="text-[10px] font-semibold text-slate-600">Ou Ã©quipe pÃ©dagogique</p>
+          <aside className="overflow-hidden rounded-xl border border-black bg-white print:rounded-none">
+            <div className="border-b border-black px-2 py-2 text-center">
+              <h4 className="text-[11px] font-black uppercase text-black print:text-[8px]">PROFESSEURS DE LA CLASSE</h4>
+              <p className="text-[9px] font-semibold text-black print:text-[7px]">Ou équipe pédagogique</p>
             </div>
-            <table className="w-full border-collapse text-[11px]">
+            <table className="w-full border-collapse text-[9px] text-black print:text-[7px]">
               <tbody>
                 {teacherRows.map(([subject, teacher], index) => (
                   <tr key={`${subject}-${teacher}-${index}`}>
-                    <td className="w-8 border border-slate-900 px-2 py-1 text-center">{index + 1}</td>
-                    <td className="border border-slate-900 px-2 py-1 font-black">{subject}</td>
-                    <td className="border border-slate-900 px-2 py-1">{teacher}</td>
+                    <td className="w-7 border border-black px-1 py-1 text-center">{index + 1}</td>
+                    <td className="border border-black px-1 py-1 font-black">{subject}</td>
+                    <td className="border border-black px-1 py-1">{teacher}</td>
                   </tr>
                 ))}
               </tbody>
@@ -571,18 +674,18 @@ function OfficialClassSheet({
       </div>
 
       {isClassMode ? (
-        <div className="mx-4 mb-4 hidden print:block">
-          <table className="w-full border-collapse text-[11px]">
+        <div className="mx-3 mb-3 print:mx-0 print:mb-0 print:mt-3">
+          <table className="w-full border-collapse text-[10px] text-black print:text-[8px]">
             <thead>
               <tr>
-                <th className="border border-black py-1 text-center font-black">PERSONNEL Dâ€™ENCADREMENT</th>
-                <th className="border border-black py-1 text-center font-black">TÃ‰LÃ‰PHONE</th>
+                <th className="border border-black py-1 text-center font-black">PERSONNEL D’ENCADREMENT</th>
+                <th className="w-[30%] border border-black py-1 text-center font-black">TÉLÉPHONE</th>
               </tr>
             </thead>
             <tbody>
-              <tr><td className="border border-black px-2 py-1">Inspecteur dâ€™Ã‰ducation</td><td className="border border-black" /></tr>
-              <tr><td className="border border-black px-2 py-1">Ã‰ducateur</td><td className="border border-black" /></tr>
-              <tr><td className="border border-black px-2 py-1">PP (chef Ã©quipe pÃ©da.)</td><td className="border border-black" /></tr>
+              <tr><td className="border border-black px-2 py-1">Inspecteur d’Éducation</td><td className="border border-black" /></tr>
+              <tr><td className="border border-black px-2 py-1">Éducateur</td><td className="border border-black" /></tr>
+              <tr><td className="border border-black px-2 py-1">PP (chef équipe péda.)</td><td className="border border-black" /></tr>
             </tbody>
           </table>
         </div>
@@ -610,7 +713,7 @@ function ListView({ groups, mode, snapshot }: { groups: Array<{ label: string; i
                 <tr className="text-left text-xs font-black uppercase tracking-wide text-slate-500">
                   <th className="px-4 py-3">Jour</th>
                   <th className="px-4 py-3">Horaire</th>
-                  <th className="px-4 py-3">MatiÃ¨re</th>
+                  <th className="px-4 py-3">Matière</th>
                   <th className="px-4 py-3">{mode === "class" ? "Professeur" : "Classe"}</th>
                   <th className="px-4 py-3">Salle</th>
                 </tr>
@@ -618,11 +721,13 @@ function ListView({ groups, mode, snapshot }: { groups: Array<{ label: string; i
               <tbody className="divide-y divide-slate-100">
                 {sortAssignments(group.items).map((item, index) => (
                   <tr key={`${item.id || index}-list`}>
-                    <td className="px-4 py-3 font-bold text-slate-900">{dayLabel(Number(item.weekday || 0))}</td>
-                    <td className="px-4 py-3 text-slate-600">{item.start_time && item.end_time ? `${shortTime(item.start_time)}-${shortTime(item.end_time)}` : item.period_label || `SÃ©ance ${item.period_no || "?"}`}</td>
-                    <td className="px-4 py-3 font-black text-slate-950">{clean(item.subject_label, "MatiÃ¨re")}</td>
+                    <td className="px-4 py-3 font-bold text-slate-900">{dayLabel(getNumeric(item.weekday))}</td>
+                    <td className="px-4 py-3 text-slate-600">
+                      {item.start_time && item.end_time ? `${shortTime(item.start_time)}-${shortTime(item.end_time)}` : item.period_label || `Séance ${item.period_no || "?"}`}
+                    </td>
+                    <td className="px-4 py-3 font-black text-slate-950">{clean(item.subject_label, "Matière")}</td>
                     <td className="px-4 py-3 text-slate-700">{getSecondaryLabel(item, mode)}</td>
-                    <td className="px-4 py-3 text-slate-700">{getRoomName(item, roomMap) || "â€”"}</td>
+                    <td className="px-4 py-3 text-slate-700">{getRoomName(item, roomMap) || "—"}</td>
                   </tr>
                 ))}
               </tbody>
@@ -693,8 +798,16 @@ export default function MontageProjectPreview({ projectId }: { projectId: string
   }
 
   return (
-    <main className="min-h-screen bg-slate-50 px-4 py-6 text-slate-950 print:bg-white print:px-0 print:py-0">
-      <section className="mx-auto max-w-7xl space-y-6 print:max-w-none print:space-y-4">
+    <main className="min-h-screen bg-slate-100 px-3 py-5 text-slate-950 print:bg-white print:px-0 print:py-0">
+      <style dangerouslySetInnerHTML={{ __html: `
+        @page { size: A4 landscape; margin: 7mm; }
+        @media print {
+          body { background: #fff !important; }
+          .print\\:break-after-page { break-after: page; page-break-after: always; }
+        }
+      ` }} />
+
+      <section className="mx-auto max-w-[1760px] space-y-5 print:max-w-none print:space-y-0">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between print:hidden">
           <Link href="/admin/montage-emploi-du-temps" className="inline-flex items-center gap-2 text-sm font-bold text-slate-600 transition hover:text-slate-950">
             <ArrowLeft className="h-4 w-4" />
@@ -722,26 +835,26 @@ export default function MontageProjectPreview({ projectId }: { projectId: string
           </div>
         </div>
 
-        <div className="overflow-hidden rounded-[32px] border border-slate-200 bg-slate-950 shadow-xl print:hidden">
+        <div className="overflow-hidden rounded-[30px] border border-slate-200 bg-slate-950 shadow-xl print:hidden">
           <div className="relative p-6 sm:p-8">
             <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(56,189,248,0.20),transparent_34%),radial-gradient(circle_at_bottom_left,rgba(16,185,129,0.17),transparent_32%)]" />
             <div className="relative">
               <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/10 px-3 py-1 text-xs font-black uppercase tracking-[0.18em] text-sky-100">
                 <CalendarDays className="h-4 w-4" />
-                Grille HoraClasse officielle
+                Aperçu officiel HoraClasse
               </div>
               <h1 className="mt-5 text-3xl font-black tracking-tight text-white sm:text-4xl">
-                {project?.name || "Emploi du temps gÃ©nÃ©rÃ©"}
+                {project?.name || "Emploi du temps généré"}
               </h1>
-              <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-300 sm:text-base">
-                PrÃ©sentation rapprochÃ©e du rendu HoraClasse : grille administrative, blocs fusionnÃ©s sur 2h, pas dâ€™UUID affichÃ©, tableau des professeurs pour les classes.
+              <p className="mt-3 max-w-4xl text-sm leading-6 text-slate-300 sm:text-base">
+                Rendu administratif : grille officielle, bordures nettes, blocs consécutifs fusionnés, horaires réels, professeurs de la classe à droite et aucun identifiant technique affiché dans les cellules.
               </p>
               {project && (
                 <div className="mt-5 flex flex-wrap gap-2 text-xs font-bold">
                   <span className="rounded-full bg-white px-3 py-1 text-slate-950">Statut : {project.status}</span>
-                  <span className="rounded-full bg-white/10 px-3 py-1 text-slate-200 ring-1 ring-white/10">ModifiÃ© le {formatDate(project.updated_at)}</span>
+                  <span className="rounded-full bg-white/10 px-3 py-1 text-slate-200 ring-1 ring-white/10">Modifié le {formatDate(project.updated_at)}</span>
                   {result?.generated_at ? (
-                    <span className="rounded-full bg-white/10 px-3 py-1 text-slate-200 ring-1 ring-white/10">GÃ©nÃ©rÃ© le {formatDate(result.generated_at)}</span>
+                    <span className="rounded-full bg-white/10 px-3 py-1 text-slate-200 ring-1 ring-white/10">Généré le {formatDate(result.generated_at)}</span>
                   ) : null}
                 </div>
               )}
@@ -752,7 +865,7 @@ export default function MontageProjectPreview({ projectId }: { projectId: string
         {loading && (
           <div className="flex items-center gap-3 rounded-3xl border border-slate-200 bg-white p-5 text-sm font-semibold text-slate-700 shadow-sm print:hidden">
             <Loader2 className="h-5 w-5 animate-spin" />
-            Chargement de lâ€™aperÃ§u...
+            Chargement de l’aperçu...
           </div>
         )}
 
@@ -761,7 +874,7 @@ export default function MontageProjectPreview({ projectId }: { projectId: string
             <div className="flex items-start gap-3">
               <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" />
               <div>
-                <p className="font-black">Impossible de charger lâ€™aperÃ§u</p>
+                <p className="font-black">Impossible de charger l’aperçu</p>
                 <p className="mt-1 text-sm">{error}</p>
               </div>
             </div>
@@ -771,8 +884,8 @@ export default function MontageProjectPreview({ projectId }: { projectId: string
         {!loading && project && (
           <>
             <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4 print:hidden">
-              <StatBox label="Cours placÃ©s" value={result?.summary?.assignments_count ?? assignments.length} />
-              <StatBox label="Blocs non placÃ©s" value={result?.summary?.unplaced_count ?? unplaced.length} />
+              <StatBox label="Cours placés" value={result?.summary?.assignments_count ?? assignments.length} />
+              <StatBox label="Blocs non placés" value={result?.summary?.unplaced_count ?? unplaced.length} />
               <StatBox label="Score" value={`${result?.summary?.score ?? 0}%`} />
               <StatBox label="Moteur" value={result?.status === "generated_real_scheduler" ? "HoraClasse" : "En attente"} />
             </div>
@@ -782,21 +895,21 @@ export default function MontageProjectPreview({ projectId }: { projectId: string
                 <div className="flex items-start gap-3">
                   <Clock3 className="mt-0.5 h-5 w-5 shrink-0" />
                   <div>
-                    <p className="font-black">Aucun emploi du temps gÃ©nÃ©rÃ©</p>
-                    <p className="mt-1 text-sm">Retourne sur la page Montage emploi du temps, puis clique sur â€œGÃ©nÃ©rer avec HoraClasseâ€.</p>
+                    <p className="font-black">Aucun emploi du temps généré</p>
+                    <p className="mt-1 text-sm">Retourne sur la page Montage emploi du temps, puis clique sur “Générer avec HoraClasse”.</p>
                   </div>
                 </div>
               </div>
             ) : (
-              <div className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm print:rounded-none print:border-0 print:p-0 print:shadow-none">
+              <div className="rounded-[28px] border border-slate-200 bg-white p-4 shadow-sm print:rounded-none print:border-0 print:p-0 print:shadow-none">
                 <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between print:hidden">
                   <div>
                     <h2 className="flex items-center gap-2 text-xl font-black">
                       <Grid3X3 className="h-5 w-5 text-slate-500" />
-                      AperÃ§u emploi du temps
+                      Aperçu officiel
                     </h2>
                     <p className="mt-1 text-sm text-slate-500">
-                      Grille officielle : les blocs de 2h sont fusionnÃ©s et les salles affichent leur nom, jamais leur identifiant technique.
+                      Grille calée sur HoraClasse : tableau compact, complet et imprimable.
                     </p>
                   </div>
 
@@ -864,10 +977,10 @@ export default function MontageProjectPreview({ projectId }: { projectId: string
                   </div>
                 </div>
 
-                <div className="mt-6 print:mt-0">
+                <div className="mt-5 print:mt-0">
                   {display === "grid" ? (
                     selectedTarget === "all" ? (
-                      <div className="space-y-6 print:space-y-8">
+                      <div className="space-y-6 print:space-y-0">
                         {groups.map((group) => (
                           <OfficialClassSheet key={group.label} label={group.label} items={group.items} mode={mode} snapshot={snapshot} />
                         ))}
@@ -890,10 +1003,10 @@ export default function MontageProjectPreview({ projectId }: { projectId: string
                     <h2 className="font-black">Diagnostics HoraClasse</h2>
                     <div className="mt-3 space-y-2 text-sm">
                       {diagnostics.map((item, index) => (
-                        <p key={`diagnostic-${index}`}>â€¢ {item.message || "Alerte sans message"}</p>
+                        <p key={`diagnostic-${index}`}>• {item.message || "Alerte sans message"}</p>
                       ))}
                       {unplaced.map((item, index) => (
-                        <p key={`unplaced-${index}`}>â€¢ Non placÃ© : {clean(item.class_label, "Classe")} â€” {clean(item.subject_label, "MatiÃ¨re")} â€” {clean(item.teacher_name, "Enseignant")}</p>
+                        <p key={`unplaced-${index}`}>• Non placé : {clean(item.class_label, "Classe")} — {clean(item.subject_label, "Matière")} — {clean(item.teacher_name, "Enseignant")}</p>
                       ))}
                     </div>
                   </div>
@@ -906,4 +1019,3 @@ export default function MontageProjectPreview({ projectId }: { projectId: string
     </main>
   );
 }
-
