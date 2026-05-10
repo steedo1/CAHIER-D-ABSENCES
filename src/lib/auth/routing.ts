@@ -3,6 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 export type AppRole =
   | "super_admin"
+  | "drenaet_admin"
   | "admin"
   | "educator"
   | "teacher"
@@ -13,6 +14,7 @@ export type Book = "attendance" | "grades";
 
 export const ROLE_PRIORITY: AppRole[] = [
   "super_admin",
+  "drenaet_admin",
   "admin",
   "educator",
   "teacher",
@@ -21,7 +23,6 @@ export const ROLE_PRIORITY: AppRole[] = [
 ];
 
 function normalize(role: AppRole): AppRole {
-  // ⚠️ On ne mappe plus educator → admin
   // Chaque rôle reste distinct.
   return role;
 }
@@ -34,6 +35,8 @@ export function routeForRole(role: AppRole): string {
   switch (role) {
     case "super_admin":
       return "/super/dashboard";
+    case "drenaet_admin":
+      return "/drenaet/dashboard";
     case "admin":
       return "/admin/dashboard";
     case "educator":
@@ -62,15 +65,14 @@ export function routeForRoleWithBook(role: AppRole, book?: Book): string {
         return "/grades"; // Cahier de notes — espace enseignant
       case "admin":
         return "/admin/notes"; // Cahier de notes — admin établissement
+      case "drenaet_admin":
+        return "/drenaet/dashboard"; // Supervision régionale, lecture seule
       case "super_admin":
         return "/super/notes"; // Cahier de notes — super admin
       case "parent":
         return "/parents?tab=notes"; // Onglet "notes" côté parent
       case "class_device":
-        // ✅ Compte-classe pour le cahier de notes
         return "/grades/class-device";
-      // 👉 educator : ne va PAS vers /admin/notes,
-      // on retombe sur la route par défaut (dashboard admin filtré).
       default:
         return routeForRole(r);
     }
@@ -103,7 +105,7 @@ export async function routeForUser(
       if (primary) {
         const pr = normalize(primary);
 
-        // ⭐️ Enseignant ET compte-classe : si pas encore choisi son cahier,
+        // Enseignant ET compte-classe : si pas encore choisi son cahier,
         // on l'envoie sur l’écran de choix.
         if ((pr === "teacher" || pr === "class_device") && !book) {
           return "/choose-book";

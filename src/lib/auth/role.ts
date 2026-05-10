@@ -2,6 +2,7 @@
 
 export type AppRole =
   | "super_admin"
+  | "drenaet_admin"
   | "admin"
   | "educator"
   | "teacher"
@@ -10,6 +11,7 @@ export type AppRole =
 
 export const ROLE_PRIORITY: AppRole[] = [
   "super_admin",
+  "drenaet_admin",
   "admin",
   "educator",
   "teacher",
@@ -18,7 +20,6 @@ export const ROLE_PRIORITY: AppRole[] = [
 ];
 
 export function normalize(role: AppRole): AppRole {
-  // ⚠️ On ne mappe plus "educator" vers "admin"
   // Chaque rôle reste distinct.
   return role;
 }
