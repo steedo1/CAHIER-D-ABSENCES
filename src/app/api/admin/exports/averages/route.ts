@@ -1,3 +1,4 @@
+// src/app/api/admin/exports/averages/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
@@ -38,10 +39,19 @@ type StudentMetaRow = {
 type BulletinPerSubject = {
   subject_id: string;
   avg20: number | null;
+  bonus?: number | null;
+  avg20_before_bonus?: number | null;
   subject_rank?: number | null;
   has_grade?: boolean | null;
   is_nc?: boolean | null;
   is_assigned?: boolean | null;
+};
+
+type BulletinPerSubjectComponent = {
+  subject_id: string;
+  component_id: string;
+  avg20: number | null;
+  component_rank?: number | null;
 };
 
 type BulletinSubjectMeta = {
@@ -49,6 +59,15 @@ type BulletinSubjectMeta = {
   subject_name?: string | null;
   coeff_bulletin?: number | null;
   include_in_average?: boolean | null;
+};
+
+type BulletinSubjectComponentMeta = {
+  id: string;
+  subject_id: string;
+  label?: string | null;
+  short_label?: string | null;
+  coeff_in_subject?: number | null;
+  order_index?: number | null;
 };
 
 type BulletinMissingSubject = {
@@ -86,15 +105,15 @@ type BulletinItem = {
   full_name: string;
   matricule: string | null;
 
-  // 0 = vraie moyenne publiée ; null = NC / pas de moyenne.
   general_avg: number | null;
   rank?: number | null;
+  general_bonus?: number | null;
+  general_avg_before_bonus?: number | null;
 
   coverage?: BulletinCoverage | null;
   general_avg_is_complete?: boolean | null;
   general_avg_status?: "complete" | "partial" | "empty" | "admin_nc" | string | null;
 
-  // Décision NC admin centralisée via public.bulletin_nc_overrides.
   admin_forced_nc?: boolean | null;
   general_avg_before_admin_nc?: number | null;
   rank_before_admin_nc?: number | null;
@@ -114,13 +133,13 @@ type BulletinItem = {
     | string
     | null;
 
-  // Réservé au cas où l’admin force NC sur l’annuel.
   admin_annual_forced_nc?: boolean | null;
   annual_avg_before_admin_nc?: number | null;
   annual_rank_before_admin_nc?: number | null;
   admin_annual_nc_reason?: string | null;
 
   per_subject?: BulletinPerSubject[];
+  per_subject_components?: BulletinPerSubjectComponent[];
 };
 
 type BulletinResponse = {
@@ -142,6 +161,7 @@ type BulletinResponse = {
   };
   items?: BulletinItem[];
   subjects?: BulletinSubjectMeta[];
+  subject_components?: BulletinSubjectComponentMeta[];
 };
 
 type ConductAverageItem = {
@@ -166,32 +186,23 @@ type ExportRow = {
   annee_scolaire: string;
   periode: string;
 
-  // Valeur exportée principale.
-  // Pour une période : moyenne trimestrielle.
-  // Pour l’annuel : moyenne annuelle.
   moyenne_generale: number | null;
-  // Conservé pour compatibilité : signifie maintenant "moyenne classable".
   moyenne_generale_complete: boolean;
-  // Conservé pour compatibilité : toujours false, car on ne met plus d’étoile.
   moyenne_generale_has_star: boolean;
   rang: number | null;
 
   conduite: number | null;
 
   moyenne_annuelle: number | null;
-  // Conservé pour compatibilité : signifie maintenant "moyenne annuelle classable".
   moyenne_annuelle_complete: boolean;
-  // Conservé pour compatibilité : toujours false, car on ne met plus d’étoile.
   moyenne_annuelle_has_star: boolean;
   rang_annuel: number | null;
 
-  // Une clé absente = matière non affectée à cette classe.
-  // Une clé présente avec null = matière affectée mais NC.
-  // Une clé présente avec 0 = vraie note/moyenne zéro.
   subject_values: Record<string, number | null>;
 };
 
 type ExportFormat = "xlsx" | "csv";
+type ExportKind = "legacy" | "dsps_notes" | "dsps_annual";
 
 type ResolvedPeriod = {
   academicYear: string;
@@ -203,8 +214,97 @@ type ResolvedPeriod = {
   bulletinPeriod: GradePeriodRow;
 };
 
+type PreparedWorkbook = {
+  filenameBase: string;
+  mainSheetName: string;
+  rows: Record<string, unknown>[];
+  classSheets?: { sheetName: string; rows: Record<string, unknown>[] }[];
+};
+
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+const DSPS_FIRST_CYCLE_SUBJECT_HEADERS = [
+  "Composition Française",
+  "Orthographe",
+  "Oral Français",
+  "Anglais",
+  "Philosophie",
+  "Allemand",
+  "Espagnol",
+  "Histoire-Géographie",
+  "Mathématiques",
+  "Sciences Physiques",
+  "SVT",
+  "E.P.S",
+  "EDHC",
+  "Arts Plastiques",
+  "Musique",
+  "TIC",
+] as const;
+
+const DSPS_SECOND_CYCLE_SUBJECT_HEADERS = [
+  "Français",
+  "Anglais",
+  "Philosophie",
+  "Allemand",
+  "Espagnol",
+  "Histoire-Géographie",
+  "Mathématiques",
+  "Sciences Physiques",
+  "SVT",
+  "E.P.S",
+  "EDHC",
+  "Arts Plastiques",
+  "Musique",
+  "TIC",
+] as const;
+
+const DSPS_NOTES_BASE_HEADERS = ["Matricule", "Nom", "Série", "Niveau"] as const;
+const DSPS_NOTES_END_HEADERS = ["Conduite", "Bonus"] as const;
+
+const DSPS_ANNUAL_HEADERS = [
+  "N°",
+  "Matricule national",
+  "Nom",
+  "Prénoms",
+  "Moy. 1er Trim",
+  "Rang",
+  "Moy. 2e Trim",
+  "Rang ",
+  "Moy. 3e Trim",
+  "Rang  ",
+  "MGA",
+  "Rang   ",
+  "Décision du conseil",
+] as const;
+
+const SUBJECT_ALIASES: Record<string, string[]> = {
+  "Composition Française": [
+    "composition francaise",
+    "composition francais",
+    "composition",
+    "expression ecrite",
+    "redaction",
+    "production ecrite",
+  ],
+  Orthographe: ["orthographe", "grammaire orthographe", "langue"],
+  "Oral Français": ["oral francais", "oral", "expression orale", "lecture", "recitation"],
+  Français: ["francais", "français", "lettres modernes", "fr"],
+  Anglais: ["anglais", "english", "ang"],
+  Philosophie: ["philosophie", "philo"],
+  Allemand: ["allemand", "all"],
+  Espagnol: ["espagnol", "esp"],
+  "Histoire-Géographie": ["histoire geographie", "histoire-geographie", "histoire", "geographie", "hg", "h g"],
+  Mathématiques: ["mathematiques", "mathématiques", "maths", "math"],
+  "Sciences Physiques": ["sciences physiques", "physique chimie", "physique-chimie", "pc", "physique", "chimie"],
+  SVT: ["svt", "sciences de la vie", "sciences naturelles", "biologie", "geologie"],
+  "E.P.S": ["eps", "e p s", "education physique", "sport"],
+  EDHC: ["edhc", "education aux droits", "droit de l homme", "citoyennete", "education civique"],
+  "Arts Plastiques": ["arts plastiques", "art plastique", "arts", "dessin"],
+  Musique: ["musique", "education musicale"],
+  TIC: ["tic", "tice", "informatique", "numerique"],
+};
 
 function cleanNumber(value: unknown, precision = 2): number | null {
   const n = Number(value);
@@ -251,6 +351,51 @@ function toFileSafePart(value: string): string {
     .replace(/[^a-zA-Z0-9_-]+/g, "-")
     .replace(/^-+|-+$/g, "")
     .toLowerCase();
+}
+
+function safeSheetName(value: string): string {
+  const s = String(value || "Feuille")
+    .replace(/[\\/?:*\[\]]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return (s || "Feuille").slice(0, 31);
+}
+
+function normalizeForMatch(value: string | null | undefined): string {
+  return String(value ?? "")
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function compactForMatch(value: string | null | undefined): string {
+  return normalizeForMatch(value).replace(/\s+/g, "");
+}
+
+function labelMatchesHeader(label: string | null | undefined, header: string): boolean {
+  const normalizedLabel = normalizeForMatch(label);
+  const compactLabel = compactForMatch(label);
+  if (!normalizedLabel) return false;
+
+  const aliases = SUBJECT_ALIASES[header] || [header];
+
+  for (const alias of aliases) {
+    const normalizedAlias = normalizeForMatch(alias);
+    const compactAlias = compactForMatch(alias);
+    if (!normalizedAlias) continue;
+
+    if (normalizedLabel === normalizedAlias || compactLabel === compactAlias) return true;
+
+    if (normalizedAlias.length >= 4) {
+      if (normalizedLabel.includes(normalizedAlias) || compactLabel.includes(compactAlias)) {
+        return true;
+      }
+    }
+  }
+
+  return false;
 }
 
 function splitStudentName(meta: Pick<StudentMetaRow, "first_name" | "last_name" | "full_name">) {
@@ -315,51 +460,57 @@ function pickOrigin(req: NextRequest) {
     : `${proto}://${host}`;
 }
 
-function makeDownloadFilename(opts: {
-  institutionName: string;
-  academicYear: string;
-  requestedCode: string;
-  format: ExportFormat;
-  classLabel?: string;
-}) {
-  const base = [
-    "export-moyennes",
-    toFileSafePart(opts.institutionName || "etablissement"),
-    toFileSafePart(opts.academicYear || "annee"),
-    toFileSafePart(opts.requestedCode || "periode"),
-    opts.classLabel ? toFileSafePart(opts.classLabel) : "toutes-classes",
-  ]
-    .filter(Boolean)
-    .join("_");
+function normalizeLevel(level?: string | null): string {
+  const raw = normalizeForMatch(level);
+  if (!raw) return "";
 
-  return `${base}.${opts.format}`;
+  if (raw === "6e" || raw.startsWith("6")) return "6e";
+  if (raw === "5e" || raw.startsWith("5")) return "5e";
+  if (raw === "4e" || raw.startsWith("4")) return "4e";
+  if (raw === "3e" || raw.startsWith("3")) return "3e";
+  if (raw.includes("seconde") || raw.startsWith("2")) return "seconde";
+  if (raw.includes("premiere") || raw.startsWith("1")) return "première";
+  if (raw.includes("terminale") || raw.startsWith("t")) return "terminale";
+
+  return raw;
 }
 
-function isAdminForcedNc(item: BulletinItem): boolean {
+function isFirstCycleLevel(level?: string | null): boolean {
+  const n = normalizeLevel(level);
+  return n === "6e" || n === "5e" || n === "4e" || n === "3e";
+}
+
+function extractSeriesFromClass(cls: ClassRow): string {
+  const label = String(cls.label || cls.code || "").toUpperCase();
+  const level = normalizeLevel(cls.level);
+
+  if (level !== "seconde" && level !== "première" && level !== "terminale") return "";
+
+  const normalized = label
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^A-Z0-9]+/g, " ")
+    .trim();
+
+  const match = normalized.match(/\b(A1|A2|D1|D2|G1|G2|TI|TIC|C|D|B|E|F|L|S)\b/);
+  if (!match?.[1]) return "";
+  return match[1].replace(/^(D|G)[12]$/, "$1");
+}
+
+function displayLevelForDsps(cls: ClassRow): string {
+  const level = String(cls.level || "").trim();
+  if (level) return level;
+  return String(cls.label || cls.code || "").trim();
+}
+
+function isAdminForcedNc(item: BulletinItem | null | undefined): boolean {
+  if (!item) return false;
   return item.admin_forced_nc === true || item.general_avg_status === "admin_nc";
 }
 
-function isAdminAnnualForcedNc(item: BulletinItem): boolean {
+function isAdminAnnualForcedNc(item: BulletinItem | null | undefined): boolean {
+  if (!item) return false;
   return item.admin_annual_forced_nc === true || item.annual_avg_status === "admin_nc";
-}
-
-/**
- * Nom conservé pour éviter de casser le reste du fichier.
- * Nouvelle règle : une moyenne générale est classable dès qu'elle existe.
- * La couverture incomplète ne bloque plus le rang.
- */
-function isGeneralAverageComplete(item: BulletinItem): boolean {
-  if (isAdminForcedNc(item)) return false;
-  return item.general_avg !== null && item.general_avg !== undefined && Number.isFinite(Number(item.general_avg));
-}
-
-/**
- * Nom conservé pour éviter de casser le reste du fichier.
- * Nouvelle règle : une moyenne annuelle est classable dès qu'elle existe.
- */
-function isAnnualAverageComplete(item: BulletinItem): boolean {
-  if (isAdminAnnualForcedNc(item)) return false;
-  return item.annual_avg !== null && item.annual_avg !== undefined && Number.isFinite(Number(item.annual_avg));
 }
 
 function formatAverageForExport(value: number | null, _hasStar: boolean): number | string {
@@ -385,19 +536,34 @@ function formatSubjectValueForExport(
   subjectValues: Record<string, number | null>,
   header: string
 ): number | string {
-  if (!Object.prototype.hasOwnProperty.call(subjectValues, header)) {
-    // Matière non affectée à cette classe.
-    return "";
-  }
+  if (!Object.prototype.hasOwnProperty.call(subjectValues, header)) return "";
 
   const value = subjectValues[header];
 
-  if (value === null || value === undefined || !Number.isFinite(Number(value))) {
-    // Matière affectée mais aucune moyenne publiée.
-    return "NC";
-  }
+  if (value === null || value === undefined || !Number.isFinite(Number(value))) return "NC";
 
   return Number(Number(value).toFixed(2));
+}
+
+function formatDspsNumber(value: unknown): number | string {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return "";
+  return Number(n.toFixed(2));
+}
+
+function formatDspsRank(value: unknown): number | string {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return "";
+  return Math.round(n);
+}
+
+function annualDecisionLabel(avg: number | null | undefined): string {
+  if (avg === null || avg === undefined || !Number.isFinite(Number(avg))) return "";
+  const g = Number(avg);
+  if (g >= 16) return "Excellence";
+  if (g >= 14) return "Tableau d’honneur";
+  if (g >= 12) return "Encouragement";
+  return "";
 }
 
 function buildExportRows(rows: ExportRow[], subjectHeaders: string[]) {
@@ -419,9 +585,10 @@ function buildExportRows(rows: ExportRow[], subjectHeaders: string[]) {
         row.moyenne_annuelle,
         row.moyenne_annuelle_has_star
       ),
-      "Rang annuel": row.moyenne_annuelle === null
-        ? ""
-        : formatRankForExport(row.rang_annuel, row.moyenne_annuelle_complete),
+      "Rang annuel":
+        row.moyenne_annuelle === null
+          ? ""
+          : formatRankForExport(row.rang_annuel, row.moyenne_annuelle_complete),
     };
 
     for (const header of subjectHeaders) {
@@ -444,16 +611,8 @@ function assignRanks<
   const annualRankByIndex = new Map<number, number>();
 
   const periodEntries = rows
-    .map((row, index) => ({
-      index,
-      value: row.moyenne_generale,
-      complete: row.moyenne_generale_complete,
-    }))
-    .filter(
-      (x) =>
-        typeof x.value === "number" &&
-        Number.isFinite(x.value)
-    )
+    .map((row, index) => ({ index, value: row.moyenne_generale }))
+    .filter((x) => typeof x.value === "number" && Number.isFinite(x.value))
     .sort((a, b) => Number(b.value) - Number(a.value));
 
   let currentRank = 0;
@@ -471,16 +630,8 @@ function assignRanks<
   }
 
   const annualEntries = rows
-    .map((row, index) => ({
-      index,
-      value: row.moyenne_annuelle,
-      complete: row.moyenne_annuelle_complete,
-    }))
-    .filter(
-      (x) =>
-        typeof x.value === "number" &&
-        Number.isFinite(x.value)
-    )
+    .map((row, index) => ({ index, value: row.moyenne_annuelle }))
+    .filter((x) => typeof x.value === "number" && Number.isFinite(x.value))
     .sort((a, b) => Number(b.value) - Number(a.value));
 
   currentRank = 0;
@@ -498,6 +649,30 @@ function assignRanks<
   }
 
   return { periodRankByIndex, annualRankByIndex };
+}
+
+function sortRowsByClassRankAndName<T extends { Classe?: unknown; classe?: unknown; Rang?: unknown; rang?: unknown; MGA?: unknown; moyenne_generale?: unknown; Nom?: unknown; nom?: unknown; "Prénoms"?: unknown; prenoms?: unknown }>(rows: T[]) {
+  return rows.sort((a, b) => {
+    const classA = String(a.Classe ?? a.classe ?? "");
+    const classB = String(b.Classe ?? b.classe ?? "");
+    const classCmp = classA.localeCompare(classB, "fr", { numeric: true, sensitivity: "base" });
+    if (classCmp !== 0) return classCmp;
+
+    const rankA = Number.isFinite(Number(a.Rang ?? a.rang)) ? Number(a.Rang ?? a.rang) : 999999;
+    const rankB = Number.isFinite(Number(b.Rang ?? b.rang)) ? Number(b.Rang ?? b.rang) : 999999;
+    if (rankA !== rankB) return rankA - rankB;
+
+    const avgA = Number.isFinite(Number(a.MGA ?? a.moyenne_generale)) ? Number(a.MGA ?? a.moyenne_generale) : -Infinity;
+    const avgB = Number.isFinite(Number(b.MGA ?? b.moyenne_generale)) ? Number(b.MGA ?? b.moyenne_generale) : -Infinity;
+    if (avgB !== avgA) return avgB - avgA;
+
+    return `${a.Nom ?? a.nom ?? ""} ${a["Prénoms"] ?? a.prenoms ?? ""}`
+      .trim()
+      .localeCompare(`${b.Nom ?? b.nom ?? ""} ${b["Prénoms"] ?? b.prenoms ?? ""}`.trim(), "fr", {
+        sensitivity: "base",
+        numeric: true,
+      });
+  });
 }
 
 async function getAdminAndInstitution() {
@@ -580,24 +755,10 @@ async function resolvePeriod(params: {
   if (periodRef.startsWith("annual:")) {
     const year = periodRef.slice("annual:".length).trim() || academicYear;
 
-    const { data: periods } = await supabase
-      .from("grade_periods")
-      .select("id, academic_year, code, label, short_label, start_date, end_date, coeff")
-      .eq("institution_id", institutionId)
-      .eq("academic_year", year)
-      .order("start_date", { ascending: true });
+    const periods = await loadAcademicPeriods({ supabase, institutionId, academicYear: year });
+    if (!periods.length) return null;
 
-    const rows = (periods || []) as GradePeriodRow[];
-    if (!rows.length) return null;
-
-    const sorted = rows.slice().sort((a, b) => {
-      const ae = String(a.end_date || "");
-      const be = String(b.end_date || "");
-      if (ae !== be) return ae.localeCompare(be);
-      return String(a.start_date || "").localeCompare(String(b.start_date || ""));
-    });
-
-    const lastPeriod = sorted[sorted.length - 1];
+    const lastPeriod = periods[periods.length - 1];
 
     return {
       academicYear: year,
@@ -613,6 +774,114 @@ async function resolvePeriod(params: {
   return null;
 }
 
+async function loadAcademicPeriods(params: {
+  supabase: Awaited<ReturnType<typeof getSupabaseServerClient>>;
+  institutionId: string;
+  academicYear: string;
+}) {
+  const { supabase, institutionId, academicYear } = params;
+
+  const { data: periods } = await supabase
+    .from("grade_periods")
+    .select("id, academic_year, code, label, short_label, start_date, end_date, coeff")
+    .eq("institution_id", institutionId)
+    .eq("academic_year", academicYear)
+    .order("start_date", { ascending: true });
+
+  return ((periods || []) as GradePeriodRow[]).sort((a, b) => {
+    const as = String(a.start_date || "");
+    const bs = String(b.start_date || "");
+    if (as !== bs) return as.localeCompare(bs);
+    return String(a.end_date || "").localeCompare(String(b.end_date || ""));
+  });
+}
+
+async function loadClasses(params: {
+  supabase: Awaited<ReturnType<typeof getSupabaseServerClient>>;
+  institutionId: string;
+  academicYear: string;
+  classId: string;
+}) {
+  const { supabase, institutionId, academicYear, classId } = params;
+
+  let classesQuery = supabase
+    .from("classes")
+    .select("id, label, code, level, academic_year, institution_id")
+    .eq("institution_id", institutionId)
+    .eq("academic_year", academicYear)
+    .order("level", { ascending: true })
+    .order("label", { ascending: true });
+
+  if (classId) {
+    if (!isUuid(classId)) return { classes: [] as ClassRow[], error: "INVALID_CLASS_ID" as const };
+    classesQuery = classesQuery.eq("id", classId);
+  }
+
+  const { data, error } = await classesQuery;
+
+  if (error) return { classes: [] as ClassRow[], error: "CLASSES_ERROR" as const };
+  return { classes: (data || []) as ClassRow[], error: null };
+}
+
+async function loadStudentMeta(params: {
+  supabase: Awaited<ReturnType<typeof getSupabaseServerClient>>;
+  classes: ClassRow[];
+  academicYear: string;
+  activeFrom: string;
+}) {
+  const { supabase, classes, academicYear, activeFrom } = params;
+  const targetClassIds = classes.map((c) => String(c.id));
+  const classMap = new Map<string, ClassRow>(classes.map((c) => [String(c.id), c]));
+  const studentMetaByKey = new Map<string, StudentMetaRow>();
+
+  if (!targetClassIds.length) return studentMetaByKey;
+
+  const { data: enrollments } = await supabase
+    .from("class_enrollments")
+    .select(
+      `
+      class_id,
+      student_id,
+      students(
+        first_name,
+        last_name,
+        full_name,
+        matricule
+      )
+    `
+    )
+    .in("class_id", targetClassIds)
+    .or(`end_date.gte.${activeFrom},end_date.is.null`)
+    .order("student_id", { ascending: true });
+
+  for (const row of (enrollments || []) as any[]) {
+    const currentClassId = String(row?.class_id || "");
+    const studentId = String(row?.student_id || "");
+
+    if (!currentClassId || !studentId) continue;
+
+    const cls = classMap.get(currentClassId);
+    if (!cls) continue;
+
+    const student = row?.students || {};
+    const key = `${currentClassId}__${studentId}`;
+
+    studentMetaByKey.set(key, {
+      student_id: studentId,
+      class_id: currentClassId,
+      class_label: String(cls.label || cls.code || "Classe"),
+      class_level: cls.level ?? null,
+      academic_year: cls.academic_year ?? academicYear,
+      first_name: student.first_name ?? null,
+      last_name: student.last_name ?? null,
+      full_name: student.full_name ?? null,
+      matricule: student.matricule ?? null,
+    });
+  }
+
+  return studentMetaByKey;
+}
+
 async function fetchBulletinForClass(params: {
   req: NextRequest;
   classId: string;
@@ -625,8 +894,6 @@ async function fetchBulletinForClass(params: {
   url.searchParams.set("class_id", params.classId);
   url.searchParams.set("from", params.from);
   url.searchParams.set("to", params.to);
-
-  // Export officiel : notes publiées uniquement.
   url.searchParams.set("published", "true");
 
   const cookie = params.req.headers.get("cookie") ?? "";
@@ -705,145 +972,154 @@ async function fetchConductMap(params: {
   return out;
 }
 
-export async function GET(req: NextRequest) {
-  const ctx = await getAdminAndInstitution();
+function getSubjectMaps(bulletinData: BulletinResponse) {
+  const subjectNameById = new Map<string, string>();
+  const componentById = new Map<string, BulletinSubjectComponentMeta>();
 
-  if ("error" in ctx) {
-    const status =
-      ctx.error === "UNAUTHENTICATED"
-        ? 401
-        : ctx.error === "FORBIDDEN"
-        ? 403
-        : 400;
-
-    return NextResponse.json({ ok: false, error: ctx.error }, { status });
+  for (const subject of bulletinData.subjects || []) {
+    const sid = String(subject?.subject_id || "");
+    if (!sid) continue;
+    subjectNameById.set(sid, String(subject?.subject_name || sid).trim() || sid);
   }
 
-  const { supabase, institutionId } = ctx;
-  const { searchParams } = new URL(req.url);
-
-  const academicYear = String(searchParams.get("academic_year") || "").trim();
-  const periodRef = String(searchParams.get("period_ref") || "").trim();
-  const classId = String(searchParams.get("class_id") || "").trim();
-
-  const includeSubjects = ["1", "true", "yes", "on"].includes(
-    String(searchParams.get("include_subjects") || "").toLowerCase()
-  );
-
-  const format = String(searchParams.get("format") || "xlsx")
-    .trim()
-    .toLowerCase() as ExportFormat;
-
-  if (!academicYear) {
-    return NextResponse.json({ ok: false, error: "MISSING_ACADEMIC_YEAR" }, { status: 400 });
+  for (const comp of bulletinData.subject_components || []) {
+    const cid = String(comp?.id || "");
+    if (!cid) continue;
+    componentById.set(cid, comp);
   }
 
-  if (!periodRef) {
-    return NextResponse.json({ ok: false, error: "MISSING_PERIOD_REF" }, { status: 400 });
+  return { subjectNameById, componentById };
+}
+
+function findSubjectAverageForHeader(
+  item: BulletinItem,
+  subjectNameById: Map<string, string>,
+  header: string
+): number | null {
+  for (const ps of item.per_subject || []) {
+    const label = subjectNameById.get(String(ps.subject_id)) || "";
+    if (labelMatchesHeader(label, header)) {
+      return cleanNumber(ps.avg20, 4);
+    }
+  }
+  return null;
+}
+
+function findFrenchComponentAverageForHeader(
+  item: BulletinItem,
+  subjectNameById: Map<string, string>,
+  componentById: Map<string, BulletinSubjectComponentMeta>,
+  header: string
+): number | null {
+  for (const psc of item.per_subject_components || []) {
+    const subjectLabel = subjectNameById.get(String(psc.subject_id)) || "";
+    if (!labelMatchesHeader(subjectLabel, "Français")) continue;
+
+    const comp = componentById.get(String(psc.component_id));
+    const compLabel = String(comp?.short_label || comp?.label || "");
+    if (!labelMatchesHeader(compLabel, header)) continue;
+
+    return cleanNumber(psc.avg20, 4);
   }
 
-  if (!["xlsx", "csv"].includes(format)) {
-    return NextResponse.json({ ok: false, error: "INVALID_FORMAT" }, { status: 400 });
-  }
+  return null;
+}
 
-  const resolvedPeriod = await resolvePeriod({
-    supabase,
-    institutionId,
-    academicYear,
-    periodRef,
-  });
+function valueForDspsSubjectHeader(params: {
+  item: BulletinItem;
+  subjectNameById: Map<string, string>;
+  componentById: Map<string, BulletinSubjectComponentMeta>;
+  header: string;
+  firstCycle: boolean;
+}): number | null {
+  const { item, subjectNameById, componentById, header, firstCycle } = params;
 
-  if (!resolvedPeriod) {
-    return NextResponse.json({ ok: false, error: "INVALID_PERIOD_REF" }, { status: 400 });
-  }
+  if (firstCycle && ["Composition Française", "Orthographe", "Oral Français"].includes(header)) {
+    const componentValue = findFrenchComponentAverageForHeader(
+      item,
+      subjectNameById,
+      componentById,
+      header
+    );
 
-  let classesQuery = supabase
-    .from("classes")
-    .select("id, label, code, level, academic_year, institution_id")
-    .eq("institution_id", institutionId)
-    .eq("academic_year", resolvedPeriod.academicYear)
-    .order("level", { ascending: true })
-    .order("label", { ascending: true });
+    if (componentValue !== null) return componentValue;
 
-  if (classId) {
-    if (!isUuid(classId)) {
-      return NextResponse.json({ ok: false, error: "INVALID_CLASS_ID" }, { status: 400 });
+    // Fallback utile si l'établissement n'a pas encore configuré les sous-matières.
+    if (header === "Composition Française") {
+      return findSubjectAverageForHeader(item, subjectNameById, "Français");
     }
 
-    classesQuery = classesQuery.eq("id", classId);
+    return null;
   }
 
-  const { data: classRows, error: classErr } = await classesQuery;
+  return findSubjectAverageForHeader(item, subjectNameById, header);
+}
 
-  if (classErr) {
-    return NextResponse.json({ ok: false, error: "CLASSES_ERROR" }, { status: 500 });
+function buildDspsNotesHeadersForClasses(classes: ClassRow[]) {
+  const hasFirstCycle = classes.some((cls) => isFirstCycleLevel(cls.level));
+  const hasSecondCycle = classes.some((cls) => !isFirstCycleLevel(cls.level));
+
+  const subjectHeaders =
+    hasFirstCycle && hasSecondCycle
+      ? Array.from(
+          new Set([...DSPS_FIRST_CYCLE_SUBJECT_HEADERS, ...DSPS_SECOND_CYCLE_SUBJECT_HEADERS])
+        )
+      : hasFirstCycle
+      ? [...DSPS_FIRST_CYCLE_SUBJECT_HEADERS]
+      : [...DSPS_SECOND_CYCLE_SUBJECT_HEADERS];
+
+  return [...DSPS_NOTES_BASE_HEADERS, ...subjectHeaders, ...DSPS_NOTES_END_HEADERS];
+}
+
+function buildOrderedRow(headers: readonly string[], values: Record<string, unknown>) {
+  const row: Record<string, unknown> = {};
+  for (const header of headers) row[header] = values[header] ?? "";
+  return row;
+}
+
+async function prepareLegacyExport(params: {
+  req: NextRequest;
+  supabase: Awaited<ReturnType<typeof getSupabaseServerClient>>;
+  institutionId: string;
+  institutionName: string;
+  academicYear: string;
+  periodRef: string;
+  classId: string;
+  includeSubjects: boolean;
+}): Promise<PreparedWorkbook | { error: string; status: number }> {
+  const {
+    req,
+    supabase,
+    institutionId,
+    institutionName,
+    academicYear,
+    periodRef,
+    classId,
+    includeSubjects,
+  } = params;
+
+  const resolvedPeriod = await resolvePeriod({ supabase, institutionId, academicYear, periodRef });
+
+  if (!resolvedPeriod) {
+    return { error: "INVALID_PERIOD_REF", status: 400 };
   }
 
-  const classes = (classRows || []) as ClassRow[];
+  const { classes, error: classError } = await loadClasses({
+    supabase,
+    institutionId,
+    academicYear: resolvedPeriod.academicYear,
+    classId,
+  });
 
-  if (!classes.length) {
-    return NextResponse.json({ ok: false, error: "NO_CLASSES_FOUND" }, { status: 404 });
-  }
+  if (classError) return { error: classError, status: classError === "INVALID_CLASS_ID" ? 400 : 500 };
+  if (!classes.length) return { error: "NO_CLASSES_FOUND", status: 404 };
 
-  const targetClassIds = classes.map((c) => String(c.id));
-  const classMap = new Map<string, ClassRow>(classes.map((c) => [String(c.id), c]));
-
-  const { data: enrollments, error: enrollErr } = await supabase
-    .from("class_enrollments")
-    .select(
-      `
-      class_id,
-      student_id,
-      students(
-        first_name,
-        last_name,
-        full_name,
-        matricule
-      )
-    `
-    )
-    .in("class_id", targetClassIds)
-    .or(`end_date.gte.${resolvedPeriod.bulletinFrom},end_date.is.null`)
-    .order("student_id", { ascending: true });
-
-  if (enrollErr) {
-    return NextResponse.json({ ok: false, error: "ENROLLMENTS_ERROR" }, { status: 500 });
-  }
-
-  const studentMetaByKey = new Map<string, StudentMetaRow>();
-
-  for (const row of (enrollments || []) as any[]) {
-    const currentClassId = String(row?.class_id || "");
-    const studentId = String(row?.student_id || "");
-
-    if (!currentClassId || !studentId) continue;
-
-    const cls = classMap.get(currentClassId);
-    if (!cls) continue;
-
-    const student = row?.students || {};
-    const key = `${currentClassId}__${studentId}`;
-
-    studentMetaByKey.set(key, {
-      student_id: studentId,
-      class_id: currentClassId,
-      class_label: String(cls.label || cls.code || "Classe"),
-      class_level: cls.level ?? null,
-      academic_year: cls.academic_year ?? resolvedPeriod.academicYear,
-      first_name: student.first_name ?? null,
-      last_name: student.last_name ?? null,
-      full_name: student.full_name ?? null,
-      matricule: student.matricule ?? null,
-    });
-  }
-
-  const { data: institution } = await supabase
-    .from("institutions")
-    .select("name")
-    .eq("id", institutionId)
-    .maybeSingle();
-
-  const institutionName = String((institution as any)?.name || "Établissement");
+  const studentMetaByKey = await loadStudentMeta({
+    supabase,
+    classes,
+    academicYear: resolvedPeriod.academicYear,
+    activeFrom: resolvedPeriod.bulletinFrom,
+  });
 
   const allExportRows: ExportRow[] = [];
   const subjectHeaderOrder: string[] = [];
@@ -869,15 +1145,14 @@ export async function GET(req: NextRequest) {
 
     if (!bulletinData?.items?.length) continue;
 
-    const subjectNameById = new Map<string, string>();
+    const { subjectNameById } = getSubjectMaps(bulletinData);
     const classSubjectLabels: string[] = [];
 
     for (const subject of bulletinData.subjects || []) {
       const sid = String(subject?.subject_id || "");
       if (!sid) continue;
 
-      const label = String(subject?.subject_name || sid).trim() || sid;
-      subjectNameById.set(sid, label);
+      const label = subjectNameById.get(sid) || sid;
       classSubjectLabels.push(label);
 
       if (includeSubjects && !subjectHeaderSeen.has(label)) {
@@ -899,23 +1174,12 @@ export async function GET(req: NextRequest) {
       const generalForcedNc = isAdminForcedNc(item);
       const annualForcedNc = isAdminAnnualForcedNc(item);
 
-      // NC admin : la moyenne générale/rang deviennent NC, mais les moyennes matière restent exportées.
-      // Sinon : une moyenne calculable est classable, même si la couverture est partielle.
       const currentGeneral = generalForcedNc ? null : cleanNumber(item.general_avg, 4);
-      const currentGeneralComplete = currentGeneral !== null;
-      const currentGeneralHasStar = false;
-
       const currentAnnual = annualForcedNc ? null : cleanNumber(item.annual_avg, 4);
-      const currentAnnualComplete = currentAnnual !== null;
-      const currentAnnualHasStar = false;
-
       const currentConduct = cleanNumber(conductMap.get(String(item.student_id)) ?? null, 4);
 
       const exportedAverage =
         resolvedPeriod.requestedKind === "annual" ? currentAnnual : currentGeneral;
-
-      const exportedAverageComplete = exportedAverage !== null;
-      const exportedAverageHasStar = false;
 
       const exportedRank =
         exportedAverage !== null
@@ -927,11 +1191,7 @@ export async function GET(req: NextRequest) {
       const subjectValues: Record<string, number | null> = {};
 
       if (includeSubjects) {
-        // Les matières renvoyées par l’API bulletin sont les matières affectées.
-        // On les initialise à NC ; si une moyenne publiée existe, elle remplace NC.
-        for (const label of classSubjectLabels) {
-          subjectValues[label] = null;
-        }
+        for (const label of classSubjectLabels) subjectValues[label] = null;
 
         for (const ps of item.per_subject || []) {
           const sid = String(ps?.subject_id || "");
@@ -957,16 +1217,16 @@ export async function GET(req: NextRequest) {
         periode: resolvedPeriod.requestedLabel,
 
         moyenne_generale: exportedAverage,
-        moyenne_generale_complete: exportedAverageComplete,
+        moyenne_generale_complete: exportedAverage !== null,
         moyenne_generale_has_star: false,
         rang: exportedRank,
 
         conduite: currentConduct,
 
         moyenne_annuelle: currentAnnual,
-        moyenne_annuelle_complete: currentAnnualComplete,
+        moyenne_annuelle_complete: currentAnnual !== null,
         moyenne_annuelle_has_star: false,
-        rang_annuel: currentAnnualComplete ? cleanRank(item.annual_rank) : null,
+        rang_annuel: currentAnnual !== null ? cleanRank(item.annual_rank) : null,
 
         subject_values: subjectValues,
       };
@@ -975,17 +1235,11 @@ export async function GET(req: NextRequest) {
     const { periodRankByIndex, annualRankByIndex } = assignRanks(classRows);
 
     classRows.forEach((row, index) => {
-      if (
-        row.moyenne_generale !== null &&
-        (row.rang === null || row.rang === undefined)
-      ) {
+      if (row.moyenne_generale !== null && (row.rang === null || row.rang === undefined)) {
         row.rang = periodRankByIndex.get(index) ?? null;
       }
 
-      if (
-        row.moyenne_annuelle !== null &&
-        (row.rang_annuel === null || row.rang_annuel === undefined)
-      ) {
+      if (row.moyenne_annuelle !== null && (row.rang_annuel === null || row.rang_annuel === undefined)) {
         row.rang_annuel = annualRankByIndex.get(index) ?? null;
       }
 
@@ -996,62 +1250,399 @@ export async function GET(req: NextRequest) {
     allExportRows.push(...classRows);
   }
 
-  if (!allExportRows.length) {
-    return NextResponse.json({ ok: false, error: "NO_EXPORTABLE_DATA" }, { status: 404 });
-  }
+  if (!allExportRows.length) return { error: "NO_EXPORTABLE_DATA", status: 404 };
 
   allExportRows.sort((a, b) => {
-    const classCmp = a.classe.localeCompare(b.classe, "fr");
+    const classCmp = a.classe.localeCompare(b.classe, "fr", { numeric: true, sensitivity: "base" });
     if (classCmp !== 0) return classCmp;
 
-    const rankA =
-      Number.isFinite(Number(a.rang))
-        ? Number(a.rang)
-        : 999999;
-
-    const rankB =
-      Number.isFinite(Number(b.rang))
-        ? Number(b.rang)
-        : 999999;
-
+    const rankA = Number.isFinite(Number(a.rang)) ? Number(a.rang) : 999999;
+    const rankB = Number.isFinite(Number(b.rang)) ? Number(b.rang) : 999999;
     if (rankA !== rankB) return rankA - rankB;
 
-    const avgA =
-      a.moyenne_generale !== null && Number.isFinite(Number(a.moyenne_generale))
-        ? Number(a.moyenne_generale)
-        : -Infinity;
-
-    const avgB =
-      b.moyenne_generale !== null && Number.isFinite(Number(b.moyenne_generale))
-        ? Number(b.moyenne_generale)
-        : -Infinity;
-
+    const avgA = a.moyenne_generale !== null && Number.isFinite(Number(a.moyenne_generale)) ? Number(a.moyenne_generale) : -Infinity;
+    const avgB = b.moyenne_generale !== null && Number.isFinite(Number(b.moyenne_generale)) ? Number(b.moyenne_generale) : -Infinity;
     if (avgB !== avgA) return avgB - avgA;
 
-    return `${a.nom} ${a.prenoms}`.trim().localeCompare(
-      `${b.nom} ${b.prenoms}`.trim(),
-      "fr"
-    );
+    return `${a.nom} ${a.prenoms}`.trim().localeCompare(`${b.nom} ${b.prenoms}`.trim(), "fr", {
+      sensitivity: "base",
+      numeric: true,
+    });
   });
 
-  const preparedRows = buildExportRows(
-    allExportRows,
-    includeSubjects ? subjectHeaderOrder : []
-  );
+  const preparedRows = buildExportRows(allExportRows, includeSubjects ? subjectHeaderOrder : []);
 
-  const filename = makeDownloadFilename({
-    institutionName,
+  return {
+    filenameBase: [
+      "export-moyennes",
+      toFileSafePart(institutionName || "etablissement"),
+      toFileSafePart(resolvedPeriod.academicYear || "annee"),
+      toFileSafePart(resolvedPeriod.requestedCode || "periode"),
+      classes.length === 1 ? toFileSafePart(String(classes[0].label || classes[0].code || "")) : "toutes-classes",
+    ]
+      .filter(Boolean)
+      .join("_"),
+    mainSheetName: "Moyennes",
+    rows: preparedRows,
+    classSheets:
+      classes.length > 1
+        ? classes
+            .map((cls) => {
+              const classLabel = String(cls.label || cls.code || "Classe");
+              const classRows = allExportRows.filter((row) => row.classe === classLabel);
+              if (!classRows.length) return null;
+              return {
+                sheetName: safeSheetName(classLabel),
+                rows: buildExportRows(classRows, includeSubjects ? subjectHeaderOrder : []),
+              };
+            })
+            .filter(Boolean) as { sheetName: string; rows: Record<string, unknown>[] }[]
+        : [],
+  };
+}
+
+async function prepareDspsNotesExport(params: {
+  req: NextRequest;
+  supabase: Awaited<ReturnType<typeof getSupabaseServerClient>>;
+  institutionId: string;
+  institutionName: string;
+  academicYear: string;
+  periodRef: string;
+  classId: string;
+}): Promise<PreparedWorkbook | { error: string; status: number }> {
+  const { req, supabase, institutionId, institutionName, academicYear, periodRef, classId } = params;
+
+  const resolvedPeriod = await resolvePeriod({ supabase, institutionId, academicYear, periodRef });
+
+  if (!resolvedPeriod || resolvedPeriod.requestedKind !== "period") {
+    return { error: "INVALID_PERIOD_REF", status: 400 };
+  }
+
+  const { classes, error: classError } = await loadClasses({
+    supabase,
+    institutionId,
     academicYear: resolvedPeriod.academicYear,
-    requestedCode: resolvedPeriod.requestedCode,
-    classLabel:
-      classes.length === 1
-        ? String(classes[0].label || classes[0].code || "")
-        : undefined,
-    format,
+    classId,
   });
+
+  if (classError) return { error: classError, status: classError === "INVALID_CLASS_ID" ? 400 : 500 };
+  if (!classes.length) return { error: "NO_CLASSES_FOUND", status: 404 };
+
+  const headers = buildDspsNotesHeadersForClasses(classes);
+  const studentMetaByKey = await loadStudentMeta({
+    supabase,
+    classes,
+    academicYear: resolvedPeriod.academicYear,
+    activeFrom: resolvedPeriod.bulletinFrom,
+  });
+
+  const rows: Record<string, unknown>[] = [];
+  const classSheets: { sheetName: string; rows: Record<string, unknown>[] }[] = [];
+
+  for (const cls of classes) {
+    const currentClassId = String(cls.id);
+    const firstCycle = isFirstCycleLevel(cls.level);
+    const classHeaders = [
+      ...DSPS_NOTES_BASE_HEADERS,
+      ...(firstCycle ? DSPS_FIRST_CYCLE_SUBJECT_HEADERS : DSPS_SECOND_CYCLE_SUBJECT_HEADERS),
+      ...DSPS_NOTES_END_HEADERS,
+    ];
+
+    const [bulletinData, conductMap] = await Promise.all([
+      fetchBulletinForClass({
+        req,
+        classId: currentClassId,
+        from: resolvedPeriod.bulletinFrom,
+        to: resolvedPeriod.bulletinTo,
+      }),
+      fetchConductMap({
+        req,
+        classId: currentClassId,
+        from: resolvedPeriod.bulletinFrom,
+        to: resolvedPeriod.bulletinTo,
+      }),
+    ]);
+
+    if (!bulletinData?.items?.length) continue;
+
+    const { subjectNameById, componentById } = getSubjectMaps(bulletinData);
+    const classRows: Record<string, unknown>[] = [];
+
+    for (const item of bulletinData.items) {
+      const key = `${currentClassId}__${String(item.student_id)}`;
+      const meta = studentMetaByKey.get(key);
+      const split = splitStudentName({
+        first_name: meta?.first_name ?? null,
+        last_name: meta?.last_name ?? null,
+        full_name: meta?.full_name ?? item.full_name ?? null,
+      });
+
+      const rowValues: Record<string, unknown> = {
+        Matricule: String(meta?.matricule || item.matricule || ""),
+        Nom: split.nom_prenoms || [split.nom, split.prenoms].filter(Boolean).join(" "),
+        Série: extractSeriesFromClass(cls),
+        Niveau: displayLevelForDsps(cls),
+        Conduite: formatDspsNumber(conductMap.get(String(item.student_id)) ?? null),
+        Bonus: formatDspsNumber(item.general_bonus ?? null),
+      };
+
+      for (const header of firstCycle ? DSPS_FIRST_CYCLE_SUBJECT_HEADERS : DSPS_SECOND_CYCLE_SUBJECT_HEADERS) {
+        const value = valueForDspsSubjectHeader({
+          item,
+          subjectNameById,
+          componentById,
+          header,
+          firstCycle,
+        });
+        rowValues[header] = formatDspsNumber(value);
+      }
+
+      const rowForClass = buildOrderedRow(classHeaders, rowValues);
+      const rowForGlobal = buildOrderedRow(headers, rowValues);
+      classRows.push(rowForClass);
+      rows.push(rowForGlobal);
+    }
+
+    sortRowsByClassRankAndName(classRows as any[]);
+    classSheets.push({ sheetName: safeSheetName(String(cls.label || cls.code || "Classe")), rows: classRows });
+  }
+
+  if (!rows.length) return { error: "NO_EXPORTABLE_DATA", status: 404 };
+
+  sortRowsByClassRankAndName(rows as any[]);
+
+  return {
+    filenameBase: [
+      "export-desps-notes",
+      toFileSafePart(institutionName || "etablissement"),
+      toFileSafePart(resolvedPeriod.academicYear || "annee"),
+      toFileSafePart(resolvedPeriod.requestedCode || "periode"),
+      classes.length === 1 ? toFileSafePart(String(classes[0].label || classes[0].code || "")) : "toutes-classes",
+    ]
+      .filter(Boolean)
+      .join("_"),
+    mainSheetName: "Notes DESPS",
+    rows,
+    classSheets: classes.length > 1 ? classSheets : [],
+  };
+}
+
+async function prepareDspsAnnualExport(params: {
+  req: NextRequest;
+  supabase: Awaited<ReturnType<typeof getSupabaseServerClient>>;
+  institutionId: string;
+  institutionName: string;
+  academicYear: string;
+  classId: string;
+}): Promise<PreparedWorkbook | { error: string; status: number }> {
+  const { req, supabase, institutionId, institutionName, academicYear, classId } = params;
+
+  const periods = await loadAcademicPeriods({ supabase, institutionId, academicYear });
+  if (!periods.length) return { error: "NO_PERIODS_FOUND", status: 404 };
+
+  const displayPeriods = periods.slice(0, 3);
+  const firstActiveDate = periods[0]?.start_date || `${academicYear.split("-")[0] || new Date().getFullYear()}-01-01`;
+
+  const { classes, error: classError } = await loadClasses({
+    supabase,
+    institutionId,
+    academicYear,
+    classId,
+  });
+
+  if (classError) return { error: classError, status: classError === "INVALID_CLASS_ID" ? 400 : 500 };
+  if (!classes.length) return { error: "NO_CLASSES_FOUND", status: 404 };
+
+  const studentMetaByKey = await loadStudentMeta({
+    supabase,
+    classes,
+    academicYear,
+    activeFrom: firstActiveDate,
+  });
+
+  const allRows: Record<string, unknown>[] = [];
+  const classSheets: { sheetName: string; rows: Record<string, unknown>[] }[] = [];
+
+  for (const cls of classes) {
+    const currentClassId = String(cls.id);
+    const bulletinsByPeriod = new Map<string, BulletinResponse>();
+
+    await Promise.all(
+      displayPeriods.map(async (period) => {
+        const bulletin = await fetchBulletinForClass({
+          req,
+          classId: currentClassId,
+          from: period.start_date,
+          to: period.end_date,
+        });
+        if (bulletin) bulletinsByPeriod.set(period.id, bulletin);
+      })
+    );
+
+    const studentIds = new Set<string>();
+    const itemsByPeriodStudent = new Map<string, BulletinItem>();
+
+    for (const period of displayPeriods) {
+      const bulletin = bulletinsByPeriod.get(period.id);
+      for (const item of bulletin?.items || []) {
+        studentIds.add(String(item.student_id));
+        itemsByPeriodStudent.set(`${period.id}__${String(item.student_id)}`, item);
+      }
+    }
+
+    for (const [key, meta] of studentMetaByKey.entries()) {
+      if (key.startsWith(`${currentClassId}__`)) studentIds.add(meta.student_id);
+    }
+
+    const rawRows = Array.from(studentIds).map((studentId) => {
+      const meta = studentMetaByKey.get(`${currentClassId}__${studentId}`);
+      const firstItem = displayPeriods
+        .map((period) => itemsByPeriodStudent.get(`${period.id}__${studentId}`) || null)
+        .find(Boolean) as BulletinItem | null;
+
+      const split = splitStudentName({
+        first_name: meta?.first_name ?? null,
+        last_name: meta?.last_name ?? null,
+        full_name: meta?.full_name ?? firstItem?.full_name ?? null,
+      });
+
+      const periodCells = displayPeriods.map((period) => {
+        const item = itemsByPeriodStudent.get(`${period.id}__${studentId}`) || null;
+        const avg = item && !isAdminForcedNc(item) ? cleanNumber(item.general_avg, 4) : null;
+        return {
+          avg,
+          rank: avg !== null ? cleanRank(item?.rank) : null,
+        };
+      });
+
+      const lastItem = [...displayPeriods]
+        .reverse()
+        .map((period) => itemsByPeriodStudent.get(`${period.id}__${studentId}`) || null)
+        .find(Boolean) as BulletinItem | null;
+
+      const annualForcedNc = isAdminAnnualForcedNc(lastItem);
+      const validPeriodAvgs = periodCells
+        .map((p) => p.avg)
+        .filter((v): v is number => v !== null && Number.isFinite(Number(v)));
+
+      const annualFromApi = !annualForcedNc ? cleanNumber(lastItem?.annual_avg, 4) : null;
+      const annualAvg =
+        annualFromApi !== null
+          ? annualFromApi
+          : annualForcedNc
+          ? null
+          : validPeriodAvgs.length
+          ? cleanNumber(validPeriodAvgs.reduce((sum, value) => sum + value, 0) / validPeriodAvgs.length, 4)
+          : null;
+
+      return {
+        studentId,
+        matricule: String(meta?.matricule || firstItem?.matricule || ""),
+        nom: split.nom,
+        prenoms: split.prenoms,
+        periodCells,
+        annualAvg,
+        annualRank: annualAvg !== null ? cleanRank(lastItem?.annual_rank) : null,
+      };
+    });
+
+    const annualRankMap = new Map<string, number>();
+    const annualEntries = rawRows
+      .filter((row) => row.annualAvg !== null && Number.isFinite(Number(row.annualAvg)))
+      .sort((a, b) => Number(b.annualAvg) - Number(a.annualAvg));
+
+    let lastScore: number | null = null;
+    let lastRank = 0;
+    annualEntries.forEach((row, idx) => {
+      const score = Number(row.annualAvg);
+      if (lastScore === null || score !== lastScore) {
+        lastRank = idx + 1;
+        lastScore = score;
+      }
+      annualRankMap.set(row.studentId, lastRank);
+    });
+
+    const classRows = rawRows
+      .map((row) => {
+        const p1 = row.periodCells[0] || { avg: null, rank: null };
+        const p2 = row.periodCells[1] || { avg: null, rank: null };
+        const p3 = row.periodCells[2] || { avg: null, rank: null };
+        const annualRank = row.annualRank ?? annualRankMap.get(row.studentId) ?? null;
+
+        return buildOrderedRow(DSPS_ANNUAL_HEADERS, {
+          "N°": 0,
+          "Matricule national": row.matricule,
+          Nom: row.nom,
+          "Prénoms": row.prenoms,
+          "Moy. 1er Trim": formatDspsNumber(p1.avg),
+          Rang: formatDspsRank(p1.rank),
+          "Moy. 2e Trim": formatDspsNumber(p2.avg),
+          "Rang ": formatDspsRank(p2.rank),
+          "Moy. 3e Trim": formatDspsNumber(p3.avg),
+          "Rang  ": formatDspsRank(p3.rank),
+          MGA: formatDspsNumber(row.annualAvg),
+          "Rang   ": formatDspsRank(annualRank),
+          "Décision du conseil": annualDecisionLabel(row.annualAvg),
+        });
+      })
+      .sort((a, b) => {
+        const rankA = Number.isFinite(Number(a["Rang   "])) ? Number(a["Rang   "]) : 999999;
+        const rankB = Number.isFinite(Number(b["Rang   "])) ? Number(b["Rang   "]) : 999999;
+        if (rankA !== rankB) return rankA - rankB;
+
+        const avgA = Number.isFinite(Number(a.MGA)) ? Number(a.MGA) : -Infinity;
+        const avgB = Number.isFinite(Number(b.MGA)) ? Number(b.MGA) : -Infinity;
+        if (avgB !== avgA) return avgB - avgA;
+
+        return `${a.Nom ?? ""} ${a["Prénoms"] ?? ""}`.trim().localeCompare(
+          `${b.Nom ?? ""} ${b["Prénoms"] ?? ""}`.trim(),
+          "fr",
+          { sensitivity: "base", numeric: true }
+        );
+      })
+      .map((row, index) => ({ ...row, "N°": index + 1 }));
+
+    allRows.push(...classRows);
+    classSheets.push({ sheetName: safeSheetName(String(cls.label || cls.code || "Classe")), rows: classRows });
+  }
+
+  if (!allRows.length) return { error: "NO_EXPORTABLE_DATA", status: 404 };
+
+  const globalRows = classes.length > 1 ? allRows.map((row, index) => ({ ...row, "N°": index + 1 })) : allRows;
+
+  return {
+    filenameBase: [
+      "export-desps-recapitulatif-annuel",
+      toFileSafePart(institutionName || "etablissement"),
+      toFileSafePart(academicYear || "annee"),
+      classes.length === 1 ? toFileSafePart(String(classes[0].label || classes[0].code || "")) : "toutes-classes",
+    ]
+      .filter(Boolean)
+      .join("_"),
+    mainSheetName: "Récapitulatif annuel",
+    rows: globalRows,
+    classSheets: classes.length > 1 ? classSheets : [],
+  };
+}
+
+function columnWidthForHeader(header: string): number {
+  if (header === "N°") return 6;
+  if (header.toLowerCase().includes("matricule")) return 18;
+  if (header === "Nom") return 28;
+  if (header === "Prénoms") return 24;
+  if (header === "Décision du conseil") return 24;
+  if (header === "Série") return 10;
+  if (header === "Niveau") return 14;
+  if (header.length <= 5) return 10;
+  if (header.length <= 10) return 12;
+  return Math.min(Math.max(header.length + 2, 14), 28);
+}
+
+async function sendPreparedWorkbook(prepared: PreparedWorkbook, format: ExportFormat) {
+  const filename = `${prepared.filenameBase}.${format}`;
 
   if (format === "csv") {
-    const csv = buildCsv(preparedRows);
+    const csv = buildCsv(prepared.rows);
 
     return new NextResponse(csv, {
       status: 200,
@@ -1067,25 +1658,29 @@ export async function GET(req: NextRequest) {
     const XLSX = await import("xlsx");
     const workbook = XLSX.utils.book_new();
 
-    const summarySheet = XLSX.utils.json_to_sheet(preparedRows);
-    XLSX.utils.book_append_sheet(workbook, summarySheet, "Moyennes");
+    const appendSheet = (sheetName: string, rows: Record<string, unknown>[]) => {
+      const headers = rows.length ? Object.keys(rows[0]) : [];
+      const aoa = [headers, ...rows.map((row) => headers.map((header) => row[header] ?? ""))];
+      const ws = XLSX.utils.aoa_to_sheet(aoa);
+      ws["!cols"] = headers.map((header) => ({ wch: columnWidthForHeader(header) }));
 
-    if (classes.length > 1) {
-      for (const cls of classes) {
-        const classLabel = String(cls.label || cls.code || "Classe");
-        const classRows = allExportRows.filter((row) => row.classe === classLabel);
-
-        if (!classRows.length) continue;
-
-        const rowsForSheet = buildExportRows(
-          classRows,
-          includeSubjects ? subjectHeaderOrder : []
-        );
-
-        const ws = XLSX.utils.json_to_sheet(rowsForSheet);
-        const sheetName = classLabel.slice(0, 31) || "Classe";
-        XLSX.utils.book_append_sheet(workbook, ws, sheetName);
+      const baseName = safeSheetName(sheetName);
+      let finalName = baseName;
+      let suffix = 2;
+      while (workbook.SheetNames.includes(finalName)) {
+        const tail = ` (${suffix})`;
+        finalName = `${baseName.slice(0, 31 - tail.length)}${tail}`;
+        suffix += 1;
       }
+
+      XLSX.utils.book_append_sheet(workbook, ws, finalName);
+    };
+
+    appendSheet(prepared.mainSheetName, prepared.rows);
+
+    for (const sheet of prepared.classSheets || []) {
+      if (!sheet.rows.length) continue;
+      appendSheet(sheet.sheetName, sheet.rows);
     }
 
     const buffer = XLSX.write(workbook, {
@@ -1100,8 +1695,7 @@ export async function GET(req: NextRequest) {
     return new Response(fileArrayBuffer, {
       status: 200,
       headers: {
-        "Content-Type":
-          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         "Content-Disposition": `attachment; filename="${filename}"`,
         "Cache-Control": "no-store",
       },
@@ -1116,4 +1710,98 @@ export async function GET(req: NextRequest) {
       { status: 500 }
     );
   }
+}
+
+export async function GET(req: NextRequest) {
+  const ctx = await getAdminAndInstitution();
+
+  if ("error" in ctx) {
+    const status =
+      ctx.error === "UNAUTHENTICATED" ? 401 : ctx.error === "FORBIDDEN" ? 403 : 400;
+
+    return NextResponse.json({ ok: false, error: ctx.error }, { status });
+  }
+
+  const { supabase, institutionId } = ctx;
+  const { searchParams } = new URL(req.url);
+
+  const academicYear = String(searchParams.get("academic_year") || "").trim();
+  const periodRef = String(searchParams.get("period_ref") || "").trim();
+  const classId = String(searchParams.get("class_id") || "").trim();
+
+  const includeSubjects = ["1", "true", "yes", "on"].includes(
+    String(searchParams.get("include_subjects") || "").toLowerCase()
+  );
+
+  const format = String(searchParams.get("format") || "xlsx")
+    .trim()
+    .toLowerCase() as ExportFormat;
+
+  const exportKind = String(searchParams.get("export_kind") || searchParams.get("mode") || "legacy")
+    .trim()
+    .toLowerCase() as ExportKind;
+
+  if (!academicYear) {
+    return NextResponse.json({ ok: false, error: "MISSING_ACADEMIC_YEAR" }, { status: 400 });
+  }
+
+  if (!periodRef && exportKind !== "dsps_annual") {
+    return NextResponse.json({ ok: false, error: "MISSING_PERIOD_REF" }, { status: 400 });
+  }
+
+  if (!["xlsx", "csv"].includes(format)) {
+    return NextResponse.json({ ok: false, error: "INVALID_FORMAT" }, { status: 400 });
+  }
+
+  if (!["legacy", "dsps_notes", "dsps_annual"].includes(exportKind)) {
+    return NextResponse.json({ ok: false, error: "INVALID_EXPORT_KIND" }, { status: 400 });
+  }
+
+  const { data: institution } = await supabase
+    .from("institutions")
+    .select("name")
+    .eq("id", institutionId)
+    .maybeSingle();
+
+  const institutionName = String((institution as any)?.name || "Établissement");
+
+  let prepared: PreparedWorkbook | { error: string; status: number };
+
+  if (exportKind === "dsps_notes") {
+    prepared = await prepareDspsNotesExport({
+      req,
+      supabase,
+      institutionId,
+      institutionName,
+      academicYear,
+      periodRef,
+      classId,
+    });
+  } else if (exportKind === "dsps_annual") {
+    prepared = await prepareDspsAnnualExport({
+      req,
+      supabase,
+      institutionId,
+      institutionName,
+      academicYear,
+      classId,
+    });
+  } else {
+    prepared = await prepareLegacyExport({
+      req,
+      supabase,
+      institutionId,
+      institutionName,
+      academicYear,
+      periodRef,
+      classId,
+      includeSubjects,
+    });
+  }
+
+  if ("error" in prepared) {
+    return NextResponse.json({ ok: false, error: prepared.error }, { status: prepared.status });
+  }
+
+  return sendPreparedWorkbook(prepared, format);
 }

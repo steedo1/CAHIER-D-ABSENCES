@@ -225,7 +225,7 @@ const NON_CLASSES_ITEMS: NavItem[] = [
 const FILE_CORRESPONDENCE_ITEMS: NavItem[] = [
   {
     href: "/admin/export-moyennes",
-    label: "Export moyennes",
+    label: "Export DESPS",
     Icon: FileSpreadsheet,
   },
   {
