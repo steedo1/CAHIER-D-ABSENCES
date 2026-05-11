@@ -2196,10 +2196,22 @@ export default function ClassDeviceNotesPage() {
 
       const chartRowsHtml = distRows
         .map((d) => {
-          const width = d.count > 0 ? Math.max(4, d.pct) : 0;
+          const maxBarWidth = 167;
+          const width = d.count > 0 ? Math.max(8, Math.round((d.pct / 100) * maxBarWidth)) : 0;
+          const color =
+            d.from < 5
+              ? "#dc2626"
+              : d.from < 10
+                ? "#f59e0b"
+                : d.from < 15
+                  ? "#2563eb"
+                  : "#16a34a";
           return `<div class="bar-row">
             <div class="bar-label">${escapeHtml(d.label)}</div>
-            <div class="bar-track"><div class="bar-fill" style="width:${width}%"></div></div>
+            <svg class="bar-svg" viewBox="0 0 170 14" preserveAspectRatio="none" aria-hidden="true">
+              <rect x="0.75" y="0.75" width="168.5" height="12.5" rx="6" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"></rect>
+              ${width > 0 ? `<rect x="1.5" y="1.5" width="${width}" height="11" rx="5.5" fill="${color}"></rect>` : ""}
+            </svg>
             <div class="bar-value">${d.count} (${fmtPct(d.pct)})</div>
           </div>`;
         })
@@ -2212,6 +2224,11 @@ export default function ClassDeviceNotesPage() {
 <title>${escapeHtml(title)}</title>
 <style>
   * { box-sizing: border-box; }
+  html, body, .page, .header, .card, .box, .note-box, th, .bar-svg, svg, rect {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+    color-adjust: exact !important;
+  }
   @page { size: A4; margin: 12mm; }
   body {
     margin: 0;
@@ -2305,14 +2322,7 @@ export default function ClassDeviceNotesPage() {
     margin: 7px 0;
   }
   .bar-label { font-size: 10px; color: #334155; }
-  .bar-track {
-    height: 13px;
-    border-radius: 999px;
-    overflow: hidden;
-    background: #e2e8f0;
-    border: 1px solid #cbd5e1;
-  }
-  .bar-fill { height: 100%; background: #059669; border-radius: 999px; }
+  .bar-svg { width: 100%; height: 14px; display: block; }
   .bar-value { font-size: 10px; color: #334155; text-align: right; }
   .note-box {
     border-left: 4px solid #059669;
@@ -2331,6 +2341,7 @@ export default function ClassDeviceNotesPage() {
     gap: 12px;
   }
   @media print {
+    * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color-adjust: exact !important; }
     body { background: #fff; }
     .page { padding: 0; }
     .box, .card, .header { break-inside: avoid; }
