@@ -153,51 +153,20 @@ export default async function ExportDespsPage() {
             <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(16,185,129,0.35),transparent_35%),radial-gradient(circle_at_bottom_right,rgba(79,70,229,0.32),transparent_35%)]" />
 
             <div className="relative px-5 py-7 text-white sm:px-7 lg:px-8">
-              <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
-                <div className="max-w-3xl">
-                  <div className="inline-flex items-center gap-2 rounded-full bg-white/10 px-3 py-1 text-[11px] font-extrabold uppercase tracking-[0.2em] text-emerald-100 ring-1 ring-white/15">
-                    <ShieldCheck className="h-4 w-4" />
-                    Exports officiels DESPS
-                  </div>
-
-                  <h1 className="mt-4 text-3xl font-black tracking-tight sm:text-4xl">
-                    Export des moyennes et récapitulatifs
-                  </h1>
-
-                  <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-200 sm:text-base">
-                    Préparez les fichiers Excel ou CSV à partir des moyennes publiées,
-                    par période ou sur l’ensemble de l’année scolaire.
-                  </p>
+              <div className="max-w-3xl">
+                <div className="inline-flex items-center gap-2 rounded-full bg-white/10 px-3 py-1 text-[11px] font-extrabold uppercase tracking-[0.2em] text-emerald-100 ring-1 ring-white/15">
+                  <ShieldCheck className="h-4 w-4" />
+                  Exports officiels DESPS
                 </div>
 
-                <div className="grid grid-cols-3 gap-3 rounded-3xl bg-white/10 p-3 ring-1 ring-white/15 backdrop-blur">
-                  <div className="rounded-2xl bg-white/10 px-4 py-3">
-                    <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-300">
-                      Années
-                    </p>
-                    <p className="mt-1 text-2xl font-black text-white">
-                      {academicYears.length}
-                    </p>
-                  </div>
+                <h1 className="mt-4 text-3xl font-black tracking-tight sm:text-4xl">
+                  Export des moyennes et récapitulatifs
+                </h1>
 
-                  <div className="rounded-2xl bg-white/10 px-4 py-3">
-                    <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-300">
-                      Classes
-                    </p>
-                    <p className="mt-1 text-2xl font-black text-white">
-                      {classes.length}
-                    </p>
-                  </div>
-
-                  <div className="rounded-2xl bg-white/10 px-4 py-3">
-                    <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-300">
-                      Périodes
-                    </p>
-                    <p className="mt-1 text-2xl font-black text-white">
-                      {periods.length}
-                    </p>
-                  </div>
-                </div>
+                <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-200 sm:text-base">
+                  Préparez les fichiers Excel ou CSV à partir des moyennes publiées,
+                  par période ou sur l’ensemble de l’année scolaire.
+                </p>
               </div>
             </div>
           </header>
