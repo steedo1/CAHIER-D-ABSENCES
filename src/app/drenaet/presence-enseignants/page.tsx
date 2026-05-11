@@ -244,8 +244,8 @@ function DistributionBar({ totals }: { totals: PresencePayload["totals"] }) {
     <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
       <div className="flex items-center justify-between gap-3">
         <div>
-          <h2 className="text-lg font-black text-slate-950">Répartition administrative</h2>
-          <p className="mt-1 text-sm text-slate-500">Présences constatées, permissionnaires et absences à vérifier.</p>
+          <h2 className="text-lg font-black text-slate-950">Répartition administrative des cours</h2>
+          <p className="mt-1 text-sm text-slate-500">Présences déclarées, permissionnaires et absences à vérifier.</p>
         </div>
         <BarChart3 className="h-5 w-5 text-slate-400" />
       </div>
@@ -259,15 +259,15 @@ function DistributionBar({ totals }: { totals: PresencePayload["totals"] }) {
       <div className="mt-4 grid gap-3 text-sm sm:grid-cols-3">
         <div className="rounded-2xl bg-emerald-50 p-3 text-emerald-700">
           <p className="font-black">{nf(totals.opened)}</p>
-          <p className="text-xs font-semibold">Présences constatées</p>
+          <p className="text-xs font-semibold">Présences déclarées</p>
         </div>
         <div className="rounded-2xl bg-sky-50 p-3 text-sky-700">
           <p className="font-black">{nf(totals.permission_approved)}</p>
-          <p className="text-xs font-semibold">Permissionnaires</p>
+          <p className="text-xs font-semibold">Abs. autorisées</p>
         </div>
         <div className="rounded-2xl bg-red-50 p-3 text-red-700">
           <p className="font-black">{nf(totals.absent_unjustified)}</p>
-          <p className="text-xs font-semibold">Absences à vérifier</p>
+          <p className="text-xs font-semibold">Abs. à justifier</p>
         </div>
       </div>
     </div>
@@ -284,7 +284,7 @@ function CompletionBar({ totals }: { totals: PresencePayload["totals"] }) {
       <div className="flex items-center justify-between gap-3">
         <div>
           <h2 className="text-lg font-black text-slate-950">Suivi de clôture</h2>
-          <p className="mt-1 text-sm text-slate-500">Parmi les séances ouvertes : terminées ou non terminées.</p>
+          <p className="mt-1 text-sm text-slate-500">Parmi les cours ouverts : clôturés ou non clôturés.</p>
         </div>
         <CheckCircle2 className="h-5 w-5 text-slate-400" />
       </div>
@@ -297,11 +297,11 @@ function CompletionBar({ totals }: { totals: PresencePayload["totals"] }) {
       <div className="mt-4 grid gap-3 text-sm sm:grid-cols-2">
         <div className="rounded-2xl bg-indigo-50 p-3 text-indigo-700">
           <p className="font-black">{nf(totals.ended)}</p>
-          <p className="text-xs font-semibold">Séances terminées</p>
+          <p className="text-xs font-semibold">Cours clôturés</p>
         </div>
         <div className="rounded-2xl bg-amber-50 p-3 text-amber-700">
           <p className="font-black">{nf(totals.not_ended)}</p>
-          <p className="text-xs font-semibold">Séances non terminées</p>
+          <p className="text-xs font-semibold">Cours non clôturés</p>
         </div>
       </div>
     </div>
@@ -315,8 +315,8 @@ function InstitutionBars({ items }: { items: PresenceRow[] }) {
     <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
       <div className="flex items-center justify-between gap-3">
         <div>
-          <h2 className="text-lg font-black text-slate-950">Taux de présence par établissement</h2>
-          <p className="mt-1 text-sm text-slate-500">Les établissements les plus préoccupants sont affichés en premier.</p>
+          <h2 className="text-lg font-black text-slate-950">Taux de présence déclarée par établissement</h2>
+          <p className="mt-1 text-sm text-slate-500">Classement des établissements selon les cours ouverts et les absences à justifier.</p>
         </div>
         <TrendingUp className="h-5 w-5 text-slate-400" />
       </div>
@@ -335,7 +335,7 @@ function InstitutionBars({ items }: { items: PresenceRow[] }) {
               </div>
               <RateBar value={item.presence_rate} />
               <div className="mt-1 text-xs text-slate-400">
-                {nf(item.opened)} présence(s) constatée(s) / {nf(item.scheduled)} cours prévu(s)
+                {nf(item.opened)} cours ouvert(s) / {nf(item.scheduled)} cours prévu(s)
               </div>
             </div>
           ))
@@ -368,7 +368,7 @@ function TrendChart({ daily, from, to }: { daily: DailyRow[]; from: string; to: 
     <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
       <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
         <div>
-          <h2 className="text-lg font-black text-slate-950">Évolution du taux de présence</h2>
+          <h2 className="text-lg font-black text-slate-950">Évolution du taux de présence déclarée</h2>
           <p className="mt-1 text-sm text-slate-500">
             Lecture {mode === "jour" ? "journalière" : mode === "semaine" ? "hebdomadaire" : "mensuelle"} adaptée à la période sélectionnée.
           </p>
@@ -400,7 +400,7 @@ function TrendChart({ daily, from, to }: { daily: DailyRow[]; from: string; to: 
             {coords.map((coord, index) => (
               <g key={`${coord.point.label}-${index}`}>
                 <circle cx={coord.x} cy={coord.y} r="4" fill="#0f172a" />
-                <title>{`${coord.point.label} : ${pf(coord.point.presence_rate)} • ${nf(coord.point.opened)} présence(s) / ${nf(coord.point.scheduled)} cours`}</title>
+                <title>{`${coord.point.label} : ${pf(coord.point.presence_rate)} • ${nf(coord.point.opened)} cours ouvert(s) / ${nf(coord.point.scheduled)} cours`}</title>
                 {index % labelStep === 0 || index === coords.length - 1 ? (
                   <text x={coord.x} y={height - 5} textAnchor="middle" fontSize="11" fill="#64748b">
                     {coord.point.label}
@@ -461,8 +461,8 @@ export default function DrenaetPresenceEnseignantsPage() {
             </div>
             <h1 className="mt-4 text-3xl font-black tracking-tight text-slate-950">Présence enseignants</h1>
             <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-500">
-              Lecture DRENAET des enseignants attendus : présences constatées, absences à vérifier, permissionnaires,
-              demandes en attente et séances non clôturées.
+              Lecture DRENAET des cours attendus : cours ouverts par les enseignants, absences autorisées, absences à justifier,
+              demandes à valider et cours ouverts non clôturés.
             </p>
           </div>
 
@@ -480,11 +480,11 @@ export default function DrenaetPresenceEnseignantsPage() {
 
         <div className="mt-5 rounded-2xl bg-slate-50 p-4 text-sm leading-6 text-slate-600">
           <span className="font-black text-slate-900">Définition DRENAET : </span>
-          un enseignant est compté comme <span className="font-bold text-slate-900">présent</span> lorsqu’une séance est
-          ouverte dans Mon Cahier. Une séance <span className="font-bold text-slate-900">terminée</span> est une présence
-          clôturée. Un <span className="font-bold text-slate-900">permissionnaire</span> correspond à un cours prévu couvert
-          par une autorisation d’absence approuvée. Une <span className="font-bold text-slate-900">absence à vérifier</span>
-          correspond à un cours prévu non ouvert, sans autorisation approuvée ou en attente.
+          les compteurs portent sur les <span className="font-bold text-slate-900">cours prévus</span>, pas sur le nombre
+          de personnes. Un même enseignant autorisé peut donc couvrir plusieurs cours. Une <span className="font-bold text-slate-900">présence déclarée</span>{" "}
+          correspond à un cours ouvert dans Mon Cahier. Une <span className="font-bold text-slate-900">absence autorisée</span>{" "}
+          correspond à un cours couvert par une autorisation approuvée. Une <span className="font-bold text-slate-900">absence à justifier</span>{" "}
+          correspond à un cours prévu non ouvert et non couvert par une autorisation approuvée ou en attente.
         </div>
       </section>
 
@@ -501,20 +501,20 @@ export default function DrenaetPresenceEnseignantsPage() {
         <>
           <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
             <StatCard title="Cours prévus" value={nf(totals.scheduled)} subtitle="Selon les emplois du temps" icon={<ClipboardList className="h-5 w-5" />} />
-            <StatCard title="Présences constatées" value={nf(totals.opened)} subtitle="Séances ouvertes" icon={<UserCheck className="h-5 w-5" />} />
-            <StatCard title="Permissionnaires" value={nf(totals.permission_approved)} subtitle="Autorisations approuvées" icon={<ShieldCheck className="h-5 w-5" />} />
-            <StatCard title="Absences à vérifier" value={nf(totals.absent_unjustified)} subtitle="Cours non ouverts non justifiés" icon={<UserX className="h-5 w-5" />} />
-            <StatCard title="Terminées" value={nf(totals.ended)} subtitle="Séances ouvertes puis clôturées" icon={<CheckCircle2 className="h-5 w-5" />} />
-            <StatCard title="Non terminées" value={nf(totals.not_ended)} subtitle="Ouvertes mais non clôturées" icon={<AlertTriangle className="h-5 w-5" />} />
-            <StatCard title="En attente" value={nf(totals.permission_pending)} subtitle="Demandes non encore validées" icon={<Clock3 className="h-5 w-5" />} />
-            <StatCard title="Taux de présence" value={pf(totals.presence_rate)} subtitle="Présences / cours prévus" icon={<TrendingUp className="h-5 w-5" />} />
+            <StatCard title="Présences déclarées" value={nf(totals.opened)} subtitle="Cours ouverts par enseignants" icon={<UserCheck className="h-5 w-5" />} />
+            <StatCard title="Abs. autorisées" value={nf(totals.permission_approved)} subtitle="Cours couverts par autorisation" icon={<ShieldCheck className="h-5 w-5" />} />
+            <StatCard title="Abs. à justifier" value={nf(totals.absent_unjustified)} subtitle="Cours prévus non ouverts" icon={<UserX className="h-5 w-5" />} />
+            <StatCard title="Clôturés" value={nf(totals.ended)} subtitle="Cours ouverts par enseignants puis clôturées" icon={<CheckCircle2 className="h-5 w-5" />} />
+            <StatCard title="Non clôturés" value={nf(totals.not_ended)} subtitle="Cours ouverts non clôturés" icon={<AlertTriangle className="h-5 w-5" />} />
+            <StatCard title="Demandes à valider" value={nf(totals.permission_pending)} subtitle="Cours couverts par demande en attente" icon={<Clock3 className="h-5 w-5" />} />
+            <StatCard title="Taux de présence déclarée" value={pf(totals.presence_rate)} subtitle="Cours ouverts / cours prévus" icon={<TrendingUp className="h-5 w-5" />} />
           </section>
 
           {data.alerts.length > 0 ? (
             <section className="rounded-[28px] border border-amber-200 bg-amber-50 p-5 shadow-sm">
               <div className="flex items-center gap-2 text-amber-800">
                 <AlertTriangle className="h-5 w-5" />
-                <h2 className="text-lg font-black">Alertes DRENAET</h2>
+                <h2 className="text-lg font-black">Alertes administratives DRENAET</h2>
               </div>
               <div className="mt-4 grid gap-3 md:grid-cols-2">
                 {data.alerts.map((alert) => (
@@ -539,7 +539,7 @@ export default function DrenaetPresenceEnseignantsPage() {
             <div className="border-b border-slate-100 p-5">
               <h2 className="text-lg font-black text-slate-950">Détail par établissement</h2>
               <p className="mt-1 text-sm text-slate-500">
-                Classement orienté contrôle : absences à vérifier, permissionnaires et présence effective.
+                Classement orienté contrôle : cours ouverts, absences autorisées, absences à justifier et clôture des séances.
               </p>
             </div>
 
@@ -548,12 +548,12 @@ export default function DrenaetPresenceEnseignantsPage() {
                 <thead className="bg-slate-50 text-left text-xs font-black uppercase tracking-wide text-slate-500">
                   <tr>
                     <th className="px-4 py-3">Établissement</th>
-                    <th className="px-4 py-3 text-right">Prévus</th>
-                    <th className="px-4 py-3 text-right">Présents</th>
-                    <th className="px-4 py-3 text-right">Terminées</th>
-                    <th className="px-4 py-3 text-right">Non terminées</th>
-                    <th className="px-4 py-3 text-right">Permissionnaires</th>
-                    <th className="px-4 py-3 text-right">Absences à vérifier</th>
+                    <th className="px-4 py-3 text-right">Cours prévus</th>
+                    <th className="px-4 py-3 text-right">Cours ouverts</th>
+                    <th className="px-4 py-3 text-right">Clôturés</th>
+                    <th className="px-4 py-3 text-right">Non clôturés</th>
+                    <th className="px-4 py-3 text-right">Abs. autorisées</th>
+                    <th className="px-4 py-3 text-right">Abs. à justifier</th>
                     <th className="px-4 py-3 text-right">Taux</th>
                     <th className="px-4 py-3 text-right">Statut</th>
                   </tr>
