@@ -11,7 +11,6 @@ type PeriodRow = {
   id: string;
   institution_id: string;
   weekday: number | null;
-  label: string | null;
   start_time: string | null;
   end_time: string | null;
   startMin: number;
@@ -34,16 +33,20 @@ type SessionRow = {
   class_id: string | null;
   subject_id: string | null;
   teacher_id: string | null;
-  period_id?: string | null;
   started_at: string | null;
-  actual_call_at: string | null;
   ended_at: string | null;
-  origin: string | null;
+  actual_call_at?: string | null;
+  origin?: string | null;
 };
 
-type MatchableSession = SessionRow & {
-  ymd: string;
-  startedMin: number;
+type AbsenceRequestRow = {
+  id: string;
+  institution_id: string;
+  teacher_profile_id: string | null;
+  start_date: string | null;
+  end_date: string | null;
+  reason_label: string | null;
+  status: "pending" | "approved" | string;
 };
 
 type InstitutionStats = {
@@ -52,9 +55,14 @@ type InstitutionStats = {
   regional_direction: string;
   scheduled: number;
   opened: number;
-  held: number;
-  not_held: number;
-  incomplete: number;
+  ended: number;
+  not_ended: number;
+  permission_approved_raw: number;
+  permission_pending_raw: number;
+  permission_approved: number;
+  permission_pending: number;
+  not_opened: number;
+  absent_unjustified: number;
   teachers: Set<string>;
 };
 
@@ -62,14 +70,23 @@ type DailyStats = {
   date: string;
   scheduled: number;
   opened: number;
-  held: number;
-  not_held: number;
-  incomplete: number;
+  ended: number;
+  not_ended: number;
+  permission_approved_raw: number;
+  permission_pending_raw: number;
+  permission_approved: number;
+  permission_pending: number;
+  not_opened: number;
+  absent_unjustified: number;
 };
 
 function pct(part: number, total: number) {
   if (!total) return 0;
   return Math.round((part / total) * 1000) / 10;
+}
+
+function clampPositive(value: number) {
+  return Math.max(0, Math.trunc(Number(value || 0)));
 }
 
 function parseYMD(ymd: string | null | undefined): Date | null {
@@ -88,11 +105,6 @@ function toYMD(date: Date) {
 
 function isoToYMD(iso: string) {
   return toYMD(new Date(iso));
-}
-
-function isoToMinutes(iso: string) {
-  const d = new Date(iso);
-  return d.getUTCHours() * 60 + d.getUTCMinutes();
 }
 
 function normalizeTimeFromDb(raw: string | null | undefined): string | null {
@@ -125,7 +137,6 @@ function detectWeekdayMode(rows: any[]): WeekdayMode {
   );
 
   if (values.includes(7)) return "iso";
-
   const max = values.length ? Math.max(...values) : 6;
   if (max === 5) return "mon0";
   if (values.includes(0) && max === 6) return "js";
@@ -155,67 +166,106 @@ function listDates(fromYmd: string, toYmd: string) {
 }
 
 function emptyDaily(date: string): DailyStats {
-  return { date, scheduled: 0, opened: 0, held: 0, not_held: 0, incomplete: 0 };
+  return {
+    date,
+    scheduled: 0,
+    opened: 0,
+    ended: 0,
+    not_ended: 0,
+    permission_approved_raw: 0,
+    permission_pending_raw: 0,
+    permission_approved: 0,
+    permission_pending: 0,
+    not_opened: 0,
+    absent_unjustified: 0,
+  };
 }
 
-function getOperationalStatus(stats: Omit<InstitutionStats, "teachers">) {
+function getOperationalStatus(stats: {
+  scheduled: number;
+  opened: number;
+  permission_approved: number;
+  absent_unjustified: number;
+  presence_rate: number;
+}) {
   if (stats.scheduled <= 0) return "no_schedule";
-  if (stats.opened <= 0) return "silent";
-  const rate = pct(stats.held, stats.scheduled);
-  if (rate < 50) return "critical";
-  if (rate < 80) return "watch";
+  if (stats.opened <= 0 && stats.permission_approved <= 0) return "silent";
+  if (stats.presence_rate < 50 || stats.absent_unjustified >= Math.max(10, Math.ceil(stats.scheduled * 0.4))) return "critical";
+  if (stats.presence_rate < 80 || stats.absent_unjustified > 0) return "watch";
   return "stable";
 }
 
-function indexPush(map: Map<string, MatchableSession[]>, key: string, session: MatchableSession) {
-  const arr = map.get(key) || [];
-  arr.push(session);
-  map.set(key, arr);
+function emptyInstitutionStats(inst: any): InstitutionStats {
+  return {
+    institution_id: String(inst.id),
+    institution_name: inst.name || "Établissement sans nom",
+    regional_direction: inst.regional_direction || "",
+    scheduled: 0,
+    opened: 0,
+    ended: 0,
+    not_ended: 0,
+    permission_approved_raw: 0,
+    permission_pending_raw: 0,
+    permission_approved: 0,
+    permission_pending: 0,
+    not_opened: 0,
+    absent_unjustified: 0,
+    teachers: new Set<string>(),
+  };
 }
 
-function sortCandidates(candidates: MatchableSession[], startMin: number) {
-  return candidates
-    .filter((candidate) => candidate.started_at)
-    .sort((a, b) => Math.abs(a.startedMin - startMin) - Math.abs(b.startedMin - startMin));
+function finalizeDerived<T extends { scheduled: number; opened: number; permission_approved_raw: number; permission_pending_raw: number; permission_approved: number; permission_pending: number; not_opened: number; absent_unjustified: number }>(stats: T) {
+  const scheduled = clampPositive(stats.scheduled);
+  const opened = clampPositive(stats.opened);
+  const nonOpened = Math.max(0, scheduled - opened);
+  const approved = Math.min(clampPositive(stats.permission_approved_raw), nonOpened);
+  const pending = Math.min(clampPositive(stats.permission_pending_raw), Math.max(0, nonOpened - approved));
+
+  stats.not_opened = nonOpened;
+  stats.permission_approved = approved;
+  stats.permission_pending = pending;
+  stats.absent_unjustified = Math.max(0, nonOpened - approved - pending);
+  return stats;
 }
 
-async function fetchTeacherSessions(
-  srv: any,
-  institutionIds: string[],
-  fromISO: string,
-  toISO: string
-): Promise<{ data?: SessionRow[]; error?: string }> {
-  const baseSelect =
-    "id,institution_id,class_id,subject_id,teacher_id,started_at,actual_call_at,ended_at,origin";
+function buildAbsenceIndex(absenceRequests: AbsenceRequestRow[]) {
+  const index = new Map<string, { approved: boolean; pending: boolean }>();
 
-  const withPeriod = await srv
+  for (const request of absenceRequests || []) {
+    const teacherId = String(request.teacher_profile_id || "");
+    const institutionId = String(request.institution_id || "");
+    const start = parseYMD(request.start_date || "");
+    const end = parseYMD(request.end_date || "");
+    const status = String(request.status || "");
+
+    if (!teacherId || !institutionId || !start || !end || !["approved", "pending"].includes(status)) continue;
+
+    const cursor = new Date(start.getTime());
+    while (cursor.getTime() <= end.getTime()) {
+      const ymd = toYMD(cursor);
+      const key = `${ymd}|${institutionId}|${teacherId}`;
+      const current = index.get(key) || { approved: false, pending: false };
+      if (status === "approved") current.approved = true;
+      if (status === "pending") current.pending = true;
+      index.set(key, current);
+      cursor.setUTCDate(cursor.getUTCDate() + 1);
+    }
+  }
+
+  return index;
+}
+
+async function fetchTeacherSessions(srv: any, institutionIds: string[], fromISO: string, toISO: string) {
+  const { data, error } = await srv
     .from("teacher_sessions")
-    .select(`${baseSelect},period_id`)
+    .select("id,institution_id,class_id,subject_id,teacher_id,started_at,actual_call_at,ended_at,origin")
     .in("institution_id", institutionIds)
     .gte("started_at", fromISO)
     .lt("started_at", toISO)
-    .range(0, 80000);
+    .range(0, 100000);
 
-  if (!withPeriod.error) return { data: (withPeriod.data || []) as SessionRow[] };
-
-  const message = String(withPeriod.error?.message || "");
-  const periodColumnMissing =
-    message.toLowerCase().includes("period_id") ||
-    message.toLowerCase().includes("could not find") ||
-    message.toLowerCase().includes("column");
-
-  if (!periodColumnMissing) return { error: message };
-
-  const fallback = await srv
-    .from("teacher_sessions")
-    .select(baseSelect)
-    .in("institution_id", institutionIds)
-    .gte("started_at", fromISO)
-    .lt("started_at", toISO)
-    .range(0, 80000);
-
-  if (fallback.error) return { error: fallback.error.message };
-  return { data: (fallback.data || []) as SessionRow[] };
+  if (error) return { data: [], error: error.message };
+  return { data: (data || []) as SessionRow[], error: null };
 }
 
 export async function GET(req: NextRequest) {
@@ -235,54 +285,51 @@ export async function GET(req: NextRequest) {
       ok: true,
       range,
       definitions: {
-        scheduled: "Cours prévus selon les emplois du temps officiels.",
-        held: "Séances démarrées puis terminées dans Mon Cahier.",
-        not_held: "Cours prévus mais jamais ouverts par l’enseignant.",
-        incomplete: "Séances ouvertes mais non terminées.",
+        scheduled: "Cours attendus selon les emplois du temps officiels.",
+        opened: "Présences constatées : séances ouvertes dans Mon Cahier.",
+        ended: "Séances ouvertes puis clôturées.",
+        not_ended: "Séances ouvertes mais non clôturées.",
+        permission_approved: "Cours prévus couverts par une autorisation d’absence approuvée.",
+        absent_unjustified: "Cours prévus non ouverts, sans autorisation approuvée ou en attente.",
       },
-      totals: {
-        scheduled: 0,
-        opened: 0,
-        held: 0,
-        not_held: 0,
-        incomplete: 0,
-        teachers_seen: 0,
-        held_rate: 0,
-        opening_rate: 0,
-        sessions: 0,
-        confirmed: 0,
-        missing: 0,
-        coverage_rate: 0,
-        closed: 0,
-        close_rate: 0,
-      },
+      totals: {},
       daily: [],
       alerts: [],
       items: [],
     });
   }
 
-  const [periodsRes, ttsRes, sessionsRes] = await Promise.all([
+  const [periodsRes, ttsRes, sessionsRes, absenceRes] = await Promise.all([
     g.srv
       .from("institution_periods")
       .select("id,institution_id,weekday,label,start_time,end_time")
       .in("institution_id", institutionIds)
-      .range(0, 80000),
+      .range(0, 100000),
     g.srv
       .from("teacher_timetables")
       .select("id,institution_id,class_id,subject_id,teacher_id,weekday,period_id")
       .in("institution_id", institutionIds)
-      .range(0, 80000),
+      .range(0, 100000),
     fetchTeacherSessions(g.srv, institutionIds, range.fromISO, range.toISO),
+    g.srv
+      .from("teacher_absence_requests")
+      .select("id,institution_id,teacher_profile_id,start_date,end_date,reason_label,status")
+      .in("institution_id", institutionIds)
+      .in("status", ["pending", "approved"])
+      .lte("start_date", range.toYmd)
+      .gte("end_date", range.fromYmd)
+      .range(0, 100000),
   ]);
 
   if (periodsRes.error) return NextResponse.json({ error: periodsRes.error.message }, { status: 400 });
   if (ttsRes.error) return NextResponse.json({ error: ttsRes.error.message }, { status: 400 });
   if (sessionsRes.error) return NextResponse.json({ error: sessionsRes.error }, { status: 400 });
+  if (absenceRes.error) return NextResponse.json({ error: absenceRes.error.message }, { status: 400 });
 
   const rawPeriods = (periodsRes.data || []) as any[];
   const rawTimetables = (ttsRes.data || []) as any[];
   const rawSessions = (sessionsRes.data || []) as SessionRow[];
+  const rawAbsences = (absenceRes.data || []) as AbsenceRequestRow[];
 
   const periodById = new Map<string, PeriodRow>();
   for (const row of rawPeriods) {
@@ -296,7 +343,6 @@ export async function GET(req: NextRequest) {
       id,
       institution_id: String(row.institution_id || ""),
       weekday: parseWeekday(row.weekday),
-      label: row.label ?? null,
       start_time: normalizeTimeFromDb(row.start_time),
       end_time: normalizeTimeFromDb(row.end_time),
       startMin,
@@ -308,7 +354,7 @@ export async function GET(req: NextRequest) {
     id: String(row.id || ""),
     institution_id: String(row.institution_id || ""),
     class_id: row.class_id ? String(row.class_id) : null,
-    subject_id: row.subject_id ? String(row.subject_id) : "",
+    subject_id: row.subject_id ? String(row.subject_id) : null,
     teacher_id: row.teacher_id ? String(row.teacher_id) : null,
     weekday: parseWeekday(row.weekday),
     period_id: row.period_id ? String(row.period_id) : null,
@@ -329,243 +375,193 @@ export async function GET(req: NextRequest) {
   }
 
   const statsByInstitution = new Map<string, InstitutionStats>();
-  for (const inst of g.institutions) {
-    statsByInstitution.set(String(inst.id), {
-      institution_id: String(inst.id),
-      institution_name: inst.name || "Établissement sans nom",
-      regional_direction: inst.regional_direction || "",
-      scheduled: 0,
-      opened: 0,
-      held: 0,
-      not_held: 0,
-      incomplete: 0,
-      teachers: new Set<string>(),
-    });
-  }
+  for (const inst of g.institutions) statsByInstitution.set(String(inst.id), emptyInstitutionStats(inst));
 
   const dailyMap = new Map<string, DailyStats>();
   dates.forEach((date) => dailyMap.set(date.ymd, emptyDaily(date.ymd)));
 
-  const periodSessionIndex = new Map<string, MatchableSession[]>();
-  const exactSessionIndex = new Map<string, MatchableSession[]>();
-  const fallbackSessionIndex = new Map<string, MatchableSession[]>();
+  const absenceIndex = buildAbsenceIndex(rawAbsences);
 
-  for (const session of rawSessions) {
-    if (!session.started_at) continue;
-    const institutionId = String(session.institution_id || "");
-    const classId = String(session.class_id || "");
-    const subjectId = String(session.subject_id || "");
-    const teacherId = String(session.teacher_id || "");
-    const ymd = isoToYMD(session.started_at);
-    const matchable: MatchableSession = {
-      ...session,
-      institution_id: institutionId,
-      class_id: classId,
-      subject_id: subjectId,
-      teacher_id: teacherId,
-      period_id: session.period_id ? String(session.period_id) : null,
-      ymd,
-      startedMin: isoToMinutes(session.started_at),
-    };
-
-    if (matchable.period_id) {
-      indexPush(
-        periodSessionIndex,
-        [institutionId, ymd, matchable.period_id, classId, subjectId, teacherId].join("|"),
-        matchable
-      );
-    }
-
-    indexPush(exactSessionIndex, [institutionId, ymd, classId, subjectId, teacherId].join("|"), matchable);
-    indexPush(fallbackSessionIndex, [institutionId, ymd, classId, teacherId].join("|"), matchable);
-  }
-
-  const slotsByGroup = new Map<string, { period_id: string; startMin: number }[]>();
-  for (const tt of timetables) {
-    const period = tt.period_id ? periodById.get(tt.period_id) : null;
-    if (!period || !tt.class_id || !tt.teacher_id || !tt.period_id) continue;
-    const weekday = period.weekday ?? tt.weekday;
-    if (weekday === null || weekday === undefined) continue;
-    const key = [tt.institution_id, weekday, tt.class_id, tt.subject_id || "", tt.teacher_id].join("|");
-    const arr = slotsByGroup.get(key) || [];
-    arr.push({ period_id: tt.period_id, startMin: period.startMin });
-    slotsByGroup.set(key, arr);
-  }
-
-  const nextStartMinBySlot = new Map<string, number | null>();
-  for (const [group, rows] of slotsByGroup.entries()) {
-    const sorted = rows.sort((a, b) => a.startMin - b.startMin);
-    for (let i = 0; i < sorted.length; i++) {
-      nextStartMinBySlot.set(`${group}|${sorted[i].period_id}`, sorted[i + 1]?.startMin ?? null);
-    }
-  }
-
-  const consumedSessions = new Set<string>();
-
-  function chooseSession(options: {
-    institutionId: string;
-    ymd: string;
-    periodId: string;
-    classId: string;
-    subjectId: string;
-    teacherId: string;
-    startMin: number;
-    endMin: number;
-    nextStartMin: number | null;
-  }) {
-    const periodCandidates = periodSessionIndex.get(
-      [
-        options.institutionId,
-        options.ymd,
-        options.periodId,
-        options.classId,
-        options.subjectId,
-        options.teacherId,
-      ].join("|")
-    );
-
-    const buckets = [
-      periodCandidates || [],
-      exactSessionIndex.get(
-        [options.institutionId, options.ymd, options.classId, options.subjectId, options.teacherId].join("|")
-      ) || [],
-      fallbackSessionIndex.get([options.institutionId, options.ymd, options.classId, options.teacherId].join("|")) || [],
-    ];
-
-    for (const bucket of buckets) {
-      const candidates = sortCandidates(bucket, options.startMin).filter((session) => {
-        if (!session.id || consumedSessions.has(String(session.id))) return false;
-        if (session.startedMin < options.startMin) return false;
-        if (options.nextStartMin !== null && session.startedMin >= options.nextStartMin) return false;
-        return session.startedMin <= options.endMin + 120;
-      });
-
-      if (candidates.length) return candidates[0];
-    }
-
-    return null;
-  }
-
+  // 1) Cours prévus : source = emplois du temps officiels.
   for (const tt of timetables) {
     const institutionId = tt.institution_id;
     const stats = statsByInstitution.get(institutionId);
-    if (!stats) continue;
+    if (!stats || !tt.teacher_id) continue;
 
     const period = tt.period_id ? periodById.get(tt.period_id) : null;
-    if (!period || !tt.class_id || !tt.teacher_id || !tt.period_id) continue;
-
-    const weekday = period.weekday ?? tt.weekday;
+    const weekday = period?.weekday ?? tt.weekday;
     if (weekday === null || weekday === undefined) continue;
 
     const datesForDay = datesByWeekday.get(weekday) || [];
     if (!datesForDay.length) continue;
 
-    const classId = tt.class_id;
-    const subjectId = tt.subject_id || "";
-    const teacherId = tt.teacher_id;
-    const group = [institutionId, weekday, classId, subjectId, teacherId].join("|");
-    const nextStartMin = nextStartMinBySlot.get(`${group}|${tt.period_id}`) ?? null;
-
     for (const ymd of datesForDay) {
       if (ymd > today) continue;
-      if (ymd === today && period.endMin > nowMinutes) continue;
+      if (ymd === today && period && period.endMin > nowMinutes) continue;
 
       stats.scheduled += 1;
       const day = dailyMap.get(ymd) || emptyDaily(ymd);
       day.scheduled += 1;
+
+      const absence = absenceIndex.get(`${ymd}|${institutionId}|${tt.teacher_id}`);
+      if (absence?.approved) {
+        stats.permission_approved_raw += 1;
+        day.permission_approved_raw += 1;
+      } else if (absence?.pending) {
+        stats.permission_pending_raw += 1;
+        day.permission_pending_raw += 1;
+      }
+
       dailyMap.set(ymd, day);
-
-      const matched = chooseSession({
-        institutionId,
-        ymd,
-        periodId: tt.period_id,
-        classId,
-        subjectId,
-        teacherId,
-        startMin: period.startMin,
-        endMin: period.endMin,
-        nextStartMin,
-      });
-
-      if (!matched) {
-        stats.not_held += 1;
-        day.not_held += 1;
-        continue;
-      }
-
-      consumedSessions.add(String(matched.id));
-      stats.opened += 1;
-      day.opened += 1;
-      if (matched.teacher_id) stats.teachers.add(String(matched.teacher_id));
-
-      if (matched.started_at && matched.ended_at) {
-        stats.held += 1;
-        day.held += 1;
-      } else {
-        stats.incomplete += 1;
-        day.incomplete += 1;
-      }
     }
   }
 
+  // 2) Présences constatées : source = teacher_sessions réellement ouvertes.
+  const seenSessions = new Set<string>();
+  for (const session of rawSessions) {
+    const sessionId = String(session.id || "");
+    if (!sessionId || seenSessions.has(sessionId) || !session.started_at) continue;
+    seenSessions.add(sessionId);
+
+    const institutionId = String(session.institution_id || "");
+    const stats = statsByInstitution.get(institutionId);
+    if (!stats) continue;
+
+    const ymd = isoToYMD(session.started_at);
+    const day = dailyMap.get(ymd) || emptyDaily(ymd);
+
+    stats.opened += 1;
+    day.opened += 1;
+
+    if (session.ended_at) {
+      stats.ended += 1;
+      day.ended += 1;
+    } else {
+      stats.not_ended += 1;
+      day.not_ended += 1;
+    }
+
+    if (session.teacher_id) stats.teachers.add(String(session.teacher_id));
+    dailyMap.set(ymd, day);
+  }
+
+  // 3) Dérivés : non ouverts, permissionnaires pris dans les non ouverts, absences à vérifier.
+  for (const stats of statsByInstitution.values()) finalizeDerived(stats);
+  for (const day of dailyMap.values()) finalizeDerived(day);
+
   const items = Array.from(statsByInstitution.values())
     .map((stats) => {
-      const clean = {
+      const presenceRate = pct(stats.opened, stats.scheduled);
+      const closureRate = pct(stats.ended, stats.opened);
+      const completionRate = pct(stats.ended, stats.scheduled);
+      const status = getOperationalStatus({
+        scheduled: stats.scheduled,
+        opened: stats.opened,
+        permission_approved: stats.permission_approved,
+        absent_unjustified: stats.absent_unjustified,
+        presence_rate: presenceRate,
+      });
+
+      return {
         institution_id: stats.institution_id,
         institution_name: stats.institution_name,
         regional_direction: stats.regional_direction,
         scheduled: stats.scheduled,
         opened: stats.opened,
-        held: stats.held,
-        not_held: stats.not_held,
-        incomplete: stats.incomplete,
+        ended: stats.ended,
+        not_ended: stats.not_ended,
+        not_opened: stats.not_opened,
+        permission_approved: stats.permission_approved,
+        permission_pending: stats.permission_pending,
+        absent_unjustified: stats.absent_unjustified,
         teachers_seen: stats.teachers.size,
-        held_rate: pct(stats.held, stats.scheduled),
-        opening_rate: pct(stats.opened, stats.scheduled),
-      };
-
-      return {
-        ...clean,
-        status: getOperationalStatus(clean),
-        // Compatibilité avec l’ancienne page si besoin.
-        sessions: clean.scheduled,
-        confirmed: clean.held,
-        missing: clean.not_held,
-        coverage_rate: clean.held_rate,
-        closed: clean.held,
-        close_rate: clean.held_rate,
+        presence_rate: presenceRate,
+        closure_rate: closureRate,
+        completion_rate: completionRate,
+        status,
+        // Compatibilité avec les anciens écrans.
+        held: stats.ended,
+        incomplete: stats.not_ended,
+        not_held: stats.not_opened,
+        held_rate: completionRate,
+        opening_rate: presenceRate,
+        sessions: stats.scheduled,
+        confirmed: stats.ended,
+        missing: stats.not_opened,
+        coverage_rate: presenceRate,
+        closed: stats.ended,
+        close_rate: closureRate,
       };
     })
     .sort((a, b) => {
-      if (a.status === "silent" && b.status !== "silent") return -1;
-      if (b.status === "silent" && a.status !== "silent") return 1;
-      if (a.scheduled === 0 && b.scheduled !== 0) return 1;
-      if (b.scheduled === 0 && a.scheduled !== 0) return -1;
-      return a.held_rate - b.held_rate;
+      const priority: Record<string, number> = { silent: 0, critical: 1, watch: 2, no_schedule: 3, stable: 4 };
+      const pa = priority[a.status] ?? 5;
+      const pb = priority[b.status] ?? 5;
+      if (pa !== pb) return pa - pb;
+      if (a.absent_unjustified !== b.absent_unjustified) return b.absent_unjustified - a.absent_unjustified;
+      return a.presence_rate - b.presence_rate;
     });
 
   const totalsRaw = items.reduce(
     (acc, item) => {
       acc.scheduled += item.scheduled;
       acc.opened += item.opened;
-      acc.held += item.held;
-      acc.not_held += item.not_held;
-      acc.incomplete += item.incomplete;
+      acc.ended += item.ended;
+      acc.not_ended += item.not_ended;
+      acc.not_opened += item.not_opened;
+      acc.permission_approved += item.permission_approved;
+      acc.permission_pending += item.permission_pending;
+      acc.absent_unjustified += item.absent_unjustified;
       acc.teachers_seen += item.teachers_seen;
       return acc;
     },
-    { scheduled: 0, opened: 0, held: 0, not_held: 0, incomplete: 0, teachers_seen: 0 }
+    {
+      scheduled: 0,
+      opened: 0,
+      ended: 0,
+      not_ended: 0,
+      not_opened: 0,
+      permission_approved: 0,
+      permission_pending: 0,
+      absent_unjustified: 0,
+      teachers_seen: 0,
+    }
   );
+
+  const totals = {
+    ...totalsRaw,
+    presence_rate: pct(totalsRaw.opened, totalsRaw.scheduled),
+    closure_rate: pct(totalsRaw.ended, totalsRaw.opened),
+    completion_rate: pct(totalsRaw.ended, totalsRaw.scheduled),
+    // Compatibilité avec les anciens libellés côté front.
+    held: totalsRaw.ended,
+    incomplete: totalsRaw.not_ended,
+    not_held: totalsRaw.not_opened,
+    held_rate: pct(totalsRaw.ended, totalsRaw.scheduled),
+    opening_rate: pct(totalsRaw.opened, totalsRaw.scheduled),
+    sessions: totalsRaw.scheduled,
+    confirmed: totalsRaw.ended,
+    missing: totalsRaw.not_opened,
+    coverage_rate: pct(totalsRaw.opened, totalsRaw.scheduled),
+    closed: totalsRaw.ended,
+    close_rate: pct(totalsRaw.ended, totalsRaw.opened),
+  };
 
   const daily = Array.from(dailyMap.values()).map((day) => ({
     ...day,
-    held_rate: pct(day.held, day.scheduled),
+    presence_rate: pct(day.opened, day.scheduled),
+    closure_rate: pct(day.ended, day.opened),
+    completion_rate: pct(day.ended, day.scheduled),
+    held: day.ended,
+    incomplete: day.not_ended,
+    not_held: day.not_opened,
+    held_rate: pct(day.ended, day.scheduled),
     opening_rate: pct(day.opened, day.scheduled),
   }));
 
   const alerts = items
     .filter((item) => ["silent", "critical", "watch"].includes(item.status) && item.scheduled > 0)
-    .slice(0, 8)
+    .slice(0, 10)
     .map((item) => {
       if (item.status === "silent") {
         return {
@@ -573,23 +569,23 @@ export async function GET(req: NextRequest) {
           institution_name: item.institution_name,
           severity: "critical",
           type: "silent",
-          message: `${item.institution_name} a ${item.scheduled} séance(s) prévue(s), mais aucune séance tenue sur la période.`,
+          message: `${item.institution_name} a ${item.scheduled} cours prévu(s), mais aucune présence enseignant constatée sur la période.`,
           scheduled: item.scheduled,
-          held_rate: item.held_rate,
-          not_held: item.not_held,
+          presence_rate: item.presence_rate,
+          absent_unjustified: item.absent_unjustified,
         };
       }
 
-      if (item.status === "critical") {
+      if (item.absent_unjustified > 0) {
         return {
           institution_id: item.institution_id,
           institution_name: item.institution_name,
-          severity: "critical",
-          type: "low_held_rate",
-          message: `${item.institution_name} présente un taux de tenue faible (${item.held_rate}%).`,
+          severity: item.status === "critical" ? "critical" : "warning",
+          type: "absent_unjustified",
+          message: `${item.institution_name} compte ${item.absent_unjustified} absence(s) enseignant à vérifier sur la période.`,
           scheduled: item.scheduled,
-          held_rate: item.held_rate,
-          not_held: item.not_held,
+          presence_rate: item.presence_rate,
+          absent_unjustified: item.absent_unjustified,
         };
       }
 
@@ -597,39 +593,35 @@ export async function GET(req: NextRequest) {
         institution_id: item.institution_id,
         institution_name: item.institution_name,
         severity: "warning",
-        type: "watch",
-        message: `${item.institution_name} est à surveiller : ${item.not_held} séance(s) non tenue(s).`,
+        type: "low_presence_rate",
+        message: `${item.institution_name} présente un taux de présence enseignant faible (${item.presence_rate}%).`,
         scheduled: item.scheduled,
-        held_rate: item.held_rate,
-        not_held: item.not_held,
+        presence_rate: item.presence_rate,
+        absent_unjustified: item.absent_unjustified,
       };
     });
-
-  const totals = {
-    ...totalsRaw,
-    held_rate: pct(totalsRaw.held, totalsRaw.scheduled),
-    opening_rate: pct(totalsRaw.opened, totalsRaw.scheduled),
-    // Compatibilité avec les anciens libellés côté front.
-    sessions: totalsRaw.scheduled,
-    confirmed: totalsRaw.held,
-    missing: totalsRaw.not_held,
-    coverage_rate: pct(totalsRaw.held, totalsRaw.scheduled),
-    closed: totalsRaw.held,
-    close_rate: pct(totalsRaw.held, totalsRaw.scheduled),
-  };
 
   return NextResponse.json({
     ok: true,
     range,
     definitions: {
-      scheduled: "Cours prévus selon les emplois du temps officiels.",
-      held: "Séances démarrées puis terminées dans Mon Cahier.",
-      not_held: "Cours prévus mais jamais ouverts par l’enseignant.",
-      incomplete: "Séances ouvertes mais non terminées.",
+      scheduled: "Cours attendus selon les emplois du temps officiels.",
+      opened: "Présences constatées : séances ouvertes dans Mon Cahier.",
+      ended: "Séances ouvertes puis clôturées.",
+      not_ended: "Séances ouvertes mais non clôturées.",
+      not_opened: "Cours prévus mais jamais ouverts.",
+      permission_approved: "Cours prévus couverts par une autorisation d’absence approuvée.",
+      permission_pending: "Cours prévus couverts par une demande d’autorisation en attente.",
+      absent_unjustified: "Cours prévus non ouverts, sans autorisation approuvée ou en attente.",
     },
     totals,
     daily,
     alerts,
     items,
+    warnings: {
+      matching: null,
+      note:
+        "Les présences constatées sont comptées à partir des teacher_sessions réelles. Les absences à vérifier sont calculées à partir des cours prévus non ouverts, après déduction des autorisations approuvées/en attente.",
+    },
   });
 }
