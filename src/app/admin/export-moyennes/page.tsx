@@ -3,14 +3,12 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import {
   Download,
-  FileSpreadsheet,
   FileText,
   ChevronLeft,
   CalendarRange,
   School,
   ClipboardList,
   Layers3,
-  CheckCircle2,
   ShieldCheck,
 } from "lucide-react";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
@@ -162,31 +160,20 @@ export default async function ExportDespsPage() {
                 <h1 className="mt-4 text-3xl font-black tracking-tight sm:text-4xl">
                   Export des moyennes et récapitulatifs
                 </h1>
-
-                <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-200 sm:text-base">
-                  Préparez les fichiers Excel ou CSV à partir des moyennes publiées,
-                  par période ou sur l’ensemble de l’année scolaire.
-                </p>
               </div>
             </div>
           </header>
 
           <div className="grid gap-5 p-5 sm:p-6 lg:grid-cols-2 lg:p-7">
             <section className="rounded-[28px] border border-emerald-100 bg-emerald-50/70 p-4 shadow-sm sm:p-5">
-              <div className="mb-4 flex items-start gap-3">
+              <div className="mb-4 flex items-center gap-3">
                 <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-emerald-600 text-white shadow-sm">
                   <ClipboardList className="h-5 w-5" />
                 </div>
 
-                <div>
-                  <h2 className="text-lg font-black text-slate-950">
-                    Moyennes par matière
-                  </h2>
-                  <p className="mt-1 text-sm leading-6 text-slate-600">
-                    Exportez les notes et moyennes d’une période pour une classe ou
-                    pour toutes les classes.
-                  </p>
-                </div>
+                <h2 className="text-lg font-black text-slate-950">
+                  Moyennes par matière
+                </h2>
               </div>
 
               <form
@@ -265,15 +252,6 @@ export default async function ExportDespsPage() {
                   </select>
                 </div>
 
-                <div className="flex items-start gap-2 rounded-2xl border border-emerald-100 bg-emerald-50 px-3 py-3 text-xs leading-5 text-emerald-900">
-                  <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
-                  <p>
-                    Les données exportées utilisent les moyennes officiellement publiées
-                    afin de conserver une cohérence avec les bulletins et les états
-                    administratifs.
-                  </p>
-                </div>
-
                 <div className="flex flex-col gap-3 sm:flex-row">
                   <button
                     type="submit"
@@ -299,20 +277,14 @@ export default async function ExportDespsPage() {
             </section>
 
             <section className="rounded-[28px] border border-indigo-100 bg-indigo-50/70 p-4 shadow-sm sm:p-5">
-              <div className="mb-4 flex items-start gap-3">
+              <div className="mb-4 flex items-center gap-3">
                 <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-indigo-600 text-white shadow-sm">
                   <Layers3 className="h-5 w-5" />
                 </div>
 
-                <div>
-                  <h2 className="text-lg font-black text-slate-950">
-                    Récapitulatif annuel
-                  </h2>
-                  <p className="mt-1 text-sm leading-6 text-slate-600">
-                    Générez le récapitulatif de l’année scolaire à partir des périodes
-                    configurées dans l’établissement.
-                  </p>
-                </div>
+                <h2 className="text-lg font-black text-slate-950">
+                  Récapitulatif annuel
+                </h2>
               </div>
 
               <form
@@ -365,15 +337,6 @@ export default async function ExportDespsPage() {
                       </option>
                     ))}
                   </select>
-                </div>
-
-                <div className="flex items-start gap-2 rounded-2xl border border-indigo-100 bg-indigo-50 px-3 py-3 text-xs leading-5 text-indigo-900">
-                  <FileSpreadsheet className="mt-0.5 h-4 w-4 shrink-0" />
-                  <p>
-                    Le fichier annuel consolide les résultats des périodes disponibles
-                    pour l’année sélectionnée, avec une sortie adaptée au suivi
-                    administratif.
-                  </p>
                 </div>
 
                 <div className="flex flex-col gap-3 sm:flex-row">
