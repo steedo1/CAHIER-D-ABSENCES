@@ -6,12 +6,11 @@ import { usePathname } from "next/navigation";
 
 const NAV = [
   { href: "/super/dashboard", label: "Tableau de bord", icon: "🏠" },
-  // on garde cette page comme outil de création (ton écran actuel)
   { href: "/super/etablissements", label: "Créer un abonnement", icon: "🧩" },
-  // ➤ nouvel onglet : liste paginée + suppression
   { href: "/super/etablissements/liste", label: "Liste des établissements", icon: "📋" },
   { href: "/super/abonnements", label: "Mes abonnements", icon: "🧾" },
   { href: "/super/admins", label: "Liste des admins", icon: "🧑‍💼" },
+  { href: "/super/drenaets", label: "Accès DRENAET", icon: "🏛️" },
   { href: "/super/parametres", label: "Paramètres", icon: "⚙️" },
 ];
 
