@@ -1,3 +1,4 @@
+//src/app/admin/export-moyennes/page.tsx
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import {
@@ -150,9 +151,7 @@ export default async function ExportDespsPage() {
             </h1>
 
             <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-200">
-              Générez les fichiers officiels au format DESPS : notes par matière et
-              récapitulatif annuel. Les exports utilisent les notes publiées afin de
-              rester cohérents avec les bulletins officiels.
+              Générez les fichiers officiels au format DESPS 
             </p>
           </div>
 
@@ -166,10 +165,7 @@ export default async function ExportDespsPage() {
                   <h2 className="text-lg font-extrabold text-slate-900">
                     Notes par matière
                   </h2>
-                  <p className="mt-1 text-sm leading-6 text-slate-600">
-                    Produit un fichier de notes avec une ligne par élève et les matières
-                    DESPS en colonnes. Au second cycle, le Français reste une seule
-                    colonne.
+                  <p className="mt-1 text-sm leading-6 text-slate-600">                    
                   </p>
                 </div>
               </div>
@@ -246,9 +242,8 @@ export default async function ExportDespsPage() {
                 </div>
 
                 <div className="rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-900">
-                  <strong>Règle intégrée :</strong> 6e, 5e, 4e, 3e utilisent
-                  Composition Française / Orthographe / Oral Français. Seconde,
-                  Première et Terminale utilisent Français.
+                  <strong> :</strong>
+                  
                 </div>
 
                 <div className="flex flex-col gap-3 sm:flex-row">
@@ -285,8 +280,6 @@ export default async function ExportDespsPage() {
                     Récapitulatif annuel
                   </h2>
                   <p className="mt-1 text-sm leading-6 text-slate-600">
-                    Produit le tableau annuel DESPS avec les moyennes et rangs des trois
-                    trimestres, la MGA, le rang annuel et la décision du conseil.
                   </p>
                 </div>
               </div>
