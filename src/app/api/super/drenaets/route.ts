@@ -83,6 +83,28 @@ async function requireSuperAdmin() {
   return { ok: true as const, userId: user.id };
 }
 
+async function findAuthUserIdByEmail(supabase: ReturnType<typeof getSupabaseServiceClient>, email: string) {
+  const target = email.trim().toLowerCase();
+  const perPage = 1000;
+  const maxPages = 20;
+
+  for (let page = 1; page <= maxPages; page += 1) {
+    const { data, error } = await supabase.auth.admin.listUsers({ page, perPage });
+
+    if (error) {
+      throw new Error(error.message || "Impossible de rechercher l’utilisateur Auth.");
+    }
+
+    const users = data?.users ?? [];
+    const found = users.find((user) => (user.email ?? "").trim().toLowerCase() === target);
+
+    if (found?.id) return found.id;
+    if (users.length < perPage) break;
+  }
+
+  return null;
+}
+
 export async function GET(req: NextRequest) {
   const guard = await requireSuperAdmin();
   if (!guard.ok) return guard.response;
@@ -232,18 +254,13 @@ export async function POST(req: NextRequest) {
   if (existingProfile?.id) {
     profileId = existingProfile.id;
   } else {
-    const { data: existingAuthUser, error: authLookupError } = await supabase
-      .from("auth.users")
-      .select("id, email")
-      .ilike("email", email)
-      .maybeSingle();
-
-    if (authLookupError) {
-      return NextResponse.json({ error: authLookupError.message }, { status: 400 });
-    }
-
-    if (existingAuthUser?.id) {
-      profileId = existingAuthUser.id;
+    try {
+      profileId = await findAuthUserIdByEmail(supabase, email);
+    } catch (error: any) {
+      return NextResponse.json(
+        { error: error?.message || "Impossible de rechercher l’utilisateur Auth." },
+        { status: 400 }
+      );
     }
   }
 
