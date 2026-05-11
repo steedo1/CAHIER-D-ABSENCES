@@ -163,7 +163,7 @@ export default async function ExportDespsPage() {
                 </div>
                 <div>
                   <h2 className="text-lg font-extrabold text-slate-900">
-                    Notes par matière
+                    Moyennes par matière
                   </h2>
                   <p className="mt-1 text-sm leading-6 text-slate-600">                    
                   </p>
