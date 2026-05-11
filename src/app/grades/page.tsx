@@ -1571,7 +1571,7 @@ export default function TeacherNotesPage() {
 
   /* ==========================================
      Export PDF (fiche statistique par évaluation)
-     👉 Avec établissement + année, comme compte classe
+     ✅ Rendu enrichi : indicateurs clés + graphique compact + lecture pédagogique.
   ========================================== */
   function exportEvalToPdf(ev: Evaluation) {
     if (!selected) {
@@ -1583,47 +1583,97 @@ export default function TeacherNotesPage() {
       return;
     }
 
-    // On prend en compte les changements non enregistrés aussi
+    // On prend en compte les changements non enregistrés aussi.
     const evalGrades = { ...(grades[ev.id] || {}) };
     const pending = changed[ev.id] || {};
     for (const [sid, val] of Object.entries(pending)) {
       evalGrades[sid] = val;
     }
 
+    const scale = ev.scale || 20;
+    const to20 = (v: number) => (v / scale) * 20;
+    const fmt = (v: number | null | undefined, digits = 2) =>
+      v == null || Number.isNaN(v) ? "—" : v.toFixed(digits);
+    const fmtPct = (v: number | null | undefined, digits = 1) =>
+      v == null || Number.isNaN(v) ? "—" : `${v.toFixed(digits)} %`;
+
     const rows = roster.map((st, idx) => {
       const score =
         evalGrades[st.id] == null ? null : Number(evalGrades[st.id]);
-      return { idx: idx + 1, student: st, score };
+      const score20 = score == null || Number.isNaN(score) ? null : to20(score);
+      return { idx: idx + 1, student: st, score, score20 };
     });
 
-    const withScores = rows.filter((r) => r.score != null);
+    const withScores = rows.filter(
+      (r) => typeof r.score === "number" && !Number.isNaN(r.score)
+    );
     if (!withScores.length) {
       setMsg("Aucune note saisie pour cette évaluation.");
       return;
     }
 
-    const scores = withScores.map((r) => r.score as number);
+    const scores = withScores.map((r) => r.score as number).sort((a, b) => a - b);
+    const scores20 = withScores.map((r) => r.score20 as number).sort((a, b) => a - b);
     const count = scores.length;
-    const sum = scores.reduce((acc, v) => acc + v, 0);
-    const minRaw = Math.min(...scores);
-    const maxRaw = Math.max(...scores);
-    const avgRaw = sum / count;
-    const scale = ev.scale || 20;
+    const nbEleves = roster.length;
+    const nbSansNote = nbEleves - count;
+    const completionRate = nbEleves > 0 ? (count * 100) / nbEleves : 0;
 
-    const to20 = (v: number) => (v / scale) * 20;
+    const sum = scores.reduce((acc, v) => acc + v, 0);
+    const avgRaw = sum / count;
+    const minRaw = scores[0];
+    const maxRaw = scores[scores.length - 1];
     const avg20 = to20(avgRaw);
     const min20 = to20(minRaw);
     const max20 = to20(maxRaw);
 
-    const nbEleves = roster.length;
-    const nbSansNote = nbEleves - count;
+    const medianRaw =
+      count % 2 === 1
+        ? scores[(count - 1) / 2]
+        : (scores[count / 2 - 1] + scores[count / 2]) / 2;
+    const median20 = to20(medianRaw);
+    const variance20 =
+      scores20.reduce((acc, v) => acc + Math.pow(v - avg20, 2), 0) / count;
+    const stdDev20 = Math.sqrt(variance20);
+
+    const successCount = scores20.filter((v) => v >= 10).length;
+    const excellenceCount = scores20.filter((v) => v >= 15).length;
+    const fragileCount = scores20.filter((v) => v < 8).length;
+    const successRate = count > 0 ? (successCount * 100) / count : 0;
+    const excellenceRate = count > 0 ? (excellenceCount * 100) / count : 0;
+    const fragileRate = count > 0 ? (fragileCount * 100) / count : 0;
+
+    const distDefs = [
+      { label: "0 à 4,99", from: 0, to: 5 },
+      { label: "5 à 9,99", from: 5, to: 10 },
+      { label: "10 à 14,99", from: 10, to: 15 },
+      { label: "15 à 20", from: 15, to: 20.00001 },
+    ];
+    const distRows = distDefs.map((d) => {
+      const effectif = scores20.filter((v) => v >= d.from && v < d.to).length;
+      const pct = count > 0 ? (effectif * 100) / count : 0;
+      return { ...d, effectif, pct };
+    });
+
+    const rankedRows = [...withScores].sort(
+      (a, b) => (b.score20 || 0) - (a.score20 || 0)
+    );
+    const best = rankedRows[0] || null;
+    const weakest = rankedRows[rankedRows.length - 1] || null;
+
+    const interpretation =
+      avg20 >= 14
+        ? "Très bon rendement global. Maintenir l’exigence et proposer des défis aux meilleurs élèves."
+        : avg20 >= 10
+          ? "Rendement global acceptable. Les élèves fragiles doivent être ciblés pour une consolidation rapide."
+          : "Rendement global fragile. Une remédiation ciblée est recommandée avant la prochaine évaluation.";
 
     const typeLabel =
       ev.eval_kind === "devoir"
         ? "Devoir"
         : ev.eval_kind === "interro_ecrite"
-        ? "Interrogation écrite"
-        : "Interrogation orale";
+          ? "Interrogation écrite"
+          : "Interrogation orale";
 
     const dateFr = formatDateFr(ev.eval_date);
     const pdfTitle = `FICHE STATISTIQUE DE ${typeLabel.toUpperCase()} DU ${dateFr}`;
@@ -1632,6 +1682,20 @@ export default function TeacherNotesPage() {
     const year = academicYearLabel || "";
     const classe = selected.class_label || "";
     const subject = selected.subject_name || "Discipline";
+    const periodLabel = selectedPeriod
+      ? selectedPeriod.label || selectedPeriod.short_label || selectedPeriod.code || "Période"
+      : "Toutes périodes";
+
+    const chartRowsHtml = distRows
+      .map((d) => {
+        const width = d.effectif > 0 ? Math.max(4, d.pct) : 0;
+        return `<div class="bar-row">
+          <div class="bar-label">${escapeHtml(d.label)}</div>
+          <div class="bar-track"><div class="bar-fill" style="width:${width}%"></div></div>
+          <div class="bar-value">${d.effectif} (${fmtPct(d.pct)})</div>
+        </div>`;
+      })
+      .join("");
 
     const html = `<!DOCTYPE html>
 <html lang="fr">
@@ -1640,149 +1704,235 @@ export default function TeacherNotesPage() {
   <title>${escapeHtml(pdfTitle)}</title>
   <style>
     * { box-sizing: border-box; }
+    @page { size: A4; margin: 12mm; }
     body {
-      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      margin: 24px;
-      color: #020617;
-      font-size: 12px;
+      margin: 0;
+      color: #0f172a;
+      background: #f8fafc;
+      font-family: Arial, Helvetica, sans-serif;
+      font-size: 11px;
+    }
+    .page {
+      background: #fff;
+      min-height: 100vh;
+      padding: 18px;
+    }
+    .header {
+      border: 1px solid #cbd5e1;
+      border-radius: 16px;
+      padding: 14px 16px;
+      background: linear-gradient(135deg, #0f172a 0%, #1e3a8a 100%);
+      color: #fff;
+      margin-bottom: 12px;
+    }
+    .eyebrow {
+      font-size: 10px;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+      color: #bfdbfe;
+      margin-bottom: 5px;
     }
     h1 {
-      font-size: 18px;
-      text-align: center;
-      margin-bottom: 4px;
+      font-size: 17px;
+      line-height: 1.25;
+      margin: 0 0 5px;
       text-transform: uppercase;
     }
-    h2 {
-      font-size: 14px;
-      margin-top: 16px;
-      margin-bottom: 4px;
+    .subtitle { color: #dbeafe; font-size: 11px; }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+      margin: 10px 0 12px;
     }
-    .subtitle {
-      text-align: center;
-      font-size: 11px;
-      color: #475569;
-      margin-bottom: 16px;
+    .card {
+      border: 1px solid #dbe4ef;
+      border-radius: 12px;
+      padding: 9px 10px;
+      background: #f8fafc;
+      min-height: 54px;
     }
-    .meta {
-      margin-bottom: 12px;
-      font-size: 11px;
-    }
-    .meta strong {
+    .card-label {
+      color: #64748b;
+      font-size: 9px;
       text-transform: uppercase;
+      letter-spacing: .06em;
+      margin-bottom: 3px;
     }
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      margin-top: 8px;
+    .card-value { font-size: 16px; font-weight: 800; color: #0f172a; }
+    .card-note { color: #64748b; font-size: 9px; margin-top: 2px; }
+    .two-cols {
+      display: grid;
+      grid-template-columns: 1.05fr .95fr;
+      gap: 10px;
+      align-items: start;
     }
+    .box {
+      border: 1px solid #dbe4ef;
+      border-radius: 14px;
+      padding: 10px;
+      background: #fff;
+      margin-bottom: 10px;
+    }
+    .section-title {
+      margin: 0 0 8px;
+      font-size: 12px;
+      font-weight: 800;
+      color: #0f172a;
+      text-transform: uppercase;
+      letter-spacing: .04em;
+    }
+    table { width: 100%; border-collapse: collapse; }
     th, td {
-      border: 1px solid #cbd5e1;
-      padding: 4px 6px;
+      border: 1px solid #dbe4ef;
+      padding: 5px 6px;
       text-align: left;
+      vertical-align: top;
     }
-    th {
-      background: #e2e8f0;
-      font-weight: 600;
-    }
+    th { background: #eef2ff; font-weight: 700; color: #1e293b; }
     .text-right { text-align: right; }
-    .small {
-      font-size: 10px;
-      color: #6b7280;
+    .small { font-size: 9px; color: #64748b; }
+    .bar-row {
+      display: grid;
+      grid-template-columns: 62px 1fr 80px;
+      gap: 8px;
+      align-items: center;
+      margin: 7px 0;
+    }
+    .bar-label { font-size: 10px; color: #334155; }
+    .bar-track {
+      height: 13px;
+      border-radius: 999px;
+      overflow: hidden;
+      background: #e2e8f0;
+      border: 1px solid #cbd5e1;
+    }
+    .bar-fill { height: 100%; background: #2563eb; border-radius: 999px; }
+    .bar-value { font-size: 10px; color: #334155; text-align: right; }
+    .note-box {
+      border-left: 4px solid #2563eb;
+      background: #eff6ff;
+      padding: 8px 10px;
+      border-radius: 10px;
+      color: #1e3a8a;
+      line-height: 1.45;
+    }
+    .footer {
+      margin-top: 12px;
+      font-size: 9px;
+      color: #64748b;
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    @media print {
+      body { background: #fff; }
+      .page { padding: 0; }
+      .box, .card, .header { break-inside: avoid; }
     }
   </style>
 </head>
 <body>
-  <h1>${escapeHtml(pdfTitle)}</h1>
-  <div class="subtitle">
-    ${escapeHtml(inst)}${
-      year ? " • Année scolaire " + escapeHtml(year) : ""
-    }<br/>
-    Classe : ${escapeHtml(classe)} • Discipline : ${escapeHtml(subject)}
-  </div>
+  <main class="page">
+    <section class="header">
+      <div class="eyebrow">Mon Cahier — Compte rendu pédagogique</div>
+      <h1>${escapeHtml(pdfTitle)}</h1>
+      <div class="subtitle">
+        ${escapeHtml(inst || "Établissement non renseigné")}${
+          year ? " • Année scolaire " + escapeHtml(year) : ""
+        }<br/>
+        Classe : ${escapeHtml(classe)} • Discipline : ${escapeHtml(subject)} • Période : ${escapeHtml(periodLabel)}
+      </div>
+    </section>
 
-  <div class="meta">
-    <div><strong>Type :</strong> ${escapeHtml(typeLabel)}</div>
-    <div><strong>Date :</strong> ${escapeHtml(dateFr)}</div>
-    <div><strong>Échelle :</strong> /${scale} (équivalent /20 indiqué)</div>
-    <div><strong>Coefficient :</strong> ${ev.coeff}</div>
-  </div>
+    <section class="grid">
+      <div class="card"><div class="card-label">Effectif</div><div class="card-value">${nbEleves}</div><div class="card-note">élèves inscrits</div></div>
+      <div class="card"><div class="card-label">Notes saisies</div><div class="card-value">${count}/${nbEleves}</div><div class="card-note">${fmtPct(completionRate)} de couverture</div></div>
+      <div class="card"><div class="card-label">Moyenne classe</div><div class="card-value">${fmt(avg20)} / 20</div><div class="card-note">${fmt(avgRaw)} / ${scale}</div></div>
+      <div class="card"><div class="card-label">Taux de réussite</div><div class="card-value">${fmtPct(successRate)}</div><div class="card-note">${successCount} élève(s) ≥ 10/20</div></div>
+      <div class="card"><div class="card-label">Très bonnes notes</div><div class="card-value">${fmtPct(excellenceRate)}</div><div class="card-note">${excellenceCount} élève(s) ≥ 15/20</div></div>
+      <div class="card"><div class="card-label">Points de vigilance</div><div class="card-value">${fmtPct(fragileRate)}</div><div class="card-note">${fragileCount} élève(s) &lt; 8/20</div></div>
+    </section>
 
-  <h2>Résumé statistique</h2>
-  <table>
-    <tbody>
-      <tr>
-        <th>Nombre d'élèves</th>
-        <td>${nbEleves}</td>
-      </tr>
-      <tr>
-        <th>Nombre de notes saisies</th>
-        <td>${count}</td>
-      </tr>
-      <tr>
-        <th>Nombre d'élèves sans note</th>
-        <td>${nbSansNote}</td>
-      </tr>
-      <tr>
-        <th>Moyenne</th>
-        <td>${avgRaw.toFixed(2)} / ${scale} (soit ${avg20.toFixed(
-      2
-    )} / 20)</td>
-      </tr>
-      <tr>
-        <th>Note minimale</th>
-        <td>${minRaw.toFixed(2)} / ${scale} (soit ${min20.toFixed(
-      2
-    )} / 20)</td>
-      </tr>
-      <tr>
-        <th>Note maximale</th>
-        <td>${maxRaw.toFixed(2)} / ${scale} (soit ${max20.toFixed(
-      2
-    )} / 20)</td>
-      </tr>
-    </tbody>
-  </table>
+    <section class="two-cols">
+      <div class="box">
+        <div class="section-title">Répartition graphique des notes /20</div>
+        ${chartRowsHtml}
+      </div>
+      <div class="box">
+        <div class="section-title">Lecture rapide</div>
+        <table>
+          <tbody>
+            <tr><th>Type</th><td>${escapeHtml(typeLabel)}</td></tr>
+            <tr><th>Date</th><td>${escapeHtml(dateFr || "—")}</td></tr>
+            <tr><th>Échelle</th><td>/${scale}</td></tr>
+            <tr><th>Coefficient</th><td>${ev.coeff}</td></tr>
+            <tr><th>Min / Max</th><td>${fmt(min20)} /20 — ${fmt(max20)} /20</td></tr>
+            <tr><th>Médiane</th><td>${fmt(median20)} /20</td></tr>
+            <tr><th>Écart-type</th><td>${fmt(stdDev20)} /20</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
 
-  <h2>Détails par élève</h2>
-  <table>
-    <thead>
-      <tr>
-        <th>N°</th>
-        <th>Matricule</th>
-        <th>Nom et prénoms</th>
-        <th class="text-right">Note /${scale}</th>
-        <th class="text-right">Équiv. /20</th>
-      </tr>
-    </thead>
-    <tbody>
-      ${rows
-        .map((r) => {
-          if (r.score == null) {
-            return `<tr>
-              <td>${r.idx}</td>
-              <td>${escapeHtml(r.student.matricule || "")}</td>
-              <td>${escapeHtml(r.student.full_name)}</td>
-              <td class="text-right small">—</td>
-              <td class="text-right small">—</td>
-            </tr>`;
-          }
-          const n = r.score;
-          const n20 = to20(n);
-          return `<tr>
-            <td>${r.idx}</td>
-            <td>${escapeHtml(r.student.matricule || "")}</td>
-            <td>${escapeHtml(r.student.full_name)}</td>
-            <td class="text-right">${n.toFixed(2)}</td>
-            <td class="text-right">${n20.toFixed(2)}</td>
-          </tr>`;
-        })
-        .join("")}
-    </tbody>
-  </table>
+    <section class="box">
+      <div class="section-title">Appréciation statistique</div>
+      <div class="note-box">${escapeHtml(interpretation)}</div>
+    </section>
 
-  <p class="small" style="margin-top:16px;">
-    Fiche générée depuis Mon Cahier — Espace enseignant.
-  </p>
+    <section class="box">
+      <div class="section-title">Repères élèves</div>
+      <table>
+        <tbody>
+          <tr><th>Meilleur résultat</th><td>${best ? `${escapeHtml(best.student.full_name)} — ${fmt(best.score)} / ${scale} (${fmt(best.score20)} /20)` : "—"}</td></tr>
+          <tr><th>Résultat le plus faible</th><td>${weakest ? `${escapeHtml(weakest.student.full_name)} — ${fmt(weakest.score)} / ${scale} (${fmt(weakest.score20)} /20)` : "—"}</td></tr>
+          <tr><th>Élèves sans note</th><td>${nbSansNote}</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="box">
+      <div class="section-title">Détails par élève</div>
+      <table>
+        <thead>
+          <tr>
+            <th>N°</th>
+            <th>Matricule</th>
+            <th>Nom et prénoms</th>
+            <th class="text-right">Note /${scale}</th>
+            <th class="text-right">Équiv. /20</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows
+            .map((r) => {
+              if (typeof r.score !== "number" || Number.isNaN(r.score)) {
+                return `<tr>
+                  <td>${r.idx}</td>
+                  <td>${escapeHtml(r.student.matricule || "")}</td>
+                  <td>${escapeHtml(r.student.full_name)}</td>
+                  <td class="text-right small">NC</td>
+                  <td class="text-right small">NC</td>
+                </tr>`;
+              }
+              return `<tr>
+                <td>${r.idx}</td>
+                <td>${escapeHtml(r.student.matricule || "")}</td>
+                <td>${escapeHtml(r.student.full_name)}</td>
+                <td class="text-right">${fmt(r.score)}</td>
+                <td class="text-right">${fmt(r.score20)}</td>
+              </tr>`;
+            })
+            .join("")}
+        </tbody>
+      </table>
+    </section>
+
+    <div class="footer">
+      <span>Fiche générée depuis Mon Cahier — Espace enseignant.</span>
+      <span>${new Date().toLocaleDateString("fr-FR")}</span>
+    </div>
+  </main>
 </body>
 </html>`;
 
@@ -1797,7 +1947,6 @@ export default function TeacherNotesPage() {
     win.document.write(html);
     win.document.close();
     win.focus();
-    // L'utilisateur pourra choisir "Enregistrer en PDF" dans la fenêtre d'impression.
     setTimeout(() => {
       try {
         win.print();
@@ -1809,8 +1958,7 @@ export default function TeacherNotesPage() {
 
   /* ==========================================
      Export CSV / Excel
-     👉 Colonnes de notes détaillées,
-        moyenne finale alignée sur l’API /averages si possible.
+     ✅ Rendu enrichi : BOM UTF-8, séparateur Excel, contexte, indicateurs utiles.
   ========================================== */
   async function exportToCsv() {
     if (!selected) {
@@ -1823,7 +1971,18 @@ export default function TeacherNotesPage() {
     }
 
     try {
-      // On tente de récupérer les moyennes consolidées
+      const csvCell = (cell: string | number | null | undefined) => {
+        const v = cell == null ? "" : String(cell);
+        return `"${v.replace(/"/g, '""')}"`;
+      };
+      const csvLine = (cells: (string | number | null | undefined)[]) =>
+        cells.map(csvCell).join(";");
+      const formatCsvNumber = (v: number | null | undefined) =>
+        v == null || Number.isNaN(v) ? "" : v.toFixed(2).replace(".", ",");
+      const formatCsvPct = (v: number | null | undefined) =>
+        v == null || Number.isNaN(v) ? "" : `${v.toFixed(1).replace(".", ",")}%`;
+
+      // On tente de récupérer les moyennes consolidées.
       let avgByStudent = new Map<string, AverageApiRow>();
       try {
         const params = buildAverageParams();
@@ -1842,38 +2001,49 @@ export default function TeacherNotesPage() {
         avgByStudent = new Map();
       }
 
-      // En-têtes
-      const headers: string[] = ["Numero", "Matricule", "Nom complet"];
+      const headers: string[] = ["N°", "Matricule", "Nom complet"];
       evaluations.forEach((ev) => {
         const label = labelByEvalId[ev.id] ?? "NOTE";
         headers.push(`${label} (/${ev.scale})`);
       });
-      headers.push("Moyenne finale (/20)");
+      headers.push(
+        "Moyenne finale (/20)",
+        "Bonus",
+        "Rang",
+        "Évaluations saisies",
+        "Évaluations prévues",
+        "Taux de saisie",
+        "Statut"
+      );
 
+      let globalWithAverage = 0;
+      let globalSuccess = 0;
+      let globalSum = 0;
       const rowsCsv: string[][] = [];
 
       roster.forEach((st, idx) => {
-        const row: (string | number)[] = [
-          idx + 1, // Numero
+        const row: (string | number | null | undefined)[] = [
+          idx + 1,
           st.matricule ?? "",
           st.full_name,
         ];
 
         let num = 0;
         let den = 0;
+        let localCount = 0;
 
         evaluations.forEach((ev) => {
           const raw =
             changed[ev.id]?.[st.id] ?? grades[ev.id]?.[st.id] ?? null;
 
-          // Note brute telle que saisie (3/5, 8/10, 15/20…)
-          row.push(raw == null ? "" : Number(raw));
+          row.push(raw == null ? "" : formatCsvNumber(Number(raw)));
 
           if (raw != null) {
             const normalized = (Number(raw) / ev.scale) * 20;
             const w = Number(ev.coeff || 1);
             num += normalized * w;
             den += w;
+            localCount += 1;
           }
         });
 
@@ -1891,22 +2061,66 @@ export default function TeacherNotesPage() {
         const finalFromApi = apiRow
           ? cleanAvgValue(apiRow.average_rounded ?? apiRow.average) ?? finalLocal
           : finalLocal;
+        const bonusFromApi = apiRow ? cleanAvgValue(apiRow.bonus) ?? bonusLocal : bonusLocal;
+        const rankFromApi = apiRow ? cleanAvgValue(apiRow.rank) : null;
+        const expectedCount = apiRow?.total_evals ?? evaluations.length;
+        const enteredCount = apiRow?.count_evals ?? localCount;
+        const completionRate = expectedCount > 0 ? (enteredCount * 100) / expectedCount : null;
+        const status =
+          finalFromApi === null
+            ? "NC"
+            : enteredCount < expectedCount
+              ? "Partiel"
+              : "Complet";
 
-        row.push(finalFromApi === null ? "NC" : finalFromApi.toFixed(2));
+        if (finalFromApi !== null) {
+          globalWithAverage += 1;
+          globalSum += finalFromApi;
+          if (finalFromApi >= 10) globalSuccess += 1;
+        }
 
-        // Conversion en string + échappement CSV
-        const rowStr = row.map((cell) => {
-          const v = cell == null ? "" : String(cell);
-          return `"${v.replace(/"/g, '""')}"`;
-        });
-        rowsCsv.push(rowStr);
+        row.push(
+          finalFromApi === null ? "NC" : formatCsvNumber(finalFromApi),
+          formatCsvNumber(bonusFromApi),
+          rankFromApi == null ? "" : rankFromApi,
+          enteredCount,
+          expectedCount,
+          formatCsvPct(completionRate),
+          status
+        );
+
+        rowsCsv.push(row.map((cell) => csvCell(cell)));
       });
 
-      const headerStr = headers
-        .map((h) => `"${h.replace(/"/g, '""')}"`)
-        .join(";");
-      const csvLines = [headerStr, ...rowsCsv.map((r) => r.join(";"))];
-      const csvContent = csvLines.join("\r\n");
+      const periodLabel = selectedPeriod
+        ? selectedPeriod.label || selectedPeriod.short_label || selectedPeriod.code || "Période"
+        : "Toutes périodes";
+      const exportDate = new Date().toLocaleDateString("fr-FR");
+      const globalAverage = globalWithAverage > 0 ? globalSum / globalWithAverage : null;
+      const globalSuccessRate =
+        globalWithAverage > 0 ? (globalSuccess * 100) / globalWithAverage : null;
+
+      const metaLines = [
+        csvLine(["Rapport", "Export des notes - Mon Cahier"]),
+        csvLine(["Établissement", institutionName || ""]),
+        csvLine(["Année scolaire", academicYearLabel || ""]),
+        csvLine(["Classe", selected.class_label || ""]),
+        csvLine(["Discipline", selected.subject_name || "Discipline"]),
+        csvLine(["Période", periodLabel]),
+        csvLine(["Date export", exportDate]),
+        csvLine(["Moyenne globale", globalAverage == null ? "" : formatCsvNumber(globalAverage)]),
+        csvLine(["Taux de réussite", formatCsvPct(globalSuccessRate)]),
+        "",
+      ];
+
+      const headerStr = headers.map(csvCell).join(";");
+      const csvLines = [
+        "sep=;",
+        ...metaLines,
+        headerStr,
+        ...rowsCsv.map((r) => r.join(";")),
+      ];
+      const csvContent = `\ufeff${csvLines.join("\r\n")}`;
 
       const blob = new Blob([csvContent], {
         type: "text/csv;charset=utf-8;",
@@ -1929,7 +2143,7 @@ export default function TeacherNotesPage() {
       a.remove();
       URL.revokeObjectURL(url);
 
-      setMsg("Export CSV généré ✅ (ouvrable dans Excel).");
+      setMsg("Export CSV généré ✅ (Excel : encodage et séparateur optimisés).");
     } catch (e: any) {
       setMsg(e?.message || "Échec de génération du CSV.");
     }

@@ -51,6 +51,15 @@ function useIsMobile() {
   return isMobile;
 }
 
+function escapeHtml(str: string) {
+  return str
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 /* =========================
    Types
 ========================= */
@@ -1824,6 +1833,17 @@ export default function ClassDeviceNotesPage() {
     }
 
     try {
+      const csvCell = (cell: string | number | null | undefined) => {
+        const v = cell == null ? "" : String(cell);
+        return `"${v.replace(/"/g, '""')}"`;
+      };
+      const csvLine = (cells: (string | number | null | undefined)[]) =>
+        cells.map(csvCell).join(";");
+      const formatCsvNumber = (value: number | null | undefined) =>
+        value == null || Number.isNaN(value) ? "" : value.toFixed(2).replace(".", ",");
+      const formatCsvPct = (value: number | null | undefined) =>
+        value == null || Number.isNaN(value) ? "" : `${value.toFixed(1).replace(".", ",")}%`;
+
       let avgByStudent = new Map<string, AverageApiRow>();
       try {
         const params = new URLSearchParams({
@@ -1868,18 +1888,29 @@ export default function ClassDeviceNotesPage() {
         avgByStudent = new Map();
       }
 
-      const headers: string[] = ["Numero", "Matricule", "Nom complet"];
+      const headers: string[] = ["N°", "Matricule", "Nom complet"];
       evaluations.forEach((ev) => {
         const label = labelByEvalId[ev.id] ?? "NOTE";
         headers.push(`${label} (/${ev.scale})`);
       });
-      headers.push("Moyenne finale (/20)");
+      headers.push(
+        "Moyenne officielle (/20)",
+        "Bonus",
+        "Rang",
+        "Évaluations publiées prises en compte",
+        "Évaluations prévues",
+        "Taux de saisie",
+        "Statut"
+      );
       logInfo("exportToCsv -> headers", headers);
 
       const rows: string[][] = [];
+      let globalWithAverage = 0;
+      let globalSuccess = 0;
+      let globalSum = 0;
 
       roster.forEach((st, idx) => {
-        const row: (string | number)[] = [
+        const row: (string | number | null | undefined)[] = [
           idx + 1,
           st.matricule ?? "",
           st.full_name,
@@ -1887,18 +1918,20 @@ export default function ClassDeviceNotesPage() {
 
         let num = 0;
         let den = 0;
+        let localPublishedCount = 0;
 
         evaluations.forEach((ev) => {
           const raw =
             changed[ev.id]?.[st.id] ?? grades[ev.id]?.[st.id] ?? null;
 
-          row.push(raw == null ? "" : Number(raw));
+          row.push(raw == null ? "" : formatCsvNumber(Number(raw)));
 
           if (raw != null && isEvaluationPublishedOfficial(ev)) {
             const normalized = (Number(raw) / ev.scale) * 20;
             const w = Number(ev.coeff || 1);
             num += normalized * w;
             den += w;
+            localPublishedCount += 1;
           }
         });
 
@@ -1917,23 +1950,68 @@ export default function ClassDeviceNotesPage() {
           ? cleanAverage(apiRow.average_rounded ?? apiRow.average ?? null)
           : null;
         const finalValue = apiFinal ?? finalLocal;
+        const bonusValue = apiRow ? cleanAverage(apiRow.bonus) ?? bonusLocal : bonusLocal;
+        const rankValue = apiRow ? cleanAverage(apiRow.rank) : null;
+        const expectedCount = apiRow?.total_evals ?? evaluations.length;
+        const enteredCount = apiRow?.count_evals ?? localPublishedCount;
+        const completionRate = expectedCount > 0 ? (enteredCount * 100) / expectedCount : null;
+        const status =
+          finalValue === null
+            ? "NC"
+            : enteredCount < expectedCount
+              ? "Partiel"
+              : "Complet";
 
-        row.push(finalValue === null ? "NC" : finalValue.toFixed(2));
+        if (finalValue !== null) {
+          globalWithAverage += 1;
+          globalSum += finalValue;
+          if (finalValue >= 10) globalSuccess += 1;
+        }
 
-        const rowStr = row.map((cell) => {
-          const v = cell == null ? "" : String(cell);
-          return `"${v.replace(/"/g, '""')}"`;
-        });
-        rows.push(rowStr);
+        row.push(
+          finalValue === null ? "NC" : formatCsvNumber(finalValue),
+          formatCsvNumber(bonusValue),
+          rankValue == null ? "" : rankValue,
+          enteredCount,
+          expectedCount,
+          formatCsvPct(completionRate),
+          status
+        );
+
+        rows.push(row.map((cell) => csvCell(cell)));
       });
 
       logInfo("exportToCsv -> nombre de lignes", rows.length);
 
-      const headerStr = headers
-        .map((h) => `"${h.replace(/"/g, '""')}"`)
-        .join(";");
-      const csvLines = [headerStr, ...rows.map((r) => r.join(";"))];
-      const csvContent = csvLines.join("\r\n");
+      const periodLabel = selectedPeriod
+        ? selectedPeriod.label || selectedPeriod.short_label || selectedPeriod.code || "Période"
+        : "Toutes périodes";
+      const exportDate = new Date().toLocaleDateString("fr-FR");
+      const globalAverage = globalWithAverage > 0 ? globalSum / globalWithAverage : null;
+      const globalSuccessRate =
+        globalWithAverage > 0 ? (globalSuccess * 100) / globalWithAverage : null;
+
+      const metaLines = [
+        csvLine(["Rapport", "Export des notes officielles - Mon Cahier"]),
+        csvLine(["Établissement", institutionName || ""]),
+        csvLine(["Année scolaire", academicYearLabel || ""]),
+        csvLine(["Classe", selected.class_label || ""]),
+        csvLine(["Discipline", selected.subject_name || "Discipline"]),
+        csvLine(["Période", periodLabel]),
+        csvLine(["Date export", exportDate]),
+        csvLine(["Moyenne globale", globalAverage == null ? "" : formatCsvNumber(globalAverage)]),
+        csvLine(["Taux de réussite", formatCsvPct(globalSuccessRate)]),
+        "",
+      ];
+
+      const headerStr = headers.map(csvCell).join(";");
+      const csvLines = [
+        "sep=;",
+        ...metaLines,
+        headerStr,
+        ...rows.map((r) => r.join(";")),
+      ];
+      const csvContent = `\ufeff${csvLines.join("\r\n")}`;
 
       const blob = new Blob([csvContent], {
         type: "text/csv;charset=utf-8;",
@@ -1957,7 +2035,7 @@ export default function ClassDeviceNotesPage() {
       a.remove();
       URL.revokeObjectURL(url);
 
-      setMsg("Export CSV généré ✅ (ouvrable dans Excel).");
+      setMsg("Export CSV généré ✅ (Excel : encodage et séparateur optimisés).");
     } catch (e: any) {
       logError("exportToCsv -> exception", e);
       setMsg(e?.message || "Échec de génération du CSV.");
@@ -1987,86 +2065,105 @@ export default function ClassDeviceNotesPage() {
     try {
       if (typeof window === "undefined") return;
 
-      // Fusion notes enregistrées + modifications en cours
+      if (!selected) {
+        setMsg("Sélectionnez une classe/discipline avant de générer la fiche.");
+        return;
+      }
+      if (!roster.length) {
+        setMsg("Aucun élève dans cette classe pour générer la fiche.");
+        return;
+      }
+
+      // Fusion notes enregistrées + modifications en cours.
       const base = grades[ev.id] || {};
       const overrides = changed[ev.id] || {};
       const combined: Record<string, number | null> = { ...base, ...overrides };
 
-      const scored: { student: RosterItem; score: number }[] = [];
-      const noScore: RosterItem[] = [];
+      const scale = ev.scale || 20;
+      const to20 = (v: number) => (v / scale) * 20;
+      const fmt = (v: number | null | undefined, digits = 2) =>
+        v == null || Number.isNaN(v) ? "—" : v.toFixed(digits);
+      const fmtPct = (v: number | null | undefined, digits = 1) =>
+        v == null || Number.isNaN(v) ? "—" : `${v.toFixed(digits)} %`;
 
-      roster.forEach((st) => {
+      const rows = roster.map((st, index) => {
         const raw = combined[st.id];
-        if (raw == null || Number.isNaN(raw)) {
-          noScore.push(st);
-        } else {
-          scored.push({ student: st, score: Number(raw) });
-        }
+        const score = raw == null || Number.isNaN(Number(raw)) ? null : Number(raw);
+        const score20 = score == null ? null : to20(score);
+        return { index: index + 1, student: st, score, score20 };
       });
+
+      const scored = rows.filter((r) => r.score !== null);
+      const noScore = rows.filter((r) => r.score === null);
 
       const nTotal = roster.length;
       const nWith = scored.length;
       const nWithout = noScore.length;
+      const completionRate = nTotal > 0 ? (nWith * 100) / nTotal : 0;
 
       let min: number | null = null;
       let max: number | null = null;
       let avg: number | null = null;
       let median: number | null = null;
-      let stdDev: number | null = null;
+      let stdDev20: number | null = null;
+      let min20: number | null = null;
+      let max20: number | null = null;
+      let avg20: number | null = null;
+      let median20: number | null = null;
+
+      const scoreValues = scored
+        .map((s) => s.score as number)
+        .sort((a, b) => a - b);
+      const scoreValues20 = scored
+        .map((s) => s.score20 as number)
+        .sort((a, b) => a - b);
 
       if (nWith > 0) {
-        const vals = scored.map((s) => s.score).sort((a, b) => a - b);
-        min = vals[0];
-        max = vals[vals.length - 1];
-        const sum = vals.reduce((a, b) => a + b, 0);
+        min = scoreValues[0];
+        max = scoreValues[scoreValues.length - 1];
+        const sum = scoreValues.reduce((a, b) => a + b, 0);
         avg = sum / nWith;
-        if (nWith % 2 === 1) {
-          median = vals[(nWith - 1) / 2];
-        } else {
-          const mid1 = vals[nWith / 2 - 1];
-          const mid2 = vals[nWith / 2];
-          median = (mid1 + mid2) / 2;
-        }
-        const mean = avg;
-        const variance =
-          vals.reduce(
-            (acc, v) => acc + Math.pow(v - (mean as number), 2),
+        median =
+          nWith % 2 === 1
+            ? scoreValues[(nWith - 1) / 2]
+            : (scoreValues[nWith / 2 - 1] + scoreValues[nWith / 2]) / 2;
+
+        min20 = to20(min);
+        max20 = to20(max);
+        avg20 = to20(avg);
+        median20 = to20(median);
+        const variance20 =
+          scoreValues20.reduce(
+            (acc, v) => acc + Math.pow(v - (avg20 as number), 2),
             0
           ) / nWith;
-        stdDev = Math.sqrt(variance);
+        stdDev20 = Math.sqrt(variance20);
       }
 
-      const scale = ev.scale;
-      const to20 = (v: number | null) =>
-        v == null || Number.isNaN(v) ? null : (v / scale) * 20;
-
-      const min20 = to20(min);
-      const max20 = to20(max);
-      const avg20 = to20(avg);
-      const median20 = to20(median);
-      const stdDev20 =
-        stdDev == null || Number.isNaN(stdDev) ? null : (stdDev / scale) * 20;
+      const successCount = scoreValues20.filter((v) => v >= 10).length;
+      const excellenceCount = scoreValues20.filter((v) => v >= 15).length;
+      const fragileCount = scoreValues20.filter((v) => v < 8).length;
+      const successRate = nWith > 0 ? (successCount * 100) / nWith : 0;
+      const excellenceRate = nWith > 0 ? (excellenceCount * 100) / nWith : 0;
+      const fragileRate = nWith > 0 ? (fragileCount * 100) / nWith : 0;
 
       const distDefs = [
-        { label: "0 ≤ note < 5", from: 0, to: 5 },
-        { label: "5 ≤ note < 10", from: 5, to: 10 },
-        { label: "10 ≤ note < 15", from: 10, to: 15 },
-        { label: "15 ≤ note ≤ 20", from: 15, to: 20.00001 },
+        { label: "0 à 4,99", from: 0, to: 5 },
+        { label: "5 à 9,99", from: 5, to: 10 },
+        { label: "10 à 14,99", from: 10, to: 15 },
+        { label: "15 à 20", from: 15, to: 20.00001 },
       ];
       const distRows = distDefs.map((d) => {
-        let count = 0;
-        scored.forEach(({ score }) => {
-          const v20 = (score / scale) * 20;
-          if (v20 >= d.from && v20 < d.to) count++;
-        });
+        const count = scoreValues20.filter((v) => v >= d.from && v < d.to).length;
         const pct = nWith > 0 ? (count * 100) / nWith : 0;
         return { ...d, count, pct };
       });
 
-      const sorted = [...scored].sort((a, b) => b.score - a.score);
+      const sorted = [...scored].sort(
+        (a, b) => (b.score20 || 0) - (a.score20 || 0)
+      );
       const bestScore = sorted[0]?.score ?? null;
       const worstScore = sorted[sorted.length - 1]?.score ?? null;
-
       const bestStudents =
         bestScore == null
           ? []
@@ -2076,201 +2173,271 @@ export default function ClassDeviceNotesPage() {
           ? []
           : sorted.filter((s) => s.score === worstScore);
 
+      const interpretation =
+        avg20 == null
+          ? "Aucune interprétation possible : aucune note n’a été saisie."
+          : avg20 >= 14
+            ? "Très bon rendement global. Maintenir l’exigence et proposer des activités d’approfondissement."
+            : avg20 >= 10
+              ? "Rendement global acceptable. Prévoir une consolidation ciblée pour les élèves fragiles."
+              : "Rendement global fragile. Une remédiation ciblée est recommandée avant la prochaine évaluation.";
+
       const typeLabel = getTypeLabel(ev.eval_kind);
       const dateLabel = formatDateFr(ev.eval_date) || ev.eval_date;
       const title = `FICHE STATISTIQUE DE ${typeLabel.toUpperCase()} DU ${dateLabel}`;
 
       const inst = institutionName || "";
       const year = academicYearLabel || "";
-      const classLabel = selected?.class_label || "";
-      const subjectName = selected?.subject_name || "";
+      const classLabel = selected.class_label || "";
+      const subjectName = selected.subject_name || "";
+      const periodLabel = selectedPeriod
+        ? selectedPeriod.label || selectedPeriod.short_label || selectedPeriod.code || "Période"
+        : "Toutes périodes";
 
-      const fmt = (v: number | null, digits = 2) =>
-        v == null || Number.isNaN(v) ? "—" : v.toFixed(digits);
+      const chartRowsHtml = distRows
+        .map((d) => {
+          const width = d.count > 0 ? Math.max(4, d.pct) : 0;
+          return `<div class="bar-row">
+            <div class="bar-label">${escapeHtml(d.label)}</div>
+            <div class="bar-track"><div class="bar-fill" style="width:${width}%"></div></div>
+            <div class="bar-value">${d.count} (${fmtPct(d.pct)})</div>
+          </div>`;
+        })
+        .join("");
 
       const html = `<!DOCTYPE html>
 <html lang="fr">
 <head>
 <meta charset="utf-8" />
-<title>${title}</title>
+<title>${escapeHtml(title)}</title>
 <style>
   * { box-sizing: border-box; }
+  @page { size: A4; margin: 12mm; }
   body {
-    font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-    font-size: 12px;
+    margin: 0;
     color: #0f172a;
-    margin: 24px;
+    background: #f8fafc;
+    font-family: Arial, Helvetica, sans-serif;
+    font-size: 11px;
+  }
+  .page { background: #fff; min-height: 100vh; padding: 18px; }
+  .header {
+    border: 1px solid #cbd5e1;
+    border-radius: 16px;
+    padding: 14px 16px;
+    background: linear-gradient(135deg, #0f172a 0%, #065f46 100%);
+    color: #fff;
+    margin-bottom: 12px;
+  }
+  .eyebrow {
+    font-size: 10px;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: #bbf7d0;
+    margin-bottom: 5px;
   }
   h1 {
-    font-size: 18px;
-    text-align: center;
-    margin: 0 0 4px;
+    font-size: 17px;
+    line-height: 1.25;
+    margin: 0 0 5px;
     text-transform: uppercase;
   }
-  .subtitle {
-    text-align: center;
-    font-size: 11px;
-    color: #475569;
-    margin-bottom: 16px;
+  .subtitle { color: #dcfce7; font-size: 11px; }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+    margin: 10px 0 12px;
   }
-  .section-title {
-    margin-top: 16px;
-    margin-bottom: 4px;
-    font-weight: 600;
-    font-size: 13px;
+  .card {
+    border: 1px solid #dbe4ef;
+    border-radius: 12px;
+    padding: 9px 10px;
+    background: #f8fafc;
+    min-height: 54px;
   }
-  table {
-    width: 100%;
-    border-collapse: collapse;
+  .card-label {
+    color: #64748b;
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: .06em;
+    margin-bottom: 3px;
+  }
+  .card-value { font-size: 16px; font-weight: 800; color: #0f172a; }
+  .card-note { color: #64748b; font-size: 9px; margin-top: 2px; }
+  .two-cols {
+    display: grid;
+    grid-template-columns: 1.05fr .95fr;
+    gap: 10px;
+    align-items: start;
+  }
+  .box {
+    border: 1px solid #dbe4ef;
+    border-radius: 14px;
+    padding: 10px;
+    background: #fff;
     margin-bottom: 10px;
   }
+  .section-title {
+    margin: 0 0 8px;
+    font-size: 12px;
+    font-weight: 800;
+    color: #0f172a;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+  }
+  table { width: 100%; border-collapse: collapse; }
   th, td {
-    border: 1px solid #cbd5e1;
-    padding: 4px 6px;
+    border: 1px solid #dbe4ef;
+    padding: 5px 6px;
     text-align: left;
     vertical-align: top;
   }
-  th {
-    background-color: #e5e7eb;
-    font-weight: 600;
+  th { background: #ecfdf5; font-weight: 700; color: #1e293b; }
+  .text-right { text-align: right; }
+  .muted { color: #64748b; font-size: 10px; }
+  ul { margin: 4px 0 0 16px; padding: 0; }
+  .bar-row {
+    display: grid;
+    grid-template-columns: 62px 1fr 80px;
+    gap: 8px;
+    align-items: center;
+    margin: 7px 0;
   }
-  .small {
-    font-size: 11px;
-    color: #475569;
+  .bar-label { font-size: 10px; color: #334155; }
+  .bar-track {
+    height: 13px;
+    border-radius: 999px;
+    overflow: hidden;
+    background: #e2e8f0;
+    border: 1px solid #cbd5e1;
   }
-  .muted {
+  .bar-fill { height: 100%; background: #059669; border-radius: 999px; }
+  .bar-value { font-size: 10px; color: #334155; text-align: right; }
+  .note-box {
+    border-left: 4px solid #059669;
+    background: #ecfdf5;
+    padding: 8px 10px;
+    border-radius: 10px;
+    color: #065f46;
+    line-height: 1.45;
+  }
+  .footer {
+    margin-top: 12px;
+    font-size: 9px;
     color: #64748b;
-    font-size: 11px;
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
   }
-  ul {
-    margin: 4px 0 0 16px;
-    padding: 0;
+  @media print {
+    body { background: #fff; }
+    .page { padding: 0; }
+    .box, .card, .header { break-inside: avoid; }
   }
 </style>
 </head>
 <body>
-  <h1>${title}</h1>
-  <div class="subtitle">
-    ${inst ? `${inst} — ` : ""}${classLabel || "Classe ?"}${
-        subjectName ? ` — ${subjectName}` : ""
-      }${year ? ` — Année scolaire ${year}` : ""}
-  </div>
+  <main class="page">
+    <section class="header">
+      <div class="eyebrow">Mon Cahier — Compte classe</div>
+      <h1>${escapeHtml(title)}</h1>
+      <div class="subtitle">
+        ${escapeHtml(inst || "Établissement non renseigné")}${
+          year ? ` • Année scolaire ${escapeHtml(year)}` : ""
+        }<br/>
+        Classe : ${escapeHtml(classLabel || "—")} • Discipline : ${escapeHtml(subjectName || "—")} • Période : ${escapeHtml(periodLabel)}
+      </div>
+    </section>
 
-  <div class="section-title">1. Informations générales</div>
-  <table>
-    <tbody>
-      <tr><th>Établissement</th><td>${inst || "—"}</td></tr>
-      <tr><th>Année scolaire</th><td>${year || "—"}</td></tr>
-      <tr><th>Classe</th><td>${classLabel || "—"}</td></tr>
-      <tr><th>Discipline</th><td>${subjectName || "—"}</td></tr>
-      <tr><th>Type d’évaluation</th><td>${typeLabel}</td></tr>
-      <tr><th>Date</th><td>${dateLabel}</td></tr>
-      <tr><th>Échelle</th><td>/${scale}</td></tr>
-      <tr><th>Coefficient</th><td>${ev.coeff}</td></tr>
-    </tbody>
-  </table>
+    <section class="grid">
+      <div class="card"><div class="card-label">Effectif</div><div class="card-value">${nTotal}</div><div class="card-note">élèves inscrits</div></div>
+      <div class="card"><div class="card-label">Notes saisies</div><div class="card-value">${nWith}/${nTotal}</div><div class="card-note">${fmtPct(completionRate)} de couverture</div></div>
+      <div class="card"><div class="card-label">Moyenne classe</div><div class="card-value">${fmt(avg20)} / 20</div><div class="card-note">${fmt(avg)} / ${scale}</div></div>
+      <div class="card"><div class="card-label">Taux de réussite</div><div class="card-value">${fmtPct(successRate)}</div><div class="card-note">${successCount} élève(s) ≥ 10/20</div></div>
+      <div class="card"><div class="card-label">Très bonnes notes</div><div class="card-value">${fmtPct(excellenceRate)}</div><div class="card-note">${excellenceCount} élève(s) ≥ 15/20</div></div>
+      <div class="card"><div class="card-label">Points de vigilance</div><div class="card-value">${fmtPct(fragileRate)}</div><div class="card-note">${fragileCount} élève(s) &lt; 8/20</div></div>
+    </section>
 
-  <div class="section-title">2. Synthèse des résultats</div>
-  <table>
-    <tbody>
-      <tr><th>Nombre d’élèves dans la classe</th><td>${nTotal}</td></tr>
-      <tr><th>Nombre d’élèves ayant une note</th><td>${nWith}</td></tr>
-      <tr><th>Nombre d’élèves sans note</th><td>${nWithout}</td></tr>
-      <tr><th>Note la plus élevée</th><td>${fmt(max)} / ${scale}${
-        max20 != null ? ` (soit ${fmt(max20)} / 20)` : ""
-      }</td></tr>
-      <tr><th>Note la plus faible</th><td>${fmt(min)} / ${scale}${
-        min20 != null ? ` (soit ${fmt(min20)} / 20)` : ""
-      }</td></tr>
-      <tr><th>Moyenne de la classe</th><td>${fmt(avg)} / ${scale}${
-        avg20 != null ? ` (soit ${fmt(avg20)} / 20)` : ""
-      }</td></tr>
-      <tr><th>Médiane</th><td>${fmt(median)} / ${scale}${
-        median20 != null ? ` (soit ${fmt(median20)} / 20)` : ""
-      }</td></tr>
-      <tr><th>Écart-type (sur 20)</th><td>${
-        stdDev20 != null ? fmt(stdDev20) + " / 20" : "—"
-      }</td></tr>
-    </tbody>
-  </table>
+    <section class="two-cols">
+      <div class="box">
+        <div class="section-title">Répartition graphique des notes /20</div>
+        ${chartRowsHtml}
+      </div>
+      <div class="box">
+        <div class="section-title">Lecture rapide</div>
+        <table>
+          <tbody>
+            <tr><th>Type</th><td>${escapeHtml(typeLabel)}</td></tr>
+            <tr><th>Date</th><td>${escapeHtml(dateLabel || "—")}</td></tr>
+            <tr><th>Échelle</th><td>/${scale}</td></tr>
+            <tr><th>Coefficient</th><td>${ev.coeff}</td></tr>
+            <tr><th>Min / Max</th><td>${fmt(min20)} /20 — ${fmt(max20)} /20</td></tr>
+            <tr><th>Médiane</th><td>${fmt(median20)} /20</td></tr>
+            <tr><th>Écart-type</th><td>${fmt(stdDev20)} /20</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
 
-  <div class="section-title">3. Répartition des notes (sur 20)</div>
-  <table>
-    <thead>
-      <tr>
-        <th>Tranche</th>
-        <th>Effectif</th>
-        <th>Pourcentage</th>
-      </tr>
-    </thead>
-    <tbody>
-      ${distRows
-        .map(
-          (d) => `<tr>
-        <td>${d.label}</td>
-        <td>${d.count}</td>
-        <td>${nWith > 0 ? fmt(d.pct, 1) + " %" : "—"}</td>
-      </tr>`
-        )
-        .join("")}
-    </tbody>
-  </table>
+    <section class="box">
+      <div class="section-title">Appréciation statistique</div>
+      <div class="note-box">${escapeHtml(interpretation)}</div>
+    </section>
 
-  <div class="section-title">4. Meilleurs résultats</div>
-  ${
-    bestStudents.length
-      ? `<div class="small">Note maximale : ${fmt(bestScore)} / ${scale}</div>
-  <ul>
-    ${bestStudents
-      .map(
-        (s) =>
-          `<li>${s.student.full_name}${
-            s.student.matricule ? ` (${s.student.matricule})` : ""
-          }</li>`
-      )
-      .join("")}
-  </ul>`
-      : '<div class="muted">Aucune note enregistrée.</div>'
-  }
+    <section class="two-cols">
+      <div class="box">
+        <div class="section-title">Meilleurs résultats</div>
+        ${
+          bestStudents.length
+            ? `<div class="muted">Note maximale : ${fmt(bestScore)} / ${scale} (${fmt(max20)} /20)</div>
+          <ul>${bestStudents
+            .map(
+              (s) => `<li>${escapeHtml(s.student.full_name)}${
+                s.student.matricule ? ` (${escapeHtml(s.student.matricule)})` : ""
+              }</li>`
+            )
+            .join("")}</ul>`
+            : '<div class="muted">Aucune note enregistrée.</div>'
+        }
+      </div>
+      <div class="box">
+        <div class="section-title">Résultats les plus faibles</div>
+        ${
+          worstStudents.length
+            ? `<div class="muted">Note minimale : ${fmt(worstScore)} / ${scale} (${fmt(min20)} /20)</div>
+          <ul>${worstStudents
+            .map(
+              (s) => `<li>${escapeHtml(s.student.full_name)}${
+                s.student.matricule ? ` (${escapeHtml(s.student.matricule)})` : ""
+              }</li>`
+            )
+            .join("")}</ul>`
+            : '<div class="muted">Aucune note enregistrée.</div>'
+        }
+      </div>
+    </section>
 
-  <div class="section-title">5. Résultats les plus faibles</div>
-  ${
-    worstStudents.length
-      ? `<div class="small">Note minimale : ${fmt(worstScore)} / ${scale}</div>
-  <ul>
-    ${worstStudents
-      .map(
-        (s) =>
-          `<li>${s.student.full_name}${
-            s.student.matricule ? ` (${s.student.matricule})` : ""
-          }</li>`
-      )
-      .join("")}
-  </ul>`
-      : '<div class="muted">Aucune note enregistrée.</div>'
-  }
+    <section class="box">
+      <div class="section-title">Élèves sans note</div>
+      ${
+        noScore.length
+          ? `<ul>${noScore
+            .map(
+              (r) => `<li>${escapeHtml(r.student.full_name)}${
+                r.student.matricule ? ` (${escapeHtml(r.student.matricule)})` : ""
+              }</li>`
+            )
+            .join("")}</ul>`
+          : '<div class="muted">Tous les élèves ont une note pour cette évaluation.</div>'
+      }
+    </section>
 
-  <div class="section-title">6. Élèves sans note</div>
-  ${
-    noScore.length
-      ? `<ul>
-    ${noScore
-      .map(
-        (st) =>
-          `<li>${st.full_name}${
-            st.matricule ? ` (${st.matricule})` : ""
-          }</li>`
-      )
-      .join("")}
-  </ul>`
-      : '<div class="muted">Tous les élèves ont une note pour cette évaluation.</div>'
-  }
-
-  <p class="muted" style="margin-top:16px;">
-    Fiche générée depuis Mon Cahier — ${new Date().toLocaleDateString(
-      "fr-FR"
-    )}.
-  </p>
+    <div class="footer">
+      <span>Fiche générée depuis Mon Cahier — Compte classe.</span>
+      <span>${new Date().toLocaleDateString("fr-FR")}</span>
+    </div>
+  </main>
 </body>
 </html>`;
 
@@ -2287,7 +2454,6 @@ export default function ClassDeviceNotesPage() {
       doc.write(html);
       doc.close();
 
-      // Donne un petit délai au navigateur pour rendre la page avant impression
       w.focus();
       setTimeout(() => {
         try {
