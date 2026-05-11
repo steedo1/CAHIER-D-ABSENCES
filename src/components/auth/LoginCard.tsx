@@ -1,584 +1,326 @@
 // src/components/auth/LoginCard.tsx
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
-import { useAuth } from "@/app/providers";
-import type { SupabaseClient } from "@supabase/supabase-js";
+import React, { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { getSupabaseBrowserClient } from "@/lib/supabase-browser";
-import { normalizePhone, canonicalPrefix, sanitize } from "@/lib/phone";
-import {
-  Mail,
-  Phone as PhoneIcon,
-  Lock,
-  Eye,
-  EyeOff,
-  Loader2,
-  ShieldAlert,
-} from "lucide-react";
 
-type Props = {
+type ForcedMode = "emailOnly" | "phoneOnly";
+type LoginMode = "email" | "phone";
+
+type LoginCardProps = {
   redirectTo?: string;
-  compactHeader?: boolean;
-  /**
-   * "emailOnly"  → on masque le bouton téléphone (espace Direction)
-   * "phoneOnly"  → on masque le bouton email (espace Enseignant)
-   * undefined    → les deux modes sont disponibles
-   */
-  forcedMode?: "emailOnly" | "phoneOnly";
+  forcedMode?: ForcedMode;
 };
 
-// --- Helpers hoistés (stables) ---
-function Field({
-  children,
-  label,
-  hint,
-}: {
-  children: React.ReactNode;
-  label: string;
-  hint?: React.ReactNode;
-}) {
+type LoginResponse = {
+  ok?: boolean;
+  error?: string;
+  session?: {
+    access_token?: string;
+    refresh_token?: string;
+  } | null;
+};
+
+function humanError(error?: string | null) {
+  const value = String(error || "").trim();
+  if (!value) return "Connexion impossible. Vérifie les informations saisies.";
+
+  const lower = value.toLowerCase();
+  if (value === "PASSWORD_REQUIRED") return "Mot de passe obligatoire.";
+  if (value === "EMAIL_OR_PHONE_REQUIRED") return "Email ou téléphone obligatoire.";
+  if (value === "PHONE_INVALID") return "Numéro de téléphone invalide.";
+  if (lower.includes("invalid login") || lower.includes("invalid credentials")) {
+    return "Identifiants incorrects. Vérifie le compte et le mot de passe.";
+  }
+  if (lower.includes("email not confirmed")) {
+    return "Adresse email non confirmée.";
+  }
+  if (lower.includes("fetch") || lower.includes("network")) {
+    return "Connexion réseau instable. Réessaie dans quelques secondes.";
+  }
+
+  return value;
+}
+
+function Spinner() {
   return (
-    <div>
-      <div className="mb-1 flex items-center justify-between">
-        <label className="block text-xs font-medium text-slate-600">
-          {label}
-        </label>
-        {hint}
-      </div>
-      {children}
-    </div>
+    <span
+      aria-hidden
+      className="h-4 w-4 animate-spin rounded-full border-2 border-white/50 border-t-white"
+    />
   );
 }
 
-function InputWrap({
-  children,
-  IconLeft,
-}: {
-  children: React.ReactNode;
-  IconLeft?: React.ComponentType<React.SVGProps<SVGSVGElement>>;
-}) {
-  return (
-    <div className="relative">
-      {IconLeft ? (
-        <span className="pointer-events-none absolute inset-y-0 left-0 grid w-9 place-items-center text-slate-400">
-          <IconLeft className="h-4 w-4" />
-        </span>
-      ) : null}
-      <div className={IconLeft ? "pl-9" : ""}>{children}</div>
-    </div>
-  );
-}
+export default function LoginCard({ redirectTo = "/redirect", forcedMode }: LoginCardProps) {
+  const initialMode: LoginMode = forcedMode === "emailOnly" ? "email" : "phone";
 
-function sleep(ms: number) {
-  return new Promise((r) => setTimeout(r, ms));
-}
+  const [mode, setMode] = useState<LoginMode>(initialMode);
+  const [email, setEmail] = useState("");
+  const [phone, setPhone] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [statusText, setStatusText] = useState<string | null>(null);
 
-/**
- * Sync SSR cookies via /api/auth/sync :
- * - timeout court
- * - retry 2x
- * - exige res.ok (sinon on ne redirige pas "dans le vide")
- */
-async function syncSsrSession(
-  accessToken: string,
-  refreshToken: string,
-  {
-    retries = 2,
-    timeoutMs = 4500,
-  }: { retries?: number; timeoutMs?: number } = {},
-) {
-  if (!accessToken || !refreshToken) return;
+  // ✅ Verrou immédiat anti double-clic, plus fiable que le state React seul.
+  const busyRef = useRef(false);
 
-  let lastErr: any = null;
+  const modeLocked = !!forcedMode;
+  const canSubmit = useMemo(() => {
+    if (busy) return false;
+    if (!password.trim()) return false;
+    if (mode === "email") return !!email.trim();
+    return !!phone.trim();
+  }, [busy, email, mode, password, phone]);
 
-  for (let attempt = 0; attempt <= retries; attempt++) {
-    const ctrl = new AbortController();
-    const t = setTimeout(() => ctrl.abort(), timeoutMs);
+  useEffect(() => {
+    setMode(forcedMode === "emailOnly" ? "email" : "phone");
+  }, [forcedMode]);
+
+  async function clearPreviousServerCookies() {
+    try {
+      await fetch("/api/auth/sync", {
+        method: "DELETE",
+        cache: "no-store",
+        credentials: "include",
+      });
+    } catch {
+      // Tolérant : le login qui suit réécrira les bons cookies.
+    }
+  }
+
+  function clearPreviousBrowserSession() {
+    // On nettoie localement sans appeler supabase.auth.signOut() pour éviter
+    // qu’un événement SIGNED_OUT asynchrone vienne effacer les nouveaux cookies
+    // juste après une reconnexion rapide.
+    try {
+      const keys: string[] = [];
+      for (let i = 0; i < window.localStorage.length; i += 1) {
+        const key = window.localStorage.key(i);
+        if (!key) continue;
+        if (
+          key.startsWith("sb-") ||
+          key.includes("supabase.auth.token") ||
+          key.includes("auth-token")
+        ) {
+          keys.push(key);
+        }
+      }
+      keys.forEach((key) => window.localStorage.removeItem(key));
+    } catch {
+      // Tolérant.
+    }
 
     try {
-      const res = await fetch("/api/auth/sync", {
+      const keys: string[] = [];
+      for (let i = 0; i < window.sessionStorage.length; i += 1) {
+        const key = window.sessionStorage.key(i);
+        if (!key) continue;
+        if (
+          key.startsWith("sb-") ||
+          key.includes("supabase.auth.token") ||
+          key.includes("auth-token")
+        ) {
+          keys.push(key);
+        }
+      }
+      keys.forEach((key) => window.sessionStorage.removeItem(key));
+    } catch {
+      // Tolérant.
+    }
+  }
+
+  async function syncBrowserSession(accessToken?: string, refreshToken?: string) {
+    if (!accessToken || !refreshToken) return;
+
+    try {
+      const supabase = getSupabaseBrowserClient();
+      await supabase.auth.setSession({
+        access_token: accessToken,
+        refresh_token: refreshToken,
+      });
+    } catch {
+      // Le cookie serveur suffit pour /redirect ; on reste tolérant.
+    }
+
+    try {
+      await fetch("/api/auth/sync", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
         cache: "no-store",
-        signal: ctrl.signal,
+        credentials: "include",
+        headers: { "content-type": "application/json" },
         body: JSON.stringify({
           access_token: accessToken,
           refresh_token: refreshToken,
         }),
       });
-
-      if (!res.ok) {
-        const txt = await res.text().catch(() => "");
-        throw new Error(
-          txt || `sync_failed_http_${res.status || "unknown"}`,
-        );
-      }
-
-      clearTimeout(t);
-      return; // ✅ ok
-    } catch (e: any) {
-      clearTimeout(t);
-      lastErr = e;
-
-      // petite pause avant retry
-      if (attempt < retries) await sleep(250);
+    } catch {
+      // L'API /auth/login a déjà posé les cookies ; ceci est une double sécurité.
     }
   }
 
-  // Si on arrive ici : sync a échoué malgré retries
-  throw lastErr;
-}
-
-export default function LoginCard({
-  redirectTo = "/redirect",
-  compactHeader,
-  forcedMode,
-}: Props) {
-  const { session, loading } = useAuth();
-  const router = useRouter();
-
-  const emailOnly = forcedMode === "emailOnly";
-  const phoneOnly = forcedMode === "phoneOnly";
-
-  // Supabase client (singleton par montage)
-  const supabase = useMemo(() => getSupabaseBrowserClient(), []);
-
-  const [mode, setMode] = useState<"email" | "phone">(
-    phoneOnly ? "phone" : "email",
-  );
-  const [email, setEmail] = useState("");
-  const [pwdEmail, setPwdEmail] = useState("");
-  const [phone, setPhone] = useState("");
-  const [pwdPhone, setPwdPhone] = useState("");
-  const [err, setErr] = useState<string | null>(null);
-  const [submitting, setSubmitting] = useState(false);
-  const [showPwdEmail, setShowPwdEmail] = useState(false);
-  const [showPwdPhone, setShowPwdPhone] = useState(false);
-  const [forgotOpen, setForgotOpen] = useState(false);
-  const [capsEmail, setCapsEmail] = useState(false);
-  const [capsPhone, setCapsPhone] = useState(false);
-
-  const emailRef = useRef<HTMLInputElement>(null);
-  const phoneRef = useRef<HTMLInputElement>(null);
-
-  // Précharge la route de redirection (petit gain)
-  useEffect(() => {
-    router.prefetch(redirectTo);
-  }, [router, redirectTo]);
-
-  // Redirection si déjà connecté
-  const redirectedRef = useRef(false);
-  useEffect(() => {
-    if (!loading && session && !redirectedRef.current && !submitting) {
-      redirectedRef.current = true;
-      router.replace(redirectTo);
-      // Force revalidation côté App Router (évite "session ancienne" affichée)
-      setTimeout(() => router.refresh(), 0);
-    }
-  }, [session, loading, submitting, router, redirectTo]);
-
-  // Focus initial selon l’onglet
-  useEffect(() => {
-    const t = setTimeout(() => {
-      if (mode === "email") emailRef.current?.focus();
-      else phoneRef.current?.focus();
-    }, 0);
-    return () => clearTimeout(t);
-  }, [mode]);
-
-  async function onSubmit(e: React.FormEvent) {
+  async function onSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    if (submitting) return;
 
-    setErr(null);
-    setSubmitting(true);
+    // ✅ Empêche les clics répétés avant même le prochain render.
+    if (busyRef.current) return;
+    busyRef.current = true;
+    setBusy(true);
+    setError(null);
+    setStatusText("Préparation de la connexion…");
 
     try {
-      let accessToken = "";
-      let refreshToken = "";
+      // Important après une déconnexion/reconnexion : on enlève les anciens restes.
+      clearPreviousBrowserSession();
+      await clearPreviousServerCookies();
 
-      if (mode === "email") {
-        const resp = await supabase.auth.signInWithPassword({
-          email,
-          password: pwdEmail,
-        });
-        if (resp.error) {
-          throw new Error(resp.error.message || "Identifiants invalides.");
-        }
-        accessToken = resp.data.session?.access_token || "";
-        refreshToken = resp.data.session?.refresh_token || "";
-      } else {
-        // Candidats : normalisation standard + variante "conserver le 0"
-        const n1 = normalizePhone(phone) || "";
-        const pref = canonicalPrefix(undefined);
-        const digitsOnly = sanitize(phone).replace(/^\+/, "");
-        const n2 = digitsOnly ? pref + digitsOnly : "";
+      setStatusText("Vérification des identifiants…");
+      const res = await fetch("/api/auth/login", {
+        method: "POST",
+        cache: "no-store",
+        credentials: "include",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          email: mode === "email" ? email.trim() : undefined,
+          phone: mode === "phone" ? phone.trim() : undefined,
+          password,
+          country: "CI",
+        }),
+      });
 
-        const tries = [n1, n2].filter(
-          (v, i, a) => !!v && a.indexOf(v) === i,
-        );
-        if (tries.length === 0) throw new Error("Numéro de téléphone invalide.");
-
-        let lastErr: any = null;
-        for (const candidate of tries) {
-          const resp = await supabase.auth.signInWithPassword({
-            phone: candidate,
-            password: pwdPhone,
-          });
-          if (!resp.error) {
-            accessToken = resp.data.session?.access_token || "";
-            refreshToken = resp.data.session?.refresh_token || "";
-            lastErr = null;
-            break;
-          }
-          lastErr = resp.error;
-        }
-        if (lastErr) {
-          throw new Error(lastErr.message || "Identifiants invalides.");
-        }
+      const json = (await res.json().catch(() => ({}))) as LoginResponse;
+      if (!res.ok || !json.ok) {
+        throw new Error(json.error || `HTTP_${res.status}`);
       }
 
-      // ⭐ Sync cookies SSR (robuste : retry + timeout + res.ok)
-      // Si ça échoue, on NE redirige pas vers un état incertain.
-      try {
-        await syncSsrSession(accessToken, refreshToken);
-      } catch (syncErr: any) {
-        console.warn("[LoginCard] /api/auth/sync failed:", syncErr?.message || syncErr);
-        throw new Error(
-          "Connexion réussie, mais la synchronisation serveur a échoué. Réessayez (ou vérifiez votre connexion).",
-        );
-      }
+      setStatusText("Ouverture de votre espace…");
+      await syncBrowserSession(json.session?.access_token, json.session?.refresh_token);
 
-      setSubmitting(false);
-      router.replace(redirectTo);
-      // Important avec App Router : forcer revalidation après navigation
-      setTimeout(() => router.refresh(), 0);
-    } catch (authErr: any) {
-      setSubmitting(false);
-      setErr(authErr?.message || "Échec de la connexion.");
+      // ✅ Navigation complète volontaire : évite les caches client/RSC et la course avec /redirect.
+      window.location.assign(redirectTo || "/redirect");
+      return;
+    } catch (err: any) {
+      setError(humanError(err?.message));
+      setStatusText(null);
+      busyRef.current = false;
+      setBusy(false);
     }
   }
 
-  const disableButtons = submitting;
-  const readOnlyInputs = submitting;
-
   return (
-    <div className="overflow-hidden rounded-2xl border bg-white/95 shadow-xl shadow-blue-100/60 backdrop-blur">
-      {!compactHeader && (
-        <div className="border-b bg-blue-950 text-white">
-          <div className="px-6 pb-4 pt-6">
-            <h2 className="text-xl font-semibold tracking-tight">
-              Connexion à votre espace
-            </h2>
-            <p className="mt-1 text-sm text-white/80">
-              Absences, notes et prédiction sécurisées — identifiants fournis
-              par votre établissement.
-            </p>
-          </div>
-        </div>
-      )}
-
-      {loading && (
-        <div className="px-6 pt-3 text-xs text-slate-500" aria-live="polite">
-          Initialisation de la session…
-        </div>
-      )}
-
-      {/* Sélecteur Email / Téléphone selon le contexte */}
-      <div className="px-6 pt-4">
-        <div className="inline-flex rounded-full border border-slate-200 bg-slate-50 p-1 text-sm shadow-sm">
-          {!phoneOnly && (
-            <button
-              type="button"
-              onClick={() => setMode("email")}
-              disabled={disableButtons || emailOnly}
-              className={[
-                "inline-flex items-center gap-2 rounded-full px-3 py-2 transition",
-                mode === "email"
-                  ? "bg-white font-medium text-blue-700 shadow-sm"
-                  : "text-slate-600 hover:bg-white",
-              ].join(" ")}
-            >
-              <Mail className="h-4 w-4" /> Email
-            </button>
-          )}
-
-          {!emailOnly && (
-            <button
-              type="button"
-              onClick={() => setMode("phone")}
-              disabled={disableButtons || phoneOnly}
-              className={[
-                "inline-flex items-center gap-2 rounded-full px-3 py-2 transition",
-                mode === "phone"
-                  ? "bg-white font-medium text-blue-700 shadow-sm"
-                  : "text-slate-600 hover:bg-white",
-              ].join(" ")}
-            >
-              <PhoneIcon className="h-4 w-4" /> Téléphone
-            </button>
-          )}
-        </div>
-
-        {emailOnly && (
-          <p className="mt-1 text-xs text-slate-500">
-            Connexion <b>Espace Direction</b> : identifiant par{" "}
-            <b>email uniquement</b>.
-          </p>
-        )}
-        {phoneOnly && (
-          <p className="mt-1 text-xs text-slate-500">
-            Connexion <b>Espace Enseignant</b> : identifiant par{" "}
-            <b>téléphone uniquement</b>.
-          </p>
-        )}
+    <div className="rounded-[28px] border border-white/60 bg-white/95 p-5 shadow-2xl shadow-slate-900/20 backdrop-blur md:p-6">
+      <div className="mb-5">
+        <p className="text-xs font-bold uppercase tracking-[0.18em] text-emerald-700">
+          Connexion sécurisée
+        </p>
+        <h1 className="mt-1 text-2xl font-black tracking-tight text-slate-950">
+          Accéder à Mon Cahier
+        </h1>
+        <p className="mt-2 text-sm leading-6 text-slate-600">
+          Saisis tes identifiants puis patiente pendant l’ouverture de ton espace.
+        </p>
       </div>
 
-      <form noValidate onSubmit={onSubmit} className="space-y-4 px-6 py-6">
-        {mode === "email" ? (
-          <>
-            <Field label="Email">
-              <InputWrap IconLeft={Mail}>
-                <input
-                  ref={emailRef}
-                  id="login-email"
-                  name="email"
-                  type="email"
-                  inputMode="email"
-                  className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm outline-none transition placeholder:text-slate-400 focus:border-blue-400 focus:ring-4 focus:ring-blue-500/20"
-                  placeholder="nom@ecole.ci"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  required
-                  autoComplete="username"
-                  autoCapitalize="none"
-                  autoCorrect="off"
-                  spellCheck={false}
-                  enterKeyHint="next"
-                  autoFocus
-                  readOnly={readOnlyInputs}
-                />
-              </InputWrap>
-            </Field>
-
-            <Field
-              label="Mot de passe"
-              hint={
-                <div className="flex items-center gap-3">
-                  {capsEmail && (
-                    <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-800 ring-1 ring-amber-200">
-                      <ShieldAlert className="h-3.5 w-3.5" />
-                      Verr. Maj activée
-                    </span>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => setForgotOpen(true)}
-                    className="text-xs text-slate-500 underline-offset-2 hover:underline"
-                    disabled={disableButtons}
-                  >
-                    Mot de passe oublié ?
-                  </button>
-                </div>
-              }
-            >
-              <InputWrap IconLeft={Lock}>
-                <div className="relative">
-                  <input
-                    id="login-password-email"
-                    name="password"
-                    type={showPwdEmail ? "text" : "password"}
-                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 pr-10 text-sm shadow-sm outline-none transition placeholder:text-slate-400 focus:border-blue-400 focus:ring-4 focus:ring-blue-500/20"
-                    placeholder="••••••••"
-                    value={pwdEmail}
-                    onChange={(e) => setPwdEmail(e.target.value)}
-                    onKeyUp={(e) =>
-                      setCapsEmail(e.getModifierState?.("CapsLock") ?? false)
-                    }
-                    required
-                    autoComplete="current-password"
-                    autoCapitalize="none"
-                    autoCorrect="off"
-                    spellCheck={false}
-                    enterKeyHint="done"
-                    readOnly={readOnlyInputs}
-                  />
-                  <button
-                    type="button"
-                    tabIndex={-1}
-                    onMouseDown={(e) => e.preventDefault()}
-                    onTouchStart={(e) => e.preventDefault()}
-                    onClick={() => setShowPwdEmail((v) => !v)}
-                    className="absolute inset-y-0 right-0 grid w-10 place-items-center text-slate-500 hover:text-slate-700"
-                    aria-label={
-                      showPwdEmail
-                        ? "Masquer le mot de passe"
-                        : "Afficher le mot de passe"
-                    }
-                  >
-                    {showPwdEmail ? (
-                      <EyeOff className="h-4 w-4" />
-                    ) : (
-                      <Eye className="h-4 w-4" />
-                    )}
-                  </button>
-                </div>
-              </InputWrap>
-            </Field>
-          </>
-        ) : (
-          <>
-            <Field label="Téléphone">
-              <InputWrap IconLeft={PhoneIcon}>
-                <input
-                  ref={phoneRef}
-                  id="login-phone"
-                  name="phone"
-                  type="tel"
-                  inputMode="tel"
-                  className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm outline-none transition placeholder:text-slate-400 focus:border-blue-400 focus:ring-4 focus:ring-blue-500/20"
-                  placeholder="Ex. 01 02 03 04 05"
-                  value={phone}
-                  onChange={(e) => setPhone(e.target.value)}
-                  required
-                  autoComplete="tel"
-                  autoCapitalize="none"
-                  autoCorrect="off"
-                  spellCheck={false}
-                  enterKeyHint="next"
-                  autoFocus
-                  readOnly={readOnlyInputs}
-                />
-              </InputWrap>
-            </Field>
-
-            <Field
-              label="Mot de passe"
-              hint={
-                <div className="flex items-center gap-3">
-                  {capsPhone && (
-                    <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-800 ring-1 ring-amber-200">
-                      <ShieldAlert className="h-3.5 w-3.5" />
-                      Verr. Maj activée
-                    </span>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => setForgotOpen(true)}
-                    className="text-xs text-slate-500 underline-offset-2 hover:underline"
-                    disabled={disableButtons}
-                  >
-                    Mot de passe oublié ?
-                  </button>
-                </div>
-              }
-            >
-              <InputWrap IconLeft={Lock}>
-                <div className="relative">
-                  <input
-                    id="login-password-phone"
-                    name="password"
-                    type={showPwdPhone ? "text" : "password"}
-                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 pr-10 text-sm shadow-sm outline-none transition placeholder:text-slate-400 focus:border-blue-400 focus:ring-4 focus:ring-blue-500/20"
-                    placeholder="••••••••"
-                    value={pwdPhone}
-                    onChange={(e) => setPwdPhone(e.target.value)}
-                    onKeyUp={(e) =>
-                      setCapsPhone(e.getModifierState?.("CapsLock") ?? false)
-                    }
-                    required
-                    autoComplete="current-password"
-                    autoCapitalize="none"
-                    autoCorrect="off"
-                    spellCheck={false}
-                    enterKeyHint="done"
-                    readOnly={readOnlyInputs}
-                  />
-                  <button
-                    type="button"
-                    tabIndex={-1}
-                    onMouseDown={(e) => e.preventDefault()}
-                    onTouchStart={(e) => e.preventDefault()}
-                    onClick={() => setShowPwdPhone((v) => !v)}
-                    className="absolute inset-y-0 right-0 grid w-10 place-items-center text-slate-500 hover:text-slate-700"
-                    aria-label={
-                      showPwdPhone
-                        ? "Masquer le mot de passe"
-                        : "Afficher le mot de passe"
-                    }
-                  >
-                    {showPwdPhone ? (
-                      <EyeOff className="h-4 w-4" />
-                    ) : (
-                      <Eye className="h-4 w-4" />
-                    )}
-                  </button>
-                </div>
-              </InputWrap>
-            </Field>
-          </>
-        )}
-
-        {err && (
-          <div
-            className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700"
-            aria-live="polite"
+      {!modeLocked ? (
+        <div className="mb-4 grid grid-cols-2 rounded-2xl bg-slate-100 p-1 text-sm font-semibold text-slate-600">
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => setMode("phone")}
+            className={[
+              "rounded-xl px-3 py-2 transition disabled:cursor-not-allowed disabled:opacity-60",
+              mode === "phone" ? "bg-white text-slate-950 shadow-sm" : "hover:text-slate-950",
+            ].join(" ")}
           >
-            <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" />
-            <span>{err}</span>
-          </div>
+            Téléphone
+          </button>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => setMode("email")}
+            className={[
+              "rounded-xl px-3 py-2 transition disabled:cursor-not-allowed disabled:opacity-60",
+              mode === "email" ? "bg-white text-slate-950 shadow-sm" : "hover:text-slate-950",
+            ].join(" ")}
+          >
+            Email
+          </button>
+        </div>
+      ) : null}
+
+      <form className="space-y-4" onSubmit={onSubmit}>
+        {mode === "email" ? (
+          <label className="block">
+            <span className="mb-1.5 block text-sm font-semibold text-slate-700">Email</span>
+            <input
+              type="email"
+              autoComplete="email"
+              value={email}
+              disabled={busy}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="direction@ecole.ci"
+              className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-emerald-400 focus:ring-4 focus:ring-emerald-500/20 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400"
+            />
+          </label>
+        ) : (
+          <label className="block">
+            <span className="mb-1.5 block text-sm font-semibold text-slate-700">
+              Téléphone
+            </span>
+            <input
+              type="tel"
+              inputMode="tel"
+              autoComplete="tel"
+              value={phone}
+              disabled={busy}
+              onChange={(e) => setPhone(e.target.value)}
+              placeholder="07 13 02 37 62"
+              className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-emerald-400 focus:ring-4 focus:ring-emerald-500/20 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400"
+            />
+          </label>
         )}
+
+        <label className="block">
+          <span className="mb-1.5 block text-sm font-semibold text-slate-700">
+            Mot de passe
+          </span>
+          <input
+            type="password"
+            autoComplete="current-password"
+            value={password}
+            disabled={busy}
+            onChange={(e) => setPassword(e.target.value)}
+            placeholder="••••••••"
+            className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-emerald-400 focus:ring-4 focus:ring-emerald-500/20 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400"
+          />
+        </label>
+
+        {error ? (
+          <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-700">
+            {error}
+          </div>
+        ) : null}
+
+        {statusText ? (
+          <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-800">
+            {statusText}
+          </div>
+        ) : null}
 
         <button
           type="submit"
-          disabled={
-            disableButtons ||
-            (mode === "email" ? !(email && pwdEmail) : !(phone && pwdPhone))
-          }
-          className="group relative w-full overflow-hidden rounded-xl bg-blue-700 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-blue-800 disabled:opacity-50"
+          disabled={!canSubmit}
+          aria-busy={busy}
+          className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-[#003766] px-4 py-3 text-sm font-extrabold text-white shadow-lg shadow-slate-900/20 transition hover:bg-[#002b50] focus:outline-none focus:ring-4 focus:ring-[#003766]/25 disabled:cursor-not-allowed disabled:opacity-60"
         >
-          <span className="inline-flex items-center justify-center gap-2">
-            {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
-            {submitting ? "Connexion…" : "Se connecter"}
-          </span>
+          {busy ? <Spinner /> : null}
+          {busy ? "Connexion en cours…" : "Connexion"}
         </button>
-
-        <div className="pt-1 text-center text-xs text-slate-500">
-          Besoin d’aide ? Contactez l’administrateur de votre établissement.
-        </div>
       </form>
 
-      {forgotOpen && (
-        <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 px-4 backdrop-blur-sm">
-          <div className="w-full max-w-md overflow-hidden rounded-2xl bg-white shadow-xl">
-            <div className="bg-slate-50 px-5 py-3">
-              <div className="flex items-center gap-2 text-slate-800">
-                <Lock className="h-4 w-4" />
-                <div className="text-sm font-semibold">
-                  Mot de passe oublié ?
-                </div>
-              </div>
-            </div>
-            <div className="px-5 py-4">
-              <p className="text-sm text-slate-700">
-                Pour réinitialiser votre mot de passe, merci de{" "}
-                <b>contacter l’administration de votre établissement</b>. Elle
-                vous communiquera de nouveaux identifiants.
-              </p>
-              <div className="mt-4 flex justify-end">
-                <button
-                  onClick={() => setForgotOpen(false)}
-                  className="rounded-lg border border-slate-200 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50"
-                >
-                  J’ai compris
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+      <p className="mt-4 text-center text-xs leading-5 text-slate-500">
+        Un seul clic suffit : le bouton reste verrouillé pendant la vérification et la redirection.
+      </p>
     </div>
   );
 }

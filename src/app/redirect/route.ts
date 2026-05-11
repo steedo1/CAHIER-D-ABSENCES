@@ -12,9 +12,13 @@ const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_ANON = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
 
+function withNoStore(res: NextResponse) {
+  res.headers.set("Cache-Control", "no-store, max-age=0");
+  return res;
+}
+
 function attachLastDest(res: NextResponse, dest: string, book?: Book) {
-  // Cookie lisible côté client (pas httpOnly) pour fallback offline
-  const encoded = encodeURIComponent(dest);
+  // Cookie lisible côté client pour fallback offline.
   const base = {
     path: "/",
     sameSite: "lax" as const,
@@ -22,28 +26,28 @@ function attachLastDest(res: NextResponse, dest: string, book?: Book) {
     maxAge: 60 * 60 * 24 * 30, // 30 jours
   };
 
-  res.cookies.set("mc_last_dest", encoded, base);
-  if (book) res.cookies.set(`mc_last_dest_${book}`, encoded, base);
+  res.cookies.set("mc_last_dest", dest, base);
+  if (book) res.cookies.set(`mc_last_dest_${book}`, dest, base);
 
-  return res;
+  return withNoStore(res);
+}
+
+function loginRedirect(url: URL, book?: Book) {
+  const loginUrl = new URL("/login", url);
+  if (book) loginUrl.searchParams.set("book", book);
+  return withNoStore(NextResponse.redirect(loginUrl));
 }
 
 export async function GET(req: Request) {
   const url = new URL(req.url);
   const jar = await cookies();
 
-  const access = jar.get("sb-access-token")?.value ?? null;
-  const refresh = jar.get("sb-refresh-token")?.value ?? null;
-
   const rawBook = url.searchParams.get("book");
   const book: Book | undefined =
     rawBook === "grades" ? "grades" : rawBook === "attendance" ? "attendance" : undefined;
 
-  if (!access || !refresh) {
-    const loginUrl = new URL("/login", url);
-    if (book) loginUrl.searchParams.set("book", book);
-    return NextResponse.redirect(loginUrl);
-  }
+  const access = jar.get("sb-access-token")?.value ?? null;
+  const refresh = jar.get("sb-refresh-token")?.value ?? null;
 
   const supabase = createServerClient(SUPABASE_URL, SUPABASE_ANON, {
     cookies: {
@@ -53,36 +57,31 @@ export async function GET(req: Request) {
     },
   });
 
-  try {
-    await supabase.auth.setSession({ access_token: access, refresh_token: refresh });
-  } catch {
-    // tolérant
+  // Cas principal : nos cookies simples existent, donc on force la session côté serveur.
+  if (access && refresh) {
+    try {
+      await supabase.auth.setSession({ access_token: access, refresh_token: refresh });
+    } catch {
+      // Tolérant : getUser ci-dessous décidera.
+    }
   }
 
+  // Cas tolérant : même si nos cookies simples manquent, le cookie Supabase standard peut exister.
   const {
-    data: { user } = { user: null },
+    data: { user },
   } = await supabase.auth.getUser();
 
-  if (!user) {
-    const loginUrl = new URL("/login", url);
-    if (book) loginUrl.searchParams.set("book", book);
-    return NextResponse.redirect(loginUrl);
-  }
+  if (!user) return loginRedirect(url, book);
 
-  // 1) Cas spécial : compte-classe
+  // 1) Cas spécial : compte-classe.
   if (SERVICE_KEY) {
     try {
       const svc = createClient(SUPABASE_URL, SERVICE_KEY, {
         auth: { persistSession: false, autoRefreshToken: false },
       });
 
-      const { data: au } = await svc
-        .from("auth.users")
-        .select("id, phone")
-        .eq("id", user.id)
-        .maybeSingle();
-
-      const phone = (au?.phone || "").trim();
+      const { data: adminUser } = await svc.auth.admin.getUserById(user.id);
+      const phone = (adminUser?.user?.phone || "").trim();
 
       if (phone) {
         const { data: cls } = await svc
@@ -92,19 +91,17 @@ export async function GET(req: Request) {
           .maybeSingle();
 
         if (cls?.id) {
-          const dest =
-            book === "grades" ? "/grades/class-device" : `/class/${cls.id}`;
-
+          const dest = book === "grades" ? "/grades/class-device" : `/class/${cls.id}`;
           const res = NextResponse.redirect(new URL(dest, url));
           return attachLastDest(res, dest, book);
         }
       }
     } catch {
-      // on continue sur le routage standard
+      // On continue sur le routage standard.
     }
   }
 
-  // 2) Routage standard par rôle, sensible à "book"
+  // 2) Routage standard par rôle, sensible à "book".
   const dest = (await routeForUser(user.id, supabase, book)) || "/profile";
   const res = NextResponse.redirect(new URL(dest, url));
   return attachLastDest(res, dest, book);
