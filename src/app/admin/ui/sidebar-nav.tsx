@@ -5,7 +5,6 @@ import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import {
   LayoutDashboard,
-  CalendarDays,
   Ban,
   School,
   Users,
@@ -162,44 +161,6 @@ function TextBadge({ text }: { text: string }) {
 ========================= */
 const TOP_LEVEL_ITEMS: NavItem[] = [
   { href: "/admin/dashboard", label: "Tableau de bord", Icon: LayoutDashboard },
-];
-
-const MONTAGE_EDT_ITEMS: NavItem[] = [
-  {
-    href: "/admin/montage-emploi-du-temps",
-    label: "Vue d’ensemble",
-    Icon: CalendarDays,
-  },
-  {
-    href: "/admin/montage-emploi-du-temps/volumes",
-    label: "Référentiel & services",
-    Icon: FileSpreadsheet,
-  },
-  {
-    href: "/admin/montage-emploi-du-temps/regles-terrain",
-    label: "Règles terrain",
-    Icon: Settings,
-  },
-  {
-    href: "/admin/montage-emploi-du-temps/indisponibilites",
-    label: "Indisponibilités",
-    Icon: Users,
-  },
-  {
-    href: "/admin/montage-emploi-du-temps/ressources",
-    label: "Salles & ressources",
-    Icon: School,
-  },
-  {
-    href: "/admin/montage-emploi-du-temps/generation",
-    label: "Services & génération",
-    Icon: BarChart3,
-  },
-  {
-    href: "/admin/montage-emploi-du-temps/publication",
-    label: "Publication",
-    Icon: ShieldCheck,
-  },
 ];
 
 const PREDICTION_ITEMS: NavItem[] = [
@@ -862,11 +823,6 @@ export default function SidebarNav() {
 
   const topLevelItems = React.useMemo(() => TOP_LEVEL_ITEMS, []);
 
-  const montageEdtItems = React.useMemo(
-    () => MONTAGE_EDT_ITEMS.filter(() => !isEducator),
-    [isEducator]
-  );
-
   const predictionItems = React.useMemo(
     () =>
       PREDICTION_ITEMS.filter((item) => {
@@ -940,9 +896,6 @@ export default function SidebarNav() {
     currentTab
   );
 
-  const montageEdtActive =
-    !isEducator && groupHasActiveItem(pathname, montageEdtItems, currentTab);
-
   const adminActive = groupHasActiveItem(pathname, adminItems, currentTab);
 
   const callsControlActive = groupHasActiveItem(
@@ -967,9 +920,6 @@ export default function SidebarNav() {
   const [organisationOpen, setOrganisationOpen] =
     React.useState<boolean>(organisationActive);
 
-  const [montageEdtOpen, setMontageEdtOpen] =
-    React.useState<boolean>(montageEdtActive);
-
   const [adminOpen, setAdminOpen] = React.useState<boolean>(adminActive);
 
   const [callsControlOpen, setCallsControlOpen] =
@@ -993,10 +943,6 @@ export default function SidebarNav() {
   React.useEffect(() => {
     if (organisationActive) setOrganisationOpen(true);
   }, [organisationActive]);
-
-  React.useEffect(() => {
-    if (montageEdtActive) setMontageEdtOpen(true);
-  }, [montageEdtActive]);
 
   React.useEffect(() => {
     if (adminActive) setAdminOpen(true);
@@ -1119,19 +1065,6 @@ export default function SidebarNav() {
               onToggle={() => setOrganisationOpen((v) => !v)}
               accent="sky"
             />
-
-            {!isEducator && montageEdtItems.length > 0 && (
-              <GroupSection
-                title="Montage emploi du temps"
-                Icon={CalendarDays}
-                items={montageEdtItems}
-                pathname={pathname}
-                currentTab={currentTab}
-                open={montageEdtOpen}
-                onToggle={() => setMontageEdtOpen((v) => !v)}
-                accent="sky"
-              />
-            )}
 
             <GroupSection
               title="Administration & services"
