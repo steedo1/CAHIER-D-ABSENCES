@@ -34,6 +34,7 @@ type StudentMetaRow = {
   last_name: string | null;
   full_name: string | null;
   matricule: string | null;
+  gender?: string | null;
 };
 
 type BulletinPerSubject = {
@@ -104,6 +105,7 @@ type BulletinItem = {
   student_id: string;
   full_name: string;
   matricule: string | null;
+  gender?: string | null;
 
   general_avg: number | null;
   rank?: number | null;
@@ -202,7 +204,13 @@ type ExportRow = {
 };
 
 type ExportFormat = "xlsx" | "csv";
-type ExportKind = "legacy" | "dsps_notes" | "dsps_annual";
+type ExportKind =
+  | "legacy"
+  | "dsps_notes"
+  | "dsps_annual"
+  | "desps_term_summary"
+  | "desps_subject_summary"
+  | "desps_dfa_summary";
 
 type ResolvedPeriod = {
   academicYear: string;
@@ -277,6 +285,66 @@ const DSPS_ANNUAL_HEADERS = [
   "MGA",
   "Rang   ",
   "Décision du conseil",
+] as const;
+
+const DESPS_TERM_SUMMARY_HEADERS = [
+  "Niveau",
+  "Série",
+  "Classe",
+  "Effectif total",
+  "Filles",
+  "Garçons",
+  "Classés",
+  "Filles classées",
+  "Garçons classés",
+  "Non classés",
+  "Moy. >= 10",
+  "Filles moy. >= 10",
+  "Garçons moy. >= 10",
+  "8,50 <= Moy. < 10",
+  "Moy. < 8,50",
+  "Moyenne générale classe",
+  "Taux réussite %",
+] as const;
+
+const DESPS_SUBJECT_SUMMARY_HEADERS = [
+  "Niveau",
+  "Série",
+  "Classe",
+  "Discipline",
+  "Effectif total",
+  "Élèves notés",
+  "Filles notées",
+  "Garçons notés",
+  "Non notés",
+  "Moyenne discipline",
+  "Notes >= 10",
+  "Filles notes >= 10",
+  "Garçons notes >= 10",
+  "Notes < 10",
+  "Taux réussite %",
+] as const;
+
+const DESPS_DFA_SUMMARY_HEADERS = [
+  "Cycle",
+  "Niveau",
+  "Série",
+  "Classe",
+  "Effectif total",
+  "Filles",
+  "Garçons",
+  "Classés annuels",
+  "Non classés annuels",
+  "Moy. annuelle >= 10",
+  "Filles moy. annuelle >= 10",
+  "Garçons moy. annuelle >= 10",
+  "Moy. annuelle < 10",
+  "Admis automatiques",
+  "À examiner en conseil",
+  "Redoublants saisis",
+  "Exclus saisis",
+  "Moyenne annuelle classe",
+  "Taux admission automatique %",
 ] as const;
 
 const SUBJECT_ALIASES: Record<string, string[]> = {
@@ -675,6 +743,133 @@ function sortRowsByClassRankAndName<T extends { Classe?: unknown; classe?: unkno
   });
 }
 
+
+type SummaryAccumulator = {
+  total: number;
+  girls: number;
+  boys: number;
+  classed: number;
+  classedGirls: number;
+  classedBoys: number;
+  nonClassed: number;
+  ge10: number;
+  ge10Girls: number;
+  ge10Boys: number;
+  between850And10: number;
+  lt850: number;
+  sum: number;
+};
+
+function makeSummaryAccumulator(): SummaryAccumulator {
+  return {
+    total: 0,
+    girls: 0,
+    boys: 0,
+    classed: 0,
+    classedGirls: 0,
+    classedBoys: 0,
+    nonClassed: 0,
+    ge10: 0,
+    ge10Girls: 0,
+    ge10Boys: 0,
+    between850And10: 0,
+    lt850: 0,
+    sum: 0,
+  };
+}
+
+function normalizeGender(value?: string | null): "F" | "M" | "" {
+  const raw = normalizeForMatch(value);
+  if (!raw) return "";
+
+  if (
+    raw === "f" ||
+    raw === "feminin" ||
+    raw === "feminine" ||
+    raw === "female" ||
+    raw === "fille" ||
+    raw === "filles"
+  ) {
+    return "F";
+  }
+
+  if (
+    raw === "m" ||
+    raw === "masculin" ||
+    raw === "masculine" ||
+    raw === "male" ||
+    raw === "garcon" ||
+    raw === "garcons" ||
+    raw === "homme"
+  ) {
+    return "M";
+  }
+
+  return "";
+}
+
+function addGenderCount(acc: Pick<SummaryAccumulator, "girls" | "boys">, gender: "F" | "M" | "") {
+  if (gender === "F") acc.girls += 1;
+  else acc.boys += 1;
+}
+
+function addPeriodAverageToAccumulator(
+  acc: SummaryAccumulator,
+  avg: number | null,
+  gender: "F" | "M" | ""
+) {
+  acc.total += 1;
+  addGenderCount(acc, gender);
+
+  if (avg === null || !Number.isFinite(Number(avg))) {
+    acc.nonClassed += 1;
+    return;
+  }
+
+  const value = Number(avg);
+  acc.classed += 1;
+  acc.sum += value;
+
+  if (gender === "F") acc.classedGirls += 1;
+  else acc.classedBoys += 1;
+
+  if (value >= 10) {
+    acc.ge10 += 1;
+    if (gender === "F") acc.ge10Girls += 1;
+    else acc.ge10Boys += 1;
+  } else if (value >= 8.5) {
+    acc.between850And10 += 1;
+  } else {
+    acc.lt850 += 1;
+  }
+}
+
+function percent(value: number, total: number): number | string {
+  if (!total) return "";
+  return Number(((value / total) * 100).toFixed(2));
+}
+
+function meanFromAccumulator(acc: Pick<SummaryAccumulator, "sum" | "classed">): number | string {
+  if (!acc.classed) return "";
+  return Number((acc.sum / acc.classed).toFixed(2));
+}
+
+function getStudentGender(params: {
+  meta?: StudentMetaRow | null;
+  item?: BulletinItem | null;
+}): "F" | "M" | "" {
+  return normalizeGender(params.meta?.gender ?? params.item?.gender ?? null);
+}
+
+function classCycleLabel(cls: ClassRow): string {
+  return isFirstCycleLevel(cls.level) ? "1er cycle" : "2nd cycle";
+}
+
+function dfaAutoDecision(avg: number | null): "admis" | "examiner" | "non_classe" {
+  if (avg === null || !Number.isFinite(Number(avg))) return "non_classe";
+  return Number(avg) >= 10 ? "admis" : "examiner";
+}
+
 async function getAdminAndInstitution() {
   const supabase = await getSupabaseServerClient();
   const {
@@ -846,7 +1041,8 @@ async function loadStudentMeta(params: {
         first_name,
         last_name,
         full_name,
-        matricule
+        matricule,
+        gender
       )
     `
     )
@@ -876,6 +1072,7 @@ async function loadStudentMeta(params: {
       last_name: student.last_name ?? null,
       full_name: student.full_name ?? null,
       matricule: student.matricule ?? null,
+      gender: student.gender ?? null,
     });
   }
 
@@ -1625,6 +1822,554 @@ async function prepareDspsAnnualExport(params: {
   };
 }
 
+
+async function prepareDespsTermSummaryExport(params: {
+  req: NextRequest;
+  supabase: Awaited<ReturnType<typeof getSupabaseServerClient>>;
+  institutionId: string;
+  institutionName: string;
+  academicYear: string;
+  periodRef: string;
+  classId: string;
+}): Promise<PreparedWorkbook | { error: string; status: number }> {
+  const { req, supabase, institutionId, institutionName, academicYear, periodRef, classId } = params;
+
+  const resolvedPeriod = await resolvePeriod({ supabase, institutionId, academicYear, periodRef });
+
+  if (!resolvedPeriod || resolvedPeriod.requestedKind !== "period") {
+    return { error: "INVALID_PERIOD_REF", status: 400 };
+  }
+
+  const { classes, error: classError } = await loadClasses({
+    supabase,
+    institutionId,
+    academicYear: resolvedPeriod.academicYear,
+    classId,
+  });
+
+  if (classError) return { error: classError, status: classError === "INVALID_CLASS_ID" ? 400 : 500 };
+  if (!classes.length) return { error: "NO_CLASSES_FOUND", status: 404 };
+
+  const studentMetaByKey = await loadStudentMeta({
+    supabase,
+    classes,
+    academicYear: resolvedPeriod.academicYear,
+    activeFrom: resolvedPeriod.bulletinFrom,
+  });
+
+  const rows: Record<string, unknown>[] = [];
+  const totalAcc = makeSummaryAccumulator();
+
+  for (const cls of classes) {
+    const currentClassId = String(cls.id);
+    const bulletinData = await fetchBulletinForClass({
+      req,
+      classId: currentClassId,
+      from: resolvedPeriod.bulletinFrom,
+      to: resolvedPeriod.bulletinTo,
+    });
+
+    const itemByStudent = new Map<string, BulletinItem>();
+    for (const item of bulletinData?.items || []) itemByStudent.set(String(item.student_id), item);
+
+    const studentIds = new Set<string>();
+    for (const key of studentMetaByKey.keys()) {
+      if (key.startsWith(`${currentClassId}__`)) {
+        studentIds.add(key.slice(`${currentClassId}__`.length));
+      }
+    }
+    for (const item of bulletinData?.items || []) studentIds.add(String(item.student_id));
+
+    const classAcc = makeSummaryAccumulator();
+
+    for (const studentId of studentIds) {
+      const meta = studentMetaByKey.get(`${currentClassId}__${studentId}`);
+      const item = itemByStudent.get(studentId) || null;
+      const forcedNc = isAdminForcedNc(item);
+      const avg = item && !forcedNc ? cleanNumber(item.general_avg, 4) : null;
+      const gender = getStudentGender({ meta, item });
+
+      addPeriodAverageToAccumulator(classAcc, avg, gender);
+      addPeriodAverageToAccumulator(totalAcc, avg, gender);
+    }
+
+    rows.push(
+      buildOrderedRow(DESPS_TERM_SUMMARY_HEADERS, {
+        Niveau: displayLevelForDsps(cls),
+        Série: extractSeriesFromClass(cls),
+        Classe: String(cls.label || cls.code || "Classe"),
+        "Effectif total": classAcc.total,
+        Filles: classAcc.girls,
+        Garçons: classAcc.boys,
+        Classés: classAcc.classed,
+        "Filles classées": classAcc.classedGirls,
+        "Garçons classés": classAcc.classedBoys,
+        "Non classés": classAcc.nonClassed,
+        "Moy. >= 10": classAcc.ge10,
+        "Filles moy. >= 10": classAcc.ge10Girls,
+        "Garçons moy. >= 10": classAcc.ge10Boys,
+        "8,50 <= Moy. < 10": classAcc.between850And10,
+        "Moy. < 8,50": classAcc.lt850,
+        "Moyenne générale classe": meanFromAccumulator(classAcc),
+        "Taux réussite %": percent(classAcc.ge10, classAcc.classed),
+      })
+    );
+  }
+
+  if (!rows.length) return { error: "NO_EXPORTABLE_DATA", status: 404 };
+
+  rows.sort((a, b) => {
+    const levelCmp = String(a.Niveau || "").localeCompare(String(b.Niveau || ""), "fr", {
+      numeric: true,
+      sensitivity: "base",
+    });
+    if (levelCmp !== 0) return levelCmp;
+    return String(a.Classe || "").localeCompare(String(b.Classe || ""), "fr", {
+      numeric: true,
+      sensitivity: "base",
+    });
+  });
+
+  rows.push(
+    buildOrderedRow(DESPS_TERM_SUMMARY_HEADERS, {
+      Niveau: "TOTAL",
+      Série: "",
+      Classe: "Toutes les classes",
+      "Effectif total": totalAcc.total,
+      Filles: totalAcc.girls,
+      Garçons: totalAcc.boys,
+      Classés: totalAcc.classed,
+      "Filles classées": totalAcc.classedGirls,
+      "Garçons classés": totalAcc.classedBoys,
+      "Non classés": totalAcc.nonClassed,
+      "Moy. >= 10": totalAcc.ge10,
+      "Filles moy. >= 10": totalAcc.ge10Girls,
+      "Garçons moy. >= 10": totalAcc.ge10Boys,
+      "8,50 <= Moy. < 10": totalAcc.between850And10,
+      "Moy. < 8,50": totalAcc.lt850,
+      "Moyenne générale classe": meanFromAccumulator(totalAcc),
+      "Taux réussite %": percent(totalAcc.ge10, totalAcc.classed),
+    })
+  );
+
+  return {
+    filenameBase: [
+      "export-desps-rendement-trimestriel",
+      toFileSafePart(institutionName || "etablissement"),
+      toFileSafePart(resolvedPeriod.academicYear || "annee"),
+      toFileSafePart(resolvedPeriod.requestedCode || "periode"),
+      classes.length === 1 ? toFileSafePart(String(classes[0].label || classes[0].code || "")) : "toutes-classes",
+    ]
+      .filter(Boolean)
+      .join("_"),
+    mainSheetName: "Rendement général",
+    rows,
+  };
+}
+
+async function prepareDespsSubjectSummaryExport(params: {
+  req: NextRequest;
+  supabase: Awaited<ReturnType<typeof getSupabaseServerClient>>;
+  institutionId: string;
+  institutionName: string;
+  academicYear: string;
+  periodRef: string;
+  classId: string;
+}): Promise<PreparedWorkbook | { error: string; status: number }> {
+  const { req, supabase, institutionId, institutionName, academicYear, periodRef, classId } = params;
+
+  const resolvedPeriod = await resolvePeriod({ supabase, institutionId, academicYear, periodRef });
+
+  if (!resolvedPeriod || resolvedPeriod.requestedKind !== "period") {
+    return { error: "INVALID_PERIOD_REF", status: 400 };
+  }
+
+  const { classes, error: classError } = await loadClasses({
+    supabase,
+    institutionId,
+    academicYear: resolvedPeriod.academicYear,
+    classId,
+  });
+
+  if (classError) return { error: classError, status: classError === "INVALID_CLASS_ID" ? 400 : 500 };
+  if (!classes.length) return { error: "NO_CLASSES_FOUND", status: 404 };
+
+  const studentMetaByKey = await loadStudentMeta({
+    supabase,
+    classes,
+    academicYear: resolvedPeriod.academicYear,
+    activeFrom: resolvedPeriod.bulletinFrom,
+  });
+
+  const rows: Record<string, unknown>[] = [];
+
+  for (const cls of classes) {
+    const currentClassId = String(cls.id);
+    const firstCycle = isFirstCycleLevel(cls.level);
+    const subjectHeaders = firstCycle
+      ? DSPS_FIRST_CYCLE_SUBJECT_HEADERS
+      : DSPS_SECOND_CYCLE_SUBJECT_HEADERS;
+
+    const bulletinData = await fetchBulletinForClass({
+      req,
+      classId: currentClassId,
+      from: resolvedPeriod.bulletinFrom,
+      to: resolvedPeriod.bulletinTo,
+    });
+
+    if (!bulletinData?.items?.length) {
+      continue;
+    }
+
+    const { subjectNameById, componentById } = getSubjectMaps(bulletinData);
+    const metaByStudent = new Map<string, StudentMetaRow>();
+    const allStudentIds = new Set<string>();
+
+    for (const key of studentMetaByKey.keys()) {
+      if (key.startsWith(`${currentClassId}__`)) {
+        const studentId = key.slice(`${currentClassId}__`.length);
+        allStudentIds.add(studentId);
+        const meta = studentMetaByKey.get(key);
+        if (meta) metaByStudent.set(studentId, meta);
+      }
+    }
+
+    for (const item of bulletinData.items || []) allStudentIds.add(String(item.student_id));
+
+    for (const header of subjectHeaders) {
+      let noted = 0;
+      let notedGirls = 0;
+      let notedBoys = 0;
+      let ge10 = 0;
+      let ge10Girls = 0;
+      let ge10Boys = 0;
+      let lt10 = 0;
+      let sum = 0;
+
+      for (const item of bulletinData.items || []) {
+        const studentId = String(item.student_id);
+        const meta = metaByStudent.get(studentId);
+        const gender = getStudentGender({ meta, item });
+        const value = valueForDspsSubjectHeader({
+          item,
+          subjectNameById,
+          componentById,
+          header,
+          firstCycle,
+        });
+
+        if (value === null || !Number.isFinite(Number(value))) continue;
+
+        const avg = Number(value);
+        noted += 1;
+        sum += avg;
+
+        if (gender === "F") notedGirls += 1;
+        else notedBoys += 1;
+
+        if (avg >= 10) {
+          ge10 += 1;
+          if (gender === "F") ge10Girls += 1;
+          else ge10Boys += 1;
+        } else {
+          lt10 += 1;
+        }
+      }
+
+      rows.push(
+        buildOrderedRow(DESPS_SUBJECT_SUMMARY_HEADERS, {
+          Niveau: displayLevelForDsps(cls),
+          Série: extractSeriesFromClass(cls),
+          Classe: String(cls.label || cls.code || "Classe"),
+          Discipline: header,
+          "Effectif total": allStudentIds.size,
+          "Élèves notés": noted,
+          "Filles notées": notedGirls,
+          "Garçons notés": notedBoys,
+          "Non notés": Math.max(0, allStudentIds.size - noted),
+          "Moyenne discipline": noted ? Number((sum / noted).toFixed(2)) : "",
+          "Notes >= 10": ge10,
+          "Filles notes >= 10": ge10Girls,
+          "Garçons notes >= 10": ge10Boys,
+          "Notes < 10": lt10,
+          "Taux réussite %": percent(ge10, noted),
+        })
+      );
+    }
+  }
+
+  if (!rows.length) return { error: "NO_EXPORTABLE_DATA", status: 404 };
+
+  rows.sort((a, b) => {
+    const classCmp = String(a.Classe || "").localeCompare(String(b.Classe || ""), "fr", {
+      numeric: true,
+      sensitivity: "base",
+    });
+    if (classCmp !== 0) return classCmp;
+    return String(a.Discipline || "").localeCompare(String(b.Discipline || ""), "fr", {
+      numeric: true,
+      sensitivity: "base",
+    });
+  });
+
+  return {
+    filenameBase: [
+      "export-desps-moyennes-disciplines",
+      toFileSafePart(institutionName || "etablissement"),
+      toFileSafePart(resolvedPeriod.academicYear || "annee"),
+      toFileSafePart(resolvedPeriod.requestedCode || "periode"),
+      classes.length === 1 ? toFileSafePart(String(classes[0].label || classes[0].code || "")) : "toutes-classes",
+    ]
+      .filter(Boolean)
+      .join("_"),
+    mainSheetName: "Moyennes disciplines",
+    rows,
+  };
+}
+
+async function prepareDespsDfaSummaryExport(params: {
+  req: NextRequest;
+  supabase: Awaited<ReturnType<typeof getSupabaseServerClient>>;
+  institutionId: string;
+  institutionName: string;
+  academicYear: string;
+  classId: string;
+}): Promise<PreparedWorkbook | { error: string; status: number }> {
+  const { req, supabase, institutionId, institutionName, academicYear, classId } = params;
+
+  const periods = await loadAcademicPeriods({ supabase, institutionId, academicYear });
+  if (!periods.length) return { error: "NO_PERIODS_FOUND", status: 404 };
+
+  const displayPeriods = periods.slice(0, 3);
+  const firstActiveDate = periods[0]?.start_date || `${academicYear.split("-")[0] || new Date().getFullYear()}-01-01`;
+
+  const { classes, error: classError } = await loadClasses({
+    supabase,
+    institutionId,
+    academicYear,
+    classId,
+  });
+
+  if (classError) return { error: classError, status: classError === "INVALID_CLASS_ID" ? 400 : 500 };
+  if (!classes.length) return { error: "NO_CLASSES_FOUND", status: 404 };
+
+  const studentMetaByKey = await loadStudentMeta({
+    supabase,
+    classes,
+    academicYear,
+    activeFrom: firstActiveDate,
+  });
+
+  const rows: Record<string, unknown>[] = [];
+  const total = {
+    effectif: 0,
+    girls: 0,
+    boys: 0,
+    classed: 0,
+    nonClassed: 0,
+    ge10: 0,
+    ge10Girls: 0,
+    ge10Boys: 0,
+    lt10: 0,
+    admitted: 0,
+    toReview: 0,
+    repeaters: 0,
+    excluded: 0,
+    sum: 0,
+  };
+
+  for (const cls of classes) {
+    const currentClassId = String(cls.id);
+    const bulletinsByPeriod = new Map<string, BulletinResponse>();
+
+    await Promise.all(
+      displayPeriods.map(async (period) => {
+        const bulletin = await fetchBulletinForClass({
+          req,
+          classId: currentClassId,
+          from: period.start_date,
+          to: period.end_date,
+        });
+        if (bulletin) bulletinsByPeriod.set(period.id, bulletin);
+      })
+    );
+
+    const studentIds = new Set<string>();
+    const itemsByPeriodStudent = new Map<string, BulletinItem>();
+
+    for (const period of displayPeriods) {
+      const bulletin = bulletinsByPeriod.get(period.id);
+      for (const item of bulletin?.items || []) {
+        studentIds.add(String(item.student_id));
+        itemsByPeriodStudent.set(`${period.id}__${String(item.student_id)}`, item);
+      }
+    }
+
+    for (const [key, meta] of studentMetaByKey.entries()) {
+      if (key.startsWith(`${currentClassId}__`)) studentIds.add(meta.student_id);
+    }
+
+    let girls = 0;
+    let boys = 0;
+    let classed = 0;
+    let nonClassed = 0;
+    let ge10 = 0;
+    let ge10Girls = 0;
+    let ge10Boys = 0;
+    let lt10 = 0;
+    let admitted = 0;
+    let toReview = 0;
+    let repeaters = 0;
+    let excluded = 0;
+    let sum = 0;
+
+    for (const studentId of studentIds) {
+      const meta = studentMetaByKey.get(`${currentClassId}__${studentId}`);
+      const periodCells = displayPeriods.map((period) => {
+        const item = itemsByPeriodStudent.get(`${period.id}__${studentId}`) || null;
+        return item && !isAdminForcedNc(item) ? cleanNumber(item.general_avg, 4) : null;
+      });
+
+      const lastItem = [...displayPeriods]
+        .reverse()
+        .map((period) => itemsByPeriodStudent.get(`${period.id}__${studentId}`) || null)
+        .find(Boolean) as BulletinItem | null;
+
+      const gender = getStudentGender({ meta, item: lastItem });
+      if (gender === "F") girls += 1;
+      else boys += 1;
+
+      const annualForcedNc = isAdminAnnualForcedNc(lastItem);
+      const validPeriodAvgs = periodCells.filter((v): v is number => v !== null && Number.isFinite(Number(v)));
+      const annualFromApi = !annualForcedNc ? cleanNumber(lastItem?.annual_avg, 4) : null;
+      const annualAvg =
+        annualFromApi !== null
+          ? annualFromApi
+          : annualForcedNc
+          ? null
+          : validPeriodAvgs.length
+          ? cleanNumber(validPeriodAvgs.reduce((acc, value) => acc + value, 0) / validPeriodAvgs.length, 4)
+          : null;
+
+      const decision = dfaAutoDecision(annualAvg);
+
+      if (annualAvg === null) {
+        nonClassed += 1;
+      } else {
+        const avg = Number(annualAvg);
+        classed += 1;
+        sum += avg;
+
+        if (avg >= 10) {
+          ge10 += 1;
+          admitted += 1;
+          if (gender === "F") ge10Girls += 1;
+          else ge10Boys += 1;
+        } else {
+          lt10 += 1;
+        }
+      }
+
+      if (decision === "examiner") toReview += 1;
+    }
+
+    total.effectif += studentIds.size;
+    total.girls += girls;
+    total.boys += boys;
+    total.classed += classed;
+    total.nonClassed += nonClassed;
+    total.ge10 += ge10;
+    total.ge10Girls += ge10Girls;
+    total.ge10Boys += ge10Boys;
+    total.lt10 += lt10;
+    total.admitted += admitted;
+    total.toReview += toReview;
+    total.repeaters += repeaters;
+    total.excluded += excluded;
+    total.sum += sum;
+
+    rows.push(
+      buildOrderedRow(DESPS_DFA_SUMMARY_HEADERS, {
+        Cycle: classCycleLabel(cls),
+        Niveau: displayLevelForDsps(cls),
+        Série: extractSeriesFromClass(cls),
+        Classe: String(cls.label || cls.code || "Classe"),
+        "Effectif total": studentIds.size,
+        Filles: girls,
+        Garçons: boys,
+        "Classés annuels": classed,
+        "Non classés annuels": nonClassed,
+        "Moy. annuelle >= 10": ge10,
+        "Filles moy. annuelle >= 10": ge10Girls,
+        "Garçons moy. annuelle >= 10": ge10Boys,
+        "Moy. annuelle < 10": lt10,
+        "Admis automatiques": admitted,
+        "À examiner en conseil": toReview,
+        "Redoublants saisis": repeaters,
+        "Exclus saisis": excluded,
+        "Moyenne annuelle classe": classed ? Number((sum / classed).toFixed(2)) : "",
+        "Taux admission automatique %": percent(admitted, classed),
+      })
+    );
+  }
+
+  if (!rows.length) return { error: "NO_EXPORTABLE_DATA", status: 404 };
+
+  rows.sort((a, b) => {
+    const cycleCmp = String(a.Cycle || "").localeCompare(String(b.Cycle || ""), "fr", {
+      numeric: true,
+      sensitivity: "base",
+    });
+    if (cycleCmp !== 0) return cycleCmp;
+    const levelCmp = String(a.Niveau || "").localeCompare(String(b.Niveau || ""), "fr", {
+      numeric: true,
+      sensitivity: "base",
+    });
+    if (levelCmp !== 0) return levelCmp;
+    return String(a.Classe || "").localeCompare(String(b.Classe || ""), "fr", {
+      numeric: true,
+      sensitivity: "base",
+    });
+  });
+
+  rows.push(
+    buildOrderedRow(DESPS_DFA_SUMMARY_HEADERS, {
+      Cycle: "TOTAL",
+      Niveau: "TOTAL",
+      Série: "",
+      Classe: "Toutes les classes",
+      "Effectif total": total.effectif,
+      Filles: total.girls,
+      Garçons: total.boys,
+      "Classés annuels": total.classed,
+      "Non classés annuels": total.nonClassed,
+      "Moy. annuelle >= 10": total.ge10,
+      "Filles moy. annuelle >= 10": total.ge10Girls,
+      "Garçons moy. annuelle >= 10": total.ge10Boys,
+      "Moy. annuelle < 10": total.lt10,
+      "Admis automatiques": total.admitted,
+      "À examiner en conseil": total.toReview,
+      "Redoublants saisis": total.repeaters,
+      "Exclus saisis": total.excluded,
+      "Moyenne annuelle classe": total.classed ? Number((total.sum / total.classed).toFixed(2)) : "",
+      "Taux admission automatique %": percent(total.admitted, total.classed),
+    })
+  );
+
+  return {
+    filenameBase: [
+      "export-desps-dfa-synthese",
+      toFileSafePart(institutionName || "etablissement"),
+      toFileSafePart(academicYear || "annee"),
+      classes.length === 1 ? toFileSafePart(String(classes[0].label || classes[0].code || "")) : "toutes-classes",
+    ]
+      .filter(Boolean)
+      .join("_"),
+    mainSheetName: "Synthèse DFA",
+    rows,
+  };
+}
+
 function columnWidthForHeader(header: string): number {
   if (header === "N°") return 6;
   if (header.toLowerCase().includes("matricule")) return 18;
@@ -1745,7 +2490,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ ok: false, error: "MISSING_ACADEMIC_YEAR" }, { status: 400 });
   }
 
-  if (!periodRef && exportKind !== "dsps_annual") {
+  if (!periodRef && !["dsps_annual", "desps_dfa_summary"].includes(exportKind)) {
     return NextResponse.json({ ok: false, error: "MISSING_PERIOD_REF" }, { status: 400 });
   }
 
@@ -1753,7 +2498,16 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ ok: false, error: "INVALID_FORMAT" }, { status: 400 });
   }
 
-  if (!["legacy", "dsps_notes", "dsps_annual"].includes(exportKind)) {
+  if (
+    ![
+      "legacy",
+      "dsps_notes",
+      "dsps_annual",
+      "desps_term_summary",
+      "desps_subject_summary",
+      "desps_dfa_summary",
+    ].includes(exportKind)
+  ) {
     return NextResponse.json({ ok: false, error: "INVALID_EXPORT_KIND" }, { status: 400 });
   }
 
@@ -1779,6 +2533,35 @@ export async function GET(req: NextRequest) {
     });
   } else if (exportKind === "dsps_annual") {
     prepared = await prepareDspsAnnualExport({
+      req,
+      supabase,
+      institutionId,
+      institutionName,
+      academicYear,
+      classId,
+    });
+  } else if (exportKind === "desps_term_summary") {
+    prepared = await prepareDespsTermSummaryExport({
+      req,
+      supabase,
+      institutionId,
+      institutionName,
+      academicYear,
+      periodRef,
+      classId,
+    });
+  } else if (exportKind === "desps_subject_summary") {
+    prepared = await prepareDespsSubjectSummaryExport({
+      req,
+      supabase,
+      institutionId,
+      institutionName,
+      academicYear,
+      periodRef,
+      classId,
+    });
+  } else if (exportKind === "desps_dfa_summary") {
+    prepared = await prepareDespsDfaSummaryExport({
       req,
       supabase,
       institutionId,
