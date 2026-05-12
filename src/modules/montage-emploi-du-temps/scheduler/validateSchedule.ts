@@ -704,6 +704,28 @@ export function validateSchedule(
       );
     }
 
+    if (isEpsBlock(block, context)) {
+      const declaredSportsFieldExists = context.rooms.some(
+        (room) => room.roomType === "sports_field",
+      );
+      const placementRoom = context.rooms.find((room) => room.id === placement.roomId);
+
+      if (
+        declaredSportsFieldExists &&
+        placementRoom &&
+        placementRoom.roomType !== "sports_field"
+      ) {
+        warnings.push(
+          makeWarning(
+            "critical",
+            "eps_not_on_field",
+            `${describePlacement(placement, context)} : EPS est placé en ${placementRoom.name} alors qu'un terrain EPS existe. Le moteur doit utiliser le terrain.`,
+            { classId: placement.classId, teacherId: placement.teacherId, roomId: placement.roomId ?? null },
+          ),
+        );
+      }
+    }
+
     if (hasCourseAfterAfternoonEps(placement, placements, context)) {
       warnings.push(
         makeWarning(

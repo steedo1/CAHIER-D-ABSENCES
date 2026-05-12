@@ -149,6 +149,16 @@ export function getFallbackRoomsForBlock(
   block: LessonBlock,
   context: SchedulerContext,
 ): Room[] {
+  // Règle terrain stricte : si un terrain EPS existe, l'EPS ne doit pas être
+  // basculé en salle ordinaire. Le fallback EPS ne sert que lorsqu'aucun terrain
+  // n'a été déclaré dans l'établissement.
+  if (
+    block.roomTypeRequired === "sports_field" &&
+    hasRoomTypeAvailable("sports_field", context)
+  ) {
+    return [];
+  }
+
   if (!block.roomTypeRequired || !canUseOrdinaryRoomFallback(block.roomTypeRequired, context)) {
     return [];
   }

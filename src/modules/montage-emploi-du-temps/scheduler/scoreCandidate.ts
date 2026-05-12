@@ -955,7 +955,11 @@ function startsEmptyClassDayOutsideMorning(
   }
 
   const halfDay = getCandidatePrimaryHalfDay(candidate, context);
-  return halfDay !== null && halfDay !== "morning";
+  const range = getCandidateTimeRange(candidate, context);
+
+  // On n'interdit pas l'après-midi. On évite surtout de créer une journée qui
+  // commence en fin de journée ou en soirée.
+  return halfDay === "evening" || Boolean(range && range.start >= 16 * 60);
 }
 
 function getProjectedClassDaySpreadPenalty(
@@ -988,7 +992,8 @@ function getProjectedClassDaySpreadPenalty(
 
   // Même sans double vacation, le moteur doit compacter les cours de la classe.
   // Les grands écarts entre matin/après-midi/soir créent les trous visibles sur les fiches.
-  return holesInsideDay * 4800 + Math.max(0, span - 6) * 420 + last * 90;
+  // On pénalise les trous plus que l'heure de début afin de ne pas bourrer mécaniquement les matinées.
+  return holesInsideDay * 7200 + Math.max(0, span - 5) * 760 + last * 25;
 }
 
 function getLateDayPenalty(
@@ -999,24 +1004,26 @@ function getLateDayPenalty(
 ): number {
   const halfDay = getCandidatePrimaryHalfDay(candidate, context);
   const range = getCandidateTimeRange(candidate, context);
-  let penalty = getCandidateStartPosition(candidate, context) * 190;
+  let penalty = getCandidateStartPosition(candidate, context) * 35;
 
   if (halfDay === "afternoon") {
-    penalty += 700;
+    penalty += 120;
   }
 
   if (halfDay === "evening") {
-    penalty += 36000;
+    penalty += 28000;
   }
 
   if (range) {
-    if (range.start >= 16 * 60) penalty += 28000;
-    else if (range.start >= 15 * 60) penalty += 12000;
-    else if (range.start >= 14 * 60) penalty += 2600;
+    if (range.start >= 16 * 60) penalty += 18000;
+    else if (range.start >= 15 * 60) penalty += 5200;
+    else if (range.start >= 14 * 60) penalty += 420;
   }
 
   if (halfDay && !classHasCourseOnDay(block.classId, candidate.dayIndex, placements)) {
-    if (halfDay === "afternoon") penalty += 9000;
+    // Une journée peut commencer l'après-midi si cela évite des trous.
+    // En revanche, commencer une journée en fin de journée reste un très mauvais choix.
+    if (halfDay === "afternoon") penalty += 180;
     if (halfDay === "evening") penalty += 24000;
   }
 
@@ -1024,7 +1031,7 @@ function getLateDayPenalty(
     halfDay === "evening" &&
     !classHasCourseInHalfDay(block.classId, candidate.dayIndex, halfDay, placements, context)
   ) {
-    penalty += 18000;
+    penalty += 22000;
   }
 
   return penalty;
@@ -1078,7 +1085,7 @@ function createsIsolatedHalfDay(
     }
   }
 
-  return projectedHalfDayUnits <= 1;
+  return candidate.durationUnits <= 1 && projectedHalfDayUnits <= 1;
 }
 
 

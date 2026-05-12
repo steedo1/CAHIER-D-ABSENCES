@@ -809,9 +809,14 @@ function runGenerationAttempt(
     consumedBlockIds.add(block.id);
   }
 
-  const finalPlacements = options.repairGaps
+  const gapRepairedPlacements = options.repairGaps
     ? compactStudentGaps(placements, context, lessonBlocks, attempt.seed)
     : placements;
+
+  const finalPlacements = options.repairGaps
+    ? compactSingleHourReturns(gapRepairedPlacements, context, lessonBlocks, attempt.seed)
+    : gapRepairedPlacements;
+
   const warnings = validateSchedule(
     finalPlacements,
     unplacedBlocks,
@@ -939,12 +944,14 @@ function getEmergencyRoomsForBlock(
   // Secours EPS : si le terrain existe, on le garde toujours comme espace possible.
   // Le terrain est partageable ; la surcharge se colore au lieu de laisser le cours dehors.
   if (isEpsBlock(block, context)) {
-    pushRooms(getRoomsByType("sports_field", context));
+    const sportsFields = getRoomsByType("sports_field", context);
+    pushRooms(sportsFields);
 
-    if (canUseOrdinaryRoomFallback("sports_field", context)) {
+    if (sportsFields.length === 0 && canUseOrdinaryRoomFallback("sports_field", context)) {
       pushRooms(getOrdinaryFallbackRoomsForClass(block.classId, context));
     }
   }
+
 
   // Secours P.C/SVT : si la ressource spécialisée est absente/saturée, on tente la salle ordinaire
   // seulement comme dernier filet de sécurité. Si aucun labo n’existe, c’est un fonctionnement normal.
