@@ -15,6 +15,7 @@ import {
   PlusCircle,
   RefreshCw,
   School,
+  Trash2,
   Users,
 } from "lucide-react";
 import type { MontageBootstrapResponse } from "../types";
@@ -50,6 +51,10 @@ type ProjectsResponse =
 
 type GenerateResponse =
   | { ok: true; item: MontageProject; result: EngineResult; message?: string }
+  | { ok: false; error: string; message?: string };
+
+type DeleteResponse =
+  | { ok: true; deleted_id?: string; deleted_count?: number; message?: string }
   | { ok: false; error: string; message?: string };
 
 function StatCard({
@@ -109,6 +114,7 @@ export default function MontageWorkspace() {
   const [projectsLoading, setProjectsLoading] = React.useState(false);
   const [creatingDraft, setCreatingDraft] = React.useState(false);
   const [generatingId, setGeneratingId] = React.useState<string | null>(null);
+  const [deletingId, setDeletingId] = React.useState<string | null>(null);
   const [successMessage, setSuccessMessage] = React.useState<string | null>(null);
   const [projectError, setProjectError] = React.useState<string | null>(null);
 
@@ -248,6 +254,43 @@ export default function MontageWorkspace() {
     }
   }, [loadProjects]);
 
+  const deleteProject = React.useCallback(async (project: MontageProject) => {
+    if (project.status === "published") {
+      setProjectError("Un emploi du temps publié ne peut pas être supprimé depuis les brouillons.");
+      return;
+    }
+
+    const ok = window.confirm(`Supprimer définitivement le brouillon « ${project.name} » ?`);
+    if (!ok) return;
+
+    setDeletingId(project.id);
+    setSuccessMessage(null);
+    setProjectError(null);
+
+    try {
+      const res = await fetch(`/api/admin/montage-emploi-du-temps/projects/${project.id}`, {
+        method: "DELETE",
+      });
+      const json = (await res.json().catch(() => null)) as DeleteResponse | null;
+
+      if (!json) {
+        setProjectError("Réponse serveur invalide pendant la suppression du brouillon.");
+        return;
+      }
+      if (!json.ok) {
+        setProjectError(json.message || json.error);
+        return;
+      }
+
+      setSuccessMessage(json.message || "Brouillon supprimé.");
+      await loadProjects();
+    } catch (error) {
+      setProjectError(error instanceof Error ? error.message : "Impossible de supprimer le brouillon.");
+    } finally {
+      setDeletingId(null);
+    }
+  }, [loadProjects]);
+
   const isReady = data?.ok === true;
   const serviceCount = data?.ok ? data.service_assignments.length : 0;
   const readyServiceCount = data?.ok ? data.service_assignments.filter((item) => item.is_ready).length : 0;
@@ -343,8 +386,23 @@ export default function MontageWorkspace() {
                         <div key={project.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
                           <div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="font-bold text-slate-950">{project.name}</p><p className="mt-1 text-xs text-slate-500">Modifié le {formatDate(project.updated_at)}</p></div><span className="rounded-full bg-white px-3 py-1 text-xs font-black uppercase tracking-wide text-slate-600 ring-1 ring-slate-200">{getStatusLabel(project.status)}</span></div>
                           {summary && <div className="mt-4 grid grid-cols-3 gap-2 text-center text-xs"><div className="rounded-xl bg-white px-2 py-2 ring-1 ring-slate-200"><p className="font-black text-slate-950">{summary.assignments_count ?? 0}</p><p className="text-slate-500">Lignes</p></div><div className="rounded-xl bg-white px-2 py-2 ring-1 ring-slate-200"><p className="font-black text-slate-950">{summary.unplaced_count ?? 0}</p><p className="text-slate-500">Non placés</p></div><div className="rounded-xl bg-white px-2 py-2 ring-1 ring-slate-200"><p className="font-black text-slate-950">{summary.score ?? 0}%</p><p className="text-slate-500">Score</p></div></div>}
-                          <button type="button" onClick={() => void generateProject(project)} disabled={!canGenerate || generatingId === project.id} className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-slate-950 px-4 py-3 text-sm font-black text-white shadow-sm transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60">{generatingId === project.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <PlayCircle className="h-4 w-4" />}{project.status === "ready" ? "Regénérer avec HoraClasse" : "Générer avec HoraClasse"}</button>
-                          <Link href={`/admin/montage-emploi-du-temps/projets/${project.id}`} className="mt-3 inline-flex w-full items-center justify-center rounded-2xl bg-emerald-600 px-4 py-3 text-sm font-black text-white shadow-sm transition hover:bg-emerald-700">Voir l’emploi du temps</Link>
+                          <button type="button" onClick={() => void generateProject(project)} disabled={!canGenerate || generatingId === project.id || Boolean(deletingId)} className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-slate-950 px-4 py-3 text-sm font-black text-white shadow-sm transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60">{generatingId === project.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <PlayCircle className="h-4 w-4" />}{project.status === "ready" ? "Regénérer avec HoraClasse" : "Générer avec HoraClasse"}</button>
+                          <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                            <Link href={`/admin/montage-emploi-du-temps/projets/${project.id}`} className="inline-flex w-full items-center justify-center rounded-2xl bg-emerald-600 px-4 py-3 text-sm font-black text-white shadow-sm transition hover:bg-emerald-700">Voir l’emploi du temps</Link>
+                            <button
+                              type="button"
+                              onClick={() => void deleteProject(project)}
+                              disabled={project.status === "published" || deletingId === project.id || Boolean(generatingId)}
+                              className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-white px-4 py-3 text-sm font-black text-red-700 ring-1 ring-red-200 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                              {deletingId === project.id ? (
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                              ) : (
+                                <Trash2 className="h-4 w-4" />
+                              )}
+                              Supprimer
+                            </button>
+                          </div>
                         </div>
                       );
                     })}

@@ -40,3 +40,41 @@ export async function GET(_req: NextRequest, context: { params: Promise<{ id: st
     return NextResponse.json({ ok: false, error: "server_error", message: error instanceof Error ? error.message : "Erreur serveur." }, { status: 500 });
   }
 }
+
+export async function DELETE(_req: NextRequest, context: { params: Promise<{ id: string }> }) {
+  try {
+    const guard = await guardAdmin();
+    if (!guard.ok) return guard.response;
+
+    const { id } = await context.params;
+    const projectId = String(id || "").trim();
+
+    if (!projectId) {
+      return NextResponse.json({ ok: false, error: "missing_project_id", message: "Identifiant manquant." }, { status: 400 });
+    }
+
+    const { data: project, error: fetchError } = await guard.srv
+      .from("montage_timetable_projects")
+      .select("id,status,published_at")
+      .eq("id", projectId)
+      .eq("institution_id", guard.institutionId)
+      .maybeSingle();
+
+    if (fetchError) return NextResponse.json({ ok: false, error: "project_fetch_failed", message: fetchError.message }, { status: 400 });
+    if (!project) return NextResponse.json({ ok: false, error: "project_not_found", message: "Brouillon introuvable." }, { status: 404 });
+    if (project.status === "published" || project.published_at) {
+      return NextResponse.json({ ok: false, error: "project_published", message: "Un emploi du temps publié ne peut pas être supprimé depuis les brouillons." }, { status: 409 });
+    }
+
+    const { error: deleteError } = await guard.srv
+      .from("montage_timetable_projects")
+      .delete()
+      .eq("id", projectId)
+      .eq("institution_id", guard.institutionId);
+
+    if (deleteError) return NextResponse.json({ ok: false, error: "project_delete_failed", message: deleteError.message }, { status: 400 });
+    return NextResponse.json({ ok: true, deleted_id: projectId, message: "Brouillon supprimé." });
+  } catch (error) {
+    return NextResponse.json({ ok: false, error: "server_error", message: error instanceof Error ? error.message : "Erreur serveur." }, { status: 500 });
+  }
+}

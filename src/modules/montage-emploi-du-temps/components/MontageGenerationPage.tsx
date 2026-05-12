@@ -19,6 +19,7 @@ import {
   RefreshCw,
   School,
   ShieldCheck,
+  Trash2,
   Users,
   Wand2,
 } from "lucide-react";
@@ -96,6 +97,10 @@ type ProjectCreateResponse =
 
 type GenerateResponse =
   | { ok: true; item: Project; result: EngineResult; message?: string }
+  | { ok: false; error: string; message?: string };
+
+type DeleteResponse =
+  | { ok: true; deleted_id?: string; deleted_count?: number; message?: string }
   | { ok: false; error: string; message?: string };
 
 type CheckStatus = "ready" | "warning" | "blocked";
@@ -255,6 +260,7 @@ export default function MontageGenerationPage() {
   const [projectsLoading, setProjectsLoading] = React.useState(false);
   const [creating, setCreating] = React.useState(false);
   const [generatingId, setGeneratingId] = React.useState<string | null>(null);
+  const [deletingId, setDeletingId] = React.useState<string | null>(null);
   const [notice, setNotice] = React.useState<string | null>(null);
   const [error, setError] = React.useState<string | null>(null);
 
@@ -409,6 +415,43 @@ export default function MontageGenerationPage() {
       setError(err instanceof Error ? err.message : "Impossible de générer ce brouillon.");
     } finally {
       setGeneratingId(null);
+    }
+  }, [loadProjects]);
+
+  const deleteProject = React.useCallback(async (project: Project) => {
+    if (project.status === "published") {
+      setError("Un emploi du temps publié ne peut pas être supprimé depuis les brouillons.");
+      return;
+    }
+
+    const ok = window.confirm(`Supprimer définitivement le brouillon « ${project.name} » ?`);
+    if (!ok) return;
+
+    setDeletingId(project.id);
+    setError(null);
+    setNotice(null);
+
+    try {
+      const res = await fetch(`/api/admin/montage-emploi-du-temps/projects/${project.id}`, {
+        method: "DELETE",
+      });
+      const json = (await res.json().catch(() => null)) as DeleteResponse | null;
+
+      if (!json) {
+        setError("Réponse serveur invalide pendant la suppression du brouillon.");
+        return;
+      }
+      if (!json.ok) {
+        setError(json.message || json.error);
+        return;
+      }
+
+      setNotice(json.message || "Brouillon supprimé.");
+      await loadProjects();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Impossible de supprimer le brouillon.");
+    } finally {
+      setDeletingId(null);
     }
   }, [loadProjects]);
 
@@ -625,11 +668,11 @@ export default function MontageGenerationPage() {
                             </div>
                           </div>
 
-                          <div className="mt-4 grid gap-2 sm:grid-cols-2">
+                          <div className="mt-4 grid gap-2 sm:grid-cols-3">
                             <button
                               type="button"
                               onClick={() => void generateExistingProject(project)}
-                              disabled={!canRegenerate || Boolean(generatingId)}
+                              disabled={!canRegenerate || Boolean(generatingId) || Boolean(deletingId)}
                               className="inline-flex items-center justify-center gap-2 rounded-2xl bg-slate-950 px-4 py-3 text-sm font-black text-white shadow-sm transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
                             >
                               {generatingId === project.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <PlayCircle className="h-4 w-4" />}
@@ -642,6 +685,19 @@ export default function MontageGenerationPage() {
                               <Eye className="h-4 w-4" />
                               Voir
                             </Link>
+                            <button
+                              type="button"
+                              onClick={() => void deleteProject(project)}
+                              disabled={project.status === "published" || deletingId === project.id || Boolean(generatingId)}
+                              className="inline-flex items-center justify-center gap-2 rounded-2xl bg-white px-4 py-3 text-sm font-black text-red-700 ring-1 ring-red-200 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                              {deletingId === project.id ? (
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                              ) : (
+                                <Trash2 className="h-4 w-4" />
+                              )}
+                              Supprimer
+                            </button>
                           </div>
                         </div>
                       );
