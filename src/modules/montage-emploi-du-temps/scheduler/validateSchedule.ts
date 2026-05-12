@@ -8,6 +8,7 @@ import type {
   SessionPeriod,
 } from "./types";
 import { breakCutsBlock, roomMatchesRequirement } from "./hardRules";
+import { getAceTeacherLevelWarnings } from "./aceRules";
 import {
   canUseOrdinaryRoomFallback,
   candidateHitsClosedSchoolPeriod,
@@ -840,6 +841,17 @@ export function validateSchedule(
         ),
       );
     }
+  }
+
+  for (const teacherDetail of getAceTeacherLevelWarnings(placements, context)) {
+    warnings.push(
+      makeWarning(
+        "info",
+        "ace_teacher_too_many_levels",
+        `${getTeacherLabel(teacherDetail.teacherId, context)} : ${teacherDetail.levelCount} niveaux détectés (${teacherDetail.levels.join(", ")}). ACE recommande d’éviter plus de 3 niveaux, sauf EDHC/AP/Musique.`,
+        { teacherId: teacherDetail.teacherId },
+      ),
+    );
   }
 
   for (const schoolClass of context.classes) {

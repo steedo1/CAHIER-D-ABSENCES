@@ -9,4 +9,5 @@ export * from "./validateSchedule";
 export * from "./generateTimetable";
 export * from "./demoContext";
 export * from "./terrainRules";
+export * from "./aceRules";
 export * from "./tandemScience";

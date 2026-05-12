@@ -7,6 +7,7 @@ import type {
   SessionPeriod,
 } from "./types";
 import { getPeriodsForCandidate } from "./hardRules";
+import { getAceCandidatePenalty } from "./aceRules";
 import {
   canUseOrdinaryRoomFallback,
   getCandidateTimeRange,
@@ -1016,6 +1017,7 @@ export function scoreCandidate(
   const seed = options.seed ?? 0;
 
   score += getSpecializedRoomFallbackPenalty(block, candidate, context);
+  score += getAceCandidatePenalty(block, candidate, context, placements);
 
   // Répartition réelle : éviter l’effet “je remplis le premier jour disponible”.
   score += getProjectedClassDayLoadPenalty(block, candidate, context, placements);

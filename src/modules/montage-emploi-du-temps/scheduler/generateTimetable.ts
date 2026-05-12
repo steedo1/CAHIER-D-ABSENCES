@@ -43,8 +43,10 @@ import {
 } from "./tandemScience";
 import { createId } from "./utils";
 import { computeGlobalScore, validateSchedule } from "./validateSchedule";
+import { getAceDifficultyBoost, getAceSubjectPlacementPriority } from "./aceRules";
 
 type BlockOrderStrategy =
+  | "ace_priority"
   | "difficulty"
   | "class_spread"
   | "subject_spread"
@@ -148,6 +150,7 @@ function getBlockDifficulty(
   }
 
   score += countTeacherStrictUnavailability(block.teacherId, context) * 12;
+  score += getAceDifficultyBoost(block, context);
 
   return score;
 }
@@ -173,6 +176,15 @@ function compareWithSeed(
 ): number {
   const difficultyDelta =
     getBlockDifficulty(b, context) - getBlockDifficulty(a, context);
+
+  if (attempt.strategy === "ace_priority") {
+    const aceDelta =
+      getAceSubjectPlacementPriority(a, context) -
+      getAceSubjectPlacementPriority(b, context);
+
+    if (aceDelta !== 0) return aceDelta;
+    if (difficultyDelta !== 0) return difficultyDelta;
+  }
 
   if (attempt.strategy === "difficulty" && difficultyDelta !== 0) {
     return difficultyDelta;
@@ -819,6 +831,7 @@ function runGenerationAttempt(
 function buildAttempts(context: SchedulerContext): GenerationAttempt[] {
   const rules = getTerrainRules(context);
   const strategies: BlockOrderStrategy[] = [
+    "ace_priority",
     "difficulty",
     "duration_first",
     "class_spread",
@@ -1034,8 +1047,14 @@ function placeRemainingMandatoryBlocks(
 
   // Les blocs les plus sensibles sont secourus en premier.
   const ordered = [...unplacedBlocks].sort((a, b) => {
-    const aPriority = isEpsBlock(a, context) ? 0 : isPcSvtBlock(a) ? 1 : 2;
-    const bPriority = isEpsBlock(b, context) ? 0 : isPcSvtBlock(b) ? 1 : 2;
+    const aPriority = Math.min(
+      getAceSubjectPlacementPriority(a, context),
+      isEpsBlock(a, context) ? 0 : isPcSvtBlock(a) ? 1 : 20,
+    );
+    const bPriority = Math.min(
+      getAceSubjectPlacementPriority(b, context),
+      isEpsBlock(b, context) ? 0 : isPcSvtBlock(b) ? 1 : 20,
+    );
 
     if (aPriority !== bPriority) return aPriority - bPriority;
     return b.durationUnits - a.durationUnits;
