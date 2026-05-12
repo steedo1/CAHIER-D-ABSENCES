@@ -784,9 +784,9 @@ export function validateSchedule(
       const firstPlacement = sameSubjectPlacements[0];
       warnings.push(
         makeWarning(
-          "info",
+          "warning",
           "same_subject_same_day",
-          `${getClassLabel(firstPlacement.classId, context)} — ${getSubjectLabel(firstPlacement.subjectId, context)} : matière présente en ${continuousGroups.length} séances non consécutives le même jour. Case(s) à vérifier seulement si ce n’est pas volontaire.`,
+          `${getClassLabel(firstPlacement.classId, context)} — ${getSubjectLabel(firstPlacement.subjectId, context)} : matière présente en ${continuousGroups.length} séances non consécutives le même jour. ACE recommande de former un bloc consécutif ou de répartir sur un autre jour.`,
           {
             classId: firstPlacement.classId,
             teacherId: firstPlacement.teacherId,

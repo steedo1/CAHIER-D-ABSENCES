@@ -263,7 +263,7 @@ export function getAceCandidatePenalty(
 
   if (hasAceSeparatedSameSubjectSameDay(block, candidate, placements)) {
     // Deux heures consécutives restent normales ; seule la reprise séparée est pénalisée.
-    penalty += 7600;
+    penalty += 125000;
   }
 
   if (createsThreeHeavyCoursesInARow(block, candidate, context, placements)) {

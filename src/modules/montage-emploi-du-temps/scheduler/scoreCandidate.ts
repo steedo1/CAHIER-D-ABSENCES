@@ -7,7 +7,7 @@ import type {
   SessionPeriod,
 } from "./types";
 import { getPeriodsForCandidate } from "./hardRules";
-import { getAceCandidatePenalty } from "./aceRules";
+import { getAceCandidatePenalty, hasAceSeparatedSameSubjectSameDay } from "./aceRules";
 import {
   canUseOrdinaryRoomFallback,
   getCandidateTimeRange,
@@ -887,6 +887,170 @@ function getProjectedClassDayLoadPenalty(
   return Math.max(0, candidateLoad - average) * 55;
 }
 
+
+function getTeachingPeriodIndexes(context: SchedulerContext): number[] {
+  return context.periods
+    .filter((period) => period.isTeachingPeriod)
+    .sort((a, b) => a.periodIndex - b.periodIndex)
+    .map((period) => period.periodIndex);
+}
+
+function getCandidatePrimaryHalfDay(
+  candidate: CandidateSlot,
+  context: SchedulerContext,
+): HalfDay | null {
+  return getPeriodsForCandidate(candidate, context)[0]?.halfDay ?? null;
+}
+
+function getCandidateStartPosition(
+  candidate: CandidateSlot,
+  context: SchedulerContext,
+): number {
+  const teachingIndexes = getTeachingPeriodIndexes(context);
+  const position = teachingIndexes.indexOf(candidate.startPeriodIndex);
+  return position >= 0 ? position : teachingIndexes.length;
+}
+
+function classHasCourseOnDay(
+  classId: string,
+  dayIndex: number,
+  placements: Placement[],
+): boolean {
+  return placements.some(
+    (placement) => placement.classId === classId && placement.dayIndex === dayIndex,
+  );
+}
+
+function classHasCourseInHalfDay(
+  classId: string,
+  dayIndex: number,
+  halfDay: HalfDay,
+  placements: Placement[],
+  context: SchedulerContext,
+): boolean {
+  return placements.some((placement) => {
+    if (placement.classId !== classId || placement.dayIndex !== dayIndex) {
+      return false;
+    }
+
+    return getPeriodByIndex(placement.startPeriodIndex, context)?.halfDay === halfDay;
+  });
+}
+
+function isLateCandidate(candidate: CandidateSlot, context: SchedulerContext): boolean {
+  const halfDay = getCandidatePrimaryHalfDay(candidate, context);
+  const range = getCandidateTimeRange(candidate, context);
+
+  return halfDay === "evening" || Boolean(range && range.start >= 15 * 60);
+}
+
+function startsEmptyClassDayOutsideMorning(
+  block: LessonBlock,
+  candidate: CandidateSlot,
+  context: SchedulerContext,
+  placements: Placement[],
+): boolean {
+  if (classHasCourseOnDay(block.classId, candidate.dayIndex, placements)) {
+    return false;
+  }
+
+  const halfDay = getCandidatePrimaryHalfDay(candidate, context);
+  return halfDay !== null && halfDay !== "morning";
+}
+
+function getProjectedClassDaySpreadPenalty(
+  block: LessonBlock,
+  candidate: CandidateSlot,
+  context: SchedulerContext,
+  placements: Placement[],
+): number {
+  const teachingIndexes = getTeachingPeriodIndexes(context);
+  const occupied = getOccupiedPeriodsForClassDay(
+    block.classId,
+    candidate.dayIndex,
+    placements,
+    context,
+    candidate,
+  );
+  const positions = Array.from(occupied)
+    .map((periodIndex) => teachingIndexes.indexOf(periodIndex))
+    .filter((position) => position >= 0)
+    .sort((a, b) => a - b);
+
+  if (positions.length <= 1) {
+    return getCandidateStartPosition(candidate, context) * 130;
+  }
+
+  const first = positions[0];
+  const last = positions[positions.length - 1];
+  const span = last - first + 1;
+  const holesInsideDay = Math.max(0, span - positions.length);
+
+  // Même sans double vacation, le moteur doit compacter les cours de la classe.
+  // Les grands écarts entre matin/après-midi/soir créent les trous visibles sur les fiches.
+  return holesInsideDay * 4800 + Math.max(0, span - 6) * 420 + last * 90;
+}
+
+function getLateDayPenalty(
+  block: LessonBlock,
+  candidate: CandidateSlot,
+  context: SchedulerContext,
+  placements: Placement[],
+): number {
+  const halfDay = getCandidatePrimaryHalfDay(candidate, context);
+  const range = getCandidateTimeRange(candidate, context);
+  let penalty = getCandidateStartPosition(candidate, context) * 190;
+
+  if (halfDay === "afternoon") {
+    penalty += 700;
+  }
+
+  if (halfDay === "evening") {
+    penalty += 36000;
+  }
+
+  if (range) {
+    if (range.start >= 16 * 60) penalty += 28000;
+    else if (range.start >= 15 * 60) penalty += 12000;
+    else if (range.start >= 14 * 60) penalty += 2600;
+  }
+
+  if (halfDay && !classHasCourseOnDay(block.classId, candidate.dayIndex, placements)) {
+    if (halfDay === "afternoon") penalty += 9000;
+    if (halfDay === "evening") penalty += 24000;
+  }
+
+  if (
+    halfDay === "evening" &&
+    !classHasCourseInHalfDay(block.classId, candidate.dayIndex, halfDay, placements, context)
+  ) {
+    penalty += 18000;
+  }
+
+  return penalty;
+}
+
+function getLowestClassDaySpreadCandidates(
+  block: LessonBlock,
+  candidates: CandidateSlot[],
+  placements: Placement[],
+  context: SchedulerContext,
+): CandidateSlot[] {
+  if (candidates.length <= 1) {
+    return candidates;
+  }
+
+  const scored = candidates.map((candidate) => ({
+    candidate,
+    spread: getProjectedClassDaySpreadPenalty(block, candidate, context, placements),
+  }));
+  const minSpread = Math.min(...scored.map((item) => item.spread));
+
+  return scored
+    .filter((item) => item.spread === minSpread)
+    .map((item) => item.candidate);
+}
+
 function createsIsolatedHalfDay(
   block: LessonBlock,
   candidate: CandidateSlot,
@@ -1018,6 +1182,8 @@ export function scoreCandidate(
 
   score += getSpecializedRoomFallbackPenalty(block, candidate, context);
   score += getAceCandidatePenalty(block, candidate, context, placements);
+  score += getLateDayPenalty(block, candidate, context, placements);
+  score += getProjectedClassDaySpreadPenalty(block, candidate, context, placements);
 
   // Répartition réelle : éviter l’effet “je remplis le premier jour disponible”.
   score += getProjectedClassDayLoadPenalty(block, candidate, context, placements);
@@ -1155,6 +1321,27 @@ export function chooseBestCandidate(
   // Ces filtres ne bloquent jamais inutilement : ils s’appliquent seulement
   // lorsqu’une alternative existe. Cela transforme les règles terrain en vrai
   // comportement moteur, sans devenir des normes administratives rigides.
+  viable = filterWhenPossible(
+    viable,
+    (candidate) => !startsEmptyClassDayOutsideMorning(block, candidate, context, placements),
+  );
+
+  viable = filterWhenPossible(
+    viable,
+    (candidate) => !isLateCandidate(candidate, context),
+  );
+
+  // Règle ACE prioritaire : une matière peut former un bloc consécutif,
+  // mais elle ne doit pas revenir plus tard dans la même journée si une
+  // autre position existe. Ce filtre passe avant le compactage, sinon le
+  // moteur peut choisir un créneau “compact” mais pédagogiquement faux.
+  viable = filterWhenPossible(
+    viable,
+    (candidate) => !hasAceSeparatedSameSubjectSameDay(block, candidate, placements),
+  );
+
+  viable = getLowestClassDaySpreadCandidates(block, viable, placements, context);
+
   if (isEpsBlock(block, context) && rules.epsHotHourMode !== "disabled") {
     viable = filterWhenPossible(
       viable,
@@ -1213,6 +1400,10 @@ export function chooseBestCandidate(
     .sort((a, b) => {
       if (a.score !== b.score) {
         return a.score - b.score;
+      }
+
+      if (a.candidate.startPeriodIndex !== b.candidate.startPeriodIndex) {
+        return a.candidate.startPeriodIndex - b.candidate.startPeriodIndex;
       }
 
       const seed = options.seed ?? 0;
