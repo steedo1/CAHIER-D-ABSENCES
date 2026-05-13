@@ -44,11 +44,177 @@ type IncomingComponent = {
   is_active?: boolean | null;
 };
 
+const OFFICIAL_TRACK_CODES = [
+  "6eme",
+  "5eme",
+  "4eme",
+  "3eme",
+  "2ndeA",
+  "2ndeC",
+  "1ereA1",
+  "1ereA2",
+  "1ereC",
+  "1ereD",
+  "tleA1",
+  "tleA2",
+  "tleC",
+  "tleD",
+] as const;
+
+type OfficialTrackCode = (typeof OFFICIAL_TRACK_CODES)[number];
+
+function normalizeText(value: unknown) {
+  return String(value ?? "")
+    .trim()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "");
+}
+
+function isOfficialTrackCode(value: string): value is OfficialTrackCode {
+  return (OFFICIAL_TRACK_CODES as readonly string[]).includes(value);
+}
+
+function normalizeOfficialTrackCode(value: unknown): OfficialTrackCode | null {
+  const raw = String(value ?? "").trim();
+  if (isOfficialTrackCode(raw)) return raw;
+
+  const normalized = normalizeText(raw);
+  const exactByNormalized: Record<string, OfficialTrackCode> = {
+    "6EME": "6eme",
+    "6E": "6eme",
+    SIXIEME: "6eme",
+    "5EME": "5eme",
+    "5E": "5eme",
+    CINQUIEME: "5eme",
+    "4EME": "4eme",
+    "4E": "4eme",
+    QUATRIEME: "4eme",
+    "3EME": "3eme",
+    "3E": "3eme",
+    TROISIEME: "3eme",
+    "2NDEA": "2ndeA",
+    SECONDEA: "2ndeA",
+    "2A": "2ndeA",
+    "2NDEC": "2ndeC",
+    SECONDEC: "2ndeC",
+    "2C": "2ndeC",
+    "1EREA1": "1ereA1",
+    PREMIEREA1: "1ereA1",
+    "1EREA2": "1ereA2",
+    PREMIEREA2: "1ereA2",
+    "1EREC": "1ereC",
+    PREMIEREC: "1ereC",
+    "1C": "1ereC",
+    "1ERED": "1ereD",
+    PREMIERED: "1ereD",
+    "1D": "1ereD",
+    TLEA1: "tleA1",
+    TERMINALEA1: "tleA1",
+    TLEA2: "tleA2",
+    TERMINALEA2: "tleA2",
+    TLEC: "tleC",
+    TERMINALEC: "tleC",
+    TC: "tleC",
+    TLED: "tleD",
+    TERMINALED: "tleD",
+    TD: "tleD",
+  };
+
+  if (exactByNormalized[normalized]) return exactByNormalized[normalized];
+
+  if (/^6/.test(normalized)) return "6eme";
+  if (/^5/.test(normalized)) return "5eme";
+  if (/^4/.test(normalized)) return "4eme";
+  if (/^3/.test(normalized)) return "3eme";
+  if (/^(2NDEA|2A|SECONDEA)/.test(normalized)) return "2ndeA";
+  if (/^(2NDEC|2C|SECONDEC)/.test(normalized)) return "2ndeC";
+  if (/^(1D|1ERED|PREMIERED)/.test(normalized)) return "1ereD";
+  if (/^(1C|1EREC|PREMIEREC)/.test(normalized)) return "1ereC";
+  if (/^(1A|1EREA|PREMIEREA)/.test(normalized)) return "1ereA2";
+  if (/^(TLED|TD|TERMINALED)/.test(normalized)) return "tleD";
+  if (/^(TLEC|TC|TERMINALEC)/.test(normalized)) return "tleC";
+  if (/^(TLEA|TA|TERMINALEA)/.test(normalized)) return "tleA2";
+
+  return null;
+}
+
+function canonicalLevel(value: unknown): string | null {
+  const raw = String(value ?? "").trim();
+  if (!raw) return null;
+  return normalizeOfficialTrackCode(raw) || raw;
+}
+
+function equivalentLegacyLevels(level: string | null) {
+  if (!level) return [];
+  const out = new Set<string>([level]);
+  switch (level) {
+    case "6eme":
+      out.add("6e");
+      out.add("6ème");
+      break;
+    case "5eme":
+      out.add("5e");
+      out.add("5ème");
+      break;
+    case "4eme":
+      out.add("4e");
+      out.add("4ème");
+      break;
+    case "3eme":
+      out.add("3e");
+      out.add("3ème");
+      break;
+    case "2ndeA":
+      out.add("2A");
+      out.add("2nde A");
+      out.add("Seconde A");
+      break;
+    case "2ndeC":
+      out.add("2C");
+      out.add("2nde C");
+      out.add("Seconde C");
+      break;
+    case "1ereA2":
+      out.add("1A");
+      out.add("1ère A");
+      out.add("Première A");
+      break;
+    case "1ereC":
+      out.add("1C");
+      out.add("1ère C");
+      out.add("Première C");
+      break;
+    case "1ereD":
+      out.add("1D");
+      out.add("1ère D");
+      out.add("Première D");
+      break;
+    case "tleA2":
+      out.add("TA");
+      out.add("Tle A");
+      out.add("Terminale A");
+      break;
+    case "tleC":
+      out.add("TC");
+      out.add("Tle C");
+      out.add("Terminale C");
+      break;
+    case "tleD":
+      out.add("TD");
+      out.add("Tle D");
+      out.add("Terminale D");
+      break;
+  }
+  return Array.from(out);
+}
+
 /* ───────── Helper auth admin ───────── */
 
 async function guard(
   supa: SupabaseClient,
-  srv: SupabaseClient
+  srv: SupabaseClient,
 ): Promise<GuardOk | GuardErr> {
   const {
     data: { user },
@@ -72,7 +238,7 @@ async function guard(
       .eq("profile_id", user.id);
 
     const adminRow = (urRows || []).find((r: any) =>
-      ["admin", "super_admin"].includes(String(r.role || ""))
+      ["admin", "super_admin"].includes(String(r.role || "")),
     );
     if (adminRow) {
       roleFromUR = adminRow.role as Role;
@@ -116,7 +282,7 @@ export async function GET(req: NextRequest) {
   let query = srv
     .from("grade_subject_components")
     .select(
-      "id,subject_id,code,label,short_label,coeff_in_subject,order_index,is_active,level,subjects(name)"
+      "id,subject_id,code,label,short_label,coeff_in_subject,order_index,is_active,level,subjects(name)",
     )
     .eq("institution_id", g.instId)
     .order("subject_id", { ascending: true })
@@ -135,22 +301,63 @@ export async function GET(req: NextRequest) {
     return error(dbErr.message, 400);
   }
 
-  const items: SubjectComponentRow[] = (data || []).map((row: any) => {
+  const canonicalFilter = canonicalLevel(levelFilter);
+
+  const byKey = new Map<string, { item: SubjectComponentRow; score: number }>();
+
+  (data || []).forEach((row: any) => {
+    const rawLevel = row.level ? String(row.level) : null;
+    const level = canonicalLevel(rawLevel);
+
+    if (canonicalFilter && level !== canonicalFilter) return;
+
     const coeff = Number(row.coeff_in_subject ?? 1);
-    return {
+    const code = String(row.code || "");
+    const label = String(row.label || "");
+    const item: SubjectComponentRow = {
       id: String(row.id),
       subject_id: String(row.subject_id),
       subject_name: row.subjects?.name ? String(row.subjects.name) : "Matière",
-      level: row.level ? String(row.level) : null,
-      code: String(row.code || ""),
-      label: String(row.label || ""),
+      level,
+      code,
+      label,
       short_label: row.short_label ? String(row.short_label) : null,
       coeff_in_subject: coeff,
       coeff, // alias pour l’admin (même valeur)
       order_index: Number(row.order_index ?? 1),
       is_active: row.is_active !== false,
     };
+
+    const key = [
+      item.subject_id,
+      item.level || "",
+      normalizeText(item.code || item.label),
+    ].join("__");
+    const score = rawLevel && rawLevel === item.level ? 2 : 1;
+    const existing = byKey.get(key);
+    if (!existing || score >= existing.score) {
+      byKey.set(key, { item, score });
+    }
   });
+
+  const items = Array.from(byKey.values())
+    .map((entry) => entry.item)
+    .sort((a, b) => {
+      const subj = a.subject_name.localeCompare(b.subject_name, "fr", {
+        sensitivity: "base",
+      });
+      if (subj !== 0) return subj;
+      const lvl = String(a.level || "").localeCompare(
+        String(b.level || ""),
+        "fr",
+        {
+          numeric: true,
+          sensitivity: "base",
+        },
+      );
+      if (lvl !== 0) return lvl;
+      return Number(a.order_index || 0) - Number(b.order_index || 0);
+    });
 
   return NextResponse.json({ ok: true, items });
 }
@@ -179,7 +386,8 @@ export async function PUT(req: NextRequest) {
     return error("Champ 'subject_id' obligatoire dans le body.", 400);
   }
 
-  const level = (body.level ?? "").trim() || null; // "" → null = global
+  const rawLevel = (body.level ?? "").trim() || null;
+  const level = rawLevel ? canonicalLevel(rawLevel) : null; // "" → null = global
 
   const rawItems = Array.isArray(body.items) ? body.items : [];
   // On autorise de tout supprimer pour ce sujet/niveau
@@ -193,7 +401,7 @@ export async function PUT(req: NextRequest) {
     if (level === null) {
       delQuery = delQuery.is("level", null);
     } else {
-      delQuery = delQuery.eq("level", level);
+      delQuery = delQuery.in("level", equivalentLegacyLevels(level));
     }
 
     const { error: delErr } = await delQuery;
@@ -214,8 +422,7 @@ export async function PUT(req: NextRequest) {
 
       const codeBase = (raw.code || "").trim();
       const code =
-        codeBase ||
-        `c${idx + 1}`.toLowerCase().replace(/[^a-z0-9_]/g, "_");
+        codeBase || `c${idx + 1}`.toLowerCase().replace(/[^a-z0-9_]/g, "_");
 
       const short_label = (raw.short_label || label).trim();
 
@@ -226,8 +433,7 @@ export async function PUT(req: NextRequest) {
       let coeff = 1;
       if (typeof raw.coeff_in_subject === "number") {
         coeff =
-          Number.isFinite(raw.coeff_in_subject) &&
-          raw.coeff_in_subject >= 0
+          Number.isFinite(raw.coeff_in_subject) && raw.coeff_in_subject >= 0
             ? raw.coeff_in_subject
             : 1;
       } else if (
@@ -269,7 +475,7 @@ export async function PUT(req: NextRequest) {
     if (level === null) {
       delQuery = delQuery.is("level", null);
     } else {
-      delQuery = delQuery.eq("level", level);
+      delQuery = delQuery.in("level", equivalentLegacyLevels(level));
     }
 
     const { error: delErr } = await delQuery;

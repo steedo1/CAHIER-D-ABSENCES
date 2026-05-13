@@ -1,12 +1,7 @@
 // src/app/admin/parametres/page.tsx
 "use client";
 
-import React, {
-  useEffect,
-  useMemo,
-  useState,
-  ChangeEvent,
-} from "react";
+import React, { useEffect, useMemo, useState, ChangeEvent } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
   applyGeneralSecondaryCoefficientPreset,
@@ -35,6 +30,7 @@ type Profile = {
 
 type SubjectCoeffRow = {
   level: string;
+  level_label?: string;
   subject_id: string;
   subject_name: string;
   coeff: number;
@@ -73,6 +69,43 @@ type AcademicYearRow = {
   end_date: string;
   is_current: boolean;
 };
+
+const OFFICIAL_TRACK_LABELS: Record<string, string> = {
+  "6eme": "6ème",
+  "5eme": "5ème",
+  "4eme": "4ème",
+  "3eme": "3ème",
+  "2ndeA": "2nde A",
+  "2ndeC": "2nde C",
+  "1ereA1": "1ère A1",
+  "1ereA2": "1ère A2",
+  "1ereC": "1ère C",
+  "1ereD": "1ère D",
+  tleA1: "Tle A1",
+  tleA2: "Tle A2",
+  tleC: "Tle C",
+  tleD: "Tle D",
+};
+
+const OFFICIAL_TRACK_ORDER = new Map<string, number>(
+  Object.keys(OFFICIAL_TRACK_LABELS).map((code, index) => [code, index]),
+);
+
+function formatCoeffLevel(level?: string | null) {
+  const key = String(level || "").trim();
+  if (!key) return "—";
+  return OFFICIAL_TRACK_LABELS[key] || key;
+}
+
+function sortCoeffLevels(a: string, b: string) {
+  const ao = OFFICIAL_TRACK_ORDER.get(a) ?? 999;
+  const bo = OFFICIAL_TRACK_ORDER.get(b) ?? 999;
+  if (ao !== bo) return ao - bo;
+  return formatCoeffLevel(a).localeCompare(formatCoeffLevel(b), "fr", {
+    numeric: true,
+    sensitivity: "base",
+  });
+}
 
 type SettingsTabKey =
   | "security"
@@ -158,9 +191,7 @@ function Modal(props: {
             {props.title}
           </div>
         </div>
-        <div className="p-4 max-h-[70vh] overflow-auto">
-          {props.children}
-        </div>
+        <div className="p-4 max-h-[70vh] overflow-auto">{props.children}</div>
         <div className="flex items-center justify-end gap-2 border-t p-3">
           {props.actions}
           <button
@@ -227,8 +258,8 @@ function ToastItem({
     t.kind === "success"
       ? "border-emerald-200 bg-emerald-50 text-emerald-900"
       : t.kind === "error"
-      ? "border-rose-200 bg-rose-50 text-rose-900"
-      : "border-slate-200 bg-white text-slate-900";
+        ? "border-rose-200 bg-rose-50 text-rose-900"
+        : "border-slate-200 bg-white text-slate-900";
   const icon = t.kind === "success" ? "✅" : t.kind === "error" ? "⚠️" : "ℹ️";
   return (
     <div
@@ -262,7 +293,6 @@ function ToastHost({
     </div>
   );
 }
-
 
 function OverviewCard({
   label,
@@ -310,7 +340,9 @@ function OverviewCard({
 
   return (
     <div className={`rounded-3xl border p-4 shadow-sm ${t.wrap}`}>
-      <div className={`inline-flex rounded-full px-2.5 py-1 text-[11px] font-bold ${t.badge}`}>
+      <div
+        className={`inline-flex rounded-full px-2.5 py-1 text-[11px] font-bold ${t.badge}`}
+      >
         {label}
       </div>
       <div className={`mt-3 text-3xl font-black tracking-tight ${t.value}`}>
@@ -351,10 +383,16 @@ function SectionCard({
               {title}
             </h2>
             {description ? (
-              <p className="mt-2 text-sm leading-6 text-slate-600">{description}</p>
+              <p className="mt-2 text-sm leading-6 text-slate-600">
+                {description}
+              </p>
             ) : null}
           </div>
-          {actions ? <div className="flex shrink-0 flex-wrap items-center gap-2">{actions}</div> : null}
+          {actions ? (
+            <div className="flex shrink-0 flex-wrap items-center gap-2">
+              {actions}
+            </div>
+          ) : null}
         </div>
       </div>
       <div className="px-5 py-5 md:px-6 md:py-6">{children}</div>
@@ -377,7 +415,9 @@ function SubSection({
         <div className="text-sm font-black uppercase tracking-[0.16em] text-slate-700">
           {title}
         </div>
-        {description ? <p className="mt-1 text-xs leading-5 text-slate-500">{description}</p> : null}
+        {description ? (
+          <p className="mt-1 text-xs leading-5 text-slate-500">{description}</p>
+        ) : null}
       </div>
       {children}
     </div>
@@ -406,8 +446,7 @@ function FragmentRow({
   onOpenCustom,
   roleColor,
 }: FragmentRowProps) {
-  const label =
-    user.display_name || user.email || user.phone || "Utilisateur";
+  const label = user.display_name || user.email || user.phone || "Utilisateur";
   const contactLine =
     user.email && user.phone
       ? `${user.email} · ${user.phone}`
@@ -455,10 +494,7 @@ function FragmentRow({
         </tr>
         {expanded && (
           <tr className="bg-slate-50/60">
-            <td
-              className="px-3 py-2 text-[12px] text-slate-600"
-              colSpan={3}
-            >
+            <td className="px-3 py-2 text-[12px] text-slate-600" colSpan={3}>
               <div>Email : {user.email || "—"}</div>
               <div>Téléphone : {user.phone || "—"}</div>
               <div>Rôle : {roleLabel}</div>
@@ -508,9 +544,7 @@ function FragmentRow({
    Petits helpers horaires
 ========================= */
 function timeStrToMin(t: string): number {
-  const [h, m] = (t || "00:00")
-    .split(":")
-    .map((n) => parseInt(n, 10) || 0);
+  const [h, m] = (t || "00:00").split(":").map((n) => parseInt(n, 10) || 0);
   return h * 60 + m;
 }
 function minToTimeStr(min: number): string {
@@ -574,7 +608,7 @@ export default function AdminSettingsPage() {
   // Mode compact / détails dépliables
   const [compactUsers, setCompactUsers] = useState<boolean>(true);
   const [expandedUserIds, setExpandedUserIds] = useState<Set<string>>(
-    new Set()
+    new Set(),
   );
 
   // Modal pour définir un mot de passe personnalisé
@@ -591,10 +625,10 @@ export default function AdminSettingsPage() {
     r === "super_admin"
       ? "violet"
       : r === "admin"
-      ? "sky"
-      : r === "teacher"
-      ? "rose"
-      : "slate";
+        ? "sky"
+        : r === "teacher"
+          ? "rose"
+          : "slate";
 
   const disableMine = busyMine;
   const disableCustom = busyCustom;
@@ -650,11 +684,8 @@ export default function AdminSettingsPage() {
   const [academicYears, setAcademicYears] = useState<AcademicYearRow[]>([]);
   const [loadingAcademicYears, setLoadingAcademicYears] = useState(false);
   const [savingAcademicYears, setSavingAcademicYears] = useState(false);
-  const [msgAcademicYears, setMsgAcademicYears] = useState<string | null>(
-    null
-  );
-  const [selectedAcademicYear, setSelectedAcademicYear] =
-    useState<string>("");
+  const [msgAcademicYears, setMsgAcademicYears] = useState<string | null>(null);
+  const [selectedAcademicYear, setSelectedAcademicYear] = useState<string>("");
 
   /* =======================
      5) Périodes d'évaluation
@@ -662,9 +693,7 @@ export default function AdminSettingsPage() {
   const [evalPeriods, setEvalPeriods] = useState<EvalPeriodRow[]>([]);
   const [loadingEvalPeriods, setLoadingEvalPeriods] = useState(false);
   const [savingEvalPeriods, setSavingEvalPeriods] = useState(false);
-  const [msgEvalPeriods, setMsgEvalPeriods] = useState<string | null>(
-    null
-  );
+  const [msgEvalPeriods, setMsgEvalPeriods] = useState<string | null>(null);
 
   /* =======================
      6) Coeffs disciplines + sous-matières
@@ -681,8 +710,7 @@ export default function AdminSettingsPage() {
   const [loadingComponents, setLoadingComponents] = useState(false);
   const [savingComponents, setSavingComponents] = useState(false);
   const [msgComponents, setMsgComponents] = useState<string | null>(null);
-  const [componentsModalOpen, setComponentsModalOpen] =
-    useState(false);
+  const [componentsModalOpen, setComponentsModalOpen] = useState(false);
   const [componentsTarget, setComponentsTarget] = useState<{
     level: string;
     subject_id: string;
@@ -699,9 +727,7 @@ export default function AdminSettingsPage() {
     for (const row of subjectCoeffs) {
       if (row.level) s.add(row.level);
     }
-    return Array.from(s).sort((a, b) =>
-      a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" })
-    );
+    return Array.from(s).sort(sortCoeffLevels);
   }, [subjectCoeffs]);
 
   const coeffRowsForSelectedLevel = useMemo(
@@ -709,7 +735,7 @@ export default function AdminSettingsPage() {
       selectedCoeffLevel
         ? subjectCoeffs.filter((row) => row.level === selectedCoeffLevel)
         : [],
-    [selectedCoeffLevel, subjectCoeffs]
+    [selectedCoeffLevel, subjectCoeffs],
   );
 
   const componentsForTarget = useMemo(
@@ -718,10 +744,10 @@ export default function AdminSettingsPage() {
         ? subjectComponents.filter(
             (c) =>
               c.subject_id === componentsTarget.subject_id &&
-              (c.level || "") === (componentsTarget.level || "")
+              (c.level || "") === (componentsTarget.level || ""),
           )
         : [],
-    [componentsTarget, subjectComponents]
+    [componentsTarget, subjectComponents],
   );
 
   const parentCoeffForTarget = useMemo(() => {
@@ -729,18 +755,15 @@ export default function AdminSettingsPage() {
     const row = subjectCoeffs.find(
       (r) =>
         r.level === componentsTarget.level &&
-        r.subject_id === componentsTarget.subject_id
+        r.subject_id === componentsTarget.subject_id,
     );
     return row?.coeff ?? 0;
   }, [componentsTarget, subjectCoeffs]);
 
   const sumComponentsForTarget = useMemo(
     () =>
-      componentsForTarget.reduce(
-        (sum, c) => sum + (Number(c.coeff) || 0),
-        0
-      ),
-    [componentsForTarget]
+      componentsForTarget.reduce((sum, c) => sum + (Number(c.coeff) || 0), 0),
+    [componentsForTarget],
   );
 
   const coeffMatchForTarget =
@@ -751,9 +774,11 @@ export default function AdminSettingsPage() {
     const applicable = ciPresetPreview.filter((item) => item.willApply);
     const ignored = ciPresetPreview.filter((item) => !item.willApply);
     const optional = applicable.filter((item) => item.optional);
-    const withComponents = applicable.filter((item) => item.components.length > 0);
+    const withComponents = applicable.filter(
+      (item) => item.components.length > 0,
+    );
     const ambiguous = ignored.filter(
-      (item) => item.note.includes("A1") || item.note.includes("A2")
+      (item) => item.note.includes("A1") || item.note.includes("A2"),
     );
 
     return {
@@ -771,7 +796,7 @@ export default function AdminSettingsPage() {
       selectedCoeffLevel
         ? ciPresetPreview.filter((item) => item.level === selectedCoeffLevel)
         : ciPresetPreview.slice(0, 12),
-    [ciPresetPreview, selectedCoeffLevel]
+    [ciPresetPreview, selectedCoeffLevel],
   );
 
   // si aucun niveau sélectionné mais des niveaux disponibles → on sélectionne le 1er
@@ -829,7 +854,7 @@ export default function AdminSettingsPage() {
       setUsers(Array.isArray(j.items) ? j.items : []);
       pushToast(
         "info",
-        `Utilisateurs chargés (${Array.isArray(j.items) ? j.items.length : 0})`
+        `Utilisateurs chargés (${Array.isArray(j.items) ? j.items.length : 0})`,
       );
     } catch (e: any) {
       const m = e?.message || "Impossible de charger les utilisateurs.";
@@ -864,7 +889,7 @@ export default function AdminSettingsPage() {
       !confirm(
         `Réinitialiser le mot de passe de ${
           user.display_name || user.email || user.phone
-        } ?`
+        } ?`,
       )
     )
       return;
@@ -877,7 +902,7 @@ export default function AdminSettingsPage() {
       const j = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(j?.error || "Échec de réinitialisation");
       alert(
-        "Mot de passe réinitialisé (temporaire). Communiquez-le à l'utilisateur."
+        "Mot de passe réinitialisé (temporaire). Communiquez-le à l'utilisateur.",
       );
       pushToast("success", "Réinitialisation temporaire effectuée.");
     } catch (e: any) {
@@ -980,7 +1005,7 @@ export default function AdminSettingsPage() {
     if (genPreview.length === 0) {
       pushToast(
         "error",
-        "Aucune prévisualisation à appliquer. Cliquez d’abord sur « Prévisualiser »."
+        "Aucune prévisualisation à appliquer. Cliquez d’abord sur « Prévisualiser ».",
       );
       return;
     }
@@ -1001,7 +1026,7 @@ export default function AdminSettingsPage() {
       "success",
       `Créneaux ${genReplace ? "remplacés" : "ajoutés"} pour ${
         days.length
-      } jour(s).`
+      } jour(s).`,
     );
   }
 
@@ -1036,7 +1061,7 @@ export default function AdminSettingsPage() {
       }));
       pushToast(
         "success",
-        "Logo importé. N'oubliez pas de cliquer sur « Enregistrer les paramètres »."
+        "Logo importé. N'oubliez pas de cliquer sur « Enregistrer les paramètres ».",
       );
     };
     reader.onerror = () => {
@@ -1089,10 +1114,7 @@ export default function AdminSettingsPage() {
       setByDay(grouped);
       pushToast("info", "Paramètres établissement chargés.");
     } catch (e: any) {
-      pushToast(
-        "error",
-        e?.message || "Chargement des paramètres impossible."
-      );
+      pushToast("error", e?.message || "Chargement des paramètres impossible.");
     } finally {
       setLoadingCfg(false);
     }
@@ -1115,9 +1137,7 @@ export default function AdminSettingsPage() {
         id: String(row.id ?? `year_${idx}`),
         code: String(row.code || "").trim(),
         label: String(row.label || "").trim() || "Année scolaire",
-        start_date: row.start_date
-          ? String(row.start_date).slice(0, 10)
-          : "",
+        start_date: row.start_date ? String(row.start_date).slice(0, 10) : "",
         end_date: row.end_date ? String(row.end_date).slice(0, 10) : "",
         is_current: row.is_current === true,
       }));
@@ -1144,8 +1164,7 @@ export default function AdminSettingsPage() {
 
       pushToast("info", `Années scolaires chargées (${mapped.length}).`);
     } catch (e: any) {
-      const m =
-        e?.message || "Impossible de charger les années scolaires.";
+      const m = e?.message || "Impossible de charger les années scolaires.";
       setMsgAcademicYears(m);
       setAcademicYears([]);
       pushToast("error", m);
@@ -1184,8 +1203,8 @@ export default function AdminSettingsPage() {
               ...y,
               ...patch,
             }
-          : y
-      )
+          : y,
+      ),
     );
   }
 
@@ -1227,9 +1246,7 @@ export default function AdminSettingsPage() {
       });
       const j = await r.json().catch(() => ({}));
       if (!r.ok || !j?.ok) {
-        throw new Error(
-          j?.error || "Échec enregistrement années scolaires"
-        );
+        throw new Error(j?.error || "Échec enregistrement années scolaires");
       }
       const ok = "Années scolaires enregistrées ✅";
       setMsgAcademicYears(ok);
@@ -1237,8 +1254,7 @@ export default function AdminSettingsPage() {
       await loadAcademicYears();
     } catch (e: any) {
       const m =
-        e?.message ||
-        "Erreur lors de l'enregistrement des années scolaires.";
+        e?.message || "Erreur lors de l'enregistrement des années scolaires.";
       setMsgAcademicYears(m);
       pushToast("error", m);
     } finally {
@@ -1274,9 +1290,7 @@ export default function AdminSettingsPage() {
         label: String(row.label || "").trim() || "Période",
         short_label: String(row.short_label || row.label || "").trim(),
         kind: row.kind ? String(row.kind) : "",
-        start_date: row.start_date
-          ? String(row.start_date).slice(0, 10)
-          : "",
+        start_date: row.start_date ? String(row.start_date).slice(0, 10) : "",
         end_date: row.end_date ? String(row.end_date).slice(0, 10) : "",
         order_index: Number(row.order_index ?? idx + 1),
         is_active: row.is_active !== false,
@@ -1284,8 +1298,8 @@ export default function AdminSettingsPage() {
           typeof row.weight === "number"
             ? Number(row.weight) || 1
             : typeof row.coeff === "number"
-            ? Number(row.coeff) || 1
-            : 1,
+              ? Number(row.coeff) || 1
+              : 1,
       }));
       mapped.sort((a, b) => a.order_index - b.order_index);
       setEvalPeriods(mapped);
@@ -1301,7 +1315,7 @@ export default function AdminSettingsPage() {
       const infoYear = j.academic_year || year || "année courante";
       pushToast(
         "info",
-        `Périodes d'évaluation chargées (${mapped.length}) pour ${infoYear}.`
+        `Périodes d'évaluation chargées (${mapped.length}) pour ${infoYear}.`,
       );
     } catch (e: any) {
       const m =
@@ -1337,7 +1351,7 @@ export default function AdminSettingsPage() {
 
   function updateEvalPeriod(id: string, patch: Partial<EvalPeriodRow>) {
     setEvalPeriods((prev) =>
-      prev.map((p) => (p.id === id ? { ...p, ...patch } : p))
+      prev.map((p) => (p.id === id ? { ...p, ...patch } : p)),
     );
   }
 
@@ -1379,9 +1393,7 @@ export default function AdminSettingsPage() {
 
         // on part de p.weight (UI) mais on envoie bien coeff à l’API
         const coeff =
-          typeof p.weight === "number" && p.weight > 0
-            ? Number(p.weight)
-            : 1;
+          typeof p.weight === "number" && p.weight > 0 ? Number(p.weight) : 1;
 
         return {
           id: p.id,
@@ -1411,8 +1423,7 @@ export default function AdminSettingsPage() {
       pushToast("success", ok);
       await loadEvalPeriods(academic_year);
     } catch (e: any) {
-      const m =
-        e?.message || "Erreur lors de l'enregistrement des périodes.";
+      const m = e?.message || "Erreur lors de l'enregistrement des périodes.";
       setMsgEvalPeriods(m);
       pushToast("error", m);
     } finally {
@@ -1446,14 +1457,13 @@ export default function AdminSettingsPage() {
   function setCell(day: number, idx: number, patch: Partial<Period>) {
     setByDay((m) => {
       const list = (m[day] || []).slice();
-      const cur =
-        list[idx] || {
-          id: `temp_${rid()}`,
-          weekday: day,
-          label: "Séance",
-          start_time: "08:00",
-          end_time: "08:55",
-        };
+      const cur = list[idx] || {
+        id: `temp_${rid()}`,
+        weekday: day,
+        label: "Séance",
+        start_time: "08:00",
+        end_time: "08:55",
+      };
       list[idx] = { ...cur, ...patch, weekday: day };
       return { ...m, [day]: list };
     });
@@ -1538,6 +1548,7 @@ export default function AdminSettingsPage() {
       const rows = Array.isArray(j.items) ? j.items : [];
       const mapped: SubjectCoeffRow[] = rows.map((row: any) => ({
         level: (row.level ?? "") ? String(row.level).trim() : "",
+        level_label: String(row.level_label || formatCoeffLevel(row.level)),
         subject_id: String(row.subject_id),
         subject_name: String(row.subject_name || "Matière"),
         coeff: Number(row.coeff ?? 1) || 1,
@@ -1547,7 +1558,7 @@ export default function AdminSettingsPage() {
         "info",
         `Coefficients chargés (${mapped.length} entrée${
           mapped.length > 1 ? "s" : ""
-        }).`
+        }).`,
       );
     } catch (e: any) {
       const m = e?.message || "Impossible de charger les coefficients.";
@@ -1585,15 +1596,13 @@ export default function AdminSettingsPage() {
             subject_name: String(row.subject_name || "Matière"),
             component_id: String(row.id ?? `comp_${idx}`),
             component_name: String(row.label || "Sous-matière"),
-            coeff:
-              Number(row.coeff_in_subject ?? row.coeff ?? 0) ||
-              0,
+            coeff: Number(row.coeff_in_subject ?? row.coeff ?? 0) || 0,
             level, // niveau depuis l'API
             code: row.code ? String(row.code) : undefined,
             order_index: Number(row.order_index ?? idx + 1),
             is_active: row.is_active !== false,
           };
-        }
+        },
       );
 
       setSubjectComponents(mapped);
@@ -1601,11 +1610,10 @@ export default function AdminSettingsPage() {
         "info",
         `Sous-matières chargées (${mapped.length} entrée${
           mapped.length > 1 ? "s" : ""
-        }).`
+        }).`,
       );
     } catch (e: any) {
-      const m =
-        e?.message || "Impossible de charger les sous-matières.";
+      const m = e?.message || "Impossible de charger les sous-matières.";
       setMsgComponents(m);
       setSubjectComponents([]);
       pushToast("error", m);
@@ -1642,24 +1650,24 @@ export default function AdminSettingsPage() {
 
   function updateComponentRow(
     component_id: string,
-    patch: Partial<SubjectComponentRow>
+    patch: Partial<SubjectComponentRow>,
   ) {
     setSubjectComponents((prev) =>
       prev.map((row) =>
-        row.component_id === component_id ? { ...row, ...patch } : row
-      )
+        row.component_id === component_id ? { ...row, ...patch } : row,
+      ),
     );
   }
 
   function removeComponentRow(component_id: string) {
     setSubjectComponents((prev) =>
-      prev.filter((row) => row.component_id !== component_id)
+      prev.filter((row) => row.component_id !== component_id),
     );
   }
 
   // version alignée avec la route : une liste de sous-matières par (matière, niveau)
   async function saveSubjectComponents(
-    arg?: boolean | React.MouseEvent<HTMLButtonElement>
+    arg?: boolean | React.MouseEvent<HTMLButtonElement>,
   ) {
     // arg = true quand on appelle saveSubjectComponents(true) depuis le modal
     const targetOnly = typeof arg === "boolean" ? arg : false;
@@ -1673,8 +1681,7 @@ export default function AdminSettingsPage() {
 
       if (targetOnly) {
         if (!componentsTarget) {
-          const msg =
-            "Aucune matière sélectionnée pour les sous-matières.";
+          const msg = "Aucune matière sélectionnée pour les sous-matières.";
           setMsgComponents(msg);
           pushToast("error", msg);
           setSavingComponents(false);
@@ -1683,7 +1690,7 @@ export default function AdminSettingsPage() {
         scope = subjectComponents.filter(
           (c) =>
             c.subject_id === componentsTarget.subject_id &&
-            (c.level || "") === (componentsTarget.level || "")
+            (c.level || "") === (componentsTarget.level || ""),
         );
       }
 
@@ -1735,9 +1742,7 @@ export default function AdminSettingsPage() {
         const [subjectId, lvl] = key.split("::");
 
         const parents = subjectCoeffs.filter(
-          (r) =>
-            r.subject_id === subjectId &&
-            (r.level || "").trim() === lvl
+          (r) => r.subject_id === subjectId && (r.level || "").trim() === lvl,
         );
 
         // Si aucun coeff défini pour cette matière à ce niveau, on laisse passer (cas limite)
@@ -1745,19 +1750,15 @@ export default function AdminSettingsPage() {
 
         for (const parentRow of parents) {
           const parentCoeff =
-            !Number.isFinite(parentRow.coeff as any) ||
-            parentRow.coeff < 0
+            !Number.isFinite(parentRow.coeff as any) || parentRow.coeff < 0
               ? 0
               : Number(parentRow.coeff.toFixed(2));
 
-          if (
-            info.sum > 0 &&
-            Math.abs(info.sum - parentCoeff) > 1e-6
-          ) {
+          if (info.sum > 0 && Math.abs(info.sum - parentCoeff) > 1e-6) {
             bad.push(
               `${info.subject_name} (${
                 info.level || parentRow.level || "niveau ?"
-              }) : somme sous-matières ${info.sum} ≠ coeff matière ${parentCoeff}`
+              }) : somme sous-matières ${info.sum} ≠ coeff matière ${parentCoeff}`,
             );
           }
         }
@@ -1837,25 +1838,22 @@ export default function AdminSettingsPage() {
       let totalInserted = 0;
 
       for (const group of Array.from(bySubjectLevel.values())) {
-        const res = await fetch(
-          "/api/admin/institution/subject-components",
-          {
-            method: "PUT",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              subject_id: group.subject_id,
-              level: group.level || null,
-              items: group.items,
-            }),
-          }
-        );
+        const res = await fetch("/api/admin/institution/subject-components", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            subject_id: group.subject_id,
+            level: group.level || null,
+            items: group.items,
+          }),
+        });
         const j = await res.json().catch(() => ({}));
         if (!res.ok || !j?.ok) {
           throw new Error(
             j?.error ||
               `Échec enregistrement sous-matières pour la matière ${group.subject_name}${
                 group.level ? ` (${group.level})` : ""
-              }.`
+              }.`,
           );
         }
         if (typeof j.inserted === "number") {
@@ -1906,14 +1904,12 @@ export default function AdminSettingsPage() {
       if (!r.ok || !j?.ok) {
         throw new Error(j?.error || "Échec enregistrement coefficients");
       }
-      const ok =
-        "Coefficients de disciplines par niveau enregistrés ✅";
+      const ok = "Coefficients de disciplines par niveau enregistrés ✅";
       setMsgCoeffs(ok);
       pushToast("success", ok);
     } catch (e: any) {
       const m =
-        e?.message ||
-        "Erreur lors de l'enregistrement des coefficients.";
+        e?.message || "Erreur lors de l'enregistrement des coefficients.";
       setMsgCoeffs(m);
       pushToast("error", m);
     } finally {
@@ -1931,12 +1927,11 @@ export default function AdminSettingsPage() {
     }
 
     const targetRows = subjectCoeffs.filter(
-      (row) => row.level === selectedCoeffLevel
+      (row) => row.level === selectedCoeffLevel,
     );
 
     if (targetRows.length === 0) {
-      const msg =
-        `Aucune discipline à prévisualiser pour le niveau ${selectedCoeffLevel}. Cliquez sur « Rafraîchir » si vous venez d'ajouter des matières.`;
+      const msg = `Aucune discipline à prévisualiser pour le niveau ${formatCoeffLevel(selectedCoeffLevel)}. Cliquez sur « Rafraîchir » si vous venez d'ajouter des matières.`;
       setCiPresetPreview([]);
       setCiPresetAppliedOnce(false);
       setMsgCoeffs(msg);
@@ -1952,15 +1947,15 @@ export default function AdminSettingsPage() {
     const ambiguous = preview.filter(
       (item) =>
         !item.willApply &&
-        (item.note.includes("A1") || item.note.includes("A2"))
+        (item.note.includes("A1") || item.note.includes("A2")),
     ).length;
 
     const msg =
       applicable > 0
-        ? `Prévisualisation CI prête pour ${selectedCoeffLevel} : ${applicable} coefficient(s) reconnu(s)${
+        ? `Prévisualisation CI prête pour ${formatCoeffLevel(selectedCoeffLevel)} : ${applicable} coefficient(s) reconnu(s)${
             ambiguous > 0 ? `, ${ambiguous} cas A1/A2 à préciser` : ""
           }.`
-        : `Aucune discipline reconnue par le référentiel CI pour le niveau ${selectedCoeffLevel}.`;
+        : `Aucune discipline reconnue par le référentiel CI pour le niveau ${formatCoeffLevel(selectedCoeffLevel)}.`;
 
     setMsgCoeffs(msg);
     pushToast(applicable > 0 ? "info" : "error", msg);
@@ -1984,12 +1979,11 @@ export default function AdminSettingsPage() {
     }
 
     const targetRows = subjectCoeffs.filter(
-      (row) => row.level === selectedCoeffLevel
+      (row) => row.level === selectedCoeffLevel,
     );
 
     if (targetRows.length === 0) {
-      const msg =
-        `Aucune discipline à initialiser pour le niveau ${selectedCoeffLevel}. Cliquez sur « Rafraîchir » si vous venez d'ajouter des matières.`;
+      const msg = `Aucune discipline à initialiser pour le niveau ${formatCoeffLevel(selectedCoeffLevel)}. Cliquez sur « Rafraîchir » si vous venez d'ajouter des matières.`;
       setMsgCoeffs(msg);
       pushToast("error", msg);
       return;
@@ -1997,12 +1991,11 @@ export default function AdminSettingsPage() {
 
     const result = applyGeneralSecondaryCoefficientPreset(
       targetRows,
-      subjectComponents
+      subjectComponents,
     );
 
     if (result.appliedCoeffs === 0) {
-      const msg =
-        `Aucune correspondance automatique trouvée pour le niveau ${selectedCoeffLevel}. Vérifiez les noms des disciplines.`;
+      const msg = `Aucune correspondance automatique trouvée pour le niveau ${selectedCoeffLevel}. Vérifiez les noms des disciplines.`;
       setCiPresetPreview(result.preview);
       setCiPresetAppliedOnce(false);
       setMsgCoeffs(msg);
@@ -2011,22 +2004,25 @@ export default function AdminSettingsPage() {
     }
 
     const updatedByKey = new Map(
-      result.subjectCoeffs.map((row) => [`${row.level}::${row.subject_id}`, row])
+      result.subjectCoeffs.map((row) => [
+        `${row.level}::${row.subject_id}`,
+        row,
+      ]),
     );
 
     setSubjectCoeffs((prev) =>
       prev.map((row) =>
         row.level === selectedCoeffLevel
           ? updatedByKey.get(`${row.level}::${row.subject_id}`) || row
-          : row
-      )
+          : row,
+      ),
     );
     setSubjectComponents(result.subjectComponents);
     setCiPresetPreview(result.preview);
     setCiPresetAppliedOnce(true);
 
     const msg =
-      `Référentiel CI appliqué localement pour ${selectedCoeffLevel} : ${result.appliedCoeffs} coefficient(s)` +
+      `Référentiel CI appliqué localement pour ${formatCoeffLevel(selectedCoeffLevel)} : ${result.appliedCoeffs} coefficient(s)` +
       `${
         result.appliedComponents > 0
           ? `, ${result.appliedComponents} sous-matière(s) de Français`
@@ -2048,7 +2044,7 @@ export default function AdminSettingsPage() {
     setMsgComponents(
       result.appliedComponents > 0
         ? "Sous-matières de Français générées pour le niveau sélectionné. Les anciennes lignes sans niveau sont ignorées dans l'état actuel de l'écran."
-        : msgComponents
+        : msgComponents,
     );
     pushToast("success", msg);
   }
@@ -2069,14 +2065,16 @@ export default function AdminSettingsPage() {
 
   const currentDayRows: Period[] = byDay[curDay] || [];
   const allDayRows = Object.values(byDay) as Period[][];
-  const configuredDaysCount = allDayRows.filter((rows) => rows.length > 0).length;
+  const configuredDaysCount = allDayRows.filter(
+    (rows) => rows.length > 0,
+  ).length;
   const totalConfiguredPeriods = allDayRows.reduce(
     (sum, rows) => sum + rows.length,
-    0
+    0,
   );
   const activeEvalPeriods = evalPeriods.filter((row) => row.is_active).length;
   const currentAcademicYearRow = academicYears.find(
-    (row) => row.code === selectedAcademicYear
+    (row) => row.code === selectedAcademicYear,
   );
   const currentAcademicYearText =
     currentAcademicYearRow?.code || selectedAcademicYear || "Automatique";
@@ -2098,9 +2096,9 @@ export default function AdminSettingsPage() {
               </h1>
               <p className="mt-3 text-sm leading-6 text-slate-200 md:text-[15px]">
                 Un espace plus lisible pour gérer la sécurité, les utilisateurs,
-                les horaires, les années scolaires, les périodes d&apos;évaluation
-                et les coefficients de disciplines, sans changer la logique
-                existante.
+                les horaires, les années scolaires, les périodes
+                d&apos;évaluation et les coefficients de disciplines, sans
+                changer la logique existante.
               </p>
               <div className="mt-4 flex flex-wrap gap-2 text-xs font-semibold text-slate-200">
                 <span className="rounded-full bg-white/10 px-3 py-1 ring-1 ring-white/15">
@@ -2150,13 +2148,15 @@ export default function AdminSettingsPage() {
                   Groupe paramètres
                 </div>
                 <p className="mt-1 text-sm text-slate-600">
-                  Chaque grande zone de configuration est désormais rangée dans un onglet, pour éviter la longue page unique.
+                  Chaque grande zone de configuration est désormais rangée dans
+                  un onglet, pour éviter la longue page unique.
                 </p>
               </div>
               <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
                 Onglet actif :
                 <span className="ml-2 font-semibold text-slate-900">
-                  {SETTINGS_TABS.find((tab) => tab.key === activeTab)?.label || "Accès & sécurité"}
+                  {SETTINGS_TABS.find((tab) => tab.key === activeTab)?.label ||
+                    "Accès & sécurité"}
                 </span>
               </div>
             </div>
@@ -2181,7 +2181,9 @@ export default function AdminSettingsPage() {
                         : "border-slate-200 bg-white hover:bg-slate-50",
                     ].join(" ")}
                   >
-                    <div className="text-sm font-bold text-slate-900">{tab.label}</div>
+                    <div className="text-sm font-bold text-slate-900">
+                      {tab.label}
+                    </div>
                     <div className="mt-1 text-xs leading-5 text-slate-600">
                       {tab.description}
                     </div>
@@ -2214,1635 +2216,1587 @@ export default function AdminSettingsPage() {
           <OverviewCard
             label="Discipline(s)"
             value={currentLevelRows}
-            hint={selectedCoeffLevel ? `Niveau ${selectedCoeffLevel}` : "Aucun niveau sélectionné"}
+            hint={
+              selectedCoeffLevel
+                ? `Niveau ${formatCoeffLevel(selectedCoeffLevel)}`
+                : "Aucun niveau sélectionné"
+            }
             tone="amber"
           />
         </section>
 
         {activeTab === "security" && (
           <>
-        {/* =======================
+            {/* =======================
             1) Mon mot de passe
         ======================== */}
-        <SectionCard
-          id="password"
-          eyebrow="Sécurité"
-          title="Mon mot de passe"
-          description="Modifiez votre mot de passe administrateur sans toucher aux autres réglages de la page."
-        >
+            <SectionCard
+              id="password"
+              eyebrow="Sécurité"
+              title="Mon mot de passe"
+              description="Modifiez votre mot de passe administrateur sans toucher aux autres réglages de la page."
+            >
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+                <div>
+                  <div className="mb-1 flex items-center justify-between text-xs text-slate-500">
+                    <span>Nouveau mot de passe</span>
+                    <button
+                      type="button"
+                      className="inline-flex items-center gap-1 text-[11px] text-sky-700 hover:underline"
+                      onClick={() => setShow1((v) => !v)}
+                    >
+                      {show1 ? (
+                        <EyeOffIcon className="h-4 w-4" />
+                      ) : (
+                        <EyeIcon className="h-4 w-4" />
+                      )}{" "}
+                      {show1 ? "Masquer" : "Afficher"}
+                    </button>
+                  </div>
+                  <input
+                    type={show1 ? "text" : "password"}
+                    className="w-full rounded-lg border px-3 py-2 text-sm"
+                    value={pwd1}
+                    onChange={(e) => setPwd1(e.target.value)}
+                    disabled={disableMine}
+                    placeholder="••••••••"
+                  />
+                </div>
 
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-            <div>
-              <div className="mb-1 flex items-center justify-between text-xs text-slate-500">
-                <span>Nouveau mot de passe</span>
-                <button
-                  type="button"
-                  className="inline-flex items-center gap-1 text-[11px] text-sky-700 hover:underline"
-                  onClick={() => setShow1((v) => !v)}
-                >
-                  {show1 ? (
-                    <EyeOffIcon className="h-4 w-4" />
-                  ) : (
-                    <EyeIcon className="h-4 w-4" />
-                  )}{" "}
-                  {show1 ? "Masquer" : "Afficher"}
-                </button>
+                <div>
+                  <div className="mb-1 flex items-center justify-between text-xs text-slate-500">
+                    <span>Confirmer</span>
+                    <button
+                      type="button"
+                      className="inline-flex items-center gap-1 text-[11px] text-sky-700 hover:underline"
+                      onClick={() => setShow2((v) => !v)}
+                    >
+                      {show2 ? (
+                        <EyeOffIcon className="h-4 w-4" />
+                      ) : (
+                        <EyeIcon className="h-4 w-4" />
+                      )}{" "}
+                      {show2 ? "Masquer" : "Afficher"}
+                    </button>
+                  </div>
+                  <input
+                    type={show2 ? "text" : "password"}
+                    className="w-full rounded-lg border px-3 py-2 text-sm"
+                    value={pwd2}
+                    onChange={(e) => setPwd2(e.target.value)}
+                    disabled={disableMine}
+                    placeholder="••••••••"
+                  />
+                </div>
+
+                <div className="flex items-end">
+                  <button
+                    onClick={changeMyPassword}
+                    disabled={disableMine}
+                    className="rounded-xl bg-sky-700 px-4 py-2 text-sm font-medium text-white shadow hover:bg-sky-800 disabled:opacity-60"
+                  >
+                    {busyMine ? "Mise à jour…" : "Changer mon mot de passe"}
+                  </button>
+                </div>
               </div>
-              <input
-                type={show1 ? "text" : "password"}
-                className="w-full rounded-lg border px-3 py-2 text-sm"
-                value={pwd1}
-                onChange={(e) => setPwd1(e.target.value)}
-                disabled={disableMine}
-                placeholder="••••••••"
-              />
-            </div>
 
-            <div>
-              <div className="mb-1 flex items-center justify-between text-xs text-slate-500">
-                <span>Confirmer</span>
-                <button
-                  type="button"
-                  className="inline-flex items-center gap-1 text-[11px] text-sky-700 hover:underline"
-                  onClick={() => setShow2((v) => !v)}
-                >
-                  {show2 ? (
-                    <EyeOffIcon className="h-4 w-4" />
-                  ) : (
-                    <EyeIcon className="h-4 w-4" />
-                  )}{" "}
-                  {show2 ? "Masquer" : "Afficher"}
-                </button>
-              </div>
-              <input
-                type={show2 ? "text" : "password"}
-                className="w-full rounded-lg border px-3 py-2 text-sm"
-                value={pwd2}
-                onChange={(e) => setPwd2(e.target.value)}
-                disabled={disableMine}
-                placeholder="••••••••"
-              />
-            </div>
+              {msgMine && (
+                <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
+                  {msgMine}
+                </div>
+              )}
+            </SectionCard>
 
-            <div className="flex items-end">
-              <button
-                onClick={changeMyPassword}
-                disabled={disableMine}
-                className="rounded-xl bg-sky-700 px-4 py-2 text-sm font-medium text-white shadow hover:bg-sky-800 disabled:opacity-60"
-              >
-                {busyMine ? "Mise à jour…" : "Changer mon mot de passe"}
-              </button>
-            </div>
-          </div>
-
-          {msgMine && (
-            <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
-              {msgMine}
-            </div>
-          )}
-        </SectionCard>
-
-        {/* ==========================================
+            {/* ==========================================
             2) Réinitialiser le mot de passe d'un user
         =========================================== */}
-        <SectionCard
-          id="users"
-          eyebrow="Administration"
-          title="Réinitialiser le mot de passe d’un utilisateur"
-          description="Affichez la liste quand vous en avez besoin, puis lancez une réinitialisation temporaire ou un mot de passe personnalisé."
-          actions={
-            <button
-              onClick={() => setUserListOpen((v) => !v)}
-              className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
-            >
-              {userListOpen ? "Masquer la liste" : "Afficher la liste"}
-            </button>
-          }
-        >
-
-          {userListOpen && (
-            <>
-              <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                <label className="inline-flex select-none items-center gap-2 rounded-lg border px-2 py-1 text-xs">
-                  <input
-                    type="checkbox"
-                    checked={compactUsers}
-                    onChange={(e) =>
-                      setCompactUsers(e.target.checked)
-                    }
-                  />
-                  Mode compact (replier les lignes)
-                </label>
-
+            <SectionCard
+              id="users"
+              eyebrow="Administration"
+              title="Réinitialiser le mot de passe d’un utilisateur"
+              description="Affichez la liste quand vous en avez besoin, puis lancez une réinitialisation temporaire ou un mot de passe personnalisé."
+              actions={
                 <button
-                  onClick={loadUsers}
-                  className="rounded-lg border px-3 py-1.5 text-sm hover:bg-slate-50"
-                  disabled={loadingUsers}
-                  title="Rafraîchir la liste"
+                  onClick={() => setUserListOpen((v) => !v)}
+                  className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
                 >
-                  {loadingUsers ? "Chargement…" : "Rafraîchir"}
+                  {userListOpen ? "Masquer la liste" : "Afficher la liste"}
                 </button>
-              </div>
+              }
+            >
+              {userListOpen && (
+                <>
+                  <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                    <label className="inline-flex select-none items-center gap-2 rounded-lg border px-2 py-1 text-xs">
+                      <input
+                        type="checkbox"
+                        checked={compactUsers}
+                        onChange={(e) => setCompactUsers(e.target.checked)}
+                      />
+                      Mode compact (replier les lignes)
+                    </label>
 
-              {errUsers && (
-                <div className="mb-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
-                  {errUsers}
-                </div>
-              )}
+                    <button
+                      onClick={loadUsers}
+                      className="rounded-lg border px-3 py-1.5 text-sm hover:bg-slate-50"
+                      disabled={loadingUsers}
+                      title="Rafraîchir la liste"
+                    >
+                      {loadingUsers ? "Chargement…" : "Rafraîchir"}
+                    </button>
+                  </div>
 
-              {loadingUsers ? (
-                <div className="text-sm text-slate-500">
-                  Chargement des utilisateurs…
-                </div>
-              ) : users.length === 0 ? (
-                <div className="text-sm text-slate-500">
-                  Aucun utilisateur trouvé.
-                </div>
-              ) : (
-                <div className="overflow-x-auto">
-                  <table className="min-w-full text-sm">
-                    <thead>
-                      <tr className="border-b bg-slate-50 text-slate-600">
-                        <th className="px-3 py-2 text-left">
-                          Utilisateur
-                        </th>
-                        {!compactUsers && (
-                          <th className="px-3 py-2 text-left">
-                            Contact
-                          </th>
-                        )}
-                        <th className="px-3 py-2 text-left">Rôle</th>
-                        <th className="px-3 py-2 text-right">
-                          Actions
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {users.map((u) => {
-                        const isOpen = expandedUserIds.has(u.id);
-                        return (
-                          <FragmentRow
-                            key={u.id}
-                            user={u}
-                            compact={compactUsers}
-                            expanded={isOpen}
-                            onToggle={() =>
-                              toggleUserExpanded(u.id)
-                            }
-                            onResetTemp={() => resetTemp(u)}
-                            onOpenCustom={() => openCustom(u)}
-                            roleColor={roleColor}
-                          />
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
+                  {errUsers && (
+                    <div className="mb-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+                      {errUsers}
+                    </div>
+                  )}
+
+                  {loadingUsers ? (
+                    <div className="text-sm text-slate-500">
+                      Chargement des utilisateurs…
+                    </div>
+                  ) : users.length === 0 ? (
+                    <div className="text-sm text-slate-500">
+                      Aucun utilisateur trouvé.
+                    </div>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <table className="min-w-full text-sm">
+                        <thead>
+                          <tr className="border-b bg-slate-50 text-slate-600">
+                            <th className="px-3 py-2 text-left">Utilisateur</th>
+                            {!compactUsers && (
+                              <th className="px-3 py-2 text-left">Contact</th>
+                            )}
+                            <th className="px-3 py-2 text-left">Rôle</th>
+                            <th className="px-3 py-2 text-right">Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {users.map((u) => {
+                            const isOpen = expandedUserIds.has(u.id);
+                            return (
+                              <FragmentRow
+                                key={u.id}
+                                user={u}
+                                compact={compactUsers}
+                                expanded={isOpen}
+                                onToggle={() => toggleUserExpanded(u.id)}
+                                onResetTemp={() => resetTemp(u)}
+                                onOpenCustom={() => openCustom(u)}
+                                roleColor={roleColor}
+                              />
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </>
               )}
-            </>
-          )}
-        </SectionCard>
+            </SectionCard>
           </>
         )}
 
         {activeTab === "school" && (
           <>
-        {/* =======================
+            {/* =======================
             3) Horaires & séances + infos établissement
         ======================== */}
-        <SectionCard
-          id="schedule"
-          eyebrow="Organisation"
-          title="Horaires, séances et identité de l’établissement"
-          description="Regroupez ici les informations administratives, les créneaux officiels et le générateur rapide de séances pour offrir une lecture plus simple aux utilisateurs."
-          actions={
-            <button
-              onClick={loadInstitutionConfig}
-              className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
-              title="Rafraîchir"
+            <SectionCard
+              id="schedule"
+              eyebrow="Organisation"
+              title="Horaires, séances et identité de l’établissement"
+              description="Regroupez ici les informations administratives, les créneaux officiels et le générateur rapide de séances pour offrir une lecture plus simple aux utilisateurs."
+              actions={
+                <button
+                  onClick={loadInstitutionConfig}
+                  className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                  title="Rafraîchir"
+                >
+                  Rafraîchir
+                </button>
+              }
             >
-              Rafraîchir
-            </button>
-          }
-        >
-
-          <SubSection
-            title="Paramètres généraux"
-            description="Fuseau horaire, durée par défaut et informations administratives affichées dans certains documents."
-          >
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-            <div>
-              <div className="mb-1 text-xs text-slate-500">
-                Fuseau horaire
-              </div>
-              <select
-                className="w-full rounded-lg border px-3 py-2 text-sm"
-                value={cfg.tz}
-                onChange={(e) =>
-                  setCfg((s) => ({ ...s, tz: e.target.value }))
-                }
-                disabled={loadingCfg || savingCfg}
+              <SubSection
+                title="Paramètres généraux"
+                description="Fuseau horaire, durée par défaut et informations administratives affichées dans certains documents."
               >
-                <option value="Africa/Abidjan">
-                  Africa/Abidjan (UTC+0)
-                </option>
-                <option value="Africa/Lagos">
-                  Africa/Lagos (UTC+1)
-                </option>
-                <option value="Africa/Dakar">
-                  Africa/Dakar (UTC+0)
-                </option>
-                <option value="UTC">UTC</option>
-              </select>
-            </div>
-            <div>
-              <div className="mb-1 text-xs text-slate-500">
-                Durée par séance (minutes)
-              </div>
-              <input
-                type="number"
-                min={1}
-                className="w-full rounded-lg border px-3 py-2 text-sm"
-                value={cfg.default_session_minutes}
-                onChange={(e) =>
-                  setCfg((s) => ({
-                    ...s,
-                    default_session_minutes: Math.max(
-                      1,
-                      parseInt(e.target.value || "60", 10)
-                    ),
-                  }))
-                }
-                disabled={loadingCfg || savingCfg}
-              />
-              <div className="mt-1 text-[11px] text-slate-500">
-                Utilisée comme valeur par défaut lors de l’ouverture de séance
-                (UI), sans forcer vos créneaux ci-dessous.
-              </div>
-            </div>
-            <div className="flex items-end">
-              <label className="inline-flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  checked={!!cfg.auto_lateness}
-                  onChange={(e) =>
-                    setCfg((s) => ({
-                      ...s,
-                      auto_lateness: e.target.checked,
-                    }))
-                  }
-                  disabled={loadingCfg || savingCfg}
-                />
-                <span className="text-sm text-slate-700">
-                  Calcul automatique des retards (par créneau)
-                </span>
-              </label>
-            </div>
-          </div>
-
-          {/* Infos d'établissement (optionnelles) */}
-          <div className="mb-4 grid grid-cols-1 gap-3 md:grid-cols-3">
-            <div>
-              <div className="mb-1 text-xs text-slate-500">
-                Nom du pays pour l&apos;en-tête (optionnel)
-              </div>
-              <input
-                className="w-full rounded-lg border px-3 py-2 text-sm"
-                value={cfg.country_name}
-                onChange={(e) =>
-                  setCfg((s) => ({
-                    ...s,
-                    country_name: e.target.value,
-                  }))
-                }
-                disabled={loadingCfg || savingCfg}
-                placeholder="République de Côte d&apos;Ivoire"
-              />
-            </div>
-            <div>
-              <div className="mb-1 text-xs text-slate-500">
-                Devise nationale (optionnel)
-              </div>
-              <input
-                className="w-full rounded-lg border px-3 py-2 text-sm"
-                value={cfg.country_motto}
-                onChange={(e) =>
-                  setCfg((s) => ({
-                    ...s,
-                    country_motto: e.target.value,
-                  }))
-                }
-                disabled={loadingCfg || savingCfg}
-                placeholder="Union - Discipline - Travail"
-              />
-            </div>
-            <div>
-              <div className="mb-1 text-xs text-slate-500">
-                Nom du ministère (optionnel)
-              </div>
-              <input
-                className="w-full rounded-lg border px-3 py-2 text-sm"
-                value={cfg.ministry_name}
-                onChange={(e) =>
-                  setCfg((s) => ({
-                    ...s,
-                    ministry_name: e.target.value,
-                  }))
-                }
-                disabled={loadingCfg || savingCfg}
-                placeholder="MINISTERE DE L&apos;EDUCATION NATIONALE ET DE L&apos;ALPHABETISATION"
-              />
-            </div>
-            <div>
-              <div className="mb-1 text-xs text-slate-500">
-                Code établissement / MEN (optionnel)
-              </div>
-              <input
-                className="w-full rounded-lg border px-3 py-2 text-sm"
-                value={cfg.institution_code}
-                onChange={(e) =>
-                  setCfg((s) => ({
-                    ...s,
-                    institution_code: e.target.value,
-                  }))
-                }
-                disabled={loadingCfg || savingCfg}
-                placeholder="Code MEN : 123456"
-              />
-            </div>
-
-            <div>
-              <div className="mb-1 text-xs text-slate-500">
-                Téléphone de l&apos;établissement (optionnel)
-              </div>
-              <input
-                type="tel"
-                className="w-full rounded-lg border px-3 py-2 text-sm"
-                value={cfg.institution_phone}
-                onChange={(e) =>
-                  setCfg((s) => ({
-                    ...s,
-                    institution_phone: e.target.value,
-                  }))
-                }
-                disabled={loadingCfg || savingCfg}
-                placeholder="+225 01 02 03 04"
-              />
-            </div>
-            <div>
-              <div className="mb-1 text-xs text-slate-500">
-                Email de l&apos;établissement (optionnel)
-              </div>
-              <input
-                type="email"
-                className="w-full rounded-lg border px-3 py-2 text-sm"
-                value={cfg.institution_email}
-                onChange={(e) =>
-                  setCfg((s) => ({
-                    ...s,
-                    institution_email: e.target.value,
-                  }))
-                }
-                disabled={loadingCfg || savingCfg}
-                placeholder="contact@ecole.ci"
-              />
-            </div>
-
-            {/* Logo importé par fichier */}
-            <div>
-              <div className="mb-1 text-xs text-slate-500">
-                Logo de l&apos;établissement (import d&apos;image)
-              </div>
-              <div className="flex flex-col gap-2">
-                <div className="flex flex-wrap items-center gap-2">
-                  <label className="inline-flex cursor-pointer items-center justify-center rounded-lg border bg-white px-3 py-1.5 text-xs font-medium text-slate-700 shadow-sm hover:bg-slate-50">
-                    <input
-                      type="file"
-                      accept="image/*"
-                      className="hidden"
-                      onChange={handleLogoFileChange}
-                      disabled={loadingCfg || savingCfg}
-                    />
-                    Choisir un fichier…
-                  </label>
-                  {cfg.institution_logo_url && (
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setCfg((s) => ({
-                          ...s,
-                          institution_logo_url: "",
-                        }))
+                <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+                  <div>
+                    <div className="mb-1 text-xs text-slate-500">
+                      Fuseau horaire
+                    </div>
+                    <select
+                      className="w-full rounded-lg border px-3 py-2 text-sm"
+                      value={cfg.tz}
+                      onChange={(e) =>
+                        setCfg((s) => ({ ...s, tz: e.target.value }))
                       }
-                      className="rounded-lg border border-rose-300 bg-rose-50 px-2 py-1 text-[11px] font-medium text-rose-800 hover:bg-rose-100"
                       disabled={loadingCfg || savingCfg}
                     >
-                      Retirer le logo
-                    </button>
+                      <option value="Africa/Abidjan">
+                        Africa/Abidjan (UTC+0)
+                      </option>
+                      <option value="Africa/Lagos">Africa/Lagos (UTC+1)</option>
+                      <option value="Africa/Dakar">Africa/Dakar (UTC+0)</option>
+                      <option value="UTC">UTC</option>
+                    </select>
+                  </div>
+                  <div>
+                    <div className="mb-1 text-xs text-slate-500">
+                      Durée par séance (minutes)
+                    </div>
+                    <input
+                      type="number"
+                      min={1}
+                      className="w-full rounded-lg border px-3 py-2 text-sm"
+                      value={cfg.default_session_minutes}
+                      onChange={(e) =>
+                        setCfg((s) => ({
+                          ...s,
+                          default_session_minutes: Math.max(
+                            1,
+                            parseInt(e.target.value || "60", 10),
+                          ),
+                        }))
+                      }
+                      disabled={loadingCfg || savingCfg}
+                    />
+                    <div className="mt-1 text-[11px] text-slate-500">
+                      Utilisée comme valeur par défaut lors de l’ouverture de
+                      séance (UI), sans forcer vos créneaux ci-dessous.
+                    </div>
+                  </div>
+                  <div className="flex items-end">
+                    <label className="inline-flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={!!cfg.auto_lateness}
+                        onChange={(e) =>
+                          setCfg((s) => ({
+                            ...s,
+                            auto_lateness: e.target.checked,
+                          }))
+                        }
+                        disabled={loadingCfg || savingCfg}
+                      />
+                      <span className="text-sm text-slate-700">
+                        Calcul automatique des retards (par créneau)
+                      </span>
+                    </label>
+                  </div>
+                </div>
+
+                {/* Infos d'établissement (optionnelles) */}
+                <div className="mb-4 grid grid-cols-1 gap-3 md:grid-cols-3">
+                  <div>
+                    <div className="mb-1 text-xs text-slate-500">
+                      Nom du pays pour l&apos;en-tête (optionnel)
+                    </div>
+                    <input
+                      className="w-full rounded-lg border px-3 py-2 text-sm"
+                      value={cfg.country_name}
+                      onChange={(e) =>
+                        setCfg((s) => ({
+                          ...s,
+                          country_name: e.target.value,
+                        }))
+                      }
+                      disabled={loadingCfg || savingCfg}
+                      placeholder="République de Côte d'Ivoire"
+                    />
+                  </div>
+                  <div>
+                    <div className="mb-1 text-xs text-slate-500">
+                      Devise nationale (optionnel)
+                    </div>
+                    <input
+                      className="w-full rounded-lg border px-3 py-2 text-sm"
+                      value={cfg.country_motto}
+                      onChange={(e) =>
+                        setCfg((s) => ({
+                          ...s,
+                          country_motto: e.target.value,
+                        }))
+                      }
+                      disabled={loadingCfg || savingCfg}
+                      placeholder="Union - Discipline - Travail"
+                    />
+                  </div>
+                  <div>
+                    <div className="mb-1 text-xs text-slate-500">
+                      Nom du ministère (optionnel)
+                    </div>
+                    <input
+                      className="w-full rounded-lg border px-3 py-2 text-sm"
+                      value={cfg.ministry_name}
+                      onChange={(e) =>
+                        setCfg((s) => ({
+                          ...s,
+                          ministry_name: e.target.value,
+                        }))
+                      }
+                      disabled={loadingCfg || savingCfg}
+                      placeholder="MINISTERE DE L'EDUCATION NATIONALE ET DE L'ALPHABETISATION"
+                    />
+                  </div>
+                  <div>
+                    <div className="mb-1 text-xs text-slate-500">
+                      Code établissement / MEN (optionnel)
+                    </div>
+                    <input
+                      className="w-full rounded-lg border px-3 py-2 text-sm"
+                      value={cfg.institution_code}
+                      onChange={(e) =>
+                        setCfg((s) => ({
+                          ...s,
+                          institution_code: e.target.value,
+                        }))
+                      }
+                      disabled={loadingCfg || savingCfg}
+                      placeholder="Code MEN : 123456"
+                    />
+                  </div>
+
+                  <div>
+                    <div className="mb-1 text-xs text-slate-500">
+                      Téléphone de l&apos;établissement (optionnel)
+                    </div>
+                    <input
+                      type="tel"
+                      className="w-full rounded-lg border px-3 py-2 text-sm"
+                      value={cfg.institution_phone}
+                      onChange={(e) =>
+                        setCfg((s) => ({
+                          ...s,
+                          institution_phone: e.target.value,
+                        }))
+                      }
+                      disabled={loadingCfg || savingCfg}
+                      placeholder="+225 01 02 03 04"
+                    />
+                  </div>
+                  <div>
+                    <div className="mb-1 text-xs text-slate-500">
+                      Email de l&apos;établissement (optionnel)
+                    </div>
+                    <input
+                      type="email"
+                      className="w-full rounded-lg border px-3 py-2 text-sm"
+                      value={cfg.institution_email}
+                      onChange={(e) =>
+                        setCfg((s) => ({
+                          ...s,
+                          institution_email: e.target.value,
+                        }))
+                      }
+                      disabled={loadingCfg || savingCfg}
+                      placeholder="contact@ecole.ci"
+                    />
+                  </div>
+
+                  {/* Logo importé par fichier */}
+                  <div>
+                    <div className="mb-1 text-xs text-slate-500">
+                      Logo de l&apos;établissement (import d&apos;image)
+                    </div>
+                    <div className="flex flex-col gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <label className="inline-flex cursor-pointer items-center justify-center rounded-lg border bg-white px-3 py-1.5 text-xs font-medium text-slate-700 shadow-sm hover:bg-slate-50">
+                          <input
+                            type="file"
+                            accept="image/*"
+                            className="hidden"
+                            onChange={handleLogoFileChange}
+                            disabled={loadingCfg || savingCfg}
+                          />
+                          Choisir un fichier…
+                        </label>
+                        {cfg.institution_logo_url && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setCfg((s) => ({
+                                ...s,
+                                institution_logo_url: "",
+                              }))
+                            }
+                            className="rounded-lg border border-rose-300 bg-rose-50 px-2 py-1 text-[11px] font-medium text-rose-800 hover:bg-rose-100"
+                            disabled={loadingCfg || savingCfg}
+                          >
+                            Retirer le logo
+                          </button>
+                        )}
+                      </div>
+
+                      {cfg.institution_logo_url && (
+                        <div className="flex items-center gap-2">
+                          <div className="h-12 w-12 overflow-hidden rounded border bg-white">
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img
+                              src={cfg.institution_logo_url}
+                              alt="Logo de l'établissement"
+                              className="h-full w-full object-contain"
+                            />
+                          </div>
+                          <div className="text-[11px] text-slate-500">
+                            Logo actuellement utilisé pour les bulletins et
+                            autres documents officiels.
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="text-[11px] text-slate-500">
+                        Formats conseillés : PNG ou JPG, taille ≤ 1&nbsp;Mo.
+                      </div>
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="mb-1 text-xs text-slate-500">
+                      Direction régionale (optionnel)
+                    </div>
+                    <input
+                      className="w-full rounded-lg border px-3 py-2 text-sm"
+                      value={cfg.institution_region}
+                      onChange={(e) =>
+                        setCfg((s) => ({
+                          ...s,
+                          institution_region: e.target.value,
+                        }))
+                      }
+                      disabled={loadingCfg || savingCfg}
+                      placeholder="DRENA Abidjan 1"
+                    />
+                  </div>
+                  <div>
+                    <div className="mb-1 text-xs text-slate-500">
+                      Adresse postale (optionnel)
+                    </div>
+                    <input
+                      className="w-full rounded-lg border px-3 py-2 text-sm"
+                      value={cfg.institution_postal_address}
+                      onChange={(e) =>
+                        setCfg((s) => ({
+                          ...s,
+                          institution_postal_address: e.target.value,
+                        }))
+                      }
+                      disabled={loadingCfg || savingCfg}
+                      placeholder="BP 123 Abidjan"
+                    />
+                  </div>
+                  <div>
+                    <div className="mb-1 text-xs text-slate-500">
+                      Statut de l&apos;établissement (optionnel)
+                    </div>
+                    <input
+                      className="w-full rounded-lg border px-3 py-2 text-sm"
+                      value={cfg.institution_status}
+                      onChange={(e) =>
+                        setCfg((s) => ({
+                          ...s,
+                          institution_status: e.target.value,
+                        }))
+                      }
+                      disabled={loadingCfg || savingCfg}
+                      placeholder="Public / Privé laïc / ..."
+                    />
+                  </div>
+                  <div>
+                    <div className="mb-1 text-xs text-slate-500">
+                      Nom complet du 1er responsable (optionnel)
+                    </div>
+                    <input
+                      className="w-full rounded-lg border px-3 py-2 text-sm"
+                      value={cfg.institution_head_name}
+                      onChange={(e) =>
+                        setCfg((s) => ({
+                          ...s,
+                          institution_head_name: e.target.value,
+                        }))
+                      }
+                      disabled={loadingCfg || savingCfg}
+                      placeholder="Nom et prénom(s)"
+                    />
+                  </div>
+                  <div>
+                    <div className="mb-1 text-xs text-slate-500">
+                      Fonction du 1er responsable (optionnel)
+                    </div>
+                    <input
+                      className="w-full rounded-lg border px-3 py-2 text-sm"
+                      value={cfg.institution_head_title}
+                      onChange={(e) =>
+                        setCfg((s) => ({
+                          ...s,
+                          institution_head_title: e.target.value,
+                        }))
+                      }
+                      disabled={loadingCfg || savingCfg}
+                      placeholder="Proviseur, Directeur, ..."
+                    />
+                  </div>
+                </div>
+
+                <div className="mb-3 flex items-center gap-2">
+                  <button
+                    onClick={saveConfig}
+                    disabled={savingCfg || loadingCfg}
+                    className="rounded-lg bg-sky-700 px-3 py-1.5 text-sm font-medium text-white hover:bg-sky-800 disabled:opacity-60"
+                  >
+                    {savingCfg
+                      ? "Enregistrement…"
+                      : "Enregistrer les paramètres"}
+                  </button>
+                  {msgSched && (
+                    <span className="text-sm text-slate-700">{msgSched}</span>
                   )}
                 </div>
 
-                {cfg.institution_logo_url && (
-                  <div className="flex items-center gap-2">
-                    <div className="h-12 w-12 overflow-hidden rounded border bg-white">
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img
-                        src={cfg.institution_logo_url}
-                        alt="Logo de l'établissement"
-                        className="h-full w-full object-contain"
+                {/* Générateur de créneaux */}
+                <div className="mb-4 rounded-xl border bg-slate-50 p-3">
+                  <div className="mb-2 text-sm font-medium text-slate-800">
+                    Générateur de créneaux (auto)
+                  </div>
+                  <div className="grid grid-cols-1 gap-2 md:grid-cols-5">
+                    <div>
+                      <div className="mb-1 text-xs text-slate-500">
+                        Début journée
+                      </div>
+                      <input
+                        type="time"
+                        value={genStart}
+                        onChange={(e) => setGenStart(e.target.value)}
+                        className="w-full rounded-lg border bg-white px-3 py-1.5 text-sm"
                       />
                     </div>
-                    <div className="text-[11px] text-slate-500">
-                      Logo actuellement utilisé pour les bulletins et autres
-                      documents officiels.
+                    <div>
+                      <div className="mb-1 text-xs text-slate-500">
+                        Fin journée
+                      </div>
+                      <input
+                        type="time"
+                        value={genEnd}
+                        onChange={(e) => setGenEnd(e.target.value)}
+                        className="w-full rounded-lg border bg-white px-3 py-1.5 text-sm"
+                      />
+                    </div>
+                    <div>
+                      <div className="mb-1 text-xs text-slate-500">
+                        Durée séance (min)
+                      </div>
+                      <input
+                        type="number"
+                        min={1}
+                        value={genDuration}
+                        onChange={(e) =>
+                          setGenDuration(
+                            Math.max(1, parseInt(e.target.value || "0", 10)),
+                          )
+                        }
+                        className="w-full rounded-lg border bg-white px-3 py-1.5 text-sm"
+                      />
+                    </div>
+                    <div>
+                      <div className="mb-1 text-xs text-slate-500">
+                        Pause entre séances (min)
+                      </div>
+                      <input
+                        type="number"
+                        min={0}
+                        value={genGap}
+                        onChange={(e) =>
+                          setGenGap(
+                            Math.max(0, parseInt(e.target.value || "0", 10)),
+                          )
+                        }
+                        className="w-full rounded-lg border bg-white px-3 py-1.5 text-sm"
+                      />
+                    </div>
+                    <div>
+                      <div className="mb-1 text-xs text-slate-500">
+                        Libellé de base
+                      </div>
+                      <input
+                        value={genLabelBase}
+                        onChange={(e) => setGenLabelBase(e.target.value)}
+                        className="w-full rounded-lg border bg-white px-3 py-1.5 text-sm"
+                        placeholder="Séance"
+                      />
                     </div>
                   </div>
-                )}
 
-                <div className="text-[11px] text-slate-500">
-                  Formats conseillés : PNG ou JPG, taille ≤ 1&nbsp;Mo.
-                </div>
-              </div>
-            </div>
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <label className="inline-flex items-center gap-2 text-xs">
+                      <input
+                        type="checkbox"
+                        checked={genReplace}
+                        onChange={(e) => setGenReplace(e.target.checked)}
+                      />
+                      Remplacer les créneaux existants (sinon, ajouter à la
+                      suite)
+                    </label>
 
-            <div>
-              <div className="mb-1 text-xs text-slate-500">
-                Direction régionale (optionnel)
-              </div>
-              <input
-                className="w-full rounded-lg border px-3 py-2 text-sm"
-                value={cfg.institution_region}
-                onChange={(e) =>
-                  setCfg((s) => ({
-                    ...s,
-                    institution_region: e.target.value,
-                  }))
-                }
-                disabled={loadingCfg || savingCfg}
-                placeholder="DRENA Abidjan 1"
-              />
-            </div>
-            <div>
-              <div className="mb-1 text-xs text-slate-500">
-                Adresse postale (optionnel)
-              </div>
-              <input
-                className="w-full rounded-lg border px-3 py-2 text-sm"
-                value={cfg.institution_postal_address}
-                onChange={(e) =>
-                  setCfg((s) => ({
-                    ...s,
-                    institution_postal_address: e.target.value,
-                  }))
-                }
-                disabled={loadingCfg || savingCfg}
-                placeholder="BP 123 Abidjan"
-              />
-            </div>
-            <div>
-              <div className="mb-1 text-xs text-slate-500">
-                Statut de l&apos;établissement (optionnel)
-              </div>
-              <input
-                className="w-full rounded-lg border px-3 py-2 text-sm"
-                value={cfg.institution_status}
-                onChange={(e) =>
-                  setCfg((s) => ({
-                    ...s,
-                    institution_status: e.target.value,
-                  }))
-                }
-                disabled={loadingCfg || savingCfg}
-                placeholder="Public / Privé laïc / ..."
-              />
-            </div>
-            <div>
-              <div className="mb-1 text-xs text-slate-500">
-                Nom complet du 1er responsable (optionnel)
-              </div>
-              <input
-                className="w-full rounded-lg border px-3 py-2 text-sm"
-                value={cfg.institution_head_name}
-                onChange={(e) =>
-                  setCfg((s) => ({
-                    ...s,
-                    institution_head_name: e.target.value,
-                  }))
-                }
-                disabled={loadingCfg || savingCfg}
-                placeholder="Nom et prénom(s)"
-              />
-            </div>
-            <div>
-              <div className="mb-1 text-xs text-slate-500">
-                Fonction du 1er responsable (optionnel)
-              </div>
-              <input
-                className="w-full rounded-lg border px-3 py-2 text-sm"
-                value={cfg.institution_head_title}
-                onChange={(e) =>
-                  setCfg((s) => ({
-                    ...s,
-                    institution_head_title: e.target.value,
-                  }))
-                }
-                disabled={loadingCfg || savingCfg}
-                placeholder="Proviseur, Directeur, ..."
-              />
-            </div>
-          </div>
+                    <button
+                      onClick={() => buildPreview(curDay)}
+                      className="rounded-lg border bg-white px-3 py-1.5 text-sm hover:bg-slate-100"
+                    >
+                      Prévisualiser (jour courant)
+                    </button>
+                    <button
+                      onClick={() => applyGeneratedToDays([curDay])}
+                      className="rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700"
+                    >
+                      Appliquer au jour courant
+                    </button>
+                    <button
+                      onClick={() => applyGeneratedToDays([1, 2, 3, 4, 5])}
+                      className="rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700"
+                    >
+                      Appliquer Lun→Ven
+                    </button>
+                  </div>
 
-          <div className="mb-3 flex items-center gap-2">
-            <button
-              onClick={saveConfig}
-              disabled={savingCfg || loadingCfg}
-              className="rounded-lg bg-sky-700 px-3 py-1.5 text-sm font-medium text-white hover:bg-sky-800 disabled:opacity-60"
-            >
-              {savingCfg ? "Enregistrement…" : "Enregistrer les paramètres"}
-            </button>
-            {msgSched && (
-              <span className="text-sm text-slate-700">{msgSched}</span>
-            )}
-          </div>
+                  {genPreview.length > 0 && (
+                    <div className="mt-3 overflow-x-auto rounded-lg border bg-white">
+                      <table className="min-w-full text-sm">
+                        <thead className="bg-slate-50">
+                          <tr className="text-left text-slate-600">
+                            <th className="w-12 px-3 py-2">#</th>
+                            <th className="w-36 px-3 py-2">Début</th>
+                            <th className="w-36 px-3 py-2">Fin</th>
+                            <th className="px-3 py-2">
+                              Libellé (prévisualisation)
+                            </th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y">
+                          {genPreview.map((p, i) => (
+                            <tr key={p.id ?? i}>
+                              <td className="px-3 py-2">{i + 1}</td>
+                              <td className="px-3 py-2">{p.start_time}</td>
+                              <td className="px-3 py-2">{p.end_time}</td>
+                              <td className="px-3 py-2">{p.label}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              </SubSection>
 
-          {/* Générateur de créneaux */}
-          <div className="mb-4 rounded-xl border bg-slate-50 p-3">
-            <div className="mb-2 text-sm font-medium text-slate-800">
-              Générateur de créneaux (auto)
-            </div>
-            <div className="grid grid-cols-1 gap-2 md:grid-cols-5">
-              <div>
-                <div className="mb-1 text-xs text-slate-500">
-                  Début journée
-                </div>
-                <input
-                  type="time"
-                  value={genStart}
-                  onChange={(e) => setGenStart(e.target.value)}
-                  className="w-full rounded-lg border bg-white px-3 py-1.5 text-sm"
-                />
-              </div>
-              <div>
-                <div className="mb-1 text-xs text-slate-500">
-                  Fin journée
-                </div>
-                <input
-                  type="time"
-                  value={genEnd}
-                  onChange={(e) => setGenEnd(e.target.value)}
-                  className="w-full rounded-lg border bg-white px-3 py-1.5 text-sm"
-                />
-              </div>
-              <div>
-                <div className="mb-1 text-xs text-slate-500">
-                  Durée séance (min)
-                </div>
-                <input
-                  type="number"
-                  min={1}
-                  value={genDuration}
-                  onChange={(e) =>
-                    setGenDuration(
-                      Math.max(1, parseInt(e.target.value || "0", 10))
-                    )
-                  }
-                  className="w-full rounded-lg border bg-white px-3 py-1.5 text-sm"
-                />
-              </div>
-              <div>
-                <div className="mb-1 text-xs text-slate-500">
-                  Pause entre séances (min)
-                </div>
-                <input
-                  type="number"
-                  min={0}
-                  value={genGap}
-                  onChange={(e) =>
-                    setGenGap(
-                      Math.max(0, parseInt(e.target.value || "0", 10))
-                    )
-                  }
-                  className="w-full rounded-lg border bg-white px-3 py-1.5 text-sm"
-                />
-              </div>
-              <div>
-                <div className="mb-1 text-xs text-slate-500">
-                  Libellé de base
-                </div>
-                <input
-                  value={genLabelBase}
-                  onChange={(e) => setGenLabelBase(e.target.value)}
-                  className="w-full rounded-lg border bg-white px-3 py-1.5 text-sm"
-                  placeholder="Séance"
-                />
-              </div>
-            </div>
-
-            <div className="mt-2 flex flex-wrap items-center gap-2">
-              <label className="inline-flex items-center gap-2 text-xs">
-                <input
-                  type="checkbox"
-                  checked={genReplace}
-                  onChange={(e) => setGenReplace(e.target.checked)}
-                />
-                Remplacer les créneaux existants (sinon, ajouter à la suite)
-              </label>
-
-              <button
-                onClick={() => buildPreview(curDay)}
-                className="rounded-lg border bg-white px-3 py-1.5 text-sm hover:bg-slate-100"
+              <SubSection
+                title="Créneaux par jour"
+                description="Sélectionnez un jour, modifiez chaque horaire si nécessaire, puis enregistrez l’ensemble."
               >
-                Prévisualiser (jour courant)
-              </button>
-              <button
-                onClick={() => applyGeneratedToDays([curDay])}
-                className="rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700"
-              >
-                Appliquer au jour courant
-              </button>
-              <button
-                onClick={() => applyGeneratedToDays([1, 2, 3, 4, 5])}
-                className="rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700"
-              >
-                Appliquer Lun→Ven
-              </button>
-            </div>
+                <div className="mb-3 flex flex-wrap gap-2">
+                  {[
+                    { d: 1, n: "Lun" },
+                    { d: 2, n: "Mar" },
+                    { d: 3, n: "Mer" },
+                    { d: 4, n: "Jeu" },
+                    { d: 5, n: "Ven" },
+                    { d: 6, n: "Sam" },
+                  ].map((w) => (
+                    <button
+                      key={w.d}
+                      onClick={() => setCurDay(w.d)}
+                      className={`rounded-lg border px-3 py-1.5 text-sm ${
+                        curDay === w.d
+                          ? "bg-slate-900 text-white"
+                          : "hover:bg-slate-50"
+                      }`}
+                    >
+                      {w.n}
+                    </button>
+                  ))}
+                </div>
 
-            {genPreview.length > 0 && (
-              <div className="mt-3 overflow-x-auto rounded-lg border bg-white">
-                <table className="min-w-full text-sm">
-                  <thead className="bg-slate-50">
-                    <tr className="text-left text-slate-600">
-                      <th className="w-12 px-3 py-2">#</th>
-                      <th className="w-36 px-3 py-2">Début</th>
-                      <th className="w-36 px-3 py-2">Fin</th>
-                      <th className="px-3 py-2">
-                        Libellé (prévisualisation)
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y">
-                    {genPreview.map((p, i) => (
-                      <tr key={p.id ?? i}>
-                        <td className="px-3 py-2">{i + 1}</td>
-                        <td className="px-3 py-2">{p.start_time}</td>
-                        <td className="px-3 py-2">{p.end_time}</td>
-                        <td className="px-3 py-2">{p.label}</td>
+                {/* Tableau créneaux pour le jour courant */}
+                <div className="overflow-x-auto rounded-xl border">
+                  <table className="min-w-full text-sm">
+                    <thead className="bg-slate-50">
+                      <tr className="text-left text-slate-600">
+                        <th className="w-12 px-3 py-2">#</th>
+                        <th className="w-36 px-3 py-2">Début</th>
+                        <th className="w-36 px-3 py-2">Fin</th>
+                        <th className="px-3 py-2">Libellé</th>
+                        <th className="w-24 px-3 py-2 text-right">Actions</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-          </SubSection>
+                    </thead>
+                    <tbody className="divide-y">
+                      {loadingCfg ? (
+                        <tr>
+                          <td className="px-3 py-3 text-slate-500" colSpan={5}>
+                            Chargement…
+                          </td>
+                        </tr>
+                      ) : (byDay[curDay] || []).length === 0 ? (
+                        <tr>
+                          <td className="px-3 py-3 text-slate-500" colSpan={5}>
+                            Aucun créneau pour ce jour.
+                          </td>
+                        </tr>
+                      ) : (
+                        (byDay[curDay] || []).map((row, i) => (
+                          <tr key={row.id ?? i}>
+                            <td className="px-3 py-2">{i + 1}</td>
+                            <td className="px-3 py-2">
+                              <input
+                                type="time"
+                                value={row.start_time}
+                                onChange={(e) =>
+                                  setCell(curDay, i, {
+                                    start_time: e.target.value,
+                                  })
+                                }
+                                className="w-36 rounded-lg border px-3 py-1.5 text-sm"
+                              />
+                            </td>
+                            <td className="px-3 py-2">
+                              <input
+                                type="time"
+                                value={row.end_time}
+                                onChange={(e) =>
+                                  setCell(curDay, i, {
+                                    end_time: e.target.value,
+                                  })
+                                }
+                                className="w-36 rounded-lg border px-3 py-1.5 text-sm"
+                              />
+                            </td>
+                            <td className="px-3 py-2">
+                              <input
+                                value={row.label}
+                                onChange={(e) =>
+                                  setCell(curDay, i, {
+                                    label: e.target.value,
+                                  })
+                                }
+                                className="w-full rounded-lg border px-3 py-1.5 text-sm"
+                                placeholder="1ère heure / Pause / …"
+                              />
+                            </td>
+                            <td className="px-3 py-2 text-right">
+                              <button
+                                onClick={() => removeRow(curDay, i)}
+                                className="rounded-lg border border-rose-300 bg-rose-50 px-3 py-1.5 text-xs font-medium text-rose-800 hover:bg-rose-100"
+                              >
+                                Supprimer
+                              </button>
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
 
-          <SubSection
-            title="Créneaux par jour"
-            description="Sélectionnez un jour, modifiez chaque horaire si nécessaire, puis enregistrez l’ensemble."
-          >
-            <div className="mb-3 flex flex-wrap gap-2">
-            {[
-              { d: 1, n: "Lun" },
-              { d: 2, n: "Mar" },
-              { d: 3, n: "Mer" },
-              { d: 4, n: "Jeu" },
-              { d: 5, n: "Ven" },
-              { d: 6, n: "Sam" },
-            ].map((w) => (
-              <button
-                key={w.d}
-                onClick={() => setCurDay(w.d)}
-                className={`rounded-lg border px-3 py-1.5 text-sm ${
-                  curDay === w.d
-                    ? "bg-slate-900 text-white"
-                    : "hover:bg-slate-50"
-                }`}
-              >
-                {w.n}
-              </button>
-            ))}
-          </div>
+                <div className="mt-3 flex items-center justify-between">
+                  <button
+                    onClick={() => addRow(curDay)}
+                    className="rounded-lg border px-3 py-1.5 text-sm hover:bg-slate-50"
+                  >
+                    + Ajouter un créneau
+                  </button>
 
-          {/* Tableau créneaux pour le jour courant */}
-          <div className="overflow-x-auto rounded-xl border">
-            <table className="min-w-full text-sm">
-              <thead className="bg-slate-50">
-                <tr className="text-left text-slate-600">
-                  <th className="w-12 px-3 py-2">#</th>
-                  <th className="w-36 px-3 py-2">Début</th>
-                  <th className="w-36 px-3 py-2">Fin</th>
-                  <th className="px-3 py-2">Libellé</th>
-                  <th className="w-24 px-3 py-2 text-right">
-                    Actions
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="divide-y">
-                {loadingCfg ? (
-                  <tr>
-                    <td
-                      className="px-3 py-3 text-slate-500"
-                      colSpan={5}
-                    >
-                      Chargement…
-                    </td>
-                  </tr>
-                ) : (byDay[curDay] || []).length === 0 ? (
-                  <tr>
-                    <td
-                      className="px-3 py-3 text-slate-500"
-                      colSpan={5}
-                    >
-                      Aucun créneau pour ce jour.
-                    </td>
-                  </tr>
-                ) : (
-                  (byDay[curDay] || []).map((row, i) => (
-                    <tr key={row.id ?? i}>
-                      <td className="px-3 py-2">{i + 1}</td>
-                      <td className="px-3 py-2">
-                        <input
-                          type="time"
-                          value={row.start_time}
-                          onChange={(e) =>
-                            setCell(curDay, i, {
-                              start_time: e.target.value,
-                            })
-                          }
-                          className="w-36 rounded-lg border px-3 py-1.5 text-sm"
-                        />
-                      </td>
-                      <td className="px-3 py-2">
-                        <input
-                          type="time"
-                          value={row.end_time}
-                          onChange={(e) =>
-                            setCell(curDay, i, {
-                              end_time: e.target.value,
-                            })
-                          }
-                          className="w-36 rounded-lg border px-3 py-1.5 text-sm"
-                        />
-                      </td>
-                      <td className="px-3 py-2">
-                        <input
-                          value={row.label}
-                          onChange={(e) =>
-                            setCell(curDay, i, {
-                              label: e.target.value,
-                            })
-                          }
-                          className="w-full rounded-lg border px-3 py-1.5 text-sm"
-                          placeholder="1ère heure / Pause / …"
-                        />
-                      </td>
-                      <td className="px-3 py-2 text-right">
-                        <button
-                          onClick={() => removeRow(curDay, i)}
-                          className="rounded-lg border border-rose-300 bg-rose-50 px-3 py-1.5 text-xs font-medium text-rose-800 hover:bg-rose-100"
-                        >
-                          Supprimer
-                        </button>
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
+                  <button
+                    onClick={savePeriods}
+                    disabled={savingPeriods || loadingCfg}
+                    className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white shadow hover:bg-emerald-700 disabled:opacity-60"
+                  >
+                    {savingPeriods
+                      ? "Enregistrement…"
+                      : "Enregistrer les créneaux"}
+                  </button>
+                </div>
 
-          <div className="mt-3 flex items-center justify-between">
-            <button
-              onClick={() => addRow(curDay)}
-              className="rounded-lg border px-3 py-1.5 text-sm hover:bg-slate-50"
-            >
-              + Ajouter un créneau
-            </button>
-
-            <button
-              onClick={savePeriods}
-              disabled={savingPeriods || loadingCfg}
-              className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white shadow hover:bg-emerald-700 disabled:opacity-60"
-            >
-              {savingPeriods
-                ? "Enregistrement…"
-                : "Enregistrer les créneaux"}
-            </button>
-          </div>
-
-          <div className="mt-4 text-[12px] text-slate-500">
-            Astuce : si vous laissez des jours vides, ils ne seront pas pris en
-            compte. Le calcul de retard se base sur le créneau du jour le plus
-            proche de l’heure de début de séance.
-          </div>
-          </SubSection>
-        </SectionCard>
+                <div className="mt-4 text-[12px] text-slate-500">
+                  Astuce : si vous laissez des jours vides, ils ne seront pas
+                  pris en compte. Le calcul de retard se base sur le créneau du
+                  jour le plus proche de l’heure de début de séance.
+                </div>
+              </SubSection>
+            </SectionCard>
           </>
         )}
 
         {activeTab === "academic-years" && (
           <>
-        {/* =======================
+            {/* =======================
             4) Années scolaires
         ======================== */}
-        <SectionCard
-          id="academic-years"
-          eyebrow="Archivage"
-          title="Années scolaires"
-          description="Définissez l’année courante, préparez les archives et choisissez l’année utilisée pour les périodes et les bulletins."
-          actions={
-            <button
-              onClick={loadAcademicYears}
-              disabled={loadingAcademicYears}
-              className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+            <SectionCard
+              id="academic-years"
+              eyebrow="Archivage"
+              title="Années scolaires"
+              description="Définissez l’année courante, préparez les archives et choisissez l’année utilisée pour les périodes et les bulletins."
+              actions={
+                <button
+                  onClick={loadAcademicYears}
+                  disabled={loadingAcademicYears}
+                  className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+                >
+                  {loadingAcademicYears ? "Chargement…" : "Rafraîchir"}
+                </button>
+              }
             >
-              {loadingAcademicYears ? "Chargement…" : "Rafraîchir"}
-            </button>
-          }
-        >
+              {msgAcademicYears && (
+                <div className="mb-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
+                  {msgAcademicYears}
+                </div>
+              )}
 
-          {msgAcademicYears && (
-            <div className="mb-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
-              {msgAcademicYears}
-            </div>
-          )}
-
-          <div className="mb-3 grid grid-cols-1 gap-3 md:grid-cols-3">
-            <div>
-              <div className="mb-1 text-xs text-slate-500">
-                Année scolaire utilisée pour les périodes & bulletins
+              <div className="mb-3 grid grid-cols-1 gap-3 md:grid-cols-3">
+                <div>
+                  <div className="mb-1 text-xs text-slate-500">
+                    Année scolaire utilisée pour les périodes & bulletins
+                  </div>
+                  <select
+                    className="w-full rounded-lg border px-3 py-2 text-sm"
+                    value={selectedAcademicYear}
+                    onChange={async (e) => {
+                      const year = e.target.value;
+                      setSelectedAcademicYear(year);
+                      await loadEvalPeriods(year);
+                    }}
+                  >
+                    <option value="">
+                      — Année déduite automatiquement (serveur) —
+                    </option>
+                    {academicYears.map((y) => (
+                      <option key={y.code || y.id} value={y.code}>
+                        {y.code || "(sans code)"}
+                        {y.is_current ? " — année courante" : ""}
+                      </option>
+                    ))}
+                  </select>
+                  <div className="mt-1 text-[11px] text-slate-500">
+                    Utilisée lors de l&apos;enregistrement des périodes
+                    d&apos;évaluation.
+                  </div>
+                </div>
               </div>
-              <select
-                className="w-full rounded-lg border px-3 py-2 text-sm"
-                value={selectedAcademicYear}
-                onChange={async (e) => {
-                  const year = e.target.value;
-                  setSelectedAcademicYear(year);
-                  await loadEvalPeriods(year);
-                }}
-              >
-                <option value="">
-                  — Année déduite automatiquement (serveur) —
-                </option>
-                {academicYears.map((y) => (
-                  <option key={y.code || y.id} value={y.code}>
-                    {y.code || "(sans code)"}
-                    {y.is_current ? " — année courante" : ""}
-                  </option>
-                ))}
-              </select>
-              <div className="mt-1 text-[11px] text-slate-500">
-                Utilisée lors de l&apos;enregistrement des périodes d&apos;évaluation.
-              </div>
-            </div>
-          </div>
 
-          <div className="overflow-x-auto rounded-xl border">
-            <table className="min-w-full text-sm">
-              <thead className="bg-slate-50 text-slate-600">
-                <tr>
-                  <th className="w-10 px-3 py-2 text-left">#</th>
-                  <th className="px-3 py-2 text-left">Code</th>
-                  <th className="px-3 py-2 text-left">Libellé</th>
-                  <th className="w-32 px-3 py-2 text-left">
-                    Début
-                  </th>
-                  <th className="w-32 px-3 py-2 text-left">Fin</th>
-                  <th className="w-40 px-3 py-2 text-center">
-                    Année courante
-                  </th>
-                  <th className="w-32 px-3 py-2 text-right">
-                    Actions
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="divide-y">
-                {loadingAcademicYears ? (
-                  <tr>
-                    <td
-                      className="px-3 py-3 text-slate-500"
-                      colSpan={7}
-                    >
-                      Chargement des années scolaires…
-                    </td>
-                  </tr>
-                ) : academicYears.length === 0 ? (
-                  <tr>
-                    <td
-                      className="px-3 py-3 text-slate-500"
-                      colSpan={7}
-                    >
-                      Aucune année scolaire définie. Ajoutez au moins une ligne
-                      pour commencer.
-                    </td>
-                  </tr>
-                ) : (
-                  academicYears.map((y, index) => (
-                    <tr key={y.id}>
-                      <td className="px-3 py-2">{index + 1}</td>
-                      <td className="px-3 py-2">
-                        <input
-                          value={y.code}
-                          onChange={(e) =>
-                            updateAcademicYear(y.id, {
-                              code: e.target.value,
-                            })
-                          }
-                          className="w-32 rounded-lg border px-2 py-1 text-sm"
-                          placeholder="2024-2025"
-                        />
-                      </td>
-                      <td className="px-3 py-2">
-                        <input
-                          value={y.label}
-                          onChange={(e) =>
-                            updateAcademicYear(y.id, {
-                              label: e.target.value,
-                            })
-                          }
-                          className="w-full rounded-lg border px-2 py-1 text-sm"
-                          placeholder="Année scolaire 2024-2025"
-                        />
-                      </td>
-                      <td className="px-3 py-2">
-                        <input
-                          type="date"
-                          value={y.start_date}
-                          onChange={(e) =>
-                            updateAcademicYear(y.id, {
-                              start_date: e.target.value,
-                            })
-                          }
-                          className="w-32 rounded-lg border px-2 py-1 text-sm"
-                        />
-                      </td>
-                      <td className="px-3 py-2">
-                        <input
-                          type="date"
-                          value={y.end_date}
-                          onChange={(e) =>
-                            updateAcademicYear(y.id, {
-                              end_date: e.target.value,
-                            })
-                          }
-                          className="w-32 rounded-lg border px-2 py-1 text-sm"
-                        />
-                      </td>
-                      <td className="px-3 py-2 text-center">
-                        <input
-                          type="radio"
-                          name="current_academic_year"
-                          checked={y.is_current}
-                          onChange={() => {
-                            setAcademicYears((prev) =>
-                              prev.map((row) => ({
-                                ...row,
-                                is_current: row.id === y.id,
-                              }))
-                            );
-                            setSelectedAcademicYear(
-                              y.code || selectedAcademicYear
-                            );
-                          }}
-                        />
-                      </td>
-                      <td className="px-3 py-2 text-right">
-                        <button
-                          type="button"
-                          onClick={() => removeAcademicYear(y.id)}
-                          className="rounded-lg border border-rose-300 bg-rose-50 px-2 py-1 text-xs font-medium text-rose-800 hover:bg-rose-100"
-                          title="Supprimer"
-                        >
-                          Suppr.
-                        </button>
-                      </td>
+              <div className="overflow-x-auto rounded-xl border">
+                <table className="min-w-full text-sm">
+                  <thead className="bg-slate-50 text-slate-600">
+                    <tr>
+                      <th className="w-10 px-3 py-2 text-left">#</th>
+                      <th className="px-3 py-2 text-left">Code</th>
+                      <th className="px-3 py-2 text-left">Libellé</th>
+                      <th className="w-32 px-3 py-2 text-left">Début</th>
+                      <th className="w-32 px-3 py-2 text-left">Fin</th>
+                      <th className="w-40 px-3 py-2 text-center">
+                        Année courante
+                      </th>
+                      <th className="w-32 px-3 py-2 text-right">Actions</th>
                     </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
+                  </thead>
+                  <tbody className="divide-y">
+                    {loadingAcademicYears ? (
+                      <tr>
+                        <td className="px-3 py-3 text-slate-500" colSpan={7}>
+                          Chargement des années scolaires…
+                        </td>
+                      </tr>
+                    ) : academicYears.length === 0 ? (
+                      <tr>
+                        <td className="px-3 py-3 text-slate-500" colSpan={7}>
+                          Aucune année scolaire définie. Ajoutez au moins une
+                          ligne pour commencer.
+                        </td>
+                      </tr>
+                    ) : (
+                      academicYears.map((y, index) => (
+                        <tr key={y.id}>
+                          <td className="px-3 py-2">{index + 1}</td>
+                          <td className="px-3 py-2">
+                            <input
+                              value={y.code}
+                              onChange={(e) =>
+                                updateAcademicYear(y.id, {
+                                  code: e.target.value,
+                                })
+                              }
+                              className="w-32 rounded-lg border px-2 py-1 text-sm"
+                              placeholder="2024-2025"
+                            />
+                          </td>
+                          <td className="px-3 py-2">
+                            <input
+                              value={y.label}
+                              onChange={(e) =>
+                                updateAcademicYear(y.id, {
+                                  label: e.target.value,
+                                })
+                              }
+                              className="w-full rounded-lg border px-2 py-1 text-sm"
+                              placeholder="Année scolaire 2024-2025"
+                            />
+                          </td>
+                          <td className="px-3 py-2">
+                            <input
+                              type="date"
+                              value={y.start_date}
+                              onChange={(e) =>
+                                updateAcademicYear(y.id, {
+                                  start_date: e.target.value,
+                                })
+                              }
+                              className="w-32 rounded-lg border px-2 py-1 text-sm"
+                            />
+                          </td>
+                          <td className="px-3 py-2">
+                            <input
+                              type="date"
+                              value={y.end_date}
+                              onChange={(e) =>
+                                updateAcademicYear(y.id, {
+                                  end_date: e.target.value,
+                                })
+                              }
+                              className="w-32 rounded-lg border px-2 py-1 text-sm"
+                            />
+                          </td>
+                          <td className="px-3 py-2 text-center">
+                            <input
+                              type="radio"
+                              name="current_academic_year"
+                              checked={y.is_current}
+                              onChange={() => {
+                                setAcademicYears((prev) =>
+                                  prev.map((row) => ({
+                                    ...row,
+                                    is_current: row.id === y.id,
+                                  })),
+                                );
+                                setSelectedAcademicYear(
+                                  y.code || selectedAcademicYear,
+                                );
+                              }}
+                            />
+                          </td>
+                          <td className="px-3 py-2 text-right">
+                            <button
+                              type="button"
+                              onClick={() => removeAcademicYear(y.id)}
+                              className="rounded-lg border border-rose-300 bg-rose-50 px-2 py-1 text-xs font-medium text-rose-800 hover:bg-rose-100"
+                              title="Supprimer"
+                            >
+                              Suppr.
+                            </button>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
 
-          <div className="mt-3 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={addAcademicYear}
-                className="rounded-lg border px-3 py-1.5 text-sm hover:bg-slate-50"
-              >
-                + Ajouter une année scolaire
-              </button>
-            </div>
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={saveAcademicYears}
-                disabled={savingAcademicYears}
-                className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white shadow hover:bg-emerald-700 disabled:opacity-60"
-              >
-                {savingAcademicYears
-                  ? "Enregistrement…"
-                  : "Enregistrer les années scolaires"}
-              </button>
-            </div>
-          </div>
-        </SectionCard>
+              <div className="mt-3 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={addAcademicYear}
+                    className="rounded-lg border px-3 py-1.5 text-sm hover:bg-slate-50"
+                  >
+                    + Ajouter une année scolaire
+                  </button>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={saveAcademicYears}
+                    disabled={savingAcademicYears}
+                    className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white shadow hover:bg-emerald-700 disabled:opacity-60"
+                  >
+                    {savingAcademicYears
+                      ? "Enregistrement…"
+                      : "Enregistrer les années scolaires"}
+                  </button>
+                </div>
+              </div>
+            </SectionCard>
           </>
         )}
 
         {activeTab === "grading-periods" && (
           <>
-        {/* =======================
+            {/* =======================
             5) Périodes d'évaluation (bulletins)
         ======================== */}
-        <SectionCard
-          id="grading-periods"
-          eyebrow="Bulletins"
-          title="Périodes d&apos;évaluation"
-          description="Trimestres, semestres, compositions : chaque période garde son ordre, son coefficient et sa plage de dates."
-          actions={
-            <button
-              onClick={() => loadEvalPeriods()}
-              disabled={loadingEvalPeriods}
-              className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+            <SectionCard
+              id="grading-periods"
+              eyebrow="Bulletins"
+              title="Périodes d'évaluation"
+              description="Trimestres, semestres, compositions : chaque période garde son ordre, son coefficient et sa plage de dates."
+              actions={
+                <button
+                  onClick={() => loadEvalPeriods()}
+                  disabled={loadingEvalPeriods}
+                  className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+                >
+                  {loadingEvalPeriods ? "Chargement…" : "Rafraîchir"}
+                </button>
+              }
             >
-              {loadingEvalPeriods ? "Chargement…" : "Rafraîchir"}
-            </button>
-          }
-        >
+              {msgEvalPeriods && (
+                <div className="mb-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
+                  {msgEvalPeriods}
+                </div>
+              )}
 
-          {msgEvalPeriods && (
-            <div className="mb-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
-              {msgEvalPeriods}
-            </div>
-          )}
-
-          <div className="overflow-x-auto rounded-xl border">
-            <table className="min-w-full text-sm">
-              <thead className="bg-slate-50 text-slate-600">
-                <tr>
-                  <th className="w-10 px-3 py-2 text-left">#</th>
-                  <th className="px-3 py-2 text-left">Code</th>
-                  <th className="px-3 py-2 text-left">
-                    Libellé complet
-                  </th>
-                  <th className="px-3 py-2 text-left">
-                    Libellé bulletin
-                  </th>
-                  <th className="w-24 px-3 py-2 text-right">
-                    Coeff. période
-                  </th>
-                  <th className="w-32 px-3 py-2 text-left">
-                    Début
-                  </th>
-                  <th className="w-32 px-3 py-2 text-left">
-                    Fin
-                  </th>
-                  <th className="w-24 px-3 py-2 text-center">
-                    Actif
-                  </th>
-                  <th className="w-32 px-3 py-2 text-right">
-                    Actions
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="divide-y">
-                {loadingEvalPeriods ? (
-                  <tr>
-                    <td
-                      className="px-3 py-3 text-slate-500"
-                      colSpan={9}
-                    >
-                      Chargement des périodes…
-                    </td>
-                  </tr>
-                ) : evalPeriods.length === 0 ? (
-                  <tr>
-                    <td
-                      className="px-3 py-3 text-slate-500"
-                      colSpan={9}
-                    >
-                      Aucune période définie. Cliquez sur « Ajouter une période »
-                      pour commencer.
-                    </td>
-                  </tr>
-                ) : (
-                  evalPeriods.map((p, index) => (
-                    <tr key={p.id}>
-                      <td className="px-3 py-2">{index + 1}</td>
-                      <td className="px-3 py-2">
-                        <input
-                          value={p.code}
-                          onChange={(e) =>
-                            updateEvalPeriod(p.id, {
-                              code: e.target.value,
-                            })
-                          }
-                          className="w-24 rounded-lg border px-2 py-1 text-sm"
-                          placeholder="T1 / S1 / JN"
-                        />
-                      </td>
-                      <td className="px-3 py-2">
-                        <input
-                          value={p.label}
-                          onChange={(e) =>
-                            updateEvalPeriod(p.id, {
-                              label: e.target.value,
-                            })
-                          }
-                          className="w-full rounded-lg border px-2 py-1 text-sm"
-                          placeholder="1er trimestre 2024-2025"
-                        />
-                      </td>
-                      <td className="px-3 py-2">
-                        <input
-                          value={p.short_label}
-                          onChange={(e) =>
-                            updateEvalPeriod(p.id, {
-                              short_label: e.target.value,
-                            })
-                          }
-                          className="w-full rounded-lg border px-2 py-1 text-sm"
-                          placeholder="Trim. 1 / Juin"
-                        />
-                      </td>
-                      <td className="px-3 py-2 text-right">
-                        <input
-                          type="number"
-                          min={0}
-                          step="0.5"
-                          className="w-20 rounded-lg border px-2 py-1 text-right text-sm"
-                          value={p.weight}
-                          onChange={(e) => {
-                            const raw =
-                              e.target.value.replace(",", ".");
-                            const num = parseFloat(raw);
-                            updateEvalPeriod(p.id, {
-                              weight: isNaN(num)
-                                ? 1
-                                : Math.max(0, num),
-                            });
-                          }}
-                        />
-                      </td>
-                      <td className="px-3 py-2">
-                        <input
-                          type="date"
-                          value={p.start_date}
-                          onChange={(e) =>
-                            updateEvalPeriod(p.id, {
-                              start_date: e.target.value,
-                            })
-                          }
-                          className="w-32 rounded-lg border px-2 py-1 text-sm"
-                        />
-                      </td>
-                      <td className="px-3 py-2">
-                        <input
-                          type="date"
-                          value={p.end_date}
-                          onChange={(e) =>
-                            updateEvalPeriod(p.id, {
-                              end_date: e.target.value,
-                            })
-                          }
-                          className="w-32 rounded-lg border px-2 py-1 text-sm"
-                        />
-                      </td>
-                      <td className="px-3 py-2 text-center">
-                        <input
-                          type="checkbox"
-                          checked={p.is_active}
-                          onChange={(e) =>
-                            updateEvalPeriod(p.id, {
-                              is_active: e.target.checked,
-                            })
-                          }
-                        />
-                      </td>
-                      <td className="px-3 py-2 text-right">
-                        <div className="flex justify-end gap-1">
-                          <button
-                            type="button"
-                            onClick={() => moveEvalPeriod(p.id, "up")}
-                            disabled={index === 0}
-                            className="rounded-lg border px-2 py-1 text-xs hover:bg-slate-50 disabled:opacity-40"
-                            title="Monter"
-                          >
-                            ↑
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() =>
-                              moveEvalPeriod(p.id, "down")
-                            }
-                            disabled={
-                              index === evalPeriods.length - 1
-                            }
-                            className="rounded-lg border px-2 py-1 text-xs hover:bg-slate-50 disabled:opacity-40"
-                            title="Descendre"
-                          >
-                            ↓
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => removeEvalPeriod(p.id)}
-                            className="rounded-lg border border-rose-300 bg-rose-50 px-2 py-1 text-xs font-medium text-rose-800 hover:bg-rose-100"
-                            title="Supprimer"
-                          >
-                            Suppr.
-                          </button>
-                        </div>
-                      </td>
+              <div className="overflow-x-auto rounded-xl border">
+                <table className="min-w-full text-sm">
+                  <thead className="bg-slate-50 text-slate-600">
+                    <tr>
+                      <th className="w-10 px-3 py-2 text-left">#</th>
+                      <th className="px-3 py-2 text-left">Code</th>
+                      <th className="px-3 py-2 text-left">Libellé complet</th>
+                      <th className="px-3 py-2 text-left">Libellé bulletin</th>
+                      <th className="w-24 px-3 py-2 text-right">
+                        Coeff. période
+                      </th>
+                      <th className="w-32 px-3 py-2 text-left">Début</th>
+                      <th className="w-32 px-3 py-2 text-left">Fin</th>
+                      <th className="w-24 px-3 py-2 text-center">Actif</th>
+                      <th className="w-32 px-3 py-2 text-right">Actions</th>
                     </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
+                  </thead>
+                  <tbody className="divide-y">
+                    {loadingEvalPeriods ? (
+                      <tr>
+                        <td className="px-3 py-3 text-slate-500" colSpan={9}>
+                          Chargement des périodes…
+                        </td>
+                      </tr>
+                    ) : evalPeriods.length === 0 ? (
+                      <tr>
+                        <td className="px-3 py-3 text-slate-500" colSpan={9}>
+                          Aucune période définie. Cliquez sur « Ajouter une
+                          période » pour commencer.
+                        </td>
+                      </tr>
+                    ) : (
+                      evalPeriods.map((p, index) => (
+                        <tr key={p.id}>
+                          <td className="px-3 py-2">{index + 1}</td>
+                          <td className="px-3 py-2">
+                            <input
+                              value={p.code}
+                              onChange={(e) =>
+                                updateEvalPeriod(p.id, {
+                                  code: e.target.value,
+                                })
+                              }
+                              className="w-24 rounded-lg border px-2 py-1 text-sm"
+                              placeholder="T1 / S1 / JN"
+                            />
+                          </td>
+                          <td className="px-3 py-2">
+                            <input
+                              value={p.label}
+                              onChange={(e) =>
+                                updateEvalPeriod(p.id, {
+                                  label: e.target.value,
+                                })
+                              }
+                              className="w-full rounded-lg border px-2 py-1 text-sm"
+                              placeholder="1er trimestre 2024-2025"
+                            />
+                          </td>
+                          <td className="px-3 py-2">
+                            <input
+                              value={p.short_label}
+                              onChange={(e) =>
+                                updateEvalPeriod(p.id, {
+                                  short_label: e.target.value,
+                                })
+                              }
+                              className="w-full rounded-lg border px-2 py-1 text-sm"
+                              placeholder="Trim. 1 / Juin"
+                            />
+                          </td>
+                          <td className="px-3 py-2 text-right">
+                            <input
+                              type="number"
+                              min={0}
+                              step="0.5"
+                              className="w-20 rounded-lg border px-2 py-1 text-right text-sm"
+                              value={p.weight}
+                              onChange={(e) => {
+                                const raw = e.target.value.replace(",", ".");
+                                const num = parseFloat(raw);
+                                updateEvalPeriod(p.id, {
+                                  weight: isNaN(num) ? 1 : Math.max(0, num),
+                                });
+                              }}
+                            />
+                          </td>
+                          <td className="px-3 py-2">
+                            <input
+                              type="date"
+                              value={p.start_date}
+                              onChange={(e) =>
+                                updateEvalPeriod(p.id, {
+                                  start_date: e.target.value,
+                                })
+                              }
+                              className="w-32 rounded-lg border px-2 py-1 text-sm"
+                            />
+                          </td>
+                          <td className="px-3 py-2">
+                            <input
+                              type="date"
+                              value={p.end_date}
+                              onChange={(e) =>
+                                updateEvalPeriod(p.id, {
+                                  end_date: e.target.value,
+                                })
+                              }
+                              className="w-32 rounded-lg border px-2 py-1 text-sm"
+                            />
+                          </td>
+                          <td className="px-3 py-2 text-center">
+                            <input
+                              type="checkbox"
+                              checked={p.is_active}
+                              onChange={(e) =>
+                                updateEvalPeriod(p.id, {
+                                  is_active: e.target.checked,
+                                })
+                              }
+                            />
+                          </td>
+                          <td className="px-3 py-2 text-right">
+                            <div className="flex justify-end gap-1">
+                              <button
+                                type="button"
+                                onClick={() => moveEvalPeriod(p.id, "up")}
+                                disabled={index === 0}
+                                className="rounded-lg border px-2 py-1 text-xs hover:bg-slate-50 disabled:opacity-40"
+                                title="Monter"
+                              >
+                                ↑
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => moveEvalPeriod(p.id, "down")}
+                                disabled={index === evalPeriods.length - 1}
+                                className="rounded-lg border px-2 py-1 text-xs hover:bg-slate-50 disabled:opacity-40"
+                                title="Descendre"
+                              >
+                                ↓
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => removeEvalPeriod(p.id)}
+                                className="rounded-lg border border-rose-300 bg-rose-50 px-2 py-1 text-xs font-medium text-rose-800 hover:bg-rose-100"
+                                title="Supprimer"
+                              >
+                                Suppr.
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
 
-          <div className="mt-3 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={addEvalPeriod}
-                className="rounded-lg border px-3 py-1.5 text-sm hover:bg-slate-50"
-              >
-                + Ajouter une période
-              </button>
-            </div>
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={saveEvalPeriods}
-                disabled={savingEvalPeriods || loadingEvalPeriods}
-                className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white shadow hover:bg-emerald-700 disabled:opacity-60"
-              >
-                {savingEvalPeriods
-                  ? "Enregistrement…"
-                  : "Enregistrer les périodes"}
-              </button>
-            </div>
-          </div>
+              <div className="mt-3 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={addEvalPeriod}
+                    className="rounded-lg border px-3 py-1.5 text-sm hover:bg-slate-50"
+                  >
+                    + Ajouter une période
+                  </button>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={saveEvalPeriods}
+                    disabled={savingEvalPeriods || loadingEvalPeriods}
+                    className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white shadow hover:bg-emerald-700 disabled:opacity-60"
+                  >
+                    {savingEvalPeriods
+                      ? "Enregistrement…"
+                      : "Enregistrer les périodes"}
+                  </button>
+                </div>
+              </div>
 
-          <div className="mt-2 text-[11px] text-slate-500">
-            Exemple : trois périodes « 1er trimestre », « 2e trimestre »,
-            « 3e trimestre » avec des coefficients 1, 2, 2 ; ou deux lignes
-            « Semestre 1 » et « Semestre 2 ». Pour le primaire, vous pouvez
-            définir « Composition de mars », « Composition de juin », etc.
-          </div>
-        </SectionCard>
+              <div className="mt-2 text-[11px] text-slate-500">
+                Exemple : trois périodes « 1er trimestre », « 2e trimestre », «
+                3e trimestre » avec des coefficients 1, 2, 2 ; ou deux lignes «
+                Semestre 1 » et « Semestre 2 ». Pour le primaire, vous pouvez
+                définir « Composition de mars », « Composition de juin », etc.
+              </div>
+            </SectionCard>
           </>
         )}
 
         {activeTab === "coefficients" && (
           <>
-        {/* =======================
+            {/* =======================
             6) Coefficients des disciplines + sous-matières
         ======================== */}
-        <SectionCard
-          id="subject-coeffs"
-          eyebrow="Notation"
-          title="Coefficients des disciplines par niveau"
-          description="Ajustez les coefficients du bulletin et, si besoin, détaillez chaque matière en sous-matières tout en respectant la somme attendue."
-          actions={
-            <button
-              onClick={() => {
-                loadSubjectCoeffs();
-                loadSubjectComponents();
-              }}
-              disabled={loadingCoeffs || loadingComponents}
-              className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+            <SectionCard
+              id="subject-coeffs"
+              eyebrow="Notation"
+              title="Coefficients des disciplines par niveau"
+              description="Ajustez les coefficients du bulletin et, si besoin, détaillez chaque matière en sous-matières tout en respectant la somme attendue."
+              actions={
+                <button
+                  onClick={() => {
+                    loadSubjectCoeffs();
+                    loadSubjectComponents();
+                  }}
+                  disabled={loadingCoeffs || loadingComponents}
+                  className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+                >
+                  {loadingCoeffs || loadingComponents
+                    ? "Chargement…"
+                    : "Rafraîchir"}
+                </button>
+              }
             >
-              {loadingCoeffs || loadingComponents ? "Chargement…" : "Rafraîchir"}
-            </button>
-          }
-        >
-
-          {msgCoeffs && (
-            <div className="mb-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
-              {msgCoeffs}
-            </div>
-          )}
-
-          {msgComponents && (
-            <div className="mb-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
-              {msgComponents}
-            </div>
-          )}
-
-          <div className="mb-5 rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-3 md:items-end">
-              <div>
-                <div className="mb-1 text-xs font-bold uppercase tracking-[0.14em] text-slate-500">
-                  Niveau à configurer
+              {msgCoeffs && (
+                <div className="mb-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
+                  {msgCoeffs}
                 </div>
-                <select
-                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm outline-none transition focus:border-emerald-400 focus:ring-4 focus:ring-emerald-500/20"
-                  value={selectedCoeffLevel}
-                  onChange={(e) => setSelectedCoeffLevel(e.target.value)}
-                >
-                  <option value="">— Choisir un niveau —</option>
-                  {coeffLevels.map((lvl) => (
-                    <option key={lvl} value={lvl}>
-                      {lvl}
-                    </option>
-                  ))}
-                </select>
-                <div className="mt-1 text-[11px] text-slate-500">
-                  Choisissez d’abord le niveau, puis prévisualisez ou appliquez
-                  le référentiel CI pour ce niveau.
-                </div>
-              </div>
+              )}
 
-              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600 md:col-span-2">
-                Niveau actif :
-                <span className="ml-2 font-bold text-slate-900">
-                  {selectedCoeffLevel || "Aucun niveau sélectionné"}
-                </span>
-                <span className="mx-2 text-slate-300">•</span>
-                <span>
-                  {selectedCoeffLevel
-                    ? `${coeffRowsForSelectedLevel.length} discipline(s) affichée(s)`
-                    : "Sélection requise avant l’initialisation CI"}
-                </span>
-              </div>
-            </div>
-          </div>
+              {msgComponents && (
+                <div className="mb-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
+                  {msgComponents}
+                </div>
+              )}
 
-          <div className="mb-5 rounded-3xl border border-emerald-200 bg-gradient-to-br from-emerald-50 via-white to-sky-50 p-4 shadow-sm">
-            <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-              <div className="max-w-3xl">
-                <div className="text-[11px] font-black uppercase tracking-[0.18em] text-emerald-700">
-                  Initialisation rapide
-                </div>
-                <div className="mt-1 text-lg font-black text-slate-900">
-                  Référentiel CI — Secondaire général
-                </div>
-                <p className="mt-1 text-sm leading-6 text-slate-600">
-                  Après sélection du niveau ci-dessus, applique automatiquement les coefficients officiels aux disciplines reconnues.
-                  Les matières non reconnues ne sont pas modifiées. Le Français du 1er cycle reçoit aussi ses
-                  sous-matières par niveau : Composition française, Expression orale, Orthographe-Grammaire.
-                </p>
-                <div className="mt-3 flex flex-wrap gap-2 text-[11px] font-semibold">
-                  <span className="rounded-full bg-white px-2.5 py-1 text-slate-700 ring-1 ring-slate-200">
-                    {ciPresetStats.applicable} reconnu(s)
-                  </span>
-                  <span className="rounded-full bg-white px-2.5 py-1 text-slate-700 ring-1 ring-slate-200">
-                    {ciPresetStats.withComponents} avec sous-matières
-                  </span>
-                  <span className="rounded-full bg-white px-2.5 py-1 text-slate-700 ring-1 ring-slate-200">
-                    {ciPresetStats.optional} LV2 facultative(s)
-                  </span>
-                  {ciPresetStats.ambiguous > 0 && (
-                    <span className="rounded-full bg-amber-100 px-2.5 py-1 text-amber-800 ring-1 ring-amber-200">
-                      {ciPresetStats.ambiguous} cas A1/A2 à préciser
-                    </span>
-                  )}
-                </div>
-              </div>
-
-              <div className="flex shrink-0 flex-col gap-2 sm:flex-row lg:flex-col">
-                <button
-                  type="button"
-                  onClick={previewGeneralSecondaryCiPreset}
-                  disabled={loadingCoeffs || !selectedCoeffLevel || coeffRowsForSelectedLevel.length === 0}
-                  className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-bold text-slate-700 shadow-sm hover:bg-slate-50 disabled:opacity-60"
-                >
-                  Prévisualiser
-                </button>
-                <button
-                  type="button"
-                  onClick={applyGeneralSecondaryCiPreset}
-                  disabled={loadingCoeffs || !selectedCoeffLevel || coeffRowsForSelectedLevel.length === 0}
-                  className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-bold text-white shadow-sm hover:bg-emerald-700 disabled:opacity-60"
-                >
-                  Appliquer CI
-                </button>
-              </div>
-            </div>
-
-            {ciPresetPreview.length > 0 && (
-              <div className="mt-4 overflow-hidden rounded-2xl border border-slate-200 bg-white">
-                <div className="border-b border-slate-100 px-3 py-2 text-xs font-bold text-slate-700">
-                  Aperçu {selectedCoeffLevel ? `— ${selectedCoeffLevel}` : "global"}
-                  {ciPresetAppliedOnce ? " · appliqué localement" : ""}
-                </div>
-                <div className="max-h-60 overflow-auto">
-                  <table className="min-w-full text-xs">
-                    <thead className="sticky top-0 bg-slate-50 text-slate-600">
-                      <tr>
-                        <th className="px-3 py-2 text-left">Niveau</th>
-                        <th className="px-3 py-2 text-left">Discipline</th>
-                        <th className="px-3 py-2 text-right">Actuel</th>
-                        <th className="px-3 py-2 text-right">CI</th>
-                        <th className="px-3 py-2 text-left">Statut</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y">
-                      {ciPresetRowsForSelectedLevel.slice(0, 80).map((item) => (
-                        <tr key={`${item.level}-${item.subject_id}`}>
-                          <td className="px-3 py-2 font-medium text-slate-700">
-                            {item.level || "—"}
-                          </td>
-                          <td className="px-3 py-2 text-slate-700">
-                            {item.subject_name}
-                            {item.components.length > 0 && (
-                              <span className="ml-2 rounded-full bg-sky-50 px-2 py-0.5 text-[10px] font-bold text-sky-700 ring-1 ring-sky-100">
-                                sous-matières FR
-                              </span>
-                            )}
-                          </td>
-                          <td className="px-3 py-2 text-right text-slate-500">
-                            {item.currentCoeff}
-                          </td>
-                          <td className="px-3 py-2 text-right font-bold text-slate-900">
-                            {item.coeff ?? "—"}
-                          </td>
-                          <td className="px-3 py-2">
-                            {item.willApply ? (
-                              <span className="rounded-full bg-emerald-50 px-2 py-0.5 font-bold text-emerald-700 ring-1 ring-emerald-100">
-                                reconnu{item.optional ? " · facultatif" : ""}
-                              </span>
-                            ) : (
-                              <span className="rounded-full bg-slate-50 px-2 py-0.5 font-medium text-slate-600 ring-1 ring-slate-100">
-                                {item.note}
-                              </span>
-                            )}
-                          </td>
-                        </tr>
+              <div className="mb-5 rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
+                <div className="grid grid-cols-1 gap-3 md:grid-cols-3 md:items-end">
+                  <div>
+                    <div className="mb-1 text-xs font-bold uppercase tracking-[0.14em] text-slate-500">
+                      Niveau à configurer
+                    </div>
+                    <select
+                      className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm outline-none transition focus:border-emerald-400 focus:ring-4 focus:ring-emerald-500/20"
+                      value={selectedCoeffLevel}
+                      onChange={(e) => setSelectedCoeffLevel(e.target.value)}
+                    >
+                      <option value="">— Choisir un niveau —</option>
+                      {coeffLevels.map((lvl) => (
+                        <option key={lvl} value={lvl}>
+                          {formatCoeffLevel(lvl)}
+                        </option>
                       ))}
-                    </tbody>
-                  </table>
+                    </select>
+                    <div className="mt-1 text-[11px] text-slate-500">
+                      Choisissez d’abord le niveau, puis prévisualisez ou
+                      appliquez le référentiel CI pour ce niveau.
+                    </div>
+                  </div>
+
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600 md:col-span-2">
+                    Niveau actif :
+                    <span className="ml-2 font-bold text-slate-900">
+                      {selectedCoeffLevel
+                        ? formatCoeffLevel(selectedCoeffLevel)
+                        : "Aucun niveau sélectionné"}
+                    </span>
+                    <span className="mx-2 text-slate-300">•</span>
+                    <span>
+                      {selectedCoeffLevel
+                        ? `${coeffRowsForSelectedLevel.length} discipline(s) affichée(s)`
+                        : "Sélection requise avant l’initialisation CI"}
+                    </span>
+                  </div>
                 </div>
               </div>
-            )}
-          </div>
 
-          <div className="overflow-x-auto rounded-xl border">
-            <table className="min-w-full text-sm">
-              <thead className="bg-slate-50 text-slate-600">
-                <tr>
-                  <th className="px-3 py-2 text-left">Discipline</th>
-                  <th className="w-32 px-3 py-2 text-right">
-                    Coefficient bulletin
-                  </th>
-                  <th className="w-56 px-3 py-2 text-right">
-                    Sous-matières (optionnel)
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="divide-y">
-                {loadingCoeffs ? (
-                  <tr>
-                    <td
-                      className="px-3 py-3 text-slate-500"
-                      colSpan={3}
-                    >
-                      Chargement des disciplines…
-                    </td>
-                  </tr>
-                ) : !selectedCoeffLevel ? (
-                  <tr>
-                    <td
-                      className="px-3 py-3 text-slate-500"
-                      colSpan={3}
-                    >
-                      Choisissez d&apos;abord un niveau pour voir et modifier
-                      les coefficients.
-                    </td>
-                  </tr>
-                ) : coeffRowsForSelectedLevel.length === 0 ? (
-                  <tr>
-                    <td
-                      className="px-3 py-3 text-slate-500"
-                      colSpan={3}
-                    >
-                      Aucune discipline n&apos;est encore paramétrée pour ce
-                      niveau. Cliquez sur « Rafraîchir » si vous venez
-                      d&apos;ajouter des matières.
-                    </td>
-                  </tr>
-                ) : (
-                  coeffRowsForSelectedLevel.map((sc) => {
-                    const comps = subjectComponents.filter(
-                      (c) =>
-                        c.subject_id === sc.subject_id &&
-                        (c.level || "") === (sc.level || "")
-                    );
-                    const sum = comps.reduce(
-                      (s, c) => s + (Number(c.coeff) || 0),
-                      0
-                    );
-                    const ok = Math.abs(sum - sc.coeff) < 1e-6;
+              <div className="mb-5 rounded-3xl border border-emerald-200 bg-gradient-to-br from-emerald-50 via-white to-sky-50 p-4 shadow-sm">
+                <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                  <div className="max-w-3xl">
+                    <div className="text-[11px] font-black uppercase tracking-[0.18em] text-emerald-700">
+                      Initialisation rapide
+                    </div>
+                    <div className="mt-1 text-lg font-black text-slate-900">
+                      Référentiel CI — Secondaire général
+                    </div>
+                    <p className="mt-1 text-sm leading-6 text-slate-600">
+                      Après sélection du niveau ci-dessus, applique
+                      automatiquement les coefficients officiels aux disciplines
+                      reconnues. Les matières non reconnues ne sont pas
+                      modifiées. Le Français du 1er cycle reçoit aussi ses
+                      sous-matières par niveau : Composition française,
+                      Expression orale, Orthographe-Grammaire.
+                    </p>
+                    <div className="mt-3 flex flex-wrap gap-2 text-[11px] font-semibold">
+                      <span className="rounded-full bg-white px-2.5 py-1 text-slate-700 ring-1 ring-slate-200">
+                        {ciPresetStats.applicable} reconnu(s)
+                      </span>
+                      <span className="rounded-full bg-white px-2.5 py-1 text-slate-700 ring-1 ring-slate-200">
+                        {ciPresetStats.withComponents} avec sous-matières
+                      </span>
+                      <span className="rounded-full bg-white px-2.5 py-1 text-slate-700 ring-1 ring-slate-200">
+                        {ciPresetStats.optional} LV2 facultative(s)
+                      </span>
+                      {ciPresetStats.ambiguous > 0 && (
+                        <span className="rounded-full bg-amber-100 px-2.5 py-1 text-amber-800 ring-1 ring-amber-200">
+                          {ciPresetStats.ambiguous} cas A1/A2 à préciser
+                        </span>
+                      )}
+                    </div>
+                  </div>
 
-                    return (
-                      <tr
-                        key={`${sc.level}-${sc.subject_id}`}
-                      >
-                        <td className="px-3 py-2 text-slate-800">
-                          {sc.subject_name}
-                        </td>
-                        <td className="px-3 py-2 text-right">
-                          <input
-                            type="number"
-                            min={0}
-                            step="0.5"
-                            className="w-24 rounded-lg border px-2 py-1 text-right text-sm"
-                            value={sc.coeff}
-                            onChange={(e) => {
-                              const raw =
-                                e.target.value.replace(",", ".");
-                              const num = parseFloat(raw);
-                              setSubjectCoeffs((prev) =>
-                                prev.map((row) =>
-                                  row.subject_id === sc.subject_id &&
-                                  row.level === sc.level
-                                    ? {
-                                        ...row,
-                                        coeff: isNaN(num)
-                                          ? 0
-                                          : Math.max(0, num),
-                                      }
-                                    : row
-                                )
-                              );
-                            }}
-                          />
-                        </td>
-                        <td className="px-3 py-2 text-right">
-                          <div className="flex flex-col items-end gap-1">
-                            <button
-                              type="button"
-                              onClick={() =>
-                                openComponentsEditor(sc)
-                              }
-                              className="rounded-lg border px-2 py-1 text-xs hover:bg-slate-50"
-                            >
-                              {comps.length > 0
-                                ? "Modifier les sous-matières"
-                                : "Ajouter des sous-matières"}
-                            </button>
-                            {comps.length > 0 && (
-                              <div className="text-[11px] text-slate-500">
-                                {comps.length} sous-matière
-                                {comps.length > 1 ? "s" : ""} — somme&nbsp;
-                                <span
-                                  className={
-                                    "font-medium " +
-                                    (ok
-                                      ? "text-emerald-700"
-                                      : "text-rose-700")
-                                  }
-                                >
-                                  {sum}
-                                </span>
-                                {" / "}
-                                <span className="font-medium">
-                                  {sc.coeff}
-                                </span>
-                              </div>
-                            )}
-                          </div>
+                  <div className="flex shrink-0 flex-col gap-2 sm:flex-row lg:flex-col">
+                    <button
+                      type="button"
+                      onClick={previewGeneralSecondaryCiPreset}
+                      disabled={
+                        loadingCoeffs ||
+                        !selectedCoeffLevel ||
+                        coeffRowsForSelectedLevel.length === 0
+                      }
+                      className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-bold text-slate-700 shadow-sm hover:bg-slate-50 disabled:opacity-60"
+                    >
+                      Prévisualiser
+                    </button>
+                    <button
+                      type="button"
+                      onClick={applyGeneralSecondaryCiPreset}
+                      disabled={
+                        loadingCoeffs ||
+                        !selectedCoeffLevel ||
+                        coeffRowsForSelectedLevel.length === 0
+                      }
+                      className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-bold text-white shadow-sm hover:bg-emerald-700 disabled:opacity-60"
+                    >
+                      Appliquer CI
+                    </button>
+                  </div>
+                </div>
+
+                {ciPresetPreview.length > 0 && (
+                  <div className="mt-4 overflow-hidden rounded-2xl border border-slate-200 bg-white">
+                    <div className="border-b border-slate-100 px-3 py-2 text-xs font-bold text-slate-700">
+                      Aperçu{" "}
+                      {selectedCoeffLevel
+                        ? `— ${formatCoeffLevel(selectedCoeffLevel)}`
+                        : "global"}
+                      {ciPresetAppliedOnce ? " · appliqué localement" : ""}
+                    </div>
+                    <div className="max-h-60 overflow-auto">
+                      <table className="min-w-full text-xs">
+                        <thead className="sticky top-0 bg-slate-50 text-slate-600">
+                          <tr>
+                            <th className="px-3 py-2 text-left">Niveau</th>
+                            <th className="px-3 py-2 text-left">Discipline</th>
+                            <th className="px-3 py-2 text-right">Actuel</th>
+                            <th className="px-3 py-2 text-right">CI</th>
+                            <th className="px-3 py-2 text-left">Statut</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y">
+                          {ciPresetRowsForSelectedLevel
+                            .slice(0, 80)
+                            .map((item) => (
+                              <tr key={`${item.level}-${item.subject_id}`}>
+                                <td className="px-3 py-2 font-medium text-slate-700">
+                                  {formatCoeffLevel(item.level)}
+                                </td>
+                                <td className="px-3 py-2 text-slate-700">
+                                  {item.subject_name}
+                                  {item.components.length > 0 && (
+                                    <span className="ml-2 rounded-full bg-sky-50 px-2 py-0.5 text-[10px] font-bold text-sky-700 ring-1 ring-sky-100">
+                                      sous-matières FR
+                                    </span>
+                                  )}
+                                </td>
+                                <td className="px-3 py-2 text-right text-slate-500">
+                                  {item.currentCoeff}
+                                </td>
+                                <td className="px-3 py-2 text-right font-bold text-slate-900">
+                                  {item.coeff ?? "—"}
+                                </td>
+                                <td className="px-3 py-2">
+                                  {item.willApply ? (
+                                    <span className="rounded-full bg-emerald-50 px-2 py-0.5 font-bold text-emerald-700 ring-1 ring-emerald-100">
+                                      reconnu
+                                      {item.optional ? " · facultatif" : ""}
+                                    </span>
+                                  ) : (
+                                    <span className="rounded-full bg-slate-50 px-2 py-0.5 font-medium text-slate-600 ring-1 ring-slate-100">
+                                      {item.note}
+                                    </span>
+                                  )}
+                                </td>
+                              </tr>
+                            ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="overflow-x-auto rounded-xl border">
+                <table className="min-w-full text-sm">
+                  <thead className="bg-slate-50 text-slate-600">
+                    <tr>
+                      <th className="px-3 py-2 text-left">Discipline</th>
+                      <th className="w-32 px-3 py-2 text-right">
+                        Coefficient bulletin
+                      </th>
+                      <th className="w-56 px-3 py-2 text-right">
+                        Sous-matières (optionnel)
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y">
+                    {loadingCoeffs ? (
+                      <tr>
+                        <td className="px-3 py-3 text-slate-500" colSpan={3}>
+                          Chargement des disciplines…
                         </td>
                       </tr>
-                    );
-                  })
-                )}
-              </tbody>
-            </table>
-          </div>
+                    ) : !selectedCoeffLevel ? (
+                      <tr>
+                        <td className="px-3 py-3 text-slate-500" colSpan={3}>
+                          Choisissez d&apos;abord un niveau pour voir et
+                          modifier les coefficients.
+                        </td>
+                      </tr>
+                    ) : coeffRowsForSelectedLevel.length === 0 ? (
+                      <tr>
+                        <td className="px-3 py-3 text-slate-500" colSpan={3}>
+                          Aucune discipline n&apos;est encore paramétrée pour ce
+                          niveau. Cliquez sur « Rafraîchir » si vous venez
+                          d&apos;ajouter des matières.
+                        </td>
+                      </tr>
+                    ) : (
+                      coeffRowsForSelectedLevel.map((sc) => {
+                        const comps = subjectComponents.filter(
+                          (c) =>
+                            c.subject_id === sc.subject_id &&
+                            (c.level || "") === (sc.level || ""),
+                        );
+                        const sum = comps.reduce(
+                          (s, c) => s + (Number(c.coeff) || 0),
+                          0,
+                        );
+                        const ok = Math.abs(sum - sc.coeff) < 1e-6;
 
-          <div className="mt-3 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-            <div className="text-[11px] text-slate-500">
-              Un coeff à 0 retire la matière du calcul de moyenne générale pour
-              le niveau choisi. Les sous-matières (si définies) apparaissent
-              dans la saisie des notes, mais le bulletin conserve le coefficient
-              total de la matière mère.
-            </div>
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-              <button
-                onClick={saveSubjectComponents}
-                disabled={disableComponentsSaveAll}
-                className="rounded-lg bg-sky-700 px-4 py-2 text-sm font-medium text-white shadow hover:bg-sky-800 disabled:opacity-60"
-              >
-                {savingComponents
-                  ? "Enregistrement…"
-                  : "Enregistrer toutes les sous-matières"}
-              </button>
-              <button
-                onClick={saveSubjectCoeffs}
-                disabled={disableCoeffsSaveAll}
-                className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white shadow hover:bg-emerald-700 disabled:opacity-60"
-              >
-                {savingCoeffs
-                  ? "Enregistrement…"
-                  : "Enregistrer les coefficients"}
-              </button>
-            </div>
-          </div>
-        </SectionCard>
+                        return (
+                          <tr key={`${sc.level}-${sc.subject_id}`}>
+                            <td className="px-3 py-2 text-slate-800">
+                              {sc.subject_name}
+                            </td>
+                            <td className="px-3 py-2 text-right">
+                              <input
+                                type="number"
+                                min={0}
+                                step="0.5"
+                                className="w-24 rounded-lg border px-2 py-1 text-right text-sm"
+                                value={sc.coeff}
+                                onChange={(e) => {
+                                  const raw = e.target.value.replace(",", ".");
+                                  const num = parseFloat(raw);
+                                  setSubjectCoeffs((prev) =>
+                                    prev.map((row) =>
+                                      row.subject_id === sc.subject_id &&
+                                      row.level === sc.level
+                                        ? {
+                                            ...row,
+                                            coeff: isNaN(num)
+                                              ? 0
+                                              : Math.max(0, num),
+                                          }
+                                        : row,
+                                    ),
+                                  );
+                                }}
+                              />
+                            </td>
+                            <td className="px-3 py-2 text-right">
+                              <div className="flex flex-col items-end gap-1">
+                                <button
+                                  type="button"
+                                  onClick={() => openComponentsEditor(sc)}
+                                  className="rounded-lg border px-2 py-1 text-xs hover:bg-slate-50"
+                                >
+                                  {comps.length > 0
+                                    ? "Modifier les sous-matières"
+                                    : "Ajouter des sous-matières"}
+                                </button>
+                                {comps.length > 0 && (
+                                  <div className="text-[11px] text-slate-500">
+                                    {comps.length} sous-matière
+                                    {comps.length > 1 ? "s" : ""} — somme&nbsp;
+                                    <span
+                                      className={
+                                        "font-medium " +
+                                        (ok
+                                          ? "text-emerald-700"
+                                          : "text-rose-700")
+                                      }
+                                    >
+                                      {sum}
+                                    </span>
+                                    {" / "}
+                                    <span className="font-medium">
+                                      {sc.coeff}
+                                    </span>
+                                  </div>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="mt-3 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                <div className="text-[11px] text-slate-500">
+                  Un coeff à 0 retire la matière du calcul de moyenne générale
+                  pour le niveau choisi. Les sous-matières (si définies)
+                  apparaissent dans la saisie des notes, mais le bulletin
+                  conserve le coefficient total de la matière mère.
+                </div>
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                  <button
+                    onClick={saveSubjectComponents}
+                    disabled={disableComponentsSaveAll}
+                    className="rounded-lg bg-sky-700 px-4 py-2 text-sm font-medium text-white shadow hover:bg-sky-800 disabled:opacity-60"
+                  >
+                    {savingComponents
+                      ? "Enregistrement…"
+                      : "Enregistrer toutes les sous-matières"}
+                  </button>
+                  <button
+                    onClick={saveSubjectCoeffs}
+                    disabled={disableCoeffsSaveAll}
+                    className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white shadow hover:bg-emerald-700 disabled:opacity-60"
+                  >
+                    {savingCoeffs
+                      ? "Enregistrement…"
+                      : "Enregistrer les coefficients"}
+                  </button>
+                </div>
+              </div>
+            </SectionCard>
           </>
         )}
       </main>
@@ -3925,8 +3879,7 @@ export default function AdminSettingsPage() {
           )}
 
           <div className="rounded-lg border border-yellow-200 bg-yellow-50 px-3 py-2 text-[12px] text-yellow-800">
-            Astuce : laissez ce modal et utilisez{" "}
-            <b>« Réinit. temporaire »</b>{" "}
+            Astuce : laissez ce modal et utilisez <b>« Réinit. temporaire »</b>{" "}
             si vous préférez générer un mot de passe provisoire côté serveur.
           </div>
         </div>
@@ -3968,20 +3921,13 @@ export default function AdminSettingsPage() {
                 {componentsTarget.subject_name}
               </span>
               ) au niveau{" "}
-              <span className="font-semibold">
-                {componentsTarget.level}
-              </span>
-              :{" "}
-              <span className="font-semibold">
-                {parentCoeffForTarget}
-              </span>
-              . Somme des coefficients de sous-matières :{" "}
+              <span className="font-semibold">{componentsTarget.level}</span>:{" "}
+              <span className="font-semibold">{parentCoeffForTarget}</span>.
+              Somme des coefficients de sous-matières :{" "}
               <span
                 className={
                   "font-semibold " +
-                  (coeffMatchForTarget
-                    ? "text-emerald-700"
-                    : "text-rose-700")
+                  (coeffMatchForTarget ? "text-emerald-700" : "text-rose-700")
                 }
               >
                 {sumComponentsForTarget}
@@ -4012,15 +3958,9 @@ export default function AdminSettingsPage() {
                     <th className="px-3 py-2 text-left">
                       Libellé de la sous-matière
                     </th>
-                    <th className="w-24 px-3 py-2 text-right">
-                      Coeff.
-                    </th>
-                    <th className="w-20 px-3 py-2 text-center">
-                      Actif
-                    </th>
-                    <th className="w-24 px-3 py-2 text-right">
-                      Actions
-                    </th>
+                    <th className="w-24 px-3 py-2 text-right">Coeff.</th>
+                    <th className="w-20 px-3 py-2 text-center">Actif</th>
+                    <th className="w-24 px-3 py-2 text-right">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y">
@@ -4058,13 +3998,10 @@ export default function AdminSettingsPage() {
                             className="w-20 rounded-lg border px-2 py-1 text-right text-sm"
                             value={c.coeff}
                             onChange={(e) => {
-                              const raw =
-                                e.target.value.replace(",", ".");
+                              const raw = e.target.value.replace(",", ".");
                               const num = parseFloat(raw);
                               updateComponentRow(c.component_id, {
-                                coeff: isNaN(num)
-                                  ? 0
-                                  : Math.max(0, num),
+                                coeff: isNaN(num) ? 0 : Math.max(0, num),
                               });
                             }}
                           />
@@ -4083,9 +4020,7 @@ export default function AdminSettingsPage() {
                         <td className="px-3 py-2 text-right">
                           <button
                             type="button"
-                            onClick={() =>
-                              removeComponentRow(c.component_id)
-                            }
+                            onClick={() => removeComponentRow(c.component_id)}
                             className="rounded-lg border border-rose-300 bg-rose-50 px-2 py-1 text-[11px] font-medium text-rose-800 hover:bg-rose-100"
                           >
                             Suppr.
