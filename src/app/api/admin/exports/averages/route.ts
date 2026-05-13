@@ -3431,7 +3431,7 @@ async function sendTemplateWorkbook(prepared: PreparedWorkbook) {
     }
 
     workbook.Workbook = workbook.Workbook || {};
-    workbook.Workbook.CalcPr = { fullCalcOnLoad: true, forceFullCalc: true, calcMode: "auto" };
+    (workbook.Workbook as any).CalcPr = { fullCalcOnLoad: true, forceFullCalc: true, calcMode: "auto" };
 
     const extension = prepared.outputExtension || "xlsx";
     const buffer = XLSX.write(workbook, {
