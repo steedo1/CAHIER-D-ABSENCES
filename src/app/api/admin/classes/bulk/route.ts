@@ -27,6 +27,8 @@ type Body = {
   codePrefix?: string | null;
   official_track_code?: OfficialTrackCode | "" | null;
   officialTrackCode?: OfficialTrackCode | "" | null;
+  official_tracks_by_label?: Record<string, OfficialTrackCode | "" | null> | null;
+  officialTracksByLabel?: Record<string, OfficialTrackCode | "" | null> | null;
 };
 
 const OFFICIAL_TRACK_CODES = new Set<string>([
@@ -108,6 +110,28 @@ function cleanOfficialTrackCode(value: unknown, fallbackLevel: string): Official
   return inferOfficialTrackCode(fallbackLevel);
 }
 
+function cleanTrackByLabel(value: unknown) {
+  const out: Record<string, OfficialTrackCode> = {};
+
+  if (!value || typeof value !== "object" || Array.isArray(value)) return out;
+
+  for (const [label, raw] of Object.entries(value as Record<string, unknown>)) {
+    const cleanedLabel = String(label || "").trim();
+    if (!cleanedLabel) continue;
+
+    const cleanedTrack = typeof raw === "string" ? raw.trim() : "";
+    if (!cleanedTrack) continue;
+
+    if (!OFFICIAL_TRACK_CODES.has(cleanedTrack)) {
+      throw new Error("bad_official_track_code");
+    }
+
+    out[cleanedLabel] = cleanedTrack as OfficialTrackCode;
+  }
+
+  return out;
+}
+
 export async function POST(req: NextRequest) {
   const body = (await req.json().catch(() => ({}))) as Body;
 
@@ -165,6 +189,13 @@ export async function POST(req: NextRequest) {
     labels = Array.from({ length: effectiveCount }, (_, i) => `${level}${String.fromCharCode(65 + i)}`);
   }
 
+  let officialTracksByLabel: Record<string, OfficialTrackCode> = {};
+  try {
+    officialTracksByLabel = cleanTrackByLabel(body.official_tracks_by_label ?? body.officialTracksByLabel ?? null);
+  } catch {
+    return NextResponse.json({ error: "bad_official_track_code" }, { status: 400 });
+  }
+
   const supabaseAdmin = getSupabaseServiceClient();
 
   // On ne réutilise plus une classe d'une ancienne année scolaire.
@@ -187,13 +218,15 @@ export async function POST(req: NextRequest) {
     .map((label) => {
       const base = slug(label);
       const code = codePrefix ? `${codePrefix}-${base}` : base;
+      const rowOfficialTrackCode = officialTracksByLabel[label] ?? official_track_code;
+
       return {
         institution_id,
         label,
         level,
         code,
         academic_year,
-        official_track_code,
+        official_track_code: rowOfficialTrackCode,
       };
     });
 

@@ -166,9 +166,24 @@ function officialTrackLabel(code?: string | null) {
   return OFFICIAL_TRACK_OPTIONS.find((option) => option.value === code)?.label || "À compléter";
 }
 
-function isSeriesA(level: string) {
+function isPremiereA(level: string) {
   const key = normalizeKey(level);
-  return /^(1EREA|PREMIEREA|1A|TLEA|TERMINALEA|TA)/.test(key);
+  return /^(1EREA|PREMIEREA|1A)/.test(key);
+}
+
+function isTerminaleA(level: string) {
+  const key = normalizeKey(level);
+  return /^(TLEA|TERMINALEA|TA)/.test(key);
+}
+
+function isSeriesA(level: string) {
+  return isPremiereA(level) || isTerminaleA(level);
+}
+
+function computeOfficialTrackForGeneratedClass(level: string, isOfficialA1: boolean): OfficialTrackCode | "" {
+  if (isPremiereA(level)) return isOfficialA1 ? "1ereA1" : "1ereA2";
+  if (isTerminaleA(level)) return isOfficialA1 ? "tleA1" : "tleA2";
+  return inferOfficialTrackCode(level);
 }
 
 function academicYearOptionLabel(row: AcademicYearRow) {
@@ -187,6 +202,7 @@ export default function ClassesPage() {
   const [count, setCount] = useState<number>(5);
   const [officialTrackCode, setOfficialTrackCode] = useState<OfficialTrackCode | "">("6eme");
   const [preview, setPreview] = useState<string[]>([]);
+  const [seriesA1ByLabel, setSeriesA1ByLabel] = useState<Record<string, boolean>>({});
 
   const [items, setItems] = useState<ClassRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -246,7 +262,11 @@ export default function ClassesPage() {
   }, [eLevel]);
 
   function genPreview() {
-    if (!level || count < 1) return setPreview([]);
+    if (!level || count < 1) {
+      setPreview([]);
+      setSeriesA1ByLabel({});
+      return;
+    }
 
     const p: string[] = [];
     if (format === "none") {
@@ -258,6 +278,11 @@ export default function ClassesPage() {
     }
 
     setPreview(p);
+    setSeriesA1ByLabel((current) => {
+      const next: Record<string, boolean> = {};
+      for (const label of p) next[label] = current[label] === true;
+      return next;
+    });
   }
 
   useEffect(genPreview, [level, format, count]);
@@ -364,7 +389,13 @@ export default function ClassesPage() {
         format,
         count,
         academic_year: academicYear,
-        official_track_code: officialTrackCode || null,
+        official_track_code: isSeriesA(level) ? null : officialTrackCode || null,
+        official_tracks_by_label: Object.fromEntries(
+          preview.map((label) => [
+            label,
+            computeOfficialTrackForGeneratedClass(level, seriesA1ByLabel[label] === true) || null,
+          ])
+        ),
       }),
     });
 
@@ -561,8 +592,8 @@ export default function ClassesPage() {
         <h1 className="text-2xl font-semibold">Classes</h1>
         <p className="text-slate-600">
           Créer, éditer et supprimer les classes par année scolaire. Les années viennent des paramètres de
-          l'établissement. La série officielle sert aux coefficients, bulletins, matrices et exports DESPS sans modifier
-          le nom affiché de la classe.
+          l'établissement. Pour la série A, cochez seulement les classes réellement A1 ; les autres restent A2 par défaut.
+          La série officielle sert aux coefficients, bulletins, matrices et exports DESPS sans modifier le nom affiché.
         </p>
       </div>
 
@@ -627,41 +658,61 @@ export default function ClassesPage() {
           </div>
         </div>
 
-        <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-[minmax(220px,320px)_1fr]">
-          <div>
-            <div className="mb-1 text-xs text-slate-500">Série officielle</div>
-            <Select value={officialTrackCode} onChange={(e) => setOfficialTrackCode(e.target.value as any)}>
-              <option value="">À compléter</option>
-              {OFFICIAL_TRACK_OPTIONS.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </Select>
-          </div>
-
-          <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
-            {academicYearError ? (
-              <>{academicYearError}</>
-            ) : !academicYear ? (
-              <>Définissez d'abord l'année scolaire dans les paramètres avant de créer les classes.</>
-            ) : isSeriesA(level) ? (
-              <>
-                Attention série A : vérifiez bien si les classes créées relèvent de <b>A1</b> ou <b>A2</b>.
-                Par défaut, Mon Cahier propose A2 pour conserver l'existant.
-              </>
-            ) : (
-              <>
-                Année active sur cet écran : <b>{selectedAcademicYear?.label || academicYear}</b>. La liste ci-dessous
-                s'adapte automatiquement au choix de l'année.
-              </>
-            )}
-          </div>
+        <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+          {academicYearError ? (
+            <>{academicYearError}</>
+          ) : !academicYear ? (
+            <>Définissez d'abord l'année scolaire dans les paramètres avant de créer les classes.</>
+          ) : isSeriesA(level) ? (
+            <>
+              Série A : cochez uniquement les classes qui correspondent réellement à la <b>série officielle A1</b>.
+              Les classes non cochées seront rattachées à <b>A2</b> par défaut.
+            </>
+          ) : (
+            <>
+              Année active sur cet écran : <b>{selectedAcademicYear?.label || academicYear}</b>. Série officielle déduite :
+              <b> {officialTrackLabel(officialTrackCode)}</b>. La liste ci-dessous s'adapte automatiquement au choix de l'année.
+            </>
+          )}
         </div>
 
         {preview.length > 0 && (
-          <div className="mt-4 text-sm text-slate-700">
-            <b>Prévisualisation :</b> {preview.join(", ")}
+          <div className="mt-4 rounded-xl border bg-slate-50 p-3 text-sm text-slate-700">
+            <div className="mb-2 font-semibold">Prévisualisation</div>
+
+            {isSeriesA(level) ? (
+              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                {preview.map((label) => {
+                  const checked = seriesA1ByLabel[label] === true;
+                  const code = computeOfficialTrackForGeneratedClass(level, checked);
+
+                  return (
+                    <label
+                      key={label}
+                      className="flex items-center justify-between gap-3 rounded-xl border bg-white px-3 py-2 text-sm shadow-sm"
+                    >
+                      <span>
+                        <span className="font-semibold text-slate-900">{label}</span>
+                        <span className="ml-2 text-xs text-slate-500">{officialTrackLabel(code)}</span>
+                      </span>
+                      <span className="flex items-center gap-2 text-xs font-semibold text-slate-700">
+                        <input
+                          type="checkbox"
+                          className="h-4 w-4 rounded border-slate-300"
+                          checked={checked}
+                          onChange={(e) =>
+                            setSeriesA1ByLabel((current) => ({ ...current, [label]: e.target.checked }))
+                          }
+                        />
+                        Série A1
+                      </span>
+                    </label>
+                  );
+                })}
+              </div>
+            ) : (
+              <div>{preview.join(", ")}</div>
+            )}
           </div>
         )}
       </div>
