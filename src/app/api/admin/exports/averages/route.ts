@@ -22,6 +22,7 @@ type ClassRow = {
   label?: string | null;
   code?: string | null;
   level?: string | null;
+  official_track_code?: string | null;
   academic_year?: string | null;
   institution_id?: string | null;
 };
@@ -31,6 +32,7 @@ type StudentMetaRow = {
   class_id: string;
   class_label: string;
   class_level: string | null;
+  class_official_track_code?: string | null;
   academic_year: string | null;
   first_name: string | null;
   last_name: string | null;
@@ -168,6 +170,7 @@ type BulletinResponse = {
     label: string;
     academic_year?: string | null;
     level?: string | null;
+    official_track_code?: string | null;
   };
   period?: {
     from: string | null;
@@ -600,6 +603,95 @@ function extractSeriesFromClass(cls: ClassRow): string {
   return match[1].replace(/^(D|G)[12]$/, "$1");
 }
 
+
+function normalizeOfficialTrackCode(value?: string | null): string {
+  return String(value || "")
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-zA-Z0-9]+/g, "")
+    .toLowerCase();
+}
+
+function officialTrackToDespsLevel(value?: string | null): string {
+  const code = normalizeOfficialTrackCode(value);
+
+  switch (code) {
+    case "6eme":
+    case "6e":
+      return "6ème";
+    case "5eme":
+    case "5e":
+      return "5ème";
+    case "4eme":
+    case "4e":
+      return "4ème";
+    case "3eme":
+    case "3e":
+      return "3ème";
+    case "2ndea":
+    case "2dea":
+    case "2a":
+      return "2ndeA";
+    case "2ndec":
+    case "2dec":
+    case "2c":
+      return "2ndeC";
+    case "1erea1":
+    case "1a1":
+      return "1èreA1";
+    case "1erea2":
+    case "1a2":
+    case "1a":
+      return "1èreA2";
+    case "1erec":
+    case "1c":
+      return "1èreC";
+    case "1ered":
+    case "1d":
+      return "1èreD";
+    case "tlea1":
+    case "ta1":
+      return "TleA1";
+    case "tlea2":
+    case "ta2":
+    case "ta":
+      return "TleA2";
+    case "tlec":
+    case "tc":
+      return "TleC";
+    case "tled":
+    case "td":
+      return "TleD";
+    default:
+      return "";
+  }
+}
+
+function officialTrackToRapportClassCode(value?: string | null): string {
+  const level = officialTrackToDespsLevel(value);
+
+  if (level === "6ème") return "6è";
+  if (level === "5ème") return "5è";
+  if (level === "4ème") return "4è";
+  if (level === "3ème") return "3è";
+  if (level === "2ndeA") return "2NDEA";
+  if (level === "2ndeC") return "2NDEC";
+  if (level === "1èreA1" || level === "1èreA2") return "1EREA";
+  if (level === "1èreC") return "1EREC";
+  if (level === "1èreD") return "1ERED";
+  if (level === "TleA1" || level === "TleA2") return "TA";
+  if (level === "TleC") return "TC";
+  if (level === "TleD") return "TD";
+  return "";
+}
+
+function officialTrackCycle(value?: string | null): "first" | "second" | "other" {
+  const level = officialTrackToDespsLevel(value);
+  if (["6ème", "5ème", "4ème", "3ème"].includes(level)) return "first";
+  if (level.startsWith("2nde") || level.startsWith("1ère") || level.startsWith("Tle")) return "second";
+  return "other";
+}
+
 function displayLevelForDsps(cls: ClassRow): string {
   const level = String(cls.level || "").trim();
   if (level) return level;
@@ -972,10 +1064,12 @@ function getStudentRepeater(meta?: StudentMetaRow | null, item?: BulletinItem | 
 }
 
 function officialRapportClassCode(cls: ClassRow): string {
+  const codeFromOfficialTrack = officialTrackToRapportClassCode(cls.official_track_code);
+  if (codeFromOfficialTrack) return codeFromOfficialTrack;
+
   const level = normalizeLevel(cls.level);
   const series = extractSeriesFromClass(cls).toUpperCase();
   const label = normalizeForMatch(`${cls.label || ""} ${cls.code || ""}`);
-  const rawLabel = String(`${cls.label || ""} ${cls.code || ""}`).toUpperCase();
 
   if (level === "6e") return "6è";
   if (level === "5e") return "5è";
@@ -996,7 +1090,6 @@ function officialRapportClassCode(cls: ClassRow): string {
   if (level === "terminale") {
     if (series === "C") return "TC";
     if (series === "D") return "TD";
-    if (rawLabel.includes("A2")) return "TA";
     return "TA";
   }
 
@@ -1004,6 +1097,9 @@ function officialRapportClassCode(cls: ClassRow): string {
 }
 
 function classCycleLabel(cls: ClassRow): string {
+  const cycleFromOfficialTrack = officialTrackCycle(cls.official_track_code);
+  if (cycleFromOfficialTrack === "first") return "1er cycle";
+  if (cycleFromOfficialTrack === "second") return "2nd cycle";
   return isFirstCycleLevel(cls.level) ? "1er cycle" : "2nd cycle";
 }
 
@@ -1143,7 +1239,7 @@ async function loadClasses(params: {
 
   let classesQuery = supabase
     .from("classes")
-    .select("id, label, code, level, academic_year, institution_id")
+    .select("id, label, code, level, official_track_code, academic_year, institution_id")
     .eq("institution_id", institutionId)
     .eq("academic_year", academicYear)
     .order("level", { ascending: true })
@@ -1216,6 +1312,7 @@ async function loadStudentMeta(params: {
       class_id: currentClassId,
       class_label: String(cls.label || cls.code || "Classe"),
       class_level: cls.level ?? null,
+      class_official_track_code: cls.official_track_code ?? null,
       academic_year: cls.academic_year ?? academicYear,
       first_name: student.first_name ?? null,
       last_name: student.last_name ?? null,
@@ -2696,9 +2793,11 @@ function officialClassed(stats: Pick<OfficialGeneralStats, "classedGirls" | "cla
 }
 
 function officialLevelKey(cls: ClassRow): string {
+  const codeFromOfficialTrack = officialTrackToDespsLevel(cls.official_track_code);
+  if (codeFromOfficialTrack) return codeFromOfficialTrack;
+
   const level = normalizeLevel(cls.level);
   const label = normalizeForMatch(`${cls.label || ""} ${cls.code || ""}`);
-  const rawLabel = String(`${cls.label || ""} ${cls.code || ""}`).toUpperCase();
 
   if (level === "6e") return "6ème";
   if (level === "5e") return "5ème";
@@ -2715,15 +2814,13 @@ function officialLevelKey(cls: ClassRow): string {
   if (level === "première") {
     if (series === "C") return "1èreC";
     if (series === "D") return "1èreD";
-    if (rawLabel.includes("A2")) return "1èreA2";
-    return "1èreA1";
+    return "1èreA2";
   }
 
   if (level === "terminale") {
     if (series === "C") return "TleC";
     if (series === "D") return "TleD";
-    if (rawLabel.includes("A2")) return "TleA2";
-    return "TleA1";
+    return "TleA2";
   }
 
   return displayLevelForDsps(cls) || "Autre";
@@ -3614,7 +3711,7 @@ function setWorksheetCell(XLSX: any, ws: any, rowIndex0: number, colIndex0: numb
   const ref = XLSX.utils.encode_cell({ r: rowIndex0, c: colIndex0 });
   const previous = ws[ref] || {};
 
-  // Les modèles officiels contiennent beaucoup de formules. On ne les écrase pas :
+  // Les modèles officiels(STATISTIQUES MODELES DESPS) contiennent beaucoup de formules. On ne les écrase pas :
   // on remplit les cellules de saisie et Excel recalculera les cellules formulées à l'ouverture.
   if (previous?.f) return;
 
