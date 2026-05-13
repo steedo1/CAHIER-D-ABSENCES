@@ -19,6 +19,7 @@ type ClassRow = {
   label?: string | null;
   level?: string | null;
   academic_year?: string | null;
+  official_track_code?: string | null;
 };
 
 type GradePeriod = {
@@ -612,6 +613,25 @@ export default function AdminNotesStatsPage() {
 
     return Array.from(set).sort().reverse();
   }, [classes, periods]);
+
+  const filteredClasses = useMemo(() => {
+    if (!selectedAcademicYear) return classes;
+    return classes.filter((c) => c.academic_year === selectedAcademicYear);
+  }, [classes, selectedAcademicYear]);
+
+  useEffect(() => {
+    if (!selectedAcademicYear) return;
+    if (!selectedClassId) return;
+    const cls = classes.find((c) => c.id === selectedClassId);
+    if (cls && cls.academic_year !== selectedAcademicYear) {
+      setSelectedClassId("");
+      setSelectedPeriodId("");
+      setSelectedSubjectId("");
+      setMatrixRows([]);
+      setLoadedPeriods([]);
+      setErrorMsg(null);
+    }
+  }, [classes, selectedAcademicYear, selectedClassId]);
 
   const matrixPeriods = useMemo(() => {
     return periods
@@ -1882,7 +1902,7 @@ export default function AdminNotesStatsPage() {
             >
               <option value="">— Sélectionner une classe —</option>
 
-              {classes.map((c) => (
+              {filteredClasses.map((c) => (
                 <option key={c.id} value={c.id}>
                   {clsLabel(c)}
                   {c.level ? ` • ${c.level}` : ""}
@@ -1899,7 +1919,15 @@ export default function AdminNotesStatsPage() {
 
             <Select
               value={selectedAcademicYear}
-              onChange={(e) => setSelectedAcademicYear(e.target.value)}
+              onChange={(e) => {
+                setSelectedAcademicYear(e.target.value);
+                setSelectedClassId("");
+                setSelectedPeriodId("");
+                setSelectedSubjectId("");
+                setMatrixRows([]);
+                setLoadedPeriods([]);
+                setErrorMsg(null);
+              }}
               disabled={periodsLoading}
             >
               <option value="">Année courante</option>

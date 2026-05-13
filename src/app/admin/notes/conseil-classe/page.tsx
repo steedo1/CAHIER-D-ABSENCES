@@ -80,6 +80,7 @@ type ClassRow = {
   label?: string | null;
   level?: string | null;
   academic_year?: string | null;
+  official_track_code?: string | null;
 };
 
 type GradePeriod = {
@@ -975,6 +976,25 @@ export default function ConseilClassePage() {
     if (!selectedAcademicYear) return periods;
     return periods.filter((p) => p.academic_year === selectedAcademicYear);
   }, [periods, selectedAcademicYear]);
+
+  const filteredClasses = useMemo(() => {
+    if (!selectedAcademicYear) return classes;
+    return classes.filter((c) => c.academic_year === selectedAcademicYear);
+  }, [classes, selectedAcademicYear]);
+
+  useEffect(() => {
+    if (!selectedAcademicYear) return;
+    if (!selectedClassId) return;
+    const cls = classes.find((c) => c.id === selectedClassId);
+    if (cls && cls.academic_year !== selectedAcademicYear) {
+      setSelectedClassId("");
+      setActiveStudentIds([]);
+      setBulletinRaw(null);
+      setCouncilRows([]);
+      setYearPeriodBulletins({});
+      setErrorMsg(null);
+    }
+  }, [classes, selectedAcademicYear, selectedClassId]);
 
   const selectedPeriod = useMemo(
     () => periods.find((p) => p.id === selectedPeriodId) || null,
@@ -2044,9 +2064,14 @@ export default function ConseilClassePage() {
                 value={selectedAcademicYear}
                 onChange={(e) => {
                   setSelectedAcademicYear(e.target.value);
+                  setSelectedClassId("");
                   setSelectedPeriodId("");
                   setDateFrom("");
                   setDateTo("");
+                  setActiveStudentIds([]);
+                  setBulletinRaw(null);
+                  setCouncilRows([]);
+                  setYearPeriodBulletins({});
                 }}
                 disabled={periodsLoading || academicYears.length === 0}
               >
@@ -2077,7 +2102,7 @@ export default function ConseilClassePage() {
               <label className="mb-1 block text-xs font-semibold uppercase text-slate-500">Classe</label>
               <Select value={selectedClassId} onChange={(e) => setSelectedClassId(e.target.value)} disabled={classesLoading}>
                 <option value="">Sélectionner une classe…</option>
-                {classes.map((c) => (
+                {filteredClasses.map((c) => (
                   <option key={c.id} value={c.id}>{(c.label || c.name || "").trim() || c.id}</option>
                 ))}
               </Select>

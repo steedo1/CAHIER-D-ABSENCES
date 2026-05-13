@@ -32,6 +32,7 @@ type ClassRow = {
   code?: string | null;
   level?: string | null;
   academic_year?: string | null;
+  official_track_code?: string | null;
 };
 
 type GradePeriod = {
@@ -363,6 +364,23 @@ export default function NonClassesPage() {
     periods.forEach((p) => p.academic_year && set.add(p.academic_year));
     return Array.from(set).sort().reverse();
   }, [classes, periods]);
+
+  const filteredClasses = useMemo(() => {
+    if (!selectedAcademicYear) return classes;
+    return classes.filter((c) => c.academic_year === selectedAcademicYear);
+  }, [classes, selectedAcademicYear]);
+
+  useEffect(() => {
+    if (!selectedAcademicYear) return;
+    if (!selectedClassId) return;
+    const cls = classes.find((c) => String(c.id) === String(selectedClassId));
+    if (cls && cls.academic_year !== selectedAcademicYear) {
+      setSelectedClassId("");
+      setRows([]);
+      setMsg(null);
+      setErrorMsg(null);
+    }
+  }, [classes, selectedAcademicYear, selectedClassId]);
 
   const filteredPeriods = useMemo(() => {
     return periods
@@ -871,7 +889,7 @@ export default function NonClassesPage() {
               disabled={classesLoading}
             >
               <option value="">— Sélectionner une classe —</option>
-              {classes.map((c) => (
+              {filteredClasses.map((c) => (
                 <option key={c.id} value={c.id}>
                   {classLabel(c)}
                   {c.level ? ` • ${c.level}` : ""}
@@ -891,8 +909,11 @@ export default function NonClassesPage() {
               value={selectedAcademicYear}
               onChange={(e) => {
                 setSelectedAcademicYear(e.target.value);
+                setSelectedClassId("");
                 setSelectedPeriodId("");
                 setRows([]);
+                setMsg(null);
+                setErrorMsg(null);
               }}
               disabled={periodsLoading}
             >
