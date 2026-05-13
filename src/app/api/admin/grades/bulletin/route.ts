@@ -28,6 +28,7 @@ type ClassRow = {
   academic_year?: string | null;
   head_teacher_id?: string | null;
   level?: string | null;
+  official_track_code?: string | null;
 };
 
 type HeadTeacherRow = {
@@ -211,12 +212,79 @@ function normalizeBulletinLevel(level?: string | null): string | null {
   return null;
 }
 
+function normalizeAsciiToken(value?: string | null): string {
+  return String(value ?? "")
+    .trim()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "");
+}
+
+/**
+ * ✅ Clé officielle utilisée pour les coefficients et sous-matières.
+ *
+ * IMPORTANT : on ne doit plus écraser 1èreA1 / 1èreA2 en simple "première".
+ * official_track_code devient prioritaire pour éviter la confusion entre :
+ * - 1A1 comme nom de division ;
+ * - 1ère A1 comme série officielle DESPS/coefficients.
+ */
+function normalizeCoeffLevelKey(level?: string | null): string | null {
+  const x = normalizeAsciiToken(level);
+  if (!x) return null;
+
+  if (/^(6|6e|6eme|sixieme)$/.test(x)) return "6eme";
+  if (/^(5|5e|5eme|cinquieme)$/.test(x)) return "5eme";
+  if (/^(4|4e|4eme|quatrieme)$/.test(x)) return "4eme";
+  if (/^(3|3e|3eme|troisieme)$/.test(x)) return "3eme";
+
+  if (/^(2ndea|2dea|secondea|2a|2a[0-9]+)$/.test(x)) return "2ndeA";
+  if (/^(2ndec|2dec|secondec|2c|2c[0-9]+)$/.test(x)) return "2ndeC";
+  if (/^(2nde|2de|seconde)$/.test(x)) return "seconde";
+
+  if (/^(1erea1|premierea1|1rea1|1a1)$/.test(x)) return "1ereA1";
+  if (/^(1erea2|premierea2|1rea2|1a2|1a|1a[0-9]+)$/.test(x)) return "1ereA2";
+  if (/^(1erec|premierec|1rec|1c|1c[0-9]+)$/.test(x)) return "1ereC";
+  if (/^(1ered|premiered|1red|1d|1d[0-9]+)$/.test(x)) return "1ereD";
+  if (/^(1ere|1re|premiere)$/.test(x)) return "première";
+
+  if (/^(tlea1|terminalea1|ta1)$/.test(x)) return "tleA1";
+  if (/^(tlea2|terminalea2|ta2|tlea|terminalea|ta|ta[0-9]+)$/.test(x)) return "tleA2";
+  if (/^(tlec|terminalec|tc|tc[0-9]+)$/.test(x)) return "tleC";
+  if (/^(tled|terminaled|td|td[0-9]+)$/.test(x)) return "tleD";
+  if (/^(tle|terminal|terminale)$/.test(x)) return "terminale";
+
+  return x;
+}
+
 function normalizeStoredLevel(level?: string | null): string | null {
+  const specific = normalizeCoeffLevelKey(level);
+  if (specific) return specific;
+
   const n = normalizeBulletinLevel(level);
   if (n) return n;
 
   const raw = String(level ?? "").trim().toLowerCase();
   return raw || null;
+}
+
+function pushUniqueLevelCandidate(list: string[], value?: string | null) {
+  const key = normalizeCoeffLevelKey(value);
+  if (key && !list.includes(key)) list.push(key);
+}
+
+function buildCoeffLevelCandidates(classRow: ClassRow, bulletinLevel: string | null): string[] {
+  const out: string[] = [];
+
+  pushUniqueLevelCandidate(out, classRow.official_track_code);
+  pushUniqueLevelCandidate(out, classRow.level);
+  pushUniqueLevelCandidate(out, classRow.code);
+  pushUniqueLevelCandidate(out, classRow.label);
+  pushUniqueLevelCandidate(out, bulletinLevel);
+
+  if (bulletinLevel && !out.includes(bulletinLevel)) out.push(bulletinLevel);
+
+  return out;
 }
 
 /**
@@ -236,14 +304,18 @@ function allowSubjectComponentsForBulletinLevel(level?: string | null): boolean 
 
 function pickBestCoeffRow(
   rows: SubjectCoeffRow[],
-  wantedLevel: string | null
+  wantedLevels: Array<string | null | undefined>
 ): SubjectCoeffRow | null {
   if (!rows.length) return null;
 
-  const wanted = normalizeStoredLevel(wantedLevel);
+  const wanted = wantedLevels
+    .map((level) => normalizeStoredLevel(level))
+    .filter((level): level is string => Boolean(level));
 
-  const exact = rows.find((r) => normalizeStoredLevel(r.level) === wanted);
-  if (exact) return exact;
+  for (const key of wanted) {
+    const exact = rows.find((r) => normalizeStoredLevel(r.level) === key);
+    if (exact) return exact;
+  }
 
   const globalRow = rows.find((r) => !normalizeStoredLevel(r.level));
   if (globalRow) return globalRow;
@@ -253,13 +325,18 @@ function pickBestCoeffRow(
 
 function pickBestComponentRows<T extends { level?: string | null }>(
   rows: T[],
-  wantedLevel: string | null
+  wantedLevels: Array<string | null | undefined>
 ): T[] {
   if (!rows.length) return [];
 
-  const wanted = normalizeStoredLevel(wantedLevel);
-  const exact = rows.filter((r) => normalizeStoredLevel(r.level) === wanted);
-  if (exact.length) return exact;
+  const wanted = wantedLevels
+    .map((level) => normalizeStoredLevel(level))
+    .filter((level): level is string => Boolean(level));
+
+  for (const key of wanted) {
+    const exact = rows.filter((r) => normalizeStoredLevel(r.level) === key);
+    if (exact.length) return exact;
+  }
 
   const globalRows = rows.filter((r) => !normalizeStoredLevel(r.level));
   if (globalRows.length) return globalRows;
@@ -1282,7 +1359,7 @@ export async function GET(req: NextRequest) {
   /* 1) Vérifier que la classe appartient à l'établissement + récupérer prof principal */
   const { data: cls, error: clsErr } = await supabase
     .from("classes")
-    .select("id, label, code, institution_id, academic_year, head_teacher_id, level")
+    .select("id, label, code, institution_id, academic_year, head_teacher_id, level, official_track_code")
     .eq("id", classId)
     .maybeSingle();
 
@@ -1303,6 +1380,7 @@ export async function GET(req: NextRequest) {
   }
 
   const bulletinLevel = normalizeBulletinLevel(classRow.level);
+  const coeffLevelCandidates = buildCoeffLevelCandidates(classRow, bulletinLevel);
   const allowSubjectComponents = allowSubjectComponentsForBulletinLevel(bulletinLevel);
 
   /* ✅ lire l'option établissement : bulletin_signatures_enabled (institutions) */
@@ -1547,6 +1625,8 @@ export async function GET(req: NextRequest) {
         code: classRow.code || null,
         academic_year: classRow.academic_year || null,
         level: classRow.level || null,
+        official_track_code: classRow.official_track_code || null,
+        coefficient_level: coeffLevelCandidates[0] || bulletinLevel || null,
         bulletin_level: bulletinLevel,
         head_teacher: headTeacher
           ? {
@@ -1647,7 +1727,7 @@ export async function GET(req: NextRequest) {
   }
 
   for (const [sid, rows] of coeffRowsBySubject.entries()) {
-    const best = pickBestCoeffRow(rows, bulletinLevel);
+    const best = pickBestCoeffRow(rows, coeffLevelCandidates);
     if (!best) continue;
 
     coeffBySubject.set(sid, {
@@ -1906,6 +1986,8 @@ export async function GET(req: NextRequest) {
         code: classRow.code || null,
         academic_year: classRow.academic_year || null,
         level: classRow.level || null,
+        official_track_code: classRow.official_track_code || null,
+        coefficient_level: coeffLevelCandidates[0] || bulletinLevel || null,
         bulletin_level: bulletinLevel,
         head_teacher: headTeacher
           ? {
@@ -2044,7 +2126,7 @@ export async function GET(req: NextRequest) {
       const finalRows: BulletinSubjectComponent[] = [];
 
       for (const sid of orderedSubjectIds) {
-        const chosen = pickBestComponentRows(rawBySubject.get(sid) || [], bulletinLevel);
+        const chosen = pickBestComponentRows(rawBySubject.get(sid) || [], coeffLevelCandidates);
 
         chosen.sort((a, b) => {
           return (a.order_index ?? 1) - (b.order_index ?? 1);
@@ -2082,19 +2164,28 @@ export async function GET(req: NextRequest) {
     subjectInfoById.set(s.id, { name: s.name ?? "", code: s.code ?? "" })
   );
 
-  // ⚙️ (A) essayer d'abord la config DB si niveau normalisé
-  if (bulletinLevel) {
+  // ⚙️ (A) essayer d'abord la config DB avec la série officielle en priorité
+  if (coeffLevelCandidates.length) {
     const { data: groupsData, error: groupsErr } = await srv
       .from("bulletin_subject_groups")
       .select("id, level, label, order_index, is_active, code, short_label, annual_coeff")
       .eq("institution_id", institutionId)
-      .eq("level", bulletinLevel)
       .order("order_index", { ascending: true });
 
     if (groupsErr) {
       // ignore
     } else if (groupsData && groupsData.length) {
-      const activeGroups = (groupsData as any[]).filter((g) => g.is_active !== false);
+      const activeAllGroups = (groupsData as any[]).filter((g) => g.is_active !== false);
+      let activeGroups: any[] = [];
+
+      for (const wantedLevel of coeffLevelCandidates) {
+        const wanted = normalizeStoredLevel(wantedLevel);
+        const matching = activeAllGroups.filter((g) => normalizeStoredLevel(g.level) === wanted);
+        if (matching.length) {
+          activeGroups = matching;
+          break;
+        }
+      }
 
       if (activeGroups.length) {
         const groupIds = activeGroups.map((g) => String(g.id));
@@ -2945,7 +3036,7 @@ export async function GET(req: NextRequest) {
         }
 
         for (const sid of annualOrderedSubjectIds) {
-          const chosen = pickBestComponentRows(rawBySubject.get(sid) || [], bulletinLevel);
+          const chosen = pickBestComponentRows(rawBySubject.get(sid) || [], coeffLevelCandidates);
 
           for (const r of chosen) {
             const obj: BulletinSubjectComponent = {
@@ -3374,6 +3465,8 @@ export async function GET(req: NextRequest) {
       code: classRow.code || null,
       academic_year: classRow.academic_year || null,
       level: classRow.level || null,
+      official_track_code: classRow.official_track_code || null,
+      coefficient_level: coeffLevelCandidates[0] || bulletinLevel || null,
       bulletin_level: bulletinLevel,
       head_teacher: headTeacher
         ? {
