@@ -37,6 +37,13 @@ type StudentMetaRow = {
   full_name: string | null;
   matricule: string | null;
   gender?: string | null;
+  birthdate?: string | null;
+  birth_place?: string | null;
+  nationality?: string | null;
+  regime?: string | null;
+  is_repeater?: boolean | null;
+  is_boarder?: boolean | null;
+  is_affecte?: boolean | null;
 };
 
 type BulletinPerSubject = {
@@ -108,6 +115,14 @@ type BulletinItem = {
   full_name: string;
   matricule: string | null;
   gender?: string | null;
+  birth_date?: string | null;
+  birthdate?: string | null;
+  birth_place?: string | null;
+  nationality?: string | null;
+  regime?: string | null;
+  is_repeater?: boolean | null;
+  is_boarder?: boolean | null;
+  is_affecte?: boolean | null;
 
   general_avg: number | null;
   rank?: number | null;
@@ -881,6 +896,113 @@ function getStudentGender(params: {
   return normalizeGender(params.meta?.gender ?? params.item?.gender ?? null);
 }
 
+function getRapportGender(params: { meta?: StudentMetaRow | null; item?: BulletinItem | null }): "F" | "G" | "" {
+  const gender = getStudentGender(params);
+  if (gender === "F") return "F";
+  if (gender === "M") return "G";
+  return "";
+}
+
+function parseDateLike(value?: string | null): Date | null {
+  const raw = String(value || "").trim();
+  if (!raw) return null;
+
+  const direct = new Date(raw);
+  if (!Number.isNaN(direct.getTime())) return direct;
+
+  const match = raw.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})$/);
+  if (!match) return null;
+
+  const day = Number(match[1]);
+  const month = Number(match[2]);
+  const year = Number(match[3]);
+  const parsed = new Date(year, month - 1, day);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return parsed;
+}
+
+function pad2(value: number): string {
+  return String(value).padStart(2, "0");
+}
+
+function formatDateFr(value?: string | null): string {
+  const d = parseDateLike(value);
+  if (!d) return "";
+  return `${pad2(d.getDate())}/${pad2(d.getMonth() + 1)}/${d.getFullYear()}`;
+}
+
+function datePart(value: string | null | undefined, part: "day" | "month" | "year"): string | number {
+  const d = parseDateLike(value);
+  if (!d) return "";
+  if (part === "day") return d.getDate();
+  if (part === "month") return d.getMonth() + 1;
+  return d.getFullYear();
+}
+
+function ageAtAcademicYear(value: string | null | undefined, academicYear: string): string | number {
+  const d = parseDateLike(value);
+  if (!d) return "";
+
+  const startYear = Number(String(academicYear || "").split("-")[0]);
+  const referenceYear = Number.isFinite(startYear) ? startYear : new Date().getFullYear();
+  const reference = new Date(referenceYear, 11, 31);
+
+  let age = reference.getFullYear() - d.getFullYear();
+  const birthdayPassed =
+    reference.getMonth() > d.getMonth() ||
+    (reference.getMonth() === d.getMonth() && reference.getDate() >= d.getDate());
+  if (!birthdayPassed) age -= 1;
+  return age >= 0 && age < 100 ? age : "";
+}
+
+function getStudentBirthdate(meta?: StudentMetaRow | null, item?: BulletinItem | null): string | null {
+  return item?.birth_date || item?.birthdate || meta?.birthdate || null;
+}
+
+function getStudentNationality(meta?: StudentMetaRow | null, item?: BulletinItem | null): string {
+  const value = String(item?.nationality || meta?.nationality || "").trim();
+  return value || "IVOIRIENNE";
+}
+
+function getStudentRepeater(meta?: StudentMetaRow | null, item?: BulletinItem | null): string {
+  const value = item?.is_repeater ?? meta?.is_repeater;
+  if (value === true) return "OUI";
+  if (value === false) return "NON";
+  return "";
+}
+
+function officialRapportClassCode(cls: ClassRow): string {
+  const level = normalizeLevel(cls.level);
+  const series = extractSeriesFromClass(cls).toUpperCase();
+  const label = normalizeForMatch(`${cls.label || ""} ${cls.code || ""}`);
+  const rawLabel = String(`${cls.label || ""} ${cls.code || ""}`).toUpperCase();
+
+  if (level === "6e") return "6è";
+  if (level === "5e") return "5è";
+  if (level === "4e") return "4è";
+  if (level === "3e") return "3è";
+
+  if (level === "seconde") {
+    if (series === "C" || label.includes("2nde c") || label.includes("2nd c")) return "2NDEC";
+    return "2NDEA";
+  }
+
+  if (level === "première") {
+    if (series === "C") return "1EREC";
+    if (series === "D") return "1ERED";
+    return "1EREA";
+  }
+
+  if (level === "terminale") {
+    if (series === "C") return "TC";
+    if (series === "D") return "TD";
+    if (rawLabel.includes("A2")) return "TA";
+    return "TA";
+  }
+
+  return String(cls.label || cls.code || "Classe").trim();
+}
+
 function classCycleLabel(cls: ClassRow): string {
   return isFirstCycleLevel(cls.level) ? "1er cycle" : "2nd cycle";
 }
@@ -1062,7 +1184,14 @@ async function loadStudentMeta(params: {
         last_name,
         full_name,
         matricule,
-        gender
+        gender,
+        birthdate,
+        birth_place,
+        nationality,
+        regime,
+        is_repeater,
+        is_boarder,
+        is_affecte
       )
     `
     )
@@ -1093,6 +1222,13 @@ async function loadStudentMeta(params: {
       full_name: student.full_name ?? null,
       matricule: student.matricule ?? null,
       gender: student.gender ?? null,
+      birthdate: student.birthdate ?? null,
+      birth_place: student.birth_place ?? null,
+      nationality: student.nationality ?? null,
+      regime: student.regime ?? null,
+      is_repeater: student.is_repeater ?? null,
+      is_boarder: student.is_boarder ?? null,
+      is_affecte: student.is_affecte ?? null,
     });
   }
 
@@ -2832,6 +2968,58 @@ function buildOfficialTermSubjectSheet(term: 1 | 2 | 3, subjectsByLevel: Map<str
   return aoa;
 }
 
+
+function buildOfficialAnnualSubjectSheet(subjectsByLevel: Map<string, Map<string, OfficialSubjectStats>>) {
+  const aoa = makeAoa(56, 35);
+  setAoaCell(aoa, "A2", "Tableau 3: Proportion d'élèves n'ayant pas obtenu la moyenne annuelle par niveau et par discipline au général");
+  setAoaCell(aoa, "A4", "    Disciplines                                                             Niveaux                 ");
+  setAoaCell(aoa, "B4", "Genre");
+
+  for (const item of OFFICIAL_SUBJECT_COLUMNS) {
+    aoa[3][item.col] = item.title;
+    aoa[4][item.col] = "Effectif classé";
+    aoa[4][item.col + 1] = " MA<10";
+    aoa[5][item.col + 1] = "Effectif";
+    aoa[5][item.col + 2] = "% ";
+  }
+
+  const rows: { level: string; row: number }[] = [
+    { level: "6ème", row: 7 },
+    { level: "5ème", row: 10 },
+    { level: "4ème", row: 13 },
+    { level: "3ème", row: 16 },
+    { level: "1er CYCLE", row: 19 },
+    { level: "2ndeA", row: 23 },
+    { level: "2ndeC", row: 26 },
+    { level: "1èreA1", row: 29 },
+    { level: "1èreA2", row: 32 },
+    { level: "1èreC", row: 35 },
+    { level: "1èreD", row: 38 },
+    { level: "TleA1", row: 41 },
+    { level: "TleA2", row: 44 },
+    { level: "TleC", row: 47 },
+    { level: "TleD", row: 50 },
+    { level: "2nd CYCLE", row: 53 },
+  ];
+
+  for (const { level, row } of rows) {
+    setAoaCell(aoa, `A${row}`, `${level} `);
+    setAoaCell(aoa, `B${row}`, "Féminin");
+    setAoaCell(aoa, `B${row + 1}`, "Masculin");
+    setAoaCell(aoa, `B${row + 2}`, "Ensemble");
+
+    const levelMap = subjectsByLevel.get(level) || new Map<string, OfficialSubjectStats>();
+    for (const item of OFFICIAL_SUBJECT_COLUMNS) {
+      const stats = levelMap.get(item.title) || makeOfficialSubjectStats();
+      putSubjectTriple(aoa, row, item.col, stats, "F");
+      putSubjectTriple(aoa, row + 1, item.col, stats, "M");
+      putSubjectTriple(aoa, row + 2, item.col, stats, "T");
+    }
+  }
+
+  return aoa;
+}
+
 function buildDropdownSheets(): PreparedSheet[] {
   return [
     {
@@ -3041,19 +3229,23 @@ function putDfaRow(aoa: unknown[][], rowIndex1: number, level: string, stats: Of
   setAoaCell(aoa, `Q${r}`, percent(nBoys, stats.classedBoys));
   setAoaCell(aoa, `R${r}`, nGirls + nBoys);
   setAoaCell(aoa, `S${r}`, percent(nGirls + nBoys, officialClassed(stats)));
-  setAoaCell(aoa, `T${r}`, stats.excludedGirls);
-  setAoaCell(aoa, `U${r}`, percent(stats.excludedGirls, stats.classedGirls));
-  setAoaCell(aoa, `V${r}`, stats.excludedBoys);
-  setAoaCell(aoa, `W${r}`, percent(stats.excludedBoys, stats.classedBoys));
-  setAoaCell(aoa, `X${r}`, stats.excludedGirls + stats.excludedBoys);
-  setAoaCell(aoa, `Y${r}`, percent(stats.excludedGirls + stats.excludedBoys, officialClassed(stats)));
+
+  const secondBlockGirls = exam ? stats.excludedGirls : stats.repeatGirls;
+  const secondBlockBoys = exam ? stats.excludedBoys : stats.repeatBoys;
+  setAoaCell(aoa, `T${r}`, secondBlockGirls);
+  setAoaCell(aoa, `U${r}`, percent(secondBlockGirls, stats.classedGirls));
+  setAoaCell(aoa, `V${r}`, secondBlockBoys);
+  setAoaCell(aoa, `W${r}`, percent(secondBlockBoys, stats.classedBoys));
+  setAoaCell(aoa, `X${r}`, secondBlockGirls + secondBlockBoys);
+  setAoaCell(aoa, `Y${r}`, percent(secondBlockGirls + secondBlockBoys, officialClassed(stats)));
+
   if (!exam) {
-    setAoaCell(aoa, `Z${r}`, stats.repeatGirls);
-    setAoaCell(aoa, `AA${r}`, percent(stats.repeatGirls, stats.classedGirls));
-    setAoaCell(aoa, `AB${r}`, stats.repeatBoys);
-    setAoaCell(aoa, `AC${r}`, percent(stats.repeatBoys, stats.classedBoys));
-    setAoaCell(aoa, `AD${r}`, stats.repeatGirls + stats.repeatBoys);
-    setAoaCell(aoa, `AE${r}`, percent(stats.repeatGirls + stats.repeatBoys, officialClassed(stats)));
+    setAoaCell(aoa, `Z${r}`, stats.excludedGirls);
+    setAoaCell(aoa, `AA${r}`, percent(stats.excludedGirls, stats.classedGirls));
+    setAoaCell(aoa, `AB${r}`, stats.excludedBoys);
+    setAoaCell(aoa, `AC${r}`, percent(stats.excludedBoys, stats.classedBoys));
+    setAoaCell(aoa, `AD${r}`, stats.excludedGirls + stats.excludedBoys);
+    setAoaCell(aoa, `AE${r}`, percent(stats.excludedGirls + stats.excludedBoys, officialClassed(stats)));
   }
 }
 
@@ -3131,9 +3323,16 @@ async function prepareDespsOfficialAnnualExport(params: {
 
   const studentMetaByKey = await loadStudentMeta({ supabase, classes, academicYear, activeFrom: firstActiveDate });
   const statsByLevel = new Map<string, OfficialDfaStats>();
+  const annualSubjectsByLevel = new Map<string, Map<string, OfficialSubjectStats>>();
   const ensure = (level: string) => {
     if (!statsByLevel.has(level)) statsByLevel.set(level, makeOfficialDfaStats());
     return statsByLevel.get(level)!;
+  };
+  const ensureAnnualSubject = (level: string, title: string) => {
+    if (!annualSubjectsByLevel.has(level)) annualSubjectsByLevel.set(level, new Map<string, OfficialSubjectStats>());
+    const m = annualSubjectsByLevel.get(level)!;
+    if (!m.has(title)) m.set(title, makeOfficialSubjectStats());
+    return m.get(title)!;
   };
 
   for (const cls of classes) {
@@ -3147,11 +3346,32 @@ async function prepareDespsOfficialAnnualExport(params: {
 
     const studentIds = new Set<string>();
     const itemsByPeriodStudent = new Map<string, BulletinItem>();
+    const subjectValuesByStudent = new Map<string, Map<string, number[]>>();
+    const cycleKey = officialCycleKey(levelKey);
+
+    const pushAnnualSubjectValue = (studentId: string, title: string, value: number | null) => {
+      if (value === null || !Number.isFinite(Number(value))) return;
+      if (!subjectValuesByStudent.has(studentId)) subjectValuesByStudent.set(studentId, new Map<string, number[]>());
+      const bySubject = subjectValuesByStudent.get(studentId)!;
+      if (!bySubject.has(title)) bySubject.set(title, []);
+      bySubject.get(title)!.push(Number(value));
+    };
+
     for (const period of displayPeriods) {
       const bulletin = bulletinsByPeriod.get(period.id);
+      const { subjectNameById, componentById } = getSubjectMaps(bulletin || { ok: true, items: [], subjects: [], subject_components: [] });
       for (const item of bulletin?.items || []) {
-        studentIds.add(String(item.student_id));
-        itemsByPeriodStudent.set(`${period.id}__${String(item.student_id)}`, item);
+        const studentId = String(item.student_id);
+        studentIds.add(studentId);
+        itemsByPeriodStudent.set(`${period.id}__${studentId}`, item);
+
+        for (const col of OFFICIAL_SUBJECT_COLUMNS) {
+          if (cycleKey === "first" && col.title === "Français (uniquement pour le 2nd cycle)") continue;
+          if (cycleKey === "first" && col.title === "PHILO") continue;
+          if (cycleKey === "second" && ["COMPO. FR", "ORTH/GRAM"].includes(col.title)) continue;
+          const value = valueForDspsSubjectHeader({ item, subjectNameById, componentById, header: col.header, firstCycle: cycleKey === "first" });
+          pushAnnualSubjectValue(studentId, col.title, value);
+        }
       }
     }
     for (const [key, meta] of studentMetaByKey.entries()) if (key.startsWith(`${currentClassId}__`)) studentIds.add(meta.student_id);
@@ -3167,7 +3387,15 @@ async function prepareDespsOfficialAnnualExport(params: {
       const valid = periodCells.filter((v): v is number => v !== null && Number.isFinite(Number(v)));
       const annualFromApi = !annualForcedNc ? cleanNumber(lastItem?.annual_avg, 4) : null;
       const annualAvg = annualFromApi !== null ? annualFromApi : annualForcedNc ? null : valid.length ? cleanNumber(valid.reduce((a, b) => a + b, 0) / valid.length, 4) : null;
-      addOfficialDfa(ensure(levelKey), annualAvg, getStudentGender({ meta, item: lastItem }));
+      const gender = getStudentGender({ meta, item: lastItem });
+      addOfficialDfa(ensure(levelKey), annualAvg, gender);
+
+      const bySubject = subjectValuesByStudent.get(studentId);
+      for (const col of OFFICIAL_SUBJECT_COLUMNS) {
+        const values = bySubject?.get(col.title) || [];
+        const avg = values.length ? cleanNumber(values.reduce((a, b) => a + b, 0) / values.length, 4) : null;
+        addOfficialSubject(ensureAnnualSubject(levelKey, col.title), avg, gender);
+      }
     }
   }
 
@@ -3195,6 +3423,27 @@ async function prepareDespsOfficialAnnualExport(params: {
   examStats.set("2nd CYCLE", secondExam);
   examStats.set("TOTAL", totalExam);
 
+  const addAnnualSubjectTotal = (target: string, sourceLevels: string[]) => {
+    for (const col of OFFICIAL_SUBJECT_COLUMNS) {
+      const total = makeOfficialSubjectStats();
+      for (const level of sourceLevels) {
+        const stats = annualSubjectsByLevel.get(level)?.get(col.title);
+        if (!stats) continue;
+        total.classedGirls += stats.classedGirls;
+        total.classedBoys += stats.classedBoys;
+        total.lt10Girls += stats.lt10Girls;
+        total.lt10Boys += stats.lt10Boys;
+      }
+      const targetStats = ensureAnnualSubject(target, col.title);
+      targetStats.classedGirls = total.classedGirls;
+      targetStats.classedBoys = total.classedBoys;
+      targetStats.lt10Girls = total.lt10Girls;
+      targetStats.lt10Boys = total.lt10Boys;
+    }
+  };
+  addAnnualSubjectTotal("1er CYCLE", ["6ème", "5ème", "4ème", "3ème"]);
+  addAnnualSubjectTotal("2nd CYCLE", ["2ndeA", "2ndeC", "1èreA1", "1èreA2", "1èreC", "1èreD", "TleA1", "TleA2", "TleC", "TleD"]);
+
   return {
     templateFileName: "resultats_annuels_dfa.xlsx",
     outputExtension: "xlsx",
@@ -3204,6 +3453,12 @@ async function prepareDespsOfficialAnnualExport(params: {
     sheets: [
       { sheetName: "Classes intermédiaires", aoa: buildDfaIntermediateSheet(academicYear, institutionName, statsByLevel), cols: Array.from({ length: 31 }, (_, i) => ({ wch: i < 4 ? 18 : 12 })) },
       { sheetName: "Classes d'examen", aoa: buildDfaExamSheet(academicYear, institutionName, examStats), cols: Array.from({ length: 25 }, (_, i) => ({ wch: i < 4 ? 18 : 12 })) },
+      {
+        sheetName: "Moy par discipline au général",
+        aoa: buildOfficialAnnualSubjectSheet(annualSubjectsByLevel),
+        cols: Array.from({ length: 35 }, (_, i) => ({ wch: i === 0 ? 14 : i === 1 ? 12 : 11 })),
+        merges: [{ s: { r: 1, c: 0 }, e: { r: 1, c: 34 } }],
+      },
     ],
   };
 }
@@ -3284,22 +3539,25 @@ async function prepareRapportFOfficialExport(params: {
         return item && !isAdminForcedNc(item) ? cleanNumber(item.general_avg, 2) : null;
       });
       const valid = avgs.filter((v): v is number => v !== null && Number.isFinite(Number(v)));
-      const dfa = valid.length ? (valid.reduce((a, b) => a + b, 0) / valid.length >= 10 ? "Admis" : "Redouble") : "";
+      const annualAverage = valid.length ? valid.reduce((a, b) => a + b, 0) / valid.length : null;
+      const dfa = annualAverage === null ? "" : annualAverage >= 10 ? "Admis" : "Redouble";
+      const birthdate = getStudentBirthdate(meta, [...displayPeriods].reverse().map((period) => itemsByPeriodStudent.get(`${period.id}__${studentId}`) || null).find(Boolean) || null);
+      const referenceItem = [...displayPeriods].reverse().map((period) => itemsByPeriodStudent.get(`${period.id}__${studentId}`) || null).find(Boolean) || null;
       rows.push([
         line,
         meta?.matricule || "",
         String(meta?.full_name || `${meta?.last_name || ""} ${meta?.first_name || ""}`).trim(),
+        formatDateFr(birthdate),
+        datePart(birthdate, "day"),
+        datePart(birthdate, "month"),
+        datePart(birthdate, "year"),
+        ageAtAcademicYear(birthdate, academicYear),
+        officialRapportClassCode(cls),
         "",
         "",
-        "",
-        "",
-        "",
-        String(cls.label || cls.code || "Classe"),
-        "",
-        "",
-        "IVOIRIENNE",
-        normalizeGender(meta?.gender || "") || "",
-        "",
+        getStudentNationality(meta, referenceItem),
+        getRapportGender({ meta, item: referenceItem }),
+        getStudentRepeater(meta, referenceItem),
         "",
         avgs[0] ?? "",
         avgs[1] ?? "",
@@ -3330,7 +3588,7 @@ async function prepareRapportFOfficialExport(params: {
       {
         sheetName: "BASE DE DONNEES",
         aoa: rows,
-        clearRanges: ["B6:D10005", "I6:S10005"],
+        clearRanges: ["A6:S10005"],
         cols: rapportBaseHeaders().map((h) => ({ wch: h.length < 8 ? 10 : Math.min(Math.max(h.length + 2, 14), 28) })),
       },
     ],
