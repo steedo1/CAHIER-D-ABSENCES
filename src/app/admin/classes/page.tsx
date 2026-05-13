@@ -313,7 +313,7 @@ export default function ClassesPage() {
           end_date: row.end_date ? String(row.end_date).slice(0, 10) : null,
           is_current: row.is_current === true,
         }))
-        .filter((row) => row.code);
+        .filter((row: AcademicYearRow) => row.code);
 
       rows.sort((a, b) => {
         const ak = a.start_date || a.code;
