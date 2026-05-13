@@ -28,6 +28,15 @@ type ClassRow = {
   class_phone_e164?: string | null;
 };
 
+type AcademicYearRow = {
+  id: string;
+  code: string;
+  label: string;
+  start_date?: string | null;
+  end_date?: string | null;
+  is_current: boolean;
+};
+
 const OFFICIAL_TRACK_OPTIONS: { value: OfficialTrackCode; label: string }[] = [
   { value: "6eme", label: "6ème" },
   { value: "5eme", label: "5ème" },
@@ -59,7 +68,7 @@ function Button(p: React.ButtonHTMLAttributes<HTMLButtonElement>) {
       {...p}
       className={
         "rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white shadow " +
-        (p.disabled ? "opacity-60" : "transition hover:bg-emerald-700")
+        (p.disabled ? "cursor-not-allowed opacity-60" : "transition hover:bg-emerald-700")
       }
     />
   );
@@ -123,12 +132,6 @@ function Modal({
   );
 }
 
-function computeAcademicYear(d = new Date()) {
-  const m = d.getMonth() + 1;
-  const y = d.getFullYear();
-  return m >= 8 ? `${y}-${y + 1}` : `${y - 1}-${y}`;
-}
-
 function normalizeKey(value: string) {
   return String(value || "")
     .normalize("NFD")
@@ -168,8 +171,17 @@ function isSeriesA(level: string) {
   return /^(1EREA|PREMIEREA|1A|TLEA|TERMINALEA|TA)/.test(key);
 }
 
+function academicYearOptionLabel(row: AcademicYearRow) {
+  const label = row.label || `Année scolaire ${row.code}`;
+  return row.is_current ? `${label} — courante` : label;
+}
+
 export default function ClassesPage() {
-  const [academicYear, setAcademicYear] = useState(computeAcademicYear());
+  const [academicYears, setAcademicYears] = useState<AcademicYearRow[]>([]);
+  const [academicYear, setAcademicYear] = useState("");
+  const [loadingAcademicYears, setLoadingAcademicYears] = useState(true);
+  const [academicYearError, setAcademicYearError] = useState<string | null>(null);
+
   const [level, setLevel] = useState("6e");
   const [format, setFormat] = useState<"none" | "numeric" | "alpha">("numeric");
   const [count, setCount] = useState<number>(5);
@@ -201,6 +213,17 @@ export default function ClassesPage() {
   const [authErr, setAuthErr] = useState(false);
 
   useEffect(() => {
+    loadAcademicYears();
+  }, []);
+
+  useEffect(() => {
+    if (!academicYear) {
+      setItems([]);
+      setPhoneDraft({});
+      setLoading(false);
+      return;
+    }
+
     refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [academicYear]);
@@ -239,8 +262,61 @@ export default function ClassesPage() {
 
   useEffect(genPreview, [level, format, count]);
 
+  async function loadAcademicYears() {
+    setLoadingAcademicYears(true);
+    setAcademicYearError(null);
+
+    try {
+      const r = await fetch("/api/admin/institution/academic-years", { cache: "no-store" });
+
+      if (r.status === 401) {
+        setAuthErr(true);
+        return;
+      }
+
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || !j?.ok) {
+        throw new Error(j?.error || "Impossible de charger les années scolaires.");
+      }
+
+      const rows: AcademicYearRow[] = (Array.isArray(j.items) ? j.items : [])
+        .map((row: any, idx: number) => ({
+          id: String(row.id ?? `year_${idx}`),
+          code: String(row.code || "").trim(),
+          label: String(row.label || "").trim() || `Année scolaire ${String(row.code || "").trim()}`,
+          start_date: row.start_date ? String(row.start_date).slice(0, 10) : null,
+          end_date: row.end_date ? String(row.end_date).slice(0, 10) : null,
+          is_current: row.is_current === true,
+        }))
+        .filter((row) => row.code);
+
+      rows.sort((a, b) => {
+        const ak = a.start_date || a.code;
+        const bk = b.start_date || b.code;
+        return bk.localeCompare(ak, "fr", { numeric: true });
+      });
+
+      setAcademicYears(rows);
+
+      setAcademicYear((current) => {
+        if (current && rows.some((row) => row.code === current)) return current;
+
+        const currentYear = rows.find((row) => row.is_current);
+        return currentYear?.code || rows[0]?.code || "";
+      });
+    } catch (e: any) {
+      setAcademicYears([]);
+      setAcademicYear("");
+      setItems([]);
+      setAcademicYearError(e?.message || "Impossible de charger les années scolaires.");
+    } finally {
+      setLoadingAcademicYears(false);
+    }
+  }
+
   async function refresh() {
     setLoading(true);
+
     try {
       const qs = new URLSearchParams({ limit: "300", academic_year: academicYear });
       const r = await fetch(`/api/admin/classes?${qs.toString()}`, { cache: "no-store" });
@@ -275,6 +351,11 @@ export default function ClassesPage() {
   }
 
   async function create() {
+    if (!academicYear) {
+      alert("Définissez d'abord une année scolaire dans les paramètres.");
+      return;
+    }
+
     const r = await fetch("/api/admin/classes/bulk", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -458,6 +539,9 @@ export default function ClassesPage() {
     setTimeout(() => setMsgPhone(null), 1500);
   }
 
+  const selectedAcademicYear = academicYears.find((row) => row.code === academicYear) || null;
+  const canCreate = !!academicYear && !loadingAcademicYears;
+
   if (authErr) {
     return (
       <div className="rounded-xl border bg-white p-5">
@@ -476,8 +560,9 @@ export default function ClassesPage() {
       <div>
         <h1 className="text-2xl font-semibold">Classes</h1>
         <p className="text-slate-600">
-          Créer, éditer et supprimer les classes par année scolaire. La série officielle sert aux coefficients,
-          bulletins, matrices et exports DESPS sans modifier le nom affiché de la classe.
+          Créer, éditer et supprimer les classes par année scolaire. Les années viennent des paramètres de
+          l'établissement. La série officielle sert aux coefficients, bulletins, matrices et exports DESPS sans modifier
+          le nom affiché de la classe.
         </p>
       </div>
 
@@ -485,7 +570,23 @@ export default function ClassesPage() {
         <div className="grid grid-cols-1 gap-3 md:grid-cols-5">
           <div>
             <div className="mb-1 text-xs text-slate-500">Année scolaire</div>
-            <Input value={academicYear} onChange={(e) => setAcademicYear(e.target.value)} placeholder="2026-2027" />
+            <Select
+              value={academicYear}
+              onChange={(e) => setAcademicYear(e.target.value)}
+              disabled={loadingAcademicYears || academicYears.length === 0}
+            >
+              {loadingAcademicYears ? (
+                <option value="">Chargement…</option>
+              ) : academicYears.length === 0 ? (
+                <option value="">Aucune année définie</option>
+              ) : (
+                academicYears.map((row) => (
+                  <option key={row.id} value={row.code}>
+                    {academicYearOptionLabel(row)}
+                  </option>
+                ))
+              )}
+            </Select>
           </div>
 
           <div>
@@ -520,7 +621,9 @@ export default function ClassesPage() {
           </div>
 
           <div className="flex items-end">
-            <Button onClick={create}>Créer</Button>
+            <Button onClick={create} disabled={!canCreate}>
+              Créer
+            </Button>
           </div>
         </div>
 
@@ -538,15 +641,19 @@ export default function ClassesPage() {
           </div>
 
           <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
-            {isSeriesA(level) ? (
+            {academicYearError ? (
+              <>{academicYearError}</>
+            ) : !academicYear ? (
+              <>Définissez d'abord l'année scolaire dans les paramètres avant de créer les classes.</>
+            ) : isSeriesA(level) ? (
               <>
                 Attention série A : vérifiez bien si les classes créées relèvent de <b>A1</b> ou <b>A2</b>.
                 Par défaut, Mon Cahier propose A2 pour conserver l'existant.
               </>
             ) : (
               <>
-                Cette information permet de garder les coefficients, bulletins, matrices et exports DESPS cohérents
-                avec la série officielle.
+                Année active sur cet écran : <b>{selectedAcademicYear?.label || academicYear}</b>. La liste ci-dessous
+                s'adapte automatiquement au choix de l'année.
               </>
             )}
           </div>
@@ -562,11 +669,15 @@ export default function ClassesPage() {
       <div className="rounded-2xl border bg-white p-5">
         <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div className="text-sm font-semibold uppercase tracking-wide text-slate-700">Liste des classes</div>
-          <div className="text-xs text-slate-500">Année affichée : {academicYear}</div>
+          <div className="text-xs text-slate-500">
+            Année affichée : <b>{academicYear || "—"}</b>
+          </div>
         </div>
 
         {loading ? (
           <div className="text-sm text-slate-500">Chargement…</div>
+        ) : !academicYear ? (
+          <div className="text-sm text-slate-500">Choisissez une année scolaire.</div>
         ) : items.length === 0 ? (
           <div className="text-sm text-slate-500">Aucune classe pour cette année scolaire.</div>
         ) : (
@@ -699,7 +810,14 @@ export default function ClassesPage() {
           </div>
           <div>
             <div className="mb-1 text-xs text-slate-500">Année scolaire</div>
-            <Input value={eAcademicYear} onChange={(e) => setEAcademicYear(e.target.value)} placeholder="2026-2027" />
+            <Select value={eAcademicYear} onChange={(e) => setEAcademicYear(e.target.value)}>
+              <option value="">À compléter</option>
+              {academicYears.map((row) => (
+                <option key={row.id} value={row.code}>
+                  {academicYearOptionLabel(row)}
+                </option>
+              ))}
+            </Select>
           </div>
           <div>
             <div className="mb-1 text-xs text-slate-500">Série officielle</div>
