@@ -1,5 +1,7 @@
 // src/app/api/admin/exports/averages/route.ts
 import { NextRequest, NextResponse } from "next/server";
+import fs from "node:fs/promises";
+import path from "node:path";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 type Role = "super_admin" | "admin" | "educator" | "teacher" | "parent" | string;
@@ -230,6 +232,7 @@ type PreparedSheet = {
   aoa: unknown[][];
   cols?: { wch: number }[];
   merges?: { s: { r: number; c: number }; e: { r: number; c: number } }[];
+  clearRanges?: string[];
 };
 
 type PreparedWorkbook = {
@@ -238,6 +241,8 @@ type PreparedWorkbook = {
   rows: Record<string, unknown>[];
   classSheets?: { sheetName: string; rows: Record<string, unknown>[] }[];
   sheets?: PreparedSheet[];
+  templateFileName?: string;
+  outputExtension?: "xlsx" | "xlsm";
 };
 
 export const runtime = "nodejs";
@@ -2973,6 +2978,13 @@ async function prepareDespsOfficialTermExport(params: {
     classes: ClassRow[];
   };
   return {
+    templateFileName:
+      params.term === 1
+        ? "recueil_moyennes_t1.xlsx"
+        : params.term === 2
+        ? "recueil_moyennes_t2.xlsx"
+        : "recueil_moyennes_t3.xlsx",
+    outputExtension: "xlsx",
     filenameBase: [
       `fichier-recueil-moyennes-etablissement-${params.term}e-trimestre`,
       toFileSafePart(params.institutionName || "etablissement"),
@@ -3184,14 +3196,14 @@ async function prepareDespsOfficialAnnualExport(params: {
   examStats.set("TOTAL", totalExam);
 
   return {
+    templateFileName: "resultats_annuels_dfa.xlsx",
+    outputExtension: "xlsx",
     filenameBase: ["etablissement-resultats-annuels-dfa", toFileSafePart(institutionName || "etablissement"), toFileSafePart(academicYear || "annee")].join("_"),
     mainSheetName: "Classes intermédiaires",
     rows: [],
     sheets: [
       { sheetName: "Classes intermédiaires", aoa: buildDfaIntermediateSheet(academicYear, institutionName, statsByLevel), cols: Array.from({ length: 31 }, (_, i) => ({ wch: i < 4 ? 18 : 12 })) },
       { sheetName: "Classes d'examen", aoa: buildDfaExamSheet(academicYear, institutionName, examStats), cols: Array.from({ length: 25 }, (_, i) => ({ wch: i < 4 ? 18 : 12 })) },
-      { sheetName: "Moy par discipline au général", aoa: buildOfficialTermSubjectSheet(3, new Map()), cols: Array.from({ length: 35 }, (_, i) => ({ wch: i === 0 ? 14 : i === 1 ? 12 : 11 })) },
-      ...buildDropdownSheets().slice(1),
     ],
   };
 }
@@ -3299,6 +3311,8 @@ async function prepareRapportFOfficialExport(params: {
   }
 
   return {
+    templateFileName: "rapport_f.xlsm",
+    outputExtension: "xlsm",
     filenameBase: ["rapport-f", toFileSafePart(institutionName || "etablissement"), toFileSafePart(academicYear || "annee")].join("_"),
     mainSheetName: "BASE DE DONNEES",
     rows: [],
@@ -3310,16 +3324,151 @@ async function prepareRapportFOfficialExport(params: {
           ["N°", "ETABLISSEMENT", "CHOIX_DRENA :", ""],
           [1, institutionName, "CHOIX_ANNEE SCOLAIRE :", academicYear],
         ],
+        clearRanges: ["A4:B369"],
         cols: [{ wch: 12 }, { wch: 42 }, { wch: 22 }, { wch: 22 }],
       },
-      { sheetName: "CONSIGNES ET IMPRESSION", aoa: [["", "", "", "CONSIGNES ET IMPRESSION"], ["Ø ", "N'apporter aucune modification au fichier !!!!!!. Pas d'insertion ou de suppression de lignes ou de colonnes."], ["Ø ", "Ne saisir que dans les cellules blanches."]], cols: [{ wch: 8 }, { wch: 120 }] },
-      { sheetName: "BASE DE DONNEES", aoa: rows, cols: rapportBaseHeaders().map((h) => ({ wch: h.length < 8 ? 10 : Math.min(Math.max(h.length + 2, 14), 28) })) },
-      { sheetName: "SOMMAIRE", aoa: [["", "", "", "", "", "", "", "", "", "", "", "", "", "", "ENQUETE RAPIDE"], [], ["", "", "", "", "", "", "", "", "", "", "", "", "", "", "RAPPORT DE RENTREE"], [], ["", "", "", "", "", "", "", "", "", "", "", "", "", "", "PREMIER TRIMESTRE"], [], ["", "", "", "", "", "", "", "", "", "", "", "", "", "", "DEUXIEME TRIMESTRE"]] },
-      { sheetName: "PREMIER TRIMES.", aoa: [["COLLER D'ICI", "", "", "RAPPORT ETABLISSEMENT SECONDAIRE PUBLIC PREMIER TRIMESTRE"], [], ["CONTACT CHEF D'ETABLISSEMENT", "", "F_26-40_R1"], [], ["", "INTRODUCTION:"]] },
-      { sheetName: "DEUXIEME TRIMES.", aoa: [["COLLER D'ICI", "", "", "RAPPORT ETABLISSEMENT SECONDAIRE PUBLIC DEUXIEME TRIMESTRE"], [], ["CONTACT CHEF D'ETABLISSEMENT", "", "F_26-40_R2"], [], ["", "INTRODUCTION:"]] },
-      { sheetName: "TROISIEME TRI et BILAN", aoa: [["COLLER D'ICI", "", "", "RAPPORT ETABLISSEMENT SECONDAIRE PUBLIC TROISIEME TRIMESTRE ET BILAN"], [], ["CONTACT CHEF D'ETABLISSEMENT", "", "F_26-40_R3"], [], ["", "INTRODUCTION:"]] },
+      {
+        sheetName: "BASE DE DONNEES",
+        aoa: rows,
+        clearRanges: ["B6:D10005", "I6:S10005"],
+        cols: rapportBaseHeaders().map((h) => ({ wch: h.length < 8 ? 10 : Math.min(Math.max(h.length + 2, 14), 28) })),
+      },
     ],
   };
+}
+
+
+const DESPS_TEMPLATE_DIR = path.join(process.cwd(), "src", "templates", "desps");
+
+function despsTemplatePath(fileName: string) {
+  return path.join(DESPS_TEMPLATE_DIR, fileName);
+}
+
+function inferCellType(value: unknown): "s" | "n" | "b" | "d" | "z" {
+  if (value === null || value === undefined || value === "") return "z";
+  if (typeof value === "number") return "n";
+  if (typeof value === "boolean") return "b";
+  if (value instanceof Date) return "d";
+  return "s";
+}
+
+function setWorksheetCell(XLSX: any, ws: any, rowIndex0: number, colIndex0: number, value: unknown) {
+  const ref = XLSX.utils.encode_cell({ r: rowIndex0, c: colIndex0 });
+  const previous = ws[ref] || {};
+
+  // Les modèles officiels contiennent beaucoup de formules. On ne les écrase pas :
+  // on remplit les cellules de saisie et Excel recalculera les cellules formulées à l'ouverture.
+  if (previous?.f) return;
+
+  if (value === null || value === undefined || value === "") {
+    if (previous && Object.keys(previous).length) {
+      delete previous.v;
+      delete previous.w;
+      previous.t = "z";
+      ws[ref] = previous;
+    }
+    return;
+  }
+
+  ws[ref] = {
+    ...previous,
+    t: inferCellType(value),
+    v: value,
+  };
+  delete ws[ref].w;
+}
+
+function clearWorksheetRange(XLSX: any, ws: any, rangeRef: string) {
+  const range = XLSX.utils.decode_range(rangeRef);
+  for (let r = range.s.r; r <= range.e.r; r += 1) {
+    for (let c = range.s.c; c <= range.e.c; c += 1) {
+      const ref = XLSX.utils.encode_cell({ r, c });
+      const previous = ws[ref];
+      if (!previous || previous.f) continue;
+      delete previous.v;
+      delete previous.w;
+      previous.t = "z";
+      ws[ref] = previous;
+    }
+  }
+}
+
+function applyAoaToTemplateSheet(XLSX: any, ws: any, sheet: PreparedSheet) {
+  for (const rangeRef of sheet.clearRanges || []) {
+    clearWorksheetRange(XLSX, ws, rangeRef);
+  }
+
+  for (let r = 0; r < sheet.aoa.length; r += 1) {
+    const row = sheet.aoa[r] || [];
+    for (let c = 0; c < row.length; c += 1) {
+      const value = row[c];
+      if (value === undefined) continue;
+      setWorksheetCell(XLSX, ws, r, c, value);
+    }
+  }
+}
+
+async function sendTemplateWorkbook(prepared: PreparedWorkbook) {
+  try {
+    const XLSX = await import("xlsx");
+    const templateBuffer = await fs.readFile(despsTemplatePath(prepared.templateFileName!));
+    const workbook = XLSX.read(templateBuffer, {
+      type: "buffer",
+      cellStyles: true,
+      cellNF: true,
+      cellDates: true,
+      bookVBA: prepared.outputExtension === "xlsm",
+    });
+
+    for (const sheet of prepared.sheets || []) {
+      let ws = workbook.Sheets[sheet.sheetName];
+      if (!ws) {
+        ws = XLSX.utils.aoa_to_sheet([]);
+        workbook.Sheets[sheet.sheetName] = ws;
+        workbook.SheetNames.push(sheet.sheetName);
+      }
+      applyAoaToTemplateSheet(XLSX, ws, sheet);
+    }
+
+    workbook.Workbook = workbook.Workbook || {};
+    workbook.Workbook.CalcPr = { fullCalcOnLoad: true, forceFullCalc: true, calcMode: "auto" };
+
+    const extension = prepared.outputExtension || "xlsx";
+    const buffer = XLSX.write(workbook, {
+      type: "buffer",
+      bookType: extension,
+      bookVBA: extension === "xlsm",
+      cellStyles: true,
+    }) as Buffer;
+
+    const fileBytes = Uint8Array.from(buffer);
+    const fileArrayBuffer = new ArrayBuffer(fileBytes.byteLength);
+    new Uint8Array(fileArrayBuffer).set(fileBytes);
+
+    return new Response(fileArrayBuffer, {
+      status: 200,
+      headers: {
+        "Content-Type":
+          extension === "xlsm"
+            ? "application/vnd.ms-excel.sheet.macroEnabled.12"
+            : "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "Content-Disposition": `attachment; filename="${prepared.filenameBase}.${extension}"`,
+        "Cache-Control": "no-store",
+      },
+    });
+  } catch (error) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: "DESPS_TEMPLATE_EXPORT_FAILED",
+        message:
+          error instanceof Error
+            ? error.message
+            : "Impossible de charger ou de remplir le modèle officiel DESPS.",
+      },
+      { status: 500 }
+    );
+  }
 }
 
 
@@ -3337,7 +3486,8 @@ function columnWidthForHeader(header: string): number {
 }
 
 async function sendPreparedWorkbook(prepared: PreparedWorkbook, format: ExportFormat) {
-  const filename = `${prepared.filenameBase}.${format}`;
+  const extension = prepared.outputExtension || format;
+  const filename = `${prepared.filenameBase}.${extension}`;
 
   if (format === "csv") {
     const csv = prepared.sheets?.length
@@ -3352,6 +3502,10 @@ async function sendPreparedWorkbook(prepared: PreparedWorkbook, format: ExportFo
         "Cache-Control": "no-store",
       },
     });
+  }
+
+  if (prepared.templateFileName) {
+    return sendTemplateWorkbook(prepared);
   }
 
   try {
