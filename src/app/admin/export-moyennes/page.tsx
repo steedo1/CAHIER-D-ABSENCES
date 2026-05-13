@@ -7,7 +7,6 @@ import {
   FileSpreadsheet,
   GraduationCap,
   Layers3,
-  School,
   ShieldCheck,
 } from "lucide-react";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
@@ -35,22 +34,28 @@ type GradePeriodRow = {
   end_date: string;
 };
 
-function formatDateFR(iso?: string | null) {
-  if (!iso) return "—";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return String(iso);
-  return d.toLocaleDateString("fr-FR");
+function periodTextForMatch(period: GradePeriodRow) {
+  return [period.code, period.label, period.short_label]
+    .map((value) => String(value || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, ""))
+    .join(" ");
 }
 
-function periodDisplayLabel(period: GradePeriodRow) {
-  const title =
-    String(period.short_label || "").trim() ||
-    String(period.label || "").trim() ||
-    String(period.code || "").trim() ||
-    "Période";
+function periodMatchesTerm(period: GradePeriodRow, term: 1 | 2 | 3) {
+  const raw = periodTextForMatch(period);
 
-  const year = String(period.academic_year || "").trim();
-  return `${year ? `[${year}] ` : ""}${title} — ${formatDateFR(period.start_date)} → ${formatDateFR(period.end_date)}`;
+  if (term === 1) {
+    return /(^|\s)(t1|trim1|trim\s*1|trimestre1|trimestre\s*1|1er|1ere|premier|premiere)(\s|$)/.test(raw);
+  }
+
+  if (term === 2) {
+    return /(^|\s)(t2|trim2|trim\s*2|trimestre2|trimestre\s*2|2e|2eme|deuxieme)(\s|$)/.test(raw);
+  }
+
+  return /(^|\s)(t3|trim3|trim\s*3|trimestre3|trimestre\s*3|3e|3eme|troisieme)(\s|$)/.test(raw);
+}
+
+function resolveFixedTermPeriod(periods: GradePeriodRow[], term: 1 | 2 | 3) {
+  return periods.find((period) => periodMatchesTerm(period, term)) || null;
 }
 
 function classDisplayLabel(cls: ClassRow) {
@@ -94,22 +99,20 @@ function EmptyOption({ label }: { label: string }) {
 function TermExportCard({
   title,
   term,
-  periods,
+  period,
   classes,
   academicYears,
   defaultAcademicYear,
   hasAcademicYears,
-  hasPeriods,
   hasClasses,
 }: {
   title: string;
   term: 1 | 2 | 3;
-  periods: GradePeriodRow[];
+  period: GradePeriodRow | null;
   classes: ClassRow[];
   academicYears: string[];
   defaultAcademicYear: string;
   hasAcademicYears: boolean;
-  hasPeriods: boolean;
   hasClasses: boolean;
 }) {
   return (
@@ -129,6 +132,7 @@ function TermExportCard({
       <form action="/api/admin/exports/averages" method="GET" className="grid gap-3">
         <input type="hidden" name="export_kind" value="desps_official_term" />
         <input type="hidden" name="term" value={term} />
+        <input type="hidden" name="period_ref" value={period ? `period:${period.id}` : ""} />
         <input type="hidden" name="format" value="xlsx" />
 
         <select
@@ -149,22 +153,6 @@ function TermExportCard({
         </select>
 
         <select
-          name="period_ref"
-          required
-          className="w-full rounded-2xl border border-slate-300 bg-white px-3 py-2.5 text-sm font-semibold text-slate-900 outline-none transition focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/15"
-          defaultValue=""
-        >
-          <option value="" disabled>
-            {hasPeriods ? "Trimestre / période" : "Aucune période disponible"}
-          </option>
-          {periods.map((period) => (
-            <option key={`${term}-period-${period.id}`} value={`period:${period.id}`}>
-              {periodDisplayLabel(period)}
-            </option>
-          ))}
-        </select>
-
-        <select
           name="class_id"
           className="w-full rounded-2xl border border-slate-300 bg-white px-3 py-2.5 text-sm font-semibold text-slate-900 outline-none transition focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/15"
           defaultValue=""
@@ -179,7 +167,7 @@ function TermExportCard({
 
         <button
           type="submit"
-          disabled={!hasAcademicYears || !hasPeriods}
+          disabled={!hasAcademicYears || !period}
           className="inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-5 py-3 text-sm font-black text-white shadow-sm transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-500"
         >
           <Download className="h-4 w-4" />
@@ -369,16 +357,17 @@ export default async function ExportDespsPage() {
 
   const defaultAcademicYear = academicYears[0] ?? "";
   const hasAcademicYears = academicYears.length > 0;
-  const hasPeriods = periods.length > 0;
   const hasClasses = classes.length > 0;
 
+  const firstTermPeriod = resolveFixedTermPeriod(periods, 1);
+  const secondTermPeriod = resolveFixedTermPeriod(periods, 2);
+  const thirdTermPeriod = resolveFixedTermPeriod(periods, 3);
+
   const cardProps = {
-    periods,
     classes,
     academicYears,
     defaultAcademicYear,
     hasAcademicYears,
-    hasPeriods,
     hasClasses,
   };
 
@@ -443,9 +432,9 @@ export default async function ExportDespsPage() {
           </header>
 
           <div className="grid gap-4 p-5 sm:p-6 lg:grid-cols-2 lg:p-7">
-            <TermExportCard title="1er trimestre" term={1} {...cardProps} />
-            <TermExportCard title="2e trimestre" term={2} {...cardProps} />
-            <TermExportCard title="3e trimestre" term={3} {...cardProps} />
+            <TermExportCard title="1er trimestre" term={1} period={firstTermPeriod} {...cardProps} />
+            <TermExportCard title="2e trimestre" term={2} period={secondTermPeriod} {...cardProps} />
+            <TermExportCard title="3e trimestre" term={3} period={thirdTermPeriod} {...cardProps} />
             <AnnualExportCard {...annualProps} />
             <RapportFCard {...annualProps} />
           </div>
