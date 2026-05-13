@@ -3,31 +3,68 @@
 
 import { useEffect, useMemo, useState } from "react";
 
-/* ─────────────────────────────
-   Types
-───────────────────────────── */
-type ClassRow = { id: string; name: string; level: string; class_phone_e164?: string | null };
+type OfficialTrackCode =
+  | "6eme"
+  | "5eme"
+  | "4eme"
+  | "3eme"
+  | "2ndeA"
+  | "2ndeC"
+  | "1ereA1"
+  | "1ereA2"
+  | "1ereC"
+  | "1ereD"
+  | "tleA1"
+  | "tleA2"
+  | "tleC"
+  | "tleD";
 
-/* ─────────────────────────────
-   UI helpers
-───────────────────────────── */
+type ClassRow = {
+  id: string;
+  name: string;
+  level: string;
+  academic_year?: string | null;
+  official_track_code?: OfficialTrackCode | null;
+  class_phone_e164?: string | null;
+};
+
+const OFFICIAL_TRACK_OPTIONS: { value: OfficialTrackCode; label: string }[] = [
+  { value: "6eme", label: "6ème" },
+  { value: "5eme", label: "5ème" },
+  { value: "4eme", label: "4ème" },
+  { value: "3eme", label: "3ème" },
+  { value: "2ndeA", label: "2nde A" },
+  { value: "2ndeC", label: "2nde C" },
+  { value: "1ereA1", label: "1ère A1" },
+  { value: "1ereA2", label: "1ère A2" },
+  { value: "1ereC", label: "1ère C" },
+  { value: "1ereD", label: "1ère D" },
+  { value: "tleA1", label: "Terminale A1" },
+  { value: "tleA2", label: "Terminale A2" },
+  { value: "tleC", label: "Terminale C" },
+  { value: "tleD", label: "Terminale D" },
+];
+
 function Input(p: React.InputHTMLAttributes<HTMLInputElement>) {
   return <input {...p} className={"w-full rounded-lg border px-3 py-2 text-sm " + (p.className ?? "")} />;
 }
+
 function Select(p: React.SelectHTMLAttributes<HTMLSelectElement>) {
   return <select {...p} className={"w-full rounded-lg border bg-white px-3 py-2 text-sm " + (p.className ?? "")} />;
 }
+
 function Button(p: React.ButtonHTMLAttributes<HTMLButtonElement>) {
   return (
     <button
       {...p}
       className={
-        "rounded-xl bg-emerald-600 text-white px-4 py-2 text-sm font-medium shadow " +
-        (p.disabled ? "opacity-60" : "hover:bg-emerald-700 transition")
+        "rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white shadow " +
+        (p.disabled ? "opacity-60" : "transition hover:bg-emerald-700")
       }
     />
   );
 }
+
 function IconButton({
   title,
   onClick,
@@ -46,14 +83,15 @@ function IconButton({
       onClick={onClick}
       disabled={disabled}
       className={
-        "inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium border " +
-        (disabled ? "opacity-50 cursor-not-allowed" : "hover:bg-slate-50")
+        "inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-xs font-medium " +
+        (disabled ? "cursor-not-allowed opacity-50" : "hover:bg-slate-50")
       }
     >
       {children}
     </button>
   );
 }
+
 function Modal({
   open,
   title,
@@ -68,12 +106,13 @@ function Modal({
   actions?: any;
 }) {
   if (!open) return null;
+
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/30 p-4">
       <div className="w-full max-w-lg rounded-2xl bg-white shadow-xl">
         <div className="flex items-center justify-between border-b px-4 py-3">
           <div className="text-sm font-semibold">{title}</div>
-          <button onClick={onClose} className="text-slate-400 hover:text-slate-600 text-lg leading-none">
+          <button onClick={onClose} className="text-lg leading-none text-slate-400 hover:text-slate-600">
             ×
           </button>
         </div>
@@ -84,56 +123,108 @@ function Modal({
   );
 }
 
-/* ─────────────────────────────
-   Page
-───────────────────────────── */
+function computeAcademicYear(d = new Date()) {
+  const m = d.getMonth() + 1;
+  const y = d.getFullYear();
+  return m >= 8 ? `${y}-${y + 1}` : `${y - 1}-${y}`;
+}
+
+function normalizeKey(value: string) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "");
+}
+
+function inferOfficialTrackCode(level: string): OfficialTrackCode | "" {
+  const key = normalizeKey(level);
+
+  if (/^6/.test(key)) return "6eme";
+  if (/^5/.test(key)) return "5eme";
+  if (/^4/.test(key)) return "4eme";
+  if (/^3/.test(key)) return "3eme";
+
+  if (/^(2NDEA|SECONDEA|2A)/.test(key)) return "2ndeA";
+  if (/^(2NDEC|SECONDEC|2C)/.test(key)) return "2ndeC";
+
+  if (/^(1ERED|PREMIERED|1D)/.test(key)) return "1ereD";
+  if (/^(1EREC|PREMIEREC|1C)/.test(key)) return "1ereC";
+  if (/^(1EREA|PREMIEREA|1A)/.test(key)) return "1ereA2";
+
+  if (/^(TLED|TERMINALED|TD)/.test(key)) return "tleD";
+  if (/^(TLEC|TERMINALEC|TC)/.test(key)) return "tleC";
+  if (/^(TLEA|TERMINALEA|TA)/.test(key)) return "tleA2";
+
+  return "";
+}
+
+function officialTrackLabel(code?: string | null) {
+  return OFFICIAL_TRACK_OPTIONS.find((option) => option.value === code)?.label || "À compléter";
+}
+
+function isSeriesA(level: string) {
+  const key = normalizeKey(level);
+  return /^(1EREA|PREMIEREA|1A|TLEA|TERMINALEA|TA)/.test(key);
+}
+
 export default function ClassesPage() {
-  // Génération
+  const [academicYear, setAcademicYear] = useState(computeAcademicYear());
   const [level, setLevel] = useState("6e");
   const [format, setFormat] = useState<"none" | "numeric" | "alpha">("numeric");
   const [count, setCount] = useState<number>(5);
+  const [officialTrackCode, setOfficialTrackCode] = useState<OfficialTrackCode | "">("6eme");
   const [preview, setPreview] = useState<string[]>([]);
 
-  // Liste
   const [items, setItems] = useState<ClassRow[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // Drafts de numéros (édition rapide par carte)
   const [phoneDraft, setPhoneDraft] = useState<Record<string, string>>({});
   const [savingPhoneId, setSavingPhoneId] = useState<string | null>(null);
   const [msgPhone, setMsgPhone] = useState<string | null>(null);
 
-  // Accordéon des groupes
   const [openLevel, setOpenLevel] = useState<string | null>(null);
 
-  // Édition (modal)
   const [editOpen, setEditOpen] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
   const [eLabel, setELabel] = useState("");
   const [eLevel, setELevel] = useState("");
-  const [ePhone, setEPhone] = useState(""); // numéro optionnel
+  const [eAcademicYear, setEAcademicYear] = useState("");
+  const [eOfficialTrackCode, setEOfficialTrackCode] = useState<OfficialTrackCode | "">("");
+  const [ePhone, setEPhone] = useState("");
   const [saving, setSaving] = useState(false);
 
-  // Suppression
   const [delOpen, setDelOpen] = useState(false);
   const [delId, setDelId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
 
-  // Auth
   const [authErr, setAuthErr] = useState(false);
 
   useEffect(() => {
     refresh();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [academicYear]);
 
-  // Si on choisit "Aucun suffixe", on force count=1 (évite CM21)
   useEffect(() => {
     if (format === "none") setCount(1);
   }, [format]);
 
-  // Prévisualisation
+  useEffect(() => {
+    const inferred = inferOfficialTrackCode(level);
+    setOfficialTrackCode(inferred);
+  }, [level]);
+
+  useEffect(() => {
+    const inferred = inferOfficialTrackCode(eLevel);
+    if (inferred && !eOfficialTrackCode) {
+      setEOfficialTrackCode(inferred);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [eLevel]);
+
   function genPreview() {
     if (!level || count < 1) return setPreview([]);
+
     const p: string[] = [];
     if (format === "none") {
       p.push(level);
@@ -142,27 +233,39 @@ export default function ClassesPage() {
         p.push(format === "numeric" ? `${level}${i}` : `${level}${String.fromCharCode(64 + i)}`);
       }
     }
+
     setPreview(p);
   }
+
   useEffect(genPreview, [level, format, count]);
 
   async function refresh() {
     setLoading(true);
     try {
-      const r = await fetch("/api/admin/classes?limit=200", { cache: "no-store" });
+      const qs = new URLSearchParams({ limit: "300", academic_year: academicYear });
+      const r = await fetch(`/api/admin/classes?${qs.toString()}`, { cache: "no-store" });
+
       if (r.status === 401) {
         setAuthErr(true);
         setItems([]);
         return;
       }
+
       const j = await r.json().catch(() => ({}));
       const rows: ClassRow[] = (j.items || []).map((x: any) => {
-        // compat : accepte class_phone_e164 OU (ancien) device_phone_e164
         const phone = x.class_phone_e164 ?? x.device_phone_e164 ?? null;
-        return { id: x.id, name: x.name, level: x.level, class_phone_e164: phone };
+        return {
+          id: x.id,
+          name: x.name ?? x.label,
+          level: x.level,
+          academic_year: x.academic_year ?? null,
+          official_track_code: x.official_track_code ?? x.officialTrackCode ?? null,
+          class_phone_e164: phone,
+        };
       });
+
       setItems(rows);
-      // initialise les drafts à partir de la donnée
+
       const init: Record<string, string> = {};
       for (const it of rows) init[it.id] = it.class_phone_e164 ?? "";
       setPhoneDraft(init);
@@ -175,24 +278,46 @@ export default function ClassesPage() {
     const r = await fetch("/api/admin/classes/bulk", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ level, format, count }),
+      body: JSON.stringify({
+        level,
+        format,
+        count,
+        academic_year: academicYear,
+        official_track_code: officialTrackCode || null,
+      }),
     });
+
     if (r.status === 401) {
       setAuthErr(true);
       return;
     }
+
     if (!r.ok) {
       const t = await r.json().catch(() => ({}));
-      alert("Échec de création" + (t?.error ? ` : ${t.error}` : ""));
+      if (r.status === 409) {
+        alert(
+          "Ces classes existent déjà pour cette année scolaire, ou une ancienne contrainte unique bloque la recréation par année."
+        );
+      } else {
+        alert("Échec de création" + (t?.error ? ` : ${t.error}` : ""));
+      }
       return;
     }
+
+    const j = await r.json().catch(() => ({}));
     await refresh();
     setOpenLevel(level);
-    setMsgPhone("Classes créées. Vous pouvez maintenant attribuer un numéro à chaque classe depuis la liste.");
-    setTimeout(() => setMsgPhone(null), 3000);
+
+    const inserted = Number(j?.inserted ?? 0);
+    const existing = Number(j?.existing ?? 0);
+    setMsgPhone(
+      inserted > 0
+        ? `${inserted} classe(s) créée(s). ${existing > 0 ? `${existing} existait déjà pour cette année.` : ""}`
+        : "Aucune nouvelle classe créée : elles existent déjà pour cette année scolaire."
+    );
+    setTimeout(() => setMsgPhone(null), 3500);
   }
 
-  // Groupage des classes par niveau
   const grouped = useMemo(() => {
     const m = new Map<string, ClassRow[]>();
     for (const c of items) {
@@ -214,37 +339,51 @@ export default function ClassesPage() {
     setEditId(row.id);
     setELabel(row.name);
     setELevel(row.level);
+    setEAcademicYear(row.academic_year || academicYear);
+    setEOfficialTrackCode(row.official_track_code || inferOfficialTrackCode(row.level));
     setEPhone(row.class_phone_e164 ?? "");
     setEditOpen(true);
   }
 
   async function saveEdit() {
     if (!editId) return;
+
     setSaving(true);
     setMsgPhone(null);
-    // ✅ l’API PATCH attend `class_phone`, pas `class_phone_e164`
-    const body: any = { label: eLabel, level: eLevel, class_phone: ePhone.trim() || null };
+
+    const body: any = {
+      label: eLabel,
+      level: eLevel,
+      academic_year: eAcademicYear || null,
+      official_track_code: eOfficialTrackCode || null,
+      class_phone: ePhone.trim() || null,
+    };
+
     const r = await fetch(`/api/admin/classes/${editId}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
+
     setSaving(false);
+
     if (r.status === 401) {
       setAuthErr(true);
       return;
     }
+
     if (!r.ok) {
       const t = await r.json().catch(() => ({}));
       if (r.status === 409) {
-        alert("Ce numéro est déjà utilisé par une autre classe de votre établissement.");
+        alert("Une classe avec ce libellé existe déjà pour cette année scolaire.");
       } else if (r.status === 400) {
-        alert("Numéro invalide. Saisissez un local ou un international : il sera normalisé.");
+        alert("Données invalides. Vérifiez le numéro, l'année scolaire ou la série officielle.");
       } else {
         alert("Échec de mise à jour" + (t?.error ? ` : ${t.error}` : ""));
       }
       return;
     }
+
     setEditOpen(false);
     setEditId(null);
     await refresh();
@@ -259,42 +398,49 @@ export default function ClassesPage() {
 
   async function confirmDelete() {
     if (!delId) return;
+
     setDeleting(true);
     const r = await fetch(`/api/admin/classes/${delId}`, { method: "DELETE" });
     setDeleting(false);
+
     if (r.status === 401) {
       setAuthErr(true);
       return;
     }
+
     if (!r.ok) {
       const t = await r.json().catch(() => ({}));
       alert("Échec de suppression" + (t?.error ? ` : ${t.error}` : ""));
       return;
     }
+
     setDelOpen(false);
     setDelId(null);
     await refresh();
   }
 
-  // Éditeur rapide du téléphone par carte
   function setDraft(id: string, v: string) {
     setPhoneDraft((m) => ({ ...m, [id]: v }));
   }
+
   async function savePhone(id: string) {
     setSavingPhoneId(id);
     setMsgPhone(null);
-    // ✅ envoie `class_phone` (UI accepte local ou international)
+
     const body: any = { class_phone: (phoneDraft[id] || "").trim() || null };
     const r = await fetch(`/api/admin/classes/${id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
+
     setSavingPhoneId(null);
+
     if (r.status === 401) {
       setAuthErr(true);
       return;
     }
+
     if (!r.ok) {
       const t = await r.json().catch(() => ({}));
       if (r.status === 409) {
@@ -306,6 +452,7 @@ export default function ClassesPage() {
       }
       return;
     }
+
     await refresh();
     setMsgPhone("Numéro enregistré.");
     setTimeout(() => setMsgPhone(null), 1500);
@@ -329,18 +476,23 @@ export default function ClassesPage() {
       <div>
         <h1 className="text-2xl font-semibold">Classes</h1>
         <p className="text-slate-600">
-          Créer, éditer et supprimer des classes de l’établissement. Vous pouvez aussi <b>attribuer un numéro de
-          téléphone</b> (optionnel) par classe.
+          Créer, éditer et supprimer les classes par année scolaire. La série officielle sert aux coefficients,
+          bulletins, matrices et exports DESPS sans modifier le nom affiché de la classe.
         </p>
       </div>
 
-      {/* Génération rapide */}
       <div className="rounded-2xl border bg-white p-5">
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-5">
           <div>
-            <div className="mb-1 text-xs text-slate-500">Niveau</div>
-            <Input value={level} onChange={(e) => setLevel(e.target.value)} placeholder="CM2 / 6e / 5e / 2nde ..." />
+            <div className="mb-1 text-xs text-slate-500">Année scolaire</div>
+            <Input value={academicYear} onChange={(e) => setAcademicYear(e.target.value)} placeholder="2026-2027" />
           </div>
+
+          <div>
+            <div className="mb-1 text-xs text-slate-500">Niveau / préfixe</div>
+            <Input value={level} onChange={(e) => setLevel(e.target.value)} placeholder="6e / 1A / 1D / TA / TC" />
+          </div>
+
           <div>
             <div className="mb-1 text-xs text-slate-500">Format</div>
             <Select value={format} onChange={(e) => setFormat(e.target.value as any)}>
@@ -354,6 +506,7 @@ export default function ClassesPage() {
               </div>
             )}
           </div>
+
           <div>
             <div className="mb-1 text-xs text-slate-500">Nombre</div>
             <Input
@@ -365,10 +518,40 @@ export default function ClassesPage() {
               onChange={(e) => setCount(parseInt(e.target.value || "1", 10))}
             />
           </div>
+
           <div className="flex items-end">
             <Button onClick={create}>Créer</Button>
           </div>
         </div>
+
+        <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-[minmax(220px,320px)_1fr]">
+          <div>
+            <div className="mb-1 text-xs text-slate-500">Série officielle</div>
+            <Select value={officialTrackCode} onChange={(e) => setOfficialTrackCode(e.target.value as any)}>
+              <option value="">À compléter</option>
+              {OFFICIAL_TRACK_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </Select>
+          </div>
+
+          <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+            {isSeriesA(level) ? (
+              <>
+                Attention série A : vérifiez bien si les classes créées relèvent de <b>A1</b> ou <b>A2</b>.
+                Par défaut, Mon Cahier propose A2 pour conserver l'existant.
+              </>
+            ) : (
+              <>
+                Cette information permet de garder les coefficients, bulletins, matrices et exports DESPS cohérents
+                avec la série officielle.
+              </>
+            )}
+          </div>
+        </div>
+
         {preview.length > 0 && (
           <div className="mt-4 text-sm text-slate-700">
             <b>Prévisualisation :</b> {preview.join(", ")}
@@ -376,14 +559,16 @@ export default function ClassesPage() {
         )}
       </div>
 
-      {/* Liste groupée par niveau (accordéon) */}
       <div className="rounded-2xl border bg-white p-5">
-        <div className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-700">Liste des classes</div>
+        <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div className="text-sm font-semibold uppercase tracking-wide text-slate-700">Liste des classes</div>
+          <div className="text-xs text-slate-500">Année affichée : {academicYear}</div>
+        </div>
 
         {loading ? (
           <div className="text-sm text-slate-500">Chargement…</div>
         ) : items.length === 0 ? (
-          <div className="text-sm text-slate-500">Aucune classe.</div>
+          <div className="text-sm text-slate-500">Aucune classe pour cette année scolaire.</div>
         ) : (
           Array.from(grouped.keys())
             .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
@@ -411,8 +596,13 @@ export default function ClassesPage() {
                           <div key={c.id} className="rounded-xl border p-3">
                             <div className="flex items-start justify-between gap-3">
                               <div className="min-w-0">
-                                <div className="font-medium truncate">{c.name}</div>
+                                <div className="truncate font-medium">{c.name}</div>
                                 <div className="text-xs text-slate-500">Niveau : {c.level}</div>
+                                <div className="text-xs text-slate-500">Année : {c.academic_year || "—"}</div>
+                                <div className="mt-1 text-xs text-slate-700">
+                                  Série officielle : <b>{officialTrackLabel(c.official_track_code)}</b>
+                                </div>
+
                                 <div className="mt-2 text-xs text-slate-600">
                                   <span className="inline-block min-w-[140px] font-medium">Téléphone (optionnel)</span>
                                 </div>
@@ -430,8 +620,8 @@ export default function ClassesPage() {
                                   >
                                     {savingPhoneId === c.id ? (
                                       <svg className="h-3.5 w-3.5 animate-spin" viewBox="0 0 24 24" fill="none">
-                                        <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" opacity="0.25"></circle>
-                                        <path d="M22 12a10 10 0 0 1-10 10" stroke="currentColor" strokeWidth="4"></path>
+                                        <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" opacity="0.25" />
+                                        <path d="M22 12a10 10 0 0 1-10 10" stroke="currentColor" strokeWidth="4" />
                                       </svg>
                                     ) : (
                                       <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor">
@@ -442,10 +632,10 @@ export default function ClassesPage() {
                                   </IconButton>
                                 </div>
                                 <div className="mt-1 text-[11px] text-slate-500">
-                                  Saisissez un <i>numéro local</i> (ex: 07…) <b>ou</b> international (ex: +225…).
-                                  Il sera <b>normalisé automatiquement</b>.
+                                  Saisissez un <i>numéro local</i> ou international. Il sera <b>normalisé automatiquement</b>.
                                 </div>
                               </div>
+
                               <div className="flex items-start gap-2">
                                 <IconButton title="Éditer" onClick={() => openEdit(c)}>
                                   <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor">
@@ -476,10 +666,13 @@ export default function ClassesPage() {
               );
             })
         )}
-        {msgPhone && <div className="mt-2 text-sm text-slate-700" aria-live="polite">{msgPhone}</div>}
+        {msgPhone && (
+          <div className="mt-2 text-sm text-slate-700" aria-live="polite">
+            {msgPhone}
+          </div>
+        )}
       </div>
 
-      {/* Modal Édition */}
       <Modal
         open={editOpen}
         title="Éditer la classe"
@@ -498,29 +691,40 @@ export default function ClassesPage() {
         <div className="grid grid-cols-1 gap-3">
           <div>
             <div className="mb-1 text-xs text-slate-500">Libellé</div>
-            <Input value={eLabel} onChange={(e) => setELabel(e.target.value)} placeholder="ex: CM2" />
+            <Input value={eLabel} onChange={(e) => setELabel(e.target.value)} placeholder="ex: 1A1" />
           </div>
           <div>
-            <div className="mb-1 text-xs text-slate-500">Niveau</div>
-            <Input value={eLevel} onChange={(e) => setELevel(e.target.value)} placeholder="ex: CM2 / 6e / 2nde" />
+            <div className="mb-1 text-xs text-slate-500">Niveau / préfixe</div>
+            <Input value={eLevel} onChange={(e) => setELevel(e.target.value)} placeholder="ex: 1A / 1D / TC" />
+          </div>
+          <div>
+            <div className="mb-1 text-xs text-slate-500">Année scolaire</div>
+            <Input value={eAcademicYear} onChange={(e) => setEAcademicYear(e.target.value)} placeholder="2026-2027" />
+          </div>
+          <div>
+            <div className="mb-1 text-xs text-slate-500">Série officielle</div>
+            <Select value={eOfficialTrackCode} onChange={(e) => setEOfficialTrackCode(e.target.value as any)}>
+              <option value="">À compléter</option>
+              {OFFICIAL_TRACK_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </Select>
+            <div className="mt-1 text-[11px] text-slate-500">
+              Ne change pas le nom de la classe. Sert aux coefficients, bulletins, matrices et exports DESPS.
+            </div>
           </div>
           <div>
             <div className="mb-1 text-xs text-slate-500">Téléphone de la classe (optionnel)</div>
-            <Input
-              value={ePhone}
-              onChange={(e) => setEPhone(e.target.value)}
-              placeholder="+2250701020304"
-              inputMode="tel"
-              autoComplete="tel"
-            />
+            <Input value={ePhone} onChange={(e) => setEPhone(e.target.value)} placeholder="+2250701020304" inputMode="tel" autoComplete="tel" />
             <div className="mt-1 text-[11px] text-slate-500">
-              Saisissez un <i>numéro local</i> (ex: 07…) <b>ou</b> international (ex: +225…). Il sera normalisé automatiquement.
+              Saisissez un <i>numéro local</i> ou international. Il sera normalisé automatiquement.
             </div>
           </div>
         </div>
       </Modal>
 
-      {/* Modal Suppression */}
       <Modal
         open={delOpen}
         title="Supprimer la classe"
@@ -534,8 +738,8 @@ export default function ClassesPage() {
               onClick={confirmDelete}
               disabled={deleting}
               className={
-                "rounded-xl bg-red-600 text-white px-4 py-2 text-sm font-medium shadow " +
-                (deleting ? "opacity-60" : "hover:bg-red-700 transition")
+                "rounded-xl bg-red-600 px-4 py-2 text-sm font-medium text-white shadow " +
+                (deleting ? "opacity-60" : "transition hover:bg-red-700")
               }
             >
               {deleting ? "Suppression…" : "Supprimer"}
