@@ -19,7 +19,8 @@ export async function POST(req: NextRequest) {
   const {
     data: { user },
   } = await supa.auth.getUser();
-  if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  if (!user)
+    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
 
   const { data: me } = await supa
     .from("profiles")
@@ -28,7 +29,8 @@ export async function POST(req: NextRequest) {
     .maybeSingle();
 
   const inst = (me?.institution_id ?? null) as string | null;
-  if (!inst) return NextResponse.json({ error: "no_institution" }, { status: 400 });
+  if (!inst)
+    return NextResponse.json({ error: "no_institution" }, { status: 400 });
 
   const body = await req.json().catch(() => ({}));
   const action: Action = (body?.action || "").trim();
@@ -37,15 +39,17 @@ export async function POST(req: NextRequest) {
   if (!action || (action !== "create_and_assign" && action !== "assign")) {
     return NextResponse.json({ error: "bad_action" }, { status: 400 });
   }
-  if (!class_id) return NextResponse.json({ error: "class_id_required" }, { status: 400 });
+  if (!class_id)
+    return NextResponse.json({ error: "class_id_required" }, { status: 400 });
 
   // Classe valide ?
   const { data: cls, error: clsErr } = await srv
     .from("classes")
-    .select("id,institution_id")
+    .select("id,institution_id,academic_year")
     .eq("id", class_id)
     .maybeSingle();
-  if (clsErr) return NextResponse.json({ error: clsErr.message }, { status: 400 });
+  if (clsErr)
+    return NextResponse.json({ error: clsErr.message }, { status: 400 });
   if (!cls || (cls as any).institution_id !== inst) {
     return NextResponse.json({ error: "invalid_class" }, { status: 400 });
   }
@@ -56,9 +60,12 @@ export async function POST(req: NextRequest) {
   let studentMatricule: string | null = null;
 
   if (action === "create_and_assign") {
-    const first_name: string | null = (body?.first_name ?? null) ? String(body.first_name).trim() : null;
-    const last_name: string | null = (body?.last_name ?? null) ? String(body.last_name).trim() : null;
-    const matricule: string | null = (body?.matricule ?? null) ? String(body.matricule).trim() : null;
+    const first_name: string | null =
+      body?.first_name ?? null ? String(body.first_name).trim() : null;
+    const last_name: string | null =
+      body?.last_name ?? null ? String(body.last_name).trim() : null;
+    const matricule: string | null =
+      body?.matricule ?? null ? String(body.matricule).trim() : null;
 
     if (matricule) {
       const { data: exist, error: exErr } = await srv
@@ -67,7 +74,8 @@ export async function POST(req: NextRequest) {
         .eq("institution_id", inst)
         .eq("matricule", matricule)
         .maybeSingle();
-      if (exErr) return NextResponse.json({ error: exErr.message }, { status: 400 });
+      if (exErr)
+        return NextResponse.json({ error: exErr.message }, { status: 400 });
 
       if (exist) {
         studentId = (exist as any).id;
@@ -76,12 +84,18 @@ export async function POST(req: NextRequest) {
         studentMatricule = (exist as any).matricule ?? null;
 
         const patch: any = {};
-        if (first_name && first_name !== (studentFirst ?? "")) patch.first_name = first_name;
-        if (last_name && last_name !== (studentLast ?? "")) patch.last_name = last_name;
+        if (first_name && first_name !== (studentFirst ?? ""))
+          patch.first_name = first_name;
+        if (last_name && last_name !== (studentLast ?? ""))
+          patch.last_name = last_name;
 
         if (Object.keys(patch).length > 0) {
-          const { error: upErr } = await srv.from("students").update(patch).eq("id", studentId);
-          if (upErr) return NextResponse.json({ error: upErr.message }, { status: 400 });
+          const { error: upErr } = await srv
+            .from("students")
+            .update(patch)
+            .eq("id", studentId);
+          if (upErr)
+            return NextResponse.json({ error: upErr.message }, { status: 400 });
           studentFirst = patch.first_name ?? studentFirst;
           studentLast = patch.last_name ?? studentLast;
         }
@@ -91,7 +105,8 @@ export async function POST(req: NextRequest) {
           .insert([{ institution_id: inst, first_name, last_name, matricule }])
           .select("id,first_name,last_name,matricule")
           .maybeSingle();
-        if (cErr) return NextResponse.json({ error: cErr.message }, { status: 400 });
+        if (cErr)
+          return NextResponse.json({ error: cErr.message }, { status: 400 });
 
         studentId = (created as any).id;
         studentFirst = (created as any).first_name ?? null;
@@ -101,10 +116,13 @@ export async function POST(req: NextRequest) {
     } else {
       const { data: created, error: cErr } = await srv
         .from("students")
-        .insert([{ institution_id: inst, first_name, last_name, matricule: null }])
+        .insert([
+          { institution_id: inst, first_name, last_name, matricule: null },
+        ])
         .select("id,first_name,last_name,matricule")
         .maybeSingle();
-      if (cErr) return NextResponse.json({ error: cErr.message }, { status: 400 });
+      if (cErr)
+        return NextResponse.json({ error: cErr.message }, { status: 400 });
 
       studentId = (created as any).id;
       studentFirst = (created as any).first_name ?? null;
@@ -117,7 +135,10 @@ export async function POST(req: NextRequest) {
     const byId: string = String(body?.student_id || "").trim();
 
     if (!matricule && !byId) {
-      return NextResponse.json({ error: "matricule_or_student_id_required" }, { status: 400 });
+      return NextResponse.json(
+        { error: "matricule_or_student_id_required" },
+        { status: 400 },
+      );
     }
 
     if (byId) {
@@ -126,10 +147,18 @@ export async function POST(req: NextRequest) {
         .select("id,first_name,last_name,matricule,institution_id")
         .eq("id", byId)
         .maybeSingle();
-      if (exErr) return NextResponse.json({ error: exErr.message }, { status: 400 });
-      if (!exist) return NextResponse.json({ error: "student_not_found" }, { status: 404 });
+      if (exErr)
+        return NextResponse.json({ error: exErr.message }, { status: 400 });
+      if (!exist)
+        return NextResponse.json(
+          { error: "student_not_found" },
+          { status: 404 },
+        );
       if ((exist as any).institution_id !== inst) {
-        return NextResponse.json({ error: "student_wrong_institution" }, { status: 403 });
+        return NextResponse.json(
+          { error: "student_wrong_institution" },
+          { status: 403 },
+        );
       }
       studentId = (exist as any).id;
       studentFirst = (exist as any).first_name ?? null;
@@ -142,8 +171,13 @@ export async function POST(req: NextRequest) {
         .eq("institution_id", inst)
         .eq("matricule", matricule)
         .maybeSingle();
-      if (exErr) return NextResponse.json({ error: exErr.message }, { status: 400 });
-      if (!exist) return NextResponse.json({ error: "student_not_found" }, { status: 404 });
+      if (exErr)
+        return NextResponse.json({ error: exErr.message }, { status: 400 });
+      if (!exist)
+        return NextResponse.json(
+          { error: "student_not_found" },
+          { status: 404 },
+        );
 
       studentId = (exist as any).id;
       studentFirst = (exist as any).first_name ?? null;
@@ -152,20 +186,50 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  if (!studentId) return NextResponse.json({ error: "student_resolve_failed" }, { status: 400 });
+  if (!studentId)
+    return NextResponse.json(
+      { error: "student_resolve_failed" },
+      { status: 400 },
+    );
 
   const today = isoToday();
 
-  // Clôturer autres classes
-  const { data: oldClosed, error: oldErr } = await srv
+  // Clôturer les autres classes actives seulement dans la même année scolaire.
+  // Changer d'année ne doit pas effacer l'historique de l'année précédente.
+  let sameYearClassIds: string[] = [];
+  const targetAcademicYear = String((cls as any).academic_year || "").trim();
+
+  if (targetAcademicYear) {
+    const { data: sameYearClasses, error: sameYearErr } = await srv
+      .from("classes")
+      .select("id")
+      .eq("institution_id", inst)
+      .eq("academic_year", targetAcademicYear);
+
+    if (sameYearErr)
+      return NextResponse.json({ error: sameYearErr.message }, { status: 400 });
+    sameYearClassIds = (sameYearClasses ?? [])
+      .map((row: any) => String(row.id))
+      .filter(Boolean);
+  }
+
+  let closeQuery = srv
     .from("class_enrollments")
     .update({ end_date: today })
     .eq("institution_id", inst)
     .eq("student_id", studentId)
     .neq("class_id", class_id)
-    .is("end_date", null)
-    .select("id");
-  if (oldErr) return NextResponse.json({ error: oldErr.message }, { status: 400 });
+    .is("end_date", null);
+
+  if (targetAcademicYear) {
+    closeQuery = sameYearClassIds.length
+      ? closeQuery.in("class_id", sameYearClassIds)
+      : closeQuery.eq("class_id", "__NO_CLASS__");
+  }
+
+  const { data: oldClosed, error: oldErr } = await closeQuery.select("id");
+  if (oldErr)
+    return NextResponse.json({ error: oldErr.message }, { status: 400 });
 
   // Réactiver si déjà présent dans la cible
   const { data: reactivated, error: reacErr } = await srv
@@ -175,19 +239,35 @@ export async function POST(req: NextRequest) {
     .eq("student_id", studentId)
     .eq("class_id", class_id)
     .select("id");
-  if (reacErr) return NextResponse.json({ error: reacErr.message }, { status: 400 });
+  if (reacErr)
+    return NextResponse.json({ error: reacErr.message }, { status: 400 });
 
   // Upsert dans la classe cible
-  const row = { class_id, student_id: studentId, institution_id: inst, start_date: today, end_date: null };
+  const row = {
+    class_id,
+    student_id: studentId,
+    institution_id: inst,
+    start_date: today,
+    end_date: null,
+  };
   const { data: inserted, error: insErr } = await srv
     .from("class_enrollments")
-    .upsert([row], { onConflict: "class_id,student_id", ignoreDuplicates: true })
+    .upsert([row], {
+      onConflict: "class_id,student_id",
+      ignoreDuplicates: true,
+    })
     .select("id");
-  if (insErr) return NextResponse.json({ error: insErr.message }, { status: 400 });
+  if (insErr)
+    return NextResponse.json({ error: insErr.message }, { status: 400 });
 
   return NextResponse.json({
     ok: true,
-    student: { id: studentId, first_name: studentFirst, last_name: studentLast, matricule: studentMatricule },
+    student: {
+      id: studentId,
+      first_name: studentFirst,
+      last_name: studentLast,
+      matricule: studentMatricule,
+    },
     closed_old_enrollments: (oldClosed ?? []).length,
     reactivated_in_target: (reactivated ?? []).length,
     inserted_in_target: (inserted ?? []).length,

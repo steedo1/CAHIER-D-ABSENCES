@@ -70,7 +70,20 @@ function boolLabel(v: unknown) {
    Types
 ========================= */
 
-type ClassItem = { id: string; name: string; level?: string | null };
+type ClassItem = {
+  id: string;
+  name: string;
+  level?: string | null;
+  academic_year?: string | null;
+};
+type AcademicYearRow = {
+  id: string;
+  code: string;
+  label: string;
+  start_date?: string | null;
+  end_date?: string | null;
+  is_current: boolean;
+};
 type Mode = "students" | "teachers" | "student_photos";
 type MatchMode = "auto" | "matricule" | "full_name";
 
@@ -178,12 +191,12 @@ async function parseImportFile(file: File): Promise<ParsedFileResult> {
 
   if (ext === "xls") {
     throw new Error(
-      "Le format .xls ancien n’est pas supporté. Enregistre le fichier en .xlsx ou .csv puis réessaie."
+      "Le format .xls ancien n’est pas supporté. Enregistre le fichier en .xlsx ou .csv puis réessaie.",
     );
   }
 
   throw new Error(
-    "Format non supporté. Utilise un fichier .csv, .txt, .tsv ou .xlsx."
+    "Format non supporté. Utilise un fichier .csv, .txt, .tsv ou .xlsx.",
   );
 }
 
@@ -194,6 +207,9 @@ async function parseImportFile(file: File): Promise<ParsedFileResult> {
 export default function ImportPage() {
   const [mode, setMode] = useState<Mode>("students");
 
+  const [academicYears, setAcademicYears] = useState<AcademicYearRow[]>([]);
+  const [academicYear, setAcademicYear] = useState<string>("");
+  const [loadingAcademicYears, setLoadingAcademicYears] = useState(true);
   const [classes, setClasses] = useState<ClassItem[]>([]);
   const [level, setLevel] = useState<string>("");
   const [classId, setClassId] = useState<string>("");
@@ -201,16 +217,16 @@ export default function ImportPage() {
   const levels = useMemo(
     () =>
       Array.from(
-        new Set(classes.map((c) => c.level).filter(Boolean) as string[])
+        new Set(classes.map((c) => c.level).filter(Boolean) as string[]),
       ).sort((a, b) =>
-        String(a).localeCompare(String(b), undefined, { numeric: true })
+        String(a).localeCompare(String(b), undefined, { numeric: true }),
       ),
-    [classes]
+    [classes],
   );
 
   const classesOfLevel = useMemo(
     () => classes.filter((c) => !level || c.level === level),
-    [classes, level]
+    [classes, level],
   );
 
   const [csv, setCsv] = useState<string>("");
@@ -232,12 +248,69 @@ export default function ImportPage() {
   const [matchMode, setMatchMode] = useState<MatchMode>("auto");
 
   useEffect(() => {
-    void loadClasses();
+    void loadAcademicYears();
   }, []);
 
-  async function loadClasses() {
+  useEffect(() => {
+    if (!academicYear) {
+      setClasses([]);
+      setLevel("");
+      setClassId("");
+      return;
+    }
+    void loadClasses(academicYear);
+  }, [academicYear]);
+
+  async function loadAcademicYears() {
+    setLoadingAcademicYears(true);
     try {
-      const r = await fetch("/api/admin/classes?limit=500", {
+      const r = await fetch("/api/admin/institution/academic-years", {
+        cache: "no-store",
+      });
+      if (r.status === 401) {
+        setAuthErr(true);
+        return;
+      }
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || !j?.ok) throw new Error(j?.error || `HTTP ${r.status}`);
+
+      const rows: AcademicYearRow[] = (Array.isArray(j.items) ? j.items : [])
+        .map((row: any, idx: number) => ({
+          id: String(row.id ?? `year_${idx}`),
+          code: String(row.code || "").trim(),
+          label:
+            String(row.label || "").trim() ||
+            `Année scolaire ${String(row.code || "").trim()}`,
+          start_date: row.start_date
+            ? String(row.start_date).slice(0, 10)
+            : null,
+          end_date: row.end_date ? String(row.end_date).slice(0, 10) : null,
+          is_current: row.is_current === true,
+        }))
+        .filter((row: AcademicYearRow) => row.code);
+
+      rows.sort((a, b) => {
+        const ak = a.start_date || a.code;
+        const bk = b.start_date || b.code;
+        return bk.localeCompare(ak, "fr", { numeric: true });
+      });
+
+      setAcademicYears(rows);
+      const current = rows.find((row) => row.is_current);
+      setAcademicYear(current?.code || rows[0]?.code || "");
+    } catch {
+      setAcademicYears([]);
+      setAcademicYear("");
+      setClasses([]);
+    } finally {
+      setLoadingAcademicYears(false);
+    }
+  }
+
+  async function loadClasses(year: string) {
+    try {
+      const qs = new URLSearchParams({ limit: "500", academic_year: year });
+      const r = await fetch(`/api/admin/classes?${qs.toString()}`, {
         cache: "no-store",
       });
       if (r.status === 401) {
@@ -247,8 +320,12 @@ export default function ImportPage() {
       const j = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(j?.error || `HTTP ${r.status}`);
       setClasses(j.items || []);
+      setLevel("");
+      setClassId("");
     } catch {
-      // no-op
+      setClasses([]);
+      setLevel("");
+      setClassId("");
     }
   }
 
@@ -265,8 +342,8 @@ export default function ImportPage() {
     mode === "students"
       ? !!csv.trim() && !!classId && !loading
       : mode === "teachers"
-      ? !!csv.trim() && !loading
-      : false;
+        ? !!csv.trim() && !loading
+        : false;
 
   const canImport = canPreview;
 
@@ -290,7 +367,7 @@ export default function ImportPage() {
 
       if (parsed.detectedType === "xlsx") {
         setMsg(
-          "Fichier Excel chargé avec succès. Le fichier a été converti automatiquement pour l’import."
+          "Fichier Excel chargé avec succès. Le fichier a été converti automatiquement pour l’import.",
         );
       }
     } catch (e: any) {
@@ -399,7 +476,7 @@ export default function ImportPage() {
         setMsg(
           `Import OK : ${inserted} élève(s) créé(s), ${updated} mise(s) à jour par matricule, ${updatedByName} mise(s) à jour par nom, ${insertedInTarget} inscription(s) ajoutée(s), ${reactivated} réactivée(s), ${closedOld} ancienne(s) clôturée(s)${
             ambiguous ? `, ${ambiguous} nom(s) ambigu(s)` : ""
-          }.`
+          }.`,
         );
       } else {
         const created = j?.created ?? 0;
@@ -412,7 +489,7 @@ export default function ImportPage() {
         setMsg(
           `Import OK : ${created} créé(s), ${updated} mis à jour, ${subjectsAdded} matière(s), ${payrollProfilesUpserted} fiche(s) de paie synchronisée(s), ${skipped} sans téléphone${
             failed ? `, ${failed} échec(s)` : ""
-          }.`
+          }.`,
         );
       }
 
@@ -531,7 +608,7 @@ Mme KONE,kone@ecole.ci,+22505060708,Français,permanent,Oui`;
       const updated = j?.updated ?? 0;
       const failed = j?.failed ?? 0;
       setPhotoMsg(
-        `Upload terminé : ${updated} photo(s) associée(s) ✅ | ${failed} échec(s)`
+        `Upload terminé : ${updated} photo(s) associée(s) ✅ | ${failed} échec(s)`,
       );
 
       setPhotoPreview(j?.results || null);
@@ -567,10 +644,16 @@ Mme KONE,kone@ecole.ci,+22505060708,Français,permanent,Oui`;
 
       <div className="space-y-3 rounded-2xl border bg-white p-5">
         <div className="flex flex-wrap gap-2">
-          <Button onClick={() => setMode("students")} disabled={mode === "students"}>
+          <Button
+            onClick={() => setMode("students")}
+            disabled={mode === "students"}
+          >
             Élèves
           </Button>
-          <Button onClick={() => setMode("teachers")} disabled={mode === "teachers"}>
+          <Button
+            onClick={() => setMode("teachers")}
+            disabled={mode === "teachers"}
+          >
             Enseignants
           </Button>
           <Button
@@ -608,6 +691,29 @@ Mme KONE,kone@ecole.ci,+22505060708,Français,permanent,Oui`;
         {mode === "students" && (
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
             <div>
+              <div className="mb-1 text-xs text-slate-500">Année scolaire</div>
+              <Select
+                value={academicYear}
+                onChange={(e) => setAcademicYear(e.target.value)}
+                disabled={loadingAcademicYears}
+              >
+                {!academicYears.length ? (
+                  <option value="">Aucune année définie</option>
+                ) : (
+                  academicYears.map((year) => (
+                    <option key={year.id} value={year.code}>
+                      {year.label || year.code}
+                      {year.is_current ? " — courante" : ""}
+                    </option>
+                  ))
+                )}
+              </Select>
+              <div className="mt-1 text-[11px] text-slate-500">
+                Les classes et listes d’élèves sont filtrées par année scolaire.
+              </div>
+            </div>
+
+            <div>
               <div className="mb-1 text-xs text-slate-500">Niveau</div>
               <Select
                 value={level}
@@ -627,7 +733,10 @@ Mme KONE,kone@ecole.ci,+22505060708,Français,permanent,Oui`;
 
             <div>
               <div className="mb-1 text-xs text-slate-500">Classe</div>
-              <Select value={classId} onChange={(e) => setClassId(e.target.value)}>
+              <Select
+                value={classId}
+                onChange={(e) => setClassId(e.target.value)}
+              >
                 <option value="">— Choisir —</option>
                 {classesOfLevel.map((c) => (
                   <option key={c.id} value={c.id}>
@@ -636,7 +745,7 @@ Mme KONE,kone@ecole.ci,+22505060708,Français,permanent,Oui`;
                 ))}
               </Select>
               <div className="mt-1 text-[11px] text-slate-500">
-                Sélectionne la classe ciblée pour l’inscription.
+                Sélectionne une classe de l’année scolaire choisie.
               </div>
             </div>
           </div>
@@ -645,7 +754,9 @@ Mme KONE,kone@ecole.ci,+22505060708,Français,permanent,Oui`;
         {mode === "student_photos" ? (
           <div className="space-y-3">
             <div className="rounded-lg border bg-slate-50 p-3 text-[13px] text-slate-700">
-              <div className="mb-1 font-semibold">Règle de nommage des fichiers</div>
+              <div className="mb-1 font-semibold">
+                Règle de nommage des fichiers
+              </div>
               <ul className="list-disc space-y-1 pl-5">
                 <li>
                   Recommandé : <code>MATRICULE.jpg</code> — ex :{" "}
@@ -668,7 +779,9 @@ Mme KONE,kone@ecole.ci,+22505060708,Français,permanent,Oui`;
                   value={matchMode}
                   onChange={(e) => setMatchMode(e.target.value as MatchMode)}
                 >
-                  <option value="auto">Auto (matricule puis nom complet)</option>
+                  <option value="auto">
+                    Auto (matricule puis nom complet)
+                  </option>
                   <option value="matricule">Matricule uniquement</option>
                   <option value="full_name">Nom complet uniquement</option>
                 </Select>
@@ -676,11 +789,19 @@ Mme KONE,kone@ecole.ci,+22505060708,Français,permanent,Oui`;
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
-              <SecondaryButton onClick={pickPhotos}>Choisir des photos…</SecondaryButton>
-              <SecondaryButton onClick={clearPhotos} disabled={!photoFiles.length}>
+              <SecondaryButton onClick={pickPhotos}>
+                Choisir des photos…
+              </SecondaryButton>
+              <SecondaryButton
+                onClick={clearPhotos}
+                disabled={!photoFiles.length}
+              >
                 Effacer
               </SecondaryButton>
-              <Button onClick={uploadPhotos} disabled={!photoFiles.length || photoLoading}>
+              <Button
+                onClick={uploadPhotos}
+                disabled={!photoFiles.length || photoLoading}
+              >
                 {photoLoading ? "…" : "Uploader & associer"}
               </Button>
 
@@ -733,12 +854,20 @@ Mme KONE,kone@ecole.ci,+22505060708,Français,permanent,Oui`;
                             <td className="px-3 py-2">{r.file_name}</td>
                             <td className="px-3 py-2">{r.key_raw ?? ""}</td>
                             <td className="px-3 py-2">
-                              <span className={ok ? "text-emerald-700" : "text-rose-700"}>
+                              <span
+                                className={
+                                  ok ? "text-emerald-700" : "text-rose-700"
+                                }
+                              >
                                 {status}
                               </span>
                             </td>
-                            <td className="px-3 py-2">{student?.matricule ?? ""}</td>
-                            <td className="px-3 py-2">{student?.full_name ?? ""}</td>
+                            <td className="px-3 py-2">
+                              {student?.matricule ?? ""}
+                            </td>
+                            <td className="px-3 py-2">
+                              {student?.full_name ?? ""}
+                            </td>
                           </tr>
                         );
                       })}
@@ -751,17 +880,22 @@ Mme KONE,kone@ecole.ci,+22505060708,Français,permanent,Oui`;
         ) : (
           <>
             <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-[13px] text-slate-700">
-              Formats acceptés : <code>.csv</code>, <code>.txt</code>, <code>.tsv</code>,{" "}
-              <code>.xlsx</code>.
+              Formats acceptés : <code>.csv</code>, <code>.txt</code>,{" "}
+              <code>.tsv</code>, <code>.xlsx</code>.
               <br />
-              Les anciens fichiers <code>.xls</code> doivent être réenregistrés en{" "}
-              <code>.xlsx</code> ou <code>.csv</code>.
+              Les anciens fichiers <code>.xls</code> doivent être réenregistrés
+              en <code>.xlsx</code> ou <code>.csv</code>.
             </div>
 
             <div className="space-y-2">
               <div className="flex flex-wrap items-center gap-2">
-                <SecondaryButton onClick={pickFile}>Choisir un fichier…</SecondaryButton>
-                <SecondaryButton onClick={clearCsv} disabled={!csv.trim() && !fileName}>
+                <SecondaryButton onClick={pickFile}>
+                  Choisir un fichier…
+                </SecondaryButton>
+                <SecondaryButton
+                  onClick={clearCsv}
+                  disabled={!csv.trim() && !fileName}
+                >
                   Effacer
                 </SecondaryButton>
 
@@ -835,7 +969,9 @@ Mme KONE,kone@ecole.ci,+22505060708,Français,permanent,Oui`;
                 <tbody>
                   {preview.map((r: any, idx: number) => (
                     <tr key={idx} className="border-t">
-                      <td className="px-3 py-2">{r.numero ?? String(idx + 1)}</td>
+                      <td className="px-3 py-2">
+                        {r.numero ?? String(idx + 1)}
+                      </td>
                       <td className="px-3 py-2">{r.matricule ?? ""}</td>
                       <td className="px-3 py-2">{r.last_name ?? ""}</td>
                       <td className="px-3 py-2">{r.first_name ?? ""}</td>
@@ -869,11 +1005,17 @@ Mme KONE,kone@ecole.ci,+22505060708,Français,permanent,Oui`;
                       <td className="px-3 py-2">{r.display_name}</td>
                       <td className="px-3 py-2">{r.email ?? ""}</td>
                       <td className="px-3 py-2">{r.phone ?? ""}</td>
-                      <td className="px-3 py-2">{(r.subjects || []).join(", ")}</td>
                       <td className="px-3 py-2">
-                        {r.employment_type === "vacataire" ? "Vacataire" : "Permanent"}
+                        {(r.subjects || []).join(", ")}
                       </td>
-                      <td className="px-3 py-2">{boolLabel(r.payroll_enabled)}</td>
+                      <td className="px-3 py-2">
+                        {r.employment_type === "vacataire"
+                          ? "Vacataire"
+                          : "Permanent"}
+                      </td>
+                      <td className="px-3 py-2">
+                        {boolLabel(r.payroll_enabled)}
+                      </td>
                     </tr>
                   ))}
                 </tbody>

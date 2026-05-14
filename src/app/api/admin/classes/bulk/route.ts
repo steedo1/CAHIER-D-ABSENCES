@@ -27,7 +27,10 @@ type Body = {
   codePrefix?: string | null;
   official_track_code?: OfficialTrackCode | "" | null;
   officialTrackCode?: OfficialTrackCode | "" | null;
-  official_tracks_by_label?: Record<string, OfficialTrackCode | "" | null> | null;
+  official_tracks_by_label?: Record<
+    string,
+    OfficialTrackCode | "" | null
+  > | null;
   officialTracksByLabel?: Record<string, OfficialTrackCode | "" | null> | null;
 };
 
@@ -65,10 +68,31 @@ function normalizeKey(value: string) {
     .replace(/[^A-Z0-9]/g, "");
 }
 
-function computeAcademicYear(d = new Date()) {
-  const m = d.getUTCMonth() + 1;
-  const y = d.getUTCFullYear();
-  return m >= 8 ? `${y}-${y + 1}` : `${y - 1}-${y}`;
+async function getCurrentAcademicYear(
+  institutionId: string,
+): Promise<string | null> {
+  const srv = getSupabaseServiceClient();
+
+  const { data: current } = await srv
+    .from("academic_years")
+    .select("code")
+    .eq("institution_id", institutionId)
+    .eq("is_current", true)
+    .order("start_date", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (current?.code) return String(current.code);
+
+  const { data: latest } = await srv
+    .from("academic_years")
+    .select("code")
+    .eq("institution_id", institutionId)
+    .order("start_date", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  return latest?.code ? String(latest.code) : null;
 }
 
 function inferOfficialTrackCode(level: string): OfficialTrackCode | null {
@@ -98,7 +122,10 @@ function inferOfficialTrackCode(level: string): OfficialTrackCode | null {
   return null;
 }
 
-function cleanOfficialTrackCode(value: unknown, fallbackLevel: string): OfficialTrackCode | null {
+function cleanOfficialTrackCode(
+  value: unknown,
+  fallbackLevel: string,
+): OfficialTrackCode | null {
   const raw = typeof value === "string" ? value.trim() : "";
   if (raw) {
     if (!OFFICIAL_TRACK_CODES.has(raw)) {
@@ -138,23 +165,29 @@ export async function POST(req: NextRequest) {
   const level = (body.level ?? "").trim();
   const format = body.format;
   const count = Number(body.count ?? 0);
-  const academic_year = String(body.academic_year || computeAcademicYear()).trim();
+  const requestedAcademicYear = String(body.academic_year || "").trim();
   const codePrefix = body.codePrefix ?? null;
 
   let official_track_code: OfficialTrackCode | null = null;
   try {
     official_track_code = cleanOfficialTrackCode(
       body.official_track_code ?? body.officialTrackCode ?? null,
-      level
+      level,
     );
   } catch {
-    return NextResponse.json({ error: "bad_official_track_code" }, { status: 400 });
+    return NextResponse.json(
+      { error: "bad_official_track_code" },
+      { status: 400 },
+    );
   }
 
-  const formatOk = format === "none" || format === "numeric" || format === "alpha";
-  const countOk = Number.isFinite(count) && (format === "none" ? true : count >= 1 && count <= 30);
+  const formatOk =
+    format === "none" || format === "numeric" || format === "alpha";
+  const countOk =
+    Number.isFinite(count) &&
+    (format === "none" ? true : count >= 1 && count <= 30);
 
-  if (!level || !formatOk || !countOk || !academic_year) {
+  if (!level || !formatOk || !countOk) {
     return NextResponse.json({ error: "bad_payload" }, { status: 400 });
   }
 
@@ -173,10 +206,23 @@ export async function POST(req: NextRequest) {
     .eq("id", user.id)
     .maybeSingle();
 
-  if (meErr) return NextResponse.json({ error: meErr.message }, { status: 400 });
-  if (!me?.institution_id) return NextResponse.json({ error: "no_institution" }, { status: 400 });
+  if (meErr)
+    return NextResponse.json({ error: meErr.message }, { status: 400 });
+  if (!me?.institution_id)
+    return NextResponse.json({ error: "no_institution" }, { status: 400 });
 
   const institution_id = me.institution_id as string;
+  const academic_year =
+    requestedAcademicYear ||
+    (await getCurrentAcademicYear(institution_id)) ||
+    "";
+
+  if (!academic_year) {
+    return NextResponse.json(
+      { error: "academic_year_required" },
+      { status: 400 },
+    );
+  }
 
   const effectiveCount = format === "none" ? 1 : count;
   let labels: string[] = [];
@@ -184,16 +230,27 @@ export async function POST(req: NextRequest) {
   if (format === "none") {
     labels = [level];
   } else if (format === "numeric") {
-    labels = Array.from({ length: effectiveCount }, (_, i) => `${level}${i + 1}`);
+    labels = Array.from(
+      { length: effectiveCount },
+      (_, i) => `${level}${i + 1}`,
+    );
   } else {
-    labels = Array.from({ length: effectiveCount }, (_, i) => `${level}${String.fromCharCode(65 + i)}`);
+    labels = Array.from(
+      { length: effectiveCount },
+      (_, i) => `${level}${String.fromCharCode(65 + i)}`,
+    );
   }
 
   let officialTracksByLabel: Record<string, OfficialTrackCode> = {};
   try {
-    officialTracksByLabel = cleanTrackByLabel(body.official_tracks_by_label ?? body.officialTracksByLabel ?? null);
+    officialTracksByLabel = cleanTrackByLabel(
+      body.official_tracks_by_label ?? body.officialTracksByLabel ?? null,
+    );
   } catch {
-    return NextResponse.json({ error: "bad_official_track_code" }, { status: 400 });
+    return NextResponse.json(
+      { error: "bad_official_track_code" },
+      { status: 400 },
+    );
   }
 
   const supabaseAdmin = getSupabaseServiceClient();
@@ -202,7 +259,9 @@ export async function POST(req: NextRequest) {
   // On vérifie seulement les doublons dans la même institution + même année + même libellé.
   const { data: existingRows, error: existingErr } = await supabaseAdmin
     .from("classes")
-    .select("id,label,level,code,academic_year,official_track_code,class_phone_e164")
+    .select(
+      "id,label,level,code,academic_year,official_track_code,class_phone_e164",
+    )
     .eq("institution_id", institution_id)
     .eq("academic_year", academic_year)
     .in("label", labels);
@@ -211,14 +270,17 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: existingErr.message }, { status: 400 });
   }
 
-  const existingLabels = new Set((existingRows ?? []).map((row: any) => String(row.label)));
+  const existingLabels = new Set(
+    (existingRows ?? []).map((row: any) => String(row.label)),
+  );
 
   const rows = labels
     .filter((label) => !existingLabels.has(label))
     .map((label) => {
       const base = slug(label);
       const code = codePrefix ? `${codePrefix}-${base}` : base;
-      const rowOfficialTrackCode = officialTracksByLabel[label] ?? official_track_code;
+      const rowOfficialTrackCode =
+        officialTracksByLabel[label] ?? official_track_code;
 
       return {
         institution_id,
@@ -236,7 +298,9 @@ export async function POST(req: NextRequest) {
     const { data, error } = await supabaseAdmin
       .from("classes")
       .insert(rows)
-      .select("id,label,level,code,academic_year,official_track_code,class_phone_e164");
+      .select(
+        "id,label,level,code,academic_year,official_track_code,class_phone_e164",
+      );
 
     if (error) {
       const isUnique = (error as any).code === "23505";
@@ -248,15 +312,16 @@ export async function POST(req: NextRequest) {
             ? "Vérifiez que l'ancienne contrainte unique institution_id,label a bien été remplacée par une unicité par année scolaire."
             : null,
         },
-        { status: isUnique ? 409 : 400 }
+        { status: isUnique ? 409 : 400 },
       );
     }
 
     insertedRows = data ?? [];
   }
 
-  const items = [...(existingRows ?? []), ...insertedRows].sort((a: any, b: any) =>
-    String(a.label).localeCompare(String(b.label), "fr", { numeric: true })
+  const items = [...(existingRows ?? []), ...insertedRows].sort(
+    (a: any, b: any) =>
+      String(a.label).localeCompare(String(b.label), "fr", { numeric: true }),
   );
 
   return NextResponse.json({
