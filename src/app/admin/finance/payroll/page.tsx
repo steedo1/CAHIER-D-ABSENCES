@@ -241,10 +241,10 @@ function parseAmount(value: FormDataEntryValue | null, fallback = 0) {
 }
 
 function parsePositiveInt(
-  value: FormDataEntryValue | string | null | undefined,
+  value: FormDataEntryValue | string | number | null | undefined,
   fallback = 0,
 ) {
-  const n = Math.round(Number(String(value || "").replace(",", ".")));
+  const n = Math.round(Number(String(value ?? "").replace(",", ".")));
   return Number.isFinite(n) && n >= 0 ? n : fallback;
 }
 
