@@ -273,10 +273,35 @@ function pushUniqueLevelCandidate(list: string[], value?: string | null) {
   if (key && !list.includes(key)) list.push(key);
 }
 
+const STRICT_OFFICIAL_COEFF_LEVELS = new Set([
+  "2ndeA",
+  "2ndeC",
+  "1ereA1",
+  "1ereA2",
+  "1ereC",
+  "1ereD",
+  "tleA1",
+  "tleA2",
+  "tleC",
+  "tleD",
+]);
+
 function buildCoeffLevelCandidates(classRow: ClassRow, bulletinLevel: string | null): string[] {
   const out: string[] = [];
 
-  pushUniqueLevelCandidate(out, classRow.official_track_code);
+  /**
+   * Si la classe porte une série officielle, elle devient la vérité métier.
+   * On ne retombe surtout pas sur le label de classe :
+   * - 1A1 peut être une division de A2 ;
+   * - TA1 peut être une division de A2 ;
+   * - A1 et A2 n'ont pas les mêmes coefficients.
+   */
+  const official = normalizeCoeffLevelKey(classRow.official_track_code);
+  if (official) {
+    out.push(official);
+    return out;
+  }
+
   pushUniqueLevelCandidate(out, classRow.level);
   pushUniqueLevelCandidate(out, classRow.code);
   pushUniqueLevelCandidate(out, classRow.label);
@@ -320,6 +345,10 @@ function pickBestCoeffRow(
   const globalRow = rows.find((r) => !normalizeStoredLevel(r.level));
   if (globalRow) return globalRow;
 
+  // Pas de fallback arbitraire : il vaut mieux signaler un coefficient manquant
+  // que prendre par erreur les coefficients d'une autre série (A1/A2 notamment).
+  if (wanted.length) return null;
+
   return rows[0] ?? null;
 }
 
@@ -340,6 +369,10 @@ function pickBestComponentRows<T extends { level?: string | null }>(
 
   const globalRows = rows.filter((r) => !normalizeStoredLevel(r.level));
   if (globalRows.length) return globalRows;
+
+  // Même règle que pour les coefficients : ne pas utiliser les sous-matières
+  // d'une autre série/niveau quand une série officielle est attendue.
+  if (wanted.length) return [];
 
   return rows;
 }
@@ -1724,6 +1757,35 @@ export async function GET(req: NextRequest) {
     const arr = coeffRowsBySubject.get(sid) || [];
     arr.push(row);
     coeffRowsBySubject.set(sid, arr);
+  }
+
+  const officialCoeffLevel = normalizeCoeffLevelKey(classRow.official_track_code);
+  const requiresStrictOfficialCoeffs =
+    !!officialCoeffLevel && STRICT_OFFICIAL_COEFF_LEVELS.has(officialCoeffLevel);
+
+  if (requiresStrictOfficialCoeffs) {
+    const configuredSubjectsForOfficialLevel = new Set<string>();
+
+    for (const row of (coeffAllData || []) as SubjectCoeffRow[]) {
+      const sid = String(row.subject_id || "");
+      if (!sid || !isUuid(sid)) continue;
+      if (normalizeStoredLevel(row.level) !== officialCoeffLevel) continue;
+      configuredSubjectsForOfficialLevel.add(sid);
+    }
+
+    if (configuredSubjectsForOfficialLevel.size === 0) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "MISSING_OFFICIAL_TRACK_COEFFS",
+          message:
+            "Les coefficients de la série officielle de cette classe ne sont pas configurés. Configurez d'abord les coefficients dans Paramètres avant de générer le bulletin.",
+          official_track_code: officialCoeffLevel,
+          class_label: classRow.label || classRow.code || null,
+        },
+        { status: 409 }
+      );
+    }
   }
 
   for (const [sid, rows] of coeffRowsBySubject.entries()) {
