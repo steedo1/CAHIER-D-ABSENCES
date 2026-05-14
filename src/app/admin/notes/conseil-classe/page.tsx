@@ -990,7 +990,6 @@ export default function ConseilClassePage() {
       setSelectedClassId("");
       setActiveStudentIds([]);
       setBulletinRaw(null);
-      setCouncilRows([]);
       setYearPeriodBulletins({});
       setErrorMsg(null);
     }
@@ -2070,8 +2069,7 @@ export default function ConseilClassePage() {
                   setDateTo("");
                   setActiveStudentIds([]);
                   setBulletinRaw(null);
-                  setCouncilRows([]);
-                  setYearPeriodBulletins({});
+                              setYearPeriodBulletins({});
                 }}
                 disabled={periodsLoading || academicYears.length === 0}
               >
