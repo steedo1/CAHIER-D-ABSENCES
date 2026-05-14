@@ -976,6 +976,21 @@ function percent(value: number, total: number): number | string {
   return Number(((value / total) * 100).toFixed(2));
 }
 
+type ExcelCellValue = { __excelCell: true; value: unknown; numFmt?: string };
+
+function excelCell(value: unknown, numFmt?: string): ExcelCellValue {
+  return { __excelCell: true, value, numFmt };
+}
+
+function isExcelCellValue(value: unknown): value is ExcelCellValue {
+  return !!value && typeof value === "object" && (value as ExcelCellValue).__excelCell === true;
+}
+
+function percentCell(value: number, total: number): ExcelCellValue | string {
+  if (!total) return "";
+  return excelCell(Number((value / total).toFixed(4)), "0.00%");
+}
+
 function meanFromAccumulator(acc: Pick<SummaryAccumulator, "sum" | "classed">): number | string {
   if (!acc.classed) return "";
   return Number((acc.sum / acc.classed).toFixed(2));
@@ -1263,6 +1278,7 @@ async function loadStudentMeta(params: {
   activeFrom: string;
 }) {
   const { supabase, classes, academicYear, activeFrom } = params;
+  void activeFrom; // Les exports DESPS doivent suivre la liste active actuelle, comme les bulletins.
   const targetClassIds = classes.map((c) => String(c.id));
   const classMap = new Map<string, ClassRow>(classes.map((c) => [String(c.id), c]));
   const studentMetaByKey = new Map<string, StudentMetaRow>();
@@ -1292,7 +1308,7 @@ async function loadStudentMeta(params: {
     `
     )
     .in("class_id", targetClassIds)
-    .or(`end_date.gte.${activeFrom},end_date.is.null`)
+    .is("end_date", null)
     .order("student_id", { ascending: true });
 
   for (const row of (enrollments || []) as any[]) {
@@ -2933,23 +2949,23 @@ function putTermGeneralRow(aoa: unknown[][], rowIndex1: number, level: string, s
   setAoaCell(aoa, `L${r}`, stats.nonClassedBoys);
   setAoaCell(aoa, `M${r}`, stats.nonClassedGirls + stats.nonClassedBoys);
   setAoaCell(aoa, `N${r}`, stats.ge10Girls);
-  setAoaCell(aoa, `O${r}`, percent(stats.ge10Girls, stats.classedGirls));
+  setAoaCell(aoa, `O${r}`, percentCell(stats.ge10Girls, stats.classedGirls));
   setAoaCell(aoa, `P${r}`, stats.ge10Boys);
-  setAoaCell(aoa, `Q${r}`, percent(stats.ge10Boys, stats.classedBoys));
+  setAoaCell(aoa, `Q${r}`, percentCell(stats.ge10Boys, stats.classedBoys));
   setAoaCell(aoa, `R${r}`, stats.ge10Girls + stats.ge10Boys);
-  setAoaCell(aoa, `S${r}`, percent(stats.ge10Girls + stats.ge10Boys, officialClassed(stats)));
+  setAoaCell(aoa, `S${r}`, percentCell(stats.ge10Girls + stats.ge10Boys, officialClassed(stats)));
   setAoaCell(aoa, `T${r}`, stats.betweenGirls);
-  setAoaCell(aoa, `U${r}`, percent(stats.betweenGirls, stats.classedGirls));
+  setAoaCell(aoa, `U${r}`, percentCell(stats.betweenGirls, stats.classedGirls));
   setAoaCell(aoa, `V${r}`, stats.betweenBoys);
-  setAoaCell(aoa, `W${r}`, percent(stats.betweenBoys, stats.classedBoys));
+  setAoaCell(aoa, `W${r}`, percentCell(stats.betweenBoys, stats.classedBoys));
   setAoaCell(aoa, `X${r}`, stats.betweenGirls + stats.betweenBoys);
-  setAoaCell(aoa, `Y${r}`, percent(stats.betweenGirls + stats.betweenBoys, officialClassed(stats)));
+  setAoaCell(aoa, `Y${r}`, percentCell(stats.betweenGirls + stats.betweenBoys, officialClassed(stats)));
   setAoaCell(aoa, `Z${r}`, stats.lt850Girls);
-  setAoaCell(aoa, `AA${r}`, percent(stats.lt850Girls, stats.classedGirls));
+  setAoaCell(aoa, `AA${r}`, percentCell(stats.lt850Girls, stats.classedGirls));
   setAoaCell(aoa, `AB${r}`, stats.lt850Boys);
-  setAoaCell(aoa, `AC${r}`, percent(stats.lt850Boys, stats.classedBoys));
+  setAoaCell(aoa, `AC${r}`, percentCell(stats.lt850Boys, stats.classedBoys));
   setAoaCell(aoa, `AD${r}`, stats.lt850Girls + stats.lt850Boys);
-  setAoaCell(aoa, `AE${r}`, percent(stats.lt850Girls + stats.lt850Boys, officialClassed(stats)));
+  setAoaCell(aoa, `AE${r}`, percentCell(stats.lt850Girls + stats.lt850Boys, officialClassed(stats)));
 }
 
 function buildOfficialTermGeneralSheet(term: 1 | 2 | 3, academicYear: string, institutionName: string, statsByLevel: Map<string, OfficialGeneralStats>) {
@@ -3010,7 +3026,7 @@ function putSubjectTriple(aoa: unknown[][], rowIndex1: number, startCol: number,
   const r = rowIndex1 - 1;
   aoa[r][startCol] = classed;
   aoa[r][startCol + 1] = lt10;
-  aoa[r][startCol + 2] = percent(lt10, classed);
+  aoa[r][startCol + 2] = percentCell(lt10, classed);
 }
 
 function buildOfficialTermSubjectSheet(term: 1 | 2 | 3, subjectsByLevel: Map<string, Map<string, OfficialSubjectStats>>) {
@@ -3182,7 +3198,6 @@ async function collectOfficialTermStats(params: {
     for (const key of studentMetaByKey.keys()) {
       if (key.startsWith(`${currentClassId}__`)) studentIds.add(key.slice(`${currentClassId}__`.length));
     }
-    for (const item of bulletinData?.items || []) studentIds.add(String(item.student_id));
 
     for (const studentId of studentIds) {
       const meta = studentMetaByKey.get(`${currentClassId}__${studentId}`);
@@ -3196,6 +3211,7 @@ async function collectOfficialTermStats(params: {
       const { subjectNameById, componentById } = getSubjectMaps(bulletinData);
       for (const item of bulletinData.items) {
         const meta = studentMetaByKey.get(`${currentClassId}__${String(item.student_id)}`);
+        if (!meta) continue;
         const gender = getStudentGender({ meta, item });
         for (const col of OFFICIAL_SUBJECT_COLUMNS) {
           if (cycleKey === "first" && col.title === "Français (uniquement pour le 2nd cycle)") continue;
@@ -3321,28 +3337,28 @@ function putDfaRow(aoa: unknown[][], rowIndex1: number, level: string, stats: Of
   const nGirls = exam ? stats.repeatGirls : stats.admittedGirls;
   const nBoys = exam ? stats.repeatBoys : stats.admittedBoys;
   setAoaCell(aoa, `N${r}`, nGirls);
-  setAoaCell(aoa, `O${r}`, percent(nGirls, stats.classedGirls));
+  setAoaCell(aoa, `O${r}`, percentCell(nGirls, stats.classedGirls));
   setAoaCell(aoa, `P${r}`, nBoys);
-  setAoaCell(aoa, `Q${r}`, percent(nBoys, stats.classedBoys));
+  setAoaCell(aoa, `Q${r}`, percentCell(nBoys, stats.classedBoys));
   setAoaCell(aoa, `R${r}`, nGirls + nBoys);
-  setAoaCell(aoa, `S${r}`, percent(nGirls + nBoys, officialClassed(stats)));
+  setAoaCell(aoa, `S${r}`, percentCell(nGirls + nBoys, officialClassed(stats)));
 
   const secondBlockGirls = exam ? stats.excludedGirls : stats.repeatGirls;
   const secondBlockBoys = exam ? stats.excludedBoys : stats.repeatBoys;
   setAoaCell(aoa, `T${r}`, secondBlockGirls);
-  setAoaCell(aoa, `U${r}`, percent(secondBlockGirls, stats.classedGirls));
+  setAoaCell(aoa, `U${r}`, percentCell(secondBlockGirls, stats.classedGirls));
   setAoaCell(aoa, `V${r}`, secondBlockBoys);
-  setAoaCell(aoa, `W${r}`, percent(secondBlockBoys, stats.classedBoys));
+  setAoaCell(aoa, `W${r}`, percentCell(secondBlockBoys, stats.classedBoys));
   setAoaCell(aoa, `X${r}`, secondBlockGirls + secondBlockBoys);
-  setAoaCell(aoa, `Y${r}`, percent(secondBlockGirls + secondBlockBoys, officialClassed(stats)));
+  setAoaCell(aoa, `Y${r}`, percentCell(secondBlockGirls + secondBlockBoys, officialClassed(stats)));
 
   if (!exam) {
     setAoaCell(aoa, `Z${r}`, stats.excludedGirls);
-    setAoaCell(aoa, `AA${r}`, percent(stats.excludedGirls, stats.classedGirls));
+    setAoaCell(aoa, `AA${r}`, percentCell(stats.excludedGirls, stats.classedGirls));
     setAoaCell(aoa, `AB${r}`, stats.excludedBoys);
-    setAoaCell(aoa, `AC${r}`, percent(stats.excludedBoys, stats.classedBoys));
+    setAoaCell(aoa, `AC${r}`, percentCell(stats.excludedBoys, stats.classedBoys));
     setAoaCell(aoa, `AD${r}`, stats.excludedGirls + stats.excludedBoys);
-    setAoaCell(aoa, `AE${r}`, percent(stats.excludedGirls + stats.excludedBoys, officialClassed(stats)));
+    setAoaCell(aoa, `AE${r}`, percentCell(stats.excludedGirls + stats.excludedBoys, officialClassed(stats)));
   }
 }
 
@@ -3710,13 +3726,12 @@ function inferCellType(value: unknown): "s" | "n" | "b" | "d" | "z" {
 function setWorksheetCell(XLSX: any, ws: any, rowIndex0: number, colIndex0: number, value: unknown) {
   const ref = XLSX.utils.encode_cell({ r: rowIndex0, c: colIndex0 });
   const previous = ws[ref] || {};
+  const cellValue = isExcelCellValue(value) ? value.value : value;
+  const forcedNumFmt = isExcelCellValue(value) ? value.numFmt : undefined;
 
-  // Les modèles officiels(STATISTIQUES MODELES DESPS) contiennent beaucoup de formules. On ne les écrase pas :
-  // on remplit les cellules de saisie et Excel recalculera les cellules formulées à l'ouverture.
-  if (previous?.f) return;
-
-  if (value === null || value === undefined || value === "") {
+  if (cellValue === null || cellValue === undefined || cellValue === "") {
     if (previous && Object.keys(previous).length) {
+      delete previous.f;
       delete previous.v;
       delete previous.w;
       previous.t = "z";
@@ -3727,10 +3742,20 @@ function setWorksheetCell(XLSX: any, ws: any, rowIndex0: number, colIndex0: numb
 
   ws[ref] = {
     ...previous,
-    t: inferCellType(value),
-    v: value,
+    t: inferCellType(cellValue),
+    v: cellValue,
   };
+
+  // Les modèles DESPS contiennent des formules et parfois un format % sur des cellules d'effectifs.
+  // Ici, Mon Cahier écrit les résultats calculés directement pour éviter les anciens caches Excel.
+  delete ws[ref].f;
   delete ws[ref].w;
+
+  if (forcedNumFmt) {
+    ws[ref].z = forcedNumFmt;
+  } else if (typeof cellValue === "number" && String(previous?.z || "").includes("%")) {
+    ws[ref].z = "0";
+  }
 }
 
 function clearWorksheetRange(XLSX: any, ws: any, rangeRef: string) {
@@ -3739,7 +3764,8 @@ function clearWorksheetRange(XLSX: any, ws: any, rangeRef: string) {
     for (let c = range.s.c; c <= range.e.c; c += 1) {
       const ref = XLSX.utils.encode_cell({ r, c });
       const previous = ws[ref];
-      if (!previous || previous.f) continue;
+      if (!previous) continue;
+      delete previous.f;
       delete previous.v;
       delete previous.w;
       previous.t = "z";
