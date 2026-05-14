@@ -13,12 +13,31 @@ type InstitutionRow = {
   city?: string | null;
 };
 
+type QueryResult<T> = {
+  data: T | null;
+  error: { message?: string } | null;
+};
+
 function todayYmd() {
   return new Date().toISOString().slice(0, 10);
 }
 
 function money(value: number) {
   return `${Number(value || 0).toLocaleString("fr-FR")} F`;
+}
+
+async function safeData<T>(label: string, query: PromiseLike<QueryResult<T>>, fallback: T): Promise<T> {
+  try {
+    const res = await query;
+    if (res?.error) {
+      console.warn(`[founder/dashboard] ${label}:`, res.error.message || res.error);
+      return fallback;
+    }
+    return (res?.data ?? fallback) as T;
+  } catch (e: any) {
+    console.warn(`[founder/dashboard] ${label}:`, e?.message || e);
+    return fallback;
+  }
 }
 
 async function getFounderContext() {
@@ -31,65 +50,84 @@ async function getFounderContext() {
 
   if (!user) redirect("/login");
 
-  const { data: roles, error: roleErr } = await service
-    .from("user_roles")
-    .select("institution_id,role")
-    .eq("profile_id", user.id)
-    .eq("role", "founder");
-
-  if (roleErr) throw new Error(roleErr.message);
+  const roles = await safeData<any[]>(
+    "user_roles",
+    service
+      .from("user_roles")
+      .select("institution_id,role")
+      .eq("profile_id", user.id)
+      .eq("role", "founder"),
+    [],
+  );
 
   const institutionIds: string[] = Array.from(
     new Set((roles ?? []).map((row: any) => String(row.institution_id || "")).filter(Boolean)),
   );
 
-  if (!institutionIds.length) redirect("/(errors)/forbidden");
+  if (!institutionIds.length) redirect("/profile");
 
-  const { data: institutions, error: instErr } = await service
-    .from("institutions")
-    .select("id,name,code_unique,city")
-    .in("id", institutionIds)
-    .order("name", { ascending: true });
+  const institutions = await safeData<InstitutionRow[]>(
+    "institutions",
+    service
+      .from("institutions")
+      .select("id,name,code_unique,city")
+      .in("id", institutionIds)
+      .order("name", { ascending: true }),
+    [],
+  );
 
-  if (instErr) throw new Error(instErr.message);
-
-  return { service, institutionIds, institutions: (institutions ?? []) as InstitutionRow[] };
+  return { service, institutionIds, institutions };
 }
 
 export default async function FounderDashboardPage() {
   const { service, institutionIds, institutions } = await getFounderContext();
   const today = todayYmd();
+  const startIso = `${today}T00:00:00.000Z`;
+  const endIso = `${today}T23:59:59.999Z`;
 
-  const [enrollmentsRes, sessionsRes, receiptsRes, expensesRes] = await Promise.all([
-    service
-      .from("class_enrollments")
-      .select("id,institution_id", { count: "exact", head: false })
-      .in("institution_id", institutionIds)
-      .eq("start_date", today),
-    service
-      .from("teacher_sessions")
-      .select("id,institution_id", { count: "exact", head: false })
-      .in("institution_id", institutionIds)
-      .gte("started_at", `${today}T00:00:00.000Z`)
-      .lte("started_at", `${today}T23:59:59.999Z`),
-    service
-      .from("receipts")
-      .select("id,school_id,total_amount,receipt_status,payment_date")
-      .in("school_id", institutionIds)
-      .eq("receipt_status", "posted")
-      .eq("payment_date", today),
-    service
-      .from("expenses")
-      .select("id,school_id,amount,expense_status,expense_date")
-      .in("school_id", institutionIds)
-      .eq("expense_status", "posted")
-      .eq("expense_date", today),
+  const [enrollments, sessions, receipts, expenses] = await Promise.all([
+    safeData<any[]>(
+      "class_enrollments",
+      service
+        .from("class_enrollments")
+        .select("id,institution_id", { count: "exact", head: false })
+        .in("institution_id", institutionIds)
+        .eq("start_date", today),
+      [],
+    ),
+    safeData<any[]>(
+      "teacher_sessions",
+      service
+        .from("teacher_sessions")
+        .select("id,institution_id", { count: "exact", head: false })
+        .in("institution_id", institutionIds)
+        .gte("started_at", startIso)
+        .lte("started_at", endIso),
+      [],
+    ),
+    safeData<any[]>(
+      "finance.receipts",
+      service
+        .schema("finance")
+        .from("receipts")
+        .select("id,school_id,total_amount,receipt_status,payment_date")
+        .in("school_id", institutionIds)
+        .eq("receipt_status", "posted")
+        .eq("payment_date", today),
+      [],
+    ),
+    safeData<any[]>(
+      "finance.expenses",
+      service
+        .schema("finance")
+        .from("expenses")
+        .select("id,school_id,amount,expense_status,expense_date")
+        .in("school_id", institutionIds)
+        .eq("expense_status", "posted")
+        .eq("expense_date", today),
+      [],
+    ),
   ]);
-
-  const enrollments = enrollmentsRes.data ?? [];
-  const sessions = sessionsRes.data ?? [];
-  const receipts = receiptsRes.data ?? [];
-  const expenses = expensesRes.data ?? [];
 
   const totalReceipts = receipts.reduce((sum: number, row: any) => sum + Number(row.total_amount || 0), 0);
   const totalExpenses = expenses.reduce((sum: number, row: any) => sum + Number(row.amount || 0), 0);
@@ -141,14 +179,20 @@ export default async function FounderDashboardPage() {
           Écoles rattachées
         </div>
         <div className="grid gap-3 md:grid-cols-2">
-          {institutions.map((school) => (
-            <div key={school.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-              <div className="font-black text-slate-950">{school.name || "Établissement"}</div>
-              <div className="mt-1 text-xs text-slate-500">
-                {[school.code_unique, school.city].filter(Boolean).join(" • ") || school.id}
-              </div>
+          {institutions.length === 0 ? (
+            <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm font-semibold text-amber-800">
+              Aucune école trouvée pour ce compte fondateur.
             </div>
-          ))}
+          ) : (
+            institutions.map((school) => (
+              <div key={school.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <div className="font-black text-slate-950">{school.name || "Établissement"}</div>
+                <div className="mt-1 text-xs text-slate-500">
+                  {[school.code_unique, school.city].filter(Boolean).join(" • ") || school.id}
+                </div>
+              </div>
+            ))
+          )}
         </div>
       </section>
     </div>
