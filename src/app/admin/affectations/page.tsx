@@ -4,9 +4,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 
-type ClassRow   = { id: string; name: string; level?: string | null };
+type ClassRow   = { id: string; name: string; level?: string | null; academic_year?: string | null };
 type SubjectRow = { id: string; name: string; inst_subject_id: string | null }; // id = subjects.id, inst_subject_id = institution_subjects.id
 type TeacherRow = { id: string; display_name: string | null; email: string | null; phone: string | null };
+type AcademicYearRow = { code: string; label?: string | null; start_date?: string | null; is_current?: boolean | null };
 
 // Pour la vue de gestion
 type CurrentItem = {
@@ -48,6 +49,8 @@ export default function AffectationsPage() {
   const [subjects, setSubjects] = useState<SubjectRow[]>([]);
   const [classes,  setClasses]  = useState<ClassRow[]>([]);
   const [teachers, setTeachers] = useState<TeacherRow[]>([]);
+  const [academicYears, setAcademicYears] = useState<AcademicYearRow[]>([]);
+  const [selectedAcademicYear, setSelectedAcademicYear] = useState<string>("");
 
   // Sélections (affecter)
   // subjectId = subjects.id (global). Sert pour filtrer les enseignants.
@@ -79,26 +82,64 @@ export default function AffectationsPage() {
   const [manageBusy, setManageBusy] = useState(false);
   const [manageMsg, setManageMsg] = useState<string | null>(null);
 
-  // Charger disciplines + classes
+  // Charger disciplines + années scolaires
   useEffect(() => {
     (async () => {
       try {
-        const [s, c] = await Promise.all([
+        const [s, years] = await Promise.all([
           fetchJSON<{ items: SubjectRow[] }>("/api/admin/subjects"),
-          fetchJSON<{ items: any[] }>("/api/admin/classes?limit=999"),
+          fetchJSON<{ ok?: boolean; items: AcademicYearRow[] }>("/api/admin/institution/academic-years"),
         ]);
         setSubjects(s.items || []);
-        setClasses((c.items || []).map((x: any) => ({
-          id: x.id,
-          name: x.name,
-          level: x.level ?? null,
-        })));
+
+        const rows = (years.items || [])
+          .map((row: AcademicYearRow) => ({
+            code: String(row.code || "").trim(),
+            label: row.label || row.code || "",
+            start_date: row.start_date || null,
+            is_current: row.is_current === true,
+          }))
+          .filter((row: AcademicYearRow) => row.code);
+
+        rows.sort((a, b) => {
+          const ak = a.start_date || a.code;
+          const bk = b.start_date || b.code;
+          return bk.localeCompare(ak, "fr", { numeric: true });
+        });
+
+        setAcademicYears(rows);
+        const currentYear = rows.find((row) => row.is_current)?.code || rows[0]?.code || "";
+        setSelectedAcademicYear(currentYear);
       } catch (e: any) {
         if (e.message === "unauthorized") setAuthErr(true);
         else alert(e.message || "Erreur");
       }
     })();
   }, []);
+
+  // Charger les classes de l'année scolaire sélectionnée
+  useEffect(() => {
+    (async () => {
+      try {
+        const url = new URL(`${location.origin}/api/admin/classes`);
+        url.searchParams.set("limit", "999");
+        if (selectedAcademicYear) url.searchParams.set("academic_year", selectedAcademicYear);
+
+        const c = await fetchJSON<{ items: any[]; academic_year?: string | null }>(url.toString());
+        setClasses((c.items || []).map((x: any) => ({
+          id: x.id,
+          name: x.name || x.label || x.code || "Classe",
+          level: x.level ?? null,
+          academic_year: x.academic_year ?? c.academic_year ?? selectedAcademicYear ?? null,
+        })));
+        setClassIds([]);
+        setLevelsFilter("");
+      } catch (e: any) {
+        if (e.message === "unauthorized") setAuthErr(true);
+        else alert(e.message || "Erreur");
+      }
+    })();
+  }, [selectedAcademicYear]);
 
   // Charger enseignants : SI discipline → filtre via subjects.id, SINON → tous
   useEffect(() => {
@@ -162,6 +203,7 @@ export default function AffectationsPage() {
           // IMPORTANT: envoyer institution_subjects.id (et non subjects.id)
           subject_id: instSubjectId || null, // peut être null au primaire
           class_ids: classIds,
+          academic_year: selectedAcademicYear || null,
         }),
       });
       const j = await r.json().catch(() => ({}));
@@ -228,6 +270,7 @@ export default function AffectationsPage() {
       const url = new URL(`${location.origin}/api/admin/affectations/current`);
       if (q.trim()) url.searchParams.set("q", q.trim());
       if (manageSubject) url.searchParams.set("subject_id", manageSubject); // attend institution_subjects.id
+      if (selectedAcademicYear) url.searchParams.set("academic_year", selectedAcademicYear);
       const j = await fetchJSON<{ items: CurrentItem[] }>(url.toString());
       setCurrent(j.items || []);
     } catch (e: any) {
@@ -241,12 +284,12 @@ export default function AffectationsPage() {
   useEffect(() => {
     loadCurrent();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [selectedAcademicYear]);
   useEffect(() => {
     const t = setTimeout(loadCurrent, 300);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [q, manageSubject]);
+  }, [q, manageSubject, selectedAcademicYear]);
 
   async function removeOne(teacher_id: string, class_id: string, subject_id: string | null) {
     try {
@@ -280,6 +323,7 @@ export default function AffectationsPage() {
           type: "teacher_classes_clear",
           teacher_id,
           subject_id, // si null → toutes disciplines
+          academic_year: selectedAcademicYear || null,
         }),
       });
       const j = await r.json().catch(() => ({}));
@@ -305,6 +349,7 @@ export default function AffectationsPage() {
         body: JSON.stringify({
           type: "teacher_classes_clear_all",
           subject_id: subject_id || null, // optionnel, attend inst_subject_id
+          academic_year: selectedAcademicYear || null,
         }),
       });
       const j = await r.json().catch(() => ({}));
@@ -348,7 +393,29 @@ export default function AffectationsPage() {
         <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-emerald-700">
           Étape 1 • Choisir la discipline et l’enseignant
         </div>
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
+          <div>
+            <div className="mb-1 text-xs text-slate-600">Année scolaire</div>
+            <Select
+              value={selectedAcademicYear}
+              onChange={(e) => setSelectedAcademicYear(e.target.value)}
+              disabled={academicYears.length === 0}
+            >
+              {academicYears.length === 0 ? (
+                <option value="">Aucune année définie</option>
+              ) : (
+                academicYears.map((year) => (
+                  <option key={year.code} value={year.code}>
+                    {year.label || year.code}{year.is_current ? " — active" : ""}
+                  </option>
+                ))
+              )}
+            </Select>
+            <div className="mt-1 text-[11px] text-slate-500">
+              Les classes et affectations affichées sont limitées à cette année.
+            </div>
+          </div>
+
           <div>
             <div className="mb-1 text-xs text-slate-600">Discipline (facultatif)</div>
             {/* value = subjects.id (global). On en déduit inst_subject_id côté JS */}
@@ -423,7 +490,9 @@ export default function AffectationsPage() {
         </div>
 
         {filteredClasses.length === 0 ? (
-          <div className="text-sm text-slate-600">Aucune classe.</div>
+          <div className="text-sm text-slate-600">
+            Aucune classe pour l'année scolaire sélectionnée. Créez d'abord les classes de cette année.
+          </div>
         ) : (
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
             {filteredClasses.map((c) => (
@@ -486,7 +555,7 @@ export default function AffectationsPage() {
               Étape 3 • Gérer les affectations actuelles
             </div>
             <div className="text-[12px] text-slate-700">
-              Recherche, filtre par discipline, retire ou réinitialise les affectations.
+              Recherche, filtre par discipline, retire ou réinitialise les affectations de l’année sélectionnée.
             </div>
           </div>
           <div className="flex items-center gap-2">
@@ -577,7 +646,7 @@ export default function AffectationsPage() {
             <div>
               <div className="font-semibold text-rose-800 text-sm">Zone de réinitialisation</div>
               <div className="text-[12px] text-rose-700">
-                Cette action supprime toutes les affectations actives de l’établissement
+                Cette action supprime uniquement les affectations actives de l’année scolaire sélectionnée
                 {manageSubject ? " pour la discipline sélectionnée." : "."}
               </div>
             </div>

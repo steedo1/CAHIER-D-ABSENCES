@@ -6,12 +6,37 @@ import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 type CurrentItem = {
   teacher: { id: string; display_name: string | null; email: string | null; phone: string | null };
   subject: { id: string | null; label: string };
-  classes: Array<{ id: string; name: string | null; level: string | null }>;
+  classes: Array<{ id: string; name: string | null; level: string | null; academic_year?: string | null }>;
 };
 
 const lc = (s: string | null | undefined) => (s ?? "").toLowerCase().trim();
 const norm = (s: string | null | undefined) =>
   (s ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
+
+async function getCurrentAcademicYear(institutionId: string): Promise<string | null> {
+  const srv = getSupabaseServiceClient();
+
+  const { data: current } = await srv
+    .from("academic_years")
+    .select("code")
+    .eq("institution_id", institutionId)
+    .eq("is_current", true)
+    .order("start_date", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (current?.code) return String(current.code);
+
+  const { data: latest } = await srv
+    .from("academic_years")
+    .select("code")
+    .eq("institution_id", institutionId)
+    .order("start_date", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  return latest?.code ? String(latest.code) : null;
+}
 
 export async function GET(req: NextRequest) {
   const supa = await getSupabaseServerClient();
@@ -38,8 +63,11 @@ export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const qRaw = searchParams.get("q") || "";
   const subjectRaw = searchParams.get("subject_id") || ""; // institution_subjects.id OU subjects.id
+  const academicYearRaw = (searchParams.get("academic_year") || "").trim();
   const q = norm(qRaw);
   const subjectFilter = (subjectRaw || "").trim();
+  const academicYear = academicYearRaw || (await getCurrentAcademicYear(institution_id));
+  const shouldFilterYear = Boolean(academicYear && academicYear !== "all");
 
   // Query (schema-tolerant)
   const { data, error } = await srv
@@ -74,6 +102,10 @@ export async function GET(req: NextRequest) {
     const t = (row as any).teacher;
     const c = (row as any).class || {};
     const is = (row as any).instsub;
+
+    if (shouldFilterYear && String(c?.academic_year || "") !== academicYear) {
+      continue;
+    }
 
     const teacher_id = t?.id as string;
     const instSubId = (is?.id as string) ?? null;
@@ -119,6 +151,7 @@ export async function GET(req: NextRequest) {
         id: clsId,
         name: clsName ? String(clsName) : null,
         level: clsLevel ? String(clsLevel) : null,
+        academic_year: c?.academic_year ? String(c.academic_year) : null,
       });
     }
   }
@@ -156,5 +189,5 @@ export async function GET(req: NextRequest) {
   // Strip internals
   const out: CurrentItem[] = items.map(({ _subjectIds, ...rest }) => rest);
 
-  return NextResponse.json({ items: out });
+  return NextResponse.json({ items: out, academic_year: shouldFilterYear ? academicYear : null });
 }

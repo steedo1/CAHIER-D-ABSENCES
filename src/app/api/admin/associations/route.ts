@@ -6,6 +6,35 @@ import { normalizePhone as toE164 } from "@/lib/phone";
 
 const DEFAULT_TEMP_PASSWORD = process.env.DEFAULT_TEMP_PASSWORD || "Pass2025";
 
+async function getClassIdsForAcademicYear(
+  srv: any,
+  institutionId: string,
+  academicYear: string | null,
+): Promise<string[] | null> {
+  const year = (academicYear || "").trim();
+  if (!year || year === "all") return null;
+
+  const { data, error } = await srv
+    .from("classes")
+    .select("id")
+    .eq("institution_id", institutionId)
+    .eq("academic_year", year);
+
+  if (error) {
+    const err = new Error(error.message) as any;
+    err.status = 400;
+    throw err;
+  }
+
+  return (data || []).map((row: any) => String(row.id));
+}
+
+function restrictDeleteToClassIds(query: any, ids: string[] | null): any | null {
+  if (ids === null) return query;
+  if (!ids.length) return null;
+  return query.in("class_id", ids);
+}
+
 /* ---------------------- Helpers ---------------------- */
 async function resolveOrCreateParent(
   srv: any,
@@ -123,9 +152,28 @@ export async function POST(req: NextRequest) {
     const email: string | null = body?.email ?? null;
     const subject_id_raw: string | null = body?.subject_id ?? null;
     const class_ids: string[] = Array.isArray(body?.class_ids) ? body.class_ids : [];
+    const academicYear: string | null = (body?.academic_year || "").trim() || null;
 
     if ((!teacher_id && !email) || class_ids.length === 0) {
       return NextResponse.json({ error: "missing_params" }, { status: 400 });
+    }
+
+    let yearClassIds: string[] | null = null;
+    try {
+      yearClassIds = await getClassIdsForAcademicYear(srv, inst, academicYear);
+    } catch (e: any) {
+      return NextResponse.json({ error: e?.message || "academic_year_filter_failed" }, { status: e?.status || 400 });
+    }
+
+    if (yearClassIds !== null) {
+      const allowed = new Set(yearClassIds);
+      const invalid = class_ids.filter((id) => !allowed.has(id));
+      if (invalid.length) {
+        return NextResponse.json(
+          { error: "classes_not_in_selected_academic_year", invalid_class_ids: invalid },
+          { status: 400 },
+        );
+      }
     }
 
     // Resolve teacher id
@@ -159,8 +207,11 @@ export async function POST(req: NextRequest) {
     if (subject_id_raw) {
       del = instSubjectId ? del.eq("subject_id", instSubjectId) : del.eq("subject_id", subject_id_raw);
     }
-    const { error: dErr } = await del;
-    if (dErr) return NextResponse.json({ error: dErr.message }, { status: 400 });
+    const scopedDel = restrictDeleteToClassIds(del, yearClassIds);
+    if (scopedDel) {
+      const { error: dErr } = await scopedDel;
+      if (dErr) return NextResponse.json({ error: dErr.message }, { status: 400 });
+    }
 
     const today = new Date().toISOString().slice(0, 10);
     const buildRows = (sid: string | null) =>
@@ -225,7 +276,15 @@ export async function POST(req: NextRequest) {
   if (type === "teacher_classes_clear") {
     const teacher_id: string = body?.teacher_id;
     const subject_id_raw: string | null = body?.subject_id ?? null;
+    const academicYear: string | null = (body?.academic_year || "").trim() || null;
     if (!teacher_id) return NextResponse.json({ error: "missing_params" }, { status: 400 });
+
+    let yearClassIds: string[] | null = null;
+    try {
+      yearClassIds = await getClassIdsForAcademicYear(srv, inst, academicYear);
+    } catch (e: any) {
+      return NextResponse.json({ error: e?.message || "academic_year_filter_failed" }, { status: e?.status || 400 });
+    }
 
     let del = srv
       .from("class_teachers")
@@ -244,7 +303,10 @@ export async function POST(req: NextRequest) {
       del = link?.id ? del.eq("subject_id", link.id) : del.eq("subject_id", subject_id_raw);
     }
 
-    const { error, count } = await (del as any);
+    const scopedDel = restrictDeleteToClassIds(del, yearClassIds);
+    if (!scopedDel) return NextResponse.json({ ok: true, removed: 0 });
+
+    const { error, count } = await (scopedDel as any);
     if (error) return NextResponse.json({ error: error.message }, { status: 400 });
     return NextResponse.json({ ok: true, removed: count ?? 0 });
   }
@@ -260,6 +322,14 @@ export async function POST(req: NextRequest) {
     const subject_id_raw: string | null = body?.subject_id ?? null;
     const class_ids: string[] | null = Array.isArray(body?.class_ids) ? body.class_ids : null;
     const level: string | null = body?.level ?? null;
+    const academicYear: string | null = (body?.academic_year || "").trim() || null;
+
+    let yearClassIds: string[] | null = null;
+    try {
+      yearClassIds = await getClassIdsForAcademicYear(srv, inst, academicYear);
+    } catch (e: any) {
+      return NextResponse.json({ error: e?.message || "academic_year_filter_failed" }, { status: e?.status || 400 });
+    }
 
     let del = srv.from("class_teachers").delete().eq("institution_id", inst);
 
@@ -275,22 +345,34 @@ export async function POST(req: NextRequest) {
       del = link?.id ? del.eq("subject_id", link.id) : del.eq("subject_id", subject_id_raw);
     }
 
-    // Filtre classes explicites
+    // Filtre classes explicites / niveau / année scolaire
     if (class_ids && class_ids.length) {
-      del = del.in("class_id", class_ids);
+      let ids = class_ids;
+      if (yearClassIds !== null) {
+        const allowed = new Set(yearClassIds);
+        ids = ids.filter((id) => allowed.has(id));
+      }
+      if (!ids.length) return NextResponse.json({ ok: true, removed: 0 });
+      del = del.in("class_id", ids);
     } else if (level) {
       // Filtre par niveau (optionnel)
-      const { data: cls } = await srv
+      let clsQuery = srv
         .from("classes")
         .select("id")
         .eq("institution_id", inst)
         .eq("level", level);
+      if (academicYear && academicYear !== "all") clsQuery = clsQuery.eq("academic_year", academicYear);
+      const { data: cls } = await clsQuery;
       const ids = (cls || []).map((c: any) => c.id);
       if (ids.length) del = del.in("class_id", ids);
       else {
         // Rien à supprimer si aucune classe ne matche le niveau
         return NextResponse.json({ ok: true, removed: 0 });
       }
+    } else {
+      const scopedDel = restrictDeleteToClassIds(del, yearClassIds);
+      if (!scopedDel) return NextResponse.json({ ok: true, removed: 0 });
+      del = scopedDel;
     }
 
     const { error, count } = await (del as any);
