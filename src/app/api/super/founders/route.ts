@@ -62,7 +62,6 @@ async function findExistingUserId(opts: { phone: string | null; email: string | 
     if (data?.id) return String(data.id);
   }
 
-
   return null;
 }
 
@@ -78,7 +77,7 @@ export async function GET() {
     await Promise.all([
       service
         .from("institutions")
-        .select("id,name,code_unique,city")
+        .select("id,name,code_unique")
         .order("name", { ascending: true }),
       service
         .from("user_roles")
@@ -88,7 +87,7 @@ export async function GET() {
           institution_id,
           role,
           profiles:profile_id ( id, display_name, email, phone ),
-          institutions:institution_id ( id, name, code_unique, city )
+          institutions:institution_id ( id, name, code_unique )
         `,
         )
         .eq("role", "founder")
