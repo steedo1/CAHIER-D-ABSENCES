@@ -929,8 +929,10 @@ async function generatePayrollDraftAction(formData: FormData) {
             )
           : 0;
 
-      const toleranceMinutes =
-        effActual > 0 ? lateToleranceMin + earlyDepartureToleranceMin : 0;
+      const isActuallyHeld = effActual > 0;
+      const toleranceMinutes = isActuallyHeld
+        ? lateToleranceMin + earlyDepartureToleranceMin
+        : 0;
       const lostMinutes = Math.max(
         0,
         expectedMinutes - effActual - toleranceMinutes,
@@ -944,11 +946,17 @@ async function generatePayrollDraftAction(formData: FormData) {
           ? rateFirst
           : rateSecond
         : 0;
-      const theoreticalAmount = monetizeTeacher ? rate : 0;
-      const lostAmount = monetizeTeacher
+
+      // Important métier : le salaire « sans pertes » d’un vacataire ne doit
+      // pas être calculé sur toutes les séances prévues, mais uniquement sur
+      // les séances réellement accomplies. Les séances non tenues restent
+      // comptabilisées dans les minutes perdues et le rapport, mais elles ne
+      // gonflent pas le salaire de base.
+      const theoreticalAmount = monetizeTeacher && isActuallyHeld ? rate : 0;
+      const lostAmount = monetizeTeacher && isActuallyHeld
         ? roundMoney(rate * lostSessionsEquivalent)
         : 0;
-      const adjustedAmount = monetizeTeacher
+      const adjustedAmount = monetizeTeacher && isActuallyHeld
         ? Math.max(0, roundMoney(theoreticalAmount - lostAmount))
         : 0;
 
@@ -967,8 +975,8 @@ async function generatePayrollDraftAction(formData: FormData) {
         theoretical_amount: theoreticalAmount,
         lost_amount: lostAmount,
         adjusted_amount: adjustedAmount,
-        source_origin: effActual > 0 ? "class_device" : "timetable_expected",
-        counted_for_pay: adjustedAmount > 0,
+        source_origin: isActuallyHeld ? "class_device" : "timetable_expected",
+        counted_for_pay: theoreticalAmount > 0,
       };
     });
 
@@ -980,15 +988,17 @@ async function generatePayrollDraftAction(formData: FormData) {
       0,
     );
     const sessionsFirstCycle = sessionItems.filter(
-      (item) => item.cycle === "first_cycle",
+      (item) => item.actual_minutes > 0 && item.cycle === "first_cycle",
     ).length;
     const sessionsSecondCycle = sessionItems.filter(
-      (item) => item.cycle === "second_cycle",
+      (item) => item.actual_minutes > 0 && item.cycle === "second_cycle",
     ).length;
-    const expectedAmount = sessionItems.reduce(
-      (acc, item) => acc + item.theoretical_amount,
-      0,
-    );
+    const expectedAmount = monetizeTeacher
+      ? expectedSlots.reduce((acc, slot) => {
+          const rate = slot.cycle === "first_cycle" ? rateFirst : rateSecond;
+          return acc + rate;
+        }, 0)
+      : 0;
     const lostMinutesAfterTolerance = sessionItems.reduce(
       (acc, item) => acc + item.lost_minutes_after_tolerance,
       0,
@@ -1003,7 +1013,10 @@ async function generatePayrollDraftAction(formData: FormData) {
       (acc, item) => acc + item.adjusted_amount,
       0,
     );
-    const grossAmount = expectedAmount;
+    const grossAmount = sessionItems.reduce(
+      (acc, item) => acc + item.theoretical_amount,
+      0,
+    );
 
     const { data: insertedLine, error: insLineErr } = await admin
       .schema("finance")
