@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
+import { queueFounderStudentEnrollmentNotification } from "@/lib/push/founder";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -45,7 +46,7 @@ export async function POST(req: NextRequest) {
   // Classe valide ?
   const { data: cls, error: clsErr } = await srv
     .from("classes")
-    .select("id,institution_id,academic_year")
+    .select("id,institution_id,academic_year,label")
     .eq("id", class_id)
     .maybeSingle();
   if (clsErr)
@@ -259,6 +260,32 @@ export async function POST(req: NextRequest) {
     .select("id");
   if (insErr)
     return NextResponse.json({ error: insErr.message }, { status: 400 });
+
+  const insertedCount = (inserted ?? []).length;
+
+  if (insertedCount > 0) {
+    try {
+      const { data: institutionRow } = await srv
+        .from("institutions")
+        .select("name")
+        .eq("id", inst)
+        .maybeSingle();
+
+      await queueFounderStudentEnrollmentNotification({
+        institutionId: inst,
+        institutionName: (institutionRow as any)?.name ?? null,
+        classLabel: (cls as any)?.label ?? null,
+        count: insertedCount,
+        mode: "manual",
+        req,
+      });
+    } catch (e: any) {
+      console.warn(
+        "[enrollments/assign] founder notification skipped",
+        e?.message || e,
+      );
+    }
+  }
 
   return NextResponse.json({
     ok: true,

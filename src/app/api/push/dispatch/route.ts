@@ -431,6 +431,10 @@ async function run(req: Request) {
     const url =
       typ === "admin_attendance_alert"
         ? "/admin/assiduite"
+        : typ === "founder_student_enrolled" || typ === "founder_daily_summary"
+        ? "/founder/dashboard"
+        : core?.url && typeof core.url === "string"
+        ? core.url
         : "/parents";
 
     const targetUsers = targetUserIdsByRow.get(n.id) || [];
