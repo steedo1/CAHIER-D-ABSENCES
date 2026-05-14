@@ -361,9 +361,20 @@ export default async function FinanceExpensesPage({
   const q = String(params?.q || "").trim();
   const statusFilter = String(params?.status || "").trim();
   const categoryIdFilter = String(params?.category_id || "").trim();
+  const requestedAcademicYear = String(params?.academic_year || "").trim();
 
   const institutionId = await getCurrentInstitutionIdOrThrow();
   const supabase = await getSupabaseServerClient();
+  const academicYearCtx = await getFinanceAcademicYearContext(
+    institutionId,
+    requestedAcademicYear,
+  );
+  const {
+    academicYears,
+    selectedAcademicYearCode,
+    selectedAcademicYearStart,
+    selectedAcademicYearEnd,
+  } = academicYearCtx;
 
   const [
     { data: categories, error: catErr },
