@@ -73,7 +73,7 @@ type AdminUserItem = {
   role: string | null;
 };
 
-type CreateRole = "teacher" | "educator" | "admin";
+type CreateRole = "teacher" | "educator" | "admin" | "finance_manager";
 type EmploymentType = "vacataire" | "permanent";
 
 function onlyDigits(v: string) {
@@ -499,6 +499,7 @@ export default function UsersPage() {
         let labelRole = "utilisateur";
         if (rawRole === "educator") labelRole = "éducateur";
         if (rawRole === "admin") labelRole = "admin";
+        if (rawRole === "finance_manager") labelRole = "gestionnaire financier";
         setMsg(`Compte ${labelRole} créé.`);
       }
 
@@ -692,6 +693,8 @@ export default function UsersPage() {
       ? "enseignant"
       : createRole === "educator"
       ? "éducateur"
+      : createRole === "finance_manager"
+      ? "gestionnaire financier"
       : "admin";
 
   return (
@@ -699,20 +702,25 @@ export default function UsersPage() {
       <div>
         <h1 className="text-2xl font-semibold">Utilisateurs & rôles</h1>
         <p className="text-slate-600">
-          Créer des comptes <b>enseignants</b>, <b>éducateurs</b> ou{" "}
-          <b>admins d’établissement</b>. Pour les enseignants, on peut aussi
-          gérer la <b>fiche de paie</b> avec le type <b>vacataire</b> ou{" "}
-          <b>permanent</b>.
+          Créer et gérer les comptes du <b>personnel de l’établissement</b> :
+          enseignants, éducateurs, admins d’établissement et gestionnaires
+          financiers. Les champs liés à la discipline et à la paie s’affichent
+          uniquement pour les enseignants.
         </p>
       </div>
 
       <div className="rounded-2xl border bg-white p-5">
-        <div className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-700">
-          Créer un compte ({currentRoleLabel})
+        <div className="mb-1 text-sm font-semibold uppercase tracking-wide text-slate-700">
+          Créer un membre du personnel
+        </div>
+        <div className="mb-3 text-xs text-slate-500">
+          Profil sélectionné : <b>{currentRoleLabel}</b>
         </div>
         <Help>
-          Téléphone <b>obligatoire</b>. Email <b>facultatif</b>. La discipline
-          et la fiche de paie ne concernent que les <b>enseignants</b>.
+          Téléphone <b>obligatoire</b>. Email <b>facultatif</b>. Les champs
+          <b> discipline</b>, <b>type d’enseignant</b> et <b>paie</b> apparaissent
+          uniquement pour les enseignants. Le <b>gestionnaire financier</b> est
+          limité à la Gestion financière.
         </Help>
 
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
@@ -725,6 +733,7 @@ export default function UsersPage() {
               <option value="teacher">Enseignant</option>
               <option value="educator">Éducateur</option>
               <option value="admin">Admin d’établissement</option>
+              <option value="finance_manager">Gestionnaire financier</option>
             </Select>
           </div>
 
@@ -844,7 +853,7 @@ export default function UsersPage() {
 
         <div className="mt-4">
           <Button onClick={createUser} disabled={submitting || !tPhone.trim()}>
-            {submitting ? "Création…" : `Créer le compte ${currentRoleLabel}`}
+            {submitting ? "Création…" : "Créer le compte"}
           </Button>
         </div>
 
