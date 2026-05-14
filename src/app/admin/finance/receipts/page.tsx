@@ -15,6 +15,10 @@ import {
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getFinanceAccessForCurrentUser } from "@/lib/finance-access";
 import {
+  AcademicYearSelector,
+  getFinanceAcademicYearContext,
+} from "../_shared/academic-year";
+import {
   getAdminStudentsServer,
   type AdminStudentRow,
 } from "@/lib/admin-students-server";
@@ -147,11 +151,7 @@ function StatCard({
   );
 }
 
-function StatusPill({
-  status,
-}: {
-  status: "posted" | "cancelled";
-}) {
+function StatusPill({ status }: { status: "posted" | "cancelled" }) {
   return status === "posted" ? (
     <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-bold text-emerald-700 ring-1 ring-emerald-200">
       <BadgeCheck className="h-3.5 w-3.5" />
@@ -168,7 +168,12 @@ function StatusPill({
 export default async function FinanceReceiptsPage({
   searchParams,
 }: {
-  searchParams?: Promise<{ q?: string; status?: string; class_id?: string }>;
+  searchParams?: Promise<{
+    q?: string;
+    status?: string;
+    class_id?: string;
+    academic_year?: string;
+  }>;
 }) {
   const access = await getFinanceAccessForCurrentUser();
 
@@ -180,31 +185,49 @@ export default async function FinanceReceiptsPage({
   const q = String(params?.q || "").trim();
   const statusFilter = String(params?.status || "").trim();
   const classIdFilter = String(params?.class_id || "").trim();
+  const requestedAcademicYear = String(params?.academic_year || "").trim();
 
   const institutionId = await getCurrentInstitutionIdOrThrow();
   const supabase = await getSupabaseServerClient();
   const adminStudents = await getAdminStudentsServer();
+  const academicYearCtx = await getFinanceAcademicYearContext(
+    institutionId,
+    requestedAcademicYear,
+  );
+  const { academicYears, selectedAcademicYearCode } = academicYearCtx;
 
-  const { data: classes, error: clsErr } = await supabase
+  let classesQuery = supabase
     .from("classes")
     .select("id,label,level,academic_year")
-    .eq("institution_id", institutionId)
-    .order("label", { ascending: true });
+    .eq("institution_id", institutionId);
+
+  if (selectedAcademicYearCode) {
+    classesQuery = classesQuery.eq("academic_year", selectedAcademicYearCode);
+  }
+
+  const { data: classes, error: clsErr } = await classesQuery.order("label", {
+    ascending: true,
+  });
 
   if (clsErr) throw new Error(clsErr.message);
 
   const classRows = (classes ?? []) as ClassRow[];
+  const classIds = classRows.map((row) => row.id);
   const classMap = new Map(classRows.map((c) => [c.id, c]));
 
   let receiptsQuery = supabase
     .schema("finance")
     .from("receipts")
     .select(
-      "id,school_id,academic_year_id,academic_year,student_id,receipt_no,receipt_status,payment_date,payer_name,reference_no,total_amount,notes,cancelled_at,cancelled_by,cancel_reason,created_at"
+      "id,school_id,academic_year_id,academic_year,student_id,receipt_no,receipt_status,payment_date,payer_name,reference_no,total_amount,notes,cancelled_at,cancelled_by,cancel_reason,created_at",
     )
     .eq("school_id", institutionId)
     .order("payment_date", { ascending: false })
     .order("created_at", { ascending: false });
+
+  if (selectedAcademicYearCode) {
+    receiptsQuery = receiptsQuery.eq("academic_year", selectedAcademicYearCode);
+  }
 
   if (statusFilter === "posted" || statusFilter === "cancelled") {
     receiptsQuery = receiptsQuery.eq("receipt_status", statusFilter);
@@ -216,7 +239,12 @@ export default async function FinanceReceiptsPage({
   const receiptRows = (receipts ?? []) as ReceiptRow[];
 
   const receiptStudentIds = new Set(receiptRows.map((r) => r.student_id));
-  const studentRows = adminStudents.filter((s) => receiptStudentIds.has(s.id));
+  const classIdSet = new Set(classIds);
+  const studentRows = adminStudents.filter(
+    (s) =>
+      receiptStudentIds.has(s.id) &&
+      (!s.class_id || classIdSet.has(s.class_id)),
+  );
   const studentMap = new Map(studentRows.map((s) => [s.id, s]));
 
   let filteredReceipts = receiptRows;
@@ -232,8 +260,9 @@ export default async function FinanceReceiptsPage({
   if (qn) {
     filteredReceipts = filteredReceipts.filter((row) => {
       const student = studentMap.get(row.student_id);
-      const cls =
-        student?.class_id ? classMap.get(student.class_id) : undefined;
+      const cls = student?.class_id
+        ? classMap.get(student.class_id)
+        : undefined;
 
       const haystack = normalize(
         [
@@ -246,7 +275,7 @@ export default async function FinanceReceiptsPage({
           student?.class_label || "",
           cls?.label || "",
           cls?.level || "",
-        ].join(" ")
+        ].join(" "),
       );
 
       return haystack.includes(qn);
@@ -266,14 +295,16 @@ export default async function FinanceReceiptsPage({
   if (allocErr) throw new Error(allocErr.message);
 
   const allocationRows = (allocations ?? []) as ReceiptAllocationRow[];
-  const chargeIds = Array.from(new Set(allocationRows.map((a) => a.student_charge_id)));
+  const chargeIds = Array.from(
+    new Set(allocationRows.map((a) => a.student_charge_id)),
+  );
 
   const { data: charges, error: chErr } = chargeIds.length
     ? await supabase
         .schema("finance")
         .from("v_charge_balances")
         .select(
-          "id,student_id,class_id,label,due_date,net_amount,paid_amount,balance_due"
+          "id,student_id,class_id,label,due_date,net_amount,paid_amount,balance_due",
         )
         .in("id", chargeIds)
     : { data: [], error: null as any };
@@ -283,28 +314,29 @@ export default async function FinanceReceiptsPage({
   const chargeRows = (charges ?? []) as ChargeRow[];
   const chargeMap = new Map(chargeRows.map((c) => [c.id, c]));
 
-  const allocationsByReceipt = allocationRows.reduce<Record<string, ReceiptAllocationRow[]>>(
-    (acc, row) => {
-      if (!acc[row.receipt_id]) acc[row.receipt_id] = [];
-      acc[row.receipt_id].push(row);
-      return acc;
-    },
-    {}
-  );
+  const allocationsByReceipt = allocationRows.reduce<
+    Record<string, ReceiptAllocationRow[]>
+  >((acc, row) => {
+    if (!acc[row.receipt_id]) acc[row.receipt_id] = [];
+    acc[row.receipt_id].push(row);
+    return acc;
+  }, {});
 
-  const postedReceipts = filteredReceipts.filter((r) => r.receipt_status === "posted");
+  const postedReceipts = filteredReceipts.filter(
+    (r) => r.receipt_status === "posted",
+  );
   const cancelledReceipts = filteredReceipts.filter(
-    (r) => r.receipt_status === "cancelled"
+    (r) => r.receipt_status === "cancelled",
   );
 
   const postedAmount = postedReceipts.reduce(
     (sum, row) => sum + Number(row.total_amount || 0),
-    0
+    0,
   );
 
   const cancelledAmount = cancelledReceipts.reduce(
     (sum, row) => sum + Number(row.total_amount || 0),
-    0
+    0,
   );
 
   return (
@@ -342,6 +374,13 @@ export default async function FinanceReceiptsPage({
         </div>
       </section>
 
+      <AcademicYearSelector
+        academicYears={academicYears}
+        selectedAcademicYearCode={selectedAcademicYearCode}
+        currentPath="/admin/finance/receipts"
+        hiddenParams={{ q, status: statusFilter, class_id: classIdFilter }}
+      />
+
       <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <StatCard
           icon={<Receipt className="h-5 w-5" />}
@@ -370,7 +409,15 @@ export default async function FinanceReceiptsPage({
       </section>
 
       <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
-        <form className="grid gap-3 lg:grid-cols-[1fr_220px_260px_auto]">
+        <form
+          method="GET"
+          className="grid gap-3 lg:grid-cols-[1fr_220px_260px_auto]"
+        >
+          <input
+            type="hidden"
+            name="academic_year"
+            value={selectedAcademicYearCode}
+          />
           <div className="relative">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
             <input
@@ -421,8 +468,9 @@ export default async function FinanceReceiptsPage({
         ) : (
           filteredReceipts.map((row) => {
             const student = studentMap.get(row.student_id);
-            const cls =
-              student?.class_id ? classMap.get(student.class_id) : null;
+            const cls = student?.class_id
+              ? classMap.get(student.class_id)
+              : null;
             const items = (allocationsByReceipt[row.id] || []).map((alloc) => ({
               alloc,
               charge: chargeMap.get(alloc.student_charge_id),
@@ -445,27 +493,39 @@ export default async function FinanceReceiptsPage({
 
                       <div className="mt-3 grid gap-2 text-sm text-slate-600 sm:grid-cols-2 lg:grid-cols-3">
                         <div>
-                          <span className="font-semibold text-slate-800">Élève :</span>{" "}
+                          <span className="font-semibold text-slate-800">
+                            Élève :
+                          </span>{" "}
                           {fullName(student)}
                         </div>
                         <div>
-                          <span className="font-semibold text-slate-800">Matricule :</span>{" "}
+                          <span className="font-semibold text-slate-800">
+                            Matricule :
+                          </span>{" "}
                           {student?.matricule || "—"}
                         </div>
                         <div>
-                          <span className="font-semibold text-slate-800">Classe :</span>{" "}
+                          <span className="font-semibold text-slate-800">
+                            Classe :
+                          </span>{" "}
                           {student?.class_label || cls?.label || "—"}
                         </div>
                         <div>
-                          <span className="font-semibold text-slate-800">Payeur :</span>{" "}
+                          <span className="font-semibold text-slate-800">
+                            Payeur :
+                          </span>{" "}
                           {row.payer_name || "—"}
                         </div>
                         <div>
-                          <span className="font-semibold text-slate-800">Référence :</span>{" "}
+                          <span className="font-semibold text-slate-800">
+                            Référence :
+                          </span>{" "}
                           {row.reference_no || "—"}
                         </div>
                         <div>
-                          <span className="font-semibold text-slate-800">Année :</span>{" "}
+                          <span className="font-semibold text-slate-800">
+                            Année :
+                          </span>{" "}
                           {row.academic_year || cls?.academic_year || "—"}
                         </div>
                       </div>
@@ -476,7 +536,8 @@ export default async function FinanceReceiptsPage({
                         </p>
                       ) : null}
 
-                      {row.receipt_status === "cancelled" && row.cancel_reason ? (
+                      {row.receipt_status === "cancelled" &&
+                      row.cancel_reason ? (
                         <div className="mt-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
                           <span className="font-semibold text-slate-800">
                             Motif d’annulation :
@@ -524,8 +585,10 @@ export default async function FinanceReceiptsPage({
                                   Échéance : {charge?.due_date || "—"}
                                 </div>
                                 <div className="mt-1 text-xs text-slate-500">
-                                  Brut : {formatMoney(charge?.net_amount || 0)} • Déjà payé :{" "}
-                                  {formatMoney(charge?.paid_amount || 0)} • Reste :{" "}
+                                  Brut : {formatMoney(charge?.net_amount || 0)}{" "}
+                                  • Déjà payé :{" "}
+                                  {formatMoney(charge?.paid_amount || 0)} •
+                                  Reste :{" "}
                                   {formatMoney(charge?.balance_due || 0)}
                                 </div>
                               </div>
@@ -549,20 +612,30 @@ export default async function FinanceReceiptsPage({
                     <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50/70 p-4 text-sm text-slate-700">
                       <div className="grid gap-3">
                         <div>
-                          <span className="font-semibold text-slate-800">Date de paiement :</span>{" "}
+                          <span className="font-semibold text-slate-800">
+                            Date de paiement :
+                          </span>{" "}
                           {formatDateTime(row.payment_date)}
                         </div>
                         <div>
-                          <span className="font-semibold text-slate-800">Créé le :</span>{" "}
+                          <span className="font-semibold text-slate-800">
+                            Créé le :
+                          </span>{" "}
                           {formatDateTime(row.created_at)}
                         </div>
                         <div>
-                          <span className="font-semibold text-slate-800">Année :</span>{" "}
+                          <span className="font-semibold text-slate-800">
+                            Année :
+                          </span>{" "}
                           {row.academic_year || cls?.academic_year || "—"}
                         </div>
                         <div>
-                          <span className="font-semibold text-slate-800">Statut :</span>{" "}
-                          {row.receipt_status === "posted" ? "Validé" : "Annulé"}
+                          <span className="font-semibold text-slate-800">
+                            Statut :
+                          </span>{" "}
+                          {row.receipt_status === "posted"
+                            ? "Validé"
+                            : "Annulé"}
                         </div>
                       </div>
                     </div>
@@ -585,7 +658,7 @@ export default async function FinanceReceiptsPage({
                       </Link>
 
                       <Link
-                        href="/admin/finance/payments"
+                        href={`/admin/finance/payments?academic_year=${encodeURIComponent(selectedAcademicYearCode)}`}
                         className="inline-flex items-center justify-center rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-bold text-slate-700 hover:bg-slate-50"
                       >
                         Retour aux encaissements

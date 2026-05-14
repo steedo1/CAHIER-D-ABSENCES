@@ -13,6 +13,10 @@ import {
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getFinanceAccessForCurrentUser } from "@/lib/finance-access";
 import {
+  AcademicYearSelector,
+  getFinanceAcademicYearContext,
+} from "../_shared/academic-year";
+import {
   getAdminStudentsServer,
   type AdminStudentRow,
 } from "@/lib/admin-students-server";
@@ -118,13 +122,7 @@ function StatCard({
   );
 }
 
-function StatusPill({
-  overdue,
-  label,
-}: {
-  overdue: boolean;
-  label: string;
-}) {
+function StatusPill({ overdue, label }: { overdue: boolean; label: string }) {
   return overdue ? (
     <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2.5 py-1 text-xs font-bold text-amber-700 ring-1 ring-amber-200">
       <AlertTriangle className="h-3.5 w-3.5" />
@@ -141,7 +139,11 @@ function StatusPill({
 export default async function FinanceArrearsPage({
   searchParams,
 }: {
-  searchParams?: Promise<{ q?: string; class_id?: string }>;
+  searchParams?: Promise<{
+    q?: string;
+    class_id?: string;
+    academic_year?: string;
+  }>;
 }) {
   const access = await getFinanceAccessForCurrentUser();
 
@@ -152,28 +154,41 @@ export default async function FinanceArrearsPage({
   const params = searchParams ? await searchParams : undefined;
   const q = String(params?.q || "").trim();
   const classIdFilter = String(params?.class_id || "").trim();
+  const requestedAcademicYear = String(params?.academic_year || "").trim();
 
   const institutionId = await getCurrentInstitutionIdOrThrow();
   const supabase = await getSupabaseServerClient();
   const adminStudents = await getAdminStudentsServer();
+  const academicYearCtx = await getFinanceAcademicYearContext(
+    institutionId,
+    requestedAcademicYear,
+  );
+  const { academicYears, selectedAcademicYearCode } = academicYearCtx;
 
-  const { data: classes, error: clsErr } = await supabase
+  let classesQuery = supabase
     .from("classes")
     .select("id,label,level,academic_year")
-    .eq("institution_id", institutionId)
+    .eq("institution_id", institutionId);
+
+  if (selectedAcademicYearCode) {
+    classesQuery = classesQuery.eq("academic_year", selectedAcademicYearCode);
+  }
+
+  const { data: classes, error: clsErr } = await classesQuery
     .order("level", { ascending: true })
     .order("label", { ascending: true });
 
   if (clsErr) throw new Error(clsErr.message);
 
   const classRows = (classes ?? []) as ClassRow[];
+  const classIds = classRows.map((row) => row.id);
   const classMap = new Map(classRows.map((c) => [c.id, c]));
 
   let balancesQuery = supabase
     .schema("finance")
     .from("v_charge_balances")
     .select(
-      "id,school_id,academic_year_id,student_id,class_id,fee_schedule_id,fee_category_id,label,base_amount,adjustment_total,net_amount,paid_amount,balance_due,due_date,charge_date,computed_status,created_at,updated_at"
+      "id,school_id,academic_year_id,student_id,class_id,fee_schedule_id,fee_category_id,label,base_amount,adjustment_total,net_amount,paid_amount,balance_due,due_date,charge_date,computed_status,created_at,updated_at",
     )
     .eq("school_id", institutionId)
     .gt("balance_due", 0)
@@ -182,6 +197,13 @@ export default async function FinanceArrearsPage({
 
   if (classIdFilter) {
     balancesQuery = balancesQuery.eq("class_id", classIdFilter);
+  } else if (classIds.length > 0) {
+    balancesQuery = balancesQuery.in("class_id", classIds);
+  } else {
+    balancesQuery = balancesQuery.eq(
+      "id",
+      "00000000-0000-0000-0000-000000000000",
+    );
   }
 
   const { data: balances, error: balErr } = await balancesQuery;
@@ -191,17 +213,21 @@ export default async function FinanceArrearsPage({
   const balanceRows = (balances ?? []) as ChargeBalanceRow[];
   const relevantStudentIds = new Set(balanceRows.map((b) => b.student_id));
 
-  const studentRows = adminStudents.filter((s) => relevantStudentIds.has(s.id));
+  const classIdSet = new Set(classIds);
+  const studentRows = adminStudents.filter(
+    (s) =>
+      relevantStudentIds.has(s.id) &&
+      (!s.class_id || classIdSet.has(s.class_id)),
+  );
   const studentMap = new Map(studentRows.map((s) => [s.id, s]));
 
   const qn = normalize(q);
 
   const filteredRows = balanceRows.filter((row) => {
     const student = studentMap.get(row.student_id);
-    const cls =
-      row.class_id
-        ? classMap.get(row.class_id)
-        : student?.class_id
+    const cls = row.class_id
+      ? classMap.get(row.class_id)
+      : student?.class_id
         ? classMap.get(student.class_id)
         : null;
 
@@ -216,7 +242,7 @@ export default async function FinanceArrearsPage({
         cls?.level || "",
         cls?.academic_year || "",
         row.label || "",
-      ].join(" ")
+      ].join(" "),
     );
 
     return haystack.includes(qn);
@@ -224,7 +250,7 @@ export default async function FinanceArrearsPage({
 
   const totalDue = filteredRows.reduce(
     (sum, row) => sum + Number(row.balance_due || 0),
-    0
+    0,
   );
 
   const overdueRows = filteredRows.filter((row) => {
@@ -234,10 +260,11 @@ export default async function FinanceArrearsPage({
 
   const overdueAmount = overdueRows.reduce(
     (sum, row) => sum + Number(row.balance_due || 0),
-    0
+    0,
   );
 
-  const impactedStudentsCount = new Set(filteredRows.map((r) => r.student_id)).size;
+  const impactedStudentsCount = new Set(filteredRows.map((r) => r.student_id))
+    .size;
 
   const groupedByStudent = filteredRows.reduce<
     Record<
@@ -252,10 +279,9 @@ export default async function FinanceArrearsPage({
     >
   >((acc, row) => {
     const student = studentMap.get(row.student_id);
-    const classRow =
-      row.class_id
-        ? classMap.get(row.class_id)
-        : student?.class_id
+    const classRow = row.class_id
+      ? classMap.get(row.class_id)
+      : student?.class_id
         ? classMap.get(student.class_id)
         : undefined;
 
@@ -282,7 +308,7 @@ export default async function FinanceArrearsPage({
   }, {});
 
   const studentGroups = Object.values(groupedByStudent).sort(
-    (a, b) => b.totalDue - a.totalDue
+    (a, b) => b.totalDue - a.totalDue,
   );
 
   return (
@@ -320,6 +346,13 @@ export default async function FinanceArrearsPage({
         </div>
       </section>
 
+      <AcademicYearSelector
+        academicYears={academicYears}
+        selectedAcademicYearCode={selectedAcademicYearCode}
+        currentPath="/admin/finance/arrears"
+        hiddenParams={{ q, class_id: classIdFilter }}
+      />
+
       <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <StatCard
           icon={<Receipt className="h-5 w-5" />}
@@ -348,7 +381,12 @@ export default async function FinanceArrearsPage({
       </section>
 
       <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
-        <form className="grid gap-3 lg:grid-cols-[1fr_280px_auto]">
+        <form method="GET" className="grid gap-3 lg:grid-cols-[1fr_280px_auto]">
+          <input
+            type="hidden"
+            name="academic_year"
+            value={selectedAcademicYearCode}
+          />
           <div className="relative">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
             <input
@@ -411,7 +449,10 @@ export default async function FinanceArrearsPage({
                         ) : null}
 
                         {group.overdueDue > 0 ? (
-                          <StatusPill overdue label="Au moins une échéance dépassée" />
+                          <StatusPill
+                            overdue
+                            label="Au moins une échéance dépassée"
+                          />
                         ) : (
                           <StatusPill overdue={false} label="Dettes ouvertes" />
                         )}
@@ -419,12 +460,16 @@ export default async function FinanceArrearsPage({
 
                       <div className="mt-3 grid gap-2 text-sm text-slate-600 sm:grid-cols-3">
                         <div>
-                          <span className="font-semibold text-slate-800">Classe :</span>{" "}
+                          <span className="font-semibold text-slate-800">
+                            Classe :
+                          </span>{" "}
                           {student?.class_label || cls?.label || "—"}
                           {cls?.level ? ` (${cls.level})` : ""}
                         </div>
                         <div>
-                          <span className="font-semibold text-slate-800">Année :</span>{" "}
+                          <span className="font-semibold text-slate-800">
+                            Année :
+                          </span>{" "}
                           {cls?.academic_year || "—"}
                         </div>
                         <div>
@@ -442,7 +487,7 @@ export default async function FinanceArrearsPage({
                       </div>
 
                       <Link
-                        href="/admin/finance/payments"
+                        href={`/admin/finance/payments?academic_year=${encodeURIComponent(selectedAcademicYearCode)}`}
                         className="inline-flex items-center justify-center rounded-2xl bg-emerald-600 px-4 py-3 text-sm font-bold text-white hover:bg-emerald-700"
                       >
                         Enregistrer un paiement
@@ -465,7 +510,8 @@ export default async function FinanceArrearsPage({
                     .map((row) => {
                       const overdue =
                         !!row.due_date &&
-                        new Date(`${row.due_date}T23:59:59`).getTime() < Date.now();
+                        new Date(`${row.due_date}T23:59:59`).getTime() <
+                          Date.now();
 
                       return (
                         <div
@@ -482,13 +528,18 @@ export default async function FinanceArrearsPage({
                                 {overdue ? (
                                   <StatusPill overdue label="Échu" />
                                 ) : (
-                                  <StatusPill overdue={false} label="À recouvrer" />
+                                  <StatusPill
+                                    overdue={false}
+                                    label="À recouvrer"
+                                  />
                                 )}
                               </div>
 
                               <div className="mt-3 grid gap-2 text-sm text-slate-600 sm:grid-cols-2 lg:grid-cols-4">
                                 <div>
-                                  <span className="font-semibold text-slate-800">Brut :</span>{" "}
+                                  <span className="font-semibold text-slate-800">
+                                    Brut :
+                                  </span>{" "}
                                   {formatMoney(row.net_amount)}
                                 </div>
                                 <div>
@@ -513,7 +564,7 @@ export default async function FinanceArrearsPage({
                             </div>
 
                             <Link
-                              href="/admin/finance/payments"
+                              href={`/admin/finance/payments?academic_year=${encodeURIComponent(selectedAcademicYearCode)}`}
                               className="inline-flex items-center justify-center rounded-2xl border border-emerald-200 bg-white px-4 py-3 text-sm font-bold text-emerald-700 hover:bg-emerald-50"
                             >
                               Régler cette dette

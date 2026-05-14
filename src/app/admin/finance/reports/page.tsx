@@ -10,6 +10,10 @@ import {
 } from "lucide-react";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getFinanceAccessForCurrentUser } from "@/lib/finance-access";
+import {
+  AcademicYearSelector,
+  getFinanceAcademicYearContext,
+} from "../_shared/academic-year";
 
 export const dynamic = "force-dynamic";
 
@@ -115,15 +119,32 @@ function StatCard({
   );
 }
 
-export default async function FinanceReportsPage() {
+export default async function FinanceReportsPage({
+  searchParams,
+}: {
+  searchParams?: Promise<{ academic_year?: string }>;
+}) {
   const access = await getFinanceAccessForCurrentUser();
 
   if (!access.ok) {
     redirect("/admin/finance/locked");
   }
 
+  const params = searchParams ? await searchParams : undefined;
+  const requestedAcademicYear = String(params?.academic_year || "").trim();
+
   const institutionId = await getCurrentInstitutionIdOrThrow();
   const supabase = await getSupabaseServerClient();
+  const academicYearCtx = await getFinanceAcademicYearContext(
+    institutionId,
+    requestedAcademicYear,
+  );
+  const {
+    academicYears,
+    selectedAcademicYearCode,
+    selectedAcademicYearStart,
+    selectedAcademicYearEnd,
+  } = academicYearCtx;
 
   const [
     { data: feeCategories, error: feeCatErr },
@@ -139,14 +160,21 @@ export default async function FinanceReportsPage() {
       .eq("school_id", institutionId)
       .order("name", { ascending: true }),
 
-    supabase
-      .schema("finance")
-      .from("fee_schedules")
-      .select(
-        "id,label,amount,academic_year,class_id,fee_category_id,due_date,allow_partial,is_active"
-      )
-      .eq("school_id", institutionId)
-      .order("created_at", { ascending: false }),
+    (() => {
+      let query = supabase
+        .schema("finance")
+        .from("fee_schedules")
+        .select(
+          "id,label,amount,academic_year,class_id,fee_category_id,due_date,allow_partial,is_active",
+        )
+        .eq("school_id", institutionId);
+
+      if (selectedAcademicYearCode) {
+        query = query.eq("academic_year", selectedAcademicYearCode);
+      }
+
+      return query.order("created_at", { ascending: false });
+    })(),
 
     supabase
       .schema("finance")
@@ -155,19 +183,39 @@ export default async function FinanceReportsPage() {
       .eq("school_id", institutionId)
       .order("name", { ascending: true }),
 
-    supabase
-      .schema("finance")
-      .from("expenses")
-      .select("id,category_id,expense_status,expense_date,label,beneficiary,amount")
-      .eq("school_id", institutionId)
-      .order("expense_date", { ascending: false })
-      .order("created_at", { ascending: false }),
+    (() => {
+      let query = supabase
+        .schema("finance")
+        .from("expenses")
+        .select(
+          "id,category_id,expense_status,expense_date,label,beneficiary,amount",
+        )
+        .eq("school_id", institutionId);
 
-    supabase
-      .from("classes")
-      .select("id,label,level,academic_year")
-      .eq("institution_id", institutionId)
-      .order("label", { ascending: true }),
+      if (selectedAcademicYearStart) {
+        query = query.gte("expense_date", selectedAcademicYearStart);
+      }
+      if (selectedAcademicYearEnd) {
+        query = query.lte("expense_date", selectedAcademicYearEnd);
+      }
+
+      return query
+        .order("expense_date", { ascending: false })
+        .order("created_at", { ascending: false });
+    })(),
+
+    (() => {
+      let query = supabase
+        .from("classes")
+        .select("id,label,level,academic_year")
+        .eq("institution_id", institutionId);
+
+      if (selectedAcademicYearCode) {
+        query = query.eq("academic_year", selectedAcademicYearCode);
+      }
+
+      return query.order("label", { ascending: true });
+    })(),
   ]);
 
   if (feeCatErr) throw new Error(feeCatErr.message);
@@ -188,16 +236,18 @@ export default async function FinanceReportsPage() {
 
   const activeFeeCategories = feeCategoryRows.filter((r) => r.is_active).length;
   const activeSchedules = feeScheduleRows.filter((r) => r.is_active);
-  const postedExpenses = expenseRows.filter((r) => r.expense_status === "posted");
+  const postedExpenses = expenseRows.filter(
+    (r) => r.expense_status === "posted",
+  );
 
   const totalScheduledAmount = activeSchedules.reduce(
     (sum, row) => sum + Number(row.amount || 0),
-    0
+    0,
   );
 
   const totalExpensesAmount = postedExpenses.reduce(
     (sum, row) => sum + Number(row.amount || 0),
-    0
+    0,
   );
 
   const schedulesByCategory = feeCategoryRows
@@ -238,24 +288,33 @@ export default async function FinanceReportsPage() {
         amount: Number(row.amount || 0),
       };
     })
-    .reduce<Record<string, { classLabel: string; academicYear: string; total: number; count: number }>>(
-      (acc, row) => {
-        if (!acc[row.classId]) {
-          acc[row.classId] = {
-            classLabel: row.classLabel,
-            academicYear: row.academicYear,
-            total: 0,
-            count: 0,
-          };
+    .reduce<
+      Record<
+        string,
+        {
+          classLabel: string;
+          academicYear: string;
+          total: number;
+          count: number;
         }
-        acc[row.classId].total += row.amount;
-        acc[row.classId].count += 1;
-        return acc;
-      },
-      {}
-    );
+      >
+    >((acc, row) => {
+      if (!acc[row.classId]) {
+        acc[row.classId] = {
+          classLabel: row.classLabel,
+          academicYear: row.academicYear,
+          total: 0,
+          count: 0,
+        };
+      }
+      acc[row.classId].total += row.amount;
+      acc[row.classId].count += 1;
+      return acc;
+    }, {});
 
-  const classSummary = Object.values(schedulesByClass).sort((a, b) => b.total - a.total);
+  const classSummary = Object.values(schedulesByClass).sort(
+    (a, b) => b.total - a.total,
+  );
 
   return (
     <div className="space-y-6">
@@ -272,8 +331,8 @@ export default async function FinanceReportsPage() {
             </h1>
 
             <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-200 sm:text-[15px]">
-              Vue synthétique des catégories de frais, des barèmes enregistrés et des
-              dépenses déjà saisies dans l’établissement.
+              Vue synthétique des catégories de frais, des barèmes enregistrés
+              et des dépenses déjà saisies dans l’établissement.
             </p>
           </div>
 
@@ -290,6 +349,12 @@ export default async function FinanceReportsPage() {
           </div>
         </div>
       </section>
+
+      <AcademicYearSelector
+        academicYears={academicYears}
+        selectedAcademicYearCode={selectedAcademicYearCode}
+        currentPath="/admin/finance/reports"
+      />
 
       <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <StatCard
@@ -338,7 +403,9 @@ export default async function FinanceReportsPage() {
                 >
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                     <div>
-                      <h2 className="text-lg font-black text-slate-900">{row.name}</h2>
+                      <h2 className="text-lg font-black text-slate-900">
+                        {row.name}
+                      </h2>
                       <div className="mt-1 text-sm text-slate-600">
                         {row.count} barème{row.count > 1 ? "s" : ""}
                       </div>
@@ -372,7 +439,9 @@ export default async function FinanceReportsPage() {
                 >
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                     <div>
-                      <h2 className="text-lg font-black text-slate-900">{row.name}</h2>
+                      <h2 className="text-lg font-black text-slate-900">
+                        {row.name}
+                      </h2>
                       <div className="mt-1 text-sm text-slate-600">
                         {row.count} dépense{row.count > 1 ? "s" : ""}
                       </div>
@@ -411,7 +480,8 @@ export default async function FinanceReportsPage() {
                         {row.classLabel}
                       </h2>
                       <div className="mt-1 text-sm text-slate-600">
-                        {row.academicYear} • {row.count} barème{row.count > 1 ? "s" : ""}
+                        {row.academicYear} • {row.count} barème
+                        {row.count > 1 ? "s" : ""}
                       </div>
                     </div>
                     <div className="rounded-full bg-sky-50 px-3 py-1.5 text-sm font-bold text-sky-700 ring-1 ring-sky-200">
@@ -436,7 +506,9 @@ export default async function FinanceReportsPage() {
           ) : (
             <div className="mt-5 space-y-4">
               {postedExpenses.slice(0, 8).map((row) => {
-                const cat = row.category_id ? expenseCategoryMap.get(row.category_id) : null;
+                const cat = row.category_id
+                  ? expenseCategoryMap.get(row.category_id)
+                  : null;
                 return (
                   <article
                     key={row.id}
@@ -444,7 +516,9 @@ export default async function FinanceReportsPage() {
                   >
                     <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                       <div>
-                        <h2 className="text-lg font-black text-slate-900">{row.label}</h2>
+                        <h2 className="text-lg font-black text-slate-900">
+                          {row.label}
+                        </h2>
                         <div className="mt-1 text-sm text-slate-600">
                           {row.expense_date} • {cat?.name || "Sans catégorie"}
                           {row.beneficiary ? ` • ${row.beneficiary}` : ""}

@@ -16,6 +16,10 @@ import {
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { getFinanceAccessForCurrentUser } from "@/lib/finance-access";
+import {
+  AcademicYearSelector,
+  getFinanceAcademicYearContext,
+} from "../_shared/academic-year";
 
 export const dynamic = "force-dynamic";
 
@@ -132,7 +136,7 @@ async function createExpenseCategoryAction(formData: FormData) {
   if (error) {
     if (error.message?.toLowerCase().includes("duplicate")) {
       throw new Error(
-        "Une catégorie portant ce code existe déjà pour cet établissement."
+        "Une catégorie portant ce code existe déjà pour cet établissement.",
       );
     }
     throw new Error(error.message);
@@ -323,11 +327,7 @@ function CategoryStatusPill({ active }: { active: boolean }) {
   );
 }
 
-function ExpenseStatusPill({
-  status,
-}: {
-  status: "posted" | "cancelled";
-}) {
+function ExpenseStatusPill({ status }: { status: "posted" | "cancelled" }) {
   return status === "posted" ? (
     <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-bold text-emerald-700 ring-1 ring-emerald-200">
       <BadgeCheck className="h-3.5 w-3.5" />
@@ -344,7 +344,12 @@ function ExpenseStatusPill({
 export default async function FinanceExpensesPage({
   searchParams,
 }: {
-  searchParams?: Promise<{ q?: string; status?: string; category_id?: string }>;
+  searchParams?: Promise<{
+    q?: string;
+    status?: string;
+    category_id?: string;
+    academic_year?: string;
+  }>;
 }) {
   const access = await getFinanceAccessForCurrentUser();
 
@@ -360,37 +365,46 @@ export default async function FinanceExpensesPage({
   const institutionId = await getCurrentInstitutionIdOrThrow();
   const supabase = await getSupabaseServerClient();
 
-  const [{ data: categories, error: catErr }, { data: expenses, error: expErr }] =
-    await Promise.all([
-      supabase
+  const [
+    { data: categories, error: catErr },
+    { data: expenses, error: expErr },
+  ] = await Promise.all([
+    supabase
+      .schema("finance")
+      .from("expense_categories")
+      .select("id,code,name,is_active")
+      .eq("school_id", institutionId)
+      .order("name", { ascending: true }),
+
+    (() => {
+      let query = supabase
         .schema("finance")
-        .from("expense_categories")
-        .select("id,code,name,is_active")
+        .from("expenses")
+        .select(
+          "id,category_id,expense_status,expense_date,label,beneficiary,amount,created_at",
+        )
         .eq("school_id", institutionId)
-        .order("name", { ascending: true }),
+        .order("expense_date", { ascending: false })
+        .order("created_at", { ascending: false });
 
-      (() => {
-        let query = supabase
-          .schema("finance")
-          .from("expenses")
-          .select(
-            "id,category_id,expense_status,expense_date,label,beneficiary,amount,created_at"
-          )
-          .eq("school_id", institutionId)
-          .order("expense_date", { ascending: false })
-          .order("created_at", { ascending: false });
+      if (selectedAcademicYearStart) {
+        query = query.gte("expense_date", selectedAcademicYearStart);
+      }
+      if (selectedAcademicYearEnd) {
+        query = query.lte("expense_date", selectedAcademicYearEnd);
+      }
 
-        if (categoryIdFilter) {
-          query = query.eq("category_id", categoryIdFilter);
-        }
+      if (categoryIdFilter) {
+        query = query.eq("category_id", categoryIdFilter);
+      }
 
-        if (statusFilter === "posted" || statusFilter === "cancelled") {
-          query = query.eq("expense_status", statusFilter);
-        }
+      if (statusFilter === "posted" || statusFilter === "cancelled") {
+        query = query.eq("expense_status", statusFilter);
+      }
 
-        return query;
-      })(),
-    ]);
+      return query;
+    })(),
+  ]);
 
   if (catErr) throw new Error(catErr.message);
   if (expErr) throw new Error(expErr.message);
@@ -414,23 +428,25 @@ export default async function FinanceExpensesPage({
         cat?.name || "",
         cat?.code || "",
         row.expense_date || "",
-      ].join(" ")
+      ].join(" "),
     );
 
     return haystack.includes(qn);
   });
 
   const postedRows = filteredRows.filter((r) => r.expense_status === "posted");
-  const cancelledRows = filteredRows.filter((r) => r.expense_status === "cancelled");
+  const cancelledRows = filteredRows.filter(
+    (r) => r.expense_status === "cancelled",
+  );
 
   const totalPosted = postedRows.reduce(
     (sum, row) => sum + Number(row.amount || 0),
-    0
+    0,
   );
 
   const totalAll = filteredRows.reduce(
     (sum, row) => sum + Number(row.amount || 0),
-    0
+    0,
   );
 
   return (
@@ -468,6 +484,17 @@ export default async function FinanceExpensesPage({
         </div>
       </section>
 
+      <AcademicYearSelector
+        academicYears={academicYears}
+        selectedAcademicYearCode={selectedAcademicYearCode}
+        currentPath="/admin/finance/expenses"
+        hiddenParams={{
+          q,
+          status: statusFilter,
+          category_id: categoryIdFilter,
+        }}
+      />
+
       <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <StatCard
           icon={<FolderPlus className="h-6 w-6" />}
@@ -502,7 +529,10 @@ export default async function FinanceExpensesPage({
             Nouvelle catégorie de dépense
           </div>
 
-          <form action={createExpenseCategoryAction} className="mt-5 grid gap-4">
+          <form
+            action={createExpenseCategoryAction}
+            className="mt-5 grid gap-4"
+          >
             <div>
               <label className="mb-1.5 block text-sm font-semibold text-slate-700">
                 Nom de la catégorie
@@ -535,7 +565,7 @@ export default async function FinanceExpensesPage({
               </button>
 
               <Link
-                href="/admin/finance"
+                href={`/admin/finance?academic_year=${encodeURIComponent(selectedAcademicYearCode)}`}
                 className="inline-flex items-center justify-center rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-bold text-slate-700 hover:bg-slate-50"
               >
                 Retour Finance
@@ -556,7 +586,10 @@ export default async function FinanceExpensesPage({
               dépense.
             </div>
           ) : (
-            <form action={createExpenseAction} className="mt-5 grid gap-4 md:grid-cols-2">
+            <form
+              action={createExpenseAction}
+              className="mt-5 grid gap-4 md:grid-cols-2"
+            >
               <div className="md:col-span-2">
                 <label className="mb-1.5 block text-sm font-semibold text-slate-700">
                   Catégorie
@@ -637,7 +670,7 @@ export default async function FinanceExpensesPage({
                 </button>
 
                 <Link
-                  href="/admin/finance/reports"
+                  href={`/admin/finance/reports?academic_year=${encodeURIComponent(selectedAcademicYearCode)}`}
                   className="inline-flex items-center justify-center rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-bold text-slate-700 hover:bg-slate-50"
                 >
                   Voir les rapports
@@ -655,7 +688,8 @@ export default async function FinanceExpensesPage({
               Catégories existantes
             </div>
             <p className="mt-1 text-sm text-slate-600">
-              Active ou désactive les catégories selon l’organisation de ton établissement.
+              Active ou désactive les catégories selon l’organisation de ton
+              établissement.
             </p>
           </div>
         </div>
@@ -673,7 +707,9 @@ export default async function FinanceExpensesPage({
               >
                 <div className="flex items-start justify-between gap-3">
                   <div>
-                    <div className="text-lg font-black text-slate-900">{row.name}</div>
+                    <div className="text-lg font-black text-slate-900">
+                      {row.name}
+                    </div>
                     <div className="mt-1 text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">
                       {row.code}
                     </div>
@@ -722,7 +758,15 @@ export default async function FinanceExpensesPage({
           Filtrer les dépenses
         </div>
 
-        <form className="mt-5 grid gap-4 md:grid-cols-[1.3fr_0.8fr_0.8fr_auto]">
+        <form
+          method="GET"
+          className="mt-5 grid gap-4 md:grid-cols-[1.3fr_0.8fr_0.8fr_auto]"
+        >
+          <input
+            type="hidden"
+            name="academic_year"
+            value={selectedAcademicYearCode}
+          />
           <div>
             <label className="mb-1.5 block text-sm font-semibold text-slate-700">
               Recherche
@@ -775,7 +819,7 @@ export default async function FinanceExpensesPage({
             </button>
 
             <Link
-              href="/admin/finance/expenses"
+              href={`/admin/finance/expenses?academic_year=${encodeURIComponent(selectedAcademicYearCode)}`}
               className="inline-flex h-[50px] items-center justify-center rounded-2xl border border-slate-300 bg-white px-4 text-sm font-bold text-slate-700 hover:bg-slate-50"
             >
               Réinitialiser
@@ -790,7 +834,9 @@ export default async function FinanceExpensesPage({
             </div>
           ) : (
             filteredRows.map((row) => {
-              const category = row.category_id ? categoryMap.get(row.category_id) : null;
+              const category = row.category_id
+                ? categoryMap.get(row.category_id)
+                : null;
 
               return (
                 <article
@@ -831,15 +877,21 @@ export default async function FinanceExpensesPage({
                   <div className="flex flex-col gap-4 px-5 py-4 lg:flex-row lg:items-center lg:justify-between">
                     <div className="grid gap-2 text-sm text-slate-700">
                       <div>
-                        <span className="font-semibold text-slate-800">Date :</span>{" "}
+                        <span className="font-semibold text-slate-800">
+                          Date :
+                        </span>{" "}
                         {formatExpenseDate(row.expense_date)}
                       </div>
                       <div>
-                        <span className="font-semibold text-slate-800">Code catégorie :</span>{" "}
+                        <span className="font-semibold text-slate-800">
+                          Code catégorie :
+                        </span>{" "}
                         {category?.code || "—"}
                       </div>
                       <div>
-                        <span className="font-semibold text-slate-800">Créée le :</span>{" "}
+                        <span className="font-semibold text-slate-800">
+                          Créée le :
+                        </span>{" "}
                         {row.created_at
                           ? new Date(row.created_at).toLocaleString("fr-FR", {
                               dateStyle: "short",

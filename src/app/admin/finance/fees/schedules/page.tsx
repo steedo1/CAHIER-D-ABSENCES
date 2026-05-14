@@ -11,6 +11,10 @@ import {
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { getFinanceAccessForCurrentUser } from "@/lib/finance-access";
+import {
+  AcademicYearSelector,
+  getFinanceAcademicYearContext,
+} from "../../_shared/academic-year";
 
 export const dynamic = "force-dynamic";
 
@@ -51,7 +55,7 @@ function normalizeText(value: unknown) {
 function buildLevelScheduleLabel(
   labelInput: string,
   categoryName: string,
-  classLabel: string
+  classLabel: string,
 ) {
   const base = labelInput || categoryName;
   return `${base} - ${classLabel}`;
@@ -130,7 +134,9 @@ async function createFeeScheduleAction(formData: FormData) {
 
   if (targetScope === "level") {
     if (!level) {
-      throw new Error("Le niveau est obligatoire pour une création par niveau.");
+      throw new Error(
+        "Le niveau est obligatoire pour une création par niveau.",
+      );
     }
 
     const { data: levelClasses, error: classesErr } = await admin
@@ -149,7 +155,7 @@ async function createFeeScheduleAction(formData: FormData) {
 
     if (targetClasses.length === 0) {
       throw new Error(
-        `Aucune classe trouvée pour le niveau ${level} sur l’année ${academicYear}.`
+        `Aucune classe trouvée pour le niveau ${level} sur l’année ${academicYear}.`,
       );
     }
 
@@ -167,9 +173,14 @@ async function createFeeScheduleAction(formData: FormData) {
     if (existingErr) throw new Error(existingErr.message);
 
     const existingClassIds = new Set(
-      ((existingSchedules ?? []) as Array<{ id: string; class_id: string | null }>)
+      (
+        (existingSchedules ?? []) as Array<{
+          id: string;
+          class_id: string | null;
+        }>
+      )
         .map((row) => row.class_id)
-        .filter(Boolean) as string[]
+        .filter(Boolean) as string[],
     );
 
     if (existingClassIds.size > 0) {
@@ -181,7 +192,7 @@ async function createFeeScheduleAction(formData: FormData) {
       const suffix = conflicts.length > 5 ? " ..." : "";
 
       throw new Error(
-        `Un barème de cette catégorie existe déjà sur l’année ${academicYear} pour : ${preview}${suffix}`
+        `Un barème de cette catégorie existe déjà sur l’année ${academicYear} pour : ${preview}${suffix}`,
       );
     }
 
@@ -300,15 +311,27 @@ function StatusPill({
   );
 }
 
-export default async function FinanceFeeSchedulesPage() {
+export default async function FinanceFeeSchedulesPage({
+  searchParams,
+}: {
+  searchParams?: Promise<{ academic_year?: string }>;
+}) {
   const access = await getFinanceAccessForCurrentUser();
 
   if (!access.ok) {
     redirect("/admin/finance/locked");
   }
 
+  const params = searchParams ? await searchParams : undefined;
+  const requestedAcademicYear = String(params?.academic_year || "").trim();
+
   const institutionId = await getCurrentInstitutionIdOrThrow();
   const supabase = await getSupabaseServerClient();
+  const academicYearCtx = await getFinanceAcademicYearContext(
+    institutionId,
+    requestedAcademicYear,
+  );
+  const { academicYears, selectedAcademicYearCode } = academicYearCtx;
 
   const [
     { data: categories, error: catErr },
@@ -323,21 +346,36 @@ export default async function FinanceFeeSchedulesPage() {
       .eq("is_active", true)
       .order("name", { ascending: true }),
 
-    supabase
-      .from("classes")
-      .select("id,label,level,academic_year")
-      .eq("institution_id", institutionId)
-      .order("level", { ascending: true })
-      .order("label", { ascending: true }),
+    (() => {
+      let query = supabase
+        .from("classes")
+        .select("id,label,level,academic_year")
+        .eq("institution_id", institutionId);
 
-    supabase
-      .schema("finance")
-      .from("fee_schedules")
-      .select(
-        "id,school_id,academic_year,class_id,fee_category_id,label,amount,due_date,allow_partial,is_active,notes,created_at,updated_at"
-      )
-      .eq("school_id", institutionId)
-      .order("created_at", { ascending: false }),
+      if (selectedAcademicYearCode) {
+        query = query.eq("academic_year", selectedAcademicYearCode);
+      }
+
+      return query
+        .order("level", { ascending: true })
+        .order("label", { ascending: true });
+    })(),
+
+    (() => {
+      let query = supabase
+        .schema("finance")
+        .from("fee_schedules")
+        .select(
+          "id,school_id,academic_year,class_id,fee_category_id,label,amount,due_date,allow_partial,is_active,notes,created_at,updated_at",
+        )
+        .eq("school_id", institutionId);
+
+      if (selectedAcademicYearCode) {
+        query = query.eq("academic_year", selectedAcademicYearCode);
+      }
+
+      return query.order("created_at", { ascending: false });
+    })(),
   ]);
 
   if (catErr) throw new Error(catErr.message);
@@ -357,10 +395,10 @@ export default async function FinanceFeeSchedulesPage() {
     new Map(
       classRows
         .filter((row) => normalizeText(row.level))
-        .map((row) => [normalizeText(row.level), normalizeText(row.level)])
-    ).values()
+        .map((row) => [normalizeText(row.level), normalizeText(row.level)]),
+    ).values(),
   ).sort((a, b) =>
-    a.localeCompare(b, "fr", { numeric: true, sensitivity: "base" })
+    a.localeCompare(b, "fr", { numeric: true, sensitivity: "base" }),
   );
 
   return (
@@ -411,6 +449,12 @@ export default async function FinanceFeeSchedulesPage() {
           </div>
         </div>
       </section>
+
+      <AcademicYearSelector
+        academicYears={academicYears}
+        selectedAcademicYearCode={selectedAcademicYearCode}
+        currentPath="/admin/finance/fees/schedules"
+      />
 
       <section className="grid gap-6 xl:grid-cols-[430px_1fr]">
         <form
@@ -512,6 +556,7 @@ export default async function FinanceFeeSchedulesPage() {
                 type="text"
                 name="academic_year"
                 required
+                defaultValue={selectedAcademicYearCode}
                 placeholder="Ex. 2025-2026"
                 className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-semibold text-slate-800 outline-none placeholder:text-slate-400"
               />
@@ -609,7 +654,9 @@ export default async function FinanceFeeSchedulesPage() {
           ) : (
             <div className="mt-5 space-y-4">
               {scheduleRows.map((row) => {
-                const classRow = row.class_id ? classMap.get(row.class_id) : null;
+                const classRow = row.class_id
+                  ? classMap.get(row.class_id)
+                  : null;
                 const categoryRow = categoryMap.get(row.fee_category_id);
 
                 return (

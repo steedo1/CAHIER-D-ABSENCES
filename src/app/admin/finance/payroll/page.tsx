@@ -18,6 +18,10 @@ import {
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { getFinanceAccessForCurrentUser } from "@/lib/finance-access";
+import {
+  AcademicYearSelector,
+  getFinanceAcademicYearContext,
+} from "../_shared/academic-year";
 
 export const dynamic = "force-dynamic";
 
@@ -56,6 +60,11 @@ type TeacherPayrollRunRow = {
   generated_at: string;
   validated_at: string | null;
   notes: string | null;
+  academic_year_id?: string | null;
+  academic_year?: string | null;
+  late_tolerance_min?: number | string | null;
+  early_departure_tolerance_min?: number | string | null;
+  session_reference_minutes?: number | string | null;
 };
 
 type TeacherPayrollLineRow = {
@@ -75,6 +84,11 @@ type TeacherPayrollLineRow = {
   rate_first_cycle: number | string;
   rate_second_cycle: number | string;
   gross_amount: number | string;
+  expected_amount?: number | string | null;
+  lost_minutes_after_tolerance?: number | string | null;
+  lost_sessions_equivalent?: number | string | null;
+  lost_amount?: number | string | null;
+  adjusted_amount?: number | string | null;
   notes: string | null;
   created_at: string;
   updated_at: string;
@@ -146,6 +160,8 @@ type ExpectedSlot = {
   weekday: number;
   cycle: SchoolCycle;
   expected_minutes: number;
+  start_time?: string | null;
+  end_time?: string | null;
 };
 
 function formatMoney(value: number | string) {
@@ -182,16 +198,34 @@ function minutesToHourLabel(min: number) {
   return `${h}H${String(r).padStart(2, "0")}`;
 }
 
+function formatSessions(value: number) {
+  const n = Number(value || 0);
+  return n.toLocaleString("fr-FR", {
+    minimumFractionDigits: Number.isInteger(n) ? 0 : 2,
+    maximumFractionDigits: 2,
+  });
+}
+
+function numberValue(value: number | string | null | undefined) {
+  const n = Number(value || 0);
+  return Number.isFinite(n) ? n : 0;
+}
+
 function teacherLabel(t: {
   display_name?: string | null;
   email?: string | null;
   phone?: string | null;
 }) {
-  return t.display_name?.trim() || t.email?.trim() || t.phone?.trim() || "(enseignant)";
+  return (
+    t.display_name?.trim() ||
+    t.email?.trim() ||
+    t.phone?.trim() ||
+    "(enseignant)"
+  );
 }
 
 function normalizeScope(value: string | null | undefined): PayrollScope {
-  return value === "all_teachers" ? "all_teachers" : "vacataires_only";
+  return value === "vacataires_only" ? "vacataires_only" : "all_teachers";
 }
 
 function normalizeMonth(value: string | null | undefined) {
@@ -206,6 +240,18 @@ function parseAmount(value: FormDataEntryValue | null, fallback = 0) {
   return Number.isFinite(n) ? n : fallback;
 }
 
+function parsePositiveInt(
+  value: FormDataEntryValue | string | null | undefined,
+  fallback = 0,
+) {
+  const n = Math.round(Number(String(value || "").replace(",", ".")));
+  return Number.isFinite(n) && n >= 0 ? n : fallback;
+}
+
+function roundMoney(value: number) {
+  return Math.round(Number(value || 0));
+}
+
 function monthRange(month: string) {
   const [year, monthNumber] = month.split("-").map(Number);
   const start = new Date(year, (monthNumber || 1) - 1, 1);
@@ -213,7 +259,7 @@ function monthRange(month: string) {
   const periodMonth = `${year}-${String(monthNumber).padStart(2, "0")}-01`;
   const periodStart = `${year}-${String(monthNumber).padStart(2, "0")}-01`;
   const periodEnd = `${end.getFullYear()}-${String(end.getMonth() + 1).padStart(2, "0")}-${String(
-    end.getDate()
+    end.getDate(),
   ).padStart(2, "0")}`;
 
   return { start, end, periodMonth, periodStart, periodEnd };
@@ -275,7 +321,7 @@ function overlapDateRange(
   startDate: string | null | undefined,
   endDate: string | null | undefined,
   from: string,
-  to: string
+  to: string,
 ) {
   const s = (startDate || "0001-01-01").slice(0, 10);
   const e = (endDate || "9999-12-31").slice(0, 10);
@@ -326,7 +372,7 @@ async function getCurrentContextOrThrow() {
 async function fetchStatisticsDetailServer(
   teacherId: string,
   from: string,
-  to: string
+  to: string,
 ): Promise<StatisticsDetailPayload> {
   const h = await headers();
   const c = await cookies();
@@ -399,7 +445,7 @@ async function fetchInstitutionSettingsServer(): Promise<InstitutionSettings> {
 }
 
 async function getPayrollTeachers(
-  institutionId: string
+  institutionId: string,
 ): Promise<PayrollTeacherRow[]> {
   const admin = getSupabaseServiceClient();
 
@@ -412,31 +458,33 @@ async function getPayrollTeachers(
   if (roleErr) throw new Error(roleErr.message);
 
   const teacherIds = Array.from(
-    new Set((roles ?? []).map((r: any) => String(r.profile_id)))
+    new Set((roles ?? []).map((r: any) => String(r.profile_id))),
   );
 
   if (teacherIds.length === 0) return [];
 
-  const [{ data: profiles, error: profErr }, { data: payProfiles, error: payErr }] =
-    await Promise.all([
-      admin
-        .from("profiles")
-        .select("id,display_name,email,phone")
-        .in("id", teacherIds),
+  const [
+    { data: profiles, error: profErr },
+    { data: payProfiles, error: payErr },
+  ] = await Promise.all([
+    admin
+      .from("profiles")
+      .select("id,display_name,email,phone")
+      .in("id", teacherIds),
 
-      admin
-        .schema("finance")
-        .from("teacher_pay_profiles")
-        .select("profile_id,employment_type,payroll_enabled,notes")
-        .eq("institution_id", institutionId)
-        .in("profile_id", teacherIds),
-    ]);
+    admin
+      .schema("finance")
+      .from("teacher_pay_profiles")
+      .select("profile_id,employment_type,payroll_enabled,notes")
+      .eq("institution_id", institutionId)
+      .in("profile_id", teacherIds),
+  ]);
 
   if (profErr) throw new Error(profErr.message);
   if (payErr) throw new Error(payErr.message);
 
   const payMap = new Map(
-    (payProfiles ?? []).map((r: any) => [String(r.profile_id), r])
+    (payProfiles ?? []).map((r: any) => [String(r.profile_id), r]),
   );
 
   return (profiles ?? [])
@@ -447,10 +495,13 @@ async function getPayrollTeachers(
         display_name: (p.display_name ?? null) as string | null,
         email: (p.email ?? null) as string | null,
         phone: (p.phone ?? null) as string | null,
-        employment_type:
-          ((pay?.employment_type as EmploymentType | undefined) ?? "permanent") as EmploymentType,
+        employment_type: ((pay?.employment_type as
+          | EmploymentType
+          | undefined) ?? "permanent") as EmploymentType,
         payroll_enabled:
-          typeof pay?.payroll_enabled === "boolean" ? pay.payroll_enabled : true,
+          typeof pay?.payroll_enabled === "boolean"
+            ? pay.payroll_enabled
+            : true,
         notes: (pay?.notes ?? null) as string | null,
       };
     })
@@ -465,7 +516,8 @@ async function buildExpectedSlotsForTeacher(params: {
   periodEnd: string;
   classMap: Map<string, ClassRow>;
 }) {
-  const { admin, institutionId, teacherId, periodStart, periodEnd, classMap } = params;
+  const { admin, institutionId, teacherId, periodStart, periodEnd, classMap } =
+    params;
 
   const [
     { data: ttRows, error: ttErr },
@@ -496,12 +548,14 @@ async function buildExpectedSlotsForTeacher(params: {
 
   const activeAssignments = new Set(
     ((ctRows ?? []) as ClassTeacherAssignmentRow[])
-      .filter((r) => overlapDateRange(r.start_date, r.end_date, periodStart, periodEnd))
-      .map((r) => `${r.class_id}::${r.subject_id}`)
+      .filter((r) =>
+        overlapDateRange(r.start_date, r.end_date, periodStart, periodEnd),
+      )
+      .map((r) => `${r.class_id}::${r.subject_id}`),
   );
 
   const periodById = new Map<string, PeriodScheduleRow>(
-    ((periodRows ?? []) as PeriodScheduleRow[]).map((p) => [String(p.id), p])
+    ((periodRows ?? []) as PeriodScheduleRow[]).map((p) => [String(p.id), p]),
   );
 
   const from = new Date(`${periodStart}T00:00:00`);
@@ -537,14 +591,16 @@ async function buildExpectedSlotsForTeacher(params: {
         weekday,
         cycle,
         expected_minutes,
+        start_time: period.start_time || null,
+        end_time: period.end_time || null,
       });
     }
   }
 
   out.sort((a, b) =>
     `${a.session_date}|${a.class_id}|${a.subject_id}|${a.period_id}`.localeCompare(
-      `${b.session_date}|${b.class_id}|${b.subject_id}|${b.period_id}`
-    )
+      `${b.session_date}|${b.class_id}|${b.subject_id}|${b.period_id}`,
+    ),
   );
 
   return out;
@@ -566,14 +622,42 @@ async function generatePayrollDraftAction(formData: FormData) {
   const rateFirst = parseAmount(formData.get("rate_first"), 0);
   const rateSecond = parseAmount(formData.get("rate_second"), 0);
   const notes = String(formData.get("notes") || "").trim() || null;
+  const requestedAcademicYear = String(
+    formData.get("academic_year") || "",
+  ).trim();
+  const lateToleranceMin = parsePositiveInt(
+    formData.get("late_tolerance_min"),
+    10,
+  );
+  const earlyDepartureToleranceMin = parsePositiveInt(
+    formData.get("early_departure_tolerance_min"),
+    0,
+  );
+  const sessionReferenceMinutes = Math.max(
+    1,
+    parsePositiveInt(formData.get("session_reference_minutes"), 60),
+  );
 
   const { periodMonth, periodStart, periodEnd } = monthRange(month);
+  const academicYearCtx = await getFinanceAcademicYearContext(
+    institutionId,
+    requestedAcademicYear,
+  );
+  const { selectedAcademicYearId, selectedAcademicYearCode } = academicYearCtx;
 
   const [{ data: classRows, error: clsErr }, teachers] = await Promise.all([
-    admin
-      .from("classes")
-      .select("id,label,level,academic_year")
-      .eq("institution_id", institutionId),
+    (() => {
+      let query = admin
+        .from("classes")
+        .select("id,label,level,academic_year")
+        .eq("institution_id", institutionId);
+
+      if (selectedAcademicYearCode) {
+        query = query.eq("academic_year", selectedAcademicYearCode);
+      }
+
+      return query;
+    })(),
     getPayrollTeachers(institutionId),
   ]);
 
@@ -592,9 +676,10 @@ async function generatePayrollDraftAction(formData: FormData) {
     .schema("finance")
     .from("teacher_payroll_runs")
     .select(
-      "id,institution_id,period_month,period_start,period_end,scope,default_rate_first_cycle,default_rate_second_cycle,status,generated_at,validated_at,notes"
+      "id,institution_id,period_month,period_start,period_end,scope,default_rate_first_cycle,default_rate_second_cycle,status,generated_at,validated_at,notes,academic_year_id,academic_year,late_tolerance_min,early_departure_tolerance_min,session_reference_minutes",
     )
     .eq("institution_id", institutionId)
+    .eq("academic_year", selectedAcademicYearCode || null)
     .eq("period_month", periodMonth)
     .eq("status", "draft")
     .order("generated_at", { ascending: false })
@@ -616,6 +701,11 @@ async function generatePayrollDraftAction(formData: FormData) {
         default_rate_first_cycle: rateFirst,
         default_rate_second_cycle: rateSecond,
         notes,
+        academic_year_id: selectedAcademicYearId,
+        academic_year: selectedAcademicYearCode || null,
+        late_tolerance_min: lateToleranceMin,
+        early_departure_tolerance_min: earlyDepartureToleranceMin,
+        session_reference_minutes: sessionReferenceMinutes,
         generated_by: userId,
         generated_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
@@ -639,11 +729,16 @@ async function generatePayrollDraftAction(formData: FormData) {
         generated_by: userId,
         generated_at: new Date().toISOString(),
         notes,
+        academic_year_id: selectedAcademicYearId,
+        academic_year: selectedAcademicYearCode || null,
+        late_tolerance_min: lateToleranceMin,
+        early_departure_tolerance_min: earlyDepartureToleranceMin,
+        session_reference_minutes: sessionReferenceMinutes,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       } as any)
       .select(
-        "id,institution_id,period_month,period_start,period_end,scope,default_rate_first_cycle,default_rate_second_cycle,status,generated_at,validated_at,notes"
+        "id,institution_id,period_month,period_start,period_end,scope,default_rate_first_cycle,default_rate_second_cycle,status,generated_at,validated_at,notes,academic_year_id,academic_year,late_tolerance_min,early_departure_tolerance_min,session_reference_minutes",
       )
       .single();
 
@@ -699,29 +794,12 @@ async function generatePayrollDraftAction(formData: FormData) {
     const expectedSessions = expectedSlots.length;
     const expectedMinutes = expectedSlots.reduce(
       (acc, slot) => acc + Number(slot.expected_minutes || 0),
-      0
+      0,
     );
 
     const actualRows = (stats.rows || []).filter(
-      (r) => !!r.actual_call_iso || Number(r.real_minutes || 0) > 0
+      (r) => !!r.actual_call_iso || Number(r.real_minutes || 0) > 0,
     );
-
-    let actualSessions = 0;
-    let actualMinutes = 0;
-    let sessionsFirstCycle = 0;
-    let sessionsSecondCycle = 0;
-
-    for (const row of actualRows) {
-      const cls = row.class_id ? classMap.get(row.class_id) : null;
-      const cycle = cycleFromLevel(cls?.level);
-      const effActual = Number(row.real_minutes || row.expected_minutes || 0);
-
-      actualSessions += 1;
-      actualMinutes += effActual;
-
-      if (cycle === "first_cycle") sessionsFirstCycle += 1;
-      else sessionsSecondCycle += 1;
-    }
 
     const actualBuckets = new Map<string, StatisticsDetailRow[]>();
 
@@ -742,16 +820,39 @@ async function generatePayrollDraftAction(formData: FormData) {
       const key = `${slot.session_date}::${slot.weekday}::${slot.class_id}`;
       const bucket = actualBuckets.get(key) || [];
       const matched = bucket.length ? bucket.shift()! : null;
+      const expectedMinutes = Number(slot.expected_minutes || 0);
 
       const effActual =
-        matched && (!!matched.actual_call_iso || Number(matched.real_minutes || 0) > 0)
-          ? Number(
-              matched.real_minutes ||
-                matched.expected_minutes ||
-                slot.expected_minutes ||
-                0
+        matched &&
+        (!!matched.actual_call_iso || Number(matched.real_minutes || 0) > 0)
+          ? Math.min(
+              expectedMinutes,
+              Number(
+                matched.real_minutes ||
+                  matched.expected_minutes ||
+                  expectedMinutes ||
+                  0,
+              ),
             )
           : 0;
+
+      const toleranceMinutes =
+        effActual > 0 ? lateToleranceMin + earlyDepartureToleranceMin : 0;
+      const lostMinutes = Math.max(
+        0,
+        expectedMinutes - effActual - toleranceMinutes,
+      );
+      const lostSessionsEquivalent = Math.min(
+        1,
+        lostMinutes / sessionReferenceMinutes,
+      );
+      const rate = slot.cycle === "first_cycle" ? rateFirst : rateSecond;
+      const theoreticalAmount = rate;
+      const lostAmount = roundMoney(rate * lostSessionsEquivalent);
+      const adjustedAmount = Math.max(
+        0,
+        roundMoney(theoreticalAmount - lostAmount),
+      );
 
       return {
         class_id: slot.class_id,
@@ -760,15 +861,51 @@ async function generatePayrollDraftAction(formData: FormData) {
         session_date: slot.session_date,
         weekday: slot.weekday,
         cycle: slot.cycle,
-        expected_minutes: Number(slot.expected_minutes || 0),
+        expected_minutes: expectedMinutes,
         actual_minutes: effActual,
+        tolerance_minutes: toleranceMinutes,
+        lost_minutes_after_tolerance: lostMinutes,
+        lost_sessions_equivalent: lostSessionsEquivalent,
+        theoretical_amount: theoreticalAmount,
+        lost_amount: lostAmount,
+        adjusted_amount: adjustedAmount,
         source_origin: effActual > 0 ? "class_device" : "timetable_expected",
-        counted_for_pay: effActual > 0,
+        counted_for_pay: adjustedAmount > 0,
       };
     });
 
-    const grossAmount =
-      sessionsFirstCycle * rateFirst + sessionsSecondCycle * rateSecond;
+    const actualSessions = sessionItems.filter(
+      (item) => item.actual_minutes > 0,
+    ).length;
+    const actualMinutes = sessionItems.reduce(
+      (acc, item) => acc + item.actual_minutes,
+      0,
+    );
+    const sessionsFirstCycle = sessionItems.filter(
+      (item) => item.cycle === "first_cycle",
+    ).length;
+    const sessionsSecondCycle = sessionItems.filter(
+      (item) => item.cycle === "second_cycle",
+    ).length;
+    const expectedAmount = sessionItems.reduce(
+      (acc, item) => acc + item.theoretical_amount,
+      0,
+    );
+    const lostMinutesAfterTolerance = sessionItems.reduce(
+      (acc, item) => acc + item.lost_minutes_after_tolerance,
+      0,
+    );
+    const lostSessionsEquivalent =
+      lostMinutesAfterTolerance / sessionReferenceMinutes;
+    const lostAmount = sessionItems.reduce(
+      (acc, item) => acc + item.lost_amount,
+      0,
+    );
+    const adjustedAmount = sessionItems.reduce(
+      (acc, item) => acc + item.adjusted_amount,
+      0,
+    );
+    const grossAmount = expectedAmount;
 
     const { data: insertedLine, error: insLineErr } = await admin
       .schema("finance")
@@ -789,12 +926,17 @@ async function generatePayrollDraftAction(formData: FormData) {
         rate_first_cycle: rateFirst,
         rate_second_cycle: rateSecond,
         gross_amount: grossAmount,
+        expected_amount: expectedAmount,
+        lost_minutes_after_tolerance: lostMinutesAfterTolerance,
+        lost_sessions_equivalent: lostSessionsEquivalent,
+        lost_amount: lostAmount,
+        adjusted_amount: adjustedAmount,
         notes: teacher.notes || null,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       } as any)
       .select(
-        "id,run_id,institution_id,teacher_id,teacher_name_snapshot,employment_type,payroll_enabled,expected_sessions,actual_sessions,expected_minutes,actual_minutes,sessions_first_cycle,sessions_second_cycle,rate_first_cycle,rate_second_cycle,gross_amount,notes,created_at,updated_at"
+        "id,run_id,institution_id,teacher_id,teacher_name_snapshot,employment_type,payroll_enabled,expected_sessions,actual_sessions,expected_minutes,actual_minutes,sessions_first_cycle,sessions_second_cycle,rate_first_cycle,rate_second_cycle,gross_amount,expected_amount,lost_minutes_after_tolerance,lost_sessions_equivalent,lost_amount,adjusted_amount,notes,created_at,updated_at",
       )
       .single();
 
@@ -814,6 +956,12 @@ async function generatePayrollDraftAction(formData: FormData) {
         cycle: item.cycle,
         expected_minutes: item.expected_minutes,
         actual_minutes: item.actual_minutes,
+        tolerance_minutes: item.tolerance_minutes,
+        lost_minutes_after_tolerance: item.lost_minutes_after_tolerance,
+        lost_sessions_equivalent: item.lost_sessions_equivalent,
+        theoretical_amount: item.theoretical_amount,
+        lost_amount: item.lost_amount,
+        adjusted_amount: item.adjusted_amount,
         source_origin: item.source_origin,
         counted_for_pay: item.counted_for_pay,
         created_at: new Date().toISOString(),
@@ -831,10 +979,18 @@ async function generatePayrollDraftAction(formData: FormData) {
   revalidatePath("/admin/finance/payroll");
   redirect(
     `/admin/finance/payroll?month=${encodeURIComponent(month)}&scope=${encodeURIComponent(
-      scope
+      scope,
     )}&rate_first=${encodeURIComponent(String(rateFirst))}&rate_second=${encodeURIComponent(
-      String(rateSecond)
-    )}&run_id=${encodeURIComponent(runId)}`
+      String(rateSecond),
+    )}&academic_year=${encodeURIComponent(
+      selectedAcademicYearCode,
+    )}&late_tolerance_min=${encodeURIComponent(
+      String(lateToleranceMin),
+    )}&early_departure_tolerance_min=${encodeURIComponent(
+      String(earlyDepartureToleranceMin),
+    )}&session_reference_minutes=${encodeURIComponent(
+      String(sessionReferenceMinutes),
+    )}&run_id=${encodeURIComponent(runId)}`,
   );
 }
 
@@ -850,6 +1006,7 @@ async function validatePayrollRunAction(formData: FormData) {
   const admin = getSupabaseServiceClient();
 
   const runId = String(formData.get("run_id") || "").trim();
+  const academicYear = String(formData.get("academic_year") || "").trim();
   if (!runId) throw new Error("run_id manquant.");
 
   const { error } = await admin
@@ -868,7 +1025,11 @@ async function validatePayrollRunAction(formData: FormData) {
   if (error) throw new Error(error.message);
 
   revalidatePath("/admin/finance/payroll");
-  redirect(`/admin/finance/payroll?run_id=${encodeURIComponent(runId)}`);
+  redirect(
+    `/admin/finance/payroll?academic_year=${encodeURIComponent(
+      academicYear,
+    )}&run_id=${encodeURIComponent(runId)}`,
+  );
 }
 
 function StatCard({
@@ -941,15 +1102,15 @@ function StatusPill({ status }: { status: PayrollStatus }) {
     status === "validated"
       ? "bg-emerald-50 text-emerald-700 ring-emerald-200"
       : status === "draft"
-      ? "bg-amber-50 text-amber-700 ring-amber-200"
-      : "bg-slate-100 text-slate-700 ring-slate-200";
+        ? "bg-amber-50 text-amber-700 ring-amber-200"
+        : "bg-slate-100 text-slate-700 ring-slate-200";
 
   const label =
     status === "validated"
       ? "Validé"
       : status === "draft"
-      ? "Brouillon"
-      : "Annulé";
+        ? "Brouillon"
+        : "Annulé";
 
   return (
     <span
@@ -972,6 +1133,10 @@ export default async function FinancePayrollPage({
     run_id?: string;
     print?: string;
     autoprint?: string;
+    academic_year?: string;
+    late_tolerance_min?: string;
+    early_departure_tolerance_min?: string;
+    session_reference_minutes?: string;
   }>;
 }) {
   const access = await getFinanceAccessForCurrentUser();
@@ -986,27 +1151,48 @@ export default async function FinancePayrollPage({
   const scope = normalizeScope(params?.scope);
   const rateFirst = Number(params?.rate_first || 1500) || 1500;
   const rateSecond = Number(params?.rate_second || 2000) || 2000;
+  const requestedAcademicYear = String(params?.academic_year || "").trim();
+  const lateToleranceMin = parsePositiveInt(params?.late_tolerance_min, 10);
+  const earlyDepartureToleranceMin = parsePositiveInt(
+    params?.early_departure_tolerance_min,
+    0,
+  );
+  const sessionReferenceMinutes = Math.max(
+    1,
+    parsePositiveInt(params?.session_reference_minutes, 60),
+  );
   const printMode = String(params?.print || "") === "1";
   const autoPrint = printMode && String(params?.autoprint || "") === "1";
   const requestedRunId = String(params?.run_id || "").trim();
 
   const { institutionId } = await getCurrentContextOrThrow();
   const supabase = await getSupabaseServerClient();
+  const academicYearCtx = await getFinanceAcademicYearContext(
+    institutionId,
+    requestedAcademicYear,
+  );
+  const { academicYears, selectedAcademicYearCode } = academicYearCtx;
 
   const [
     { data: runs, error: runsErr },
     { data: teachersPay, error: teachersErr },
     institutionCfg,
   ] = await Promise.all([
-    supabase
-      .schema("finance")
-      .from("teacher_payroll_runs")
-      .select(
-        "id,institution_id,period_month,period_start,period_end,scope,default_rate_first_cycle,default_rate_second_cycle,status,generated_at,validated_at,notes"
-      )
-      .eq("institution_id", institutionId)
-      .order("generated_at", { ascending: false })
-      .limit(24),
+    (() => {
+      let query = supabase
+        .schema("finance")
+        .from("teacher_payroll_runs")
+        .select(
+          "id,institution_id,period_month,period_start,period_end,scope,default_rate_first_cycle,default_rate_second_cycle,status,generated_at,validated_at,notes,academic_year_id,academic_year,late_tolerance_min,early_departure_tolerance_min,session_reference_minutes",
+        )
+        .eq("institution_id", institutionId);
+
+      if (selectedAcademicYearCode) {
+        query = query.eq("academic_year", selectedAcademicYearCode);
+      }
+
+      return query.order("generated_at", { ascending: false }).limit(24);
+    })(),
 
     supabase
       .schema("finance")
@@ -1029,22 +1215,40 @@ export default async function FinancePayrollPage({
   }[];
 
   const selectedRun =
-    (requestedRunId
-      ? runRows.find((r) => r.id === requestedRunId)
-      : null) ||
-    runRows.find((r) => r.period_month === `${month}-01` && r.status === "draft") ||
+    (requestedRunId ? runRows.find((r) => r.id === requestedRunId) : null) ||
+    runRows.find(
+      (r) => r.period_month === `${month}-01` && r.status === "draft",
+    ) ||
     runRows.find((r) => r.period_month === `${month}-01`) ||
     runRows[0] ||
     null;
 
   const selectedRunId = selectedRun?.id || null;
+  const effectiveLateToleranceMin = selectedRun
+    ? parsePositiveInt(selectedRun.late_tolerance_min, lateToleranceMin)
+    : lateToleranceMin;
+  const effectiveEarlyDepartureToleranceMin = selectedRun
+    ? parsePositiveInt(
+        selectedRun.early_departure_tolerance_min,
+        earlyDepartureToleranceMin,
+      )
+    : earlyDepartureToleranceMin;
+  const effectiveSessionReferenceMinutes = selectedRun
+    ? Math.max(
+        1,
+        parsePositiveInt(
+          selectedRun.session_reference_minutes,
+          sessionReferenceMinutes,
+        ),
+      )
+    : sessionReferenceMinutes;
 
   const { data: lineRows, error: lineErr } = selectedRunId
     ? await supabase
         .schema("finance")
         .from("teacher_payroll_lines")
         .select(
-          "id,run_id,institution_id,teacher_id,teacher_name_snapshot,employment_type,payroll_enabled,expected_sessions,actual_sessions,expected_minutes,actual_minutes,sessions_first_cycle,sessions_second_cycle,rate_first_cycle,rate_second_cycle,gross_amount,notes,created_at,updated_at"
+          "id,run_id,institution_id,teacher_id,teacher_name_snapshot,employment_type,payroll_enabled,expected_sessions,actual_sessions,expected_minutes,actual_minutes,sessions_first_cycle,sessions_second_cycle,rate_first_cycle,rate_second_cycle,gross_amount,expected_amount,lost_minutes_after_tolerance,lost_sessions_equivalent,lost_amount,adjusted_amount,notes,created_at,updated_at",
         )
         .eq("run_id", selectedRunId)
         .order("teacher_name_snapshot", { ascending: true })
@@ -1063,6 +1267,10 @@ export default async function FinancePayrollPage({
       acc.firstCycle += Number(row.sessions_first_cycle || 0);
       acc.secondCycle += Number(row.sessions_second_cycle || 0);
       acc.gross += Number(row.gross_amount || 0);
+      acc.lostMinutes += numberValue(row.lost_minutes_after_tolerance);
+      acc.lostSessions += numberValue(row.lost_sessions_equivalent);
+      acc.lostAmount += numberValue(row.lost_amount);
+      acc.adjusted += numberValue(row.adjusted_amount ?? row.gross_amount);
       return acc;
     },
     {
@@ -1073,19 +1281,25 @@ export default async function FinancePayrollPage({
       firstCycle: 0,
       secondCycle: 0,
       gross: 0,
-    }
+      lostMinutes: 0,
+      lostSessions: 0,
+      lostAmount: 0,
+      adjusted: 0,
+    },
   );
 
   const activePayrollTeachers = teacherPayRows.filter((r) => r.payroll_enabled);
   const vacataires = teacherPayRows.filter(
-    (r) => r.payroll_enabled && r.employment_type === "vacataire"
+    (r) => r.payroll_enabled && r.employment_type === "vacataire",
   );
 
   const institutionName = institutionDisplayName(institutionCfg);
   const headName =
-    (institutionCfg.institution_head_name || "").trim() || "Le premier responsable";
+    (institutionCfg.institution_head_name || "").trim() ||
+    "Le premier responsable";
   const headTitle =
-    (institutionCfg.institution_head_title || "").trim() || "Chef d’établissement";
+    (institutionCfg.institution_head_title || "").trim() ||
+    "Chef d’établissement";
   const place =
     (institutionCfg.institution_region || "").trim() ||
     (institutionCfg.institution_postal_address || "").trim() ||
@@ -1221,8 +1435,9 @@ export default async function FinancePayrollPage({
               </h1>
 
               <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-200 sm:text-[15px]">
-                Calcule la paie du mois à partir des séances attendues de l’emploi du temps,
-                tout en conservant les heures accomplies issues des statistiques réelles.
+                Calcule la paie du mois à partir des séances attendues de
+                l’emploi du temps, tout en conservant les heures accomplies
+                issues des statistiques réelles.
               </p>
 
               <div className="mt-4 flex flex-wrap items-center gap-2 text-xs font-semibold text-slate-200">
@@ -1301,22 +1516,30 @@ export default async function FinancePayrollPage({
                     {institutionCfg.institution_postal_address ? (
                       <div>{institutionCfg.institution_postal_address}</div>
                     ) : null}
-                    {institutionCfg.institution_phone || institutionCfg.institution_email ? (
+                    {institutionCfg.institution_phone ||
+                    institutionCfg.institution_email ? (
                       <div>
-                        {[institutionCfg.institution_phone, institutionCfg.institution_email]
+                        {[
+                          institutionCfg.institution_phone,
+                          institutionCfg.institution_email,
+                        ]
                           .filter(Boolean)
                           .join(" - ")}
                       </div>
                     ) : null}
                     {institutionCfg.institution_code ? (
-                      <div>Code établissement : {institutionCfg.institution_code}</div>
+                      <div>
+                        Code établissement : {institutionCfg.institution_code}
+                      </div>
                     ) : null}
                   </div>
                 </div>
               </div>
 
               <div className="shrink-0 text-right">
-                <div className="text-2xl font-black text-slate-900">FICHE DE PAIE</div>
+                <div className="text-2xl font-black text-slate-900">
+                  FICHE DE PAIE
+                </div>
                 <div className="mt-2 text-sm text-slate-600">
                   {formatMonthLabel(selectedRun.period_month.slice(0, 7))}
                 </div>
@@ -1325,14 +1548,16 @@ export default async function FinancePayrollPage({
                   {formatDate(selectedRun.period_end)}
                 </div>
                 <div className="no-print mt-3 text-xs font-semibold text-slate-500">
-                  Impression directe. Si besoin : Ctrl+P puis “Enregistrer au format PDF”.
+                  Impression directe. Si besoin : Ctrl+P puis “Enregistrer au
+                  format PDF”.
                 </div>
               </div>
             </div>
 
             {selectedRun.notes ? (
               <div className="mb-5 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700">
-                <span className="font-bold text-slate-900">Note :</span> {selectedRun.notes}
+                <span className="font-bold text-slate-900">Note :</span>{" "}
+                {selectedRun.notes}
               </div>
             ) : null}
 
@@ -1364,6 +1589,12 @@ export default async function FinancePayrollPage({
                         Heures accomplies
                       </th>
                       <th className="border border-slate-300 px-3 py-3 text-right font-black text-slate-700">
+                        Minutes perdues
+                      </th>
+                      <th className="border border-slate-300 px-3 py-3 text-right font-black text-slate-700">
+                        Eq. séances
+                      </th>
+                      <th className="border border-slate-300 px-3 py-3 text-right font-black text-slate-700">
                         1er cycle
                       </th>
                       <th className="border border-slate-300 px-3 py-3 text-right font-black text-slate-700">
@@ -1386,7 +1617,9 @@ export default async function FinancePayrollPage({
                           </div>
                         </td>
                         <td className="border border-slate-300 px-3 py-4 text-slate-700">
-                          {row.employment_type === "vacataire" ? "Vacataire" : "Permanent"}
+                          {row.employment_type === "vacataire"
+                            ? "Vacataire"
+                            : "Permanent"}
                         </td>
                         <td className="border border-slate-300 px-3 py-4 text-right text-slate-700">
                           {row.expected_sessions}
@@ -1400,6 +1633,16 @@ export default async function FinancePayrollPage({
                         <td className="border border-slate-300 px-3 py-4 text-right font-semibold text-slate-900">
                           {minutesToHourLabel(row.actual_minutes)}
                         </td>
+                        <td className="border border-slate-300 px-3 py-4 text-right font-semibold text-amber-700">
+                          {minutesToHourLabel(
+                            numberValue(row.lost_minutes_after_tolerance),
+                          )}
+                        </td>
+                        <td className="border border-slate-300 px-3 py-4 text-right font-semibold text-amber-700">
+                          {formatSessions(
+                            numberValue(row.lost_sessions_equivalent),
+                          )}
+                        </td>
                         <td className="border border-slate-300 px-3 py-4 text-right text-slate-700">
                           {row.sessions_first_cycle}
                         </td>
@@ -1408,6 +1651,14 @@ export default async function FinancePayrollPage({
                         </td>
                         <td className="border border-slate-300 px-3 py-4 text-right font-black text-emerald-700">
                           {formatMoney(row.gross_amount)}
+                          <div className="mt-1 text-xs font-bold text-slate-500">
+                            Avec pertes :{" "}
+                            {formatMoney(
+                              numberValue(
+                                row.adjusted_amount ?? row.gross_amount,
+                              ),
+                            )}
+                          </div>
                         </td>
                         <td className="border border-slate-300 px-3 py-4">
                           <div className="h-10 w-full rounded-md border border-dashed border-slate-300" />
@@ -1435,6 +1686,12 @@ export default async function FinancePayrollPage({
                       <td className="border border-slate-300 px-3 py-3 text-right font-bold text-slate-900">
                         {minutesToHourLabel(totals.actualMinutes)}
                       </td>
+                      <td className="border border-slate-300 px-3 py-3 text-right font-bold text-amber-700">
+                        {minutesToHourLabel(totals.lostMinutes)}
+                      </td>
+                      <td className="border border-slate-300 px-3 py-3 text-right font-bold text-amber-700">
+                        {formatSessions(totals.lostSessions)}
+                      </td>
                       <td className="border border-slate-300 px-3 py-3 text-right font-bold text-slate-900">
                         {totals.firstCycle}
                       </td>
@@ -1443,6 +1700,9 @@ export default async function FinancePayrollPage({
                       </td>
                       <td className="border border-slate-300 px-3 py-3 text-right font-black text-emerald-700">
                         {formatMoney(totals.gross)}
+                        <div className="mt-1 text-xs font-bold text-slate-500">
+                          Avec pertes : {formatMoney(totals.adjusted)}
+                        </div>
                       </td>
                       <td className="border border-slate-300 px-3 py-3" />
                     </tr>
@@ -1458,19 +1718,39 @@ export default async function FinancePayrollPage({
                 </div>
                 <div className="mt-3 font-bold">{headTitle}</div>
                 <div className="h-24" />
-                <div className="font-bold underline underline-offset-2">{headName}</div>
+                <div className="font-bold underline underline-offset-2">
+                  {headName}
+                </div>
               </div>
             </div>
           </div>
         </section>
       ) : (
         <section className="rounded-[28px] border border-dashed border-slate-300 bg-slate-50 px-5 py-12 text-center text-sm text-slate-600 shadow-sm">
-          Aucun run de paie chargé pour le moment. Génère un brouillon pour ce mois.
+          Aucun run de paie chargé pour le moment. Génère un brouillon pour ce
+          mois.
         </section>
       )}
 
       {!printMode ? (
         <>
+          <AcademicYearSelector
+            academicYears={academicYears}
+            selectedAcademicYearCode={selectedAcademicYearCode}
+            currentPath="/admin/finance/payroll"
+            hiddenParams={{
+              month,
+              scope,
+              rate_first: rateFirst,
+              rate_second: rateSecond,
+              run_id: selectedRunId || undefined,
+              late_tolerance_min: effectiveLateToleranceMin,
+              early_departure_tolerance_min:
+                effectiveEarlyDepartureToleranceMin,
+              session_reference_minutes: effectiveSessionReferenceMinutes,
+            }}
+          />
+
           <section className="no-print grid gap-4 md:grid-cols-2 xl:grid-cols-4">
             <StatCard
               icon={<Users className="h-6 w-6" />}
@@ -1495,13 +1775,11 @@ export default async function FinancePayrollPage({
             />
             <StatCard
               icon={<Wallet className="h-6 w-6" />}
-              label="Montant brut"
+              label="Salaire sans pertes"
               value={formatMoney(totals.gross)}
               hint={
                 selectedRun
-                  ? selectedRun.status === "validated"
-                    ? "Run validé"
-                    : "Run brouillon"
+                  ? `Avec pertes : ${formatMoney(totals.adjusted)}`
                   : "Aucun brouillon"
               }
               tone="violet"
@@ -1519,6 +1797,11 @@ export default async function FinancePayrollPage({
                 className="grid gap-4 md:grid-cols-2"
                 data-loading-form
               >
+                <input
+                  type="hidden"
+                  name="academic_year"
+                  value={selectedAcademicYearCode}
+                />
                 <div>
                   <div className="mb-1 text-xs font-bold uppercase tracking-wide text-slate-500">
                     Mois
@@ -1540,9 +1823,50 @@ export default async function FinancePayrollPage({
                     defaultValue={scope}
                     className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-semibold text-slate-800 outline-none"
                   >
-                    <option value="vacataires_only">Vacataires seulement</option>
                     <option value="all_teachers">Tous les enseignants</option>
+                    <option value="vacataires_only">
+                      Vacataires seulement
+                    </option>
                   </select>
+                </div>
+
+                <div>
+                  <div className="mb-1 text-xs font-bold uppercase tracking-wide text-slate-500">
+                    Marge retard autorisée
+                  </div>
+                  <input
+                    type="number"
+                    min="0"
+                    name="late_tolerance_min"
+                    defaultValue={effectiveLateToleranceMin}
+                    className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-semibold text-slate-800 outline-none"
+                  />
+                </div>
+
+                <div>
+                  <div className="mb-1 text-xs font-bold uppercase tracking-wide text-slate-500">
+                    Marge sortie anticipée
+                  </div>
+                  <input
+                    type="number"
+                    min="0"
+                    name="early_departure_tolerance_min"
+                    defaultValue={effectiveEarlyDepartureToleranceMin}
+                    className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-semibold text-slate-800 outline-none"
+                  />
+                </div>
+
+                <div>
+                  <div className="mb-1 text-xs font-bold uppercase tracking-wide text-slate-500">
+                    Minutes pour 1 séance
+                  </div>
+                  <input
+                    type="number"
+                    min="1"
+                    name="session_reference_minutes"
+                    defaultValue={effectiveSessionReferenceMinutes}
+                    className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-semibold text-slate-800 outline-none"
+                  />
                 </div>
 
                 <div>
@@ -1587,18 +1911,24 @@ export default async function FinancePayrollPage({
 
                 <div className="md:col-span-2 flex flex-wrap gap-3">
                   <button className="inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-4 py-3 text-sm font-bold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-80">
-                    <span data-idle-label className="inline-flex items-center justify-center gap-2">
+                    <span
+                      data-idle-label
+                      className="inline-flex items-center justify-center gap-2"
+                    >
                       <RefreshCcw className="h-4 w-4" />
                       Générer / actualiser le brouillon
                     </span>
-                    <span data-loading-label className="hidden items-center justify-center gap-2">
+                    <span
+                      data-loading-label
+                      className="hidden items-center justify-center gap-2"
+                    >
                       <span className="inline-block h-4 w-4 rounded-full border-2 border-white/30 border-t-white animate-spin" />
                       Chargement...
                     </span>
                   </button>
 
                   <Link
-                    href="/admin/finance"
+                    href={`/admin/finance?academic_year=${encodeURIComponent(selectedAcademicYearCode)}`}
                     className="inline-flex items-center justify-center rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-bold text-slate-700 hover:bg-slate-50"
                   >
                     Retour Finance
@@ -1620,11 +1950,27 @@ export default async function FinancePayrollPage({
                 <div className="space-y-3">
                   {runRows.map((run) => {
                     const href = `/admin/finance/payroll?month=${encodeURIComponent(
-                      run.period_month.slice(0, 7)
+                      run.period_month.slice(0, 7),
                     )}&scope=${encodeURIComponent(run.scope)}&rate_first=${encodeURIComponent(
-                      String(run.default_rate_first_cycle)
+                      String(run.default_rate_first_cycle),
                     )}&rate_second=${encodeURIComponent(
-                      String(run.default_rate_second_cycle)
+                      String(run.default_rate_second_cycle),
+                    )}&academic_year=${encodeURIComponent(
+                      run.academic_year || selectedAcademicYearCode,
+                    )}&late_tolerance_min=${encodeURIComponent(
+                      String(
+                        run.late_tolerance_min || effectiveLateToleranceMin,
+                      ),
+                    )}&early_departure_tolerance_min=${encodeURIComponent(
+                      String(
+                        run.early_departure_tolerance_min ||
+                          effectiveEarlyDepartureToleranceMin,
+                      ),
+                    )}&session_reference_minutes=${encodeURIComponent(
+                      String(
+                        run.session_reference_minutes ||
+                          effectiveSessionReferenceMinutes,
+                      ),
                     )}&run_id=${encodeURIComponent(run.id)}`;
 
                     return (
@@ -1673,25 +2019,40 @@ export default async function FinancePayrollPage({
                     <StatusPill status={selectedRun.status} />
                   </div>
                   <div className="mt-2 text-sm text-slate-600">
-                    <span className="font-semibold text-slate-800">Période :</span>{" "}
-                    {formatDate(selectedRun.period_start)} → {formatDate(selectedRun.period_end)}
+                    <span className="font-semibold text-slate-800">
+                      Période :
+                    </span>{" "}
+                    {formatDate(selectedRun.period_start)} →{" "}
+                    {formatDate(selectedRun.period_end)}
                   </div>
 
                   {selectedRun.notes ? (
-                    <p className="mt-3 text-sm leading-6 text-slate-600">{selectedRun.notes}</p>
+                    <p className="mt-3 text-sm leading-6 text-slate-600">
+                      {selectedRun.notes}
+                    </p>
                   ) : null}
                 </div>
 
                 <div className="flex flex-wrap gap-3">
                   {selectedRun.status === "draft" ? (
                     <form action={validatePayrollRunAction} data-loading-form>
-                      <input type="hidden" name="run_id" value={selectedRun.id} />
+                      <input
+                        type="hidden"
+                        name="run_id"
+                        value={selectedRun.id}
+                      />
                       <button className="inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-4 py-3 text-sm font-bold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-80">
-                        <span data-idle-label className="inline-flex items-center justify-center gap-2">
+                        <span
+                          data-idle-label
+                          className="inline-flex items-center justify-center gap-2"
+                        >
                           <BadgeCheck className="h-4 w-4" />
                           Valider ce brouillon
                         </span>
-                        <span data-loading-label className="hidden items-center justify-center gap-2">
+                        <span
+                          data-loading-label
+                          className="hidden items-center justify-center gap-2"
+                        >
                           <span className="inline-block h-4 w-4 rounded-full border-2 border-white/30 border-t-white animate-spin" />
                           Chargement...
                         </span>
@@ -1701,11 +2062,19 @@ export default async function FinancePayrollPage({
 
                   <Link
                     href={`/admin/finance/payroll?month=${encodeURIComponent(
-                      selectedRun.period_month.slice(0, 7)
+                      selectedRun.period_month.slice(0, 7),
                     )}&scope=${encodeURIComponent(selectedRun.scope)}&rate_first=${encodeURIComponent(
-                      String(selectedRun.default_rate_first_cycle)
+                      String(selectedRun.default_rate_first_cycle),
                     )}&rate_second=${encodeURIComponent(
-                      String(selectedRun.default_rate_second_cycle)
+                      String(selectedRun.default_rate_second_cycle),
+                    )}&academic_year=${encodeURIComponent(
+                      selectedRun.academic_year || selectedAcademicYearCode,
+                    )}&late_tolerance_min=${encodeURIComponent(
+                      String(effectiveLateToleranceMin),
+                    )}&early_departure_tolerance_min=${encodeURIComponent(
+                      String(effectiveEarlyDepartureToleranceMin),
+                    )}&session_reference_minutes=${encodeURIComponent(
+                      String(effectiveSessionReferenceMinutes),
                     )}&run_id=${encodeURIComponent(selectedRun.id)}&print=1&autoprint=1`}
                     target="_blank"
                     rel="noreferrer"
@@ -1719,7 +2088,8 @@ export default async function FinancePayrollPage({
             </section>
           ) : (
             <section className="rounded-[28px] border border-dashed border-slate-300 bg-slate-50 px-5 py-12 text-center text-sm text-slate-600 shadow-sm">
-              Aucun run de paie chargé pour le moment. Génère un brouillon pour ce mois.
+              Aucun run de paie chargé pour le moment. Génère un brouillon pour
+              ce mois.
             </section>
           )}
 
@@ -1742,16 +2112,16 @@ export default async function FinancePayrollPage({
                 />
                 <StatCard
                   icon={<CalendarClock className="h-6 w-6" />}
-                  label="Séances accomplies"
-                  value={totals.actualSessions}
-                  hint={minutesToHourLabel(totals.actualMinutes)}
+                  label="Minutes perdues"
+                  value={minutesToHourLabel(totals.lostMinutes)}
+                  hint={`${formatSessions(totals.lostSessions)} séance(s) équivalente(s)`}
                   tone="amber"
                 />
                 <StatCard
                   icon={<Wallet className="h-6 w-6" />}
                   label="Montant brut"
                   value={formatMoney(totals.gross)}
-                  hint={`${totals.firstCycle} séances 1er cycle • ${totals.secondCycle} séances 2nd cycle`}
+                  hint={`Ajusté proposé : ${formatMoney(totals.adjusted)}`}
                   tone="violet"
                 />
               </section>
@@ -1771,29 +2141,62 @@ export default async function FinancePayrollPage({
                     <table className="min-w-full text-sm">
                       <thead className="bg-slate-50">
                         <tr>
-                          <th className="px-3 py-3 text-left font-bold text-slate-600">Enseignant</th>
-                          <th className="px-3 py-3 text-left font-bold text-slate-600">Statut</th>
-                          <th className="px-3 py-3 text-right font-bold text-slate-600">Séances prévues</th>
-                          <th className="px-3 py-3 text-right font-bold text-slate-600">Séances accomplies</th>
-                          <th className="px-3 py-3 text-right font-bold text-slate-600">Heures prévues</th>
-                          <th className="px-3 py-3 text-right font-bold text-slate-600">Heures accomplies</th>
-                          <th className="px-3 py-3 text-right font-bold text-slate-600">1er cycle</th>
-                          <th className="px-3 py-3 text-right font-bold text-slate-600">2nd cycle</th>
-                          <th className="px-3 py-3 text-right font-bold text-slate-600">Tarif 1er cycle</th>
-                          <th className="px-3 py-3 text-right font-bold text-slate-600">Tarif 2nd cycle</th>
-                          <th className="px-3 py-3 text-right font-bold text-slate-600">Montant</th>
+                          <th className="px-3 py-3 text-left font-bold text-slate-600">
+                            Enseignant
+                          </th>
+                          <th className="px-3 py-3 text-left font-bold text-slate-600">
+                            Statut
+                          </th>
+                          <th className="px-3 py-3 text-right font-bold text-slate-600">
+                            Séances prévues
+                          </th>
+                          <th className="px-3 py-3 text-right font-bold text-slate-600">
+                            Séances accomplies
+                          </th>
+                          <th className="px-3 py-3 text-right font-bold text-slate-600">
+                            Heures prévues
+                          </th>
+                          <th className="px-3 py-3 text-right font-bold text-slate-600">
+                            Heures accomplies
+                          </th>
+                          <th className="px-3 py-3 text-right font-bold text-slate-600">
+                            Minutes perdues
+                          </th>
+                          <th className="px-3 py-3 text-right font-bold text-slate-600">
+                            Eq. séances
+                          </th>
+                          <th className="px-3 py-3 text-right font-bold text-slate-600">
+                            1er cycle
+                          </th>
+                          <th className="px-3 py-3 text-right font-bold text-slate-600">
+                            2nd cycle
+                          </th>
+                          <th className="px-3 py-3 text-right font-bold text-slate-600">
+                            Tarif 1er cycle
+                          </th>
+                          <th className="px-3 py-3 text-right font-bold text-slate-600">
+                            Tarif 2nd cycle
+                          </th>
+                          <th className="px-3 py-3 text-right font-bold text-slate-600">
+                            Sans pertes
+                          </th>
                         </tr>
                       </thead>
                       <tbody>
                         {selectedRunLines.map((row) => (
-                          <tr key={row.id} className="border-t border-slate-100">
+                          <tr
+                            key={row.id}
+                            className="border-t border-slate-100"
+                          >
                             <td className="px-3 py-3">
                               <div className="font-bold text-slate-900">
                                 {row.teacher_name_snapshot || "Enseignant"}
                               </div>
                             </td>
                             <td className="px-3 py-3 text-slate-700">
-                              {row.employment_type === "vacataire" ? "Vacataire" : "Permanent"}
+                              {row.employment_type === "vacataire"
+                                ? "Vacataire"
+                                : "Permanent"}
                             </td>
                             <td className="px-3 py-3 text-right text-slate-700">
                               {row.expected_sessions}
@@ -1806,6 +2209,16 @@ export default async function FinancePayrollPage({
                             </td>
                             <td className="px-3 py-3 text-right font-semibold text-slate-900">
                               {minutesToHourLabel(row.actual_minutes)}
+                            </td>
+                            <td className="px-3 py-3 text-right font-semibold text-amber-700">
+                              {minutesToHourLabel(
+                                numberValue(row.lost_minutes_after_tolerance),
+                              )}
+                            </td>
+                            <td className="px-3 py-3 text-right font-semibold text-amber-700">
+                              {formatSessions(
+                                numberValue(row.lost_sessions_equivalent),
+                              )}
                             </td>
                             <td className="px-3 py-3 text-right text-slate-700">
                               {row.sessions_first_cycle}
@@ -1821,13 +2234,24 @@ export default async function FinancePayrollPage({
                             </td>
                             <td className="px-3 py-3 text-right font-black text-emerald-700">
                               {formatMoney(row.gross_amount)}
+                              <div className="mt-1 text-xs font-bold text-slate-500">
+                                Avec pertes :{" "}
+                                {formatMoney(
+                                  numberValue(
+                                    row.adjusted_amount ?? row.gross_amount,
+                                  ),
+                                )}
+                              </div>
                             </td>
                           </tr>
                         ))}
                       </tbody>
                       <tfoot>
                         <tr className="border-t-2 border-slate-200 bg-slate-50">
-                          <td className="px-3 py-3 font-black text-slate-900" colSpan={2}>
+                          <td
+                            className="px-3 py-3 font-black text-slate-900"
+                            colSpan={2}
+                          >
                             Total
                           </td>
                           <td className="px-3 py-3 text-right font-bold text-slate-900">
@@ -1842,6 +2266,12 @@ export default async function FinancePayrollPage({
                           <td className="px-3 py-3 text-right font-bold text-slate-900">
                             {minutesToHourLabel(totals.actualMinutes)}
                           </td>
+                          <td className="px-3 py-3 text-right font-bold text-amber-700">
+                            {minutesToHourLabel(totals.lostMinutes)}
+                          </td>
+                          <td className="px-3 py-3 text-right font-bold text-amber-700">
+                            {formatSessions(totals.lostSessions)}
+                          </td>
                           <td className="px-3 py-3 text-right font-bold text-slate-900">
                             {totals.firstCycle}
                           </td>
@@ -1852,6 +2282,9 @@ export default async function FinancePayrollPage({
                           <td className="px-3 py-3"></td>
                           <td className="px-3 py-3 text-right font-black text-emerald-700">
                             {formatMoney(totals.gross)}
+                            <div className="mt-1 text-xs font-bold text-slate-500">
+                              Avec pertes : {formatMoney(totals.adjusted)}
+                            </div>
                           </td>
                         </tr>
                       </tfoot>

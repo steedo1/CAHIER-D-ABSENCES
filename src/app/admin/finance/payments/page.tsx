@@ -17,6 +17,10 @@ import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { getFinanceAccessForCurrentUser } from "@/lib/finance-access";
 import {
+  AcademicYearSelector,
+  getFinanceAcademicYearContext,
+} from "../_shared/academic-year";
+import {
   getAdminStudentsServer,
   type AdminStudentRow,
 } from "@/lib/admin-students-server";
@@ -167,7 +171,7 @@ async function createPaymentAction(formData: FormData) {
     .schema("finance")
     .from("v_charge_balances")
     .select(
-      "id,school_id,academic_year_id,student_id,class_id,fee_schedule_id,fee_category_id,label,base_amount,adjustment_total,net_amount,paid_amount,balance_due,due_date,charge_date,computed_status,created_at,updated_at"
+      "id,school_id,academic_year_id,student_id,class_id,fee_schedule_id,fee_category_id,label,base_amount,adjustment_total,net_amount,paid_amount,balance_due,due_date,charge_date,computed_status,created_at,updated_at",
     )
     .eq("id", chargeId)
     .eq("school_id", institutionId)
@@ -183,11 +187,12 @@ async function createPaymentAction(formData: FormData) {
 
   if (amount > balanceDue) {
     throw new Error(
-      `Le montant saisi dépasse le reste dû (${formatMoney(balanceDue)}).`
+      `Le montant saisi dépasse le reste dû (${formatMoney(balanceDue)}).`,
     );
   }
 
   let academicYear: string | null = null;
+  let academicYearId: string | null = charge.academic_year_id || null;
 
   if (charge.class_id) {
     const { data: cls, error: clsErr } = await admin
@@ -199,6 +204,18 @@ async function createPaymentAction(formData: FormData) {
 
     if (clsErr) throw new Error(clsErr.message);
     academicYear = cls?.academic_year ?? null;
+
+    if (!academicYearId && academicYear) {
+      const { data: yearRow, error: yearErr } = await admin
+        .from("academic_years")
+        .select("id")
+        .eq("institution_id", institutionId)
+        .eq("code", academicYear)
+        .maybeSingle();
+
+      if (yearErr) throw new Error(yearErr.message);
+      academicYearId = yearRow?.id || null;
+    }
   }
 
   const receiptNo = makeReceiptNo();
@@ -211,7 +228,7 @@ async function createPaymentAction(formData: FormData) {
     .from("receipts")
     .insert({
       school_id: institutionId,
-      academic_year_id: charge.academic_year_id || null,
+      academic_year_id: academicYearId,
       academic_year: academicYear,
       student_id: charge.student_id,
       receipt_no: receiptNo,
@@ -246,7 +263,11 @@ async function createPaymentAction(formData: FormData) {
     } as any);
 
   if (allocErr) {
-    await admin.schema("finance").from("receipts").delete().eq("id", receipt.id);
+    await admin
+      .schema("finance")
+      .from("receipts")
+      .delete()
+      .eq("id", receipt.id);
     throw new Error(allocErr.message);
   }
 
@@ -310,51 +331,79 @@ function StatusPill({
   );
 }
 
-export default async function FinancePaymentsPage() {
+export default async function FinancePaymentsPage({
+  searchParams,
+}: {
+  searchParams?: Promise<{ academic_year?: string }>;
+}) {
   const access = await getFinanceAccessForCurrentUser();
 
   if (!access.ok) {
     redirect("/admin/finance/locked");
   }
 
+  const params = searchParams ? await searchParams : undefined;
+  const requestedAcademicYear = String(params?.academic_year || "").trim();
+
   const { institutionId } = await getCurrentContextOrThrow();
   const supabase = await getSupabaseServerClient();
   const adminStudents = await getAdminStudentsServer();
+  const academicYearCtx = await getFinanceAcademicYearContext(
+    institutionId,
+    requestedAcademicYear,
+  );
+  const { academicYears, selectedAcademicYearCode } = academicYearCtx;
 
-  const { data: classes, error: clsErr } = await supabase
+  let classesQuery = supabase
     .from("classes")
     .select("id,label,level,academic_year")
-    .eq("institution_id", institutionId)
+    .eq("institution_id", institutionId);
+
+  if (selectedAcademicYearCode) {
+    classesQuery = classesQuery.eq("academic_year", selectedAcademicYearCode);
+  }
+
+  const { data: classes, error: clsErr } = await classesQuery
     .order("level", { ascending: true })
     .order("label", { ascending: true });
 
   if (clsErr) throw new Error(clsErr.message);
 
   const classRows = (classes ?? []) as ClassRow[];
+  const classIds = classRows.map((row) => row.id);
   const classMap = new Map(classRows.map((c) => [c.id, c]));
 
   const [{ data: balances, error: balErr }, { data: receipts, error: recErr }] =
     await Promise.all([
-      supabase
-        .schema("finance")
-        .from("v_charge_balances")
-        .select(
-          "id,school_id,academic_year_id,student_id,class_id,fee_schedule_id,fee_category_id,label,base_amount,adjustment_total,net_amount,paid_amount,balance_due,due_date,charge_date,computed_status,created_at,updated_at"
-        )
-        .eq("school_id", institutionId)
-        .gt("balance_due", 0)
-        .neq("computed_status", "cancelled")
-        .order("due_date", { ascending: true, nullsFirst: false }),
+      classIds.length > 0
+        ? supabase
+            .schema("finance")
+            .from("v_charge_balances")
+            .select(
+              "id,school_id,academic_year_id,student_id,class_id,fee_schedule_id,fee_category_id,label,base_amount,adjustment_total,net_amount,paid_amount,balance_due,due_date,charge_date,computed_status,created_at,updated_at",
+            )
+            .eq("school_id", institutionId)
+            .in("class_id", classIds)
+            .gt("balance_due", 0)
+            .neq("computed_status", "cancelled")
+            .order("due_date", { ascending: true, nullsFirst: false })
+        : Promise.resolve({ data: [], error: null } as any),
 
-      supabase
-        .schema("finance")
-        .from("receipts")
-        .select(
-          "id,school_id,academic_year_id,academic_year,student_id,receipt_no,receipt_status,payment_date,payer_name,reference_no,total_amount,notes,created_at"
-        )
-        .eq("school_id", institutionId)
-        .order("payment_date", { ascending: false })
-        .limit(12),
+      (() => {
+        let query = supabase
+          .schema("finance")
+          .from("receipts")
+          .select(
+            "id,school_id,academic_year_id,academic_year,student_id,receipt_no,receipt_status,payment_date,payer_name,reference_no,total_amount,notes,created_at",
+          )
+          .eq("school_id", institutionId);
+
+        if (selectedAcademicYearCode) {
+          query = query.eq("academic_year", selectedAcademicYearCode);
+        }
+
+        return query.order("payment_date", { ascending: false }).limit(12);
+      })(),
     ]);
 
   if (balErr) throw new Error(balErr.message);
@@ -373,10 +422,9 @@ export default async function FinancePaymentsPage() {
 
   const paymentSelectionRows: PaymentSelectionRow[] = balanceRows.map((row) => {
     const student = studentMap.get(row.student_id);
-    const cls =
-      row.class_id
-        ? classMap.get(row.class_id)
-        : student?.class_id
+    const cls = row.class_id
+      ? classMap.get(row.class_id)
+      : student?.class_id
         ? classMap.get(student.class_id)
         : null;
 
@@ -399,7 +447,7 @@ export default async function FinancePaymentsPage() {
 
   const totalDue = balanceRows.reduce(
     (sum, row) => sum + Number(row.balance_due || 0),
-    0
+    0,
   );
 
   const totalReceipts = receiptRows
@@ -439,6 +487,12 @@ export default async function FinancePaymentsPage() {
           </div>
         </div>
       </section>
+
+      <AcademicYearSelector
+        academicYears={academicYears}
+        selectedAcademicYearCode={selectedAcademicYearCode}
+        currentPath="/admin/finance/payments"
+      />
 
       <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <StatCard
@@ -488,10 +542,9 @@ export default async function FinancePaymentsPage() {
             <div className="mt-5 space-y-4">
               {balanceRows.map((row) => {
                 const student = studentMap.get(row.student_id);
-                const cls =
-                  row.class_id
-                    ? classMap.get(row.class_id)
-                    : student?.class_id
+                const cls = row.class_id
+                  ? classMap.get(row.class_id)
+                  : student?.class_id
                     ? classMap.get(student.class_id)
                     : null;
 
@@ -583,7 +636,9 @@ export default async function FinancePaymentsPage() {
             <div className="mt-5 space-y-4">
               {receiptRows.map((row) => {
                 const student = studentMap.get(row.student_id);
-                const cls = student?.class_id ? classMap.get(student.class_id) : null;
+                const cls = student?.class_id
+                  ? classMap.get(student.class_id)
+                  : null;
 
                 return (
                   <article
@@ -598,10 +653,14 @@ export default async function FinancePaymentsPage() {
                           </h2>
                           <StatusPill
                             label={
-                              row.receipt_status === "posted" ? "Validé" : "Annulé"
+                              row.receipt_status === "posted"
+                                ? "Validé"
+                                : "Annulé"
                             }
                             tone={
-                              row.receipt_status === "posted" ? "emerald" : "slate"
+                              row.receipt_status === "posted"
+                                ? "emerald"
+                                : "slate"
                             }
                           />
                         </div>
@@ -635,10 +694,13 @@ export default async function FinancePaymentsPage() {
                             <span className="font-semibold text-slate-800">
                               Date :
                             </span>{" "}
-                            {new Date(row.payment_date).toLocaleString("fr-FR", {
-                              dateStyle: "short",
-                              timeStyle: "short",
-                            })}
+                            {new Date(row.payment_date).toLocaleString(
+                              "fr-FR",
+                              {
+                                dateStyle: "short",
+                                timeStyle: "short",
+                              },
+                            )}
                           </div>
                           <div>
                             <span className="font-semibold text-slate-800">

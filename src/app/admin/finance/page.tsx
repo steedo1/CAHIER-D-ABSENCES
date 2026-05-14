@@ -19,6 +19,11 @@ import {
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getFinanceAccessForCurrentUser } from "@/lib/finance-access";
 import {
+  AcademicYearSelector,
+  financeYearHref,
+  getFinanceAcademicYearContext,
+} from "./_shared/academic-year";
+import {
   getAdminStudentsServer,
   type AdminStudentRow,
 } from "@/lib/admin-students-server";
@@ -91,6 +96,7 @@ type TeacherPayrollRunRow = {
   id: string;
   status: "draft" | "validated" | "cancelled";
   period_month: string;
+  academic_year?: string | null;
 };
 
 function formatMoney(value: number | string) {
@@ -233,26 +239,51 @@ function QuickLinkCard({
   );
 }
 
-export default async function AdminFinancePage() {
+export default async function AdminFinancePage({
+  searchParams,
+}: {
+  searchParams?: Promise<{ academic_year?: string }>;
+}) {
   const access = await getFinanceAccessForCurrentUser();
 
   if (!access.ok) {
     redirect("/admin/finance/locked");
   }
 
+  const params = searchParams ? await searchParams : undefined;
+  const requestedAcademicYear = String(params?.academic_year || "").trim();
+
   const institutionId = await getCurrentInstitutionIdOrThrow();
   const supabase = await getSupabaseServerClient();
   const adminStudents = await getAdminStudentsServer();
+  const academicYearCtx = await getFinanceAcademicYearContext(
+    institutionId,
+    requestedAcademicYear,
+  );
+  const {
+    academicYears,
+    selectedAcademicYearCode,
+    selectedAcademicYearStart,
+    selectedAcademicYearEnd,
+  } = academicYearCtx;
 
-  const { data: classes, error: clsErr } = await supabase
+  let classesQuery = supabase
     .from("classes")
     .select("id,label,level,academic_year")
-    .eq("institution_id", institutionId)
-    .order("label", { ascending: true });
+    .eq("institution_id", institutionId);
+
+  if (selectedAcademicYearCode) {
+    classesQuery = classesQuery.eq("academic_year", selectedAcademicYearCode);
+  }
+
+  const { data: classes, error: clsErr } = await classesQuery.order("label", {
+    ascending: true,
+  });
 
   if (clsErr) throw new Error(clsErr.message);
 
   const classRows = (classes ?? []) as ClassRow[];
+  const classIds = classRows.map((c) => c.id);
   const classMap = new Map(classRows.map((c) => [c.id, c]));
 
   const [
@@ -271,39 +302,68 @@ export default async function AdminFinancePage() {
       .eq("school_id", institutionId)
       .order("name", { ascending: true }),
 
-    supabase
-      .schema("finance")
-      .from("fee_schedules")
-      .select("id,class_id,label,amount,due_date,allow_partial,is_active")
-      .eq("school_id", institutionId)
-      .order("created_at", { ascending: false }),
+    (() => {
+      let query = supabase
+        .schema("finance")
+        .from("fee_schedules")
+        .select("id,class_id,label,amount,due_date,allow_partial,is_active")
+        .eq("school_id", institutionId);
 
-    supabase
-      .schema("finance")
-      .from("v_charge_balances")
-      .select(
-        "id,student_id,class_id,label,net_amount,paid_amount,balance_due,due_date,computed_status"
-      )
-      .eq("school_id", institutionId)
-      .neq("computed_status", "cancelled"),
+      if (selectedAcademicYearCode) {
+        query = query.eq("academic_year", selectedAcademicYearCode);
+      }
 
-    supabase
-      .schema("finance")
-      .from("receipts")
-      .select(
-        "id,student_id,receipt_no,receipt_status,payment_date,total_amount,payer_name"
-      )
-      .eq("school_id", institutionId)
-      .order("payment_date", { ascending: false })
-      .limit(8),
+      if (classIds.length > 0) {
+        query = query.in("class_id", classIds);
+      }
 
-    supabase
-      .schema("finance")
-      .from("expenses")
-      .select("id,expense_status,expense_date,label,amount,beneficiary")
-      .eq("school_id", institutionId)
-      .order("expense_date", { ascending: false })
-      .limit(8),
+      return query.order("created_at", { ascending: false });
+    })(),
+
+    classIds.length > 0
+      ? supabase
+          .schema("finance")
+          .from("v_charge_balances")
+          .select(
+            "id,student_id,class_id,label,net_amount,paid_amount,balance_due,due_date,computed_status",
+          )
+          .eq("school_id", institutionId)
+          .in("class_id", classIds)
+          .neq("computed_status", "cancelled")
+      : Promise.resolve({ data: [], error: null } as any),
+
+    (() => {
+      let query = supabase
+        .schema("finance")
+        .from("receipts")
+        .select(
+          "id,student_id,receipt_no,receipt_status,payment_date,total_amount,payer_name",
+        )
+        .eq("school_id", institutionId);
+
+      if (selectedAcademicYearCode) {
+        query = query.eq("academic_year", selectedAcademicYearCode);
+      }
+
+      return query.order("payment_date", { ascending: false }).limit(8);
+    })(),
+
+    (() => {
+      let query = supabase
+        .schema("finance")
+        .from("expenses")
+        .select("id,expense_status,expense_date,label,amount,beneficiary")
+        .eq("school_id", institutionId);
+
+      if (selectedAcademicYearStart) {
+        query = query.gte("expense_date", selectedAcademicYearStart);
+      }
+      if (selectedAcademicYearEnd) {
+        query = query.lte("expense_date", selectedAcademicYearEnd);
+      }
+
+      return query.order("expense_date", { ascending: false }).limit(8);
+    })(),
 
     supabase
       .schema("finance")
@@ -311,13 +371,19 @@ export default async function AdminFinancePage() {
       .select("id,profile_id,employment_type,payroll_enabled")
       .eq("institution_id", institutionId),
 
-    supabase
-      .schema("finance")
-      .from("teacher_payroll_runs")
-      .select("id,status,period_month")
-      .eq("institution_id", institutionId)
-      .order("generated_at", { ascending: false })
-      .limit(12),
+    (() => {
+      let query = supabase
+        .schema("finance")
+        .from("teacher_payroll_runs")
+        .select("id,status,period_month,academic_year")
+        .eq("institution_id", institutionId);
+
+      if (selectedAcademicYearCode) {
+        query = query.eq("academic_year", selectedAcademicYearCode);
+      }
+
+      return query.order("generated_at", { ascending: false }).limit(12);
+    })(),
   ]);
 
   if (feeCatErr) throw new Error(feeCatErr.message);
@@ -333,8 +399,10 @@ export default async function AdminFinancePage() {
   const balanceRows = (balances ?? []) as ChargeBalanceRow[];
   const receiptRows = (receipts ?? []) as ReceiptRow[];
   const expenseRows = (expenses ?? []) as ExpenseRow[];
-  const teacherPayProfileRows = (teacherPayProfiles ?? []) as TeacherPayProfileRow[];
-  const teacherPayrollRunRows = (teacherPayrollRuns ?? []) as TeacherPayrollRunRow[];
+  const teacherPayProfileRows = (teacherPayProfiles ??
+    []) as TeacherPayProfileRow[];
+  const teacherPayrollRunRows = (teacherPayrollRuns ??
+    []) as TeacherPayrollRunRow[];
 
   const relevantStudentIds = new Set([
     ...balanceRows.map((r) => r.student_id),
@@ -346,42 +414,48 @@ export default async function AdminFinancePage() {
 
   const activeFeeCategories = feeCategoryRows.filter((r) => r.is_active).length;
   const activeSchedules = feeScheduleRows.filter((r) => r.is_active);
-  const postedReceipts = receiptRows.filter((r) => r.receipt_status === "posted");
-  const postedExpenses = expenseRows.filter((r) => r.expense_status === "posted");
-  const openBalances = balanceRows.filter((r) => Number(r.balance_due || 0) > 0);
+  const postedReceipts = receiptRows.filter(
+    (r) => r.receipt_status === "posted",
+  );
+  const postedExpenses = expenseRows.filter(
+    (r) => r.expense_status === "posted",
+  );
+  const openBalances = balanceRows.filter(
+    (r) => Number(r.balance_due || 0) > 0,
+  );
   const overdueBalances = openBalances.filter((r) => {
     if (!r.due_date) return false;
     return new Date(`${r.due_date}T23:59:59`).getTime() < Date.now();
   });
 
   const payrollEnabledTeachers = teacherPayProfileRows.filter(
-    (r) => r.payroll_enabled
+    (r) => r.payroll_enabled,
   );
   const vacataireTeachers = teacherPayProfileRows.filter(
-    (r) => r.payroll_enabled && r.employment_type === "vacataire"
+    (r) => r.payroll_enabled && r.employment_type === "vacataire",
   );
   const payrollDraftRuns = teacherPayrollRunRows.filter(
-    (r) => r.status === "draft"
+    (r) => r.status === "draft",
   );
   const payrollValidatedRuns = teacherPayrollRunRows.filter(
-    (r) => r.status === "validated"
+    (r) => r.status === "validated",
   );
 
   const totalBilled = balanceRows.reduce(
     (sum, row) => sum + Number(row.net_amount || 0),
-    0
+    0,
   );
   const totalCollected = balanceRows.reduce(
     (sum, row) => sum + Number(row.paid_amount || 0),
-    0
+    0,
   );
   const totalDue = openBalances.reduce(
     (sum, row) => sum + Number(row.balance_due || 0),
-    0
+    0,
   );
   const expensesAmount = postedExpenses.reduce(
     (sum, row) => sum + Number(row.amount || 0),
-    0
+    0,
   );
 
   const coverageRate =
@@ -390,7 +464,10 @@ export default async function AdminFinancePage() {
   const chargesByClass = classRows
     .map((cls) => {
       const rows = openBalances.filter((b) => b.class_id === cls.id);
-      const due = rows.reduce((sum, row) => sum + Number(row.balance_due || 0), 0);
+      const due = rows.reduce(
+        (sum, row) => sum + Number(row.balance_due || 0),
+        0,
+      );
       const overdue = rows.filter((row) => {
         if (!row.due_date) return false;
         return new Date(`${row.due_date}T23:59:59`).getTime() < Date.now();
@@ -413,8 +490,12 @@ export default async function AdminFinancePage() {
   const recentArrears = openBalances
     .slice()
     .sort((a, b) => {
-      const ad = a.due_date ? new Date(a.due_date).getTime() : Number.MAX_SAFE_INTEGER;
-      const bd = b.due_date ? new Date(b.due_date).getTime() : Number.MAX_SAFE_INTEGER;
+      const ad = a.due_date
+        ? new Date(a.due_date).getTime()
+        : Number.MAX_SAFE_INTEGER;
+      const bd = b.due_date
+        ? new Date(b.due_date).getTime()
+        : Number.MAX_SAFE_INTEGER;
       return ad - bd;
     })
     .slice(0, 6);
@@ -510,64 +591,97 @@ export default async function AdminFinancePage() {
         />
       </section>
 
+      <AcademicYearSelector
+        academicYears={academicYears}
+        selectedAcademicYearCode={selectedAcademicYearCode}
+        currentPath="/admin/finance"
+      />
+
       <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <QuickLinkCard
-          href="/admin/finance/fees"
+          href={financeYearHref(
+            "/admin/finance/fees",
+            selectedAcademicYearCode,
+          )}
           icon={<Layers3 className="h-5 w-5" />}
           title="Catégories de frais"
           description="Créer les types de frais comme scolarité, inscription, transport ou cantine."
           badge={`${feeCategoryRows.length}`}
         />
         <QuickLinkCard
-          href="/admin/finance/fees/schedules"
+          href={financeYearHref(
+            "/admin/finance/fees/schedules",
+            selectedAcademicYearCode,
+          )}
           icon={<CalendarClock className="h-5 w-5" />}
           title="Barèmes & échéanciers"
           description="Définir les montants réels par classe et année scolaire."
           badge={`${activeSchedules.length}`}
         />
         <QuickLinkCard
-          href="/admin/finance/charges"
+          href={financeYearHref(
+            "/admin/finance/charges",
+            selectedAcademicYearCode,
+          )}
           icon={<FileText className="h-5 w-5" />}
           title="Dettes élèves"
           description="Générer les dettes manquantes à partir des barèmes de chaque classe."
           badge={`${balanceRows.length}`}
         />
         <QuickLinkCard
-          href="/admin/finance/payments"
+          href={financeYearHref(
+            "/admin/finance/payments",
+            selectedAcademicYearCode,
+          )}
           icon={<CreditCard className="h-5 w-5" />}
           title="Encaissements"
           description="Enregistrer manuellement les règlements reçus par l’établissement."
           badge={`${postedReceipts.length}`}
         />
         <QuickLinkCard
-          href="/admin/finance/receipts"
+          href={financeYearHref(
+            "/admin/finance/receipts",
+            selectedAcademicYearCode,
+          )}
           icon={<Receipt className="h-5 w-5" />}
           title="Reçus"
           description="Consulter l’historique des reçus et la ventilation des paiements."
           badge={`${receiptRows.length}`}
         />
         <QuickLinkCard
-          href="/admin/finance/arrears"
+          href={financeYearHref(
+            "/admin/finance/arrears",
+            selectedAcademicYearCode,
+          )}
           icon={<AlertTriangle className="h-5 w-5" />}
           title="Impayés"
           description="Suivre les soldes dus, les retards et les échéances dépassées."
           badge={`${overdueBalances.length}`}
         />
         <QuickLinkCard
-          href="/admin/finance/expenses"
+          href={financeYearHref(
+            "/admin/finance/expenses",
+            selectedAcademicYearCode,
+          )}
           icon={<Wallet className="h-5 w-5" />}
           title="Dépenses"
           description="Saisir et suivre les dépenses internes de l’établissement."
           badge={`${expenseRows.length}`}
         />
         <QuickLinkCard
-          href="/admin/finance/reports"
+          href={financeYearHref(
+            "/admin/finance/reports",
+            selectedAcademicYearCode,
+          )}
           icon={<TrendingUp className="h-5 w-5" />}
           title="Rapports"
           description="Voir les synthèses financières et répartitions par classe ou catégorie."
         />
         <QuickLinkCard
-          href="/admin/finance/payroll"
+          href={financeYearHref(
+            "/admin/finance/payroll",
+            selectedAcademicYearCode,
+          )}
           icon={<BadgeDollarSign className="h-5 w-5" />}
           title="Paie enseignants"
           description="Calculer la paie mensuelle des enseignants à partir des séances issues du téléphone de classe."
@@ -660,10 +774,9 @@ export default async function AdminFinancePage() {
             <div className="mt-5 space-y-4">
               {recentArrears.map((row) => {
                 const student = studentMap.get(row.student_id);
-                const cls =
-                  row.class_id
-                    ? classMap.get(row.class_id)
-                    : student?.class_id
+                const cls = row.class_id
+                  ? classMap.get(row.class_id)
+                  : student?.class_id
                     ? classMap.get(student.class_id)
                     : null;
 
@@ -682,7 +795,8 @@ export default async function AdminFinancePage() {
                           {fullName(student)}
                         </h2>
                         <div className="mt-1 text-sm text-slate-600">
-                          {student?.class_label || cls?.label || "—"} • {row.label}
+                          {student?.class_label || cls?.label || "—"} •{" "}
+                          {row.label}
                         </div>
                         <div className="mt-2 flex flex-wrap items-center gap-2">
                           <span

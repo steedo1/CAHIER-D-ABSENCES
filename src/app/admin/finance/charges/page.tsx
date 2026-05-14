@@ -11,6 +11,10 @@ import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { getFinanceAccessForCurrentUser } from "@/lib/finance-access";
 import {
+  AcademicYearSelector,
+  getFinanceAcademicYearContext,
+} from "../_shared/academic-year";
+import {
   getAdminStudentsServer,
   type AdminStudentRow,
 } from "@/lib/admin-students-server";
@@ -125,7 +129,7 @@ async function generateChargesForClassAction(formData: FormData) {
     .schema("finance")
     .from("fee_schedules")
     .select(
-      "id,school_id,academic_year,class_id,fee_category_id,label,amount,due_date,allow_partial,is_active,notes,created_at,updated_at"
+      "id,school_id,academic_year,class_id,fee_category_id,label,amount,due_date,allow_partial,is_active,notes,created_at,updated_at",
     )
     .eq("school_id", institutionId)
     .eq("class_id", classId)
@@ -137,7 +141,7 @@ async function generateChargesForClassAction(formData: FormData) {
 
   if (scheduleRows.length === 0) {
     throw new Error(
-      "Aucun barème actif trouvé pour cette classe. Crée d’abord les barèmes."
+      "Aucun barème actif trouvé pour cette classe. Crée d’abord les barèmes.",
     );
   }
 
@@ -147,6 +151,18 @@ async function generateChargesForClassAction(formData: FormData) {
   if (studentRows.length === 0) {
     throw new Error("Aucun élève trouvé dans cette classe.");
   }
+
+  const { data: academicYearRow, error: academicYearErr } =
+    classRow.academic_year
+      ? await admin
+          .from("academic_years")
+          .select("id,code")
+          .eq("institution_id", institutionId)
+          .eq("code", classRow.academic_year)
+          .maybeSingle()
+      : { data: null, error: null as any };
+
+  if (academicYearErr) throw new Error(academicYearErr.message);
 
   const scheduleIds = scheduleRows.map((s) => s.id);
 
@@ -168,7 +184,7 @@ async function generateChargesForClassAction(formData: FormData) {
         student_id: string;
         fee_schedule_id: string | null;
       }>
-    ).map((row) => `${row.student_id}:${row.fee_schedule_id || ""}`)
+    ).map((row) => `${row.student_id}:${row.fee_schedule_id || ""}`),
   );
 
   const today = new Date().toISOString().slice(0, 10);
@@ -179,7 +195,7 @@ async function generateChargesForClassAction(formData: FormData) {
       .filter((schedule) => !existingSet.has(`${student.id}:${schedule.id}`))
       .map((schedule) => ({
         school_id: institutionId,
-        academic_year_id: null,
+        academic_year_id: academicYearRow?.id || null,
         academic_year: schedule.academic_year || classRow.academic_year || null,
         student_id: student.id,
         class_id: classId,
@@ -194,7 +210,7 @@ async function generateChargesForClassAction(formData: FormData) {
         created_by: userId,
         created_at: nowIso,
         updated_at: nowIso,
-      }))
+      })),
   );
 
   if (inserts.length > 0) {
@@ -242,53 +258,91 @@ function StatCard({
   );
 }
 
-export default async function FinanceChargesPage() {
+export default async function FinanceChargesPage({
+  searchParams,
+}: {
+  searchParams?: Promise<{ academic_year?: string }>;
+}) {
   const access = await getFinanceAccessForCurrentUser();
 
   if (!access.ok) {
     redirect("/admin/finance/locked");
   }
 
+  const params = searchParams ? await searchParams : undefined;
+  const requestedAcademicYear = String(params?.academic_year || "").trim();
+
   const { institutionId } = await getCurrentContextOrThrow();
   const supabase = await getSupabaseServerClient();
   const adminStudents = await getAdminStudentsServer();
+  const academicYearCtx = await getFinanceAcademicYearContext(
+    institutionId,
+    requestedAcademicYear,
+  );
+  const { academicYears, selectedAcademicYearCode } = academicYearCtx;
+
+  let classesQuery = supabase
+    .from("classes")
+    .select("id,label,level,academic_year")
+    .eq("institution_id", institutionId);
+
+  if (selectedAcademicYearCode) {
+    classesQuery = classesQuery.eq("academic_year", selectedAcademicYearCode);
+  }
+
+  const { data: classes, error: clsErr } = await classesQuery.order("label", {
+    ascending: true,
+  });
+
+  if (clsErr) throw new Error(clsErr.message);
+
+  const classRows = (classes ?? []) as ClassRow[];
+  const classIds = classRows.map((row) => row.id);
 
   const [
-    { data: classes, error: clsErr },
     { data: schedules, error: schErr },
     { data: balances, error: balErr },
   ] = await Promise.all([
-    supabase
-      .from("classes")
-      .select("id,label,level,academic_year")
-      .eq("institution_id", institutionId)
-      .order("label", { ascending: true }),
+    (() => {
+      let query = supabase
+        .schema("finance")
+        .from("fee_schedules")
+        .select(
+          "id,school_id,academic_year,class_id,fee_category_id,label,amount,due_date,allow_partial,is_active,notes,created_at,updated_at",
+        )
+        .eq("school_id", institutionId)
+        .eq("is_active", true);
 
-    supabase
-      .schema("finance")
-      .from("fee_schedules")
-      .select(
-        "id,school_id,academic_year,class_id,fee_category_id,label,amount,due_date,allow_partial,is_active,notes,created_at,updated_at"
-      )
-      .eq("school_id", institutionId)
-      .eq("is_active", true),
+      if (selectedAcademicYearCode) {
+        query = query.eq("academic_year", selectedAcademicYearCode);
+      }
+      if (classIds.length > 0) {
+        query = query.in("class_id", classIds);
+      }
 
-    supabase
-      .schema("finance")
-      .from("v_charge_balances")
-      .select(
-        "id,school_id,academic_year_id,student_id,class_id,fee_schedule_id,fee_category_id,label,base_amount,adjustment_total,net_amount,paid_amount,balance_due,due_date,charge_date,computed_status,created_at,updated_at"
-      )
-      .eq("school_id", institutionId)
-      .neq("computed_status", "cancelled"),
+      return query;
+    })(),
+
+    classIds.length > 0
+      ? supabase
+          .schema("finance")
+          .from("v_charge_balances")
+          .select(
+            "id,school_id,academic_year_id,student_id,class_id,fee_schedule_id,fee_category_id,label,base_amount,adjustment_total,net_amount,paid_amount,balance_due,due_date,charge_date,computed_status,created_at,updated_at",
+          )
+          .eq("school_id", institutionId)
+          .in("class_id", classIds)
+          .neq("computed_status", "cancelled")
+      : Promise.resolve({ data: [], error: null } as any),
   ]);
 
-  if (clsErr) throw new Error(clsErr.message);
   if (schErr) throw new Error(schErr.message);
   if (balErr) throw new Error(balErr.message);
 
-  const classRows = (classes ?? []) as ClassRow[];
-  const studentRows = adminStudents;
+  const classIdSet = new Set(classIds);
+  const studentRows = adminStudents.filter((student) =>
+    student.class_id ? classIdSet.has(student.class_id) : false,
+  );
   const scheduleRows = (schedules ?? []) as FeeScheduleRow[];
   const balanceRows = (balances ?? []) as ChargeBalanceRow[];
 
@@ -299,35 +353,33 @@ export default async function FinanceChargesPage() {
       acc[key].push(row);
       return acc;
     },
-    {}
+    {},
   );
 
-  const schedulesByClass = scheduleRows.reduce<Record<string, FeeScheduleRow[]>>(
-    (acc, row) => {
-      const key = row.class_id || "none";
-      if (!acc[key]) acc[key] = [];
-      acc[key].push(row);
-      return acc;
-    },
-    {}
-  );
+  const schedulesByClass = scheduleRows.reduce<
+    Record<string, FeeScheduleRow[]>
+  >((acc, row) => {
+    const key = row.class_id || "none";
+    if (!acc[key]) acc[key] = [];
+    acc[key].push(row);
+    return acc;
+  }, {});
 
-  const balancesByClass = balanceRows.reduce<Record<string, ChargeBalanceRow[]>>(
-    (acc, row) => {
-      const key = row.class_id || "none";
-      if (!acc[key]) acc[key] = [];
-      acc[key].push(row);
-      return acc;
-    },
-    {}
-  );
+  const balancesByClass = balanceRows.reduce<
+    Record<string, ChargeBalanceRow[]>
+  >((acc, row) => {
+    const key = row.class_id || "none";
+    if (!acc[key]) acc[key] = [];
+    acc[key].push(row);
+    return acc;
+  }, {});
 
   const totalStudents = studentRows.length;
   const totalSchedules = scheduleRows.length;
   const totalCharges = balanceRows.length;
   const totalDue = balanceRows.reduce(
     (sum, row) => sum + Number(row.balance_due || 0),
-    0
+    0,
   );
 
   const classSummaries = classRows.map((cls) => {
@@ -340,7 +392,7 @@ export default async function FinanceChargesPage() {
     const missingCount = Math.max(theoreticalCount - actualCount, 0);
     const dueAmount = classBalances.reduce(
       (sum, row) => sum + Number(row.balance_due || 0),
-      0
+      0,
     );
 
     return {
@@ -355,7 +407,7 @@ export default async function FinanceChargesPage() {
         .slice()
         .sort(
           (a, b) =>
-            new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+            new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
         )
         .slice(0, 4),
     };
@@ -394,6 +446,12 @@ export default async function FinanceChargesPage() {
           </div>
         </div>
       </section>
+
+      <AcademicYearSelector
+        academicYears={academicYears}
+        selectedAcademicYearCode={selectedAcademicYearCode}
+        currentPath="/admin/finance/charges"
+      />
 
       <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <StatCard
@@ -455,29 +513,43 @@ export default async function FinanceChargesPage() {
                   {summary.studentsCount}
                 </div>
                 <div>
-                  <span className="font-semibold text-slate-800">Barèmes :</span>{" "}
+                  <span className="font-semibold text-slate-800">
+                    Barèmes :
+                  </span>{" "}
                   {summary.schedulesCount}
                 </div>
                 <div>
-                  <span className="font-semibold text-slate-800">Théorique :</span>{" "}
+                  <span className="font-semibold text-slate-800">
+                    Théorique :
+                  </span>{" "}
                   {summary.theoreticalCount}
                 </div>
                 <div>
-                  <span className="font-semibold text-slate-800">Générées :</span>{" "}
+                  <span className="font-semibold text-slate-800">
+                    Générées :
+                  </span>{" "}
                   {summary.actualCount}
                 </div>
                 <div>
-                  <span className="font-semibold text-slate-800">Manquantes :</span>{" "}
+                  <span className="font-semibold text-slate-800">
+                    Manquantes :
+                  </span>{" "}
                   {summary.missingCount}
                 </div>
                 <div>
-                  <span className="font-semibold text-slate-800">Reste dû :</span>{" "}
+                  <span className="font-semibold text-slate-800">
+                    Reste dû :
+                  </span>{" "}
                   {formatMoney(summary.dueAmount)}
                 </div>
               </div>
 
               <form action={generateChargesForClassAction} className="mt-4">
-                <input type="hidden" name="class_id" value={summary.classRow.id} />
+                <input
+                  type="hidden"
+                  name="class_id"
+                  value={summary.classRow.id}
+                />
                 <button
                   className="inline-flex w-full items-center justify-center rounded-2xl bg-emerald-600 px-4 py-3 text-sm font-bold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
                   disabled={
@@ -511,7 +583,9 @@ export default async function FinanceChargesPage() {
                         key={row.id}
                         className="rounded-xl bg-slate-50 px-3 py-2 text-sm text-slate-700"
                       >
-                        <div className="font-semibold text-slate-800">{row.label}</div>
+                        <div className="font-semibold text-slate-800">
+                          {row.label}
+                        </div>
                         <div>
                           Brut : {formatMoney(row.net_amount)} • Reste :{" "}
                           {formatMoney(row.balance_due)}
