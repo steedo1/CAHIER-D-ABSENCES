@@ -113,7 +113,7 @@ function canonicalSubjectKey(value: string | null | undefined) {
   return SUBJECT_ALIAS_TO_CANONICAL[raw] || raw;
 }
 
-type BodyRole = "teacher" | "parent" | "admin" | "educator";
+type BodyRole = "teacher" | "parent" | "admin" | "educator" | "finance_manager";
 
 type SubjectLite = {
   id: string;
@@ -151,6 +151,29 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "no_institution" }, { status: 400 });
   }
 
+  const { data: callerRoles, error: callerRolesErr } = await supaSrv
+    .from("user_roles")
+    .select("role,institution_id")
+    .eq("profile_id", user.id);
+
+  if (callerRolesErr) {
+    return NextResponse.json({ error: callerRolesErr.message }, { status: 400 });
+  }
+
+  const isSuperAdmin = (callerRoles ?? []).some(
+    (r) => String(r.role) === "super_admin"
+  );
+  const isInstitutionAdmin = (callerRoles ?? []).some(
+    (r) => String(r.role) === "admin" && String(r.institution_id) === inst
+  );
+
+  if (!isSuperAdmin && !isInstitutionAdmin) {
+    return NextResponse.json(
+      { error: "admin_required" },
+      { status: 403 }
+    );
+  }
+
   // Payload
   const body = await req.json().catch(() => ({} as any));
   const role = body?.role as BodyRole;
@@ -181,6 +204,21 @@ export async function POST(req: NextRequest) {
   if (!role) {
     return NextResponse.json({ error: "role_required" }, { status: 400 });
   }
+
+  const allowedRoles: BodyRole[] = [
+    "teacher",
+    "parent",
+    "admin",
+    "educator",
+    "finance_manager",
+  ];
+
+  if (!allowedRoles.includes(role)) {
+    return NextResponse.json({ error: "role_not_allowed" }, { status: 403 });
+  }
+
+  // Le rôle founder est volontairement absent ici :
+  // il doit être créé uniquement depuis l'espace Super Admin.
 
   // Règle produit : le parent doit avoir un téléphone
   if (role === "parent" && !phone) {

@@ -1,16 +1,74 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Menu, X, LayoutDashboard, Ban, NotebookPen, Settings } from "lucide-react";
+import { Menu, X, LayoutDashboard, Ban, NotebookPen, Settings, FileSpreadsheet } from "lucide-react";
 import { LogoutButton } from "@/components/LogoutButton";
 import SidebarNav from "./sidebar-nav";
 import ContactUsButton from "@/components/ContactUsButton";
 
 export default function AdminShell({ children }: { children: React.ReactNode }) {
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [role, setRole] = useState<string | null>(null);
   const pathname = usePathname();
+
+  useEffect(() => {
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const r = await fetch("/api/auth/role", { cache: "no-store" });
+        if (!r.ok) return;
+
+        const j = await r.json().catch(() => ({}));
+        if (!cancelled) setRole(j?.role ? String(j.role) : null);
+      } catch {
+        if (!cancelled) setRole(null);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const isFinanceManager = role === "finance_manager";
+
+  const mobileItems = useMemo(
+    () =>
+      isFinanceManager
+        ? [
+            {
+              href: "/admin/finance",
+              label: "Finance",
+              Icon: FileSpreadsheet,
+            },
+          ]
+        : [
+            {
+              href: "/admin/dashboard",
+              label: "Accueil",
+              Icon: LayoutDashboard,
+            },
+            {
+              href: "/admin/absences",
+              label: "Absences",
+              Icon: Ban,
+            },
+            {
+              href: "/admin/notes",
+              label: "Notes",
+              Icon: NotebookPen,
+            },
+            {
+              href: "/admin/parametres",
+              label: "Paramètres",
+              Icon: Settings,
+            },
+          ],
+    [isFinanceManager]
+  );
 
   function isActive(href: string) {
     return pathname === href || (pathname ?? "").startsWith(href + "/");
@@ -91,7 +149,9 @@ export default function AdminShell({ children }: { children: React.ReactNode }) 
 
                 {/* Tagline masquée sur très petit écran pour un rendu plus "app" */}
                 <span className="hidden rounded-full bg-white/10 px-2 py-0.5 text-xs font-semibold ring-1 ring-white/20 sm:inline-flex">
-                  Absences &amp; notes · Admin établissement
+                  {isFinanceManager
+                    ? "Gestion financière · Établissement"
+                    : "Absences & notes · Admin établissement"}
                 </span>
               </div>
 
@@ -113,28 +173,7 @@ export default function AdminShell({ children }: { children: React.ReactNode }) 
           ───────────────────────────── */}
           <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-slate-200 bg-white/95 shadow-[0_-4px_12px_rgba(15,23,42,0.12)] backdrop-blur md:hidden">
             <div className="mx-auto flex max-w-7xl items-stretch justify-between">
-              {[
-                {
-                  href: "/admin/dashboard",
-                  label: "Accueil",
-                  Icon: LayoutDashboard,
-                },
-                {
-                  href: "/admin/absences",
-                  label: "Absences",
-                  Icon: Ban,
-                },
-                {
-                  href: "/admin/notes",
-                  label: "Notes",
-                  Icon: NotebookPen,
-                },
-                {
-                  href: "/admin/parametres",
-                  label: "Paramètres",
-                  Icon: Settings,
-                },
-              ].map(({ href, label, Icon }) => {
+              {mobileItems.map(({ href, label, Icon }) => {
                 const active = isActive(href);
 
                 return (

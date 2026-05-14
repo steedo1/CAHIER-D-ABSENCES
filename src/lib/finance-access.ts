@@ -1,4 +1,4 @@
-//src/lib/finance-access.ts
+// src/lib/finance-access.ts
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 export type FinanceAccessResult = {
@@ -7,6 +7,7 @@ export type FinanceAccessResult = {
     | "ok"
     | "not_authenticated"
     | "no_institution"
+    | "role_not_allowed"
     | "finance_not_enabled"
     | "subscription_expired";
   institutionId: string | null;
@@ -14,6 +15,13 @@ export type FinanceAccessResult = {
   subscriptionValid?: boolean;
   expiresAt?: string | null;
 };
+
+const FINANCE_ALLOWED_ROLES = new Set([
+  "super_admin",
+  "founder",
+  "admin",
+  "finance_manager",
+]);
 
 export async function getFinanceAccessForCurrentUser(): Promise<FinanceAccessResult> {
   const supabase = await getSupabaseServerClient();
@@ -47,6 +55,33 @@ export async function getFinanceAccessForCurrentUser(): Promise<FinanceAccessRes
       ok: false,
       reason: "no_institution",
       institutionId: null,
+    };
+  }
+
+  const { data: roleRows, error: roleErr } = await supabase
+    .from("user_roles")
+    .select("role,institution_id")
+    .eq("profile_id", user.id);
+
+  if (roleErr) {
+    throw new Error(roleErr.message);
+  }
+
+  const hasFinanceRole = (roleRows ?? []).some((row) => {
+    const role = String(row.role);
+    const roleInstitutionId = row.institution_id ? String(row.institution_id) : null;
+
+    if (role === "super_admin") return true;
+    if (!FINANCE_ALLOWED_ROLES.has(role)) return false;
+
+    return roleInstitutionId === institutionId;
+  });
+
+  if (!hasFinanceRole) {
+    return {
+      ok: false,
+      reason: "role_not_allowed",
+      institutionId,
     };
   }
 

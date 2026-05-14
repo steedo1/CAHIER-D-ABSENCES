@@ -1,7 +1,16 @@
 import { NextResponse, type NextRequest } from "next/server";
 
 const PUBLIC = new Set(["/login", "/recover", "/redirect"]);
-const PROTECTED_PREFIXES = ["/attendance", "/admin", "/super", "/parent", "/profile", "/(protected)"];
+
+const PROTECTED_PREFIXES = [
+  "/attendance",
+  "/admin",
+  "/super",
+  "/founder",
+  "/parent",
+  "/profile",
+  "/(protected)",
+];
 
 export function middleware(req: NextRequest) {
   const url = req.nextUrl.clone();
@@ -14,6 +23,7 @@ export function middleware(req: NextRequest) {
   const isProtected = PROTECTED_PREFIXES.some(
     (p) => pathname === p || pathname.startsWith(p + "/")
   );
+
   if (!isProtected) return NextResponse.next();
 
   // Cookies Supabase
@@ -23,6 +33,7 @@ export function middleware(req: NextRequest) {
 
   const projectRef = process.env.NEXT_PUBLIC_SUPABASE_URL
     ?.match(/^https:\/\/([^.]+)\.supabase\.co/i)?.[1];
+
   const authTokenName = projectRef ? `sb-${projectRef}-auth-token` : null;
   const hasAuthToken = authTokenName ? !!c.get(authTokenName) : false;
 

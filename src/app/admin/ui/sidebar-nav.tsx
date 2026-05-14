@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import {
   LayoutDashboard,
+  CalendarDays,
   Ban,
   School,
   Users,
@@ -161,6 +162,44 @@ function TextBadge({ text }: { text: string }) {
 ========================= */
 const TOP_LEVEL_ITEMS: NavItem[] = [
   { href: "/admin/dashboard", label: "Tableau de bord", Icon: LayoutDashboard },
+];
+
+const MONTAGE_EDT_ITEMS: NavItem[] = [
+  {
+    href: "/admin/montage-emploi-du-temps",
+    label: "Vue d’ensemble",
+    Icon: CalendarDays,
+  },
+  {
+    href: "/admin/montage-emploi-du-temps/volumes",
+    label: "Référentiel & services",
+    Icon: FileSpreadsheet,
+  },
+  {
+    href: "/admin/montage-emploi-du-temps/regles-terrain",
+    label: "Règles terrain",
+    Icon: Settings,
+  },
+  {
+    href: "/admin/montage-emploi-du-temps/indisponibilites",
+    label: "Indisponibilités",
+    Icon: Users,
+  },
+  {
+    href: "/admin/montage-emploi-du-temps/ressources",
+    label: "Salles & ressources",
+    Icon: School,
+  },
+  {
+    href: "/admin/montage-emploi-du-temps/generation",
+    label: "Services & génération",
+    Icon: BarChart3,
+  },
+  {
+    href: "/admin/montage-emploi-du-temps/publication",
+    label: "Publication",
+    Icon: ShieldCheck,
+  },
 ];
 
 const PREDICTION_ITEMS: NavItem[] = [
@@ -820,68 +859,95 @@ export default function SidebarNav() {
   }, []);
 
   const isEducator = role === "educator";
+  const isFinanceManager = role === "finance_manager";
 
-  const topLevelItems = React.useMemo(() => TOP_LEVEL_ITEMS, []);
+  const topLevelItems = React.useMemo(
+    () => (isFinanceManager ? [] : TOP_LEVEL_ITEMS),
+    [isFinanceManager]
+  );
+
+  const montageEdtItems = React.useMemo(
+    () => MONTAGE_EDT_ITEMS.filter(() => !isEducator && !isFinanceManager),
+    [isEducator, isFinanceManager]
+  );
 
   const predictionItems = React.useMemo(
     () =>
       PREDICTION_ITEMS.filter((item) => {
+        if (isFinanceManager) return false;
         if (isEducator && item.href.startsWith("/admin/notes")) return false;
         return true;
       }),
-    [isEducator]
+    [isEducator, isFinanceManager]
   );
 
   const nonClassesItems = React.useMemo(
     () =>
       NON_CLASSES_ITEMS.filter((item) => {
+        if (isFinanceManager) return false;
         if (isEducator && item.href.startsWith("/admin/notes")) return false;
         return true;
       }),
-    [isEducator]
+    [isEducator, isFinanceManager]
   );
 
   const fileCorrespondenceItems = React.useMemo(
     () =>
       FILE_CORRESPONDENCE_ITEMS.filter(() => {
+        if (isFinanceManager) return false;
         if (isEducator) return false;
         return true;
       }),
-    [isEducator]
+    [isEducator, isFinanceManager]
   );
 
   const conductManagementItems = React.useMemo(
-    () => CONDUCT_MANAGEMENT_ITEMS,
-    []
+    () => (isFinanceManager ? [] : CONDUCT_MANAGEMENT_ITEMS),
+    [isFinanceManager]
   );
 
-  const organisationItems = React.useMemo(() => ORGANISATION_ITEMS, []);
+  const organisationItems = React.useMemo(
+    () => (isFinanceManager ? [] : ORGANISATION_ITEMS),
+    [isFinanceManager]
+  );
 
   const adminItems = React.useMemo(
     () =>
       ADMIN_ITEMS.filter((item) => {
+        if (isFinanceManager) return item.href.startsWith("/admin/finance");
         if (isEducator && item.href.startsWith("/admin/finance")) return false;
         return true;
       }),
-    [isEducator]
+    [isEducator, isFinanceManager]
   );
 
-  const callsControlItems = React.useMemo(() => CALLS_CONTROL_ITEMS, []);
-  const absItems = React.useMemo(() => ABS_ITEMS, []);
+  const callsControlItems = React.useMemo(
+    () => (isFinanceManager ? [] : CALLS_CONTROL_ITEMS),
+    [isFinanceManager]
+  );
+  const absItems = React.useMemo(
+    () => (isFinanceManager ? [] : ABS_ITEMS),
+    [isFinanceManager]
+  );
 
   const notesItems = React.useMemo(
     () =>
       NOTES_ITEMS.filter((item) => {
+        if (isFinanceManager) return false;
         if (isEducator && item.href.startsWith("/admin/notes")) return false;
         return true;
       }),
-    [isEducator]
+    [isEducator, isFinanceManager]
   );
 
-  const settingsItems = React.useMemo(() => SETTINGS_ITEMS, []);
+  const settingsItems = React.useMemo(
+    () => (isFinanceManager ? [] : SETTINGS_ITEMS),
+    [isFinanceManager]
+  );
 
   const fileCorrespondenceActive =
     !isEducator &&
+    !isFinanceManager &&
     groupHasActiveItem(pathname, fileCorrespondenceItems, currentTab);
 
   const conductManagementActive = groupHasActiveItem(
@@ -896,6 +962,11 @@ export default function SidebarNav() {
     currentTab
   );
 
+  const montageEdtActive =
+    !isEducator &&
+    !isFinanceManager &&
+    groupHasActiveItem(pathname, montageEdtItems, currentTab);
+
   const adminActive = groupHasActiveItem(pathname, adminItems, currentTab);
 
   const callsControlActive = groupHasActiveItem(
@@ -907,7 +978,9 @@ export default function SidebarNav() {
   const absActive = groupHasActiveItem(pathname, absItems, currentTab);
 
   const notesActive =
-    !isEducator && groupHasActiveItem(pathname, notesItems, currentTab);
+    !isEducator &&
+    !isFinanceManager &&
+    groupHasActiveItem(pathname, notesItems, currentTab);
 
   const settingsActive = groupHasActiveItem(pathname, settingsItems, currentTab);
 
@@ -919,6 +992,9 @@ export default function SidebarNav() {
 
   const [organisationOpen, setOrganisationOpen] =
     React.useState<boolean>(organisationActive);
+
+  const [montageEdtOpen, setMontageEdtOpen] =
+    React.useState<boolean>(montageEdtActive);
 
   const [adminOpen, setAdminOpen] = React.useState<boolean>(adminActive);
 
@@ -943,6 +1019,10 @@ export default function SidebarNav() {
   React.useEffect(() => {
     if (organisationActive) setOrganisationOpen(true);
   }, [organisationActive]);
+
+  React.useEffect(() => {
+    if (montageEdtActive) setMontageEdtOpen(true);
+  }, [montageEdtActive]);
 
   React.useEffect(() => {
     if (adminActive) setAdminOpen(true);
@@ -1042,7 +1122,7 @@ export default function SidebarNav() {
               />
             )}
 
-            {conductManagementItems.length > 0 && (
+            {!isFinanceManager && conductManagementItems.length > 0 && (
               <GroupSection
                 title="Gestion conduite"
                 Icon={ShieldCheck}
@@ -1055,7 +1135,8 @@ export default function SidebarNav() {
               />
             )}
 
-            <GroupSection
+            {!isFinanceManager && organisationItems.length > 0 && (
+              <GroupSection
               title="Organisation scolaire"
               Icon={School}
               items={organisationItems}
@@ -1065,6 +1146,20 @@ export default function SidebarNav() {
               onToggle={() => setOrganisationOpen((v) => !v)}
               accent="sky"
             />
+            )}
+
+            {!isEducator && !isFinanceManager && montageEdtItems.length > 0 && (
+              <GroupSection
+                title="Montage emploi du temps"
+                Icon={CalendarDays}
+                items={montageEdtItems}
+                pathname={pathname}
+                currentTab={currentTab}
+                open={montageEdtOpen}
+                onToggle={() => setMontageEdtOpen((v) => !v)}
+                accent="sky"
+              />
+            )}
 
             <GroupSection
               title="Administration & services"
@@ -1075,12 +1170,15 @@ export default function SidebarNav() {
               open={adminOpen}
               onToggle={() => setAdminOpen((v) => !v)}
               accent="amber"
-              badgeCount={pendingAbsenceCount}
-              pendingAbsenceCount={pendingAbsenceCount}
-              pendingGradePublicationCount={pendingGradePublicationCount}
+              badgeCount={isFinanceManager ? 0 : pendingAbsenceCount}
+              pendingAbsenceCount={isFinanceManager ? 0 : pendingAbsenceCount}
+              pendingGradePublicationCount={
+                isFinanceManager ? 0 : pendingGradePublicationCount
+              }
             />
 
-            <GroupSection
+            {!isFinanceManager && callsControlItems.length > 0 && (
+              <GroupSection
               title="Contrôle des appels"
               Icon={BarChart3}
               items={callsControlItems}
@@ -1090,8 +1188,10 @@ export default function SidebarNav() {
               onToggle={() => setCallsControlOpen((v) => !v)}
               accent="cyan"
             />
+            )}
 
-            <GroupSection
+            {!isFinanceManager && absItems.length > 0 && (
+              <GroupSection
               title="Cahier des absences"
               Icon={Ban}
               items={absItems}
@@ -1101,8 +1201,9 @@ export default function SidebarNav() {
               onToggle={() => setAbsOpen((v) => !v)}
               accent="emerald"
             />
+            )}
 
-            {!isEducator && notesItems.length > 0 && (
+            {!isEducator && !isFinanceManager && notesItems.length > 0 && (
               <GroupSection
                 title="Cahier de notes"
                 Icon={NotebookPen}
@@ -1117,7 +1218,8 @@ export default function SidebarNav() {
               />
             )}
 
-            <GroupSection
+            {!isFinanceManager && settingsItems.length > 0 && (
+              <GroupSection
               title="Paramètres"
               Icon={Settings}
               items={settingsItems}
@@ -1127,6 +1229,7 @@ export default function SidebarNav() {
               onToggle={() => setSettingsOpen((v) => !v)}
               accent="amber"
             />
+            )}
           </ul>
         </div>
 
@@ -1157,3 +1260,4 @@ export default function SidebarNav() {
     </div>
   );
 }
+
