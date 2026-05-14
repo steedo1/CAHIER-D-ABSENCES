@@ -274,16 +274,18 @@ function pushUniqueLevelCandidate(list: string[], value?: string | null) {
 }
 
 const STRICT_OFFICIAL_COEFF_LEVELS = new Set([
-  "2ndeA",
-  "2ndeC",
+  /**
+   * On reste strict uniquement sur les séries A, car A1 et A2 ont
+   * des coefficients différents et ne doivent jamais se remplacer.
+   *
+   * Pour les séries non ambiguës (D, C, 2nde, collège), on garde la
+   * compatibilité avec les anciens libellés déjà présents en base
+   * grâce à normalizeStoredLevel() : 1reD -> 1ereD, TD -> tleD, etc.
+   */
   "1ereA1",
   "1ereA2",
-  "1ereC",
-  "1ereD",
   "tleA1",
   "tleA2",
-  "tleC",
-  "tleD",
 ]);
 
 function buildCoeffLevelCandidates(classRow: ClassRow, bulletinLevel: string | null): string[] {
@@ -299,6 +301,17 @@ function buildCoeffLevelCandidates(classRow: ClassRow, bulletinLevel: string | n
   const official = normalizeCoeffLevelKey(classRow.official_track_code);
   if (official) {
     out.push(official);
+
+    // Les séries A restent strictes : A1 et A2 n'ont pas les mêmes coefficients.
+    if (STRICT_OFFICIAL_COEFF_LEVELS.has(official)) return out;
+
+    // Pour les autres séries/niveaux, on ajoute les anciens libellés en secours.
+    // Exemple : official 1ereD peut retrouver des lignes historiques 1reD.
+    pushUniqueLevelCandidate(out, classRow.level);
+    pushUniqueLevelCandidate(out, classRow.code);
+    pushUniqueLevelCandidate(out, classRow.label);
+    pushUniqueLevelCandidate(out, bulletinLevel);
+    if (bulletinLevel && !out.includes(bulletinLevel)) out.push(bulletinLevel);
     return out;
   }
 
