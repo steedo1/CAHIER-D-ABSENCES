@@ -3,23 +3,29 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 export type AppRole =
   | "super_admin"
+  | "founder"
   | "drenaet_admin"
   | "admin"
+  | "finance_manager"
   | "educator"
   | "teacher"
   | "parent"
+  | "student"
   | "class_device";
 
 export type Book = "attendance" | "grades";
 
 export const ROLE_PRIORITY: AppRole[] = [
   "super_admin",
+  "founder",
   "drenaet_admin",
   "admin",
+  "finance_manager",
   "educator",
   "teacher",
   "class_device",
   "parent",
+  "student",
 ];
 
 function normalize(role: AppRole): AppRole {
@@ -35,10 +41,14 @@ export function routeForRole(role: AppRole): string {
   switch (role) {
     case "super_admin":
       return "/super/dashboard";
+    case "founder":
+      return "/founder/dashboard";
     case "drenaet_admin":
       return "/drenaet/dashboard";
     case "admin":
       return "/admin/dashboard";
+    case "finance_manager":
+      return "/admin/finance";
     case "educator":
       return "/admin/dashboard"; // même dashboard, mais menu filtré côté front
     case "teacher":
@@ -47,6 +57,8 @@ export function routeForRole(role: AppRole): string {
       return "/class"; // compte-classe pour assiduité
     case "parent":
       return "/parents";
+    case "student":
+      return "/profile";
     default:
       return "/profile";
   }
@@ -69,6 +81,10 @@ export function routeForRoleWithBook(role: AppRole, book?: Book): string {
         return "/drenaet/dashboard"; // Supervision régionale, lecture seule
       case "super_admin":
         return "/super/notes"; // Cahier de notes — super admin
+      case "founder":
+        return "/founder/dashboard";
+      case "finance_manager":
+        return "/admin/finance";
       case "parent":
         return "/parents?tab=notes"; // Onglet "notes" côté parent
       case "class_device":
@@ -99,7 +115,9 @@ export async function routeForUser(
       .eq("profile_id", userId);
 
     if (!error) {
-      const roles = (rows ?? []).map((r) => r.role as AppRole);
+      const roles = (rows ?? [])
+        .map((r) => String(r.role))
+        .filter((role): role is AppRole => ROLE_PRIORITY.includes(role as AppRole));
       const primary = ROLE_PRIORITY.find((r) => roles.includes(r)) || roles[0];
 
       if (primary) {

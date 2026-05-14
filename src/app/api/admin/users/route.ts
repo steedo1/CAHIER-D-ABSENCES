@@ -41,7 +41,19 @@ const lc = (s: string | null | undefined) => (s ?? "").toLowerCase();
 const digits = (s: string | null | undefined) => (s ?? "").replace(/\D+/g, "");
 
 /** priorité d’affichage si plusieurs rôles */
-const ROLE_ORDER = ["super_admin", "admin", "teacher", "educator", "parent", "user"] as const;
+const ROLE_ORDER = [
+  "super_admin",
+  "founder",
+  "drenaet_admin",
+  "admin",
+  "finance_manager",
+  "teacher",
+  "educator",
+  "parent",
+  "student",
+  "class_device",
+  "user",
+] as const;
 function pickRole(roles: string[]) {
   for (const r of ROLE_ORDER) if (roles.includes(r)) return r;
   return roles[0] ?? null;

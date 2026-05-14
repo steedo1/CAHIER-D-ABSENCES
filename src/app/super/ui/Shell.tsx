@@ -10,6 +10,7 @@ const NAV = [
   { href: "/super/etablissements/liste", label: "Liste des établissements", icon: "📋" },
   { href: "/super/abonnements", label: "Mes abonnements", icon: "🧾" },
   { href: "/super/admins", label: "Liste des admins", icon: "🧑‍💼" },
+  { href: "/super/founders", label: "Fondateurs", icon: "👑" },
   { href: "/super/drenaets", label: "Accès DRENAET", icon: "🏛️" },
   { href: "/super/parametres", label: "Paramètres", icon: "⚙️" },
 ];

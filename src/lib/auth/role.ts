@@ -2,21 +2,27 @@
 
 export type AppRole =
   | "super_admin"
+  | "founder"
   | "drenaet_admin"
   | "admin"
+  | "finance_manager"
   | "educator"
   | "teacher"
   | "parent"
+  | "student"
   | "class_device";
 
 export const ROLE_PRIORITY: AppRole[] = [
   "super_admin",
+  "founder",
   "drenaet_admin",
   "admin",
+  "finance_manager",
   "educator",
   "teacher",
   "class_device",
   "parent",
+  "student",
 ];
 
 export function normalize(role: AppRole): AppRole {

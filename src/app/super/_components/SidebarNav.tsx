@@ -9,6 +9,7 @@ import {
   BadgeDollarSign,
   Users,
   Settings,
+  Crown,
 } from "lucide-react";
 
 type NavItem = {
@@ -22,6 +23,7 @@ const items: NavItem[] = [
   { href: "/super/etablissements",   label: "Etablissements",  Icon: Building2 },
   { href: "/super/abonnements",      label: "Abonnements",     Icon: BadgeDollarSign },
   { href: "/super/admins",           label: "Admins",          Icon: Users },
+  { href: "/super/founders",         label: "Fondateurs",      Icon: Crown },
   { href: "/super/parametres",       label: "Parametres",      Icon: Settings },
 ];
 
