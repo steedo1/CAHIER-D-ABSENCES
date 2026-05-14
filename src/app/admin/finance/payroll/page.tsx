@@ -206,9 +206,39 @@ function formatSessions(value: number) {
   });
 }
 
+function payableLine(row: { employment_type?: EmploymentType | string | null }) {
+  return row.employment_type === "vacataire";
+}
+
 function numberValue(value: number | string | null | undefined) {
   const n = Number(value || 0);
   return Number.isFinite(n) ? n : 0;
+}
+
+function lostSessionsForLine(
+  row: Pick<
+    TeacherPayrollLineRow,
+    "expected_sessions" | "lost_minutes_after_tolerance" | "lost_sessions_equivalent"
+  >,
+  sessionReferenceMinutes: number,
+) {
+  const lostMinutes = numberValue(row.lost_minutes_after_tolerance);
+  const storedEquivalent = numberValue(row.lost_sessions_equivalent);
+  const referenceMinutes = Math.max(1, Number(sessionReferenceMinutes || 60));
+  const expectedSessions = Math.max(0, Number(row.expected_sessions || 0));
+
+  if (lostMinutes <= 0) return 0;
+
+  // Sécurité pour les anciens brouillons : certaines lignes ont pu recevoir
+  // les minutes brutes dans la colonne d’équivalent séances.
+  if (
+    storedEquivalent <= 0 ||
+    storedEquivalent > Math.max(expectedSessions, 1) * 1.25
+  ) {
+    return lostMinutes / referenceMinutes;
+  }
+
+  return storedEquivalent;
 }
 
 function teacherLabel(t: {
@@ -263,6 +293,36 @@ function monthRange(month: string) {
   ).padStart(2, "0")}`;
 
   return { start, end, periodMonth, periodStart, periodEnd };
+}
+
+function periodIsInsideAcademicYear(
+  periodStart: string,
+  periodEnd: string,
+  academicYearStart?: string | null,
+  academicYearEnd?: string | null,
+) {
+  if (academicYearStart && periodStart < academicYearStart) return false;
+  if (academicYearEnd && periodEnd > academicYearEnd) return false;
+  return true;
+}
+
+function payrollMessageLabel(code: string | null | undefined) {
+  switch (String(code || "")) {
+    case "draft_saved":
+      return {
+        tone: "success" as const,
+        title: "Brouillon de paie enregistré",
+        body: "Les paramètres saisis ont été enregistrés dans le run de paie et les lignes ont été recalculées.",
+      };
+    case "month_outside_academic_year":
+      return {
+        tone: "warning" as const,
+        title: "Mois incompatible avec l’année scolaire sélectionnée",
+        body: "Le mois choisi ne se trouve pas dans la période de l’année scolaire consultée. Sélectionne l’année scolaire correspondante ou change le mois avant de générer la paie.",
+      };
+    default:
+      return null;
+  }
 }
 
 function cycleFromLevel(level: string | null | undefined): SchoolCycle {
@@ -643,7 +703,39 @@ async function generatePayrollDraftAction(formData: FormData) {
     institutionId,
     requestedAcademicYear,
   );
-  const { selectedAcademicYearId, selectedAcademicYearCode } = academicYearCtx;
+  const {
+    selectedAcademicYearId,
+    selectedAcademicYearCode,
+    selectedAcademicYearStart,
+    selectedAcademicYearEnd,
+  } = academicYearCtx;
+
+  const baseReturnParams = `month=${encodeURIComponent(month)}&scope=${encodeURIComponent(
+    scope,
+  )}&rate_first=${encodeURIComponent(String(rateFirst))}&rate_second=${encodeURIComponent(
+    String(rateSecond),
+  )}&academic_year=${encodeURIComponent(
+    selectedAcademicYearCode,
+  )}&late_tolerance_min=${encodeURIComponent(
+    String(lateToleranceMin),
+  )}&early_departure_tolerance_min=${encodeURIComponent(
+    String(earlyDepartureToleranceMin),
+  )}&session_reference_minutes=${encodeURIComponent(
+    String(sessionReferenceMinutes),
+  )}`;
+
+  if (
+    !periodIsInsideAcademicYear(
+      periodStart,
+      periodEnd,
+      selectedAcademicYearStart,
+      selectedAcademicYearEnd,
+    )
+  ) {
+    redirect(
+      `/admin/finance/payroll?${baseReturnParams}&message=month_outside_academic_year`,
+    );
+  }
 
   const [{ data: classRows, error: clsErr }, teachers] = await Promise.all([
     (() => {
@@ -802,6 +894,7 @@ async function generatePayrollDraftAction(formData: FormData) {
     );
 
     const actualBuckets = new Map<string, StatisticsDetailRow[]>();
+    const monetizeTeacher = teacher.employment_type === "vacataire";
 
     for (const row of actualRows) {
       const sessionDate = String(row.dateISO || "").slice(0, 10);
@@ -846,13 +939,18 @@ async function generatePayrollDraftAction(formData: FormData) {
         1,
         lostMinutes / sessionReferenceMinutes,
       );
-      const rate = slot.cycle === "first_cycle" ? rateFirst : rateSecond;
-      const theoreticalAmount = rate;
-      const lostAmount = roundMoney(rate * lostSessionsEquivalent);
-      const adjustedAmount = Math.max(
-        0,
-        roundMoney(theoreticalAmount - lostAmount),
-      );
+      const rate = monetizeTeacher
+        ? slot.cycle === "first_cycle"
+          ? rateFirst
+          : rateSecond
+        : 0;
+      const theoreticalAmount = monetizeTeacher ? rate : 0;
+      const lostAmount = monetizeTeacher
+        ? roundMoney(rate * lostSessionsEquivalent)
+        : 0;
+      const adjustedAmount = monetizeTeacher
+        ? Math.max(0, roundMoney(theoreticalAmount - lostAmount))
+        : 0;
 
       return {
         class_id: slot.class_id,
@@ -978,19 +1076,9 @@ async function generatePayrollDraftAction(formData: FormData) {
 
   revalidatePath("/admin/finance/payroll");
   redirect(
-    `/admin/finance/payroll?month=${encodeURIComponent(month)}&scope=${encodeURIComponent(
-      scope,
-    )}&rate_first=${encodeURIComponent(String(rateFirst))}&rate_second=${encodeURIComponent(
-      String(rateSecond),
-    )}&academic_year=${encodeURIComponent(
-      selectedAcademicYearCode,
-    )}&late_tolerance_min=${encodeURIComponent(
-      String(lateToleranceMin),
-    )}&early_departure_tolerance_min=${encodeURIComponent(
-      String(earlyDepartureToleranceMin),
-    )}&session_reference_minutes=${encodeURIComponent(
-      String(sessionReferenceMinutes),
-    )}&run_id=${encodeURIComponent(runId)}`,
+    `/admin/finance/payroll?${baseReturnParams}&run_id=${encodeURIComponent(
+      runId,
+    )}&message=draft_saved`,
   );
 }
 
@@ -1137,6 +1225,7 @@ export default async function FinancePayrollPage({
     late_tolerance_min?: string;
     early_departure_tolerance_min?: string;
     session_reference_minutes?: string;
+    message?: string;
   }>;
 }) {
   const access = await getFinanceAccessForCurrentUser();
@@ -1171,7 +1260,20 @@ export default async function FinancePayrollPage({
     institutionId,
     requestedAcademicYear,
   );
-  const { academicYears, selectedAcademicYearCode } = academicYearCtx;
+  const {
+    academicYears,
+    selectedAcademicYearCode,
+    selectedAcademicYearStart,
+    selectedAcademicYearEnd,
+  } = academicYearCtx;
+  const currentMonthRange = monthRange(month);
+  const message = payrollMessageLabel(params?.message);
+  const monthInsideSelectedAcademicYear = periodIsInsideAcademicYear(
+    currentMonthRange.periodStart,
+    currentMonthRange.periodEnd,
+    selectedAcademicYearStart,
+    selectedAcademicYearEnd,
+  );
 
   const [
     { data: runs, error: runsErr },
@@ -1216,6 +1318,15 @@ export default async function FinancePayrollPage({
 
   const selectedRun =
     (requestedRunId ? runRows.find((r) => r.id === requestedRunId) : null) ||
+    runRows.find(
+      (r) =>
+        r.period_month === `${month}-01` &&
+        r.status === "draft" &&
+        r.scope === scope,
+    ) ||
+    runRows.find(
+      (r) => r.period_month === `${month}-01` && r.scope === scope,
+    ) ||
     runRows.find(
       (r) => r.period_month === `${month}-01` && r.status === "draft",
     ) ||
@@ -1266,11 +1377,17 @@ export default async function FinancePayrollPage({
       acc.actualMinutes += Number(row.actual_minutes || 0);
       acc.firstCycle += Number(row.sessions_first_cycle || 0);
       acc.secondCycle += Number(row.sessions_second_cycle || 0);
-      acc.gross += Number(row.gross_amount || 0);
+      const isPayable = payableLine(row);
+      acc.gross += isPayable ? Number(row.gross_amount || 0) : 0;
       acc.lostMinutes += numberValue(row.lost_minutes_after_tolerance);
-      acc.lostSessions += numberValue(row.lost_sessions_equivalent);
-      acc.lostAmount += numberValue(row.lost_amount);
-      acc.adjusted += numberValue(row.adjusted_amount ?? row.gross_amount);
+      acc.lostSessions += lostSessionsForLine(
+        row,
+        effectiveSessionReferenceMinutes,
+      );
+      acc.lostAmount += isPayable ? numberValue(row.lost_amount) : 0;
+      acc.adjusted += isPayable
+        ? numberValue(row.adjusted_amount ?? row.gross_amount)
+        : 0;
       return acc;
     },
     {
@@ -1395,19 +1512,6 @@ export default async function FinancePayrollPage({
 
               form.setAttribute("data-submitting", "true");
 
-              var controls = form.querySelectorAll("button, input, select, textarea");
-              controls.forEach(function (node) {
-                if (node instanceof HTMLButtonElement ||
-                    node instanceof HTMLInputElement ||
-                    node instanceof HTMLSelectElement ||
-                    node instanceof HTMLTextAreaElement) {
-                  node.setAttribute("aria-busy", "true");
-                  if (!(node instanceof HTMLInputElement && node.type === "hidden")) {
-                    node.disabled = true;
-                  }
-                }
-              });
-
               form.querySelectorAll("[data-idle-label]").forEach(function (el) {
                 el.classList.add("hidden");
               });
@@ -1416,7 +1520,16 @@ export default async function FinancePayrollPage({
                 el.classList.remove("hidden");
                 el.classList.add("inline-flex");
               });
-            }, true);
+
+              window.setTimeout(function () {
+                form.querySelectorAll("button").forEach(function (node) {
+                  if (node instanceof HTMLButtonElement) {
+                    node.setAttribute("aria-busy", "true");
+                    node.disabled = true;
+                  }
+                });
+              }, 0);
+            }, false);
           `,
         }}
       />
@@ -1640,7 +1753,10 @@ export default async function FinancePayrollPage({
                         </td>
                         <td className="border border-slate-300 px-3 py-4 text-right font-semibold text-amber-700">
                           {formatSessions(
-                            numberValue(row.lost_sessions_equivalent),
+                            lostSessionsForLine(
+                              row,
+                              effectiveSessionReferenceMinutes,
+                            ),
                           )}
                         </td>
                         <td className="border border-slate-300 px-3 py-4 text-right text-slate-700">
@@ -1650,15 +1766,23 @@ export default async function FinancePayrollPage({
                           {row.sessions_second_cycle}
                         </td>
                         <td className="border border-slate-300 px-3 py-4 text-right font-black text-emerald-700">
-                          {formatMoney(row.gross_amount)}
-                          <div className="mt-1 text-xs font-bold text-slate-500">
-                            Avec pertes :{" "}
-                            {formatMoney(
-                              numberValue(
-                                row.adjusted_amount ?? row.gross_amount,
-                              ),
-                            )}
-                          </div>
+                          {payableLine(row) ? (
+                            <>
+                              {formatMoney(row.gross_amount)}
+                              <div className="mt-1 text-xs font-bold text-slate-500">
+                                Avec pertes :{" "}
+                                {formatMoney(
+                                  numberValue(
+                                    row.adjusted_amount ?? row.gross_amount,
+                                  ),
+                                )}
+                              </div>
+                            </>
+                          ) : (
+                            <div className="text-xs font-bold uppercase tracking-wide text-slate-500">
+                              Rapport présence
+                            </div>
+                          )}
                         </td>
                         <td className="border border-slate-300 px-3 py-4">
                           <div className="h-10 w-full rounded-md border border-dashed border-slate-300" />
@@ -1750,6 +1874,29 @@ export default async function FinancePayrollPage({
               session_reference_minutes: effectiveSessionReferenceMinutes,
             }}
           />
+
+          {message ? (
+            <section
+              className={`rounded-[24px] border px-5 py-4 text-sm font-semibold shadow-sm ${
+                message.tone === "success"
+                  ? "border-emerald-200 bg-emerald-50 text-emerald-900"
+                  : "border-amber-200 bg-amber-50 text-amber-900"
+              }`}
+            >
+              <div className="font-black uppercase tracking-[0.12em]">
+                {message.title}
+              </div>
+              <div className="mt-1 leading-6">{message.body}</div>
+            </section>
+          ) : null}
+
+          {!monthInsideSelectedAcademicYear ? (
+            <section className="rounded-[24px] border border-amber-200 bg-amber-50 px-5 py-4 text-sm font-semibold text-amber-900 shadow-sm">
+              Le mois {formatMonthLabel(month)} ne correspond pas à l’année
+              scolaire consultée. Pour générer la paie, choisis le mois de cette
+              année scolaire ou sélectionne l’année scolaire correspondante.
+            </section>
+          ) : null}
 
           <section className="no-print grid gap-4 md:grid-cols-2 xl:grid-cols-4">
             <StatCard
@@ -1910,7 +2057,10 @@ export default async function FinancePayrollPage({
                 </div>
 
                 <div className="md:col-span-2 flex flex-wrap gap-3">
-                  <button className="inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-4 py-3 text-sm font-bold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-80">
+                  <button
+                    type="submit"
+                    className="inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-4 py-3 text-sm font-bold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-80"
+                  >
                     <span
                       data-idle-label
                       className="inline-flex items-center justify-center gap-2"
@@ -2119,7 +2269,7 @@ export default async function FinancePayrollPage({
                 />
                 <StatCard
                   icon={<Wallet className="h-6 w-6" />}
-                  label="Montant brut"
+                  label="Paie vacataires"
                   value={formatMoney(totals.gross)}
                   hint={`Ajusté proposé : ${formatMoney(totals.adjusted)}`}
                   tone="violet"
@@ -2178,7 +2328,7 @@ export default async function FinancePayrollPage({
                             Tarif 2nd cycle
                           </th>
                           <th className="px-3 py-3 text-right font-bold text-slate-600">
-                            Sans pertes
+                            Montant / Rapport
                           </th>
                         </tr>
                       </thead>
@@ -2217,7 +2367,10 @@ export default async function FinancePayrollPage({
                             </td>
                             <td className="px-3 py-3 text-right font-semibold text-amber-700">
                               {formatSessions(
-                                numberValue(row.lost_sessions_equivalent),
+                                lostSessionsForLine(
+                                  row,
+                                  effectiveSessionReferenceMinutes,
+                                ),
                               )}
                             </td>
                             <td className="px-3 py-3 text-right text-slate-700">
@@ -2233,15 +2386,23 @@ export default async function FinancePayrollPage({
                               {formatMoney(row.rate_second_cycle)}
                             </td>
                             <td className="px-3 py-3 text-right font-black text-emerald-700">
-                              {formatMoney(row.gross_amount)}
-                              <div className="mt-1 text-xs font-bold text-slate-500">
-                                Avec pertes :{" "}
-                                {formatMoney(
-                                  numberValue(
-                                    row.adjusted_amount ?? row.gross_amount,
-                                  ),
-                                )}
-                              </div>
+                              {payableLine(row) ? (
+                                <>
+                                  {formatMoney(row.gross_amount)}
+                                  <div className="mt-1 text-xs font-bold text-slate-500">
+                                    Avec pertes :{" "}
+                                    {formatMoney(
+                                      numberValue(
+                                        row.adjusted_amount ?? row.gross_amount,
+                                      ),
+                                    )}
+                                  </div>
+                                </>
+                              ) : (
+                                <div className="text-xs font-bold uppercase tracking-wide text-slate-500">
+                                  Rapport présence
+                                </div>
+                              )}
                             </td>
                           </tr>
                         ))}
