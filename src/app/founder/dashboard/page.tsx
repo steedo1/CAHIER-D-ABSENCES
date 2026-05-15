@@ -9,8 +9,6 @@ export const dynamic = "force-dynamic";
 type InstitutionRow = {
   id: string;
   name: string | null;
-  code_unique?: string | null;
-  city?: string | null;
 };
 
 type QueryResult<T> = {
@@ -70,7 +68,7 @@ async function getFounderContext() {
     "institutions",
     service
       .from("institutions")
-      .select("id,name,code_unique,city")
+      .select("id,name")
       .in("id", institutionIds)
       .order("name", { ascending: true }),
     [],
@@ -188,7 +186,7 @@ export default async function FounderDashboardPage() {
               <div key={school.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
                 <div className="font-black text-slate-950">{school.name || "Établissement"}</div>
                 <div className="mt-1 text-xs text-slate-500">
-                  {[school.code_unique, school.city].filter(Boolean).join(" • ") || school.id}
+                  {school.id}
                 </div>
               </div>
             ))

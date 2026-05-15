@@ -57,7 +57,7 @@ export default async function FounderFinancePage() {
   const [institutions, receipts, expenses] = await Promise.all([
     safeData<any[]>(
       "institutions",
-      service.from("institutions").select("id,name,code_unique").in("id", institutionIds).order("name"),
+      service.from("institutions").select("id,name").in("id", institutionIds).order("name"),
       [],
     ),
     safeData<any[]>(
@@ -109,7 +109,7 @@ export default async function FounderFinancePage() {
           rows.map(({ school, totalReceipts, totalExpenses, receiptsCount, expensesCount }) => (
             <div key={school.id} className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
               <div className="font-black text-slate-950">{school.name || "Établissement"}</div>
-              <div className="mt-1 text-xs text-slate-500">{school.code_unique || school.id}</div>
+              <div className="mt-1 text-xs text-slate-500">{school.id}</div>
 
               <div className="mt-5 grid gap-3 sm:grid-cols-2">
                 <div className="rounded-2xl border border-emerald-100 bg-emerald-50 p-4">
