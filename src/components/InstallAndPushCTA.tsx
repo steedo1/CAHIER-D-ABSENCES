@@ -29,7 +29,22 @@ function getNotificationPermission(): PermissionState {
   return Notification.permission as PermissionState;
 }
 
-async function waitForServiceWorkerReady(timeoutMs = 10000) {
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  let timer: ReturnType<typeof window.setTimeout> | undefined;
+
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timer = window.setTimeout(() => reject(new Error(message)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) window.clearTimeout(timer);
+  }
+}
+
+async function waitForServiceWorkerReady(timeoutMs = 12000) {
   if (!("serviceWorker" in navigator)) return null;
 
   const existing = await navigator.serviceWorker.getRegistration("/");
@@ -37,12 +52,15 @@ async function waitForServiceWorkerReady(timeoutMs = 10000) {
     await navigator.serviceWorker.register("/sw.js", { scope: "/" });
   }
 
-  return await Promise.race([
+  return await withTimeout(
     navigator.serviceWorker.ready,
-    new Promise<ServiceWorkerRegistration | null>((resolve) => {
-      window.setTimeout(() => resolve(null), timeoutMs);
-    }),
-  ]);
+    timeoutMs,
+    "Le service worker ne répond pas. Recharge la page puis réessaie."
+  );
+}
+
+function formatPermissionHelp() {
+  return "Clique sur l’icône cadenas ou la petite cloche dans la barre d’adresse, autorise les notifications, puis recharge la page.";
 }
 
 export default function InstallAndPushCTA() {
@@ -53,12 +71,17 @@ export default function InstallAndPushCTA() {
   const [busy, setBusy] = React.useState(false);
   const [message, setMessage] = React.useState<string | null>(null);
   const [error, setError] = React.useState<string | null>(null);
+  const [step, setStep] = React.useState<string | null>(null);
 
   React.useEffect(() => {
     const refresh = () => setPermission(getNotificationPermission());
     refresh();
     document.addEventListener("visibilitychange", refresh);
-    return () => document.removeEventListener("visibilitychange", refresh);
+    window.addEventListener("focus", refresh);
+    return () => {
+      document.removeEventListener("visibilitychange", refresh);
+      window.removeEventListener("focus", refresh);
+    };
   }, []);
 
   React.useEffect(() => {
@@ -86,6 +109,7 @@ export default function InstallAndPushCTA() {
     setBusy(true);
     setError(null);
     setMessage(null);
+    setStep("Vérification du navigateur…");
 
     try {
       if (typeof window === "undefined") return;
@@ -103,68 +127,103 @@ export default function InstallAndPushCTA() {
       let currentPermission = Notification.permission;
 
       if (currentPermission === "denied") {
-        setError("Les notifications sont bloquées dans le navigateur. Autorise-les depuis l’icône cadenas de la barre d’adresse, puis recharge la page.");
         setPermission("denied");
+        setError(`Les notifications sont bloquées. ${formatPermissionHelp()}`);
         return;
       }
 
       if (currentPermission !== "granted") {
-        currentPermission = await Notification.requestPermission();
+        setStep("Autorisation navigateur en attente…");
+        currentPermission = await withTimeout(
+          Notification.requestPermission(),
+          15000,
+          `Le navigateur attend encore l’autorisation. ${formatPermissionHelp()}`
+        );
       }
 
       setPermission(currentPermission as PermissionState);
 
       if (currentPermission !== "granted") {
-        setError("Permission de notification non accordée.");
+        setError(`Permission de notification non accordée. ${formatPermissionHelp()}`);
         return;
       }
 
+      setStep("Préparation du service worker…");
       const registration = await waitForServiceWorkerReady();
       if (!registration) {
         setError("Le service worker n’est pas prêt. Recharge la page puis réessaie.");
         return;
       }
 
-      let subscription = await registration.pushManager.getSubscription();
+      setStep("Création de l’abonnement push…");
+      let subscription = await withTimeout(
+        registration.pushManager.getSubscription(),
+        8000,
+        "Impossible de lire l’abonnement push existant."
+      );
 
       if (!subscription) {
-        const keyResponse = await fetch("/api/push/vapid", { cache: "no-store" });
+        setStep("Récupération de la clé VAPID…");
+        const keyResponse = await withTimeout(
+          fetch("/api/push/vapid", { cache: "no-store", credentials: "include" }),
+          10000,
+          "La route /api/push/vapid ne répond pas."
+        );
+
         if (!keyResponse.ok) {
-          setError("Impossible de récupérer la clé VAPID des notifications.");
+          const txt = await keyResponse.text().catch(() => "");
+          setError(`Impossible de récupérer la clé VAPID (${keyResponse.status}). ${txt}`.trim());
           return;
         }
 
         const { key } = (await keyResponse.json()) as { key?: string };
         if (!key) {
-          setError("Clé VAPID indisponible.");
+          setError("Clé VAPID indisponible dans la réponse serveur.");
           return;
         }
 
-        subscription = await registration.pushManager.subscribe({
-          userVisibleOnly: true,
-          applicationServerKey: urlBase64ToUint8Array(String(key)),
-        });
+        subscription = await withTimeout(
+          registration.pushManager.subscribe({
+            userVisibleOnly: true,
+            applicationServerKey: urlBase64ToUint8Array(String(key)),
+          }),
+          15000,
+          `Le navigateur n’a pas terminé la création de l’abonnement. ${formatPermissionHelp()}`
+        );
       }
 
-      const subscribeResponse = await fetch("/api/push/subscribe", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ platform: "web", subscription }),
-      });
+      setStep("Enregistrement dans Mon Cahier…");
+      const subscribeResponse = await withTimeout(
+        fetch("/api/push/subscribe", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({ platform: "web", subscription }),
+        }),
+        12000,
+        "La route /api/push/subscribe ne répond pas."
+      );
 
-      const payload = await subscribeResponse.json().catch(() => null);
+      const text = await subscribeResponse.text().catch(() => "");
+      let payload: { ok?: boolean; error?: string } | null = null;
+      try {
+        payload = text ? JSON.parse(text) : null;
+      } catch {
+        payload = null;
+      }
 
       if (!subscribeResponse.ok || !payload?.ok) {
         setError(
           payload?.error
             ? `Abonnement push refusé : ${payload.error}`
-            : "Abonnement push refusé par le serveur."
+            : `Abonnement push refusé par le serveur (${subscribeResponse.status}). ${text}`.trim()
         );
         return;
       }
 
       setPermission("granted");
       setMessage("Notifications activées sur cet appareil ✅");
+      setStep(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erreur inconnue pendant l’activation des notifications.");
     } finally {
@@ -194,7 +253,7 @@ export default function InstallAndPushCTA() {
 
       <div className="space-y-2">
         {alreadyEnabled ? (
-          <div className="font-semibold text-emerald-700">Notifications déjà autorisées ✅</div>
+          <div className="font-semibold text-emerald-700">Notifications autorisées sur ce navigateur ✅</div>
         ) : (
           <>
             <div className="text-slate-700">Vous pouvez activer les notifications sur cet appareil.</div>
@@ -204,11 +263,12 @@ export default function InstallAndPushCTA() {
               disabled={busy}
               className="rounded-lg bg-emerald-600 px-3 py-1.5 font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
             >
-              {busy ? "Activation..." : "Activer les notifications"}
+              {busy ? "Activation…" : "Activer les notifications"}
             </button>
           </>
         )}
 
+        {step && busy ? <div className="text-xs font-medium text-slate-500">{step}</div> : null}
         {message ? <div className="text-emerald-700">{message}</div> : null}
         {error ? <div className="rounded-lg border border-amber-200 bg-amber-50 p-2 text-amber-800">{error}</div> : null}
       </div>
