@@ -2,7 +2,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
-import { queueFounderStudentEnrollmentNotification } from "@/lib/push/founder";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 export const runtime = "nodejs";
@@ -760,30 +759,6 @@ export async function POST(req: NextRequest) {
     if (error)
       return NextResponse.json({ error: error.message }, { status: 400 });
     insertedTarget = (data ?? []).length;
-  }
-
-  if (insertedTarget > 0) {
-    try {
-      const { data: institutionRow } = await srv
-        .from("institutions")
-        .select("name")
-        .eq("id", inst)
-        .maybeSingle();
-
-      await queueFounderStudentEnrollmentNotification({
-        institutionId: inst,
-        institutionName: (institutionRow as any)?.name ?? null,
-        classLabel: (cls as any)?.label ?? null,
-        count: insertedTarget,
-        mode: "import",
-        req,
-      });
-    } catch (e: any) {
-      console.warn(
-        "[students/import] founder notification skipped",
-        e?.message || e,
-      );
-    }
   }
 
   try {

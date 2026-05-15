@@ -11,6 +11,10 @@ function todayYmd() {
   return new Date().toISOString().slice(0, 10);
 }
 
+function formatMoney(value: number) {
+  return `${Number(value || 0).toLocaleString("fr-FR")} F`;
+}
+
 function okCronAuth(req: Request) {
   const secret = (process.env.CRON_SECRET || process.env.CRON_PUSH_SECRET || "").trim();
   const xCron = (req.headers.get("x-cron-secret") || "").trim();
@@ -48,12 +52,23 @@ async function run(req: Request) {
     return NextResponse.json({ ok: true, queued: 0, reason: "no_founder" });
   }
 
-  const [{ data: institutions }, { data: enrollments }, { data: sessions }, { data: receipts }, { data: expenses }] = await Promise.all([
+  const [{ data: institutions }, { data: receipts }, { data: expenses }] = await Promise.all([
     srv.from("institutions").select("id,name").in("id", institutionIds),
-    srv.from("class_enrollments").select("id,institution_id").in("institution_id", institutionIds).eq("start_date", today),
-    srv.from("teacher_sessions").select("id,institution_id,started_at").in("institution_id", institutionIds).gte("started_at", `${today}T00:00:00.000Z`).lte("started_at", `${today}T23:59:59.999Z`),
-    srv.schema("finance").from("receipts").select("id,school_id,total_amount,receipt_status,payment_date").in("school_id", institutionIds).eq("receipt_status", "posted").gte("payment_date", `${today}T00:00:00`).lte("payment_date", `${today}T23:59:59.999`),
-    srv.schema("finance").from("expenses").select("id,school_id,amount,expense_status,expense_date").in("school_id", institutionIds).eq("expense_status", "posted").eq("expense_date", today),
+    srv
+      .schema("finance")
+      .from("receipts")
+      .select("id,school_id,total_amount,receipt_status,payment_date")
+      .in("school_id", institutionIds)
+      .eq("receipt_status", "posted")
+      .gte("payment_date", `${today}T00:00:00`)
+      .lte("payment_date", `${today}T23:59:59.999`),
+    srv
+      .schema("finance")
+      .from("expenses")
+      .select("id,school_id,amount,expense_status,expense_date")
+      .in("school_id", institutionIds)
+      .eq("expense_status", "posted")
+      .eq("expense_date", today),
   ]);
 
   const byInstitution = new Map<string, any>();
@@ -65,27 +80,34 @@ async function run(req: Request) {
 
   for (const institutionId of institutionIds) {
     const schoolName = byInstitution.get(institutionId)?.name || "Établissement";
-    const enrollmentCount = (enrollments ?? []).filter((row: any) => row.institution_id === institutionId).length;
-    const sessionCount = (sessions ?? []).filter((row: any) => row.institution_id === institutionId).length;
-    const totalReceipts = (receipts ?? [])
-      .filter((row: any) => row.school_id === institutionId)
-      .reduce((sum: number, row: any) => sum + Number(row.total_amount || 0), 0);
-    const totalExpenses = (expenses ?? [])
-      .filter((row: any) => row.school_id === institutionId)
-      .reduce((sum: number, row: any) => sum + Number(row.amount || 0), 0);
+    const schoolReceipts = (receipts ?? []).filter((row: any) => row.school_id === institutionId);
+    const schoolExpenses = (expenses ?? []).filter((row: any) => row.school_id === institutionId);
+    const totalReceipts = schoolReceipts.reduce(
+      (sum: number, row: any) => sum + Number(row.total_amount || 0),
+      0,
+    );
+    const totalExpenses = schoolExpenses.reduce(
+      (sum: number, row: any) => sum + Number(row.amount || 0),
+      0,
+    );
+    const net = totalReceipts - totalExpenses;
+
+    if (totalReceipts <= 0 && totalExpenses <= 0) continue;
 
     const result = await queueFounderNotification({
       institutionId,
-      kind: "founder_daily_summary",
-      title: `Bilan du jour — ${schoolName}`,
-      body: `Inscriptions : ${enrollmentCount} • Appels : ${sessionCount} • Encaissements : ${totalReceipts.toLocaleString("fr-FR")} F • Dépenses : ${totalExpenses.toLocaleString("fr-FR")} F`,
+      kind: "founder_finance_daily_summary",
+      title: `Bilan financier — ${schoolName}`,
+      body: `Encaissements : ${formatMoney(totalReceipts)} • Dépenses : ${formatMoney(totalExpenses)} • Net : ${formatMoney(net)}`,
+      url: "/founder/finance",
       data: {
         date: today,
         institution_name: schoolName,
-        enrollment_count: enrollmentCount,
-        session_count: sessionCount,
+        receipts_count: schoolReceipts.length,
+        expenses_count: schoolExpenses.length,
         total_receipts: totalReceipts,
         total_expenses: totalExpenses,
+        net,
       },
       req,
       dispatch: false,
@@ -96,11 +118,11 @@ async function run(req: Request) {
 
   if (queued > 0) {
     try {
-      await triggerPushDispatch({ req, reason: "founder_daily_summary", timeoutMs: 2500, retries: 0 });
+      await triggerPushDispatch({ req, reason: "founder_finance_daily_summary", timeoutMs: 2500, retries: 0 });
     } catch (e: any) {
       console.warn("[founder/daily-summary] dispatch non bloquant", e?.message || e);
     }
   }
 
-  return NextResponse.json({ ok: true, queued, date: today });
+  return NextResponse.json({ ok: true, queued, date: today, scope: "finance" });
 }

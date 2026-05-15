@@ -5,14 +5,18 @@ import { triggerPushDispatch } from "@/lib/push-dispatch";
 const WAIT_STATUS = (process.env.PUSH_WAIT_STATUS || "pending").trim();
 
 type FounderNotificationKind =
-  | "founder_student_enrolled"
-  | "founder_daily_summary";
+  | "founder_finance_payment_received"
+  | "founder_finance_expense_created"
+  | "founder_finance_receipt_cancelled"
+  | "founder_finance_expense_cancelled"
+  | "founder_finance_daily_summary";
 
 type QueueFounderNotificationInput = {
   institutionId: string;
   kind: FounderNotificationKind;
   title: string;
   body: string;
+  url?: string;
   data?: Record<string, any>;
   req?: Request;
   dispatch?: boolean;
@@ -23,11 +27,30 @@ function compactString(value: unknown, fallback = "") {
   return s || fallback;
 }
 
+function money(value: number | string | null | undefined) {
+  return `${Number(value || 0).toLocaleString("fr-FR")} F`;
+}
+
+async function getInstitutionName(institutionId: string) {
+  try {
+    const srv = getSupabaseServiceClient();
+    const { data } = await srv
+      .from("institutions")
+      .select("name")
+      .eq("id", institutionId)
+      .maybeSingle();
+    return compactString((data as any)?.name, "Établissement");
+  } catch {
+    return "Établissement";
+  }
+}
+
 export async function queueFounderNotification({
   institutionId,
   kind,
   title,
   body,
+  url = "/founder/finance",
   data = {},
   req,
   dispatch = true,
@@ -68,7 +91,7 @@ export async function queueFounderNotification({
     title: compactString(title, "Notification fondateur"),
     body: compactString(body),
     institution_id: inst,
-    url: "/founder/dashboard",
+    url,
     ...data,
   };
 
@@ -85,6 +108,7 @@ export async function queueFounderNotification({
       kind,
       institution_id: inst,
       queued_for: "founder",
+      scope: "finance",
     },
   }));
 
@@ -111,32 +135,67 @@ export async function queueFounderNotification({
   return { ok: true as const, queued: rows.length, reason: "queued" };
 }
 
-export async function queueFounderStudentEnrollmentNotification(input: {
+export async function queueFounderFinancePaymentNotification(input: {
   institutionId: string;
-  institutionName?: string | null;
-  classLabel?: string | null;
-  count: number;
-  mode: "manual" | "import";
+  amount: number;
+  receiptNo?: string | null;
+  payerName?: string | null;
+  studentName?: string | null;
   req?: Request;
 }) {
-  const count = Math.max(0, Number(input.count || 0));
-  if (!count) return { ok: true as const, queued: 0, reason: "zero_count" };
-
-  const school = compactString(input.institutionName, "Établissement");
-  const klass = compactString(input.classLabel, "Classe");
-  const plural = count > 1;
+  const school = await getInstitutionName(input.institutionId);
+  const receipt = compactString(input.receiptNo, "reçu enregistré");
+  const payer = compactString(input.payerName || input.studentName, "paiement élève");
 
   return queueFounderNotification({
     institutionId: input.institutionId,
-    kind: "founder_student_enrolled",
-    title: plural ? "Nouvelles inscriptions" : "Nouvelle inscription",
-    body: `${school} • ${klass} • ${count} élève${plural ? "s" : ""} inscrit${plural ? "s" : ""}.`,
+    kind: "founder_finance_payment_received",
+    title: "Encaissement enregistré",
+    body: `${school} • ${money(input.amount)} encaissés • ${payer}`,
+    url: "/founder/finance",
     data: {
-      count,
-      class_label: klass,
+      amount: Number(input.amount || 0),
+      receipt_no: receipt,
+      payer_name: payer,
       institution_name: school,
-      mode: input.mode,
     },
     req: input.req,
   });
+}
+
+export async function queueFounderFinanceExpenseNotification(input: {
+  institutionId: string;
+  amount: number;
+  label?: string | null;
+  beneficiary?: string | null;
+  req?: Request;
+}) {
+  const school = await getInstitutionName(input.institutionId);
+  const label = compactString(input.label, "Dépense enregistrée");
+  const beneficiary = compactString(input.beneficiary, "");
+
+  return queueFounderNotification({
+    institutionId: input.institutionId,
+    kind: "founder_finance_expense_created",
+    title: "Dépense enregistrée",
+    body: `${school} • ${money(input.amount)} dépensés • ${label}${beneficiary ? ` (${beneficiary})` : ""}`,
+    url: "/founder/finance",
+    data: {
+      amount: Number(input.amount || 0),
+      label,
+      beneficiary: beneficiary || null,
+      institution_name: school,
+    },
+    req: input.req,
+  });
+}
+
+// Sécurité métier : le fondateur ne doit PAS être notifié pour les imports/affectations d'élèves.
+// On garde cette fonction en no-op pour éviter tout spam si un ancien appel existe encore quelque part.
+export async function queueFounderStudentEnrollmentNotification() {
+  return {
+    ok: true as const,
+    queued: 0,
+    reason: "disabled_for_founder_policy_finance_only",
+  };
 }

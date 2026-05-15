@@ -431,7 +431,9 @@ async function run(req: Request) {
     const url =
       typ === "admin_attendance_alert"
         ? "/admin/assiduite"
-        : typ === "founder_student_enrolled" || typ === "founder_daily_summary"
+        : String(typ).startsWith("founder_finance_")
+        ? "/founder/finance"
+        : typ === "founder_daily_summary"
         ? "/founder/dashboard"
         : core?.url && typeof core.url === "string"
         ? core.url

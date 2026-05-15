@@ -25,6 +25,7 @@ import {
   type AdminStudentRow,
 } from "@/lib/admin-students-server";
 import PaymentsComposer from "./PaymentsComposer";
+import { queueFounderFinancePaymentNotification } from "@/lib/push/founder";
 
 export const dynamic = "force-dynamic";
 
@@ -269,6 +270,17 @@ async function createPaymentAction(formData: FormData) {
       .delete()
       .eq("id", receipt.id);
     throw new Error(allocErr.message);
+  }
+
+  try {
+    await queueFounderFinancePaymentNotification({
+      institutionId,
+      amount,
+      receiptNo: receipt.receipt_no,
+      payerName: payerName || null,
+    });
+  } catch (e: any) {
+    console.warn("[finance/payments] founder finance notification skipped", e?.message || e);
   }
 
   revalidatePath("/admin/finance/payments");

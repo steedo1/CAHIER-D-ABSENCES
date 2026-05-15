@@ -16,6 +16,7 @@ import {
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { getFinanceAccessForCurrentUser } from "@/lib/finance-access";
+import { queueFounderFinanceExpenseNotification } from "@/lib/push/founder";
 import {
   AcademicYearSelector,
   getFinanceAcademicYearContext,
@@ -244,6 +245,17 @@ async function createExpenseAction(formData: FormData) {
     } as any);
 
   if (error) throw new Error(error.message);
+
+  try {
+    await queueFounderFinanceExpenseNotification({
+      institutionId,
+      amount,
+      label,
+      beneficiary: beneficiary || null,
+    });
+  } catch (e: any) {
+    console.warn("[finance/expenses] founder finance notification skipped", e?.message || e);
+  }
 
   revalidatePath("/admin/finance/expenses");
   revalidatePath("/admin/finance/reports");
