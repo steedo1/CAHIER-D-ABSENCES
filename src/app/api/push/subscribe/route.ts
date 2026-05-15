@@ -197,13 +197,25 @@ export async function POST(req: Request) {
   const startedAt = new Date().toISOString();
 
   try {
-    // Auth préférée : cookie parent_device
     const jar = await cookies(); // Next 15
     const parentDevice = jar.get("parent_device")?.value || "";
 
-    // Institution (si connue via l’attache)
-    let instId: string | null = null;
-    if (parentDevice) {
+    const {
+      data: { user },
+    } = await supa.auth.getUser();
+
+    // Priorité ABSOLUE au compte Supabase connecté.
+    // Important : un cookie parent_device peut rester sur un navigateur déjà utilisé
+    // pour un parent. Il ne doit jamais écraser un admin, teacher ou founder connecté.
+    let userId: string | null = user?.id || null;
+    let authMode: "supabase_user" | "parent_device" | "none" = userId
+      ? "supabase_user"
+      : "none";
+
+    // Fallback parent_device uniquement quand aucune session Supabase n'existe.
+    if (!userId && parentDevice) {
+      let instId: string | null = null;
+
       const r = await srv
         .from("parent_device_children")
         .select("institution_id")
@@ -211,41 +223,42 @@ export async function POST(req: Request) {
         .order("added_at", { ascending: false })
         .limit(1)
         .maybeSingle();
+
       instId = r.data?.institution_id ?? null;
       log("device_institution", { instId });
-    }
 
-    // Résoudre un vrai profile id exploitable par FK
-    let userId: string | null = null;
-    if (parentDevice) {
       userId = await ensureAuthBackedParentId(srv, parentDevice, instId);
-    }
-    const {
-      data: { user },
-    } = await supa.auth.getUser();
-    if (!userId) userId = user?.id || null;
+      authMode = userId ? "parent_device" : "none";
 
-    // ✨ Synchroniser les liens élève ↔ parent à partir du device
-    if (parentDevice && userId) {
-      try {
-        await syncStudentGuardiansFromDevice(srv, parentDevice, userId);
-      } catch (e: any) {
-        log("student_guardians_sync_unhandled", {
-          err: String(e?.message || e),
-        });
+      // Synchroniser les liens élève ↔ parent uniquement dans le mode parent_device.
+      // On évite ainsi de rattacher par erreur un appareil admin/founder/teacher à des élèves.
+      if (userId) {
+        try {
+          await syncStudentGuardiansFromDevice(srv, parentDevice, userId);
+        } catch (e: any) {
+          log("student_guardians_sync_unhandled", {
+            err: String(e?.message || e),
+          });
+        }
       }
     }
 
     if (!userId) {
-      log("auth_fail", { startedAt, haveCookie: !!parentDevice });
+      log("auth_fail", {
+        startedAt,
+        haveCookie: !!parentDevice,
+        haveSupabaseUser: !!user?.id,
+      });
       return NextResponse.json(
         { error: "unauthorized", stage: "auth" },
         { status: 401 }
       );
     }
+
     log("auth_ok", {
       startedAt,
       userId,
+      authMode,
       haveCookie: !!parentDevice,
       haveSupabaseUser: !!user?.id,
     });
@@ -382,6 +395,8 @@ export async function POST(req: Request) {
         return NextResponse.json({
           ok: true,
           mode: "insert",
+          user_id: userId,
+          auth_mode: authMode,
           platform,
           device_id: row.device_id,
         });
@@ -394,6 +409,8 @@ export async function POST(req: Request) {
       return NextResponse.json({
         ok: true,
         mode: "update",
+        user_id: userId,
+        auth_mode: authMode,
         platform,
         device_id: row.device_id,
       });
@@ -406,6 +423,8 @@ export async function POST(req: Request) {
     return NextResponse.json({
       ok: true,
       mode: "upsert",
+      user_id: userId,
+      auth_mode: authMode,
       platform,
       device_id: row.device_id,
     });
