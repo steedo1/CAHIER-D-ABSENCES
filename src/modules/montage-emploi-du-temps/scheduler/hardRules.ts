@@ -17,6 +17,7 @@ import {
   isOrdinaryFallbackRoom,
   isSharedSportsFieldRoom,
 } from "./terrainRules";
+import { parseSplitPattern } from "./utils";
 
 function durationToPeriodCount(durationUnits: number): number {
   return Math.ceil(durationUnits);
@@ -75,6 +76,97 @@ function getPlacementEndPeriodIndex(placement: Placement): number {
 function getCandidateEndPeriodIndex(candidate: CandidateSlot): number {
   return candidate.startPeriodIndex + durationToPeriodCount(candidate.durationUnits);
 }
+
+function getMaxContiguousUnitsForSubject(block: LessonBlock, context: SchedulerContext): number {
+  const values = context.serviceAssignments
+    .filter((assignment) => assignment.classId === block.classId && assignment.subjectId === block.subjectId)
+    .flatMap((assignment) => {
+      try {
+        return parseSplitPattern(assignment.splitPattern);
+      } catch {
+        return [];
+      }
+    })
+    .filter((value) => Number.isFinite(value) && value > 0);
+
+  return Math.max(block.durationUnits, ...values, 1);
+}
+
+function sameSubjectIntervalsWithCandidate(
+  block: LessonBlock,
+  candidate: CandidateSlot,
+  placements: Placement[],
+): Array<{ start: number; end: number; isCandidate: boolean }> {
+  const intervals = placements
+    .filter(
+      (placement) =>
+        placement.classId === block.classId &&
+        placement.subjectId === block.subjectId &&
+        placement.dayIndex === candidate.dayIndex,
+    )
+    .map((placement) => ({
+      start: placement.startPeriodIndex,
+      end: getPlacementEndPeriodIndex(placement),
+      isCandidate: false,
+    }));
+
+  intervals.push({
+    start: candidate.startPeriodIndex,
+    end: getCandidateEndPeriodIndex(candidate),
+    isCandidate: true,
+  });
+
+  return intervals.sort((a, b) => a.start - b.start);
+}
+
+export function violatesSameSubjectSplitPattern(
+  block: LessonBlock,
+  candidate: CandidateSlot,
+  context: SchedulerContext,
+  placements: Placement[],
+): boolean {
+  const sameSubjectAlreadyPlaced = placements.some(
+    (placement) =>
+      placement.classId === block.classId &&
+      placement.subjectId === block.subjectId &&
+      placement.dayIndex === candidate.dayIndex,
+  );
+
+  if (!sameSubjectAlreadyPlaced) {
+    return false;
+  }
+
+  const intervals = sameSubjectIntervalsWithCandidate(block, candidate, placements);
+  const maxContiguousUnits = getMaxContiguousUnitsForSubject(block, context);
+  const groups: Array<{ start: number; end: number; hasCandidate: boolean }> = [];
+
+  for (const interval of intervals) {
+    const last = groups[groups.length - 1];
+
+    if (!last || interval.start > last.end) {
+      groups.push({ start: interval.start, end: interval.end, hasCandidate: interval.isCandidate });
+      continue;
+    }
+
+    last.end = Math.max(last.end, interval.end);
+    last.hasCandidate = last.hasCandidate || interval.isCandidate;
+  }
+
+  // Deux séances séparées de la même matière le même jour ne sont pas acceptées.
+  if (groups.length > 1) {
+    return true;
+  }
+
+  const candidateGroup = groups.find((group) => group.hasCandidate);
+  if (!candidateGroup) {
+    return false;
+  }
+
+  // Même lorsque les séances se touchent, on refuse de dépasser le plus grand
+  // morceau prévu par le découpage. Exemple : 2+1+1 autorise 2h, pas 3h d’affilée.
+  return candidateGroup.end - candidateGroup.start > Math.ceil(maxContiguousUnits);
+}
+
 
 export function periodsOverlap(
   placement: Placement,
@@ -313,6 +405,13 @@ export function respectsHardRules(
   }
 
   if (!roomMatchesRequirement(block, candidate, context)) {
+    return false;
+  }
+
+  if (
+    terrainRules.avoidSameSubjectSameDay &&
+    violatesSameSubjectSplitPattern(block, candidate, context, placements)
+  ) {
     return false;
   }
 

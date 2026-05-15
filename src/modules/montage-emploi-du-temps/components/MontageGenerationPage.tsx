@@ -194,6 +194,18 @@ function phaseLabel(phase: GenerationPhase) {
   return "Génération HoraClasse";
 }
 
+
+function waitForNextPaint(): Promise<void> {
+  return new Promise((resolve) => {
+    if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
+      window.requestAnimationFrame(() => window.setTimeout(resolve, 0));
+      return;
+    }
+
+    setTimeout(resolve, 0);
+  });
+}
+
 function buildInvalidServerResponseMessage(response: Response, bodyText: string, actionLabel: string) {
   const compactBody = bodyText.trim().replace(/\s+/g, " ").slice(0, 220);
   const statusPart = `HTTP ${response.status || "inconnu"}`;
@@ -525,6 +537,7 @@ export default function MontageGenerationPage() {
     setError(null);
     setNotice(null);
     startGenerationUi("Création du brouillon puis lancement du moteur HoraClasse.", "creating");
+    await waitForNextPaint();
 
     try {
       const now = new Date();
@@ -559,6 +572,7 @@ export default function MontageGenerationPage() {
         label: created.item.name || "Le moteur cherche le meilleur brouillon possible.",
         phase: "generating",
       });
+      await waitForNextPaint();
       const generateRes = await fetch(`/api/admin/montage-emploi-du-temps/projects/${created.item.id}/generate`, {
         method: "POST",
       });
@@ -589,6 +603,7 @@ export default function MontageGenerationPage() {
     setError(null);
     setNotice(null);
     startGenerationUi(project.name || "Régénération du brouillon HoraClasse.", "regenerating");
+    await waitForNextPaint();
     try {
       const res = await fetch(`/api/admin/montage-emploi-du-temps/projects/${project.id}/generate`, { method: "POST" });
       const json = await readApiJson<GenerateResponse>(res, "Génération du brouillon");

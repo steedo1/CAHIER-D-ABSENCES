@@ -14,7 +14,6 @@ import type {
 import { DEFAULT_TERRAIN_RULES, normalizeTerrainRules } from "../scheduler/terrainRules";
 import {
   buildSchoolClasses,
-  buildClassAcademicProfile,
   clean,
   defaultRoomsForClasses,
   inferCatalogSubjectId,
@@ -132,6 +131,42 @@ function isHeavyCatalogSubject(catalogSubjectId: string): boolean {
   );
 }
 
+
+function normalizeResourceRoomType(value: unknown): Room["roomType"] {
+  const raw = clean(value, "ordinary")
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+
+  if (["sports_field", "sport_field", "terrain", "terrain_eps", "eps", "field", "sports", "sport"].includes(raw)) {
+    return "sports_field";
+  }
+
+  if (["pc_lab", "labo_pc", "laboratoire_pc", "physique_chimie", "pc"].includes(raw)) {
+    return "pc_lab";
+  }
+
+  if (["svt_lab", "labo_svt", "laboratoire_svt", "svt"].includes(raw)) {
+    return "svt_lab";
+  }
+
+  if (["computer_lab", "salle_info", "informatique", "info", "tice"].includes(raw)) {
+    return "computer_lab";
+  }
+
+  if (["multipurpose", "polyvalente", "salle_polyvalente"].includes(raw)) {
+    return "multipurpose";
+  }
+
+  if (["administrative", "admin", "bureau"].includes(raw)) {
+    return "administrative";
+  }
+
+  return "ordinary";
+}
+
 function buildTerrainRules(raw: unknown): TerrainSchedulingRules {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
     return DEFAULT_TERRAIN_RULES;
@@ -178,19 +213,6 @@ export function buildSchedulerContextFromSnapshot(
   const snapshot = (sourceSnapshot || {}) as AnyRecord;
   const diagnostics: SchedulerBuildDiagnostic[] = [];
 
-  const classProfiles = asArray(snapshot.classes).map((item) => ({
-    id: clean(item.id),
-    ...buildClassAcademicProfile({
-      label: item.label,
-      level: item.level,
-      level_code: item.level_code || item.level,
-      series_code: item.series_code,
-      official_track_code: item.official_track_code || item.officialTrackCode,
-    }),
-  }));
-  const officialTrackSourceByClassId = new Map(
-    classProfiles.map((item) => [item.id, item.official_track_source]),
-  );
   const classes = buildSchoolClasses(asArray(snapshot.classes));
   const serviceMeta: HoraclasseServiceMeta[] = asArray(snapshot.service_assignments);
 
@@ -276,7 +298,7 @@ export function buildSchedulerContextFromSnapshot(
     .map((room) => ({
       id: clean(room.id),
       name: clean(room.name, "Salle"),
-      roomType: clean(room.room_type || room.roomType || "ordinary") as Room["roomType"],
+      roomType: normalizeResourceRoomType(room.resource_type || room.resourceType || room.room_type || room.roomType),
     }))
     .filter((room) => room.id && room.name);
 
@@ -365,27 +387,7 @@ export function buildSchedulerContextFromSnapshot(
     }))
     .filter((item) => item.teacherId && item.dayIndex >= 1 && item.dayIndex <= 7);
 
-  const unlockedClassLabels = Array.from(
-    new Set(
-      serviceMeta
-        .filter((item) => {
-          const classId = clean(item.class_id);
-          const sourceFromService = clean(item.official_track_source);
-          const sourceFromClass = officialTrackSourceByClassId.get(classId);
-          return sourceFromService !== "official" || sourceFromClass !== "official";
-        })
-        .map((item) => clean(item.class_label, item.class_id))
-        .filter(Boolean),
-    ),
-  );
-
   if (classes.length === 0) diagnostics.push({ level: "error", message: "Aucune classe disponible." });
-  if (unlockedClassLabels.length > 0) {
-    diagnostics.push({
-      level: "error",
-      message: `Référentiel non verrouillé : ${unlockedClassLabels.length} classe(s) utilisée(s) n’ont pas de série officielle enregistrée dans Mon Cahier (${unlockedClassLabels.slice(0, 6).join(", ")}${unlockedClassLabels.length > 6 ? ", …" : ""}). Corrige l’écran Classes avant de générer.`,
-    });
-  }
   if (periods.length === 0) diagnostics.push({ level: "error", message: "Aucun créneau officiel disponible." });
   if (roomsFromSnapshot.length === 0) diagnostics.push({ level: "warning", message: "Aucune salle HoraClasse configurée : le moteur utilisera des salles par défaut temporaires." });
   if (savedRoomPreferences.length === 0 && classes.length > 0) diagnostics.push({ level: "info", message: "Aucune affectation salle-classe enregistrée : le moteur appliquera une affectation automatique." });

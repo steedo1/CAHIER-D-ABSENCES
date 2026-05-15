@@ -896,6 +896,7 @@ const aceQualityWarningTypes = new Set([
   "student_gap",
   "single_hour_return",
   "same_subject_same_day",
+  "same_subject_overlong_block",
 ]);
 
 function isBetterResult(

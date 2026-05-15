@@ -14,10 +14,14 @@ export const defaultLevels: LevelDefinition[] = [
   { code: "2C", label: "2nde C", cycle: "lycee", displayOrder: 6 },
 
   { code: "1A", label: "1re A", cycle: "lycee", displayOrder: 7 },
+  { code: "1A1", label: "1re A1", cycle: "lycee", displayOrder: 7.1 },
+  { code: "1A2", label: "1re A2", cycle: "lycee", displayOrder: 7.2 },
   { code: "1C", label: "1re C", cycle: "lycee", displayOrder: 8 },
   { code: "1D", label: "1re D", cycle: "lycee", displayOrder: 9 },
 
   { code: "TleA", label: "Terminale A", cycle: "lycee", displayOrder: 10 },
+  { code: "TleA1", label: "Terminale A1", cycle: "lycee", displayOrder: 10.1 },
+  { code: "TleA2", label: "Terminale A2", cycle: "lycee", displayOrder: 10.2 },
   { code: "TleC", label: "Terminale C", cycle: "lycee", displayOrder: 11 },
   { code: "TleD", label: "Terminale D", cycle: "lycee", displayOrder: 12 },
 ];
@@ -283,6 +287,8 @@ export const defaultSubjectHours: DefaultSubjectHour[] = [
   { levelCode: "1A", subjectId: "hg", weeklyUnits: 4, splitPattern: "2+1+1" },
   { levelCode: "1A", subjectId: "lv2", weeklyUnits: 3, splitPattern: "1+1+1" },
   { levelCode: "1A", subjectId: "maths", weeklyUnits: 4, splitPattern: "2+1+1", notes: "Officiel : A1 = 4h, A2 = 3h. Valeur par défaut HoraClasse : A1." },
+  { levelCode: "1A1", subjectId: "maths", weeklyUnits: 4, splitPattern: "2+1+1", notes: "Officiel : 1re A1 = 4h." },
+  { levelCode: "1A2", subjectId: "maths", weeklyUnits: 3, splitPattern: "2+1", notes: "Officiel : 1re A2 = 3h." },
   { levelCode: "1A", subjectId: "philo", weeklyUnits: 3, splitPattern: "1+1+1" },
   { levelCode: "1A", subjectId: "pc", weeklyUnits: 1.75, splitPattern: "1+0.75", roomTypeRequired: "pc_lab", notes: "Officiel : 1 + (1h30) QZ. QZ ramené en moyenne hebdomadaire." },
   { levelCode: "1A", subjectId: "svt", weeklyUnits: 1.75, splitPattern: "1+0.75", roomTypeRequired: "svt_lab", notes: "Officiel : 1 + (1h30) QZ. QZ ramené en moyenne hebdomadaire." },
@@ -329,6 +335,8 @@ export const defaultSubjectHours: DefaultSubjectHour[] = [
   { levelCode: "TleA", subjectId: "hg", weeklyUnits: 4, splitPattern: "2+1+1" },
   { levelCode: "TleA", subjectId: "lv2", weeklyUnits: 3, splitPattern: "1+1+1" },
   { levelCode: "TleA", subjectId: "maths", weeklyUnits: 5, splitPattern: "2+2+1", notes: "Officiel : A1 = 5h, A2 = 4h. Valeur par défaut HoraClasse : A1." },
+  { levelCode: "TleA1", subjectId: "maths", weeklyUnits: 5, splitPattern: "2+2+1", notes: "Officiel : Tle A1 = 5h." },
+  { levelCode: "TleA2", subjectId: "maths", weeklyUnits: 4, splitPattern: "2+1+1", notes: "Officiel : Tle A2 = 4h." },
   { levelCode: "TleA", subjectId: "philo", weeklyUnits: 8, splitPattern: "2+2+2+2" },
   { levelCode: "TleA", subjectId: "svt", weeklyUnits: 2, splitPattern: "2", roomTypeRequired: "svt_lab" },
 

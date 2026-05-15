@@ -22,7 +22,7 @@ import {
   isSharedSportsFieldRoom,
 } from "./terrainRules";
 import { isPcSvtTandemPlacementPair } from "./tandemScience";
-import { createId } from "./utils";
+import { createId, parseSplitPattern } from "./utils";
 
 function placementOverlaps(a: Placement, b: Placement): boolean {
   if (a.dayIndex !== b.dayIndex) {
@@ -214,6 +214,33 @@ function getPlacementPeriodIndexes(placement: Placement): number[] {
 function getPlacementEndPeriodIndex(placement: Placement): number {
   return placement.startPeriodIndex + Math.ceil(placement.durationUnits);
 }
+
+function getMaxContiguousUnitsForClassSubject(
+  classId: string,
+  subjectId: string,
+  context: SchedulerContext,
+): number {
+  const values = context.serviceAssignments
+    .filter((assignment) => assignment.classId === classId && assignment.subjectId === subjectId)
+    .flatMap((assignment) => {
+      try {
+        return parseSplitPattern(assignment.splitPattern);
+      } catch {
+        return [];
+      }
+    })
+    .filter((value) => Number.isFinite(value) && value > 0);
+
+  return Math.max(...values, 1);
+}
+
+function getContinuousGroupSpan(group: Placement[]): number {
+  if (group.length === 0) return 0;
+  const start = Math.min(...group.map((placement) => placement.startPeriodIndex));
+  const end = Math.max(...group.map(getPlacementEndPeriodIndex));
+  return end - start;
+}
+
 
 function groupContinuousPlacements(placements: Placement[]): Placement[][] {
   const sorted = [...placements].sort(
@@ -797,18 +824,40 @@ export function validateSchedule(
 
       const continuousGroups = groupContinuousPlacements(sameSubjectPlacements);
 
-      // Une suite 1h + 1h, ou un vrai bloc de 2h/3h, est normal : pas d’alerte.
-      // On signale seulement les reprises séparées dans la journée.
+      const firstPlacement = sameSubjectPlacements[0];
+      const maxContiguousUnits = getMaxContiguousUnitsForClassSubject(
+        firstPlacement.classId,
+        firstPlacement.subjectId,
+        context,
+      );
+
+      for (const group of continuousGroups) {
+        const span = getContinuousGroupSpan(group);
+        if (span > Math.ceil(maxContiguousUnits)) {
+          warnings.push(
+            makeWarning(
+              "error",
+              "same_subject_overlong_block",
+              `${getClassLabel(firstPlacement.classId, context)} — ${getSubjectLabel(firstPlacement.subjectId, context)} : bloc continu de ${span}h alors que le découpage autorise au maximum ${maxContiguousUnits}h d’affilée.`,
+              {
+                classId: firstPlacement.classId,
+                teacherId: firstPlacement.teacherId,
+                lessonBlockId: firstPlacement.lessonBlockId,
+              },
+            ),
+          );
+        }
+      }
+
       if (continuousGroups.length <= 1) {
         continue;
       }
 
-      const firstPlacement = sameSubjectPlacements[0];
       warnings.push(
         makeWarning(
           "error",
           "same_subject_same_day",
-          `${getClassLabel(firstPlacement.classId, context)} — ${getSubjectLabel(firstPlacement.subjectId, context)} : matière présente en ${continuousGroups.length} séances non consécutives le même jour. ACE recommande de former un bloc consécutif ou de répartir sur un autre jour.`,
+          `${getClassLabel(firstPlacement.classId, context)} — ${getSubjectLabel(firstPlacement.subjectId, context)} : matière présente en ${continuousGroups.length} séances séparées le même jour. Le moteur doit répartir ces séances sur d’autres jours.`,
           {
             classId: firstPlacement.classId,
             teacherId: firstPlacement.teacherId,
