@@ -45,6 +45,18 @@ export type FeeCategoryOptionRow = {
   is_active: boolean;
 };
 
+export type FeeScheduleOptionRow = {
+  id: string;
+  academic_year: string | null;
+  class_id: string | null;
+  fee_category_id: string;
+  label: string;
+  amount: number;
+  due_date: string | null;
+  allow_partial: boolean;
+  is_active: boolean;
+};
+
 export type PaymentStudentRow = {
   id: string;
   full_name: string;
@@ -622,6 +634,21 @@ export default async function FinancePaymentsPage({ searchParams }: { searchPara
   const categoryRows = (categories ?? []) as FeeCategoryOptionRow[];
   const receiptRows = (receipts ?? []) as ReceiptRow[];
 
+  const { data: schedules, error: scheduleErr } = classIds.length > 0
+    ? await supabase
+        .schema("finance")
+        .from("fee_schedules")
+        .select("id,academic_year,class_id,fee_category_id,label,amount,due_date,allow_partial,is_active")
+        .eq("school_id", institutionId)
+        .eq("is_active", true)
+        .in("class_id", classIds)
+        .order("created_at", { ascending: false })
+    : { data: [], error: null as any };
+
+  if (scheduleErr) throw new Error(scheduleErr.message);
+
+  const scheduleRows = (schedules ?? []) as FeeScheduleOptionRow[];
+
   const { data: balances, error: balErr } = classIds.length > 0
     ? await supabase
         .schema("finance")
@@ -717,12 +744,17 @@ export default async function FinancePaymentsPage({ searchParams }: { searchPara
             </div>
           </div>
         </div>
-        <Link href="/admin/finance/fees" className="inline-flex items-center justify-center gap-2 rounded-[22px] border border-slate-200 bg-white px-5 py-4 text-sm font-black text-slate-800 shadow-sm hover:bg-slate-50">
-          <PlusCircle className="h-4 w-4" /> Catégories
-        </Link>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Link href="/admin/finance/fees" className="inline-flex items-center justify-center gap-2 rounded-[22px] border border-slate-200 bg-white px-5 py-4 text-sm font-black text-slate-800 shadow-sm hover:bg-slate-50">
+            <PlusCircle className="h-4 w-4" /> Catégories
+          </Link>
+          <Link href="/admin/finance/fees/schedules" className="inline-flex items-center justify-center gap-2 rounded-[22px] border border-slate-200 bg-white px-5 py-4 text-sm font-black text-slate-800 shadow-sm hover:bg-slate-50">
+            <FileText className="h-4 w-4" /> Tranches
+          </Link>
+        </div>
       </section>
 
-      <PaymentsComposer classes={classRows} students={studentRows} categories={categoryRows} rows={paymentSelectionRows} action={createPaymentAction} />
+      <PaymentsComposer classes={classRows} students={studentRows} categories={categoryRows} rows={paymentSelectionRows} schedules={scheduleRows} action={createPaymentAction} />
 
       <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">

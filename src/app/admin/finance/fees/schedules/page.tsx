@@ -1,4 +1,5 @@
 // src/app/admin/finance/fees/schedules/page.tsx
+import Link from "next/link";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import {
@@ -7,6 +8,11 @@ import {
   CircleOff,
   FolderPlus,
   Layers3,
+  Pencil,
+  Receipt,
+  Trash2,
+  UserPlus,
+  Wallet,
 } from "lucide-react";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
@@ -286,6 +292,96 @@ async function toggleFeeScheduleAction(formData: FormData) {
   if (error) throw new Error(error.message);
 
   revalidatePath("/admin/finance/fees/schedules");
+  revalidatePath("/admin/finance/payments");
+  revalidatePath("/admin/finance");
+}
+
+async function updateFeeScheduleAction(formData: FormData) {
+  "use server";
+
+  const access = await getFinanceAccessForCurrentUser();
+  if (!access.ok) redirect("/admin/finance/locked");
+
+  const institutionId = await getCurrentInstitutionIdOrThrow();
+  const admin = getSupabaseServiceClient();
+
+  const id = normalizeText(formData.get("id"));
+  const label = normalizeText(formData.get("label"));
+  const amountRaw = normalizeText(formData.get("amount"));
+  const dueDate = normalizeText(formData.get("due_date"));
+  const notes = normalizeText(formData.get("notes"));
+  const allowPartial = formData.get("allow_partial") === "on";
+
+  if (!id) throw new Error("Barème introuvable.");
+  if (!label) throw new Error("Le libellé est obligatoire.");
+
+  const amount = Number(amountRaw);
+  if (!Number.isFinite(amount) || amount <= 0) {
+    throw new Error("Le montant doit être supérieur à 0.");
+  }
+
+  const { error } = await admin
+    .schema("finance")
+    .from("fee_schedules")
+    .update({
+      label,
+      amount,
+      due_date: dueDate || null,
+      allow_partial: allowPartial,
+      notes: notes || null,
+      updated_at: new Date().toISOString(),
+    } as any)
+    .eq("id", id)
+    .eq("school_id", institutionId);
+
+  if (error) throw new Error(error.message);
+
+  revalidatePath("/admin/finance/fees/schedules");
+  revalidatePath("/admin/finance/payments");
+  revalidatePath("/admin/finance");
+}
+
+async function deleteOrDisableFeeScheduleAction(formData: FormData) {
+  "use server";
+
+  const access = await getFinanceAccessForCurrentUser();
+  if (!access.ok) redirect("/admin/finance/locked");
+
+  const institutionId = await getCurrentInstitutionIdOrThrow();
+  const admin = getSupabaseServiceClient();
+  const id = normalizeText(formData.get("id"));
+
+  if (!id) throw new Error("Barème introuvable.");
+
+  const { count, error: countErr } = await admin
+    .schema("finance")
+    .from("student_charges")
+    .select("id", { count: "exact", head: true })
+    .eq("school_id", institutionId)
+    .eq("fee_schedule_id", id);
+
+  if (countErr) throw new Error(countErr.message);
+
+  if ((count || 0) > 0) {
+    const { error } = await admin
+      .schema("finance")
+      .from("fee_schedules")
+      .update({ is_active: false, updated_at: new Date().toISOString() })
+      .eq("id", id)
+      .eq("school_id", institutionId);
+    if (error) throw new Error(error.message);
+  } else {
+    const { error } = await admin
+      .schema("finance")
+      .from("fee_schedules")
+      .delete()
+      .eq("id", id)
+      .eq("school_id", institutionId);
+    if (error) throw new Error(error.message);
+  }
+
+  revalidatePath("/admin/finance/fees/schedules");
+  revalidatePath("/admin/finance/payments");
   revalidatePath("/admin/finance");
 }
 
@@ -412,20 +508,18 @@ export default async function FinanceFeeSchedulesPage({
             </div>
 
             <h1 className="mt-4 text-3xl font-black tracking-tight sm:text-4xl">
-              Barèmes & échéanciers
+              Paramètres des tranches
             </h1>
 
             <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-200 sm:text-[15px]">
-              Définis le montant réel d’un frais pour une classe donnée ou pour
-              tout un niveau, avec son année scolaire, sa date limite et
-              l’option de paiement partiel.
+              Définis les frais attendus par classe ou niveau : frais d’inscription, scolarité, tranche, échéance et paiement partiel autorisé.
             </p>
           </div>
 
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="rounded-3xl border border-white/10 bg-white/10 p-4 backdrop-blur">
               <div className="text-xs font-bold uppercase tracking-[0.16em] text-emerald-100">
-                Barèmes
+                Tranches
               </div>
               <div className="mt-2 text-3xl font-black text-white">
                 {scheduleRows.length}
@@ -456,6 +550,14 @@ export default async function FinanceFeeSchedulesPage({
         currentPath="/admin/finance/fees/schedules"
       />
 
+      <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+        <Link href="/admin/finance/payments" className="rounded-[26px] border border-slate-200 bg-white p-4 text-sm font-black text-slate-800 shadow-sm hover:bg-slate-50"><Wallet className="mb-3 h-5 w-5" />Encaissement</Link>
+        <Link href="/admin/finance/payments" className="rounded-[26px] border border-emerald-200 bg-emerald-50 p-4 text-sm font-black text-emerald-800 shadow-sm hover:bg-emerald-100"><UserPlus className="mb-3 h-5 w-5" />Nouvelle inscription</Link>
+        <Link href="/admin/finance/receipts" className="rounded-[26px] border border-sky-200 bg-sky-50 p-4 text-sm font-black text-sky-800 shadow-sm hover:bg-sky-100"><Receipt className="mb-3 h-5 w-5" />Reçus</Link>
+        <Link href="/admin/finance/fees" className="rounded-[26px] border border-amber-200 bg-amber-50 p-4 text-sm font-black text-amber-800 shadow-sm hover:bg-amber-100"><Layers3 className="mb-3 h-5 w-5" />Catégories</Link>
+        <div className="rounded-[26px] border border-violet-300 bg-violet-100 p-4 text-sm font-black text-violet-900 shadow-sm"><CalendarClock className="mb-3 h-5 w-5" />Paramètres des tranches</div>
+      </section>
+
       <section className="grid gap-6 xl:grid-cols-[430px_1fr]">
         <form
           action={createFeeScheduleAction}
@@ -463,14 +565,11 @@ export default async function FinanceFeeSchedulesPage({
         >
           <div className="flex items-center gap-2 text-sm font-black uppercase tracking-[0.16em] text-slate-700">
             <FolderPlus className="h-4 w-4 text-emerald-600" />
-            Nouveau barème
+            Nouveau paramètre de tranche
           </div>
 
           <div className="mt-4 rounded-2xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-slate-700">
-            Tu peux créer un barème pour une seule classe ou pour tout un
-            niveau. En mode <span className="font-bold">tout le niveau</span>,
-            le système crée automatiquement un barème par classe du niveau
-            choisi afin de rester compatible avec les autres modules.
+            Tu peux créer un montant attendu pour une classe précise ou pour tout un niveau. Pour la scolarité, crée par exemple “Scolarité annuelle”, “1ère tranche”, “2e tranche” ou “3e tranche” selon l’organisation de l’école.
           </div>
 
           <div className="mt-5 space-y-4">
@@ -569,7 +668,7 @@ export default async function FinanceFeeSchedulesPage({
               <input
                 type="text"
                 name="label"
-                placeholder="Ex. Scolarité - 6e"
+                placeholder="Ex. Scolarité annuelle, 1ère tranche, Frais d’inscription"
                 className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-semibold text-slate-800 outline-none placeholder:text-slate-400"
               />
               <p className="mt-1 text-xs text-slate-500">
@@ -580,7 +679,7 @@ export default async function FinanceFeeSchedulesPage({
 
             <div>
               <label className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-slate-500">
-                Montant
+                Montant attendu
               </label>
               <input
                 type="number"
@@ -636,7 +735,7 @@ export default async function FinanceFeeSchedulesPage({
 
             <button className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-4 py-3 text-sm font-bold text-white transition hover:bg-emerald-700">
               <FolderPlus className="h-4 w-4" />
-              Ajouter le barème
+              Ajouter le paramètre
             </button>
           </div>
         </form>
@@ -644,12 +743,12 @@ export default async function FinanceFeeSchedulesPage({
         <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
           <div className="flex items-center gap-2 text-sm font-black uppercase tracking-[0.16em] text-slate-700">
             <Layers3 className="h-4 w-4 text-emerald-600" />
-            Barèmes enregistrés
+            Paramètres enregistrés
           </div>
 
           {scheduleRows.length === 0 ? (
             <div className="mt-5 rounded-3xl border border-dashed border-slate-300 bg-slate-50 px-5 py-10 text-center text-sm text-slate-600">
-              Aucun barème n’a encore été créé.
+              Aucun paramètre de tranche ou barème n’a encore été créé.
             </div>
           ) : (
             <div className="mt-5 space-y-4">
@@ -726,11 +825,7 @@ export default async function FinanceFeeSchedulesPage({
 
                       <form action={toggleFeeScheduleAction}>
                         <input type="hidden" name="id" value={row.id} />
-                        <input
-                          type="hidden"
-                          name="next_active"
-                          value={row.is_active ? "false" : "true"}
-                        />
+                        <input type="hidden" name="next_active" value={row.is_active ? "false" : "true"} />
                         <button
                           className={[
                             "inline-flex items-center justify-center rounded-2xl px-4 py-3 text-sm font-bold transition",
@@ -743,6 +838,37 @@ export default async function FinanceFeeSchedulesPage({
                         </button>
                       </form>
                     </div>
+
+                    <form action={updateFeeScheduleAction} className="mt-4 grid gap-3 rounded-2xl border border-slate-200 bg-white p-4 lg:grid-cols-[1fr_180px_180px_auto]">
+                      <input type="hidden" name="id" value={row.id} />
+                      <div>
+                        <label className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">Libellé</label>
+                        <input name="label" defaultValue={row.label} required className="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm font-semibold outline-none" />
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">Montant</label>
+                        <input name="amount" type="number" min="1" step="0.01" defaultValue={Number(row.amount || 0)} required className="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm font-semibold outline-none" />
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">Échéance</label>
+                        <input name="due_date" type="date" defaultValue={row.due_date || ""} className="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm font-semibold outline-none" />
+                      </div>
+                      <div className="flex flex-col justify-end gap-2">
+                        <label className="flex items-center gap-2 text-xs font-bold text-slate-700">
+                          <input type="checkbox" name="allow_partial" defaultChecked={row.allow_partial} className="h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500" /> Partiel
+                        </label>
+                        <button className="inline-flex items-center justify-center gap-2 rounded-2xl bg-slate-950 px-4 py-2.5 text-sm font-bold text-white hover:bg-slate-800"><Pencil className="h-4 w-4" /> Mettre à jour</button>
+                      </div>
+                      <div className="lg:col-span-4">
+                        <label className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">Notes</label>
+                        <input name="notes" defaultValue={row.notes || ""} className="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm font-semibold outline-none" />
+                      </div>
+                    </form>
+
+                    <form action={deleteOrDisableFeeScheduleAction} className="mt-3">
+                      <input type="hidden" name="id" value={row.id} />
+                      <button className="inline-flex items-center justify-center gap-2 rounded-2xl border border-rose-200 bg-white px-4 py-2.5 text-xs font-bold text-rose-700 hover:bg-rose-50"><Trash2 className="h-4 w-4" /> Supprimer si inutilisé, sinon désactiver</button>
+                    </form>
                   </article>
                 );
               })}

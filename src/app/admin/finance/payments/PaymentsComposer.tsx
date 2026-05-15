@@ -1,13 +1,15 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useMemo, useState, useTransition } from "react";
 import {
   AlertCircle,
   BadgeCheck,
+  CalendarClock,
   CreditCard,
   Loader2,
-  PlusCircle,
   Receipt,
+  Layers3,
   Search,
   UserPlus,
   UserRound,
@@ -18,6 +20,7 @@ import type {
   FeeCategoryOptionRow,
   PaymentStudentRow,
   PaymentSelectionRow,
+  FeeScheduleOptionRow,
 } from "./page";
 
 type Props = {
@@ -25,6 +28,7 @@ type Props = {
   students: PaymentStudentRow[];
   categories: FeeCategoryOptionRow[];
   rows: PaymentSelectionRow[];
+  schedules: FeeScheduleOptionRow[];
   action: (formData: FormData) => void | Promise<void>;
 };
 
@@ -57,7 +61,7 @@ function SubmitButton({ label, pending }: { label: string; pending: boolean }) {
   );
 }
 
-export default function PaymentsComposer({ classes, students, categories, rows, action }: Props) {
+export default function PaymentsComposer({ classes, students, categories, rows, schedules, action }: Props) {
   const [tab, setTab] = useState<"existing" | "new">("existing");
   const [selectedLevel, setSelectedLevel] = useState("");
   const [selectedClassId, setSelectedClassId] = useState("");
@@ -172,6 +176,37 @@ export default function PaymentsComposer({ classes, students, categories, rows, 
     [categories, selectedCategoryId],
   );
 
+  const selectedSchedule = useMemo(() => {
+    if (!selectedClassId || !selectedCategoryId) return null;
+    return (
+      schedules.find(
+        (schedule) =>
+          schedule.class_id === selectedClassId &&
+          schedule.fee_category_id === selectedCategoryId &&
+          schedule.is_active,
+      ) ?? null
+    );
+  }, [schedules, selectedClassId, selectedCategoryId]);
+
+  useEffect(() => {
+    if (selectedCharge) return;
+    if (!selectedSchedule) return;
+
+    const scheduleAmount = Number(selectedSchedule.amount || 0);
+    if (!Number.isFinite(scheduleAmount) || scheduleAmount <= 0) return;
+
+    const categoryCode = normalize(selectedCategory?.code || selectedCategory?.name || "");
+    const kind = normalize(paymentKind);
+    const isSchoolFee = categoryCode.includes("scolar") || categoryCode.includes("scolarite");
+    const isInstallment = kind.includes("tranche");
+    const suggestedAmount = isSchoolFee && isInstallment ? Math.round(scheduleAmount / 3) : scheduleAmount;
+
+    setExpectedAmount(String(suggestedAmount));
+    if (!amount || Number(amount) <= 0) {
+      setAmount(String(suggestedAmount));
+    }
+  }, [selectedSchedule?.id, paymentKind, selectedCharge?.charge_id, selectedCategory?.id]);
+
   const today = useMemo(() => new Date().toISOString().slice(0, 10), []);
 
   function submitWithTransition(formData: FormData) {
@@ -182,6 +217,56 @@ export default function PaymentsComposer({ classes, students, categories, rows, 
 
   return (
     <section className="space-y-5">
+      {isPending ? (
+        <div className="rounded-[28px] border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-bold text-emerald-800 shadow-sm">
+          <Loader2 className="mr-2 inline h-4 w-4 animate-spin" /> Traitement en cours... Le reçu sera ouvert dès que l’action est terminée.
+        </div>
+      ) : null}
+
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+        <button
+          type="button"
+          onClick={() => setTab("existing")}
+          className={`rounded-[26px] border p-4 text-left shadow-sm transition ${
+            tab === "existing" ? "border-slate-900 bg-slate-950 text-white" : "border-slate-200 bg-white text-slate-800 hover:bg-slate-50"
+          }`}
+        >
+          <Wallet className="h-5 w-5" />
+          <div className="mt-3 text-sm font-black">Encaissement</div>
+          <div className={`mt-1 text-xs leading-5 ${tab === "existing" ? "text-slate-200" : "text-slate-500"}`}>Élève déjà en base, recherche ciblée.</div>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setTab("new")}
+          className={`rounded-[26px] border p-4 text-left shadow-sm transition ${
+            tab === "new" ? "border-emerald-700 bg-emerald-700 text-white" : "border-emerald-200 bg-emerald-50 text-emerald-900 hover:bg-emerald-100"
+          }`}
+        >
+          <UserPlus className="h-5 w-5" />
+          <div className="mt-3 text-sm font-black">Nouvelle inscription</div>
+          <div className={`mt-1 text-xs leading-5 ${tab === "new" ? "text-emerald-50" : "text-emerald-700"}`}>Créer l’élève et encaisser.</div>
+        </button>
+
+        <Link href="/admin/finance/receipts" className="rounded-[26px] border border-sky-200 bg-sky-50 p-4 text-left text-sky-900 shadow-sm transition hover:bg-sky-100">
+          <Receipt className="h-5 w-5" />
+          <div className="mt-3 text-sm font-black">Reçus</div>
+          <div className="mt-1 text-xs leading-5 text-sky-700">Historique, recherche et impression.</div>
+        </Link>
+
+        <Link href="/admin/finance/fees" className="rounded-[26px] border border-amber-200 bg-amber-50 p-4 text-left text-amber-900 shadow-sm transition hover:bg-amber-100">
+          <Layers3 className="h-5 w-5" />
+          <div className="mt-3 text-sm font-black">Catégories</div>
+          <div className="mt-1 text-xs leading-5 text-amber-700">Inscription, scolarité, transport...</div>
+        </Link>
+
+        <Link href="/admin/finance/fees/schedules" className="rounded-[26px] border border-violet-200 bg-violet-50 p-4 text-left text-violet-900 shadow-sm transition hover:bg-violet-100">
+          <CalendarClock className="h-5 w-5" />
+          <div className="mt-3 text-sm font-black">Tranches</div>
+          <div className="mt-1 text-xs leading-5 text-violet-700">Barèmes, échéances, paiements partiels.</div>
+        </Link>
+      </div>
+
       <div className="grid gap-3 rounded-[28px] border border-slate-200 bg-white p-2 shadow-sm sm:grid-cols-2">
         <button
           type="button"
@@ -381,6 +466,12 @@ export default function PaymentsComposer({ classes, students, categories, rows, 
                     </select>
                   </div>
                 </div>
+
+                {selectedSchedule && !selectedCharge ? (
+                  <div className="rounded-2xl border border-violet-200 bg-violet-50 px-4 py-3 text-xs font-semibold leading-5 text-violet-800">
+                    Barème repéré : <span className="font-black">{selectedSchedule.label}</span> — montant de référence {formatMoney(Number(selectedSchedule.amount || 0))}. Le montant reste modifiable selon le versement accepté par l’école.
+                  </div>
+                ) : null}
 
                 <div className="grid gap-4 sm:grid-cols-2">
                   <div>
