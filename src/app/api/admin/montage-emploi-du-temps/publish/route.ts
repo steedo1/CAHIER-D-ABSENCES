@@ -27,6 +27,68 @@ export async function POST(req: NextRequest) {
     const body = (await req.json().catch(() => ({}))) as { project_id?: string };
     const projectId = String(body.project_id || "").trim();
     if (!projectId) return NextResponse.json({ ok: false, error: "missing_project_id", message: "Identifiant du brouillon manquant." }, { status: 400 });
+    const { data: project, error: projectError } = await guard.srv
+      .from("montage_timetable_projects")
+      .select("id,status,diagnostics,engine_result")
+      .eq("id", projectId)
+      .eq("institution_id", guard.institutionId)
+      .maybeSingle();
+
+    if (projectError) {
+      return NextResponse.json(
+        { ok: false, error: "project_fetch_failed", message: projectError.message },
+        { status: 400 },
+      );
+    }
+
+    if (!project) {
+      return NextResponse.json(
+        { ok: false, error: "project_not_found", message: "Brouillon introuvable." },
+        { status: 404 },
+      );
+    }
+
+    if (String(project.status || "") !== "ready") {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "project_not_ready",
+          message: "Publication bloquée : le brouillon doit être au statut prêt, sans erreur bloquante.",
+        },
+        { status: 409 },
+      );
+    }
+
+    const diagnostics = Array.isArray(project.diagnostics) ? project.diagnostics : [];
+    const blockingDiagnostics = diagnostics.filter((item: any) => {
+      const level = String(item?.level || "");
+      const warningType = String(item?.warning_type || item?.warningType || "");
+      return (
+        level === "error" ||
+        warningType === "student_gap" ||
+        warningType === "single_hour_return" ||
+        warningType === "same_subject_same_day" ||
+        warningType === "school_closed_period" ||
+        warningType === "break_cut_block"
+      );
+    });
+
+    const engineResult = project.engine_result && typeof project.engine_result === "object"
+      ? (project.engine_result as Record<string, any>)
+      : {};
+    const unplaced = Array.isArray(engineResult.unplaced) ? engineResult.unplaced : [];
+
+    if (blockingDiagnostics.length > 0 || unplaced.length > 0) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "blocking_diagnostics",
+          message: `Publication bloquée : ${blockingDiagnostics.length} diagnostic(s) bloquant(s) et ${unplaced.length} bloc(s) non placé(s). Corrige le brouillon avant publication.`,
+        },
+        { status: 409 },
+      );
+    }
+
     const { data, error } = await guard.srv.rpc("montage_publish_timetable", {
       p_project_id: projectId,
       p_institution_id: guard.institutionId,

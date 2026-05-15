@@ -206,6 +206,13 @@ export type SchedulerContext = {
   roomPreferences: ClassRoomPreference[];
   teacherUnavailability: TeacherUnavailability[];
   terrainRules?: TerrainSchedulingRules;
+
+  /**
+   * Créneaux officiellement ouverts dans Mon Cahier, au format "weekday:period_no".
+   * Le moteur ne doit jamais générer un cours sur une combinaison jour/créneau
+   * absente de institution_periods.
+   */
+  availablePeriodKeys?: string[];
 };
 
 export type SchedulerResult = {

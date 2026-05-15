@@ -137,8 +137,10 @@ export function generateRealTimetableFromSnapshot(sourceSnapshot: unknown) {
     });
   }
 
+  const blockingDiagnosticsCount = diagnostics.filter((item) => item.level === "error").length;
+
   return {
-    status: "generated_real_scheduler",
+    status: blockingDiagnosticsCount > 0 ? "generated_with_blocking_diagnostics" : "generated_real_scheduler",
     generated_at: new Date().toISOString(),
     summary: {
       classes_count: build.context.classes.length,
@@ -150,6 +152,7 @@ export function generateRealTimetableFromSnapshot(sourceSnapshot: unknown) {
       assignments_count: assignments.length,
       unplaced_count: unplaced.length,
       score: result.globalScore,
+      blocking_diagnostics_count: blockingDiagnosticsCount,
     },
     assignments,
     unplaced,

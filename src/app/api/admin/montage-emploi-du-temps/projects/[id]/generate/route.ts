@@ -49,7 +49,15 @@ export async function POST(_req: NextRequest, context: { params: Promise<{ id: s
       .select("id,institution_id,name,status,source_snapshot,engine_input,engine_result,diagnostics,created_at,updated_at")
       .single();
     if (updateError) return NextResponse.json({ ok: false, error: "project_update_failed", message: updateError.message }, { status: 400 });
-    return NextResponse.json({ ok: true, item: updated, result, message: result.status === "generated_real_scheduler" ? "Génération HoraClasse réussie." : "Génération bloquée : configuration incomplète." });
+    return NextResponse.json({
+      ok: true,
+      item: updated,
+      result,
+      message:
+        result.status === "generated_real_scheduler"
+          ? "Génération HoraClasse réussie."
+          : "Génération terminée, mais publication bloquée : des règles ACE/Mon Cahier restent à corriger.",
+    });
   } catch (error) {
     return NextResponse.json({ ok: false, error: "server_error", message: error instanceof Error ? error.message : "Erreur serveur pendant la génération." }, { status: 500 });
   }

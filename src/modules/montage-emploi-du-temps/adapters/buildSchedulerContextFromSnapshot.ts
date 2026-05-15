@@ -51,6 +51,80 @@ function inferHalfDay(startTime: unknown): HalfDay {
   return "evening";
 }
 
+
+function timeToMinutes(value: unknown): number | null {
+  const raw = clean(value);
+  const match = raw.match(/^(\d{1,2}):(\d{2})/);
+  if (!match) return null;
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return null;
+  return hours * 60 + minutes;
+}
+
+function getDayLabel(weekday: number): string {
+  return weekday === 1
+    ? "Lundi"
+    : weekday === 2
+      ? "Mardi"
+      : weekday === 3
+        ? "Mercredi"
+        : weekday === 4
+          ? "Jeudi"
+          : weekday === 5
+            ? "Vendredi"
+            : weekday === 6
+              ? "Samedi"
+              : "Dimanche";
+}
+
+function getPeriodBreakAfter(periodIndex: number, periodsRaw: AnyRecord[]): boolean {
+  const byDay = new Map<number, AnyRecord[]>();
+
+  for (const item of periodsRaw) {
+    const weekday = toNumber(item.weekday, 0);
+    const periodNo = toNumber(item.period_no, 0);
+    if (weekday < 1 || weekday > 7 || periodNo <= 0) continue;
+    byDay.set(weekday, [...(byDay.get(weekday) ?? []), item]);
+  }
+
+  for (const rows of byDay.values()) {
+    const sorted = [...rows].sort((a, b) => toNumber(a.period_no, 0) - toNumber(b.period_no, 0));
+    const currentPosition = sorted.findIndex((item) => toNumber(item.period_no, 0) === periodIndex);
+    if (currentPosition < 0 || currentPosition >= sorted.length - 1) continue;
+
+    const current = sorted[currentPosition];
+    const next = sorted[currentPosition + 1];
+    const currentEnd = timeToMinutes(current.end_time);
+    const nextStart = timeToMinutes(next.start_time);
+
+    if (inferHalfDay(current.start_time) !== inferHalfDay(next.start_time)) {
+      return true;
+    }
+
+    if (currentEnd !== null && nextStart !== null && nextStart - currentEnd >= 10) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function getClosedHalfDaysForWeekday(
+  weekday: number,
+  periodsRaw: AnyRecord[],
+  globalHalfDays: HalfDay[],
+): HalfDay[] {
+  const opened = new Set<HalfDay>();
+
+  for (const item of periodsRaw) {
+    if (toNumber(item.weekday, 0) !== weekday) continue;
+    opened.add(inferHalfDay(item.start_time));
+  }
+
+  return globalHalfDays.filter((halfDay) => !opened.has(halfDay));
+}
+
 function isHeavyCatalogSubject(catalogSubjectId: string): boolean {
   return ["maths", "pc", "svt", "francais", "hg", "philo"].includes(
     catalogSubjectId,
@@ -114,24 +188,15 @@ export function buildSchedulerContextFromSnapshot(
     ),
   ).sort((a, b) => a - b);
 
+  const globalHalfDays = Array.from(
+    new Set(periodsRaw.map((item) => inferHalfDay(item.start_time))),
+  );
+
   const days: SessionDay[] = weekdays.map((weekday) => ({
     dayIndex: weekday,
-    label:
-      weekday === 1
-        ? "Lundi"
-        : weekday === 2
-          ? "Mardi"
-          : weekday === 3
-            ? "Mercredi"
-            : weekday === 4
-              ? "Jeudi"
-              : weekday === 5
-                ? "Vendredi"
-                : weekday === 6
-                  ? "Samedi"
-                  : "Dimanche",
+    label: getDayLabel(weekday),
     isEnabled: true,
-    closedHalfDays: [],
+    closedHalfDays: getClosedHalfDaysForWeekday(weekday, periodsRaw, globalHalfDays),
   }));
 
   const periodByIndex = new Map<number, AnyRecord>();
@@ -150,7 +215,7 @@ export function buildSchedulerContextFromSnapshot(
       endTime: clean(period.end_time, "00:00"),
       halfDay: inferHalfDay(period.start_time),
       isTeachingPeriod: true,
-      isBreakAfter: false,
+      isBreakAfter: getPeriodBreakAfter(periodIndex, periodsRaw),
     }));
 
   const periodIdByDayAndPeriod: Record<string, string> = {};
@@ -260,6 +325,13 @@ export function buildSchedulerContextFromSnapshot(
   if (periods.length === 0) diagnostics.push({ level: "error", message: "Aucun créneau officiel disponible." });
   if (roomsFromSnapshot.length === 0) diagnostics.push({ level: "warning", message: "Aucune salle HoraClasse configurée : le moteur utilisera des salles par défaut temporaires." });
   if (savedRoomPreferences.length === 0 && classes.length > 0) diagnostics.push({ level: "info", message: "Aucune affectation salle-classe enregistrée : le moteur appliquera une affectation automatique." });
+
+  if (periods.length > 0 && Object.keys(periodIdByDayAndPeriod).length < periods.length * Math.max(1, days.length)) {
+    diagnostics.push({
+      level: "info",
+      message: "Certains jours n’ont pas tous les créneaux : le moteur utilisera strictement les créneaux officiels disponibles jour par jour.",
+    });
+  }
   if (serviceAssignments.length === 0) {
     diagnostics.push({
       level: "error",
@@ -278,6 +350,7 @@ export function buildSchedulerContextFromSnapshot(
     roomPreferences,
     teacherUnavailability,
     terrainRules: buildTerrainRules(snapshot.terrain_rules),
+    availablePeriodKeys: Object.keys(periodIdByDayAndPeriod),
   };
 
   return {

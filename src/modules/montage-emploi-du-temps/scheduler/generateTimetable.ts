@@ -7,19 +7,10 @@ import type {
 } from "./types";
 import { findCandidateSlots } from "./findCandidateSlots";
 import {
-  breakCutsBlock,
   canFitDuration,
-  hasClassConflict,
-  hasRoomConflict,
-  hasTeacherConflict,
   respectsHardRules,
-  teacherIsStrictlyUnavailable,
 } from "./hardRules";
-import {
-  getOrdinaryFallbackRoomsForClass,
-  getRoomSearchGroupsForBlock,
-  getRoomsByType,
-} from "./roomSelection";
+import { getRoomSearchGroupsForBlock } from "./roomSelection";
 import { generateLessonBlocks } from "./generateLessonBlocks";
 import {
   chooseBestCandidate,
@@ -28,11 +19,8 @@ import {
   scoreCandidate,
 } from "./scoreCandidate";
 import {
-  candidateHitsClosedSchoolPeriod,
-  canUseOrdinaryRoomFallback,
   getTerrainRules,
   isEpsBlock,
-  isOrdinaryFallbackRoom,
   withDefaultTerrainRules,
 } from "./terrainRules";
 import {
@@ -868,6 +856,29 @@ function countBlockingWarnings(result: SchedulerResult): number {
   ).length;
 }
 
+function countWarningsByType(
+  result: SchedulerResult,
+  warningTypes: Set<string>,
+): number {
+  return result.warnings.filter((warning) => warningTypes.has(warning.warningType)).length;
+}
+
+const fatalWarningTypes = new Set([
+  "class_conflict",
+  "teacher_conflict",
+  "room_conflict",
+  "school_closed_period",
+  "break_cut_block",
+  "room_requirement_mismatch",
+  "eps_not_on_field",
+]);
+
+const aceQualityWarningTypes = new Set([
+  "student_gap",
+  "single_hour_return",
+  "same_subject_same_day",
+]);
+
 function isBetterResult(
   candidate: SchedulerResult,
   currentBest: SchedulerResult | null,
@@ -877,11 +888,11 @@ function isBetterResult(
     return true;
   }
 
-  // Priorité terrain : un montage qui place plus de cours est toujours meilleur
-  // qu’un montage seulement plus joli sur le papier. Le score de qualité ne doit
-  // jamais faire gagner une tentative qui laisse davantage de cours dehors.
-  if (candidate.unplacedBlocks.length !== currentBest.unplacedBlocks.length) {
-    return candidate.unplacedBlocks.length < currentBest.unplacedBlocks.length;
+  const candidateFatal = countWarningsByType(candidate, fatalWarningTypes);
+  const currentFatal = countWarningsByType(currentBest, fatalWarningTypes);
+
+  if (candidateFatal !== currentFatal) {
+    return candidateFatal < currentFatal;
   }
 
   const candidateBlockingWarnings = countBlockingWarnings(candidate);
@@ -889,6 +900,17 @@ function isBetterResult(
 
   if (candidateBlockingWarnings !== currentBlockingWarnings) {
     return candidateBlockingWarnings < currentBlockingWarnings;
+  }
+
+  const candidateAceQuality = countWarningsByType(candidate, aceQualityWarningTypes);
+  const currentAceQuality = countWarningsByType(currentBest, aceQualityWarningTypes);
+
+  if (candidateAceQuality !== currentAceQuality) {
+    return candidateAceQuality < currentAceQuality;
+  }
+
+  if (candidate.unplacedBlocks.length !== currentBest.unplacedBlocks.length) {
+    return candidate.unplacedBlocks.length < currentBest.unplacedBlocks.length;
   }
 
   if (getTerrainRules(context).avoidStudentGaps) {
@@ -922,166 +944,6 @@ function isBetterResult(
   return candidate.placements.length > currentBest.placements.length;
 }
 
-
-
-function getEmergencyRoomsForBlock(
-  block: LessonBlock,
-  context: SchedulerContext,
-): string[] {
-  const roomIds: string[] = [];
-
-  function pushRooms(rooms: { id: string }[]): void {
-    for (const room of rooms) {
-      if (!roomIds.includes(room.id)) {
-        roomIds.push(room.id);
-      }
-    }
-  }
-
-  // On conserve l’ordre normal : labo/terrain d’abord, puis fallback.
-  pushRooms(getRoomSearchGroupsForBlock(block, context).flatMap((group) => group.rooms));
-
-  // Secours EPS : si le terrain existe, on le garde toujours comme espace possible.
-  // Le terrain est partageable ; la surcharge se colore au lieu de laisser le cours dehors.
-  if (isEpsBlock(block, context)) {
-    const sportsFields = getRoomsByType("sports_field", context);
-    pushRooms(sportsFields);
-
-    if (sportsFields.length === 0 && canUseOrdinaryRoomFallback("sports_field", context)) {
-      pushRooms(getOrdinaryFallbackRoomsForClass(block.classId, context));
-    }
-  }
-
-
-  // Secours P.C/SVT : si la ressource spécialisée est absente/saturée, on tente la salle ordinaire
-  // seulement comme dernier filet de sécurité. Si aucun labo n’existe, c’est un fonctionnement normal.
-  if (block.roomTypeRequired === "pc_lab" || block.roomTypeRequired === "svt_lab") {
-    if (canUseOrdinaryRoomFallback(block.roomTypeRequired, context)) {
-      pushRooms(getOrdinaryFallbackRoomsForClass(block.classId, context));
-    }
-  }
-
-  if (roomIds.length > 0) {
-    return roomIds;
-  }
-
-  pushRooms(context.rooms.filter((room) => isOrdinaryFallbackRoom(room.roomType)));
-  return roomIds;
-}
-
-function respectsEmergencyPlacementRules(
-  block: LessonBlock,
-  candidate: CandidateSlot,
-  context: SchedulerContext,
-  placements: Placement[],
-): boolean {
-  const terrainRules = getTerrainRules(context);
-
-  if (candidateHitsClosedSchoolPeriod(candidate, context)) {
-    return false;
-  }
-
-  if (hasClassConflict(block.classId, candidate, placements)) {
-    return false;
-  }
-
-  if (hasTeacherConflict(block.teacherId, candidate, placements)) {
-    return false;
-  }
-
-  if (teacherIsStrictlyUnavailable(block.teacherId, candidate, context)) {
-    return false;
-  }
-
-  if (
-    terrainRules.avoidBreakInsideMultiPeriodBlock &&
-    breakCutsBlock(candidate, context)
-  ) {
-    return false;
-  }
-
-  if (candidate.roomId && hasRoomConflict(candidate.roomId, candidate, placements, context)) {
-    return false;
-  }
-
-  return true;
-}
-
-function findEmergencyCandidateSlots(
-  block: LessonBlock,
-  context: SchedulerContext,
-  placements: Placement[],
-): CandidateSlot[] {
-  const roomIds = getEmergencyRoomsForBlock(block, context);
-  const enabledDays = context.days.filter((day) => day.isEnabled);
-  const teachingPeriods = context.periods
-    .filter((period) => period.isTeachingPeriod)
-    .sort((a, b) => a.periodIndex - b.periodIndex);
-  const candidates: CandidateSlot[] = [];
-
-  for (const day of enabledDays) {
-    for (const period of teachingPeriods) {
-      if (!canFitDuration(period.periodIndex, block.durationUnits, context)) {
-        continue;
-      }
-
-      for (const roomId of roomIds) {
-        const candidate: CandidateSlot = {
-          dayIndex: day.dayIndex,
-          startPeriodIndex: period.periodIndex,
-          durationUnits: block.durationUnits,
-          roomId,
-        };
-
-        if (respectsEmergencyPlacementRules(block, candidate, context, placements)) {
-          candidates.push(candidate);
-        }
-      }
-    }
-  }
-
-  return candidates;
-}
-
-function placeRemainingMandatoryBlocks(
-  placements: Placement[],
-  unplacedBlocks: LessonBlock[],
-  context: SchedulerContext,
-  seed: number,
-): { placements: Placement[]; unplacedBlocks: LessonBlock[] } {
-  const placed = [...placements];
-  const stillUnplaced: LessonBlock[] = [];
-
-  // Les blocs les plus sensibles sont secourus en premier.
-  const ordered = [...unplacedBlocks].sort((a, b) => {
-    const aPriority = Math.min(
-      getAceSubjectPlacementPriority(a, context),
-      isEpsBlock(a, context) ? 0 : isPcSvtBlock(a) ? 1 : 20,
-    );
-    const bPriority = Math.min(
-      getAceSubjectPlacementPriority(b, context),
-      isEpsBlock(b, context) ? 0 : isPcSvtBlock(b) ? 1 : 20,
-    );
-
-    if (aPriority !== bPriority) return aPriority - bPriority;
-    return b.durationUnits - a.durationUnits;
-  });
-
-  for (const block of ordered) {
-    const candidates = findEmergencyCandidateSlots(block, context, placed);
-    const bestCandidate = chooseBestCandidate(block, candidates, context, placed, { seed });
-
-    if (!bestCandidate) {
-      stillUnplaced.push(block);
-      continue;
-    }
-
-    placed.push(createPlacement(block, bestCandidate));
-  }
-
-  return { placements: placed, unplacedBlocks: stillUnplaced };
-}
-
 function finalizeBestResult(
   result: SchedulerResult | null,
   context: SchedulerContext,
@@ -1096,15 +958,8 @@ function finalizeBestResult(
     };
   }
 
-  const rescuedResult = placeRemainingMandatoryBlocks(
-    result.placements,
-    result.unplacedBlocks,
-    context,
-    0,
-  );
-
   const gapRepairedPlacements = compactStudentGaps(
-    rescuedResult.placements,
+    result.placements,
     context,
     lessonBlocks,
     0,
@@ -1117,18 +972,19 @@ function finalizeBestResult(
   );
   const warnings = validateSchedule(
     repairedPlacements,
-    rescuedResult.unplacedBlocks,
+    result.unplacedBlocks,
     context,
     lessonBlocks,
   );
 
   return {
     placements: repairedPlacements,
-    unplacedBlocks: rescuedResult.unplacedBlocks,
+    unplacedBlocks: result.unplacedBlocks,
     warnings,
     globalScore: computeGlobalScore(warnings, repairedPlacements, context),
   };
 }
+
 
 export function generateTimetable(context: SchedulerContext): SchedulerResult {
   const normalizedContext = withDefaultTerrainRules(context);
@@ -1142,6 +998,7 @@ export function generateTimetable(context: SchedulerContext): SchedulerResult {
       normalizedContext,
       lessonBlocks,
       attempt,
+      { repairGaps: true },
     );
 
     if (isBetterResult(attemptResult, bestResult, normalizedContext)) {
@@ -1207,6 +1064,7 @@ export async function generateTimetableAsync(
       normalizedContext,
       lessonBlocks,
       attempt,
+      { repairGaps: true },
     );
 
     if (isBetterResult(attemptResult, bestResult, normalizedContext)) {

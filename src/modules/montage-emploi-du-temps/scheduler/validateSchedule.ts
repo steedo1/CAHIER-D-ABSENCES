@@ -806,7 +806,7 @@ export function validateSchedule(
       const firstPlacement = sameSubjectPlacements[0];
       warnings.push(
         makeWarning(
-          "warning",
+          "error",
           "same_subject_same_day",
           `${getClassLabel(firstPlacement.classId, context)} — ${getSubjectLabel(firstPlacement.subjectId, context)} : matière présente en ${continuousGroups.length} séances non consécutives le même jour. ACE recommande de former un bloc consécutif ou de répartir sur un autre jour.`,
           {
@@ -833,7 +833,7 @@ export function validateSchedule(
 
       warnings.push(
         makeWarning(
-          "warning",
+          "error",
           "student_gap",
           `${getClassLabel(detail.classId, context)} — ${dayLabel} ${halfDayLabels[detail.halfDay]} : ${detail.gapCount} heure(s) creuse(s) restante(s).`,
           { classId: detail.classId },
@@ -856,7 +856,7 @@ export function validateSchedule(
 
       warnings.push(
         makeWarning(
-          "warning",
+          "error",
           "single_hour_return",
           `${getClassLabel(detail.classId, context)} — ${dayLabel} ${halfDayLabels[detail.halfDay]} : demi-journée limitée à 1h de cours. À éviter fortement.`,
           { classId: detail.classId },

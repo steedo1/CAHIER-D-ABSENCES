@@ -248,10 +248,45 @@ function getPeriodsForRawCandidate(
   );
 }
 
+
+function getOfficialPeriodKeySet(context: SchedulerContext): Set<string> | null {
+  if (!Array.isArray(context.availablePeriodKeys) || context.availablePeriodKeys.length === 0) {
+    return null;
+  }
+
+  return new Set(context.availablePeriodKeys);
+}
+
+export function candidateUsesOnlyOfficialPeriods(
+  candidate: CandidateSlot,
+  context: SchedulerContext,
+): boolean {
+  const officialKeys = getOfficialPeriodKeySet(context);
+
+  if (!officialKeys) {
+    return true;
+  }
+
+  const periods = getPeriodsForRawCandidate(candidate, context);
+  const expectedCount = Math.max(1, Math.ceil(candidate.durationUnits));
+
+  if (periods.length !== expectedCount) {
+    return false;
+  }
+
+  return periods.every((period) =>
+    officialKeys.has(`${candidate.dayIndex}:${period.periodIndex}`),
+  );
+}
+
 export function candidateHitsClosedSchoolPeriod(
   candidate: CandidateSlot,
   context: SchedulerContext,
 ): boolean {
+  if (!candidateUsesOnlyOfficialPeriods(candidate, context)) {
+    return true;
+  }
+
   const periods = getPeriodsForRawCandidate(candidate, context);
 
   if (periods.length === 0) {
