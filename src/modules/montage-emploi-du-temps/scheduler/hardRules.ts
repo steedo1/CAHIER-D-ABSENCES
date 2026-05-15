@@ -13,6 +13,8 @@ import {
   getEpsMaxSimultaneousCoursesPerField,
   getTerrainRules,
   isAfternoonEpsCandidate,
+  isEpsBlock,
+  isEpsCandidateFavorable,
   isEpsSubjectId,
   isOrdinaryFallbackRoom,
   isSharedSportsFieldRoom,
@@ -415,15 +417,20 @@ export function respectsHardRules(
     return false;
   }
 
-  // EPS hors plage favorable n’est plus un blocage absolu : le moteur
-  // privilégie les bons créneaux par le score, puis colore la case si un
-  // placement moins idéal est nécessaire pour garder le cours obligatoire.
+  // ACE / terrain : en mode strict, EPS ne doit pas tomber dans les heures chaudes.
+  // Si aucune place favorable n'existe, le bloc restera non placé et apparaîtra en
+  // diagnostic au lieu de produire un emploi du temps absurde (EPS 10h-12h).
+  if (
+    terrainRules.epsHotHourMode === "strict" &&
+    isEpsBlock(block, context) &&
+    !isEpsCandidateFavorable(block, candidate, context)
+  ) {
+    return false;
+  }
 
-  // EPS après-midi terminal : ce n’est plus un blocage absolu ici.
-  // Le moteur le pénalise fortement et la grille colore la case si le placement
-  // reste nécessaire. On évite ainsi de laisser un cours EPS obligatoire dehors
-  // alors qu’aucun conflit classe/professeur/salle n’existe.
-  void violatesAfternoonEpsTerminalRule;
+  if (violatesAfternoonEpsTerminalRule(block, candidate, context, placements)) {
+    return false;
+  }
 
   return true;
 }

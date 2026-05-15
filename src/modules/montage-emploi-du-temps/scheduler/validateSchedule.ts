@@ -718,9 +718,9 @@ export function validateSchedule(
     ) {
       warnings.push(
         makeWarning(
-          "warning",
+          rules.epsHotHourMode === "strict" ? "error" : "warning",
           "eps_hot_hour",
-          `${describePlacement(placement, context)} : EPS est placé hors des plages favorables. La case est à vérifier.`,
+          `${describePlacement(placement, context)} : EPS est placé hors des plages favorables. En mode strict, ce placement doit être corrigé.`,
           {
             lessonBlockId: placement.lessonBlockId,
             classId: placement.classId,

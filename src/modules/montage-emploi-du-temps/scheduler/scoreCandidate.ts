@@ -887,6 +887,152 @@ function getProjectedClassDayLoadPenalty(
   return Math.max(0, candidateLoad - average) * 55;
 }
 
+function getOpenHalfDayKeys(context: SchedulerContext): Array<{ dayIndex: number; halfDay: HalfDay }> {
+  const officialPeriodKeys = new Set(context.availablePeriodKeys ?? []);
+  const hasOfficialKeys = officialPeriodKeys.size > 0;
+  const result: Array<{ dayIndex: number; halfDay: HalfDay }> = [];
+
+  for (const day of context.days.filter((item) => item.isEnabled)) {
+    const halfDays = new Set<HalfDay>();
+
+    for (const period of context.periods.filter((item) => item.isTeachingPeriod)) {
+      if (day.closedHalfDays?.includes(period.halfDay)) {
+        continue;
+      }
+
+      if (hasOfficialKeys && !officialPeriodKeys.has(`${day.dayIndex}:${period.periodIndex}`)) {
+        continue;
+      }
+
+      halfDays.add(period.halfDay);
+    }
+
+    for (const halfDay of halfDays) {
+      result.push({ dayIndex: day.dayIndex, halfDay });
+    }
+  }
+
+  return result;
+}
+
+function getClassRequiredWeeklyUnits(classId: string, context: SchedulerContext): number {
+  return context.serviceAssignments
+    .filter((assignment) => assignment.classId === classId)
+    .reduce((total, assignment) => total + assignment.weeklyUnits, 0);
+}
+
+function getClassHalfDayUnitsForKey(
+  classId: string,
+  dayIndex: number,
+  halfDay: HalfDay,
+  placements: Placement[],
+  context: SchedulerContext,
+): number {
+  const occupied = new Set<number>();
+
+  for (const placement of placements) {
+    if (placement.classId !== classId || placement.dayIndex !== dayIndex) {
+      continue;
+    }
+
+    const period = getPeriodByIndex(placement.startPeriodIndex, context);
+
+    if (period?.halfDay !== halfDay) {
+      continue;
+    }
+
+    for (const periodIndex of getPlacementPeriodsSet(placement, context)) {
+      occupied.add(periodIndex);
+    }
+  }
+
+  return occupied.size;
+}
+
+function getProjectedClassHalfDayBalancePenalty(
+  block: LessonBlock,
+  candidate: CandidateSlot,
+  context: SchedulerContext,
+  placements: Placement[],
+): number {
+  const candidatePeriods = getPeriodsForCandidate(candidate, context);
+  const halfDay = candidatePeriods[0]?.halfDay;
+
+  if (!halfDay) {
+    return 0;
+  }
+
+  const openHalfDays = getOpenHalfDayKeys(context);
+  const totalRequiredUnits = getClassRequiredWeeklyUnits(block.classId, context);
+  const targetPerHalfDay = openHalfDays.length > 0
+    ? Math.max(2, Math.ceil(totalRequiredUnits / openHalfDays.length))
+    : 3;
+
+  const currentHalfDayUnits = getClassHalfDayUnitsForKey(
+    block.classId,
+    candidate.dayIndex,
+    halfDay,
+    placements,
+    context,
+  );
+  const projectedHalfDayUnits = currentHalfDayUnits + candidate.durationUnits;
+  const currentDayUnits = getClassDayUnits(block.classId, candidate.dayIndex, placements, context);
+  const projectedDayUnits = currentDayUnits + candidate.durationUnits;
+
+  let penalty = 0;
+
+  if (projectedHalfDayUnits > targetPerHalfDay) {
+    penalty += Math.pow(projectedHalfDayUnits - targetPerHalfDay, 2) * 4200;
+  }
+
+  if (projectedHalfDayUnits > 4) {
+    penalty += Math.pow(projectedHalfDayUnits - 4, 2) * 9000;
+  }
+
+  if (projectedDayUnits > 6) {
+    penalty += Math.pow(projectedDayUnits - 6, 2) * 3600;
+  }
+
+  // Quand la matinée est déjà lourde, on pousse les nouveaux blocs vers les autres demi-journées.
+  if (halfDay === "morning" && currentHalfDayUnits >= targetPerHalfDay) {
+    penalty += 8500 + currentHalfDayUnits * 1200;
+  }
+
+  // Récompenser un vrai bloc de 2h ou plus qui ouvre une demi-journée vide :
+  // cela évite les après-midis/soirs entièrement vides tout en refusant les retours d’1h.
+  if (currentHalfDayUnits === 0 && candidate.durationUnits >= 2 && halfDay !== "morning") {
+    penalty -= 2200;
+  }
+
+  return penalty;
+}
+
+function getSameSubjectSameStartPenalty(
+  block: LessonBlock,
+  candidate: CandidateSlot,
+  placements: Placement[],
+): number {
+  const sameSubjectPlacements = placements.filter(
+    (placement) =>
+      placement.classId === block.classId &&
+      placement.subjectId === block.subjectId,
+  );
+
+  if (sameSubjectPlacements.length === 0) {
+    return 0;
+  }
+
+  const sameStartCount = sameSubjectPlacements.filter(
+    (placement) => placement.startPeriodIndex === candidate.startPeriodIndex,
+  ).length;
+
+  const sameDayCount = sameSubjectPlacements.filter(
+    (placement) => placement.dayIndex === candidate.dayIndex,
+  ).length;
+
+  return sameStartCount * 1800 + sameDayCount * 2600;
+}
+
 
 function getTeachingPeriodIndexes(context: SchedulerContext): number[] {
   return context.periods
@@ -982,7 +1128,10 @@ function getProjectedClassDaySpreadPenalty(
     .sort((a, b) => a - b);
 
   if (positions.length <= 1) {
-    return getCandidateStartPosition(candidate, context) * 130;
+    // Ne pas forcer mécaniquement tous les premiers placements le matin.
+    // L’équilibrage des demi-journées doit pouvoir envoyer des cours l’après-midi
+    // lorsque la matinée de la classe commence à être chargée.
+    return getCandidateStartPosition(candidate, context) * 18;
   }
 
   const first = positions[0];
@@ -1004,34 +1153,36 @@ function getLateDayPenalty(
 ): number {
   const halfDay = getCandidatePrimaryHalfDay(candidate, context);
   const range = getCandidateTimeRange(candidate, context);
-  let penalty = getCandidateStartPosition(candidate, context) * 35;
+  let penalty = getCandidateStartPosition(candidate, context) * 12;
 
+  // Les après-midis ne sont pas des zones interdites : dans un établissement réel,
+  // elles doivent être utilisées pour éviter les matinées surchargées. On pénalise
+  // seulement les fins de journée tardives et les demi-journées isolées.
   if (halfDay === "afternoon") {
-    penalty += 120;
+    penalty += 20;
   }
 
   if (halfDay === "evening") {
-    penalty += 28000;
+    penalty += 380;
   }
 
   if (range) {
-    if (range.start >= 16 * 60) penalty += 18000;
-    else if (range.start >= 15 * 60) penalty += 5200;
-    else if (range.start >= 14 * 60) penalty += 420;
+    if (range.start >= 17 * 60) penalty += 2600;
+    else if (range.start >= 16 * 60) penalty += 900;
+    else if (range.start >= 15 * 60) penalty += 180;
+    else if (range.start >= 14 * 60) penalty += 30;
   }
 
   if (halfDay && !classHasCourseOnDay(block.classId, candidate.dayIndex, placements)) {
-    // Une journée peut commencer l'après-midi si cela évite des trous.
-    // En revanche, commencer une journée en fin de journée reste un très mauvais choix.
-    if (halfDay === "afternoon") penalty += 180;
-    if (halfDay === "evening") penalty += 24000;
+    if (halfDay === "afternoon") penalty += 45;
+    if (halfDay === "evening") penalty += 650;
   }
 
   if (
     halfDay === "evening" &&
     !classHasCourseInHalfDay(block.classId, candidate.dayIndex, halfDay, placements, context)
   ) {
-    penalty += 22000;
+    penalty += 480;
   }
 
   return penalty;
@@ -1192,10 +1343,12 @@ export function scoreCandidate(
   score += getLateDayPenalty(block, candidate, context, placements);
   score += getProjectedClassDaySpreadPenalty(block, candidate, context, placements);
 
-  // Répartition réelle : éviter l’effet “je remplis le premier jour disponible”.
+  // Répartition réelle : éviter l’effet “je remplis les matinées puis je jette les restes”.
   score += getProjectedClassDayLoadPenalty(block, candidate, context, placements);
-  score += getClassDayUnits(block.classId, candidate.dayIndex, placements, context) * 70;
-  score += getClassHalfDayUnits(block, candidate, context, placements) * 44;
+  score += getProjectedClassHalfDayBalancePenalty(block, candidate, context, placements);
+  score += getSameSubjectSameStartPenalty(block, candidate, placements);
+  score += getClassDayUnits(block.classId, candidate.dayIndex, placements, context) * 55;
+  score += getClassHalfDayUnits(block, candidate, context, placements) * 34;
   score += getTeacherDayUnits(block.teacherId, candidate.dayIndex, placements) * 18;
   score += getPreferredDayPenalty(block, candidate, context, seed);
 
@@ -1333,10 +1486,9 @@ export function chooseBestCandidate(
     (candidate) => !startsEmptyClassDayOutsideMorning(block, candidate, context, placements),
   );
 
-  viable = filterWhenPossible(
-    viable,
-    (candidate) => !isLateCandidate(candidate, context),
-  );
+  // Ne pas exclure les après-midis/soirs par principe. Les établissements ont
+  // configuré ces créneaux pour qu’ils servent : le score gère seulement les
+  // fins de journée trop tardives et les retours isolés.
 
   // Règle ACE prioritaire : une matière peut former un bloc consécutif,
   // mais elle ne doit pas revenir plus tard dans la même journée si une
@@ -1360,6 +1512,13 @@ export function chooseBestCandidate(
     viable = filterWhenPossible(
       viable,
       (candidate) => !repeatsSubjectSameDay(block, candidate, placements),
+    );
+  }
+
+  if (rules.balanceHalfDays) {
+    viable = filterWhenPossible(
+      viable,
+      (candidate) => getProjectedClassHalfDayBalancePenalty(block, candidate, context, placements) < 9000,
     );
   }
 
@@ -1409,10 +1568,6 @@ export function chooseBestCandidate(
         return a.score - b.score;
       }
 
-      if (a.candidate.startPeriodIndex !== b.candidate.startPeriodIndex) {
-        return a.candidate.startPeriodIndex - b.candidate.startPeriodIndex;
-      }
-
       const seed = options.seed ?? 0;
       const aHash = hashText(
         `${seed}:${block.id}:${a.candidate.dayIndex}:${a.candidate.startPeriodIndex}:${a.candidate.roomId ?? ""}`,
@@ -1421,7 +1576,11 @@ export function chooseBestCandidate(
         `${seed}:${block.id}:${b.candidate.dayIndex}:${b.candidate.startPeriodIndex}:${b.candidate.roomId ?? ""}`,
       );
 
-      return aHash - bHash;
+      if (aHash !== bHash) {
+        return aHash - bHash;
+      }
+
+      return a.candidate.startPeriodIndex - b.candidate.startPeriodIndex;
     });
 
   return scored[0].candidate;
