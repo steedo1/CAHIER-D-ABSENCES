@@ -90,6 +90,13 @@ type ProjectResponse =
 type ViewMode = "class" | "teacher";
 type DisplayMode = "grid" | "list";
 
+type TargetGroup = {
+  key: string;
+  label: string;
+  rawLabel: string;
+  items: Assignment[];
+};
+
 type PeriodRow = {
   type: "period";
   period_no: number;
@@ -236,19 +243,66 @@ function getSecondaryLabel(item: Assignment, mode: ViewMode) {
     : clean(item.class_label, "Classe");
 }
 
-function groupTargets(items: Assignment[], mode: ViewMode) {
-  const map = new Map<string, Assignment[]>();
+function getTargetKey(item: Assignment, mode: ViewMode) {
+  const id =
+    mode === "class"
+      ? emptyToBlank(item.class_id)
+      : emptyToBlank(item.teacher_id);
+
+  if (id) return id;
+
+  // Dernier recours seulement : si une ancienne donnée n’a pas d’id, on évite
+  // de mélanger deux cibles qui ont le même libellé mais des créneaux différents.
+  return `${mode}:${getTargetLabel(item, mode)}`;
+}
+
+function groupTargets(items: Assignment[], mode: ViewMode): TargetGroup[] {
+  const map = new Map<string, { rawLabel: string; items: Assignment[] }>();
 
   for (const item of items) {
-    const label = getTargetLabel(item, mode);
-    const current = map.get(label) || [];
-    current.push(item);
-    map.set(label, current);
+    const key = getTargetKey(item, mode);
+    const current = map.get(key) || { rawLabel: getTargetLabel(item, mode), items: [] };
+    current.items.push(item);
+    map.set(key, current);
   }
 
-  return Array.from(map.entries())
-    .map(([label, values]) => ({ label, items: sortAssignments(values) }))
-    .sort((a, b) => a.label.localeCompare(b.label, "fr", { numeric: true }));
+  const groups = Array.from(map.entries())
+    .map(([key, value]) => ({
+      key,
+      rawLabel: value.rawLabel,
+      label: value.rawLabel,
+      items: sortAssignments(value.items),
+    }))
+    .sort((a, b) => {
+      const labelCompare = a.rawLabel.localeCompare(b.rawLabel, "fr", { numeric: true });
+      if (labelCompare !== 0) return labelCompare;
+      return a.key.localeCompare(b.key, "fr", { numeric: true });
+    });
+
+  const counters = new Map<string, number>();
+  const totals = new Map<string, number>();
+
+  for (const group of groups) {
+    totals.set(group.rawLabel, (totals.get(group.rawLabel) ?? 0) + 1);
+  }
+
+  return groups.map((group) => {
+    const total = totals.get(group.rawLabel) ?? 1;
+    if (total <= 1) return group;
+
+    const nextIndex = (counters.get(group.rawLabel) ?? 0) + 1;
+    counters.set(group.rawLabel, nextIndex);
+
+    return {
+      ...group,
+      // Important : on ne fusionne plus deux classes/professeurs ayant le même libellé.
+      // Le suffixe reste lisible et évite d’afficher des faux conflits dans une seule grille.
+      label:
+        mode === "class"
+          ? `${group.rawLabel} — Classe ${nextIndex}`
+          : `${group.rawLabel} — Profil ${nextIndex}`,
+    };
+  });
 }
 
 function getSnapshotPeriods(snapshot?: SourceSnapshot | null): PeriodRow[] {
@@ -421,6 +475,7 @@ function getBlockKey(item: Assignment) {
     item.teacher_id || item.teacher_name || "teacher",
     item.subject_id || item.subject_label || "subject",
     item.weekday || "day",
+    item.period_no || "period",
     item.room_id || item.room_label || "room",
   ].join("|");
 }
@@ -540,33 +595,36 @@ function StatBox({ label, value }: { label: string; value: number | string }) {
 }
 
 function getCellDedupeKey(item: Assignment) {
-  return [
-    item.class_id || item.class_label || "class",
-    item.teacher_id || item.teacher_name || "teacher",
-    item.subject_id || item.subject_label || "subject",
-    item.room_id || item.room_label || "room",
-  ].join("|");
+  // Le bloc généré est la seule clé fiable : deux séances identiques
+  // matière/prof/classe dans la semaine ne doivent pas être fusionnées.
+  return getBlockKey(item);
 }
 
-function getAssignmentStart(item: Assignment) {
-  return getNumeric(item.period_no);
+function getAssignmentStart(item: Assignment, blockMeta?: Map<string, BlockMeta>) {
+  return blockMeta?.get(getBlockKey(item))?.start || getNumeric(item.period_no);
 }
 
-function getAssignmentSpan(item: Assignment) {
+function getAssignmentSpan(item: Assignment, blockMeta?: Map<string, BlockMeta>) {
+  const metaSpan = blockMeta?.get(getBlockKey(item))?.span;
   const span = Math.ceil(
-    getNumeric(item.duration_slots) || getNumeric(item.duration_units) || 1,
+    metaSpan || getNumeric(item.duration_slots) || getNumeric(item.duration_units) || 1,
   );
   return Math.max(1, span);
 }
 
-function getItemsForCell(items: Assignment[], day: number, periodNo: number) {
+function getItemsForCell(
+  items: Assignment[],
+  blockMeta: Map<string, BlockMeta>,
+  day: number,
+  periodNo: number,
+) {
   const values: Assignment[] = [];
   const seen = new Set<string>();
 
   for (const item of items) {
     if (getNumeric(item.weekday) !== day) continue;
 
-    const start = getAssignmentStart(item);
+    const start = getAssignmentStart(item, blockMeta);
     if (!start) continue;
 
     const baseKey = getCellDedupeKey(item);
@@ -575,13 +633,13 @@ function getItemsForCell(items: Assignment[], day: number, periodNo: number) {
         other !== item &&
         getNumeric(other.weekday) === day &&
         getCellDedupeKey(other) === baseKey &&
-        getAssignmentStart(other) === periodNo
+        getAssignmentStart(other, blockMeta) === periodNo
       );
     });
 
     const isExplicitStart = start === periodNo;
     const isCoveredByDuration =
-      start < periodNo && periodNo < start + getAssignmentSpan(item);
+      start < periodNo && periodNo < start + getAssignmentSpan(item, blockMeta);
 
     if (
       !isExplicitStart &&
@@ -648,6 +706,7 @@ function OfficialTimetableGrid({
   const periods = getPeriods(items, snapshot);
   const rows = buildRows(periods);
   const roomMap = React.useMemo(() => makeRoomMap(snapshot), [snapshot]);
+  const blockMeta = React.useMemo(() => makeBlockMetaMap(items), [items]);
 
   if (days.length === 0 || periods.length === 0) {
     return (
@@ -701,6 +760,7 @@ function OfficialTimetableGrid({
                 {days.map((day) => {
                   const cellItems = getItemsForCell(
                     items,
+                    blockMeta,
                     day,
                     period.period_no,
                   );
@@ -874,7 +934,7 @@ function ListView({
   mode,
   snapshot,
 }: {
-  groups: Array<{ label: string; items: Assignment[] }>;
+  groups: TargetGroup[];
   mode: ViewMode;
   snapshot?: SourceSnapshot | null;
 }) {
@@ -1007,12 +1067,15 @@ export default function MontageProjectPreview({
     setSelectedTarget("all");
   }, [mode, project?.id]);
 
+  const selectedGroup = React.useMemo(
+    () => groups.find((group) => group.key === selectedTarget) || null,
+    [groups, selectedTarget],
+  );
+
   const visibleItems = React.useMemo(() => {
     if (selectedTarget === "all") return sortAssignments(assignments);
     return sortAssignments(
-      assignments.filter(
-        (item) => getTargetLabel(item, mode) === selectedTarget,
-      ),
+      assignments.filter((item) => getTargetKey(item, mode) === selectedTarget),
     );
   }, [assignments, mode, selectedTarget]);
 
@@ -1186,7 +1249,7 @@ export default function MontageProjectPreview({
                     >
                       <option value="all">Tous</option>
                       {groups.map((group) => (
-                        <option key={group.label} value={group.label}>
+                        <option key={group.key} value={group.key}>
                           {group.label}
                         </option>
                       ))}
@@ -1256,7 +1319,7 @@ export default function MontageProjectPreview({
                       <div className="space-y-6 print:space-y-0">
                         {groups.map((group) => (
                           <OfficialClassSheet
-                            key={group.label}
+                            key={group.key}
                             label={group.label}
                             items={group.items}
                             mode={mode}
@@ -1266,7 +1329,7 @@ export default function MontageProjectPreview({
                       </div>
                     ) : (
                       <OfficialClassSheet
-                        label={selectedTarget}
+                        label={selectedGroup?.label || selectedTarget}
                         items={visibleItems}
                         mode={mode}
                         snapshot={snapshot}

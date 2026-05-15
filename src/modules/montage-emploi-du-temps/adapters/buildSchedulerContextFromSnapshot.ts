@@ -143,6 +143,34 @@ function makeServiceKey(classId: string, teacherId: string, catalogSubjectId: st
   return `${classId}:${teacherId}:${catalogSubjectId}`;
 }
 
+function inferRoomTypeForService(
+  item: HoraclasseServiceMeta,
+  catalogSubjectId: string,
+): string | null {
+  const explicit = clean(item.room_type_required);
+
+  if (explicit) {
+    return explicit;
+  }
+
+  const inferredSubjectId = inferCatalogSubjectId({
+    code: item.subject_code,
+    label: item.subject_label || item.catalog_subject_label,
+    fallbackId: catalogSubjectId,
+  });
+
+  if (inferredSubjectId === "eps") {
+    return "sports_field";
+  }
+
+  const fromCatalog = inferRoomTypeFromCatalogSubject(catalogSubjectId);
+  if (fromCatalog) {
+    return fromCatalog;
+  }
+
+  return inferRoomTypeFromCatalogSubject(inferredSubjectId);
+}
+
 export function buildSchedulerContextFromSnapshot(
   sourceSnapshot: unknown,
 ): SchedulerBuildResult {
@@ -168,7 +196,9 @@ export function buildSchedulerContextFromSnapshot(
       name: clean(found?.catalog_subject_label || found?.subject_label || catalogSubjectId),
       shortName: clean(found?.catalog_subject_label || found?.subject_label || catalogSubjectId),
       isHeavy: isHeavyCatalogSubject(catalogSubjectId),
-      defaultRoomType: inferRoomTypeFromCatalogSubject(catalogSubjectId),
+      defaultRoomType: found
+        ? inferRoomTypeForService(found, catalogSubjectId)
+        : inferRoomTypeFromCatalogSubject(catalogSubjectId),
     };
   });
 
@@ -298,7 +328,7 @@ export function buildSchedulerContextFromSnapshot(
       subjectId: catalogSubjectId,
       weeklyUnits,
       splitPattern,
-      roomTypeRequired: item.room_type_required ?? inferRoomTypeFromCatalogSubject(catalogSubjectId),
+      roomTypeRequired: inferRoomTypeForService(item, catalogSubjectId),
     });
 
     serviceMetaByPlacementKey[makeServiceKey(classId, teacherId, catalogSubjectId)] = item;

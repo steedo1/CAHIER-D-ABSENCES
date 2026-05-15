@@ -1,6 +1,7 @@
 import type { LessonBlock, Room, SchedulerContext } from "./types";
 import {
   canUseOrdinaryRoomFallback,
+  getEffectiveRoomTypeRequired,
   isOrdinaryFallbackRoom,
 } from "./terrainRules";
 
@@ -138,28 +139,22 @@ export function getPrimaryRoomsForBlock(
   block: LessonBlock,
   context: SchedulerContext,
 ): Room[] {
-  if (!block.roomTypeRequired) {
+  const requiredRoomType = getEffectiveRoomTypeRequired(block, context);
+
+  if (!requiredRoomType) {
     return getFallbackRoomsForClass(block.classId, context);
   }
 
-  return getRoomsByType(block.roomTypeRequired, context);
+  return getRoomsByType(requiredRoomType, context);
 }
 
 export function getFallbackRoomsForBlock(
   block: LessonBlock,
   context: SchedulerContext,
 ): Room[] {
-  // Règle terrain stricte : si un terrain EPS existe, l'EPS ne doit pas être
-  // basculé en salle ordinaire. Le fallback EPS ne sert que lorsqu'aucun terrain
-  // n'a été déclaré dans l'établissement.
-  if (
-    block.roomTypeRequired === "sports_field" &&
-    hasRoomTypeAvailable("sports_field", context)
-  ) {
-    return [];
-  }
+  const requiredRoomType = getEffectiveRoomTypeRequired(block, context);
 
-  if (!block.roomTypeRequired || !canUseOrdinaryRoomFallback(block.roomTypeRequired, context)) {
+  if (!requiredRoomType || !canUseOrdinaryRoomFallback(requiredRoomType, context)) {
     return [];
   }
 
@@ -170,7 +165,9 @@ export function getRoomSearchGroupsForBlock(
   block: LessonBlock,
   context: SchedulerContext,
 ): RoomSearchGroup[] {
-  if (!block.roomTypeRequired) {
+  const requiredRoomType = getEffectiveRoomTypeRequired(block, context);
+
+  if (!requiredRoomType) {
     return [{ kind: "ordinary", rooms: getFallbackRoomsForClass(block.classId, context) }];
   }
 
@@ -179,8 +176,7 @@ export function getRoomSearchGroupsForBlock(
   const groups: RoomSearchGroup[] = [];
 
   // Logique métier validée : laboratoire / terrain d’abord.
-  // Le fallback en salle ordinaire n’est essayé que si aucun créneau viable
-  // n’est trouvé avec la ressource spécialisée.
+  // Pour EPS : si un terrain existe, aucune salle ordinaire n’est proposée.
   if (primaryRooms.length > 0) {
     groups.push({ kind: "primary", rooms: primaryRooms });
   }

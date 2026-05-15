@@ -22,7 +22,7 @@ export const DEFAULT_TERRAIN_RULES: TerrainSchedulingRules = {
 
   allowPcInOrdinaryRoomWhenNoLab: true,
   allowSvtInOrdinaryRoomWhenNoLab: true,
-  allowEpsInOrdinaryRoomWhenNoField: true,
+  allowEpsInOrdinaryRoomWhenNoField: false,
   allowComputerInOrdinaryRoomWhenNoLab: true,
 
   // Réalité terrain : les terrains EPS sont partageables, mais pas illimités.
@@ -99,6 +99,17 @@ export function withDefaultTerrainRules<T extends SchedulerContext>(
   };
 }
 
+export function hasConfiguredRoomType(
+  roomType: string | null | undefined,
+  context: SchedulerContext,
+): boolean {
+  if (!roomType) {
+    return false;
+  }
+
+  return context.rooms.some((room) => room.roomType === roomType);
+}
+
 export function canUseOrdinaryRoomFallback(
   roomType: string | null | undefined,
   context: SchedulerContext,
@@ -109,16 +120,20 @@ export function canUseOrdinaryRoomFallback(
 
   const rules = getTerrainRules(context);
 
+  if (roomType === "sports_field") {
+    // Règle métier Mon Cahier / ACE : si un terrain EPS est configuré,
+    // EPS ne doit jamais être envoyé en salle ordinaire. Le fallback ne sert
+    // que pour les établissements sans terrain déclaré et seulement si
+    // l’admin l’a explicitement autorisé.
+    return !hasConfiguredRoomType("sports_field", context) && rules.allowEpsInOrdinaryRoomWhenNoField;
+  }
+
   if (roomType === "pc_lab") {
     return rules.allowPcInOrdinaryRoomWhenNoLab;
   }
 
   if (roomType === "svt_lab") {
     return rules.allowSvtInOrdinaryRoomWhenNoLab;
-  }
-
-  if (roomType === "sports_field") {
-    return rules.allowEpsInOrdinaryRoomWhenNoField;
   }
 
   if (roomType === "computer_lab") {
@@ -325,6 +340,28 @@ export function isEpsBlock(block: LessonBlock, context: SchedulerContext): boole
   }
 
   return isEpsSubjectId(block.subjectId, context);
+}
+
+export function getEffectiveRoomTypeRequired(
+  block: LessonBlock,
+  context: SchedulerContext,
+): string | null {
+  const explicit = String(block.roomTypeRequired ?? "").trim();
+
+  if (explicit) {
+    return explicit;
+  }
+
+  // Sécurité absolue : même si le référentiel Mon Cahier n’a pas renseigné
+  // room_type_required, une matière EPS reconnue doit demander un terrain EPS.
+  if (isEpsBlock(block, context)) {
+    return "sports_field";
+  }
+
+  const subject = context.subjects.find((item) => item.id === block.subjectId);
+  const defaultRoomType = String(subject?.defaultRoomType ?? "").trim();
+
+  return defaultRoomType || null;
 }
 
 function timeToMinutes(time: string): number {

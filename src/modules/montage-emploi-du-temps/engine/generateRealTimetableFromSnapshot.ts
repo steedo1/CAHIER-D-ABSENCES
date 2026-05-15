@@ -20,6 +20,26 @@ function getMeta(
   return metaByKey[makeServiceKey(placement.classId, placement.teacherId, placement.subjectId)] || null;
 }
 
+function countDuplicateAssignmentKeys(
+  assignments: AnyRecord[],
+  buildKey: (item: AnyRecord) => string,
+): number {
+  const seen = new Set<string>();
+  let duplicates = 0;
+
+  for (const item of assignments) {
+    const key = buildKey(item);
+    if (!key) continue;
+    if (seen.has(key)) {
+      duplicates += 1;
+      continue;
+    }
+    seen.add(key);
+  }
+
+  return duplicates;
+}
+
 function expandPlacementForMonCahier(
   placement: Placement,
   build: ReturnType<typeof buildSchedulerContextFromSnapshot>,
@@ -116,6 +136,19 @@ export function generateRealTimetableFromSnapshot(sourceSnapshot: unknown) {
   });
 
   const missingPeriodRows = assignments.filter((item) => !clean(item.period_id)).length;
+  const duplicateClassRows = countDuplicateAssignmentKeys(
+    assignments,
+    (item) => `${item.class_id || ""}:${item.weekday || ""}:${item.period_no || ""}`,
+  );
+  const duplicateTeacherRows = countDuplicateAssignmentKeys(
+    assignments,
+    (item) => `${item.teacher_id || ""}:${item.weekday || ""}:${item.period_no || ""}`,
+  );
+  const duplicateRoomRows = countDuplicateAssignmentKeys(
+    assignments.filter((item) => clean(item.room_id)),
+    (item) => `${item.room_id || ""}:${item.weekday || ""}:${item.period_no || ""}`,
+  );
+
   const diagnostics = [
     ...build.diagnostics,
     ...result.warnings.map((warning) => ({
@@ -137,6 +170,30 @@ export function generateRealTimetableFromSnapshot(sourceSnapshot: unknown) {
     });
   }
 
+  if (duplicateClassRows > 0) {
+    diagnostics.push({
+      level: "error",
+      warning_type: "assignment_class_conflict",
+      message: `${duplicateClassRows} conflit(s) classe détecté(s) dans les lignes finales. Publication bloquée.`,
+    });
+  }
+
+  if (duplicateTeacherRows > 0) {
+    diagnostics.push({
+      level: "error",
+      warning_type: "assignment_teacher_conflict",
+      message: `${duplicateTeacherRows} conflit(s) professeur détecté(s) dans les lignes finales. Publication bloquée.`,
+    });
+  }
+
+  if (duplicateRoomRows > 0) {
+    diagnostics.push({
+      level: "warning",
+      warning_type: "assignment_room_overlap",
+      message: `${duplicateRoomRows} chevauchement(s) de salle détecté(s) dans les lignes finales. À vérifier si la salle est partageable.`,
+    });
+  }
+
   const blockingDiagnosticsCount = diagnostics.filter((item) => item.level === "error").length;
 
   return {
@@ -153,6 +210,9 @@ export function generateRealTimetableFromSnapshot(sourceSnapshot: unknown) {
       unplaced_count: unplaced.length,
       score: result.globalScore,
       blocking_diagnostics_count: blockingDiagnosticsCount,
+      duplicate_class_rows: duplicateClassRows,
+      duplicate_teacher_rows: duplicateTeacherRows,
+      duplicate_room_rows: duplicateRoomRows,
     },
     assignments,
     unplaced,

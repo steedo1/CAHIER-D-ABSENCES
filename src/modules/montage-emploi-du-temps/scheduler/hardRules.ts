@@ -9,9 +9,10 @@ import {
   canUseOrdinaryRoomFallback,
   candidateHitsClosedSchoolPeriod,
   getCandidateTimeRange,
+  getEffectiveRoomTypeRequired,
+  getEpsMaxSimultaneousCoursesPerField,
   getTerrainRules,
   isAfternoonEpsCandidate,
-  isEpsBlock,
   isEpsSubjectId,
   isOrdinaryFallbackRoom,
   isSharedSportsFieldRoom,
@@ -119,22 +120,20 @@ export function hasRoomConflict(
   placements: Placement[],
   context: SchedulerContext,
 ): boolean {
-  // EPS : un terrain est une zone pédagogique partageable.
-  // On ne bloque plus un placement parce qu’un autre EPS occupe déjà ce terrain :
-  // la capacité déclarée par l’établissement est contrôlée par le score et par
-  // le diagnostic visuel. Cela évite de laisser EPS dehors pour une simple
-  // surcharge pédagogique qui peut être coloriée et corrigée ensuite.
   if (isSharedSportsFieldRoom(roomId, context)) {
-    return false;
+    const capacity = getEpsMaxSimultaneousCoursesPerField(context);
+    const overlappingEpsOnField = placements.filter(
+      (placement) =>
+        placement.roomId === roomId &&
+        periodsOverlap(placement, candidate) &&
+        isEpsSubjectId(placement.subjectId, context),
+    ).length;
+
+    return overlappingEpsOnField >= capacity;
   }
 
   return placements.some((placement) => {
     if (placement.roomId !== roomId || !periodsOverlap(placement, candidate)) {
-      return false;
-    }
-
-    // Sécurité si un ancien placement EPS existe déjà dans le résultat.
-    if (isSharedSportsFieldRoom(placement.roomId, context)) {
       return false;
     }
 
@@ -196,7 +195,9 @@ export function roomMatchesRequirement(
   candidate: CandidateSlot,
   context: SchedulerContext,
 ): boolean {
-  if (!block.roomTypeRequired) {
+  const requiredRoomType = getEffectiveRoomTypeRequired(block, context);
+
+  if (!requiredRoomType) {
     return true;
   }
 
@@ -210,12 +211,12 @@ export function roomMatchesRequirement(
     return false;
   }
 
-  if (room.roomType === block.roomTypeRequired) {
+  if (room.roomType === requiredRoomType) {
     return true;
   }
 
   return (
-    canUseOrdinaryRoomFallback(block.roomTypeRequired, context) &&
+    canUseOrdinaryRoomFallback(requiredRoomType, context) &&
     isOrdinaryFallbackRoom(room.roomType)
   );
 }
