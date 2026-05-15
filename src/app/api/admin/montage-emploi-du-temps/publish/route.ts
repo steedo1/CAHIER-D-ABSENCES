@@ -20,6 +20,35 @@ async function guardAdmin() {
   return { ok: true as const, srv, userId: user.id, institutionId };
 }
 
+
+function getDiagnosticType(item: any): string {
+  return String(item?.warning_type || item?.warningType || item?.type || item?.code || item?.kind || "unknown");
+}
+
+const STRICT_BLOCKING_WARNING_TYPES = new Set([
+  "class_conflict",
+  "teacher_conflict",
+  "room_conflict",
+  "assignment_class_conflict",
+  "assignment_teacher_conflict",
+  "school_closed_period",
+  "break_cut_block",
+  "room_requirement_mismatch",
+  "eps_not_on_field",
+  "eps_field_over_capacity",
+  "unplaced_block",
+  "student_gap",
+  "single_hour_return",
+  "same_subject_same_day",
+  "same_subject_overlong_block",
+]);
+
+function isStrictBlockingDiagnostic(item: any): boolean {
+  const level = String(item?.level || item?.severity || "").toLowerCase();
+  const warningType = getDiagnosticType(item);
+  return level === "critical" || level === "error" || STRICT_BLOCKING_WARNING_TYPES.has(warningType);
+}
+
 export async function POST(req: NextRequest) {
   try {
     const guard = await guardAdmin();
@@ -60,18 +89,7 @@ export async function POST(req: NextRequest) {
     }
 
     const diagnostics = Array.isArray(project.diagnostics) ? project.diagnostics : [];
-    const blockingDiagnostics = diagnostics.filter((item: any) => {
-      const level = String(item?.level || "");
-      const warningType = String(item?.warning_type || item?.warningType || "");
-      return (
-        level === "error" ||
-        warningType === "student_gap" ||
-        warningType === "single_hour_return" ||
-        warningType === "same_subject_same_day" ||
-        warningType === "school_closed_period" ||
-        warningType === "break_cut_block"
-      );
-    });
+    const blockingDiagnostics = diagnostics.filter(isStrictBlockingDiagnostic);
 
     const engineResult = project.engine_result && typeof project.engine_result === "object"
       ? (project.engine_result as Record<string, any>)
@@ -83,7 +101,7 @@ export async function POST(req: NextRequest) {
         {
           ok: false,
           error: "blocking_diagnostics",
-          message: `Publication bloquée : ${blockingDiagnostics.length} diagnostic(s) bloquant(s) et ${unplaced.length} bloc(s) non placé(s). Corrige le brouillon avant publication.`,
+          message: `Publication bloquée : ${blockingDiagnostics.length} diagnostic(s) bloquant(s) et ${unplaced.length} bloc(s) non placé(s). L’admin peut ajuster le brouillon, puis publier manuellement quand tout est propre.`,
         },
         { status: 409 },
       );

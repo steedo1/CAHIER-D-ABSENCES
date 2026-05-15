@@ -40,6 +40,55 @@ function countDuplicateAssignmentKeys(
   return duplicates;
 }
 
+
+const STRICT_BLOCKING_WARNING_TYPES = new Set([
+  "class_conflict",
+  "teacher_conflict",
+  "room_conflict",
+  "assignment_class_conflict",
+  "assignment_teacher_conflict",
+  "school_closed_period",
+  "break_cut_block",
+  "room_requirement_mismatch",
+  "eps_not_on_field",
+  "eps_field_over_capacity",
+  "unplaced_block",
+  "student_gap",
+  "single_hour_return",
+  "same_subject_same_day",
+  "same_subject_overlong_block",
+]);
+
+function getDiagnosticType(item: AnyRecord): string {
+  return String(
+    item.warning_type ||
+    item.warningType ||
+    item.type ||
+    item.code ||
+    item.kind ||
+    "unknown",
+  );
+}
+
+function isStrictBlockingDiagnostic(item: AnyRecord): boolean {
+  const level = String(item.level || item.severity || "").toLowerCase();
+  const warningType = getDiagnosticType(item);
+
+  return (
+    level === "critical" ||
+    level === "error" ||
+    STRICT_BLOCKING_WARNING_TYPES.has(warningType)
+  );
+}
+
+function countDiagnosticsByType(items: AnyRecord[]): Record<string, number> {
+  return items.reduce<Record<string, number>>((acc, item) => {
+    const warningType = getDiagnosticType(item);
+    acc[warningType] = (acc[warningType] || 0) + 1;
+    return acc;
+  }, {});
+}
+
 function expandPlacementForMonCahier(
   placement: Placement,
   build: ReturnType<typeof buildSchedulerContextFromSnapshot>,
@@ -194,7 +243,10 @@ export function generateRealTimetableFromSnapshot(sourceSnapshot: unknown) {
     });
   }
 
-  const blockingDiagnosticsCount = diagnostics.filter((item) => item.level === "error").length;
+  const typedDiagnostics = diagnostics as AnyRecord[];
+  const blockingDiagnostics = typedDiagnostics.filter(isStrictBlockingDiagnostic);
+  const blockingDiagnosticsCount = blockingDiagnostics.length;
+  const diagnosticsByType = countDiagnosticsByType(typedDiagnostics);
 
   return {
     status: blockingDiagnosticsCount > 0 ? "generated_with_blocking_diagnostics" : "generated_real_scheduler",
@@ -210,6 +262,11 @@ export function generateRealTimetableFromSnapshot(sourceSnapshot: unknown) {
       unplaced_count: unplaced.length,
       score: result.globalScore,
       blocking_diagnostics_count: blockingDiagnosticsCount,
+      diagnostics_count: diagnostics.length,
+      diagnostics_by_type: diagnosticsByType,
+      strict_blocking_types: Array.from(new Set(blockingDiagnostics.map(getDiagnosticType))).sort(),
+      publication_allowed: blockingDiagnosticsCount === 0 && unplaced.length === 0,
+      admin_manual_publication_required: true,
       duplicate_class_rows: duplicateClassRows,
       duplicate_teacher_rows: duplicateTeacherRows,
       duplicate_room_rows: duplicateRoomRows,

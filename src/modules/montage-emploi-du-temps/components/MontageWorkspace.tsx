@@ -11,8 +11,6 @@ import {
   FileSpreadsheet,
   GraduationCap,
   Loader2,
-  PlayCircle,
-  PlusCircle,
   RefreshCw,
   School,
   Trash2,
@@ -49,9 +47,6 @@ type ProjectsResponse =
   | { ok: true; items: MontageProject[] }
   | { ok: false; error: string; message?: string };
 
-type GenerateResponse =
-  | { ok: true; item: MontageProject; result: EngineResult; message?: string }
-  | { ok: false; error: string; message?: string };
 
 type DeleteResponse =
   | { ok: true; deleted_id?: string; deleted_count?: number; message?: string }
@@ -112,8 +107,6 @@ export default function MontageWorkspace() {
   const [projects, setProjects] = React.useState<MontageProject[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [projectsLoading, setProjectsLoading] = React.useState(false);
-  const [creatingDraft, setCreatingDraft] = React.useState(false);
-  const [generatingId, setGeneratingId] = React.useState<string | null>(null);
   const [deletingId, setDeletingId] = React.useState<string | null>(null);
   const [successMessage, setSuccessMessage] = React.useState<string | null>(null);
   const [projectError, setProjectError] = React.useState<string | null>(null);
@@ -163,96 +156,6 @@ export default function MontageWorkspace() {
   React.useEffect(() => {
     void load();
   }, [load]);
-
-  const createDraft = React.useCallback(async () => {
-    if (!data?.ok) return;
-    setCreatingDraft(true);
-    setSuccessMessage(null);
-    setProjectError(null);
-
-    try {
-      const now = new Date();
-      const sourceSnapshot = {
-        institution: data.institution,
-        classes: data.classes,
-        subjects: data.subjects,
-        teachers: data.teachers,
-        periods: data.periods,
-        affectations: data.affectations,
-        service_assignments: data.service_assignments,
-        terrain_rules: data.terrain_rules,
-        rooms: data.rooms,
-        room_preferences: data.room_preferences || [],
-        teacher_unavailability: data.teacher_unavailability,
-        saved_at: now.toISOString(),
-      };
-
-      const res = await fetch("/api/admin/montage-emploi-du-temps/projects", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: `Brouillon HoraClasse - ${now.toLocaleDateString("fr-FR")}`,
-          status: "draft",
-          source_snapshot: sourceSnapshot,
-          engine_input: {
-            source: "horaclasse_model_bootstrap",
-            services_count: data.service_assignments.length,
-            ready_services_count: data.service_assignments.filter((item) => item.is_ready).length,
-          },
-          engine_result: { status: "not_generated_yet", assignments: [] },
-          diagnostics: data.warnings.map((message) => ({ level: "warning", message })),
-        }),
-      });
-
-      const json = (await res.json().catch(() => null)) as
-        | { ok: true; item: MontageProject; message?: string }
-        | { ok: false; error: string; message?: string }
-        | null;
-
-      if (!json) {
-        setProjectError("Réponse serveur invalide pendant la création du brouillon.");
-        return;
-      }
-      if (!json.ok) {
-        setProjectError(json.message || json.error);
-        return;
-      }
-
-      setSuccessMessage(json.message || "Brouillon créé avec succès.");
-      await loadProjects();
-    } catch (error) {
-      setProjectError(error instanceof Error ? error.message : "Impossible de créer le brouillon.");
-    } finally {
-      setCreatingDraft(false);
-    }
-  }, [data, loadProjects]);
-
-  const generateProject = React.useCallback(async (project: MontageProject) => {
-    setGeneratingId(project.id);
-    setSuccessMessage(null);
-    setProjectError(null);
-    try {
-      const res = await fetch(`/api/admin/montage-emploi-du-temps/projects/${project.id}/generate`, { method: "POST" });
-      const json = (await res.json().catch(() => null)) as GenerateResponse | null;
-      if (!json) {
-        setProjectError("Réponse serveur invalide pendant la génération.");
-        return;
-      }
-      if (!json.ok) {
-        setProjectError(json.message || json.error);
-        return;
-      }
-      const score = json.result?.summary?.score;
-      const placed = json.result?.summary?.assignments_count;
-      const unplaced = json.result?.summary?.unplaced_count;
-      setSuccessMessage(`Génération HoraClasse terminée : ${placed ?? 0} ligne(s) placée(s), ${unplaced ?? 0} bloc(s) non placé(s), score ${score ?? 0}%.`);
-      await loadProjects();
-    } catch (error) {
-      setProjectError(error instanceof Error ? error.message : "Impossible de générer l’emploi du temps.");
-    } finally {
-      setGeneratingId(null);
-    }
-  }, [loadProjects]);
 
   const deleteProject = React.useCallback(async (project: MontageProject) => {
     if (project.status === "published") {
@@ -317,10 +220,9 @@ export default function MontageWorkspace() {
                   {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
                   Recharger
                 </button>
-                <button type="button" onClick={() => void createDraft()} disabled={!isReady || creatingDraft || readyServiceCount === 0} className="inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-500 px-5 py-3 text-sm font-black text-white shadow-lg shadow-emerald-950/20 transition hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-60">
-                  {creatingDraft ? <Loader2 className="h-4 w-4 animate-spin" /> : <PlusCircle className="h-4 w-4" />}
-                  Créer un brouillon
-                </button>
+                <Link href="/admin/montage-emploi-du-temps/generation" className="inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-500 px-5 py-3 text-sm font-black text-white shadow-lg shadow-emerald-950/20 transition hover:bg-emerald-600">
+                  Générer dans l’onglet dédié
+                </Link>
               </div>
             </div>
           </div>
@@ -372,7 +274,7 @@ export default function MontageWorkspace() {
                     <Link href="/admin/montage-emploi-du-temps/ressources" className="block rounded-2xl bg-slate-50 p-4 font-bold text-slate-900 hover:bg-slate-100">Salles & ressources</Link>
                     <Link href="/admin/montage-emploi-du-temps/regles-terrain" className="block rounded-2xl bg-slate-50 p-4 font-bold text-slate-900 hover:bg-slate-100">Règles terrain HoraClasse</Link>
                     <Link href="/admin/montage-emploi-du-temps/indisponibilites" className="block rounded-2xl bg-slate-50 p-4 font-bold text-slate-900 hover:bg-slate-100">Indisponibilités enseignants</Link>
-                    <Link href="/admin/montage-emploi-du-temps/generation" className="block rounded-2xl bg-slate-50 p-4 font-bold text-slate-900 hover:bg-slate-100">Services & génération</Link>
+                    <Link href="/admin/montage-emploi-du-temps/generation" className="block rounded-2xl bg-slate-50 p-4 font-bold text-slate-900 hover:bg-slate-100">Génération brouillon</Link>
                   </div>
                 </div>
 
@@ -381,18 +283,16 @@ export default function MontageWorkspace() {
                   <div className="mt-5 space-y-3">
                     {projects.slice(0, 6).map((project) => {
                       const summary = project.engine_result?.summary;
-                      const canGenerate = project.status !== "published";
                       return (
                         <div key={project.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
                           <div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="font-bold text-slate-950">{project.name}</p><p className="mt-1 text-xs text-slate-500">Modifié le {formatDate(project.updated_at)}</p></div><span className="rounded-full bg-white px-3 py-1 text-xs font-black uppercase tracking-wide text-slate-600 ring-1 ring-slate-200">{getStatusLabel(project.status)}</span></div>
                           {summary && <div className="mt-4 grid grid-cols-3 gap-2 text-center text-xs"><div className="rounded-xl bg-white px-2 py-2 ring-1 ring-slate-200"><p className="font-black text-slate-950">{summary.assignments_count ?? 0}</p><p className="text-slate-500">Lignes</p></div><div className="rounded-xl bg-white px-2 py-2 ring-1 ring-slate-200"><p className="font-black text-slate-950">{summary.unplaced_count ?? 0}</p><p className="text-slate-500">Non placés</p></div><div className="rounded-xl bg-white px-2 py-2 ring-1 ring-slate-200"><p className="font-black text-slate-950">{summary.score ?? 0}%</p><p className="text-slate-500">Score</p></div></div>}
-                          <button type="button" onClick={() => void generateProject(project)} disabled={!canGenerate || generatingId === project.id || Boolean(deletingId)} className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-slate-950 px-4 py-3 text-sm font-black text-white shadow-sm transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60">{generatingId === project.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <PlayCircle className="h-4 w-4" />}{project.status === "ready" ? "Regénérer avec HoraClasse" : "Générer avec HoraClasse"}</button>
                           <div className="mt-3 grid gap-2 sm:grid-cols-2">
                             <Link href={`/admin/montage-emploi-du-temps/projets/${project.id}`} className="inline-flex w-full items-center justify-center rounded-2xl bg-emerald-600 px-4 py-3 text-sm font-black text-white shadow-sm transition hover:bg-emerald-700">Voir l’emploi du temps</Link>
                             <button
                               type="button"
                               onClick={() => void deleteProject(project)}
-                              disabled={project.status === "published" || deletingId === project.id || Boolean(generatingId)}
+                              disabled={project.status === "published" || deletingId === project.id}
                               className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-white px-4 py-3 text-sm font-black text-red-700 ring-1 ring-red-200 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
                             >
                               {deletingId === project.id ? (
@@ -406,7 +306,7 @@ export default function MontageWorkspace() {
                         </div>
                       );
                     })}
-                    {projects.length === 0 && <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-5 text-center text-sm text-slate-500">Aucun brouillon. Crée un brouillon quand les services HoraClasse sont prêts.</div>}
+                    {projects.length === 0 && <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-5 text-center text-sm text-slate-500">Aucun brouillon pour le moment. La création et la génération se font uniquement dans l’onglet Génération brouillon.</div>}
                   </div>
                 </div>
               </div>

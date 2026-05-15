@@ -25,6 +25,41 @@ async function guardAdmin() {
   return { ok: true as const, srv, userId: user.id, institutionId };
 }
 
+
+function getDiagnosticType(item: any): string {
+  return String(item?.warning_type || item?.warningType || item?.type || item?.code || item?.kind || "unknown");
+}
+
+const STRICT_BLOCKING_WARNING_TYPES = new Set([
+  "class_conflict",
+  "teacher_conflict",
+  "room_conflict",
+  "assignment_class_conflict",
+  "assignment_teacher_conflict",
+  "school_closed_period",
+  "break_cut_block",
+  "room_requirement_mismatch",
+  "eps_not_on_field",
+  "eps_field_over_capacity",
+  "unplaced_block",
+  "student_gap",
+  "single_hour_return",
+  "same_subject_same_day",
+  "same_subject_overlong_block",
+]);
+
+function isStrictBlockingDiagnostic(item: any): boolean {
+  const level = String(item?.level || item?.severity || "").toLowerCase();
+  const warningType = getDiagnosticType(item);
+  return level === "critical" || level === "error" || STRICT_BLOCKING_WARNING_TYPES.has(warningType);
+}
+
+function getStrictBlockingCount(result: any): number {
+  const diagnostics = Array.isArray(result?.diagnostics) ? result.diagnostics : [];
+  const unplaced = Array.isArray(result?.unplaced) ? result.unplaced : [];
+  return diagnostics.filter(isStrictBlockingDiagnostic).length + unplaced.length;
+}
+
 export async function POST(_req: NextRequest, context: { params: Promise<{ id: string }> }) {
   try {
     const guard = await guardAdmin();
@@ -53,10 +88,14 @@ export async function POST(_req: NextRequest, context: { params: Promise<{ id: s
         generation_duration_ms: generationDurationMs,
       },
     };
-    const nextStatus = resultWithRuntime.status === "generated_real_scheduler" ? "ready" : "draft";
+    // La génération ne publie jamais automatiquement.
+    // Elle produit seulement un brouillon : "ready" si l'audit strict est propre,
+    // sinon "draft" afin que l'admin corrige avant publication manuelle.
+    const strictBlockingCount = getStrictBlockingCount(resultWithRuntime);
+    const nextStatus = strictBlockingCount === 0 && resultWithRuntime.status === "generated_real_scheduler" ? "ready" : "draft";
     const { data: updated, error: updateError } = await guard.srv
       .from("montage_timetable_projects")
-      .update({ status: nextStatus, engine_result: resultWithRuntime, diagnostics: resultWithRuntime.diagnostics || [] })
+      .update({ status: nextStatus, published_at: null, engine_result: resultWithRuntime, diagnostics: resultWithRuntime.diagnostics || [] })
       .eq("id", projectId)
       .eq("institution_id", guard.institutionId)
       .select("id,institution_id,name,status,source_snapshot,engine_input,engine_result,diagnostics,created_at,updated_at")
@@ -67,9 +106,9 @@ export async function POST(_req: NextRequest, context: { params: Promise<{ id: s
       item: updated,
       result: resultWithRuntime,
       message:
-        resultWithRuntime.status === "generated_real_scheduler"
-          ? "Génération HoraClasse réussie."
-          : "Génération terminée, mais publication bloquée : des règles ACE/Mon Cahier restent à corriger.",
+        nextStatus === "ready"
+          ? "Génération HoraClasse terminée : brouillon prêt. L’admin doit encore vérifier puis publier manuellement."
+          : `Génération terminée : brouillon à revoir (${strictBlockingCount} anomalie(s) bloquante(s)). La publication reste bloquée jusqu’à correction.`,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Erreur serveur pendant la génération.";
