@@ -4,8 +4,9 @@
 import type { ReactNode } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { BarChart3, Building2, CalendarDays, LogOut, Wallet } from "lucide-react";
+import { BarChart3, Building2, CalendarDays, Wallet } from "lucide-react";
 import InstallAndPushCTA from "@/components/InstallAndPushCTA";
+import TrueLogoutButton from "@/components/auth/TrueLogoutButton";
 
 const NAV = [
   { href: "/founder/dashboard", label: "Vue globale", Icon: BarChart3 },
@@ -30,10 +31,7 @@ export default function FounderShell({ children }: { children: ReactNode }) {
             </div>
           </div>
 
-          <Link href="/logout" className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50">
-            <LogOut className="h-4 w-4" />
-            Sortir
-          </Link>
+          <TrueLogoutButton label="Se déconnecter" />
         </div>
       </header>
 
