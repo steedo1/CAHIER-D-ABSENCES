@@ -5,6 +5,10 @@ import { generateDraftTimetableFromSnapshot } from "@/modules/montage-emploi-du-
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+// La génération peut être lourde sur un établissement complet.
+// On demande à Vercel de laisser respirer cette route quand le plan le permet,
+// tout en gardant le moteur borné côté code pour éviter les réponses 504 HTML.
+export const maxDuration = 60;
 
 async function guardAdmin() {
   const supa = await getSupabaseServerClient();
@@ -39,11 +43,20 @@ export async function POST(_req: NextRequest, context: { params: Promise<{ id: s
     if (!project) return NextResponse.json({ ok: false, error: "project_not_found", message: "Brouillon introuvable." }, { status: 404 });
     if (project.status === "published") return NextResponse.json({ ok: false, error: "project_already_published", message: "Ce brouillon est déjà publié." }, { status: 409 });
 
+    const startedAt = Date.now();
     const result = generateDraftTimetableFromSnapshot(project.source_snapshot);
-    const nextStatus = result.status === "generated_real_scheduler" ? "ready" : "draft";
+    const generationDurationMs = Date.now() - startedAt;
+    const resultWithRuntime = {
+      ...result,
+      summary: {
+        ...(result.summary || {}),
+        generation_duration_ms: generationDurationMs,
+      },
+    };
+    const nextStatus = resultWithRuntime.status === "generated_real_scheduler" ? "ready" : "draft";
     const { data: updated, error: updateError } = await guard.srv
       .from("montage_timetable_projects")
-      .update({ status: nextStatus, engine_result: result, diagnostics: result.diagnostics || [] })
+      .update({ status: nextStatus, engine_result: resultWithRuntime, diagnostics: resultWithRuntime.diagnostics || [] })
       .eq("id", projectId)
       .eq("institution_id", guard.institutionId)
       .select("id,institution_id,name,status,source_snapshot,engine_input,engine_result,diagnostics,created_at,updated_at")
@@ -52,13 +65,18 @@ export async function POST(_req: NextRequest, context: { params: Promise<{ id: s
     return NextResponse.json({
       ok: true,
       item: updated,
-      result,
+      result: resultWithRuntime,
       message:
-        result.status === "generated_real_scheduler"
+        resultWithRuntime.status === "generated_real_scheduler"
           ? "Génération HoraClasse réussie."
           : "Génération terminée, mais publication bloquée : des règles ACE/Mon Cahier restent à corriger.",
     });
   } catch (error) {
-    return NextResponse.json({ ok: false, error: "server_error", message: error instanceof Error ? error.message : "Erreur serveur pendant la génération." }, { status: 500 });
+    const message = error instanceof Error ? error.message : "Erreur serveur pendant la génération.";
+    const stack = process.env.NODE_ENV === "development" && error instanceof Error ? error.stack : undefined;
+    return NextResponse.json(
+      { ok: false, error: "server_error", message, stack },
+      { status: 500 },
+    );
   }
 }

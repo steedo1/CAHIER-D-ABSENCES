@@ -821,23 +821,42 @@ function runGenerationAttempt(
   };
 }
 
-function buildAttempts(context: SchedulerContext): GenerationAttempt[] {
+function buildAttempts(context: SchedulerContext, lessonBlockCount: number): GenerationAttempt[] {
   const rules = getTerrainRules(context);
-  const strategies: BlockOrderStrategy[] = [
+  const isConstrained =
+    rules.enablePcSvtTandem ||
+    rules.avoidStudentGaps ||
+    rules.avoidSameSubjectSameDay ||
+    rules.avoidSingleHourReturn ||
+    rules.balanceHalfDays;
+
+  // En production Mon Cahier, un établissement complet peut produire plusieurs
+  // centaines de blocs. L'ancien moteur lançait jusqu'à 72 tentatives complètes
+  // avec réparations, ce qui provoquait des timeouts Vercel et donc une réponse
+  // HTML/504 au lieu d'un JSON exploitable.
+  // Ici on garde plusieurs stratégies, mais on borne le coût selon la taille réelle
+  // du problème pour garantir une réponse serveur. Les diagnostics bloquants restent
+  // ensuite chargés de refuser la publication si le résultat n'est pas conforme.
+  let strategies: BlockOrderStrategy[] = [
     "ace_priority",
     "difficulty",
     "duration_first",
     "class_spread",
   ];
+  let seedCount = isConstrained ? 10 : 6;
 
-  const seedCount =
-    rules.enablePcSvtTandem ||
-    rules.avoidStudentGaps ||
-    rules.avoidSameSubjectSameDay ||
-    rules.avoidSingleHourReturn ||
-    rules.balanceHalfDays
-      ? 18
-      : 10;
+  if (lessonBlockCount >= 360) {
+    strategies = ["ace_priority", "difficulty"];
+    seedCount = 2;
+  } else if (lessonBlockCount >= 260) {
+    strategies = ["ace_priority", "difficulty", "duration_first"];
+    seedCount = 3;
+  } else if (lessonBlockCount >= 180) {
+    strategies = ["ace_priority", "difficulty", "duration_first", "class_spread"];
+    seedCount = 4;
+  } else if (lessonBlockCount >= 120) {
+    seedCount = isConstrained ? 6 : 4;
+  }
 
   const attempts: GenerationAttempt[] = [];
 
@@ -989,7 +1008,8 @@ function finalizeBestResult(
 export function generateTimetable(context: SchedulerContext): SchedulerResult {
   const normalizedContext = withDefaultTerrainRules(context);
   const lessonBlocks = generateLessonBlocks(normalizedContext);
-  const attempts = buildAttempts(normalizedContext);
+  const attempts = buildAttempts(normalizedContext, lessonBlocks.length);
+  const repairDuringAttempts = lessonBlocks.length <= 180;
 
   let bestResult: SchedulerResult | null = null;
 
@@ -998,7 +1018,7 @@ export function generateTimetable(context: SchedulerContext): SchedulerResult {
       normalizedContext,
       lessonBlocks,
       attempt,
-      { repairGaps: true },
+      { repairGaps: repairDuringAttempts },
     );
 
     if (isBetterResult(attemptResult, bestResult, normalizedContext)) {
@@ -1049,8 +1069,9 @@ export async function generateTimetableAsync(
 ): Promise<SchedulerResult> {
   const normalizedContext = withDefaultTerrainRules(context);
   const lessonBlocks = generateLessonBlocks(normalizedContext);
-  const attempts = buildAttempts(normalizedContext);
-  const yieldEveryAttempts = Math.max(1, options.yieldEveryAttempts ?? 3);
+  const attempts = buildAttempts(normalizedContext, lessonBlocks.length);
+  const repairDuringAttempts = lessonBlocks.length <= 180;
+  const yieldEveryAttempts = Math.max(1, options.yieldEveryAttempts ?? 2);
 
   let bestResult: SchedulerResult | null = null;
 
@@ -1064,7 +1085,7 @@ export async function generateTimetableAsync(
       normalizedContext,
       lessonBlocks,
       attempt,
-      { repairGaps: true },
+      { repairGaps: repairDuringAttempts },
     );
 
     if (isBetterResult(attemptResult, bestResult, normalizedContext)) {

@@ -113,6 +113,49 @@ type ReadinessCheck = {
   href?: string;
 };
 
+type GenerationPhase = "creating" | "generating" | "regenerating";
+
+type GenerationUiState = {
+  active: boolean;
+  startedAt: number;
+  attempt: number;
+  stageIndex: number;
+  label: string;
+  phase: GenerationPhase;
+};
+
+type GenerationStage = {
+  title: string;
+  description: string;
+};
+
+const GENERATION_STAGES: GenerationStage[] = [
+  {
+    title: "Lecture des données officielles",
+    description: "Classes, matières, enseignants, affectations, créneaux, salles et indisponibilités sont préparés.",
+  },
+  {
+    title: "Analyse des contraintes ACE",
+    description: "HoraClasse contrôle les blocs de 2h, les récréations, les demi-journées et les règles terrain.",
+  },
+  {
+    title: "Essais de placement",
+    description: "Le moteur teste plusieurs stratégies et garde progressivement le meilleur montage.",
+  },
+  {
+    title: "Réduction des trous élèves",
+    description: "Les heures creuses, retours isolés et reprises séparées de matière sont pénalisés ou bloqués.",
+  },
+  {
+    title: "Contrôle professeurs et ressources",
+    description: "Les conflits professeurs, salles, laboratoires et terrains EPS sont vérifiés.",
+  },
+  {
+    title: "Diagnostic final",
+    description: "Le brouillon est classé prêt ou maintenu en brouillon si des règles bloquantes restent présentes.",
+  },
+];
+
 function formatDate(value?: string) {
   if (!value) return "—";
   try {
@@ -136,6 +179,121 @@ function statusLabel(status: Project["status"]) {
 function cleanText(value: unknown, fallback = "—") {
   const text = String(value ?? "").trim();
   return text || fallback;
+}
+
+function formatElapsedTime(seconds: number) {
+  const safeSeconds = Math.max(0, Math.floor(seconds));
+  const minutes = Math.floor(safeSeconds / 60);
+  const rest = safeSeconds % 60;
+  return `${String(minutes).padStart(2, "0")}:${String(rest).padStart(2, "0")}`;
+}
+
+function phaseLabel(phase: GenerationPhase) {
+  if (phase === "creating") return "Création du brouillon";
+  if (phase === "regenerating") return "Régénération HoraClasse";
+  return "Génération HoraClasse";
+}
+
+function buildInvalidServerResponseMessage(response: Response, bodyText: string, actionLabel: string) {
+  const compactBody = bodyText.trim().replace(/\s+/g, " ").slice(0, 220);
+  const statusPart = `HTTP ${response.status || "inconnu"}`;
+
+  if (response.status === 504 || response.status === 502 || response.status === 500) {
+    return `${actionLabel} : le serveur a renvoyé ${statusPart} au lieu d’un JSON. La génération a probablement dépassé le temps disponible côté serveur. Le moteur a été borné pour éviter ce cas ; relance après le dernier correctif puis consulte les logs Vercel si cela persiste.`;
+  }
+
+  return `${actionLabel} : réponse serveur non JSON (${statusPart}). ${compactBody ? `Début de réponse : ${compactBody}` : "Aucun détail reçu."}`;
+}
+
+async function readApiJson<T>(response: Response, actionLabel: string): Promise<T> {
+  const text = await response.text();
+
+  if (!text.trim()) {
+    throw new Error(`${actionLabel} : réponse serveur vide (HTTP ${response.status || "inconnu"}).`);
+  }
+
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    throw new Error(buildInvalidServerResponseMessage(response, text, actionLabel));
+  }
+}
+
+function GenerationThinkingOverlay({
+  state,
+  classesCount,
+  servicesCount,
+  periodsCount,
+}: {
+  state: GenerationUiState;
+  classesCount: number;
+  servicesCount: number;
+  periodsCount: number;
+}) {
+  if (!state.active) return null;
+
+  const elapsedSeconds = Math.max(0, Math.floor((Date.now() - state.startedAt) / 1000));
+  const stage = GENERATION_STAGES[state.stageIndex] || GENERATION_STAGES[0];
+
+  return (
+    <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-slate-950/55 px-4 py-6 backdrop-blur-md" role="status" aria-live="polite">
+      <div className="w-full max-w-2xl overflow-hidden rounded-[34px] border border-white/70 bg-white shadow-2xl shadow-slate-950/30">
+        <div className="relative p-6 text-center sm:p-8">
+          <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(16,185,129,0.16),transparent_34%),radial-gradient(circle_at_bottom_left,rgba(14,165,233,0.14),transparent_32%)]" />
+          <div className="relative">
+            <div className="mx-auto flex h-20 w-20 items-center justify-center rounded-full bg-emerald-50 ring-8 ring-emerald-100/70">
+              <Loader2 className="h-10 w-10 animate-spin text-emerald-600" />
+            </div>
+
+            <p className="mt-5 text-xs font-black uppercase tracking-[0.22em] text-emerald-700">
+              HoraClasse réfléchit
+            </p>
+            <h2 className="mt-2 text-2xl font-black tracking-tight text-slate-950 sm:text-3xl">
+              {phaseLabel(state.phase)} en cours…
+            </h2>
+            <p className="mx-auto mt-3 max-w-xl text-sm font-semibold leading-6 text-slate-600">
+              {state.label || "Le moteur cherche le meilleur montage possible sans publier automatiquement."}
+            </p>
+
+            <div className="mt-6 grid gap-3 sm:grid-cols-4">
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-4">
+                <p className="text-2xl font-black text-slate-950">{state.attempt}</p>
+                <p className="mt-1 text-[11px] font-black uppercase tracking-wide text-slate-500">Tentative</p>
+              </div>
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-4">
+                <p className="text-2xl font-black text-slate-950">{formatElapsedTime(elapsedSeconds)}</p>
+                <p className="mt-1 text-[11px] font-black uppercase tracking-wide text-slate-500">Temps</p>
+              </div>
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-4">
+                <p className="text-2xl font-black text-slate-950">{servicesCount}</p>
+                <p className="mt-1 text-[11px] font-black uppercase tracking-wide text-slate-500">Services</p>
+              </div>
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-4">
+                <p className="text-2xl font-black text-slate-950">{classesCount}</p>
+                <p className="mt-1 text-[11px] font-black uppercase tracking-wide text-slate-500">Classes</p>
+              </div>
+            </div>
+
+            <div className="mt-5 rounded-3xl border border-emerald-100 bg-emerald-50 p-4 text-left">
+              <div className="flex items-start gap-3">
+                <Clock3 className="mt-0.5 h-5 w-5 shrink-0 text-emerald-700" />
+                <div>
+                  <p className="font-black text-emerald-950">{stage.title}</p>
+                  <p className="mt-1 text-sm leading-6 text-emerald-900/80">{stage.description}</p>
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-4 flex flex-wrap items-center justify-center gap-2 text-xs font-bold text-slate-500">
+              <span className="rounded-full bg-slate-100 px-3 py-1">{periodsCount} créneaux</span>
+              <span className="rounded-full bg-slate-100 px-3 py-1">Règles ACE</span>
+              <span className="rounded-full bg-slate-100 px-3 py-1">Aucune publication automatique</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function StatCard({
@@ -263,16 +421,58 @@ export default function MontageGenerationPage() {
   const [deletingId, setDeletingId] = React.useState<string | null>(null);
   const [notice, setNotice] = React.useState<string | null>(null);
   const [error, setError] = React.useState<string | null>(null);
+  const [generationUi, setGenerationUi] = React.useState<GenerationUiState>({
+    active: false,
+    startedAt: 0,
+    attempt: 1,
+    stageIndex: 0,
+    label: "",
+    phase: "generating",
+  });
+
+  const startGenerationUi = React.useCallback((label: string, phase: GenerationPhase) => {
+    setGenerationUi({
+      active: true,
+      startedAt: Date.now(),
+      attempt: 1,
+      stageIndex: 0,
+      label,
+      phase,
+    });
+  }, []);
+
+  const updateGenerationUi = React.useCallback((patch: Partial<Omit<GenerationUiState, "active" | "startedAt" | "attempt" | "stageIndex">>) => {
+    setGenerationUi((current) => (current.active ? { ...current, ...patch } : current));
+  }, []);
+
+  const stopGenerationUi = React.useCallback(() => {
+    setGenerationUi((current) => ({ ...current, active: false }));
+  }, []);
+
+  React.useEffect(() => {
+    if (!generationUi.active) return undefined;
+
+    const timer = window.setInterval(() => {
+      setGenerationUi((current) => {
+        if (!current.active) return current;
+
+        const elapsedMs = Math.max(0, Date.now() - current.startedAt);
+        return {
+          ...current,
+          attempt: Math.max(1, Math.floor(elapsedMs / 1600) + 1),
+          stageIndex: Math.floor(elapsedMs / 5200) % GENERATION_STAGES.length,
+        };
+      });
+    }, 700);
+
+    return () => window.clearInterval(timer);
+  }, [generationUi.active]);
 
   const loadProjects = React.useCallback(async () => {
     setProjectsLoading(true);
     try {
       const res = await fetch("/api/admin/montage-emploi-du-temps/projects", { cache: "no-store" });
-      const json = (await res.json().catch(() => null)) as ProjectsResponse | null;
-      if (!json) {
-        setError("Réponse serveur invalide pendant le chargement des brouillons.");
-        return;
-      }
+      const json = await readApiJson<ProjectsResponse>(res, "Chargement des brouillons");
       if (!json.ok) {
         setError(json.message || json.error);
         return;
@@ -291,11 +491,7 @@ export default function MontageGenerationPage() {
     setNotice(null);
     try {
       const res = await fetch("/api/admin/montage-emploi-du-temps/bootstrap", { cache: "no-store" });
-      const json = (await res.json().catch(() => null)) as BootstrapResponse | null;
-      if (!json) {
-        setBootstrap({ ok: false, error: "invalid_response", message: "Réponse serveur invalide." });
-        return;
-      }
+      const json = await readApiJson<BootstrapResponse>(res, "Préparation de la génération");
       setBootstrap(json);
       await loadProjects();
     } catch (err) {
@@ -328,6 +524,7 @@ export default function MontageGenerationPage() {
     setCreating(true);
     setError(null);
     setNotice(null);
+    startGenerationUi("Création du brouillon puis lancement du moteur HoraClasse.", "creating");
 
     try {
       const now = new Date();
@@ -351,26 +548,21 @@ export default function MontageGenerationPage() {
         }),
       });
 
-      const created = (await createRes.json().catch(() => null)) as ProjectCreateResponse | null;
-      if (!created) {
-        setError("Réponse serveur invalide pendant la création du brouillon.");
-        return;
-      }
+      const created = await readApiJson<ProjectCreateResponse>(createRes, "Création du brouillon");
       if (!created.ok) {
         setError(created.message || created.error);
         return;
       }
 
       setGeneratingId(created.item.id);
+      updateGenerationUi({
+        label: created.item.name || "Le moteur cherche le meilleur brouillon possible.",
+        phase: "generating",
+      });
       const generateRes = await fetch(`/api/admin/montage-emploi-du-temps/projects/${created.item.id}/generate`, {
         method: "POST",
       });
-      const generated = (await generateRes.json().catch(() => null)) as GenerateResponse | null;
-      if (!generated) {
-        setError("Brouillon créé, mais réponse invalide pendant la génération.");
-        await loadProjects();
-        return;
-      }
+      const generated = await readApiJson<GenerateResponse>(generateRes, "Génération du brouillon");
       if (!generated.ok) {
         setError(generated.message || generated.error);
         await loadProjects();
@@ -386,22 +578,20 @@ export default function MontageGenerationPage() {
     } catch (err) {
       setError(err instanceof Error ? err.message : "Impossible de créer et générer le brouillon.");
     } finally {
+      stopGenerationUi();
       setGeneratingId(null);
       setCreating(false);
     }
-  }, [canGenerate, data, loadProjects, router, warnings]);
+  }, [canGenerate, data, loadProjects, router, startGenerationUi, stopGenerationUi, updateGenerationUi, warnings]);
 
   const generateExistingProject = React.useCallback(async (project: Project) => {
     setGeneratingId(project.id);
     setError(null);
     setNotice(null);
+    startGenerationUi(project.name || "Régénération du brouillon HoraClasse.", "regenerating");
     try {
       const res = await fetch(`/api/admin/montage-emploi-du-temps/projects/${project.id}/generate`, { method: "POST" });
-      const json = (await res.json().catch(() => null)) as GenerateResponse | null;
-      if (!json) {
-        setError("Réponse serveur invalide pendant la génération.");
-        return;
-      }
+      const json = await readApiJson<GenerateResponse>(res, "Génération du brouillon");
       if (!json.ok) {
         setError(json.message || json.error);
         return;
@@ -414,9 +604,10 @@ export default function MontageGenerationPage() {
     } catch (err) {
       setError(err instanceof Error ? err.message : "Impossible de générer ce brouillon.");
     } finally {
+      stopGenerationUi();
       setGeneratingId(null);
     }
-  }, [loadProjects]);
+  }, [loadProjects, startGenerationUi, stopGenerationUi]);
 
   const deleteProject = React.useCallback(async (project: Project) => {
     if (project.status === "published") {
@@ -435,12 +626,8 @@ export default function MontageGenerationPage() {
       const res = await fetch(`/api/admin/montage-emploi-du-temps/projects/${project.id}`, {
         method: "DELETE",
       });
-      const json = (await res.json().catch(() => null)) as DeleteResponse | null;
+      const json = await readApiJson<DeleteResponse>(res, "Suppression du brouillon");
 
-      if (!json) {
-        setError("Réponse serveur invalide pendant la suppression du brouillon.");
-        return;
-      }
       if (!json.ok) {
         setError(json.message || json.error);
         return;
@@ -722,6 +909,13 @@ export default function MontageGenerationPage() {
           </>
         )}
       </section>
+
+      <GenerationThinkingOverlay
+        state={generationUi}
+        classesCount={data?.classes.length || 0}
+        servicesCount={serviceCount}
+        periodsCount={data?.periods.length || 0}
+      />
     </main>
   );
 }
