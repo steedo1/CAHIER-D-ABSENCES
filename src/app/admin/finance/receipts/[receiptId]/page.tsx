@@ -9,6 +9,7 @@ import {
   Printer,
   Receipt,
   School2,
+  UserRound,
   Wallet,
 } from "lucide-react";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
@@ -396,6 +397,7 @@ export default async function FinanceReceiptPrintPage({
 
           .receipt-box,
           .receipt-summary-card,
+          .receipt-signature-card,
           .receipt-proof-note {
             border-radius: 12px !important;
           }
@@ -492,6 +494,25 @@ export default async function FinanceReceiptPrintPage({
 
           .receipt-status-wrap {
             margin-top: 2.4mm !important;
+          }
+
+          .receipt-signature-card {
+            padding: 3.5mm !important;
+          }
+
+          .receipt-signature-grid {
+            margin-top: 3mm !important;
+            gap: 4mm !important;
+            font-size: 11px !important;
+          }
+
+          .receipt-signature-line {
+            margin-top: 5mm !important;
+          }
+
+          .receipt-signature-name {
+            margin-top: 1.6mm !important;
+            font-size: 10.5px !important;
           }
 
           .receipt-proof-note {
@@ -789,19 +810,40 @@ export default async function FinanceReceiptPrintPage({
               </div>
             </section>
 
-            <section className="rounded-3xl border border-slate-200 bg-white p-5">
+            <section className="receipt-signature-card rounded-3xl border border-slate-200 bg-white p-5">
               <div className="receipt-section-title flex items-center gap-2 text-sm font-black uppercase tracking-[0.16em] text-slate-700">
-                <School2 className="h-4 w-4 text-emerald-600" />
-                Cachet / caisse
+                <UserRound className="h-4 w-4 text-emerald-600" />
+                Signature / cachet
               </div>
 
-              <div className="mt-5 rounded-3xl border border-dashed border-slate-300 bg-slate-50 px-5 py-7 text-center text-sm text-slate-600">
-                Cachet de l’établissement ou visa de la caisse si nécessaire.
+              <div className="receipt-signature-grid mt-8 grid gap-10 text-sm text-slate-700">
+                <div>
+                  <div className="font-semibold text-slate-900">
+                    Le caissier / l’administration
+                  </div>
+                  <div className="receipt-signature-line mt-8 border-b border-slate-300" />
+                </div>
+
+                <div>
+                  <div className="font-semibold text-slate-900">Le responsable</div>
+                  <div className="receipt-signature-line mt-8 border-b border-slate-300" />
+                  {institutionSettings.institution_head_title ||
+                  institutionSettings.institution_head_name ? (
+                    <div className="receipt-signature-name mt-2 text-slate-500">
+                      {[
+                        institutionSettings.institution_head_title,
+                        institutionSettings.institution_head_name,
+                      ]
+                        .filter(Boolean)
+                        .join(" — ")}
+                    </div>
+                  ) : null}
+                </div>
               </div>
             </section>
 
             <section className="receipt-proof-note rounded-3xl border border-dashed border-slate-300 bg-slate-50 p-5 text-sm leading-6 text-slate-600">
-              Ce reçu atteste du paiement enregistré dans le système. À conserver pour tout contrôle de caisse ou de scolarité.
+              Ce reçu constitue la preuve d’enregistrement du paiement effectué. Aucun duplicata ne pourra être émis.
               
               
             </section>
