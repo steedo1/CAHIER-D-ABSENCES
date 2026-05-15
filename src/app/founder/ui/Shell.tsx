@@ -5,6 +5,7 @@ import type { ReactNode } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { BarChart3, Building2, CalendarDays, LogOut, Wallet } from "lucide-react";
+import InstallAndPushCTA from "@/components/InstallAndPushCTA";
 
 const NAV = [
   { href: "/founder/dashboard", label: "Vue globale", Icon: BarChart3 },
@@ -63,6 +64,10 @@ export default function FounderShell({ children }: { children: ReactNode }) {
               })}
             </div>
           </nav>
+
+          <div className="mt-3">
+            <InstallAndPushCTA />
+          </div>
         </aside>
 
         <main className="min-w-0">{children}</main>
