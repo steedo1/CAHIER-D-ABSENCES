@@ -5,8 +5,7 @@ import { defaultSubjectHours, defaultSubjects } from "@/modules/montage-emploi-d
 import {
   clean,
   inferCatalogSubjectId,
-  inferLevelCode,
-  inferSeriesCode,
+  buildClassAcademicProfile,
 } from "@/modules/montage-emploi-du-temps/adapters/horaclasseModelHelpers";
 import { buildHoraclasseServiceAssignments } from "@/modules/montage-emploi-du-temps/adapters/buildHoraclasseServices";
 import { DEFAULT_TERRAIN_RULES } from "@/modules/montage-emploi-du-temps/scheduler/terrainRules";
@@ -141,7 +140,7 @@ export async function GET() {
 
         srv
           .from("classes")
-          .select("id,label")
+          .select("id,label,level,code,academic_year,official_track_code")
           .eq("institution_id", institutionId)
           .order("label", { ascending: true }),
 
@@ -167,7 +166,7 @@ export async function GET() {
             subject_id,
             end_date,
             teacher:profiles(id,display_name,email,phone),
-            class:classes(id,label),
+            class:classes(id,label,level,official_track_code),
             instsub:institution_subjects(
               id,
               custom_name,
@@ -197,13 +196,22 @@ export async function GET() {
     const institution = institutionRes.data;
 
     const classes = (classesRes.data || []).map((item: any) => {
-      const label = clean(item.label, "Classe");
-      const levelCode = inferLevelCode(label);
+      const profile = buildClassAcademicProfile({
+        label: item.label,
+        level: item.level,
+        level_code: item.level,
+        official_track_code: item.official_track_code,
+      });
       return {
         id: String(item.id),
-        label,
-        level_code: levelCode,
-        series_code: inferSeriesCode(levelCode),
+        label: profile.label,
+        level: item.level ? clean(item.level) : profile.level_code,
+        code: item.code ? clean(item.code) : null,
+        academic_year: item.academic_year ? clean(item.academic_year) : null,
+        official_track_code: profile.official_track_code,
+        official_track_source: profile.official_track_source,
+        level_code: profile.level_code,
+        series_code: profile.series_code,
       };
     });
 
@@ -224,8 +232,12 @@ export async function GET() {
       const cls = Array.isArray(row.class) ? row.class[0] : row.class;
       const instsub = Array.isArray(row.instsub) ? row.instsub[0] : row.instsub;
       const subj = Array.isArray(instsub?.subj) ? instsub.subj[0] : instsub?.subj;
-      const classLabel = clean(cls?.label || "Classe");
-      const levelCode = inferLevelCode(classLabel);
+      const classProfile = buildClassAcademicProfile({
+        label: cls?.label || "Classe",
+        level: cls?.level,
+        level_code: cls?.level,
+        official_track_code: cls?.official_track_code,
+      });
       const subjectLabel = clean(instsub?.custom_name || subj?.name || "Matière");
       const subjectCode = subj?.code ? clean(subj.code) : null;
 
@@ -237,9 +249,12 @@ export async function GET() {
         subject_code: subjectCode,
         catalog_subject_id: inferCatalogSubjectId({ code: subjectCode, label: subjectLabel, fallbackId: row.subject_id }),
         class_id: String(row.class_id || cls?.id || ""),
-        class_label: classLabel,
-        level_code: levelCode,
-        series_code: inferSeriesCode(levelCode),
+        class_label: classProfile.label,
+        level: cls?.level ? clean(cls.level) : classProfile.level_code,
+        official_track_code: classProfile.official_track_code,
+        official_track_source: classProfile.official_track_source,
+        level_code: classProfile.level_code,
+        series_code: classProfile.series_code,
       };
     });
 
@@ -299,10 +314,14 @@ export async function GET() {
       duration_min: Number(item.duration_min ?? institution?.default_session_minutes ?? 60),
     }));
 
+    const classesWithoutOfficialTrack = classes.filter((item) => item.official_track_source !== "official");
     const warnings = Array.from(
       new Set([
         ...(periods.length === 0 ? ["Aucun créneau horaire détecté."] : []),
         ...((roomsRes.data || []).length === 0 ? ["Aucune salle ou ressource HoraClasse détectée."] : []),
+        ...(classesWithoutOfficialTrack.length > 0
+          ? [`${classesWithoutOfficialTrack.length} classe(s) n’ont pas de série officielle verrouillée dans Mon Cahier.`]
+          : []),
         ...serviceBuild.warnings,
       ]),
     );

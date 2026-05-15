@@ -7,19 +7,22 @@ import type { DefaultSubjectHour, SubjectDefinition } from "../catalog/types";
 import {
   clean,
   inferCatalogSubjectId,
-  inferLevelCode,
-  inferSeriesCode,
   normalizeText,
   getCatalogSubject,
   findDefaultSubjectHour,
+  buildClassAcademicProfile,
   type HoraclasseServiceMeta,
+  type OfficialTrackCode,
 } from "./horaclasseModelHelpers";
 
 export type MonCahierClassLike = {
   id: string;
   label?: string | null;
+  level?: string | null;
   level_code?: string | null;
   series_code?: string | null;
+  official_track_code?: string | null;
+  officialTrackCode?: string | null;
 };
 
 export type MonCahierSubjectLike = {
@@ -38,8 +41,11 @@ export type MonCahierAffectationLike = {
   catalog_subject_id?: string | null;
   class_id: string;
   class_label?: string | null;
+  level?: string | null;
   level_code?: string | null;
   series_code?: string | null;
+  official_track_code?: string | null;
+  officialTrackCode?: string | null;
 };
 
 export type MonCahierVolumeOverrideLike = {
@@ -147,25 +153,57 @@ function makeFallbackHour(levelCode: string, catalogSubjectId: string): DefaultS
   };
 }
 
-function findHourForLevel(levelCode: string, catalogSubjectId: string): DefaultSubjectHour | null {
+function adjustHourForOfficialTrack(
+  hour: DefaultSubjectHour,
+  officialTrackCode: OfficialTrackCode | null,
+  catalogSubjectId: string,
+): DefaultSubjectHour {
+  // Verrou officiel A1/A2 : la classe garde le niveau générique 1A/TleA,
+  // mais le référentiel horaire change pour les séries A2.
+  // Cela évite qu'une 1reA2 ou TleA2 récupère par erreur les heures d'une A1.
+  if (catalogSubjectId === "maths" && officialTrackCode === "1ereA2") {
+    return {
+      ...hour,
+      weeklyUnits: 3,
+      splitPattern: "2+1",
+      notes: "Référentiel officiel Mon Cahier : 1re A2 = 3h de mathématiques.",
+    };
+  }
+
+  if (catalogSubjectId === "maths" && officialTrackCode === "tleA2") {
+    return {
+      ...hour,
+      weeklyUnits: 4,
+      splitPattern: "2+1+1",
+      notes: "Référentiel officiel Mon Cahier : Tle A2 = 4h de mathématiques.",
+    };
+  }
+
+  return hour;
+}
+
+function findHourForLevel(
+  levelCode: string,
+  catalogSubjectId: string,
+  officialTrackCode: OfficialTrackCode | null,
+): DefaultSubjectHour | null {
   const exact = findDefaultSubjectHour(levelCode, catalogSubjectId);
-  if (exact) return exact;
+  if (exact) return adjustHourForOfficialTrack(exact, officialTrackCode, catalogSubjectId);
 
   const candidates = defaultSubjectHours.filter((item) => item.subjectId === catalogSubjectId);
+  let found: DefaultSubjectHour | null = null;
 
   if (levelCode === "2A" || levelCode === "2C") {
-    return candidates.find((item) => item.levelCode === levelCode) || candidates.find((item) => item.levelCode === "2A") || makeFallbackHour(levelCode, catalogSubjectId);
+    found = candidates.find((item) => item.levelCode === levelCode) || candidates.find((item) => item.levelCode === "2A") || null;
+  } else if (levelCode === "1A" || levelCode === "1C" || levelCode === "1D") {
+    found = candidates.find((item) => item.levelCode === levelCode) || candidates.find((item) => item.levelCode === "1A") || null;
+  } else if (levelCode === "TleA" || levelCode === "TleC" || levelCode === "TleD") {
+    found = candidates.find((item) => item.levelCode === levelCode) || candidates.find((item) => item.levelCode === "TleA") || null;
   }
 
-  if (levelCode === "1A" || levelCode === "1C" || levelCode === "1D") {
-    return candidates.find((item) => item.levelCode === levelCode) || candidates.find((item) => item.levelCode === "1A") || makeFallbackHour(levelCode, catalogSubjectId);
-  }
-
-  if (levelCode === "TleA" || levelCode === "TleC" || levelCode === "TleD") {
-    return candidates.find((item) => item.levelCode === levelCode) || candidates.find((item) => item.levelCode === "TleA") || makeFallbackHour(levelCode, catalogSubjectId);
-  }
-
-  return makeFallbackHour(levelCode, catalogSubjectId);
+  if (found) return adjustHourForOfficialTrack(found, officialTrackCode, catalogSubjectId);
+  const fallback = makeFallbackHour(levelCode, catalogSubjectId);
+  return fallback ? adjustHourForOfficialTrack(fallback, officialTrackCode, catalogSubjectId) : null;
 }
 
 function subjectMatchesCatalog(subject: MonCahierSubjectLike, catalogSubject: SubjectDefinition): boolean {
@@ -312,8 +350,16 @@ export function buildHoraclasseServiceAssignments(input: {
     const subjectRow = subjectById.get(subjectId);
 
     const classLabel = clean(row.class_label || classRow?.label, "Classe");
-    const levelCode = clean(row.level_code || classRow?.level_code) || inferLevelCode(classLabel);
-    const seriesCode = clean(row.series_code || classRow?.series_code) || inferSeriesCode(levelCode);
+    const classProfile = buildClassAcademicProfile({
+      label: classLabel,
+      level: row.level || classRow?.level,
+      level_code: row.level_code || classRow?.level_code,
+      series_code: row.series_code || classRow?.series_code,
+      official_track_code: row.official_track_code || row.officialTrackCode || classRow?.official_track_code || classRow?.officialTrackCode,
+    });
+    const levelCode = classProfile.level_code;
+    const seriesCode = classProfile.series_code;
+    const officialTrackCode = classProfile.official_track_code;
 
     const subjectLabel = clean(row.subject_label || subjectRow?.label, "Matière");
     const subjectCode = row.subject_code || subjectRow?.code || null;
@@ -324,7 +370,7 @@ export function buildHoraclasseServiceAssignments(input: {
         fallbackId: "",
       });
 
-    const defaultHour = catalogSubjectId ? findHourForLevel(levelCode, catalogSubjectId) : null;
+    const defaultHour = catalogSubjectId ? findHourForLevel(levelCode, catalogSubjectId, officialTrackCode) : null;
     const subject = catalogSubjectId ? getCatalogSubject(catalogSubjectId) : null;
     const override = exactOverrideMap.get(makeExactOverrideKey(classId, subjectId, teacherId)) ||
       classSubjectOverrideMap.get(makeClassSubjectOverrideKey(classId, subjectId));
@@ -345,6 +391,8 @@ export function buildHoraclasseServiceAssignments(input: {
       class_label: classLabel,
       level_code: levelCode,
       series_code: seriesCode,
+      official_track_code: officialTrackCode,
+      official_track_source: classProfile.official_track_source,
       teacher_id: teacherId,
       teacher_name: clean(row.teacher_name, "Enseignant"),
       subject_id: subjectId,
@@ -369,9 +417,12 @@ export function buildHoraclasseServiceAssignments(input: {
   const customized = service_assignments.filter((item) => item.source === "override").length;
   const missingSubjectRows = subject_hour_rows.filter((item) => !item.is_ready).length;
 
+  const unlockedServices = service_assignments.filter((item) => item.official_track_source !== "official").length;
+
   if (classes.length === 0) warnings.push("Aucune classe Mon Cahier détectée.");
   if (subjects.length === 0) warnings.push("Aucune matière Mon Cahier détectée.");
   if (affectations.length === 0) warnings.push("Aucune affectation active enseignant-matière-classe détectée.");
+  if (unlockedServices > 0) warnings.push(`${unlockedServices} service(s) utilisent encore un niveau/série déduit. Renseigne la série officielle dans Classes pour verrouiller le référentiel.`);
   if (missingServices > 0) warnings.push(`${missingServices} service(s) ont besoin d’un volume manuel.`);
   if (missing_catalog_subjects.length > 0) {
     warnings.push(`${missing_catalog_subjects.length} matière(s) du référentiel HoraClasse ne sont pas encore activées dans Mon Cahier.`);

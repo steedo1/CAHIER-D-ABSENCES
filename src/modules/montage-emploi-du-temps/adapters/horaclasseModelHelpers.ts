@@ -5,6 +5,39 @@ import {
 import type { DefaultSubjectHour, SubjectDefinition } from "../catalog/types";
 import type { Room, SchoolClass } from "../scheduler/types";
 
+export type OfficialTrackCode =
+  | "6eme"
+  | "5eme"
+  | "4eme"
+  | "3eme"
+  | "2ndeA"
+  | "2ndeC"
+  | "1ereA1"
+  | "1ereA2"
+  | "1ereC"
+  | "1ereD"
+  | "tleA1"
+  | "tleA2"
+  | "tleC"
+  | "tleD";
+
+const OFFICIAL_TRACK_CODES = new Set<string>([
+  "6eme",
+  "5eme",
+  "4eme",
+  "3eme",
+  "2ndeA",
+  "2ndeC",
+  "1ereA1",
+  "1ereA2",
+  "1ereC",
+  "1ereD",
+  "tleA1",
+  "tleA2",
+  "tleC",
+  "tleD",
+]);
+
 export type BootstrapSubjectLike = {
   id: string;
   label?: string | null;
@@ -14,8 +47,19 @@ export type BootstrapSubjectLike = {
 export type BootstrapClassLike = {
   id: string;
   label?: string | null;
+  level?: string | null;
   level_code?: string | null;
   series_code?: string | null;
+  official_track_code?: string | null;
+  officialTrackCode?: string | null;
+};
+
+export type ClassAcademicProfile = {
+  label: string;
+  level_code: string;
+  series_code: string | null;
+  official_track_code: OfficialTrackCode | null;
+  official_track_source: "official" | "inferred" | "missing";
 };
 
 export type HoraclasseServiceMeta = {
@@ -23,6 +67,8 @@ export type HoraclasseServiceMeta = {
   class_label: string;
   level_code: string;
   series_code: string | null;
+  official_track_code: OfficialTrackCode | null;
+  official_track_source: "official" | "inferred" | "missing";
   teacher_id: string;
   teacher_name: string;
   subject_id: string;
@@ -56,6 +102,103 @@ export function normalizeText(value: unknown): string {
     .replace(/[^a-zA-Z0-9]+/g, " ")
     .trim()
     .toUpperCase();
+}
+
+function normalizeKey(value: unknown): string {
+  return clean(value)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "");
+}
+
+export function normalizeOfficialTrackCode(value: unknown): OfficialTrackCode | null {
+  const raw = clean(value);
+  if (!raw) return null;
+  return OFFICIAL_TRACK_CODES.has(raw) ? (raw as OfficialTrackCode) : null;
+}
+
+export function inferOfficialTrackCodeFromClass(value: unknown): OfficialTrackCode | null {
+  const key = normalizeKey(value);
+  if (!key) return null;
+
+  if (/^6/.test(key)) return "6eme";
+  if (/^5/.test(key)) return "5eme";
+  if (/^4/.test(key)) return "4eme";
+  if (/^3/.test(key)) return "3eme";
+
+  if (/^(2NDEA|SECONDEA|2A)/.test(key)) return "2ndeA";
+  if (/^(2NDEC|SECONDEC|2C)/.test(key)) return "2ndeC";
+
+  if (/^(1ERED|PREMIERED|1D)/.test(key)) return "1ereD";
+  if (/^(1EREC|PREMIEREC|1C)/.test(key)) return "1ereC";
+  if (/^(1EREA1|PREMIEREA1|1A1)/.test(key)) return "1ereA1";
+  if (/^(1EREA2|PREMIEREA2|1A2)/.test(key)) return "1ereA2";
+  if (/^(1EREA|PREMIEREA|1A)/.test(key)) return "1ereA2";
+
+  if (/^(TLED|TERMINALED|TD)/.test(key)) return "tleD";
+  if (/^(TLEC|TERMINALEC|TC)/.test(key)) return "tleC";
+  if (/^(TLEA1|TERMINALEA1|TA1)/.test(key)) return "tleA1";
+  if (/^(TLEA2|TERMINALEA2|TA2)/.test(key)) return "tleA2";
+  if (/^(TLEA|TERMINALEA|TA)/.test(key)) return "tleA2";
+
+  return null;
+}
+
+export function officialTrackToLevelCode(track: OfficialTrackCode | null): string | null {
+  switch (track) {
+    case "6eme":
+      return "6e";
+    case "5eme":
+      return "5e";
+    case "4eme":
+      return "4e";
+    case "3eme":
+      return "3e";
+    case "2ndeA":
+      return "2A";
+    case "2ndeC":
+      return "2C";
+    case "1ereA1":
+    case "1ereA2":
+      return "1A";
+    case "1ereC":
+      return "1C";
+    case "1ereD":
+      return "1D";
+    case "tleA1":
+    case "tleA2":
+      return "TleA";
+    case "tleC":
+      return "TleC";
+    case "tleD":
+      return "TleD";
+    default:
+      return null;
+  }
+}
+
+export function officialTrackToSeriesCode(track: OfficialTrackCode | null): string | null {
+  switch (track) {
+    case "2ndeA":
+      return "A";
+    case "2ndeC":
+      return "C";
+    case "1ereA1":
+    case "tleA1":
+      return "A1";
+    case "1ereA2":
+    case "tleA2":
+      return "A2";
+    case "1ereC":
+    case "tleC":
+      return "C";
+    case "1ereD":
+    case "tleD":
+      return "D";
+    default:
+      return null;
+  }
 }
 
 export function inferLevelCode(labelOrCode: unknown): string {
@@ -93,6 +236,39 @@ export function inferSeriesCode(levelCode: string): string | null {
   if (levelCode.endsWith("C")) return "C";
   if (levelCode.endsWith("D")) return "D";
   return null;
+}
+
+export function buildClassAcademicProfile(input: {
+  label?: unknown;
+  level?: unknown;
+  level_code?: unknown;
+  series_code?: unknown;
+  official_track_code?: unknown;
+  officialTrackCode?: unknown;
+}): ClassAcademicProfile {
+  const label = clean(input.label, "Classe");
+  const official = normalizeOfficialTrackCode(input.official_track_code ?? input.officialTrackCode ?? null);
+  if (official) {
+    const levelCode = officialTrackToLevelCode(official) || inferLevelCode(input.level_code || input.level || label);
+    return {
+      label,
+      level_code: levelCode,
+      series_code: officialTrackToSeriesCode(official) || clean(input.series_code) || inferSeriesCode(levelCode),
+      official_track_code: official,
+      official_track_source: "official",
+    };
+  }
+
+  const inferred = inferOfficialTrackCodeFromClass(input.level_code || input.level || label);
+  const levelCode = officialTrackToLevelCode(inferred) || clean(input.level_code) || inferLevelCode(input.level || label);
+
+  return {
+    label,
+    level_code: levelCode,
+    series_code: officialTrackToSeriesCode(inferred) || clean(input.series_code) || inferSeriesCode(levelCode),
+    official_track_code: inferred,
+    official_track_source: inferred ? "inferred" : "missing",
+  };
 }
 
 export function inferCatalogSubjectId(input: {
@@ -146,14 +322,13 @@ export function inferRoomTypeFromCatalogSubject(catalogSubjectId: string): strin
 
 export function buildSchoolClasses(classesRaw: BootstrapClassLike[]): SchoolClass[] {
   return classesRaw.map((item, index) => {
-    const label = clean(item.label, "Classe");
-    const levelCode = clean(item.level_code) || inferLevelCode(label);
+    const profile = buildClassAcademicProfile(item);
     return {
       id: clean(item.id),
-      name: label,
-      shortName: label,
-      levelCode,
-      seriesCode: clean(item.series_code) || inferSeriesCode(levelCode),
+      name: profile.label,
+      shortName: profile.label,
+      levelCode: profile.level_code,
+      seriesCode: profile.series_code,
       displayOrder: index + 1,
     };
   });
