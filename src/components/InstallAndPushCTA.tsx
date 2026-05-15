@@ -29,8 +29,12 @@ function getNotificationPermission(): PermissionState {
   return Notification.permission as PermissionState;
 }
 
-async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
-  let timer: ReturnType<typeof window.setTimeout> | undefined;
+async function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  message: string
+): Promise<T> {
+  let timer: number | undefined;
 
   try {
     return await Promise.race([
@@ -40,7 +44,9 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: s
       }),
     ]);
   } finally {
-    if (timer) window.clearTimeout(timer);
+    if (typeof timer === "number") {
+      window.clearTimeout(timer);
+    }
   }
 }
 
@@ -75,9 +81,11 @@ export default function InstallAndPushCTA() {
 
   React.useEffect(() => {
     const refresh = () => setPermission(getNotificationPermission());
+
     refresh();
     document.addEventListener("visibilitychange", refresh);
     window.addEventListener("focus", refresh);
+
     return () => {
       document.removeEventListener("visibilitychange", refresh);
       window.removeEventListener("focus", refresh);
@@ -86,7 +94,11 @@ export default function InstallAndPushCTA() {
 
   React.useEffect(() => {
     const mq = window.matchMedia("(display-mode: standalone)");
-    setIsStandalone(mq.matches || (window.navigator as Navigator & { standalone?: boolean }).standalone === true);
+
+    setIsStandalone(
+      mq.matches || (window.navigator as Navigator & { standalone?: boolean }).standalone === true
+    );
+
     setIsiOS(/iphone|ipad|ipod/i.test(navigator.userAgent));
 
     const handler = (event: Event) => {
@@ -95,11 +107,15 @@ export default function InstallAndPushCTA() {
     };
 
     window.addEventListener("beforeinstallprompt", handler);
-    return () => window.removeEventListener("beforeinstallprompt", handler);
+
+    return () => {
+      window.removeEventListener("beforeinstallprompt", handler);
+    };
   }, []);
 
   async function install() {
     if (!deferred) return;
+
     await deferred.prompt();
     await deferred.userChoice.catch(() => undefined);
     setDeferred(null);
@@ -134,6 +150,7 @@ export default function InstallAndPushCTA() {
 
       if (currentPermission !== "granted") {
         setStep("Autorisation navigateur en attente…");
+
         currentPermission = await withTimeout(
           Notification.requestPermission(),
           15000,
@@ -149,13 +166,16 @@ export default function InstallAndPushCTA() {
       }
 
       setStep("Préparation du service worker…");
+
       const registration = await waitForServiceWorkerReady();
+
       if (!registration) {
         setError("Le service worker n’est pas prêt. Recharge la page puis réessaie.");
         return;
       }
 
-      setStep("Création de l’abonnement push…");
+      setStep("Création ou récupération de l’abonnement push…");
+
       let subscription = await withTimeout(
         registration.pushManager.getSubscription(),
         8000,
@@ -164,8 +184,12 @@ export default function InstallAndPushCTA() {
 
       if (!subscription) {
         setStep("Récupération de la clé VAPID…");
+
         const keyResponse = await withTimeout(
-          fetch("/api/push/vapid", { cache: "no-store", credentials: "include" }),
+          fetch("/api/push/vapid", {
+            cache: "no-store",
+            credentials: "include",
+          }),
           10000,
           "La route /api/push/vapid ne répond pas."
         );
@@ -177,6 +201,7 @@ export default function InstallAndPushCTA() {
         }
 
         const { key } = (await keyResponse.json()) as { key?: string };
+
         if (!key) {
           setError("Clé VAPID indisponible dans la réponse serveur.");
           return;
@@ -193,19 +218,25 @@ export default function InstallAndPushCTA() {
       }
 
       setStep("Enregistrement dans Mon Cahier…");
+
       const subscribeResponse = await withTimeout(
         fetch("/api/push/subscribe", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           credentials: "include",
-          body: JSON.stringify({ platform: "web", subscription }),
+          body: JSON.stringify({
+            platform: "web",
+            subscription,
+          }),
         }),
         12000,
         "La route /api/push/subscribe ne répond pas."
       );
 
       const text = await subscribeResponse.text().catch(() => "");
-      let payload: { ok?: boolean; error?: string } | null = null;
+
+      let payload: { ok?: boolean; error?: string; user_id?: string; userId?: string } | null = null;
+
       try {
         payload = text ? JSON.parse(text) : null;
       } catch {
@@ -222,22 +253,28 @@ export default function InstallAndPushCTA() {
       }
 
       setPermission("granted");
-      setMessage("Notifications activées sur cet appareil ✅");
+      setMessage("Notifications activées et synchronisées pour ce compte ✅");
       setStep(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Erreur inconnue pendant l’activation des notifications.");
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Erreur inconnue pendant l’activation des notifications."
+      );
     } finally {
       setBusy(false);
     }
   }
 
-  const alreadyEnabled = permission === "granted";
+  const alreadyAuthorized = permission === "granted";
+  const denied = permission === "denied";
 
   return (
     <div className="rounded-xl border border-slate-200 bg-white p-3 text-sm shadow-sm">
       {isiOS && !isStandalone ? (
         <div className="mb-2 text-slate-700">
-          <b>iPhone/iPad :</b> ouvrez dans <b>Safari</b>, puis <b>Partager</b> → <b>Ajouter à l’écran d’accueil</b>.
+          <b>iPhone/iPad :</b> ouvrez dans <b>Safari</b>, puis <b>Partager</b> →{" "}
+          <b>Ajouter à l’écran d’accueil</b>.
         </div>
       ) : null}
 
@@ -252,25 +289,42 @@ export default function InstallAndPushCTA() {
       ) : null}
 
       <div className="space-y-2">
-        {alreadyEnabled ? (
-          <div className="font-semibold text-emerald-700">Notifications autorisées sur ce navigateur ✅</div>
+        {alreadyAuthorized ? (
+          <div className="font-semibold text-emerald-700">
+            Notifications déjà autorisées sur ce navigateur ✅
+          </div>
+        ) : denied ? (
+          <div className="rounded-lg border border-amber-200 bg-amber-50 p-2 text-amber-800">
+            Les notifications sont bloquées. {formatPermissionHelp()}
+          </div>
         ) : (
-          <>
-            <div className="text-slate-700">Vous pouvez activer les notifications sur cet appareil.</div>
-            <button
-              type="button"
-              onClick={enablePush}
-              disabled={busy}
-              className="rounded-lg bg-emerald-600 px-3 py-1.5 font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {busy ? "Activation…" : "Activer les notifications"}
-            </button>
-          </>
+          <div className="text-slate-700">
+            Vous pouvez activer les notifications sur cet appareil.
+          </div>
         )}
 
+        <button
+          type="button"
+          onClick={enablePush}
+          disabled={busy || denied}
+          className="rounded-lg bg-emerald-600 px-3 py-1.5 font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {busy
+            ? "Activation…"
+            : alreadyAuthorized
+              ? "Synchroniser cet appareil"
+              : "Activer les notifications"}
+        </button>
+
         {step && busy ? <div className="text-xs font-medium text-slate-500">{step}</div> : null}
+
         {message ? <div className="text-emerald-700">{message}</div> : null}
-        {error ? <div className="rounded-lg border border-amber-200 bg-amber-50 p-2 text-amber-800">{error}</div> : null}
+
+        {error ? (
+          <div className="rounded-lg border border-amber-200 bg-amber-50 p-2 text-amber-800">
+            {error}
+          </div>
+        ) : null}
       </div>
     </div>
   );
