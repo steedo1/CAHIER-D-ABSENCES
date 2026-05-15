@@ -9,7 +9,6 @@ import {
   Printer,
   Receipt,
   School2,
-  UserRound,
   Wallet,
 } from "lucide-react";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
@@ -295,6 +294,18 @@ export default async function FinanceReceiptPrintPage({
     (sum, line) => sum + Number(line.alloc.amount || 0),
     0
   );
+  const totalExpected = lines.reduce(
+    (sum, line) => sum + Number(line.charge?.net_amount || 0),
+    0
+  );
+  const totalPaidAfterReceipt = lines.reduce(
+    (sum, line) => sum + Number(line.charge?.paid_amount || 0),
+    0
+  );
+  const totalRemainingAfterReceipt = lines.reduce(
+    (sum, line) => sum + Number(line.charge?.balance_due || 0),
+    0
+  );
 
   const schoolName = institutionDisplayName(institutionSettings);
   const printHref = `/admin/finance/receipts/${encodeURIComponent(
@@ -397,7 +408,6 @@ export default async function FinanceReceiptPrintPage({
 
           .receipt-box,
           .receipt-summary-card,
-          .receipt-signature-card,
           .receipt-proof-note {
             border-radius: 12px !important;
           }
@@ -496,24 +506,6 @@ export default async function FinanceReceiptPrintPage({
             margin-top: 2.4mm !important;
           }
 
-          .receipt-signature-card {
-            padding: 3.5mm !important;
-          }
-
-          .receipt-signature-grid {
-            margin-top: 3mm !important;
-            gap: 4mm !important;
-            font-size: 11px !important;
-          }
-
-          .receipt-signature-line {
-            margin-top: 5mm !important;
-          }
-
-          .receipt-signature-name {
-            margin-top: 1.6mm !important;
-            font-size: 10.5px !important;
-          }
 
           .receipt-proof-note {
             padding: 3mm !important;
@@ -725,6 +717,9 @@ export default async function FinanceReceiptPrintPage({
                       <tr>
                         <th className="px-5 py-3 font-bold">Libellé</th>
                         <th className="px-5 py-3 font-bold">Échéance</th>
+                        <th className="px-5 py-3 font-bold">Total attendu</th>
+                        <th className="px-5 py-3 font-bold">Déjà payé</th>
+                        <th className="px-5 py-3 font-bold">Reste</th>
                         <th className="px-5 py-3 font-bold">Montant réglé</th>
                       </tr>
                     </thead>
@@ -737,6 +732,15 @@ export default async function FinanceReceiptPrintPage({
                           <td className="px-5 py-4 text-slate-600">
                             {formatDate(charge?.due_date)}
                           </td>
+                          <td className="px-5 py-4 text-slate-700">
+                            {charge ? formatMoney(charge.net_amount) : "—"}
+                          </td>
+                          <td className="px-5 py-4 text-emerald-700">
+                            {charge ? formatMoney(charge.paid_amount) : "—"}
+                          </td>
+                          <td className="px-5 py-4 text-rose-700">
+                            {charge ? formatMoney(charge.balance_due) : "—"}
+                          </td>
                           <td className="px-5 py-4 font-bold text-slate-900">
                             {formatMoney(alloc.amount)}
                           </td>
@@ -747,7 +751,7 @@ export default async function FinanceReceiptPrintPage({
                       <tr className="border-t border-slate-200 bg-slate-50">
                         <td
                           className="px-5 py-4 font-black text-slate-900"
-                          colSpan={2}
+                          colSpan={5}
                         >
                           Total ventilé
                         </td>
@@ -782,6 +786,24 @@ export default async function FinanceReceiptPrintPage({
                     </span>
                   </div>
                   <div className="flex items-center justify-between gap-3">
+                    <span>Total attendu</span>
+                    <span className="font-bold text-slate-900">
+                      {formatMoney(totalExpected)}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between gap-3">
+                    <span>Total déjà versé</span>
+                    <span className="font-bold text-emerald-700">
+                      {formatMoney(totalPaidAfterReceipt)}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between gap-3">
+                    <span>Reste à payer</span>
+                    <span className="font-bold text-rose-700">
+                      {formatMoney(totalRemainingAfterReceipt)}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between gap-3">
                     <span>Date d’émission</span>
                     <span className="font-bold text-slate-900">
                       {formatDateTime(typedReceipt.created_at)}
@@ -810,42 +832,8 @@ export default async function FinanceReceiptPrintPage({
               </div>
             </section>
 
-            <section className="receipt-signature-card rounded-3xl border border-slate-200 bg-white p-5">
-              <div className="receipt-section-title flex items-center gap-2 text-sm font-black uppercase tracking-[0.16em] text-slate-700">
-                <UserRound className="h-4 w-4 text-emerald-600" />
-                Signature / cachet
-              </div>
-
-              <div className="receipt-signature-grid mt-8 grid gap-10 text-sm text-slate-700">
-                <div>
-                  <div className="font-semibold text-slate-900">
-                    Le caissier / l’administration
-                  </div>
-                  <div className="receipt-signature-line mt-8 border-b border-slate-300" />
-                </div>
-
-                <div>
-                  <div className="font-semibold text-slate-900">Le responsable</div>
-                  <div className="receipt-signature-line mt-8 border-b border-slate-300" />
-                  {institutionSettings.institution_head_title ||
-                  institutionSettings.institution_head_name ? (
-                    <div className="receipt-signature-name mt-2 text-slate-500">
-                      {[
-                        institutionSettings.institution_head_title,
-                        institutionSettings.institution_head_name,
-                      ]
-                        .filter(Boolean)
-                        .join(" — ")}
-                    </div>
-                  ) : null}
-                </div>
-              </div>
-            </section>
-
             <section className="receipt-proof-note rounded-3xl border border-dashed border-slate-300 bg-slate-50 p-5 text-sm leading-6 text-slate-600">
-              Ce reçu constitue la preuve d’enregistrement du paiement effectué. Aucun duplicata ne pourra être émis.
-              
-              
+              Ce reçu atteste du paiement enregistré dans le système. Il doit être conservé par le payeur comme justificatif.
             </section>
           </div>
         </div>
