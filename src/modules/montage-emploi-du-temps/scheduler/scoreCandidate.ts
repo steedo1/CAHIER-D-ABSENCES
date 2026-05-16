@@ -1,4 +1,4 @@
-import type {
+﻿import type {
   CandidateSlot,
   HalfDay,
   LessonBlock,
@@ -547,9 +547,9 @@ export function repeatsSubjectSameDay(
     return false;
   }
 
-  // Deux blocs successifs d’une même matière constituent souvent un vrai bloc
-  // pédagogique de 2h ou plus. On ne doit pas pénaliser ce cas comme une
-  // “matière répétée”. On pénalise seulement les reprises séparées.
+  // Deux blocs successifs dâ€™une mÃªme matiÃ¨re constituent souvent un vrai bloc
+  // pÃ©dagogique de 2h ou plus. On ne doit pas pÃ©naliser ce cas comme une
+  // â€œmatiÃ¨re rÃ©pÃ©tÃ©eâ€. On pÃ©nalise seulement les reprises sÃ©parÃ©es.
   return !sameSubjectPlacements.some((placement) =>
     touchesOrContinuesSameSubject(placement, candidate),
   );
@@ -744,9 +744,9 @@ function getEmptyHalfDayEdgePenalty(
     return 0;
   }
 
-  // Si la classe a déjà des cours dans cette demi-journée, le calcul des trous
-  // suffit. Si la demi-journée est encore vide, on évite de commencer au milieu,
-  // car cela crée souvent des heures creuses plus tard.
+  // Si la classe a dÃ©jÃ  des cours dans cette demi-journÃ©e, le calcul des trous
+  // suffit. Si la demi-journÃ©e est encore vide, on Ã©vite de commencer au milieu,
+  // car cela crÃ©e souvent des heures creuses plus tard.
   if (getClassHalfDayUnits(block, candidate, context, placements) > 0) {
     return 0;
   }
@@ -993,13 +993,13 @@ function getProjectedClassHalfDayBalancePenalty(
     penalty += Math.pow(projectedDayUnits - 6, 2) * 3600;
   }
 
-  // Quand la matinée est déjà lourde, on pousse les nouveaux blocs vers les autres demi-journées.
+  // Quand la matinÃ©e est dÃ©jÃ  lourde, on pousse les nouveaux blocs vers les autres demi-journÃ©es.
   if (halfDay === "morning" && currentHalfDayUnits >= targetPerHalfDay) {
     penalty += 8500 + currentHalfDayUnits * 1200;
   }
 
-  // Récompenser un vrai bloc de 2h ou plus qui ouvre une demi-journée vide :
-  // cela évite les après-midis/soirs entièrement vides tout en refusant les retours d’1h.
+  // RÃ©compenser un vrai bloc de 2h ou plus qui ouvre une demi-journÃ©e vide :
+  // cela Ã©vite les aprÃ¨s-midis/soirs entiÃ¨rement vides tout en refusant les retours dâ€™1h.
   if (currentHalfDayUnits === 0 && candidate.durationUnits >= 2 && halfDay !== "morning") {
     penalty -= 2200;
   }
@@ -1103,8 +1103,8 @@ function startsEmptyClassDayOutsideMorning(
   const halfDay = getCandidatePrimaryHalfDay(candidate, context);
   const range = getCandidateTimeRange(candidate, context);
 
-  // On n'interdit pas l'après-midi. On évite surtout de créer une journée qui
-  // commence en fin de journée ou en soirée.
+  // On n'interdit pas l'aprÃ¨s-midi. On Ã©vite surtout de crÃ©er une journÃ©e qui
+  // commence en fin de journÃ©e ou en soirÃ©e.
   return halfDay === "evening" || Boolean(range && range.start >= 16 * 60);
 }
 
@@ -1126,12 +1126,11 @@ function getProjectedClassDaySpreadPenalty(
     .map((periodIndex) => teachingIndexes.indexOf(periodIndex))
     .filter((position) => position >= 0)
     .sort((a, b) => a - b);
-
   if (positions.length <= 1) {
-    // Ne pas forcer mécaniquement tous les premiers placements le matin.
-    // L’équilibrage des demi-journées doit pouvoir envoyer des cours l’après-midi
-    // lorsque la matinée de la classe commence à être chargée.
-    return getCandidateStartPosition(candidate, context) * 18;
+    // Ne jamais utiliser le compactage comme critÃ¨re pour choisir "le plus tÃ´t".
+    // Sur une journÃ©e encore vide, ce critÃ¨re remplissait mÃ©caniquement les matinÃ©es
+    // avant que l'Ã©quilibrage des demi-journÃ©es puisse agir.
+    return 0;
   }
 
   const first = positions[0];
@@ -1139,9 +1138,9 @@ function getProjectedClassDaySpreadPenalty(
   const span = last - first + 1;
   const holesInsideDay = Math.max(0, span - positions.length);
 
-  // Même sans double vacation, le moteur doit compacter les cours de la classe.
-  // Les grands écarts entre matin/après-midi/soir créent les trous visibles sur les fiches.
-  // On pénalise les trous plus que l'heure de début afin de ne pas bourrer mécaniquement les matinées.
+  // MÃªme sans double vacation, le moteur doit compacter les cours de la classe.
+  // Les grands Ã©carts entre matin/aprÃ¨s-midi/soir crÃ©ent les trous visibles sur les fiches.
+  // On pÃ©nalise les trous plus que l'heure de dÃ©but afin de ne pas bourrer mÃ©caniquement les matinÃ©es.
   return holesInsideDay * 7200 + Math.max(0, span - 5) * 760 + last * 25;
 }
 
@@ -1155,9 +1154,9 @@ function getLateDayPenalty(
   const range = getCandidateTimeRange(candidate, context);
   let penalty = getCandidateStartPosition(candidate, context) * 12;
 
-  // Les après-midis ne sont pas des zones interdites : dans un établissement réel,
-  // elles doivent être utilisées pour éviter les matinées surchargées. On pénalise
-  // seulement les fins de journée tardives et les demi-journées isolées.
+  // Les aprÃ¨s-midis ne sont pas des zones interdites : dans un Ã©tablissement rÃ©el,
+  // elles doivent Ãªtre utilisÃ©es pour Ã©viter les matinÃ©es surchargÃ©es. On pÃ©nalise
+  // seulement les fins de journÃ©e tardives et les demi-journÃ©es isolÃ©es.
   if (halfDay === "afternoon") {
     penalty += 20;
   }
@@ -1209,6 +1208,28 @@ function getLowestClassDaySpreadCandidates(
     .map((item) => item.candidate);
 }
 
+function keepLowestHalfDayBalanceCandidates(
+  block: LessonBlock,
+  candidates: CandidateSlot[],
+  placements: Placement[],
+  context: SchedulerContext,
+): CandidateSlot[] {
+  if (candidates.length <= 1) {
+    return candidates;
+  }
+
+  const scored = candidates.map((candidate) => ({
+    candidate,
+    penalty: getProjectedClassHalfDayBalancePenalty(block, candidate, context, placements),
+  }));
+  const minPenalty = Math.min(...scored.map((item) => item.penalty));
+
+  // On garde aussi les candidats presque Ã©quivalents : cela Ã©vite qu'un seul critÃ¨re
+  // fasse disparaÃ®tre des placements utiles pour les contraintes professeur/salle.
+  return scored
+    .filter((item) => item.penalty <= minPenalty + 120)
+    .map((item) => item.candidate);
+}
 function createsIsolatedHalfDay(
   block: LessonBlock,
   candidate: CandidateSlot,
@@ -1262,9 +1283,9 @@ function getSpecializedRoomFallbackPenalty(
     canUseOrdinaryRoomFallback(block.roomTypeRequired, context) &&
     isOrdinaryFallbackRoom(room.roomType)
   ) {
-    // Le fallback est accepté, mais il doit rester un vrai dernier recours
-    // seulement quand la ressource spécialisée existe réellement. Si un
-    // établissement n’a pas de labo, la salle ordinaire est son fonctionnement normal.
+    // Le fallback est acceptÃ©, mais il doit rester un vrai dernier recours
+    // seulement quand la ressource spÃ©cialisÃ©e existe rÃ©ellement. Si un
+    // Ã©tablissement nâ€™a pas de labo, la salle ordinaire est son fonctionnement normal.
     return 90000;
   }
 
@@ -1343,7 +1364,7 @@ export function scoreCandidate(
   score += getLateDayPenalty(block, candidate, context, placements);
   score += getProjectedClassDaySpreadPenalty(block, candidate, context, placements);
 
-  // Répartition réelle : éviter l’effet “je remplis les matinées puis je jette les restes”.
+  // RÃ©partition rÃ©elle : Ã©viter lâ€™effet â€œje remplis les matinÃ©es puis je jette les restesâ€.
   score += getProjectedClassDayLoadPenalty(block, candidate, context, placements);
   score += getProjectedClassHalfDayBalancePenalty(block, candidate, context, placements);
   score += getSameSubjectSameStartPenalty(block, candidate, placements);
@@ -1352,7 +1373,7 @@ export function scoreCandidate(
   score += getTeacherDayUnits(block.teacherId, candidate.dayIndex, placements) * 18;
   score += getPreferredDayPenalty(block, candidate, context, seed);
 
-  // Plus une matière a déjà été placée pour la classe, plus on force son étalement.
+  // Plus une matiÃ¨re a dÃ©jÃ  Ã©tÃ© placÃ©e pour la classe, plus on force son Ã©talement.
   score += countSubjectPlacedForClass(block, placements) * 8;
 
   if (rules.avoidStudentGaps) {
@@ -1423,9 +1444,9 @@ export function scoreCandidate(
     const overloadAmount = getEpsFieldOverloadAmount(block, candidate, context, placements);
 
     if (overloadAmount > 0) {
-      // Un terrain EPS est partageable, mais selon la capacité déclarée par
-      // l’établissement. Le dépassement reste possible en dernier recours afin
-      // de ne pas supprimer le cours, mais il devient très coûteux et visible.
+      // Un terrain EPS est partageable, mais selon la capacitÃ© dÃ©clarÃ©e par
+      // lâ€™Ã©tablissement. Le dÃ©passement reste possible en dernier recours afin
+      // de ne pas supprimer le cours, mais il devient trÃ¨s coÃ»teux et visible.
       score += overloadAmount * 95000;
     }
 
@@ -1436,8 +1457,8 @@ export function scoreCandidate(
       context,
     );
 
-    // Répartir les cours EPS sur Terrain 1, Terrain 2, etc. au lieu de tout
-    // entasser sur le premier terrain trouvé.
+    // RÃ©partir les cours EPS sur Terrain 1, Terrain 2, etc. au lieu de tout
+    // entasser sur le premier terrain trouvÃ©.
     score += sameFieldUsage * 1200;
   }
 
@@ -1478,28 +1499,30 @@ export function chooseBestCandidate(
   const rules = getTerrainRules(context);
   let viable = [...candidates];
 
-  // Ces filtres ne bloquent jamais inutilement : ils s’appliquent seulement
-  // lorsqu’une alternative existe. Cela transforme les règles terrain en vrai
+  // Ces filtres ne bloquent jamais inutilement : ils sâ€™appliquent seulement
+  // lorsquâ€™une alternative existe. Cela transforme les rÃ¨gles terrain en vrai
   // comportement moteur, sans devenir des normes administratives rigides.
   viable = filterWhenPossible(
     viable,
     (candidate) => !startsEmptyClassDayOutsideMorning(block, candidate, context, placements),
   );
 
-  // Ne pas exclure les après-midis/soirs par principe. Les établissements ont
-  // configuré ces créneaux pour qu’ils servent : le score gère seulement les
-  // fins de journée trop tardives et les retours isolés.
+  // Ne pas exclure les aprÃ¨s-midis/soirs par principe. Les Ã©tablissements ont
+  // configurÃ© ces crÃ©neaux pour quâ€™ils servent : le score gÃ¨re seulement les
+  // fins de journÃ©e trop tardives et les retours isolÃ©s.
 
-  // Règle ACE prioritaire : une matière peut former un bloc consécutif,
-  // mais elle ne doit pas revenir plus tard dans la même journée si une
+  // RÃ¨gle ACE prioritaire : une matiÃ¨re peut former un bloc consÃ©cutif,
+  // mais elle ne doit pas revenir plus tard dans la mÃªme journÃ©e si une
   // autre position existe. Ce filtre passe avant le compactage, sinon le
-  // moteur peut choisir un créneau “compact” mais pédagogiquement faux.
+  // moteur peut choisir un crÃ©neau â€œcompactâ€ mais pÃ©dagogiquement faux.
   viable = filterWhenPossible(
     viable,
     (candidate) => !hasAceSeparatedSameSubjectSameDay(block, candidate, placements),
   );
 
-  viable = getLowestClassDaySpreadCandidates(block, viable, placements, context);
+  if (rules.balanceHalfDays) {
+    viable = keepLowestHalfDayBalanceCandidates(block, viable, placements, context);
+  }
 
   if (isEpsBlock(block, context) && rules.epsHotHourMode !== "disabled") {
     viable = filterWhenPossible(
@@ -1521,6 +1544,8 @@ export function chooseBestCandidate(
       (candidate) => getProjectedClassHalfDayBalancePenalty(block, candidate, context, placements) < 9000,
     );
   }
+
+  viable = getLowestClassDaySpreadCandidates(block, viable, placements, context);
 
   if (rules.avoidStudentGaps) {
     viable = filterWhenPossible(

@@ -1,4 +1,4 @@
-import type {
+﻿import type {
   CandidateSlot,
   LessonBlock,
   Placement,
@@ -113,9 +113,9 @@ function getBlockDifficulty(
   }
 
   if (block.blockType === "eps") {
-    // EPS dispose de plages très limitées : avant 10h le matin ou après 15h.
-    // On le place tôt dans l’ordre de génération pour éviter qu’il soit repoussé
-    // vers les créneaux chauds.
+    // EPS dispose de plages trÃ¨s limitÃ©es : avant 10h le matin ou aprÃ¨s 15h.
+    // On le place tÃ´t dans lâ€™ordre de gÃ©nÃ©ration pour Ã©viter quâ€™il soit repoussÃ©
+    // vers les crÃ©neaux chauds.
     score += 260;
   }
 
@@ -127,8 +127,8 @@ function getBlockDifficulty(
     score += 35;
   }
 
-  // P.C/SVT sont très contraints à cause des laboratoires et des tandems.
-  // On les place avant les matières plus souples pour respecter les espaces réels.
+  // P.C/SVT sont trÃ¨s contraints Ã  cause des laboratoires et des tandems.
+  // On les place avant les matiÃ¨res plus souples pour respecter les espaces rÃ©els.
   if (isPcSvtBlock(block)) {
     score += getTerrainRules(context).enablePcSvtTandem ? 180 : 95;
   }
@@ -429,9 +429,9 @@ function compactStudentGaps(
     return currentPlacements;
   }
 
-  // Petite passe de réparation après le montage glouton : on déplace seulement
-  // les blocs qui peuvent réellement réduire les trous, sans casser classe,
-  // professeur, salle, labo, terrain EPS, indisponibilités ni récréations.
+  // Petite passe de rÃ©paration aprÃ¨s le montage glouton : on dÃ©place seulement
+  // les blocs qui peuvent rÃ©ellement rÃ©duire les trous, sans casser classe,
+  // professeur, salle, labo, terrain EPS, indisponibilitÃ©s ni rÃ©crÃ©ations.
   for (let pass = 0; pass < 4; pass += 1) {
     let improvedThisPass = false;
 
@@ -645,8 +645,8 @@ function compactSingleHourReturns(
           continue;
         }
 
-        // Objectif terrain : déplacer la seule heure vers une demi-journée où
-        // la classe vient déjà, au lieu de créer une présence isolée.
+        // Objectif terrain : dÃ©placer la seule heure vers une demi-journÃ©e oÃ¹
+        // la classe vient dÃ©jÃ , au lieu de crÃ©er une prÃ©sence isolÃ©e.
         if (
           getClassHalfDayUnitCount(
             placement.classId,
@@ -830,13 +830,13 @@ function buildAttempts(context: SchedulerContext, lessonBlockCount: number): Gen
     rules.avoidSingleHourReturn ||
     rules.balanceHalfDays;
 
-  // En production Mon Cahier, un établissement complet peut produire plusieurs
-  // centaines de blocs. L'ancien moteur lançait jusqu'à 72 tentatives complètes
-  // avec réparations, ce qui provoquait des timeouts Vercel et donc une réponse
+  // En production Mon Cahier, un Ã©tablissement complet peut produire plusieurs
+  // centaines de blocs. L'ancien moteur lanÃ§ait jusqu'Ã  72 tentatives complÃ¨tes
+  // avec rÃ©parations, ce qui provoquait des timeouts Vercel et donc une rÃ©ponse
   // HTML/504 au lieu d'un JSON exploitable.
-  // Ici on garde plusieurs stratégies, mais on borne le coût selon la taille réelle
-  // du problème pour garantir une réponse serveur. Les diagnostics bloquants restent
-  // ensuite chargés de refuser la publication si le résultat n'est pas conforme.
+  // Ici on garde plusieurs stratÃ©gies, mais on borne le coÃ»t selon la taille rÃ©elle
+  // du problÃ¨me pour garantir une rÃ©ponse serveur. Les diagnostics bloquants restent
+  // ensuite chargÃ©s de refuser la publication si le rÃ©sultat n'est pas conforme.
   let strategies: BlockOrderStrategy[] = [
     "ace_priority",
     "difficulty",
@@ -853,9 +853,11 @@ function buildAttempts(context: SchedulerContext, lessonBlockCount: number): Gen
     seedCount = 3;
   } else if (lessonBlockCount >= 180) {
     strategies = ["ace_priority", "difficulty", "duration_first", "class_spread"];
-    seedCount = 4;
-  } else if (lessonBlockCount >= 120) {
+    // Les Ã©tablissements rÃ©els autour de 200 blocs restent gÃ©rables, et 4 graines
+    // donnent trop souvent un montage localement coincÃ© (matinÃ©es pleines, trous).
     seedCount = isConstrained ? 6 : 4;
+  } else if (lessonBlockCount >= 120) {
+    seedCount = isConstrained ? 8 : 5;
   }
 
   const attempts: GenerationAttempt[] = [];
@@ -1010,7 +1012,7 @@ export function generateTimetable(context: SchedulerContext): SchedulerResult {
   const normalizedContext = withDefaultTerrainRules(context);
   const lessonBlocks = generateLessonBlocks(normalizedContext);
   const attempts = buildAttempts(normalizedContext, lessonBlocks.length);
-  const repairDuringAttempts = lessonBlocks.length <= 180;
+  const repairDuringAttempts = lessonBlocks.length <= 260;
 
   let bestResult: SchedulerResult | null = null;
 
@@ -1060,7 +1062,7 @@ function waitForUiFrame(): Promise<void> {
 
 function assertNotAborted(signal?: AbortSignal): void {
   if (signal?.aborted) {
-    throw new Error("Génération annulée.");
+    throw new Error("GÃ©nÃ©ration annulÃ©e.");
   }
 }
 
@@ -1071,7 +1073,7 @@ export async function generateTimetableAsync(
   const normalizedContext = withDefaultTerrainRules(context);
   const lessonBlocks = generateLessonBlocks(normalizedContext);
   const attempts = buildAttempts(normalizedContext, lessonBlocks.length);
-  const repairDuringAttempts = lessonBlocks.length <= 180;
+  const repairDuringAttempts = lessonBlocks.length <= 260;
   const yieldEveryAttempts = Math.max(1, options.yieldEveryAttempts ?? 2);
 
   let bestResult: SchedulerResult | null = null;
