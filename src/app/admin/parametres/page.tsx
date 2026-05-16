@@ -1,4 +1,4 @@
-// src/app/admin/parametres/page.tsx
+﻿// src/app/admin/parametres/page.tsx
 "use client";
 
 import React, { useEffect, useMemo, useState, ChangeEvent } from "react";
@@ -40,9 +40,9 @@ type SubjectComponentRow = {
   subject_id: string;
   subject_name: string;
   component_id: string; // id en base ou temp_xxx
-  component_name: string; // libellé affiché (Ortho-Grammaire, Composition, …)
+  component_name: string; // libellÃ© affichÃ© (Ortho-Grammaire, Composition, â€¦)
   coeff: number; // coeff_in_subject
-  level?: string; // niveau (6e, 5e, 4e, 3e…) → pour que chaque niveau ait ses propres sous-matières
+  level?: string; // niveau (6e, 5e, 4e, 3eâ€¦) â†’ pour que chaque niveau ait ses propres sous-matiÃ¨res
   code?: string;
   order_index?: number;
   is_active?: boolean;
@@ -58,7 +58,7 @@ type EvalPeriodRow = {
   end_date: string;
   order_index: number;
   is_active: boolean;
-  weight: number; // coefficient de la période (pour la moyenne annuelle)
+  weight: number; // coefficient de la pÃ©riode (pour la moyenne annuelle)
 };
 
 type AcademicYearRow = {
@@ -119,16 +119,16 @@ const DEFAULT_RAPPORT_F_SETTINGS: RapportFSettings = {
 
 
 const OFFICIAL_TRACK_LABELS: Record<string, string> = {
-  "6eme": "6ème",
-  "5eme": "5ème",
-  "4eme": "4ème",
-  "3eme": "3ème",
+  "6eme": "6Ã¨me",
+  "5eme": "5Ã¨me",
+  "4eme": "4Ã¨me",
+  "3eme": "3Ã¨me",
   "2ndeA": "2nde A",
   "2ndeC": "2nde C",
-  "1ereA1": "1ère A1",
-  "1ereA2": "1ère A2",
-  "1ereC": "1ère C",
-  "1ereD": "1ère D",
+  "1ereA1": "1Ã¨re A1",
+  "1ereA2": "1Ã¨re A2",
+  "1ereC": "1Ã¨re C",
+  "1ereD": "1Ã¨re D",
   tleA1: "Tle A1",
   tleA2: "Tle A2",
   tleC: "Tle C",
@@ -141,7 +141,7 @@ const OFFICIAL_TRACK_ORDER = new Map<string, number>(
 
 function formatCoeffLevel(level?: string | null) {
   const key = String(level || "").trim();
-  if (!key) return "—";
+  if (!key) return "â€”";
   return OFFICIAL_TRACK_LABELS[key] || key;
 }
 
@@ -170,32 +170,32 @@ const SETTINGS_TABS: Array<{
 }> = [
   {
     key: "security",
-    label: "Accès & sécurité",
-    description: "Mot de passe et gestion des accès utilisateurs.",
+    label: "AccÃ¨s & sÃ©curitÃ©",
+    description: "Mot de passe et gestion des accÃ¨s utilisateurs.",
   },
   {
     key: "school",
-    label: "Établissement & horaires",
-    description: "Identité de l’établissement, logo et créneaux officiels.",
+    label: "Ã‰tablissement & horaires",
+    description: "IdentitÃ© de lâ€™Ã©tablissement, logo et crÃ©neaux officiels.",
   },
   {
     key: "academic-years",
-    label: "Années scolaires",
-    description: "Année courante, archivage et bascule annuelle.",
+    label: "AnnÃ©es scolaires",
+    description: "AnnÃ©e courante, archivage et bascule annuelle.",
   },
   {
     key: "grading-periods",
-    label: "Périodes d’évaluation",
+    label: "PÃ©riodes dâ€™Ã©valuation",
     description: "Trimestres, semestres, dates et coefficients.",
   },
   {
     key: "rapport-f",
     label: "Rapport F",
-    description: "Données que Mon Cahier ne peut pas deviner.",
+    description: "DonnÃ©es que Mon Cahier ne peut pas deviner.",
   },
   {
     key: "coefficients",
-    label: "Coefficients & sous-matières",
+    label: "Coefficients & sous-matiÃ¨res",
     description: "Coefficients par niveau et ventilation par composantes.",
   },
 ];
@@ -289,6 +289,14 @@ function EyeOffIcon(props: { className?: string }) {
   );
 }
 
+function guessCurrentAcademicYear() {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = now.getMonth() + 1;
+  const startYear = month >= 8 ? year : year - 1;
+  return `${startYear}-${startYear + 1}`;
+}
+
 /* =========================
    Toasts (feedback)
 ========================= */
@@ -314,7 +322,7 @@ function ToastItem({
       : t.kind === "error"
         ? "border-rose-200 bg-rose-50 text-rose-900"
         : "border-slate-200 bg-white text-slate-900";
-  const icon = t.kind === "success" ? "✅" : t.kind === "error" ? "⚠️" : "ℹ️";
+  const icon = t.kind === "success" ? "âœ…" : t.kind === "error" ? "âš ï¸" : "â„¹ï¸";
   return (
     <div
       className={`pointer-events-auto flex items-start gap-2 rounded-xl border px-3 py-2 shadow ${styles}`}
@@ -326,7 +334,7 @@ function ToastItem({
         onClick={() => onClose(t.id)}
         aria-label="Fermer"
       >
-        ✕
+        âœ•
       </button>
     </div>
   );
@@ -503,9 +511,9 @@ function FragmentRow({
   const label = user.display_name || user.email || user.phone || "Utilisateur";
   const contactLine =
     user.email && user.phone
-      ? `${user.email} · ${user.phone}`
-      : user.email || user.phone || "—";
-  const roleLabel = user.role || "—";
+      ? `${user.email} Â· ${user.phone}`
+      : user.email || user.phone || "â€”";
+  const roleLabel = user.role || "â€”";
 
   if (compact) {
     return (
@@ -517,7 +525,7 @@ function FragmentRow({
               onClick={onToggle}
               className="mb-0.5 text-[11px] text-sky-700 hover:underline"
             >
-              {expanded ? "Masquer les détails" : "Voir les détails"}
+              {expanded ? "Masquer les dÃ©tails" : "Voir les dÃ©tails"}
             </button>
             <div className="font-medium text-slate-900">{label}</div>
             <div className="max-w-xs truncate text-[11px] text-slate-500">
@@ -534,14 +542,14 @@ function FragmentRow({
                 onClick={onResetTemp}
                 className="rounded-lg border px-2 py-1 text-[11px] hover:bg-slate-50"
               >
-                Réinit. temporaire
+                RÃ©init. temporaire
               </button>
               <button
                 type="button"
                 onClick={onOpenCustom}
                 className="rounded-lg bg-sky-700 px-2 py-1 text-[11px] font-medium text-white hover:bg-sky-800"
               >
-                Mot de passe…
+                Mot de passeâ€¦
               </button>
             </div>
           </td>
@@ -549,9 +557,9 @@ function FragmentRow({
         {expanded && (
           <tr className="bg-slate-50/60">
             <td className="px-3 py-2 text-[12px] text-slate-600" colSpan={3}>
-              <div>Email : {user.email || "—"}</div>
-              <div>Téléphone : {user.phone || "—"}</div>
-              <div>Rôle : {roleLabel}</div>
+              <div>Email : {user.email || "â€”"}</div>
+              <div>TÃ©lÃ©phone : {user.phone || "â€”"}</div>
+              <div>RÃ´le : {roleLabel}</div>
             </td>
           </tr>
         )}
@@ -559,15 +567,15 @@ function FragmentRow({
     );
   }
 
-  // Mode non compact : 4 colonnes (Util, Contact, Rôle, Actions)
+  // Mode non compact : 4 colonnes (Util, Contact, RÃ´le, Actions)
   return (
     <tr className="align-top">
       <td className="px-3 py-2">
         <div className="font-medium text-slate-900">{label}</div>
       </td>
       <td className="px-3 py-2">
-        <div className="text-[12px] text-slate-600">{user.email || "—"}</div>
-        <div className="text-[12px] text-slate-600">{user.phone || "—"}</div>
+        <div className="text-[12px] text-slate-600">{user.email || "â€”"}</div>
+        <div className="text-[12px] text-slate-600">{user.phone || "â€”"}</div>
       </td>
       <td className="px-3 py-2">
         <Badge color={roleColor(user.role)}>{roleLabel}</Badge>
@@ -579,14 +587,14 @@ function FragmentRow({
             onClick={onResetTemp}
             className="rounded-lg border px-2 py-1 text-[11px] hover:bg-slate-50"
           >
-            Réinit. temporaire
+            RÃ©init. temporaire
           </button>
           <button
             type="button"
             onClick={onOpenCustom}
             className="rounded-lg bg-sky-700 px-2 py-1 text-[11px] font-medium text-white hover:bg-sky-800"
           >
-            Mot de passe…
+            Mot de passeâ€¦
           </button>
         </div>
       </td>
@@ -607,7 +615,7 @@ function minToTimeStr(min: number): string {
   return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
 }
 
-/** Même logique que côté API : pivot en août */
+/** MÃªme logique que cÃ´tÃ© API : pivot en aoÃ»t */
 function computeAcademicYearFromDate(d: Date = new Date()): string {
   const m = d.getUTCMonth() + 1; // 1..12
   const y = d.getUTCFullYear();
@@ -651,7 +659,7 @@ export default function AdminSettingsPage() {
   const [busyMine, setBusyMine] = useState(false);
   const [msgMine, setMsgMine] = useState<string | null>(null);
 
-  /* ----- Réinitialiser mot de passe d’un user ----- */
+  /* ----- RÃ©initialiser mot de passe dâ€™un user ----- */
   const [users, setUsers] = useState<Profile[]>([]);
   const [loadingUsers, setLoadingUsers] = useState(false);
   const [errUsers, setErrUsers] = useState<string | null>(null);
@@ -659,13 +667,13 @@ export default function AdminSettingsPage() {
   // Liste repliable
   const [userListOpen, setUserListOpen] = useState(false);
 
-  // Mode compact / détails dépliables
+  // Mode compact / dÃ©tails dÃ©pliables
   const [compactUsers, setCompactUsers] = useState<boolean>(true);
   const [expandedUserIds, setExpandedUserIds] = useState<Set<string>>(
     new Set(),
   );
 
-  // Modal pour définir un mot de passe personnalisé
+  // Modal pour dÃ©finir un mot de passe personnalisÃ©
   const [modalOpen, setModalOpen] = useState(false);
   const [targetUser, setTargetUser] = useState<Profile | null>(null);
   const [customPwd, setCustomPwd] = useState("");
@@ -688,7 +696,7 @@ export default function AdminSettingsPage() {
   const disableCustom = busyCustom;
 
   /* =======================
-     3) Horaires & séances + infos établissement
+     3) Horaires & sÃ©ances + infos Ã©tablissement
   ======================== */
   const [cfg, setCfg] = useState({
     tz: "Africa/Abidjan",
@@ -702,7 +710,7 @@ export default function AdminSettingsPage() {
     institution_status: "",
     institution_head_name: "",
     institution_head_title: "",
-    // champs pour entête des bulletins
+    // champs pour entÃªte des bulletins
     country_name: "",
     country_motto: "",
     ministry_name: "",
@@ -717,23 +725,23 @@ export default function AdminSettingsPage() {
     start_time: string;
     end_time: string;
   };
-  const [curDay, setCurDay] = useState<number>(1); // 1=Lundi … 6=Samedi
+  const [curDay, setCurDay] = useState<number>(1); // 1=Lundi â€¦ 6=Samedi
   const [byDay, setByDay] = useState<Record<number, Period[]>>({});
   const [loadingCfg, setLoadingCfg] = useState(false);
   const [savingPeriods, setSavingPeriods] = useState(false);
   const [msgSched, setMsgSched] = useState<string | null>(null);
 
-  // Générateur de créneaux (UI)
+  // GÃ©nÃ©rateur de crÃ©neaux (UI)
   const [genStart, setGenStart] = useState<string>("08:00");
   const [genEnd, setGenEnd] = useState<string>("17:00");
   const [genDuration, setGenDuration] = useState<number>(55);
-  const [genGap, setGenGap] = useState<number>(5); // pause entre séances
-  const [genLabelBase, setGenLabelBase] = useState<string>("Séance");
+  const [genGap, setGenGap] = useState<number>(5); // pause entre sÃ©ances
+  const [genLabelBase, setGenLabelBase] = useState<string>("SÃ©ance");
   const [genPreview, setGenPreview] = useState<Period[]>([]);
   const [genReplace, setGenReplace] = useState<boolean>(true); // remplacer ou ajouter
 
   /* =======================
-     4) Années scolaires
+     4) AnnÃ©es scolaires
   ======================== */
   const [academicYears, setAcademicYears] = useState<AcademicYearRow[]>([]);
   const [loadingAcademicYears, setLoadingAcademicYears] = useState(false);
@@ -742,7 +750,7 @@ export default function AdminSettingsPage() {
   const [selectedAcademicYear, setSelectedAcademicYear] = useState<string>("");
 
   /* =======================
-     5) Périodes d'évaluation
+     5) PÃ©riodes d'Ã©valuation
   ======================== */
   const [evalPeriods, setEvalPeriods] = useState<EvalPeriodRow[]>([]);
   const [loadingEvalPeriods, setLoadingEvalPeriods] = useState(false);
@@ -758,7 +766,7 @@ export default function AdminSettingsPage() {
   const [msgRapportF, setMsgRapportF] = useState<string | null>(null);
 
   /* =======================
-     6) Coeffs disciplines + sous-matières
+     6) Coeffs disciplines + sous-matiÃ¨res
   ======================== */
   const [subjectCoeffs, setSubjectCoeffs] = useState<SubjectCoeffRow[]>([]);
   const [loadingCoeffs, setLoadingCoeffs] = useState(false);
@@ -921,7 +929,7 @@ export default function AdminSettingsPage() {
     [ciPresetPreview, selectedCoeffLevel],
   );
 
-  // si aucun niveau sélectionné mais des niveaux disponibles → on sélectionne le 1er
+  // si aucun niveau sÃ©lectionnÃ© mais des niveaux disponibles â†’ on sÃ©lectionne le 1er
   useEffect(() => {
     if (!selectedCoeffLevel && coeffLevels.length > 0) {
       setSelectedCoeffLevel(coeffLevels[0]);
@@ -932,7 +940,7 @@ export default function AdminSettingsPage() {
   async function changeMyPassword() {
     setMsgMine(null);
     if (!pwd1 || pwd1.length < 6) {
-      const m = "Mot de passe trop court (6 caractères minimum).";
+      const m = "Mot de passe trop court (6 caractÃ¨res minimum).";
       setMsgMine(m);
       pushToast("error", m);
       return;
@@ -951,8 +959,8 @@ export default function AdminSettingsPage() {
         body: JSON.stringify({ new_password: pwd1 }),
       });
       const j = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(j?.error || "Échec de mise à jour");
-      const ok = "Mot de passe mis à jour ✅";
+      if (!r.ok) throw new Error(j?.error || "Ã‰chec de mise Ã  jour");
+      const ok = "Mot de passe mis Ã  jour âœ…";
       setMsgMine(ok);
       setPwd1("");
       setPwd2("");
@@ -966,7 +974,7 @@ export default function AdminSettingsPage() {
     }
   }
 
-  /* ====== Chargement des utilisateurs (sur déroulé) ====== */
+  /* ====== Chargement des utilisateurs (sur dÃ©roulÃ©) ====== */
   async function loadUsers() {
     setErrUsers(null);
     setLoadingUsers(true);
@@ -976,7 +984,7 @@ export default function AdminSettingsPage() {
       setUsers(Array.isArray(j.items) ? j.items : []);
       pushToast(
         "info",
-        `Utilisateurs chargés (${Array.isArray(j.items) ? j.items.length : 0})`,
+        `Utilisateurs chargÃ©s (${Array.isArray(j.items) ? j.items.length : 0})`,
       );
     } catch (e: any) {
       const m = e?.message || "Impossible de charger les utilisateurs.";
@@ -987,7 +995,7 @@ export default function AdminSettingsPage() {
     }
   }
 
-  // Charger la liste uniquement quand on déroule pour la première fois
+  // Charger la liste uniquement quand on dÃ©roule pour la premiÃ¨re fois
   useEffect(() => {
     if (userListOpen && users.length === 0 && !loadingUsers) {
       loadUsers();
@@ -1004,12 +1012,12 @@ export default function AdminSettingsPage() {
     });
   }
 
-  /* ====== Réinit temporaire ====== */
+  /* ====== RÃ©init temporaire ====== */
   async function resetTemp(user: Profile) {
     if (!user?.id) return;
     if (
       !confirm(
-        `Réinitialiser le mot de passe de ${
+        `RÃ©initialiser le mot de passe de ${
           user.display_name || user.email || user.phone
         } ?`,
       )
@@ -1019,14 +1027,14 @@ export default function AdminSettingsPage() {
       const r = await fetch("/api/admin/users/reset-password", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ user_id: user.id }), // mot de passe temporaire côté serveur
+        body: JSON.stringify({ user_id: user.id }), // mot de passe temporaire cÃ´tÃ© serveur
       });
       const j = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(j?.error || "Échec de réinitialisation");
+      if (!r.ok) throw new Error(j?.error || "Ã‰chec de rÃ©initialisation");
       alert(
-        "Mot de passe réinitialisé (temporaire). Communiquez-le à l'utilisateur.",
+        "Mot de passe rÃ©initialisÃ© (temporaire). Communiquez-le Ã  l'utilisateur.",
       );
-      pushToast("success", "Réinitialisation temporaire effectuée.");
+      pushToast("success", "RÃ©initialisation temporaire effectuÃ©e.");
     } catch (e: any) {
       const m = e?.message || "Erreur";
       alert(m);
@@ -1034,7 +1042,7 @@ export default function AdminSettingsPage() {
     }
   }
 
-  /* ====== Réinit personnalisé (modal) ====== */
+  /* ====== RÃ©init personnalisÃ© (modal) ====== */
   function openCustom(user: Profile) {
     setTargetUser(user);
     setCustomPwd("");
@@ -1073,8 +1081,8 @@ export default function AdminSettingsPage() {
         }),
       });
       const j = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(j?.error || "Échec de réinitialisation");
-      const ok = "Mot de passe mis à jour ✅";
+      if (!r.ok) throw new Error(j?.error || "Ã‰chec de rÃ©initialisation");
+      const ok = "Mot de passe mis Ã  jour âœ…";
       setCustomMsg(ok);
       pushToast("success", ok);
       setTimeout(() => setModalOpen(false), 600);
@@ -1087,17 +1095,17 @@ export default function AdminSettingsPage() {
     }
   }
 
-  /* ====== Horaires : générateur & gestion ====== */
+  /* ====== Horaires : gÃ©nÃ©rateur & gestion ====== */
   function buildPreview(day: number) {
     const s = timeStrToMin(genStart);
     const e = timeStrToMin(genEnd);
     if (e <= s) {
-      pushToast("error", "Heure de fin ≤ heure de début.");
+      pushToast("error", "Heure de fin â‰¤ heure de dÃ©but.");
       setGenPreview([]);
       return;
     }
     if (genDuration <= 0) {
-      pushToast("error", "Durée de séance invalide.");
+      pushToast("error", "DurÃ©e de sÃ©ance invalide.");
       setGenPreview([]);
       return;
     }
@@ -1120,14 +1128,14 @@ export default function AdminSettingsPage() {
       if (i > 100) break; // garde-fou
     }
     setGenPreview(out);
-    pushToast("info", `Prévisualisation: ${out.length} créneau(x).`);
+    pushToast("info", `PrÃ©visualisation: ${out.length} crÃ©neau(x).`);
   }
 
   function applyGeneratedToDays(days: number[]) {
     if (genPreview.length === 0) {
       pushToast(
         "error",
-        "Aucune prévisualisation à appliquer. Cliquez d’abord sur « Prévisualiser ».",
+        "Aucune prÃ©visualisation Ã  appliquer. Cliquez dâ€™abord sur Â« PrÃ©visualiser Â».",
       );
       return;
     }
@@ -1146,26 +1154,26 @@ export default function AdminSettingsPage() {
     });
     pushToast(
       "success",
-      `Créneaux ${genReplace ? "remplacés" : "ajoutés"} pour ${
+      `CrÃ©neaux ${genReplace ? "remplacÃ©s" : "ajoutÃ©s"} pour ${
         days.length
       } jour(s).`,
     );
   }
 
-  // Import du logo par fichier (image → data URL stockée dans institution_logo_url)
+  // Import du logo par fichier (image â†’ data URL stockÃ©e dans institution_logo_url)
   function handleLogoFileChange(e: ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
 
     if (!file.type.startsWith("image/")) {
-      pushToast("error", "Veuillez sélectionner une image (PNG, JPG, SVG…).");
+      pushToast("error", "Veuillez sÃ©lectionner une image (PNG, JPG, SVGâ€¦).");
       e.target.value = "";
       return;
     }
 
     const maxSize = 1024 * 1024; // ~1 Mo
     if (file.size > maxSize) {
-      pushToast("error", "Image trop volumineuse (max. 1 Mo conseillé).");
+      pushToast("error", "Image trop volumineuse (max. 1 Mo conseillÃ©).");
       e.target.value = "";
       return;
     }
@@ -1174,7 +1182,7 @@ export default function AdminSettingsPage() {
     reader.onload = () => {
       const dataUrl = typeof reader.result === "string" ? reader.result : "";
       if (!dataUrl) {
-        pushToast("error", "Impossible de lire le fichier sélectionné.");
+        pushToast("error", "Impossible de lire le fichier sÃ©lectionnÃ©.");
         return;
       }
       setCfg((s) => ({
@@ -1183,7 +1191,7 @@ export default function AdminSettingsPage() {
       }));
       pushToast(
         "success",
-        "Logo importé. N'oubliez pas de cliquer sur « Enregistrer les paramètres ».",
+        "Logo importÃ©. N'oubliez pas de cliquer sur Â« Enregistrer les paramÃ¨tres Â».",
       );
     };
     reader.onerror = () => {
@@ -1228,21 +1236,21 @@ export default function AdminSettingsPage() {
         grouped[w].push({
           id: row.id ? String(row.id) : undefined,
           weekday: w,
-          label: row.label || "Séance",
+          label: row.label || "SÃ©ance",
           start_time: String(row.start_time || "08:00").slice(0, 5),
           end_time: String(row.end_time || "09:00").slice(0, 5),
         });
       });
       setByDay(grouped);
-      pushToast("info", "Paramètres établissement chargés.");
+      pushToast("info", "ParamÃ¨tres Ã©tablissement chargÃ©s.");
     } catch (e: any) {
-      pushToast("error", e?.message || "Chargement des paramètres impossible.");
+      pushToast("error", e?.message || "Chargement des paramÃ¨tres impossible.");
     } finally {
       setLoadingCfg(false);
     }
   }
 
-  /* ====== Années scolaires : chargement & CRUD ====== */
+  /* ====== AnnÃ©es scolaires : chargement & CRUD ====== */
   async function loadAcademicYears() {
     setLoadingAcademicYears(true);
     setMsgAcademicYears(null);
@@ -1252,18 +1260,18 @@ export default function AdminSettingsPage() {
       });
       const j = await r.json().catch(() => ({}));
       if (!r.ok || !j?.ok) {
-        throw new Error(j?.error || "Échec chargement années scolaires");
+        throw new Error(j?.error || "Ã‰chec chargement annÃ©es scolaires");
       }
       const rows = Array.isArray(j.items) ? j.items : [];
       const mapped: AcademicYearRow[] = rows.map((row: any, idx: number) => ({
         id: String(row.id ?? `year_${idx}`),
         code: String(row.code || "").trim(),
-        label: String(row.label || "").trim() || "Année scolaire",
+        label: String(row.label || "").trim() || "AnnÃ©e scolaire",
         start_date: row.start_date ? String(row.start_date).slice(0, 10) : "",
         end_date: row.end_date ? String(row.end_date).slice(0, 10) : "",
         is_current: row.is_current === true,
       }));
-      // tri par date de début, puis code
+      // tri par date de dÃ©but, puis code
       mapped.sort((a, b) => {
         const ak = a.start_date || a.code;
         const bk = b.start_date || b.code;
@@ -1284,14 +1292,14 @@ export default function AdminSettingsPage() {
         setEvalPeriods([]);
       }
 
-      pushToast("info", `Années scolaires chargées (${mapped.length}).`);
+      pushToast("info", `AnnÃ©es scolaires chargÃ©es (${mapped.length}).`);
     } catch (e: any) {
-      const m = e?.message || "Impossible de charger les années scolaires.";
+      const m = e?.message || "Impossible de charger les annÃ©es scolaires.";
       setMsgAcademicYears(m);
       setAcademicYears([]);
       pushToast("error", m);
 
-      // fallback : on charge quand même les périodes selon l'année courante serveur
+      // fallback : on charge quand mÃªme les pÃ©riodes selon l'annÃ©e courante serveur
       await loadEvalPeriods();
     } finally {
       setLoadingAcademicYears(false);
@@ -1308,7 +1316,7 @@ export default function AdminSettingsPage() {
         {
           id: `temp_${rid()}`,
           code,
-          label: code ? `Année scolaire ${code}` : "",
+          label: code ? `AnnÃ©e scolaire ${code}` : "",
           start_date: "",
           end_date: "",
           is_current: prev.length === 0,
@@ -1351,7 +1359,7 @@ export default function AdminSettingsPage() {
         const code = (y.code || "").trim();
         const label =
           (y.label || "").trim() ||
-          (code ? `Année scolaire ${code}` : `Année ${idx + 1}`);
+          (code ? `AnnÃ©e scolaire ${code}` : `AnnÃ©e ${idx + 1}`);
         return {
           code,
           label,
@@ -1368,15 +1376,15 @@ export default function AdminSettingsPage() {
       });
       const j = await r.json().catch(() => ({}));
       if (!r.ok || !j?.ok) {
-        throw new Error(j?.error || "Échec enregistrement années scolaires");
+        throw new Error(j?.error || "Ã‰chec enregistrement annÃ©es scolaires");
       }
-      const ok = "Années scolaires enregistrées ✅";
+      const ok = "AnnÃ©es scolaires enregistrÃ©es âœ…";
       setMsgAcademicYears(ok);
       pushToast("success", ok);
       await loadAcademicYears();
     } catch (e: any) {
       const m =
-        e?.message || "Erreur lors de l'enregistrement des années scolaires.";
+        e?.message || "Erreur lors de l'enregistrement des annÃ©es scolaires.";
       setMsgAcademicYears(m);
       pushToast("error", m);
     } finally {
@@ -1384,7 +1392,7 @@ export default function AdminSettingsPage() {
     }
   }
 
-  /* ====== Périodes d'évaluation (bulletins) : chargement & CRUD ====== */
+  /* ====== PÃ©riodes d'Ã©valuation (bulletins) : chargement & CRUD ====== */
   async function loadEvalPeriods(forAcademicYear?: string) {
     setLoadingEvalPeriods(true);
     setMsgEvalPeriods(null);
@@ -1403,13 +1411,13 @@ export default function AdminSettingsPage() {
       });
       const j = await r.json().catch(() => ({}));
       if (!r.ok || !j?.ok) {
-        throw new Error(j?.error || "Échec chargement périodes");
+        throw new Error(j?.error || "Ã‰chec chargement pÃ©riodes");
       }
       const rows = Array.isArray(j.items) ? j.items : [];
       const mapped: EvalPeriodRow[] = rows.map((row: any, idx: number) => ({
         id: String(row.id ?? row.code ?? `row_${idx}`),
         code: String(row.code || "").trim(),
-        label: String(row.label || "").trim() || "Période",
+        label: String(row.label || "").trim() || "PÃ©riode",
         short_label: String(row.short_label || row.label || "").trim(),
         kind: row.kind ? String(row.kind) : "",
         start_date: row.start_date ? String(row.start_date).slice(0, 10) : "",
@@ -1434,14 +1442,14 @@ export default function AdminSettingsPage() {
         setSelectedAcademicYear(j.academic_year.trim());
       }
 
-      const infoYear = j.academic_year || year || "année courante";
+      const infoYear = j.academic_year || year || "annÃ©e courante";
       pushToast(
         "info",
-        `Périodes d'évaluation chargées (${mapped.length}) pour ${infoYear}.`,
+        `PÃ©riodes d'Ã©valuation chargÃ©es (${mapped.length}) pour ${infoYear}.`,
       );
     } catch (e: any) {
       const m =
-        e?.message || "Impossible de charger les périodes d'évaluation.";
+        e?.message || "Impossible de charger les pÃ©riodes d'Ã©valuation.";
       setMsgEvalPeriods(m);
       setEvalPeriods([]);
       pushToast("error", m);
@@ -1501,7 +1509,7 @@ export default function AdminSettingsPage() {
       const academic_year = (selectedAcademicYear || "").trim();
       if (!academic_year) {
         const msg =
-          "Choisissez d'abord une année scolaire dans la section « Années scolaires ».";
+          "Choisissez d'abord une annÃ©e scolaire dans la section Â« AnnÃ©es scolaires Â».";
         setMsgEvalPeriods(msg);
         pushToast("error", msg);
         setSavingEvalPeriods(false);
@@ -1510,10 +1518,10 @@ export default function AdminSettingsPage() {
 
       const normalized = evalPeriods.map((p, idx) => {
         const code = (p.code || `P${idx + 1}`).trim();
-        const label = (p.label || `Période ${idx + 1}`).trim();
+        const label = (p.label || `PÃ©riode ${idx + 1}`).trim();
         const short_label = (p.short_label || label).trim();
 
-        // on part de p.weight (UI) mais on envoie bien coeff à l’API
+        // on part de p.weight (UI) mais on envoie bien coeff Ã  lâ€™API
         const coeff =
           typeof p.weight === "number" && p.weight > 0 ? Number(p.weight) : 1;
 
@@ -1527,7 +1535,7 @@ export default function AdminSettingsPage() {
           end_date: p.end_date || null,
           order_index: idx + 1,
           is_active: !!p.is_active,
-          coeff, // champ utilisé côté API
+          coeff, // champ utilisÃ© cÃ´tÃ© API
         };
       });
 
@@ -1538,14 +1546,14 @@ export default function AdminSettingsPage() {
       });
       const j = await r.json().catch(() => ({}));
       if (!r.ok || !j?.ok) {
-        throw new Error(j?.error || "Échec enregistrement périodes");
+        throw new Error(j?.error || "Ã‰chec enregistrement pÃ©riodes");
       }
-      const ok = `Périodes d'évaluation enregistrées ✅ (${academic_year}).`;
+      const ok = `PÃ©riodes d'Ã©valuation enregistrÃ©es âœ… (${academic_year}).`;
       setMsgEvalPeriods(ok);
       pushToast("success", ok);
       await loadEvalPeriods(academic_year);
     } catch (e: any) {
-      const m = e?.message || "Erreur lors de l'enregistrement des périodes.";
+      const m = e?.message || "Erreur lors de l'enregistrement des pÃ©riodes.";
       setMsgEvalPeriods(m);
       pushToast("error", m);
     } finally {
@@ -1560,13 +1568,13 @@ export default function AdminSettingsPage() {
       list.push({
         id: `temp_${rid()}`,
         weekday: day,
-        label: "Séance",
+        label: "SÃ©ance",
         start_time: "08:00",
         end_time: "08:55",
       });
       return { ...m, [day]: list };
     });
-    pushToast("info", "Créneau ajouté (non enregistré).");
+    pushToast("info", "CrÃ©neau ajoutÃ© (non enregistrÃ©).");
   }
   function removeRow(day: number, idx: number) {
     setByDay((m) => {
@@ -1574,7 +1582,7 @@ export default function AdminSettingsPage() {
       list.splice(idx, 1);
       return { ...m, [day]: list };
     });
-    pushToast("info", "Créneau supprimé (non enregistré).");
+    pushToast("info", "CrÃ©neau supprimÃ© (non enregistrÃ©).");
   }
   function setCell(day: number, idx: number, patch: Partial<Period>) {
     setByDay((m) => {
@@ -1582,7 +1590,7 @@ export default function AdminSettingsPage() {
       const cur = list[idx] || {
         id: `temp_${rid()}`,
         weekday: day,
-        label: "Séance",
+        label: "SÃ©ance",
         start_time: "08:00",
         end_time: "08:55",
       };
@@ -1600,12 +1608,12 @@ export default function AdminSettingsPage() {
         body: JSON.stringify(cfg),
       });
       const j = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(j?.error || "Échec mise à jour paramètres");
-      const ok = "Paramètres d’établissement enregistrés ✅";
+      if (!r.ok) throw new Error(j?.error || "Ã‰chec mise Ã  jour paramÃ¨tres");
+      const ok = "ParamÃ¨tres dâ€™Ã©tablissement enregistrÃ©s âœ…";
       setMsgSched(ok);
       pushToast("success", ok);
     } catch (e: any) {
-      const m = e?.message || "Erreur enregistrement paramètres";
+      const m = e?.message || "Erreur enregistrement paramÃ¨tres";
       setMsgSched(m);
       pushToast("error", m);
     } finally {
@@ -1635,19 +1643,19 @@ export default function AdminSettingsPage() {
         body: JSON.stringify({ periods: all }),
       });
       const j = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(j?.error || "Échec enregistrement créneaux");
+      if (!r.ok) throw new Error(j?.error || "Ã‰chec enregistrement crÃ©neaux");
 
       const changes =
         [j?.inserted, j?.updated, j?.deleted]
           .filter((v) => typeof v === "number")
           .join(" / ") || `${all.length}`;
 
-      const ok = `Créneaux enregistrés ✅ (${changes})`;
+      const ok = `CrÃ©neaux enregistrÃ©s âœ… (${changes})`;
       setMsgSched(ok);
       pushToast("success", ok);
       await loadInstitutionConfig();
     } catch (e: any) {
-      const m = e?.message || "Erreur enregistrement créneaux";
+      const m = e?.message || "Erreur enregistrement crÃ©neaux";
       setMsgSched(m);
       pushToast("error", m);
     } finally {
@@ -1667,9 +1675,9 @@ export default function AdminSettingsPage() {
       const j = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(j?.error || "Chargement impossible");
       setRapportF({ ...DEFAULT_RAPPORT_F_SETTINGS, ...(j?.settings || {}) });
-      setMsgRapportF(`Données Rapport F chargées (${year}).`);
+      setMsgRapportF(`DonnÃ©es Rapport F chargÃ©es (${year}).`);
     } catch (e: any) {
-      setMsgRapportF(e?.message || "Impossible de charger les données Rapport F.");
+      setMsgRapportF(e?.message || "Impossible de charger les donnÃ©es Rapport F.");
     } finally {
       setLoadingRapportF(false);
     }
@@ -1677,7 +1685,7 @@ export default function AdminSettingsPage() {
 
   const saveRapportFSettings = async () => {
     if (!rapportFYear) {
-      setMsgRapportF("Choisissez d'abord une année scolaire.");
+      setMsgRapportF("Choisissez d'abord une annÃ©e scolaire.");
       return;
     }
     setSavingRapportF(true);
@@ -1690,11 +1698,11 @@ export default function AdminSettingsPage() {
       });
       const j = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(j?.error || "Enregistrement impossible");
-      const ok = `Données Rapport F enregistrées ✅ (${rapportFYear}).`;
+      const ok = `DonnÃ©es Rapport F enregistrÃ©es âœ… (${rapportFYear}).`;
       setMsgRapportF(ok);
       pushToast("success", ok);
     } catch (e: any) {
-      const msg = e?.message || "Impossible d'enregistrer les données Rapport F.";
+      const msg = e?.message || "Impossible d'enregistrer les donnÃ©es Rapport F.";
       setMsgRapportF(msg);
       pushToast("error", msg);
     } finally {
@@ -1709,7 +1717,7 @@ export default function AdminSettingsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, rapportFYear]);
 
-  /* ====== Coefficients disciplines + sous-matières : chargement & sauvegarde ====== */
+  /* ====== Coefficients disciplines + sous-matiÃ¨res : chargement & sauvegarde ====== */
   async function loadSubjectCoeffs() {
     setLoadingCoeffs(true);
     setMsgCoeffs(null);
@@ -1719,20 +1727,20 @@ export default function AdminSettingsPage() {
       });
       const j = await r.json().catch(() => ({}));
       if (!r.ok || !j?.ok) {
-        throw new Error(j?.error || "Échec chargement coefficients");
+        throw new Error(j?.error || "Ã‰chec chargement coefficients");
       }
       const rows = Array.isArray(j.items) ? j.items : [];
       const mapped: SubjectCoeffRow[] = rows.map((row: any) => ({
         level: (row.level ?? "") ? String(row.level).trim() : "",
         level_label: String(row.level_label || formatCoeffLevel(row.level)),
         subject_id: String(row.subject_id),
-        subject_name: String(row.subject_name || "Matière"),
+        subject_name: String(row.subject_name || "MatiÃ¨re"),
         coeff: Number(row.coeff ?? 1) || 1,
       }));
       setSubjectCoeffs(mapped);
       pushToast(
         "info",
-        `Coefficients chargés (${mapped.length} entrée${
+        `Coefficients chargÃ©s (${mapped.length} entrÃ©e${
           mapped.length > 1 ? "s" : ""
         }).`,
       );
@@ -1755,7 +1763,7 @@ export default function AdminSettingsPage() {
       });
       const j = await r.json().catch(() => ({}));
       if (!r.ok || !j?.ok) {
-        throw new Error(j?.error || "Échec chargement sous-matières");
+        throw new Error(j?.error || "Ã‰chec chargement sous-matiÃ¨res");
       }
 
       const rows = Array.isArray(j.items) ? j.items : [];
@@ -1769,9 +1777,9 @@ export default function AdminSettingsPage() {
 
           return {
             subject_id: String(row.subject_id),
-            subject_name: String(row.subject_name || "Matière"),
+            subject_name: String(row.subject_name || "MatiÃ¨re"),
             component_id: String(row.id ?? `comp_${idx}`),
-            component_name: String(row.label || "Sous-matière"),
+            component_name: String(row.label || "Sous-matiÃ¨re"),
             coeff: Number(row.coeff_in_subject ?? row.coeff ?? 0) || 0,
             level, // niveau depuis l'API
             code: row.code ? String(row.code) : undefined,
@@ -1784,12 +1792,12 @@ export default function AdminSettingsPage() {
       setSubjectComponents(mapped);
       pushToast(
         "info",
-        `Sous-matières chargées (${mapped.length} entrée${
+        `Sous-matiÃ¨res chargÃ©es (${mapped.length} entrÃ©e${
           mapped.length > 1 ? "s" : ""
         }).`,
       );
     } catch (e: any) {
-      const m = e?.message || "Impossible de charger les sous-matières.";
+      const m = e?.message || "Impossible de charger les sous-matiÃ¨res.";
       setMsgComponents(m);
       setSubjectComponents([]);
       pushToast("error", m);
@@ -1841,7 +1849,7 @@ export default function AdminSettingsPage() {
     );
   }
 
-  // version alignée avec la route : une liste de sous-matières par (matière, niveau)
+  // version alignÃ©e avec la route : une liste de sous-matiÃ¨res par (matiÃ¨re, niveau)
   async function saveSubjectComponents(
     arg?: boolean | React.MouseEvent<HTMLButtonElement>,
   ) {
@@ -1852,12 +1860,12 @@ export default function AdminSettingsPage() {
     setMsgComponents(null);
 
     try {
-      // 1) Déterminer le périmètre : tout / matière + niveau ciblés
+      // 1) DÃ©terminer le pÃ©rimÃ¨tre : tout / matiÃ¨re + niveau ciblÃ©s
       let scope = subjectComponents;
 
       if (targetOnly) {
         if (!componentsTarget) {
-          const msg = "Aucune matière sélectionnée pour les sous-matières.";
+          const msg = "Aucune matiÃ¨re sÃ©lectionnÃ©e pour les sous-matiÃ¨res.";
           setMsgComponents(msg);
           pushToast("error", msg);
           setSavingComponents(false);
@@ -1872,14 +1880,14 @@ export default function AdminSettingsPage() {
 
       if (scope.length === 0) {
         const msg =
-          "Aucune sous-matière à enregistrer pour le périmètre sélectionné.";
+          "Aucune sous-matiÃ¨re Ã  enregistrer pour le pÃ©rimÃ¨tre sÃ©lectionnÃ©.";
         setMsgComponents(msg);
         pushToast("error", msg);
         setSavingComponents(false);
         return;
       }
 
-      // 2) Vérifier, par (matière, niveau), que la somme des sous-coeffs est cohérente
+      // 2) VÃ©rifier, par (matiÃ¨re, niveau), que la somme des sous-coeffs est cohÃ©rente
       type SumInfo = {
         sum: number;
         subject_name: string;
@@ -1921,7 +1929,7 @@ export default function AdminSettingsPage() {
           (r) => r.subject_id === subjectId && (r.level || "").trim() === lvl,
         );
 
-        // Si aucun coeff défini pour cette matière à ce niveau, on laisse passer (cas limite)
+        // Si aucun coeff dÃ©fini pour cette matiÃ¨re Ã  ce niveau, on laisse passer (cas limite)
         if (parents.length === 0) return;
 
         for (const parentRow of parents) {
@@ -1934,7 +1942,7 @@ export default function AdminSettingsPage() {
             bad.push(
               `${info.subject_name} (${
                 info.level || parentRow.level || "niveau ?"
-              }) : somme sous-matières ${info.sum} ≠ coeff matière ${parentCoeff}`,
+              }) : somme sous-matiÃ¨res ${info.sum} â‰  coeff matiÃ¨re ${parentCoeff}`,
             );
           }
         }
@@ -1942,7 +1950,7 @@ export default function AdminSettingsPage() {
 
       if (bad.length > 0) {
         const msg =
-          "La somme des coefficients de sous-matières doit être égale au coefficient de la matière pour chaque niveau concerné. Vérifiez : " +
+          "La somme des coefficients de sous-matiÃ¨res doit Ãªtre Ã©gale au coefficient de la matiÃ¨re pour chaque niveau concernÃ©. VÃ©rifiez : " +
           bad.join(" ; ");
         setMsgComponents(msg);
         pushToast("error", msg);
@@ -2003,14 +2011,14 @@ export default function AdminSettingsPage() {
 
       if (bySubjectLevel.size === 0) {
         const msg =
-          "Aucune sous-matière valide à enregistrer (toutes les lignes sont vides).";
+          "Aucune sous-matiÃ¨re valide Ã  enregistrer (toutes les lignes sont vides).";
         setMsgComponents(msg);
         pushToast("error", msg);
         setSavingComponents(false);
         return;
       }
 
-      // 4) Appels API : PUT /subject-components par matière + niveau
+      // 4) Appels API : PUT /subject-components par matiÃ¨re + niveau
       let totalInserted = 0;
 
       for (const group of Array.from(bySubjectLevel.values())) {
@@ -2027,7 +2035,7 @@ export default function AdminSettingsPage() {
         if (!res.ok || !j?.ok) {
           throw new Error(
             j?.error ||
-              `Échec enregistrement sous-matières pour la matière ${group.subject_name}${
+              `Ã‰chec enregistrement sous-matiÃ¨res pour la matiÃ¨re ${group.subject_name}${
                 group.level ? ` (${group.level})` : ""
               }.`,
           );
@@ -2039,8 +2047,8 @@ export default function AdminSettingsPage() {
 
       const ok =
         targetOnly && componentsTarget
-          ? `Sous-matières enregistrées ✅ pour ${componentsTarget.subject_name} (${componentsTarget.level}).`
-          : `Sous-matières enregistrées ✅ (${totalInserted} ligne${
+          ? `Sous-matiÃ¨res enregistrÃ©es âœ… pour ${componentsTarget.subject_name} (${componentsTarget.level}).`
+          : `Sous-matiÃ¨res enregistrÃ©es âœ… (${totalInserted} ligne${
               totalInserted > 1 ? "s" : ""
             }).`;
 
@@ -2051,7 +2059,7 @@ export default function AdminSettingsPage() {
       await loadSubjectComponents();
     } catch (e: any) {
       const m =
-        e?.message || "Erreur lors de l'enregistrement des sous-matières.";
+        e?.message || "Erreur lors de l'enregistrement des sous-matiÃ¨res.";
       setMsgComponents(m);
       pushToast("error", m);
     } finally {
@@ -2078,9 +2086,9 @@ export default function AdminSettingsPage() {
       });
       const j = await r.json().catch(() => ({}));
       if (!r.ok || !j?.ok) {
-        throw new Error(j?.error || "Échec enregistrement coefficients");
+        throw new Error(j?.error || "Ã‰chec enregistrement coefficients");
       }
-      const ok = "Coefficients de disciplines par niveau enregistrés ✅";
+      const ok = "Coefficients de disciplines par niveau enregistrÃ©s âœ…";
       setMsgCoeffs(ok);
       pushToast("success", ok);
     } catch (e: any) {
@@ -2096,7 +2104,7 @@ export default function AdminSettingsPage() {
   function previewGeneralSecondaryCiPreset() {
     if (!selectedCoeffLevel) {
       const msg =
-        "Choisissez d'abord un niveau avant de prévisualiser le référentiel CI.";
+        "Choisissez d'abord un niveau avant de prÃ©visualiser le rÃ©fÃ©rentiel CI.";
       setMsgCoeffs(msg);
       pushToast("error", msg);
       return;
@@ -2107,7 +2115,7 @@ export default function AdminSettingsPage() {
     );
 
     if (targetRows.length === 0) {
-      const msg = `Aucune discipline à prévisualiser pour le niveau ${formatCoeffLevel(selectedCoeffLevel)}. Cliquez sur « Rafraîchir » si vous venez d'ajouter des matières.`;
+      const msg = `Aucune discipline Ã  prÃ©visualiser pour le niveau ${formatCoeffLevel(selectedCoeffLevel)}. Cliquez sur Â« RafraÃ®chir Â» si vous venez d'ajouter des matiÃ¨res.`;
       setCiPresetPreview([]);
       setCiPresetAppliedOnce(false);
       setMsgCoeffs(msg);
@@ -2128,10 +2136,10 @@ export default function AdminSettingsPage() {
 
     const msg =
       applicable > 0
-        ? `Prévisualisation CI prête pour ${formatCoeffLevel(selectedCoeffLevel)} : ${applicable} coefficient(s) reconnu(s)${
-            ambiguous > 0 ? `, ${ambiguous} cas A1/A2 à préciser` : ""
+        ? `PrÃ©visualisation CI prÃªte pour ${formatCoeffLevel(selectedCoeffLevel)} : ${applicable} coefficient(s) reconnu(s)${
+            ambiguous > 0 ? `, ${ambiguous} cas A1/A2 Ã  prÃ©ciser` : ""
           }.`
-        : `Aucune discipline reconnue par le référentiel CI pour le niveau ${formatCoeffLevel(selectedCoeffLevel)}.`;
+        : `Aucune discipline reconnue par le rÃ©fÃ©rentiel CI pour le niveau ${formatCoeffLevel(selectedCoeffLevel)}.`;
 
     setMsgCoeffs(msg);
     pushToast(applicable > 0 ? "info" : "error", msg);
@@ -2140,7 +2148,7 @@ export default function AdminSettingsPage() {
   function applyGeneralSecondaryCiPreset() {
     if (!selectedCoeffLevel) {
       const msg =
-        "Choisissez d'abord un niveau avant d'appliquer le référentiel CI.";
+        "Choisissez d'abord un niveau avant d'appliquer le rÃ©fÃ©rentiel CI.";
       setMsgCoeffs(msg);
       pushToast("error", msg);
       return;
@@ -2148,7 +2156,7 @@ export default function AdminSettingsPage() {
 
     if (subjectCoeffs.length === 0) {
       const msg =
-        "Aucun coefficient à initialiser. Cliquez d'abord sur « Rafraîchir ».";
+        "Aucun coefficient Ã  initialiser. Cliquez d'abord sur Â« RafraÃ®chir Â».";
       setMsgCoeffs(msg);
       pushToast("error", msg);
       return;
@@ -2159,7 +2167,7 @@ export default function AdminSettingsPage() {
     );
 
     if (targetRows.length === 0) {
-      const msg = `Aucune discipline à initialiser pour le niveau ${formatCoeffLevel(selectedCoeffLevel)}. Cliquez sur « Rafraîchir » si vous venez d'ajouter des matières.`;
+      const msg = `Aucune discipline Ã  initialiser pour le niveau ${formatCoeffLevel(selectedCoeffLevel)}. Cliquez sur Â« RafraÃ®chir Â» si vous venez d'ajouter des matiÃ¨res.`;
       setMsgCoeffs(msg);
       pushToast("error", msg);
       return;
@@ -2171,7 +2179,7 @@ export default function AdminSettingsPage() {
     );
 
     if (result.appliedCoeffs === 0) {
-      const msg = `Aucune correspondance automatique trouvée pour le niveau ${selectedCoeffLevel}. Vérifiez les noms des disciplines.`;
+      const msg = `Aucune correspondance automatique trouvÃ©e pour le niveau ${selectedCoeffLevel}. VÃ©rifiez les noms des disciplines.`;
       setCiPresetPreview(result.preview);
       setCiPresetAppliedOnce(false);
       setMsgCoeffs(msg);
@@ -2198,10 +2206,10 @@ export default function AdminSettingsPage() {
     setCiPresetAppliedOnce(true);
 
     const msg =
-      `Référentiel CI appliqué localement pour ${formatCoeffLevel(selectedCoeffLevel)} : ${result.appliedCoeffs} coefficient(s)` +
+      `RÃ©fÃ©rentiel CI appliquÃ© localement pour ${formatCoeffLevel(selectedCoeffLevel)} : ${result.appliedCoeffs} coefficient(s)` +
       `${
         result.appliedComponents > 0
-          ? `, ${result.appliedComponents} sous-matière(s) de Français`
+          ? `, ${result.appliedComponents} sous-matiÃ¨re(s) de FranÃ§ais`
           : ""
       }` +
       `${
@@ -2211,15 +2219,15 @@ export default function AdminSettingsPage() {
       }` +
       `${
         result.ambiguousCount > 0
-          ? `. ${result.ambiguousCount} cas A1/A2 restent à préciser.`
+          ? `. ${result.ambiguousCount} cas A1/A2 restent Ã  prÃ©ciser.`
           : "."
       }` +
-      " Cliquez ensuite sur les boutons d’enregistrement.";
+      " Cliquez ensuite sur les boutons dâ€™enregistrement.";
 
     setMsgCoeffs(msg);
     setMsgComponents(
       result.appliedComponents > 0
-        ? "Sous-matières de Français générées pour le niveau sélectionné. Les anciennes lignes sans niveau sont ignorées dans l'état actuel de l'écran."
+        ? "Sous-matiÃ¨res de FranÃ§ais gÃ©nÃ©rÃ©es pour le niveau sÃ©lectionnÃ©. Les anciennes lignes sans niveau sont ignorÃ©es dans l'Ã©tat actuel de l'Ã©cran."
         : msgComponents,
     );
     pushToast("success", msg);
@@ -2228,7 +2236,7 @@ export default function AdminSettingsPage() {
   /* ====== chargement initial ====== */
   useEffect(() => {
     loadInstitutionConfig();
-    loadAcademicYears(); // charge aussi les périodes
+    loadAcademicYears(); // charge aussi les pÃ©riodes
     loadSubjectCoeffs();
     loadSubjectComponents();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2268,23 +2276,23 @@ export default function AdminSettingsPage() {
                 Centre de configuration
               </div>
               <h1 className="mt-4 text-3xl font-black tracking-tight text-white md:text-4xl">
-                Paramètres de l&apos;établissement
+                ParamÃ¨tres de l&apos;Ã©tablissement
               </h1>
               <p className="mt-3 text-sm leading-6 text-slate-200 md:text-[15px]">
-                Un espace plus lisible pour gérer la sécurité, les utilisateurs,
-                les horaires, les années scolaires, les périodes
-                d&apos;évaluation et les coefficients de disciplines, sans
+                Un espace plus lisible pour gÃ©rer la sÃ©curitÃ©, les utilisateurs,
+                les horaires, les annÃ©es scolaires, les pÃ©riodes
+                d&apos;Ã©valuation et les coefficients de disciplines, sans
                 changer la logique existante.
               </p>
               <div className="mt-4 flex flex-wrap gap-2 text-xs font-semibold text-slate-200">
                 <span className="rounded-full bg-white/10 px-3 py-1 ring-1 ring-white/15">
-                  {users.length} utilisateur(s) chargé(s)
+                  {users.length} utilisateur(s) chargÃ©(s)
                 </span>
                 <span className="rounded-full bg-white/10 px-3 py-1 ring-1 ring-white/15">
-                  {configuredDaysCount} jour(s) configuré(s)
+                  {configuredDaysCount} jour(s) configurÃ©(s)
                 </span>
                 <span className="rounded-full bg-white/10 px-3 py-1 ring-1 ring-white/15">
-                  Année active : {currentAcademicYearText}
+                  AnnÃ©e active : {currentAcademicYearText}
                 </span>
               </div>
             </div>
@@ -2292,24 +2300,24 @@ export default function AdminSettingsPage() {
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="rounded-3xl border border-white/10 bg-white/10 p-4 backdrop-blur">
                 <div className="text-xs font-black uppercase tracking-[0.16em] text-sky-100">
-                  Horaires enregistrés
+                  Horaires enregistrÃ©s
                 </div>
                 <div className="mt-2 text-3xl font-black text-white">
                   {totalConfiguredPeriods}
                 </div>
                 <div className="mt-1 text-sm text-slate-200">
-                  Créneau(x) sur {configuredDaysCount} jour(s)
+                  CrÃ©neau(x) sur {configuredDaysCount} jour(s)
                 </div>
               </div>
               <div className="rounded-3xl border border-white/10 bg-white/10 p-4 backdrop-blur">
                 <div className="text-xs font-black uppercase tracking-[0.16em] text-sky-100">
-                  Périodes de bulletin
+                  PÃ©riodes de bulletin
                 </div>
                 <div className="mt-2 text-3xl font-black text-white">
                   {activeEvalPeriods}
                 </div>
                 <div className="mt-1 text-sm text-slate-200">
-                  Période(s) active(s)
+                  PÃ©riode(s) active(s)
                 </div>
               </div>
             </div>
@@ -2321,18 +2329,18 @@ export default function AdminSettingsPage() {
             <div className="flex flex-col gap-2 lg:flex-row lg:items-end lg:justify-between">
               <div>
                 <div className="text-[11px] font-black uppercase tracking-[0.2em] text-slate-500">
-                  Groupe paramètres
+                  Groupe paramÃ¨tres
                 </div>
                 <p className="mt-1 text-sm text-slate-600">
-                  Chaque grande zone de configuration est désormais rangée dans
-                  un onglet, pour éviter la longue page unique.
+                  Chaque grande zone de configuration est dÃ©sormais rangÃ©e dans
+                  un onglet, pour Ã©viter la longue page unique.
                 </p>
               </div>
               <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
                 Onglet actif :
                 <span className="ml-2 font-semibold text-slate-900">
                   {SETTINGS_TABS.find((tab) => tab.key === activeTab)?.label ||
-                    "Accès & sécurité"}
+                    "AccÃ¨s & sÃ©curitÃ©"}
                 </span>
               </div>
             </div>
@@ -2372,21 +2380,21 @@ export default function AdminSettingsPage() {
 
         <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
           <OverviewCard
-            label="Sécurité"
-            value={busyMine || busyCustom ? "En cours" : "Prêt"}
+            label="SÃ©curitÃ©"
+            value={busyMine || busyCustom ? "En cours" : "PrÃªt"}
             hint="Gestion des mots de passe"
             tone="sky"
           />
           <OverviewCard
             label="Utilisateurs"
             value={users.length}
-            hint={userListOpen ? "Liste ouverte" : "Liste repliée"}
+            hint={userListOpen ? "Liste ouverte" : "Liste repliÃ©e"}
             tone="violet"
           />
           <OverviewCard
             label="Horaires"
             value={currentDayRows.length}
-            hint={`Créneau(x) pour le jour ${curDay}`}
+            hint={`CrÃ©neau(x) pour le jour ${curDay}`}
             tone="emerald"
           />
           <OverviewCard
@@ -2395,7 +2403,7 @@ export default function AdminSettingsPage() {
             hint={
               selectedCoeffLevel
                 ? `Niveau ${formatCoeffLevel(selectedCoeffLevel)}`
-                : "Aucun niveau sélectionné"
+                : "Aucun niveau sÃ©lectionnÃ©"
             }
             tone="amber"
           />
@@ -2408,9 +2416,9 @@ export default function AdminSettingsPage() {
         ======================== */}
             <SectionCard
               id="password"
-              eyebrow="Sécurité"
+              eyebrow="SÃ©curitÃ©"
               title="Mon mot de passe"
-              description="Modifiez votre mot de passe administrateur sans toucher aux autres réglages de la page."
+              description="Modifiez votre mot de passe administrateur sans toucher aux autres rÃ©glages de la page."
             >
               <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
                 <div>
@@ -2435,7 +2443,7 @@ export default function AdminSettingsPage() {
                     value={pwd1}
                     onChange={(e) => setPwd1(e.target.value)}
                     disabled={disableMine}
-                    placeholder="••••••••"
+                    placeholder="â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢"
                   />
                 </div>
 
@@ -2461,7 +2469,7 @@ export default function AdminSettingsPage() {
                     value={pwd2}
                     onChange={(e) => setPwd2(e.target.value)}
                     disabled={disableMine}
-                    placeholder="••••••••"
+                    placeholder="â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢"
                   />
                 </div>
 
@@ -2471,7 +2479,7 @@ export default function AdminSettingsPage() {
                     disabled={disableMine}
                     className="rounded-xl bg-sky-700 px-4 py-2 text-sm font-medium text-white shadow hover:bg-sky-800 disabled:opacity-60"
                   >
-                    {busyMine ? "Mise à jour…" : "Changer mon mot de passe"}
+                    {busyMine ? "Mise Ã  jourâ€¦" : "Changer mon mot de passe"}
                   </button>
                 </div>
               </div>
@@ -2484,13 +2492,13 @@ export default function AdminSettingsPage() {
             </SectionCard>
 
             {/* ==========================================
-            2) Réinitialiser le mot de passe d'un user
+            2) RÃ©initialiser le mot de passe d'un user
         =========================================== */}
             <SectionCard
               id="users"
               eyebrow="Administration"
-              title="Réinitialiser le mot de passe d’un utilisateur"
-              description="Affichez la liste quand vous en avez besoin, puis lancez une réinitialisation temporaire ou un mot de passe personnalisé."
+              title="RÃ©initialiser le mot de passe dâ€™un utilisateur"
+              description="Affichez la liste quand vous en avez besoin, puis lancez une rÃ©initialisation temporaire ou un mot de passe personnalisÃ©."
               actions={
                 <button
                   onClick={() => setUserListOpen((v) => !v)}
@@ -2516,9 +2524,9 @@ export default function AdminSettingsPage() {
                       onClick={loadUsers}
                       className="rounded-lg border px-3 py-1.5 text-sm hover:bg-slate-50"
                       disabled={loadingUsers}
-                      title="Rafraîchir la liste"
+                      title="RafraÃ®chir la liste"
                     >
-                      {loadingUsers ? "Chargement…" : "Rafraîchir"}
+                      {loadingUsers ? "Chargementâ€¦" : "RafraÃ®chir"}
                     </button>
                   </div>
 
@@ -2530,11 +2538,11 @@ export default function AdminSettingsPage() {
 
                   {loadingUsers ? (
                     <div className="text-sm text-slate-500">
-                      Chargement des utilisateurs…
+                      Chargement des utilisateursâ€¦
                     </div>
                   ) : users.length === 0 ? (
                     <div className="text-sm text-slate-500">
-                      Aucun utilisateur trouvé.
+                      Aucun utilisateur trouvÃ©.
                     </div>
                   ) : (
                     <div className="overflow-x-auto">
@@ -2545,7 +2553,7 @@ export default function AdminSettingsPage() {
                             {!compactUsers && (
                               <th className="px-3 py-2 text-left">Contact</th>
                             )}
-                            <th className="px-3 py-2 text-left">Rôle</th>
+                            <th className="px-3 py-2 text-left">RÃ´le</th>
                             <th className="px-3 py-2 text-right">Actions</th>
                           </tr>
                         </thead>
@@ -2578,26 +2586,26 @@ export default function AdminSettingsPage() {
         {activeTab === "school" && (
           <>
             {/* =======================
-            3) Horaires & séances + infos établissement
+            3) Horaires & sÃ©ances + infos Ã©tablissement
         ======================== */}
             <SectionCard
               id="schedule"
               eyebrow="Organisation"
-              title="Horaires, séances et identité de l’établissement"
-              description="Regroupez ici les informations administratives, les créneaux officiels et le générateur rapide de séances pour offrir une lecture plus simple aux utilisateurs."
+              title="Horaires, sÃ©ances et identitÃ© de lâ€™Ã©tablissement"
+              description="Regroupez ici les informations administratives, les crÃ©neaux officiels et le gÃ©nÃ©rateur rapide de sÃ©ances pour offrir une lecture plus simple aux utilisateurs."
               actions={
                 <button
                   onClick={loadInstitutionConfig}
                   className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
-                  title="Rafraîchir"
+                  title="RafraÃ®chir"
                 >
-                  Rafraîchir
+                  RafraÃ®chir
                 </button>
               }
             >
               <SubSection
-                title="Paramètres généraux"
-                description="Fuseau horaire, durée par défaut et informations administratives affichées dans certains documents."
+                title="ParamÃ¨tres gÃ©nÃ©raux"
+                description="Fuseau horaire, durÃ©e par dÃ©faut et informations administratives affichÃ©es dans certains documents."
               >
                 <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
                   <div>
@@ -2622,7 +2630,7 @@ export default function AdminSettingsPage() {
                   </div>
                   <div>
                     <div className="mb-1 text-xs text-slate-500">
-                      Durée par séance (minutes)
+                      DurÃ©e par sÃ©ance (minutes)
                     </div>
                     <input
                       type="number"
@@ -2641,8 +2649,8 @@ export default function AdminSettingsPage() {
                       disabled={loadingCfg || savingCfg}
                     />
                     <div className="mt-1 text-[11px] text-slate-500">
-                      Utilisée comme valeur par défaut lors de l’ouverture de
-                      séance (UI), sans forcer vos créneaux ci-dessous.
+                      UtilisÃ©e comme valeur par dÃ©faut lors de lâ€™ouverture de
+                      sÃ©ance (UI), sans forcer vos crÃ©neaux ci-dessous.
                     </div>
                   </div>
                   <div className="flex items-end">
@@ -2659,17 +2667,17 @@ export default function AdminSettingsPage() {
                         disabled={loadingCfg || savingCfg}
                       />
                       <span className="text-sm text-slate-700">
-                        Calcul automatique des retards (par créneau)
+                        Calcul automatique des retards (par crÃ©neau)
                       </span>
                     </label>
                   </div>
                 </div>
 
-                {/* Infos d'établissement (optionnelles) */}
+                {/* Infos d'Ã©tablissement (optionnelles) */}
                 <div className="mb-4 grid grid-cols-1 gap-3 md:grid-cols-3">
                   <div>
                     <div className="mb-1 text-xs text-slate-500">
-                      Nom du pays pour l&apos;en-tête (optionnel)
+                      Nom du pays pour l&apos;en-tÃªte (optionnel)
                     </div>
                     <input
                       className="w-full rounded-lg border px-3 py-2 text-sm"
@@ -2681,7 +2689,7 @@ export default function AdminSettingsPage() {
                         }))
                       }
                       disabled={loadingCfg || savingCfg}
-                      placeholder="République de Côte d'Ivoire"
+                      placeholder="RÃ©publique de CÃ´te d'Ivoire"
                     />
                   </div>
                   <div>
@@ -2703,7 +2711,7 @@ export default function AdminSettingsPage() {
                   </div>
                   <div>
                     <div className="mb-1 text-xs text-slate-500">
-                      Nom du ministère (optionnel)
+                      Nom du ministÃ¨re (optionnel)
                     </div>
                     <input
                       className="w-full rounded-lg border px-3 py-2 text-sm"
@@ -2720,7 +2728,7 @@ export default function AdminSettingsPage() {
                   </div>
                   <div>
                     <div className="mb-1 text-xs text-slate-500">
-                      Code établissement / MEN (optionnel)
+                      Code Ã©tablissement / MEN (optionnel)
                     </div>
                     <input
                       className="w-full rounded-lg border px-3 py-2 text-sm"
@@ -2738,7 +2746,7 @@ export default function AdminSettingsPage() {
 
                   <div>
                     <div className="mb-1 text-xs text-slate-500">
-                      Téléphone de l&apos;établissement (optionnel)
+                      TÃ©lÃ©phone de l&apos;Ã©tablissement (optionnel)
                     </div>
                     <input
                       type="tel"
@@ -2756,7 +2764,7 @@ export default function AdminSettingsPage() {
                   </div>
                   <div>
                     <div className="mb-1 text-xs text-slate-500">
-                      Email de l&apos;établissement (optionnel)
+                      Email de l&apos;Ã©tablissement (optionnel)
                     </div>
                     <input
                       type="email"
@@ -2773,10 +2781,10 @@ export default function AdminSettingsPage() {
                     />
                   </div>
 
-                  {/* Logo importé par fichier */}
+                  {/* Logo importÃ© par fichier */}
                   <div>
                     <div className="mb-1 text-xs text-slate-500">
-                      Logo de l&apos;établissement (import d&apos;image)
+                      Logo de l&apos;Ã©tablissement (import d&apos;image)
                     </div>
                     <div className="flex flex-col gap-2">
                       <div className="flex flex-wrap items-center gap-2">
@@ -2788,7 +2796,7 @@ export default function AdminSettingsPage() {
                             onChange={handleLogoFileChange}
                             disabled={loadingCfg || savingCfg}
                           />
-                          Choisir un fichier…
+                          Choisir un fichierâ€¦
                         </label>
                         {cfg.institution_logo_url && (
                           <button
@@ -2813,26 +2821,26 @@ export default function AdminSettingsPage() {
                             {/* eslint-disable-next-line @next/next/no-img-element */}
                             <img
                               src={cfg.institution_logo_url}
-                              alt="Logo de l'établissement"
+                              alt="Logo de l'Ã©tablissement"
                               className="h-full w-full object-contain"
                             />
                           </div>
                           <div className="text-[11px] text-slate-500">
-                            Logo actuellement utilisé pour les bulletins et
+                            Logo actuellement utilisÃ© pour les bulletins et
                             autres documents officiels.
                           </div>
                         </div>
                       )}
 
                       <div className="text-[11px] text-slate-500">
-                        Formats conseillés : PNG ou JPG, taille ≤ 1&nbsp;Mo.
+                        Formats conseillÃ©s : PNG ou JPG, taille â‰¤ 1&nbsp;Mo.
                       </div>
                     </div>
                   </div>
 
                   <div>
                     <div className="mb-1 text-xs text-slate-500">
-                      Direction régionale (optionnel)
+                      Direction rÃ©gionale (optionnel)
                     </div>
                     <input
                       className="w-full rounded-lg border px-3 py-2 text-sm"
@@ -2866,7 +2874,7 @@ export default function AdminSettingsPage() {
                   </div>
                   <div>
                     <div className="mb-1 text-xs text-slate-500">
-                      Statut de l&apos;établissement (optionnel)
+                      Statut de l&apos;Ã©tablissement (optionnel)
                     </div>
                     <input
                       className="w-full rounded-lg border px-3 py-2 text-sm"
@@ -2878,7 +2886,7 @@ export default function AdminSettingsPage() {
                         }))
                       }
                       disabled={loadingCfg || savingCfg}
-                      placeholder="Public / Privé laïc / ..."
+                      placeholder="Public / PrivÃ© laÃ¯c / ..."
                     />
                   </div>
                   <div>
@@ -2895,7 +2903,7 @@ export default function AdminSettingsPage() {
                         }))
                       }
                       disabled={loadingCfg || savingCfg}
-                      placeholder="Nom et prénom(s)"
+                      placeholder="Nom et prÃ©nom(s)"
                     />
                   </div>
                   <div>
@@ -2924,23 +2932,23 @@ export default function AdminSettingsPage() {
                     className="rounded-lg bg-sky-700 px-3 py-1.5 text-sm font-medium text-white hover:bg-sky-800 disabled:opacity-60"
                   >
                     {savingCfg
-                      ? "Enregistrement…"
-                      : "Enregistrer les paramètres"}
+                      ? "Enregistrementâ€¦"
+                      : "Enregistrer les paramÃ¨tres"}
                   </button>
                   {msgSched && (
                     <span className="text-sm text-slate-700">{msgSched}</span>
                   )}
                 </div>
 
-                {/* Générateur de créneaux */}
+                {/* GÃ©nÃ©rateur de crÃ©neaux */}
                 <div className="mb-4 rounded-xl border bg-slate-50 p-3">
                   <div className="mb-2 text-sm font-medium text-slate-800">
-                    Générateur de créneaux (auto)
+                    GÃ©nÃ©rateur de crÃ©neaux (auto)
                   </div>
                   <div className="grid grid-cols-1 gap-2 md:grid-cols-5">
                     <div>
                       <div className="mb-1 text-xs text-slate-500">
-                        Début journée
+                        DÃ©but journÃ©e
                       </div>
                       <input
                         type="time"
@@ -2951,7 +2959,7 @@ export default function AdminSettingsPage() {
                     </div>
                     <div>
                       <div className="mb-1 text-xs text-slate-500">
-                        Fin journée
+                        Fin journÃ©e
                       </div>
                       <input
                         type="time"
@@ -2962,7 +2970,7 @@ export default function AdminSettingsPage() {
                     </div>
                     <div>
                       <div className="mb-1 text-xs text-slate-500">
-                        Durée séance (min)
+                        DurÃ©e sÃ©ance (min)
                       </div>
                       <input
                         type="number"
@@ -2978,7 +2986,7 @@ export default function AdminSettingsPage() {
                     </div>
                     <div>
                       <div className="mb-1 text-xs text-slate-500">
-                        Pause entre séances (min)
+                        Pause entre sÃ©ances (min)
                       </div>
                       <input
                         type="number"
@@ -2994,13 +3002,13 @@ export default function AdminSettingsPage() {
                     </div>
                     <div>
                       <div className="mb-1 text-xs text-slate-500">
-                        Libellé de base
+                        LibellÃ© de base
                       </div>
                       <input
                         value={genLabelBase}
                         onChange={(e) => setGenLabelBase(e.target.value)}
                         className="w-full rounded-lg border bg-white px-3 py-1.5 text-sm"
-                        placeholder="Séance"
+                        placeholder="SÃ©ance"
                       />
                     </div>
                   </div>
@@ -3012,7 +3020,7 @@ export default function AdminSettingsPage() {
                         checked={genReplace}
                         onChange={(e) => setGenReplace(e.target.checked)}
                       />
-                      Remplacer les créneaux existants (sinon, ajouter à la
+                      Remplacer les crÃ©neaux existants (sinon, ajouter Ã  la
                       suite)
                     </label>
 
@@ -3020,7 +3028,7 @@ export default function AdminSettingsPage() {
                       onClick={() => buildPreview(curDay)}
                       className="rounded-lg border bg-white px-3 py-1.5 text-sm hover:bg-slate-100"
                     >
-                      Prévisualiser (jour courant)
+                      PrÃ©visualiser (jour courant)
                     </button>
                     <button
                       onClick={() => applyGeneratedToDays([curDay])}
@@ -3032,7 +3040,7 @@ export default function AdminSettingsPage() {
                       onClick={() => applyGeneratedToDays([1, 2, 3, 4, 5])}
                       className="rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700"
                     >
-                      Appliquer Lun→Ven
+                      Appliquer Lunâ†’Ven
                     </button>
                   </div>
 
@@ -3042,10 +3050,10 @@ export default function AdminSettingsPage() {
                         <thead className="bg-slate-50">
                           <tr className="text-left text-slate-600">
                             <th className="w-12 px-3 py-2">#</th>
-                            <th className="w-36 px-3 py-2">Début</th>
+                            <th className="w-36 px-3 py-2">DÃ©but</th>
                             <th className="w-36 px-3 py-2">Fin</th>
                             <th className="px-3 py-2">
-                              Libellé (prévisualisation)
+                              LibellÃ© (prÃ©visualisation)
                             </th>
                           </tr>
                         </thead>
@@ -3066,8 +3074,8 @@ export default function AdminSettingsPage() {
               </SubSection>
 
               <SubSection
-                title="Créneaux par jour"
-                description="Sélectionnez un jour, modifiez chaque horaire si nécessaire, puis enregistrez l’ensemble."
+                title="CrÃ©neaux par jour"
+                description="SÃ©lectionnez un jour, modifiez chaque horaire si nÃ©cessaire, puis enregistrez lâ€™ensemble."
               >
                 <div className="mb-3 flex flex-wrap gap-2">
                   {[
@@ -3092,15 +3100,15 @@ export default function AdminSettingsPage() {
                   ))}
                 </div>
 
-                {/* Tableau créneaux pour le jour courant */}
+                {/* Tableau crÃ©neaux pour le jour courant */}
                 <div className="overflow-x-auto rounded-xl border">
                   <table className="min-w-full text-sm">
                     <thead className="bg-slate-50">
                       <tr className="text-left text-slate-600">
                         <th className="w-12 px-3 py-2">#</th>
-                        <th className="w-36 px-3 py-2">Début</th>
+                        <th className="w-36 px-3 py-2">DÃ©but</th>
                         <th className="w-36 px-3 py-2">Fin</th>
-                        <th className="px-3 py-2">Libellé</th>
+                        <th className="px-3 py-2">LibellÃ©</th>
                         <th className="w-24 px-3 py-2 text-right">Actions</th>
                       </tr>
                     </thead>
@@ -3108,13 +3116,13 @@ export default function AdminSettingsPage() {
                       {loadingCfg ? (
                         <tr>
                           <td className="px-3 py-3 text-slate-500" colSpan={5}>
-                            Chargement…
+                            Chargementâ€¦
                           </td>
                         </tr>
                       ) : (byDay[curDay] || []).length === 0 ? (
                         <tr>
                           <td className="px-3 py-3 text-slate-500" colSpan={5}>
-                            Aucun créneau pour ce jour.
+                            Aucun crÃ©neau pour ce jour.
                           </td>
                         </tr>
                       ) : (
@@ -3154,7 +3162,7 @@ export default function AdminSettingsPage() {
                                   })
                                 }
                                 className="w-full rounded-lg border px-3 py-1.5 text-sm"
-                                placeholder="1ère heure / Pause / …"
+                                placeholder="1Ã¨re heure / Pause / â€¦"
                               />
                             </td>
                             <td className="px-3 py-2 text-right">
@@ -3177,7 +3185,7 @@ export default function AdminSettingsPage() {
                     onClick={() => addRow(curDay)}
                     className="rounded-lg border px-3 py-1.5 text-sm hover:bg-slate-50"
                   >
-                    + Ajouter un créneau
+                    + Ajouter un crÃ©neau
                   </button>
 
                   <button
@@ -3186,15 +3194,15 @@ export default function AdminSettingsPage() {
                     className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white shadow hover:bg-emerald-700 disabled:opacity-60"
                   >
                     {savingPeriods
-                      ? "Enregistrement…"
-                      : "Enregistrer les créneaux"}
+                      ? "Enregistrementâ€¦"
+                      : "Enregistrer les crÃ©neaux"}
                   </button>
                 </div>
 
                 <div className="mt-4 text-[12px] text-slate-500">
                   Astuce : si vous laissez des jours vides, ils ne seront pas
-                  pris en compte. Le calcul de retard se base sur le créneau du
-                  jour le plus proche de l’heure de début de séance.
+                  pris en compte. Le calcul de retard se base sur le crÃ©neau du
+                  jour le plus proche de lâ€™heure de dÃ©but de sÃ©ance.
                 </div>
               </SubSection>
             </SectionCard>
@@ -3204,20 +3212,20 @@ export default function AdminSettingsPage() {
         {activeTab === "academic-years" && (
           <>
             {/* =======================
-            4) Années scolaires
+            4) AnnÃ©es scolaires
         ======================== */}
             <SectionCard
               id="academic-years"
               eyebrow="Archivage"
-              title="Années scolaires"
-              description="Définissez l’année courante, préparez les archives et choisissez l’année utilisée pour les périodes et les bulletins."
+              title="AnnÃ©es scolaires"
+              description="DÃ©finissez lâ€™annÃ©e courante, prÃ©parez les archives et choisissez lâ€™annÃ©e utilisÃ©e pour les pÃ©riodes et les bulletins."
               actions={
                 <button
                   onClick={loadAcademicYears}
                   disabled={loadingAcademicYears}
                   className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-60"
                 >
-                  {loadingAcademicYears ? "Chargement…" : "Rafraîchir"}
+                  {loadingAcademicYears ? "Chargementâ€¦" : "RafraÃ®chir"}
                 </button>
               }
             >
@@ -3230,7 +3238,7 @@ export default function AdminSettingsPage() {
               <div className="mb-3 grid grid-cols-1 gap-3 md:grid-cols-3">
                 <div>
                   <div className="mb-1 text-xs text-slate-500">
-                    Année scolaire utilisée pour les périodes & bulletins
+                    AnnÃ©e scolaire utilisÃ©e pour les pÃ©riodes & bulletins
                   </div>
                   <select
                     className="w-full rounded-lg border px-3 py-2 text-sm"
@@ -3242,18 +3250,18 @@ export default function AdminSettingsPage() {
                     }}
                   >
                     <option value="">
-                      — Année déduite automatiquement (serveur) —
+                      â€” AnnÃ©e dÃ©duite automatiquement (serveur) â€”
                     </option>
                     {academicYears.map((y) => (
                       <option key={y.code || y.id} value={y.code}>
                         {y.code || "(sans code)"}
-                        {y.is_current ? " — année courante" : ""}
+                        {y.is_current ? " â€” annÃ©e courante" : ""}
                       </option>
                     ))}
                   </select>
                   <div className="mt-1 text-[11px] text-slate-500">
-                    Utilisée lors de l&apos;enregistrement des périodes
-                    d&apos;évaluation.
+                    UtilisÃ©e lors de l&apos;enregistrement des pÃ©riodes
+                    d&apos;Ã©valuation.
                   </div>
                 </div>
               </div>
@@ -3264,11 +3272,11 @@ export default function AdminSettingsPage() {
                     <tr>
                       <th className="w-10 px-3 py-2 text-left">#</th>
                       <th className="px-3 py-2 text-left">Code</th>
-                      <th className="px-3 py-2 text-left">Libellé</th>
-                      <th className="w-32 px-3 py-2 text-left">Début</th>
+                      <th className="px-3 py-2 text-left">LibellÃ©</th>
+                      <th className="w-32 px-3 py-2 text-left">DÃ©but</th>
                       <th className="w-32 px-3 py-2 text-left">Fin</th>
                       <th className="w-40 px-3 py-2 text-center">
-                        Année courante
+                        AnnÃ©e courante
                       </th>
                       <th className="w-32 px-3 py-2 text-right">Actions</th>
                     </tr>
@@ -3277,13 +3285,13 @@ export default function AdminSettingsPage() {
                     {loadingAcademicYears ? (
                       <tr>
                         <td className="px-3 py-3 text-slate-500" colSpan={7}>
-                          Chargement des années scolaires…
+                          Chargement des annÃ©es scolairesâ€¦
                         </td>
                       </tr>
                     ) : academicYears.length === 0 ? (
                       <tr>
                         <td className="px-3 py-3 text-slate-500" colSpan={7}>
-                          Aucune année scolaire définie. Ajoutez au moins une
+                          Aucune annÃ©e scolaire dÃ©finie. Ajoutez au moins une
                           ligne pour commencer.
                         </td>
                       </tr>
@@ -3312,7 +3320,7 @@ export default function AdminSettingsPage() {
                                 })
                               }
                               className="w-full rounded-lg border px-2 py-1 text-sm"
-                              placeholder="Année scolaire 2024-2025"
+                              placeholder="AnnÃ©e scolaire 2024-2025"
                             />
                           </td>
                           <td className="px-3 py-2">
@@ -3381,7 +3389,7 @@ export default function AdminSettingsPage() {
                     onClick={addAcademicYear}
                     className="rounded-lg border px-3 py-1.5 text-sm hover:bg-slate-50"
                   >
-                    + Ajouter une année scolaire
+                    + Ajouter une annÃ©e scolaire
                   </button>
                 </div>
                 <div className="flex items-center gap-2">
@@ -3392,8 +3400,8 @@ export default function AdminSettingsPage() {
                     className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white shadow hover:bg-emerald-700 disabled:opacity-60"
                   >
                     {savingAcademicYears
-                      ? "Enregistrement…"
-                      : "Enregistrer les années scolaires"}
+                      ? "Enregistrementâ€¦"
+                      : "Enregistrer les annÃ©es scolaires"}
                   </button>
                 </div>
               </div>
@@ -3404,20 +3412,20 @@ export default function AdminSettingsPage() {
         {activeTab === "grading-periods" && (
           <>
             {/* =======================
-            5) Périodes d'évaluation (bulletins)
+            5) PÃ©riodes d'Ã©valuation (bulletins)
         ======================== */}
             <SectionCard
               id="grading-periods"
               eyebrow="Bulletins"
-              title="Périodes d'évaluation"
-              description="Trimestres, semestres, compositions : chaque période garde son ordre, son coefficient et sa plage de dates."
+              title="PÃ©riodes d'Ã©valuation"
+              description="Trimestres, semestres, compositions : chaque pÃ©riode garde son ordre, son coefficient et sa plage de dates."
               actions={
                 <button
                   onClick={() => loadEvalPeriods()}
                   disabled={loadingEvalPeriods}
                   className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-60"
                 >
-                  {loadingEvalPeriods ? "Chargement…" : "Rafraîchir"}
+                  {loadingEvalPeriods ? "Chargementâ€¦" : "RafraÃ®chir"}
                 </button>
               }
             >
@@ -3433,12 +3441,12 @@ export default function AdminSettingsPage() {
                     <tr>
                       <th className="w-10 px-3 py-2 text-left">#</th>
                       <th className="px-3 py-2 text-left">Code</th>
-                      <th className="px-3 py-2 text-left">Libellé complet</th>
-                      <th className="px-3 py-2 text-left">Libellé bulletin</th>
+                      <th className="px-3 py-2 text-left">LibellÃ© complet</th>
+                      <th className="px-3 py-2 text-left">LibellÃ© bulletin</th>
                       <th className="w-24 px-3 py-2 text-right">
-                        Coeff. période
+                        Coeff. pÃ©riode
                       </th>
-                      <th className="w-32 px-3 py-2 text-left">Début</th>
+                      <th className="w-32 px-3 py-2 text-left">DÃ©but</th>
                       <th className="w-32 px-3 py-2 text-left">Fin</th>
                       <th className="w-24 px-3 py-2 text-center">Actif</th>
                       <th className="w-32 px-3 py-2 text-right">Actions</th>
@@ -3448,14 +3456,14 @@ export default function AdminSettingsPage() {
                     {loadingEvalPeriods ? (
                       <tr>
                         <td className="px-3 py-3 text-slate-500" colSpan={9}>
-                          Chargement des périodes…
+                          Chargement des pÃ©riodesâ€¦
                         </td>
                       </tr>
                     ) : evalPeriods.length === 0 ? (
                       <tr>
                         <td className="px-3 py-3 text-slate-500" colSpan={9}>
-                          Aucune période définie. Cliquez sur « Ajouter une
-                          période » pour commencer.
+                          Aucune pÃ©riode dÃ©finie. Cliquez sur Â« Ajouter une
+                          pÃ©riode Â» pour commencer.
                         </td>
                       </tr>
                     ) : (
@@ -3558,7 +3566,7 @@ export default function AdminSettingsPage() {
                                 className="rounded-lg border px-2 py-1 text-xs hover:bg-slate-50 disabled:opacity-40"
                                 title="Monter"
                               >
-                                ↑
+                                â†‘
                               </button>
                               <button
                                 type="button"
@@ -3567,7 +3575,7 @@ export default function AdminSettingsPage() {
                                 className="rounded-lg border px-2 py-1 text-xs hover:bg-slate-50 disabled:opacity-40"
                                 title="Descendre"
                               >
-                                ↓
+                                â†“
                               </button>
                               <button
                                 type="button"
@@ -3593,7 +3601,7 @@ export default function AdminSettingsPage() {
                     onClick={addEvalPeriod}
                     className="rounded-lg border px-3 py-1.5 text-sm hover:bg-slate-50"
                   >
-                    + Ajouter une période
+                    + Ajouter une pÃ©riode
                   </button>
                 </div>
                 <div className="flex items-center gap-2">
@@ -3604,17 +3612,17 @@ export default function AdminSettingsPage() {
                     className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white shadow hover:bg-emerald-700 disabled:opacity-60"
                   >
                     {savingEvalPeriods
-                      ? "Enregistrement…"
-                      : "Enregistrer les périodes"}
+                      ? "Enregistrementâ€¦"
+                      : "Enregistrer les pÃ©riodes"}
                   </button>
                 </div>
               </div>
 
               <div className="mt-2 text-[11px] text-slate-500">
-                Exemple : trois périodes « 1er trimestre », « 2e trimestre », «
-                3e trimestre » avec des coefficients 1, 2, 2 ; ou deux lignes «
-                Semestre 1 » et « Semestre 2 ». Pour le primaire, vous pouvez
-                définir « Composition de mars », « Composition de juin », etc.
+                Exemple : trois pÃ©riodes Â« 1er trimestre Â», Â« 2e trimestre Â», Â«
+                3e trimestre Â» avec des coefficients 1, 2, 2 ; ou deux lignes Â«
+                Semestre 1 Â» et Â« Semestre 2 Â». Pour le primaire, vous pouvez
+                dÃ©finir Â« Composition de mars Â», Â« Composition de juin Â», etc.
               </div>
             </SectionCard>
           </>
@@ -3625,17 +3633,17 @@ export default function AdminSettingsPage() {
             <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
               <div>
                 <div className="text-xs font-black uppercase tracking-[0.16em] text-sky-700">
-                  Données Rapport F
+                  DonnÃ©es Rapport F
                 </div>
                 <h2 className="mt-1 text-lg font-black text-slate-900">
-                  Informations complémentaires de l’établissement
+                  Informations complÃ©mentaires de lâ€™Ã©tablissement
                 </h2>
                 <div className="mt-2 flex flex-wrap gap-2 text-xs font-semibold">
                   <span className="rounded-full bg-slate-100 px-3 py-1 text-slate-700">
-                    Année : {rapportFYear}
+                    AnnÃ©e : {rapportFYear}
                   </span>
                   <span className="rounded-full bg-sky-50 px-3 py-1 text-sky-700 ring-1 ring-sky-100">
-                    {rapportFCompletedFields}/{rapportFTotalFields} champ(s) renseigné(s)
+                    {rapportFCompletedFields}/{rapportFTotalFields} champ(s) renseignÃ©(s)
                   </span>
                 </div>
               </div>
@@ -3646,7 +3654,7 @@ export default function AdminSettingsPage() {
                   disabled={loadingRapportF || savingRapportF}
                   className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-700 shadow-sm hover:bg-slate-50 disabled:cursor-wait disabled:opacity-60"
                 >
-                  {loadingRapportF ? "Chargement…" : "Recharger"}
+                  {loadingRapportF ? "Chargementâ€¦" : "Recharger"}
                 </button>
                 <button
                   type="button"
@@ -3654,7 +3662,7 @@ export default function AdminSettingsPage() {
                   disabled={loadingRapportF || savingRapportF}
                   className="rounded-xl bg-sky-700 px-4 py-2 text-sm font-black text-white shadow-sm hover:bg-sky-800 disabled:cursor-wait disabled:bg-slate-300"
                 >
-                  {savingRapportF ? "Enregistrement…" : "Enregistrer"}
+                  {savingRapportF ? "Enregistrementâ€¦" : "Enregistrer"}
                 </button>
               </div>
             </div>
@@ -3673,62 +3681,62 @@ export default function AdminSettingsPage() {
                 <div className="grid gap-3 md:grid-cols-3">
                   {renderRapportInput("drenaet", "DRENAET", "DRENAET ABOISSO")}
                   {renderRapportInput("ddenaet", "DDENAET", "DDENAET ABOISSO")}
-                  {renderRapportInput("locality", "Localité", "Aboisso")}
-                  {renderRapportInput("report_author_name", "Rédacteur du rapport", "Nom et prénoms")}
-                  {renderRapportInput("report_author_phone", "Contact rédacteur", "+225 ...", "tel")}
+                  {renderRapportInput("locality", "LocalitÃ©", "Aboisso")}
+                  {renderRapportInput("report_author_name", "RÃ©dacteur du rapport", "Nom et prÃ©noms")}
+                  {renderRapportInput("report_author_phone", "Contact rÃ©dacteur", "+225 ...", "tel")}
                 </div>
               </div>
 
               <div className="rounded-2xl border border-slate-200 p-4">
                 <div className="mb-3 text-sm font-black text-slate-900">
-                  Réunion de rentrée
+                  RÃ©union de rentrÃ©e
                 </div>
                 <div className="grid gap-3 md:grid-cols-4">
                   {renderRapportInput("opening_meeting_date", "Date", "", "date")}
-                  {renderRapportInput("opening_meeting_organizer", "Organisateur", "Chef d’établissement")}
+                  {renderRapportInput("opening_meeting_organizer", "Organisateur", "Chef dâ€™Ã©tablissement")}
                   {renderRapportInput("opening_meeting_location", "Lieu", "Salle des professeurs")}
-                  {renderRapportInput("opening_meeting_observation", "Observation", "Réunion tenue")}
+                  {renderRapportInput("opening_meeting_observation", "Observation", "RÃ©union tenue")}
                 </div>
               </div>
 
               <div className="rounded-2xl border border-slate-200 p-4">
                 <div className="mb-3 text-sm font-black text-slate-900">
-                  Documents pédagogiques
+                  Documents pÃ©dagogiques
                 </div>
                 <div className="grid gap-3 md:grid-cols-4">
                   {renderRapportSelect("textbook_exists", "Cahiers de texte")}
                   {renderRapportSelect("gradebook_exists", "Cahiers de notes")}
-                  {renderRapportSelect("attendance_register_exists", "Cahiers d’appel")}
+                  {renderRapportSelect("attendance_register_exists", "Cahiers dâ€™appel")}
                   {renderRapportInput("pedagogical_documents_observation", "Observation", "Bien")}
                 </div>
                 <div className="mt-3">
                   {renderRapportTextarea(
                     "pedagogical_documents_comment",
-                    "Appréciation générale",
-                    "Tenue des documents, progression, rythme des évaluations...",
+                    "ApprÃ©ciation gÃ©nÃ©rale",
+                    "Tenue des documents, progression, rythme des Ã©valuations...",
                   )}
                 </div>
               </div>
 
               <div className="rounded-2xl border border-slate-200 p-4">
                 <div className="mb-3 text-sm font-black text-slate-900">
-                  Vie pédagogique
+                  Vie pÃ©dagogique
                 </div>
                 <div className="grid gap-3 md:grid-cols-2">
-                  {renderRapportTextarea("up_comment", "Unités pédagogiques", "Synthèse des activités des UP")}
-                  {renderRapportTextarea("teaching_council_comment", "Conseils d’enseignement", "Synthèse des activités des CE")}
+                  {renderRapportTextarea("up_comment", "UnitÃ©s pÃ©dagogiques", "SynthÃ¨se des activitÃ©s des UP")}
+                  {renderRapportTextarea("teaching_council_comment", "Conseils dâ€™enseignement", "SynthÃ¨se des activitÃ©s des CE")}
                   {renderRapportTextarea("class_visit_comment", "Visites de classes", "Observations sur les visites")}
                   {renderRapportTextarea("discipline_comment", "Discipline / vie scolaire", "Observations utiles")}
-                  {renderRapportTextarea("internal_council_comment", "Conseil intérieur", "Activités ou décisions importantes")}
-                  {renderRapportTextarea("extracurricular_comment", "Activités parascolaires", "Clubs, activités, observations")}
+                  {renderRapportTextarea("internal_council_comment", "Conseil intÃ©rieur", "ActivitÃ©s ou dÃ©cisions importantes")}
+                  {renderRapportTextarea("extracurricular_comment", "ActivitÃ©s parascolaires", "Clubs, activitÃ©s, observations")}
                 </div>
               </div>
 
               <div className="rounded-2xl border border-slate-200 p-4">
                 {renderRapportTextarea(
                   "general_observation",
-                  "Observation générale",
-                  "Synthèse générale à reprendre dans le Rapport F si nécessaire",
+                  "Observation gÃ©nÃ©rale",
+                  "SynthÃ¨se gÃ©nÃ©rale Ã  reprendre dans le Rapport F si nÃ©cessaire",
                 )}
               </div>
             </div>
@@ -3738,13 +3746,13 @@ export default function AdminSettingsPage() {
         {activeTab === "coefficients" && (
           <>
             {/* =======================
-            6) Coefficients des disciplines + sous-matières
+            6) Coefficients des disciplines + sous-matiÃ¨res
         ======================== */}
             <SectionCard
               id="subject-coeffs"
               eyebrow="Notation"
               title="Coefficients des disciplines par niveau"
-              description="Ajustez les coefficients du bulletin et, si besoin, détaillez chaque matière en sous-matières tout en respectant la somme attendue."
+              description="Ajustez les coefficients du bulletin et, si besoin, dÃ©taillez chaque matiÃ¨re en sous-matiÃ¨res tout en respectant la somme attendue."
               actions={
                 <button
                   onClick={() => {
@@ -3755,8 +3763,8 @@ export default function AdminSettingsPage() {
                   className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-60"
                 >
                   {loadingCoeffs || loadingComponents
-                    ? "Chargement…"
-                    : "Rafraîchir"}
+                    ? "Chargementâ€¦"
+                    : "RafraÃ®chir"}
                 </button>
               }
             >
@@ -3776,14 +3784,14 @@ export default function AdminSettingsPage() {
                 <div className="grid grid-cols-1 gap-3 md:grid-cols-3 md:items-end">
                   <div>
                     <div className="mb-1 text-xs font-bold uppercase tracking-[0.14em] text-slate-500">
-                      Niveau à configurer
+                      Niveau Ã  configurer
                     </div>
                     <select
                       className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm outline-none transition focus:border-emerald-400 focus:ring-4 focus:ring-emerald-500/20"
                       value={selectedCoeffLevel}
                       onChange={(e) => setSelectedCoeffLevel(e.target.value)}
                     >
-                      <option value="">— Choisir un niveau —</option>
+                      <option value="">â€” Choisir un niveau â€”</option>
                       {coeffLevels.map((lvl) => (
                         <option key={lvl} value={lvl}>
                           {formatCoeffLevel(lvl)}
@@ -3791,8 +3799,8 @@ export default function AdminSettingsPage() {
                       ))}
                     </select>
                     <div className="mt-1 text-[11px] text-slate-500">
-                      Choisissez d’abord le niveau, puis prévisualisez ou
-                      appliquez le référentiel CI pour ce niveau.
+                      Choisissez dâ€™abord le niveau, puis prÃ©visualisez ou
+                      appliquez le rÃ©fÃ©rentiel CI pour ce niveau.
                     </div>
                   </div>
 
@@ -3801,13 +3809,13 @@ export default function AdminSettingsPage() {
                     <span className="ml-2 font-bold text-slate-900">
                       {selectedCoeffLevel
                         ? formatCoeffLevel(selectedCoeffLevel)
-                        : "Aucun niveau sélectionné"}
+                        : "Aucun niveau sÃ©lectionnÃ©"}
                     </span>
-                    <span className="mx-2 text-slate-300">•</span>
+                    <span className="mx-2 text-slate-300">â€¢</span>
                     <span>
                       {selectedCoeffLevel
-                        ? `${coeffRowsForSelectedLevel.length} discipline(s) affichée(s)`
-                        : "Sélection requise avant l’initialisation CI"}
+                        ? `${coeffRowsForSelectedLevel.length} discipline(s) affichÃ©e(s)`
+                        : "SÃ©lection requise avant lâ€™initialisation CI"}
                     </span>
                   </div>
                 </div>
@@ -3820,14 +3828,14 @@ export default function AdminSettingsPage() {
                       Initialisation rapide
                     </div>
                     <div className="mt-1 text-lg font-black text-slate-900">
-                      Référentiel CI — Secondaire général
+                      RÃ©fÃ©rentiel CI â€” Secondaire gÃ©nÃ©ral
                     </div>
                     <p className="mt-1 text-sm leading-6 text-slate-600">
-                      Après sélection du niveau ci-dessus, applique
+                      AprÃ¨s sÃ©lection du niveau ci-dessus, applique
                       automatiquement les coefficients officiels aux disciplines
-                      reconnues. Les matières non reconnues ne sont pas
-                      modifiées. Le Français du 1er cycle reçoit aussi ses
-                      sous-matières par niveau : Composition française,
+                      reconnues. Les matiÃ¨res non reconnues ne sont pas
+                      modifiÃ©es. Le FranÃ§ais du 1er cycle reÃ§oit aussi ses
+                      sous-matiÃ¨res par niveau : Composition franÃ§aise,
                       Expression orale, Orthographe-Grammaire.
                     </p>
                     <div className="mt-3 flex flex-wrap gap-2 text-[11px] font-semibold">
@@ -3835,14 +3843,14 @@ export default function AdminSettingsPage() {
                         {ciPresetStats.applicable} reconnu(s)
                       </span>
                       <span className="rounded-full bg-white px-2.5 py-1 text-slate-700 ring-1 ring-slate-200">
-                        {ciPresetStats.withComponents} avec sous-matières
+                        {ciPresetStats.withComponents} avec sous-matiÃ¨res
                       </span>
                       <span className="rounded-full bg-white px-2.5 py-1 text-slate-700 ring-1 ring-slate-200">
                         {ciPresetStats.optional} LV2 facultative(s)
                       </span>
                       {ciPresetStats.ambiguous > 0 && (
                         <span className="rounded-full bg-amber-100 px-2.5 py-1 text-amber-800 ring-1 ring-amber-200">
-                          {ciPresetStats.ambiguous} cas A1/A2 à préciser
+                          {ciPresetStats.ambiguous} cas A1/A2 Ã  prÃ©ciser
                         </span>
                       )}
                     </div>
@@ -3859,7 +3867,7 @@ export default function AdminSettingsPage() {
                       }
                       className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-bold text-slate-700 shadow-sm hover:bg-slate-50 disabled:opacity-60"
                     >
-                      Prévisualiser
+                      PrÃ©visualiser
                     </button>
                     <button
                       type="button"
@@ -3879,11 +3887,11 @@ export default function AdminSettingsPage() {
                 {ciPresetPreview.length > 0 && (
                   <div className="mt-4 overflow-hidden rounded-2xl border border-slate-200 bg-white">
                     <div className="border-b border-slate-100 px-3 py-2 text-xs font-bold text-slate-700">
-                      Aperçu{" "}
+                      AperÃ§u{" "}
                       {selectedCoeffLevel
-                        ? `— ${formatCoeffLevel(selectedCoeffLevel)}`
+                        ? `â€” ${formatCoeffLevel(selectedCoeffLevel)}`
                         : "global"}
-                      {ciPresetAppliedOnce ? " · appliqué localement" : ""}
+                      {ciPresetAppliedOnce ? " Â· appliquÃ© localement" : ""}
                     </div>
                     <div className="max-h-60 overflow-auto">
                       <table className="min-w-full text-xs">
@@ -3908,7 +3916,7 @@ export default function AdminSettingsPage() {
                                   {item.subject_name}
                                   {item.components.length > 0 && (
                                     <span className="ml-2 rounded-full bg-sky-50 px-2 py-0.5 text-[10px] font-bold text-sky-700 ring-1 ring-sky-100">
-                                      sous-matières FR
+                                      sous-matiÃ¨res FR
                                     </span>
                                   )}
                                 </td>
@@ -3916,13 +3924,13 @@ export default function AdminSettingsPage() {
                                   {item.currentCoeff}
                                 </td>
                                 <td className="px-3 py-2 text-right font-bold text-slate-900">
-                                  {item.coeff ?? "—"}
+                                  {item.coeff ?? "â€”"}
                                 </td>
                                 <td className="px-3 py-2">
                                   {item.willApply ? (
                                     <span className="rounded-full bg-emerald-50 px-2 py-0.5 font-bold text-emerald-700 ring-1 ring-emerald-100">
                                       reconnu
-                                      {item.optional ? " · facultatif" : ""}
+                                      {item.optional ? " Â· facultatif" : ""}
                                     </span>
                                   ) : (
                                     <span className="rounded-full bg-slate-50 px-2 py-0.5 font-medium text-slate-600 ring-1 ring-slate-100">
@@ -3948,7 +3956,7 @@ export default function AdminSettingsPage() {
                         Coefficient bulletin
                       </th>
                       <th className="w-56 px-3 py-2 text-right">
-                        Sous-matières (optionnel)
+                        Sous-matiÃ¨res (optionnel)
                       </th>
                     </tr>
                   </thead>
@@ -3956,7 +3964,7 @@ export default function AdminSettingsPage() {
                     {loadingCoeffs ? (
                       <tr>
                         <td className="px-3 py-3 text-slate-500" colSpan={3}>
-                          Chargement des disciplines…
+                          Chargement des disciplinesâ€¦
                         </td>
                       </tr>
                     ) : !selectedCoeffLevel ? (
@@ -3969,9 +3977,9 @@ export default function AdminSettingsPage() {
                     ) : coeffRowsForSelectedLevel.length === 0 ? (
                       <tr>
                         <td className="px-3 py-3 text-slate-500" colSpan={3}>
-                          Aucune discipline n&apos;est encore paramétrée pour ce
-                          niveau. Cliquez sur « Rafraîchir » si vous venez
-                          d&apos;ajouter des matières.
+                          Aucune discipline n&apos;est encore paramÃ©trÃ©e pour ce
+                          niveau. Cliquez sur Â« RafraÃ®chir Â» si vous venez
+                          d&apos;ajouter des matiÃ¨res.
                         </td>
                       </tr>
                     ) : (
@@ -4026,13 +4034,13 @@ export default function AdminSettingsPage() {
                                   className="rounded-lg border px-2 py-1 text-xs hover:bg-slate-50"
                                 >
                                   {comps.length > 0
-                                    ? "Modifier les sous-matières"
-                                    : "Ajouter des sous-matières"}
+                                    ? "Modifier les sous-matiÃ¨res"
+                                    : "Ajouter des sous-matiÃ¨res"}
                                 </button>
                                 {comps.length > 0 && (
                                   <div className="text-[11px] text-slate-500">
-                                    {comps.length} sous-matière
-                                    {comps.length > 1 ? "s" : ""} — somme&nbsp;
+                                    {comps.length} sous-matiÃ¨re
+                                    {comps.length > 1 ? "s" : ""} â€” somme&nbsp;
                                     <span
                                       className={
                                         "font-medium " +
@@ -4061,10 +4069,10 @@ export default function AdminSettingsPage() {
 
               <div className="mt-3 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
                 <div className="text-[11px] text-slate-500">
-                  Un coeff à 0 retire la matière du calcul de moyenne générale
-                  pour le niveau choisi. Les sous-matières (si définies)
+                  Un coeff Ã  0 retire la matiÃ¨re du calcul de moyenne gÃ©nÃ©rale
+                  pour le niveau choisi. Les sous-matiÃ¨res (si dÃ©finies)
                   apparaissent dans la saisie des notes, mais le bulletin
-                  conserve le coefficient total de la matière mère.
+                  conserve le coefficient total de la matiÃ¨re mÃ¨re.
                 </div>
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
                   <button
@@ -4073,8 +4081,8 @@ export default function AdminSettingsPage() {
                     className="rounded-lg bg-sky-700 px-4 py-2 text-sm font-medium text-white shadow hover:bg-sky-800 disabled:opacity-60"
                   >
                     {savingComponents
-                      ? "Enregistrement…"
-                      : "Enregistrer toutes les sous-matières"}
+                      ? "Enregistrementâ€¦"
+                      : "Enregistrer toutes les sous-matiÃ¨res"}
                   </button>
                   <button
                     onClick={saveSubjectCoeffs}
@@ -4082,7 +4090,7 @@ export default function AdminSettingsPage() {
                     className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white shadow hover:bg-emerald-700 disabled:opacity-60"
                   >
                     {savingCoeffs
-                      ? "Enregistrement…"
+                      ? "Enregistrementâ€¦"
                       : "Enregistrer les coefficients"}
                   </button>
                 </div>
@@ -4092,10 +4100,10 @@ export default function AdminSettingsPage() {
         )}
       </main>
 
-      {/* Modal mot de passe personnalisé */}
+      {/* Modal mot de passe personnalisÃ© */}
       <Modal
         open={modalOpen}
-        title={`Définir un mot de passe — ${
+        title={`DÃ©finir un mot de passe â€” ${
           targetUser?.display_name ||
           targetUser?.email ||
           targetUser?.phone ||
@@ -4108,7 +4116,7 @@ export default function AdminSettingsPage() {
             disabled={disableCustom}
             className="rounded-lg bg-sky-700 px-3 py-1.5 text-sm font-medium text-white hover:bg-sky-800 disabled:opacity-60"
           >
-            {busyCustom ? "Mise à jour…" : "Valider"}
+            {busyCustom ? "Mise Ã  jourâ€¦" : "Valider"}
           </button>
         }
       >
@@ -4135,7 +4143,7 @@ export default function AdminSettingsPage() {
               value={customPwd}
               onChange={(e) => setCustomPwd(e.target.value)}
               disabled={disableCustom}
-              placeholder="••••••••"
+              placeholder="â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢"
             />
           </div>
 
@@ -4161,7 +4169,7 @@ export default function AdminSettingsPage() {
               value={customPwd2}
               onChange={(e) => setCustomPwd2(e.target.value)}
               disabled={disableCustom}
-              placeholder="••••••••"
+              placeholder="â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢"
             />
           </div>
 
@@ -4170,19 +4178,19 @@ export default function AdminSettingsPage() {
           )}
 
           <div className="rounded-lg border border-yellow-200 bg-yellow-50 px-3 py-2 text-[12px] text-yellow-800">
-            Astuce : laissez ce modal et utilisez <b>« Réinit. temporaire »</b>{" "}
-            si vous préférez générer un mot de passe provisoire côté serveur.
+            Astuce : laissez ce modal et utilisez <b>Â« RÃ©init. temporaire Â»</b>{" "}
+            si vous prÃ©fÃ©rez gÃ©nÃ©rer un mot de passe provisoire cÃ´tÃ© serveur.
           </div>
         </div>
       </Modal>
 
-      {/* Modal sous-matières / composants de discipline */}
+      {/* Modal sous-matiÃ¨res / composants de discipline */}
       <Modal
         open={componentsModalOpen && !!componentsTarget}
         title={
           componentsTarget
-            ? `Sous-matières — ${componentsTarget.subject_name} (${componentsTarget.level})`
-            : "Sous-matières"
+            ? `Sous-matiÃ¨res â€” ${componentsTarget.subject_name} (${componentsTarget.level})`
+            : "Sous-matiÃ¨res"
         }
         onClose={() => setComponentsModalOpen(false)}
         actions={
@@ -4194,27 +4202,27 @@ export default function AdminSettingsPage() {
               className="rounded-lg bg-sky-700 px-3 py-1.5 text-sm font-medium text-white hover:bg-sky-800 disabled:opacity-60"
             >
               {savingComponents
-                ? "Enregistrement…"
-                : "Enregistrer pour cette matière / niveau"}
+                ? "Enregistrementâ€¦"
+                : "Enregistrer pour cette matiÃ¨re / niveau"}
             </button>
           )
         }
       >
         {!componentsTarget ? (
           <div className="text-sm text-slate-600">
-            Aucune matière sélectionnée.
+            Aucune matiÃ¨re sÃ©lectionnÃ©e.
           </div>
         ) : (
           <div className="space-y-3">
             <div className="rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-700">
-              Coefficient de la matière (
+              Coefficient de la matiÃ¨re (
               <span className="font-semibold">
                 {componentsTarget.subject_name}
               </span>
               ) au niveau{" "}
               <span className="font-semibold">{componentsTarget.level}</span>:{" "}
               <span className="font-semibold">{parentCoeffForTarget}</span>.
-              Somme des coefficients de sous-matières :{" "}
+              Somme des coefficients de sous-matiÃ¨res :{" "}
               <span
                 className={
                   "font-semibold " +
@@ -4226,7 +4234,7 @@ export default function AdminSettingsPage() {
               .
               {!coeffMatchForTarget && (
                 <span className="ml-1 text-rose-700">
-                  (La somme doit être égale au coefficient de la matière.)
+                  (La somme doit Ãªtre Ã©gale au coefficient de la matiÃ¨re.)
                 </span>
               )}
             </div>
@@ -4237,7 +4245,7 @@ export default function AdminSettingsPage() {
                 onClick={addComponentForTarget}
                 className="rounded-lg border px-3 py-1.5 text-xs hover:bg-slate-50"
               >
-                + Ajouter une sous-matière
+                + Ajouter une sous-matiÃ¨re
               </button>
             </div>
 
@@ -4247,7 +4255,7 @@ export default function AdminSettingsPage() {
                   <tr>
                     <th className="w-10 px-3 py-2 text-left">#</th>
                     <th className="px-3 py-2 text-left">
-                      Libellé de la sous-matière
+                      LibellÃ© de la sous-matiÃ¨re
                     </th>
                     <th className="w-24 px-3 py-2 text-right">Coeff.</th>
                     <th className="w-20 px-3 py-2 text-center">Actif</th>
@@ -4261,8 +4269,8 @@ export default function AdminSettingsPage() {
                         className="px-3 py-3 text-[12px] text-slate-500"
                         colSpan={5}
                       >
-                        Aucune sous-matière définie pour cette matière et ce
-                        niveau. Cliquez sur « Ajouter une sous-matière ».
+                        Aucune sous-matiÃ¨re dÃ©finie pour cette matiÃ¨re et ce
+                        niveau. Cliquez sur Â« Ajouter une sous-matiÃ¨re Â».
                       </td>
                     </tr>
                   ) : (
@@ -4278,7 +4286,7 @@ export default function AdminSettingsPage() {
                               })
                             }
                             className="w-full rounded-lg border px-2 py-1 text-sm"
-                            placeholder="Dictée / Lecture / Expression écrite / TP…"
+                            placeholder="DictÃ©e / Lecture / Expression Ã©crite / TPâ€¦"
                           />
                         </td>
                         <td className="px-3 py-2 text-right">
@@ -4327,8 +4335,8 @@ export default function AdminSettingsPage() {
             {!coeffMatchForTarget && (
               <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-[12px] text-rose-800">
                 Pour pouvoir enregistrer, la somme des coefficients de
-                sous-matières doit être exactement égale au coefficient de la
-                matière pour ce niveau.
+                sous-matiÃ¨res doit Ãªtre exactement Ã©gale au coefficient de la
+                matiÃ¨re pour ce niveau.
               </div>
             )}
           </div>
@@ -4337,3 +4345,4 @@ export default function AdminSettingsPage() {
     </>
   );
 }
+
