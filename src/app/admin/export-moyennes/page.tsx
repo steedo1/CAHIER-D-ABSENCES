@@ -1,8 +1,6 @@
-// src/app/admin/export-moyennes/page.tsx
-import Link from "next/link";
+//src/app/admin/export-moyennes/page.tsx
 import { redirect } from "next/navigation";
 import {
-  ChevronLeft,
   Download,
   FileSpreadsheet,
   GraduationCap,
@@ -380,18 +378,8 @@ export default async function ExportDespsPage() {
   };
 
   return (
-    <main className="min-h-screen bg-slate-50 px-4 py-5 sm:px-6 lg:px-8">
+    <main className="min-h-screen bg-slate-50 px-4 py-3 sm:px-6 lg:px-8">
       <div className="mx-auto max-w-7xl">
-        <div className="mb-5">
-          <Link
-            href="/admin/dashboard"
-            className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-100"
-          >
-            <ChevronLeft className="h-4 w-4" />
-            Retour au tableau de bord
-          </Link>
-        </div>
-
         <section className="overflow-hidden rounded-[32px] border border-slate-200 bg-white shadow-sm">
           <header className="relative overflow-hidden bg-slate-950">
             <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(16,185,129,0.35),transparent_35%),radial-gradient(circle_at_bottom_right,rgba(124,58,237,0.3),transparent_35%)]" />
@@ -403,7 +391,7 @@ export default async function ExportDespsPage() {
                     Export DESPS
                   </div>
                   <h1 className="mt-4 text-3xl font-black tracking-tight sm:text-4xl">
-                    Modèles officiels
+                    STATISTIQUES MODELES DESPS
                   </h1>
                 </div>
 
