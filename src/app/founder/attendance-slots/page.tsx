@@ -546,96 +546,88 @@ export default async function FounderAttendanceSlotsPage() {
   const totalAbsent = activeRows.reduce((sum, row) => sum + row.absent, 0);
 
   return (
-    <div className="space-y-6">
-      <section className="overflow-hidden rounded-[32px] border border-slate-200 bg-gradient-to-br from-slate-950 via-slate-900 to-sky-950 p-5 text-white shadow-xl sm:p-7">
-        <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
-          <div className="max-w-3xl">
-            <p className="text-xs font-black uppercase tracking-[0.22em] text-sky-200">
+    <div className="space-y-4 sm:space-y-5">
+      <section className="rounded-[26px] border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="min-w-0">
+            <p className="text-[11px] font-black uppercase tracking-[0.18em] text-sky-700">
               Vue créneau fondateur
             </p>
-            <h1 className="mt-2 text-3xl font-black tracking-tight sm:text-4xl lg:text-5xl">
-              Résumé temps réel par établissement
+            <h1 className="mt-1 text-xl font-black tracking-tight text-slate-950 sm:text-2xl">
+              Suivi temps réel par établissement
             </h1>
-            <p className="mt-3 text-sm leading-6 text-slate-200 sm:text-base">
-              Lecture simplifiée : présents, permissionnaires et absents uniquement. Un appel fait compte comme présent.
+            <p className="mt-1 text-xs font-semibold text-slate-500 sm:text-sm">
+              {today} · Actualisé à {nowLabel}
             </p>
           </div>
 
-          <div className="rounded-[26px] border border-white/10 bg-white/10 p-4 backdrop-blur">
-            <div className="text-xs font-black uppercase tracking-[0.18em] text-sky-100">Aujourd’hui</div>
-            <div className="mt-1 text-2xl font-black">{today}</div>
-            <div className="mt-1 text-sm font-semibold text-slate-200">Actualisé à {nowLabel}</div>
-          </div>
-        </div>
-      </section>
-
-      <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
-        <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="flex items-center gap-2 text-xs font-black uppercase tracking-[0.16em] text-slate-500">
-            <School2 className="h-4 w-4" /> Écoles suivies
-          </div>
-          <div className="mt-3 text-3xl font-black text-slate-950">{rows.length}</div>
-          <p className="mt-1 text-xs font-semibold text-slate-500">Établissements rattachés</p>
-        </div>
-
-        <div className="rounded-[28px] border border-sky-100 bg-sky-50 p-5 shadow-sm">
-          <div className="flex items-center gap-2 text-xs font-black uppercase tracking-[0.16em] text-sky-700">
-            <Clock3 className="h-4 w-4" /> Créneau en cours
-          </div>
-          <div className="mt-3 text-3xl font-black text-sky-900">{activeRows.length}</div>
-          <p className="mt-1 text-xs font-semibold text-sky-800">École(s) actuellement dans un créneau</p>
-        </div>
-
-        <div className="rounded-[28px] border border-emerald-100 bg-emerald-50 p-5 shadow-sm">
-          <div className="flex items-center gap-2 text-xs font-black uppercase tracking-[0.16em] text-emerald-700">
-            <CheckCircle2 className="h-4 w-4" /> Présents
-          </div>
-          <div className="mt-3 text-3xl font-black text-emerald-900">{totalPresent}</div>
-          <p className="mt-1 text-xs font-semibold text-emerald-800">Appels faits sur le créneau actuel</p>
-        </div>
-
-        <div className="rounded-[28px] border border-sky-100 bg-white p-5 shadow-sm">
-          <div className="flex items-center gap-2 text-xs font-black uppercase tracking-[0.16em] text-sky-700">
-            <ShieldCheck className="h-4 w-4" /> Permissionnaires
-          </div>
-          <div className="mt-3 text-3xl font-black text-sky-900">{totalPermissionnaire}</div>
-          <p className="mt-1 text-xs font-semibold text-sky-800">Demandes autorisées</p>
-        </div>
-
-        <div className="rounded-[28px] border border-rose-100 bg-rose-50 p-5 shadow-sm">
-          <div className="flex items-center gap-2 text-xs font-black uppercase tracking-[0.16em] text-rose-700">
-            <XCircle className="h-4 w-4" /> Absents
-          </div>
-          <div className="mt-3 text-3xl font-black text-rose-900">{totalAbsent}</div>
-          <p className="mt-1 text-xs font-semibold text-rose-800">Appels non faits sans autorisation</p>
-        </div>
-      </section>
-
-      <section className="rounded-[28px] border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <div className="flex items-center gap-2 text-sm font-black text-slate-950">
-              <UsersRound className="h-4 w-4 text-slate-500" /> Supervision des établissements
-            </div>
-            <p className="mt-1 text-xs font-semibold text-slate-500">
-              Total attendu sur les créneaux en cours : {totalExpected} enseignant(s)
-            </p>
-          </div>
-
-          <div className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-black text-slate-600">
+          <div className="w-fit rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-black text-slate-700">
             Présent = appel fait
           </div>
         </div>
       </section>
 
+      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+        <div className="rounded-[24px] border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="flex items-center gap-2 text-[11px] font-black uppercase tracking-[0.14em] text-slate-500">
+            <School2 className="h-4 w-4" /> Écoles
+          </div>
+          <div className="mt-2 text-3xl font-black text-slate-950">{rows.length}</div>
+          <p className="mt-1 text-xs font-semibold text-slate-500">Établissements suivis</p>
+        </div>
+
+        <div className="rounded-[24px] border border-sky-100 bg-sky-50 p-4 shadow-sm">
+          <div className="flex items-center gap-2 text-[11px] font-black uppercase tracking-[0.14em] text-sky-700">
+            <Clock3 className="h-4 w-4" /> En cours
+          </div>
+          <div className="mt-2 text-3xl font-black text-sky-900">{activeRows.length}</div>
+          <p className="mt-1 text-xs font-semibold text-sky-800">École(s) en créneau</p>
+        </div>
+
+        <div className="rounded-[24px] border border-emerald-100 bg-emerald-50 p-4 shadow-sm">
+          <div className="flex items-center gap-2 text-[11px] font-black uppercase tracking-[0.14em] text-emerald-700">
+            <CheckCircle2 className="h-4 w-4" /> Présents
+          </div>
+          <div className="mt-2 text-3xl font-black text-emerald-900">{totalPresent}</div>
+          <p className="mt-1 text-xs font-semibold text-emerald-800">Appels faits</p>
+        </div>
+
+        <div className="rounded-[24px] border border-sky-100 bg-white p-4 shadow-sm">
+          <div className="flex items-center gap-2 text-[11px] font-black uppercase tracking-[0.14em] text-sky-700">
+            <ShieldCheck className="h-4 w-4" /> Permissionnaires
+          </div>
+          <div className="mt-2 text-3xl font-black text-sky-900">{totalPermissionnaire}</div>
+          <p className="mt-1 text-xs font-semibold text-sky-800">Demandes autorisées</p>
+        </div>
+
+        <div className="rounded-[24px] border border-rose-100 bg-rose-50 p-4 shadow-sm">
+          <div className="flex items-center gap-2 text-[11px] font-black uppercase tracking-[0.14em] text-rose-700">
+            <XCircle className="h-4 w-4" /> Absents
+          </div>
+          <div className="mt-2 text-3xl font-black text-rose-900">{totalAbsent}</div>
+          <p className="mt-1 text-xs font-semibold text-rose-800">Appels non faits</p>
+        </div>
+      </section>
+
+      <section className="rounded-[24px] border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+        <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-2 text-sm font-black text-slate-950">
+            <UsersRound className="h-4 w-4 text-slate-500" /> Supervision des établissements
+          </div>
+          <p className="text-xs font-semibold text-slate-500">
+            {totalExpected} enseignant(s) attendu(s) sur les créneaux en cours
+          </p>
+        </div>
+      </section>
+
       <div className="grid gap-4 xl:grid-cols-2">
         {rows.length === 0 ? (
-          <div className="rounded-[28px] border border-amber-200 bg-amber-50 p-5 text-sm font-semibold text-amber-800">
+          <div className="rounded-[24px] border border-amber-200 bg-amber-50 p-5 text-sm font-semibold text-amber-800">
             Aucune école rattachée trouvée pour ce compte fondateur.
           </div>
         ) : (
           rows.map((row) => (
-            <div key={row.school.id} className="rounded-[30px] border border-slate-200 bg-white p-5 shadow-sm">
+            <div key={row.school.id} className="rounded-[26px] border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                 <div className="min-w-0">
                   <div className="flex items-center gap-2 font-black text-slate-950">
@@ -655,62 +647,63 @@ export default async function FounderAttendanceSlotsPage() {
                 </div>
 
                 <div className="w-fit rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-black text-slate-600">
-                  {row.expected} prof(s) attendu(s)
+                  {row.expected} prof(s)
                 </div>
               </div>
 
               {row.periodState === "current" ? (
-                <div className="mt-5 grid grid-cols-3 gap-3">
-                  <div className="rounded-2xl border border-emerald-100 bg-emerald-50 p-4 text-center">
-                    <div className="mx-auto grid h-9 w-9 place-items-center rounded-xl bg-white text-emerald-700 shadow-sm">
+                <div className="mt-4 grid grid-cols-3 gap-2 sm:gap-3">
+                  <div className="rounded-2xl border border-emerald-100 bg-emerald-50 p-3 text-center sm:p-4">
+                    <div className="mx-auto grid h-8 w-8 place-items-center rounded-xl bg-white text-emerald-700 shadow-sm sm:h-9 sm:w-9">
                       <CheckCircle2 className="h-4 w-4" />
                     </div>
-                    <div className="mt-2 text-[11px] font-black uppercase tracking-[0.14em] text-emerald-700">
+                    <div className="mt-2 text-[10px] font-black uppercase tracking-[0.1em] text-emerald-700 sm:text-[11px]">
                       Présents
                     </div>
-                    <div className="mt-1 text-3xl font-black text-emerald-900">{row.present}</div>
+                    <div className="mt-1 text-2xl font-black text-emerald-900 sm:text-3xl">{row.present}</div>
                   </div>
 
-                  <div className="rounded-2xl border border-sky-100 bg-sky-50 p-4 text-center">
-                    <div className="mx-auto grid h-9 w-9 place-items-center rounded-xl bg-white text-sky-700 shadow-sm">
+                  <div className="rounded-2xl border border-sky-100 bg-sky-50 p-3 text-center sm:p-4">
+                    <div className="mx-auto grid h-8 w-8 place-items-center rounded-xl bg-white text-sky-700 shadow-sm sm:h-9 sm:w-9">
                       <ShieldCheck className="h-4 w-4" />
                     </div>
-                    <div className="mt-2 text-[11px] font-black uppercase tracking-[0.14em] text-sky-700">
-                      Permissionnaires
+                    <div className="mt-2 text-[10px] font-black uppercase tracking-[0.1em] text-sky-700 sm:text-[11px]">
+                      Permission
                     </div>
-                    <div className="mt-1 text-3xl font-black text-sky-900">{row.permissionnaire}</div>
+                    <div className="mt-1 text-2xl font-black text-sky-900 sm:text-3xl">{row.permissionnaire}</div>
                   </div>
 
-                  <div className="rounded-2xl border border-rose-100 bg-rose-50 p-4 text-center">
-                    <div className="mx-auto grid h-9 w-9 place-items-center rounded-xl bg-white text-rose-700 shadow-sm">
+                  <div className="rounded-2xl border border-rose-100 bg-rose-50 p-3 text-center sm:p-4">
+                    <div className="mx-auto grid h-8 w-8 place-items-center rounded-xl bg-white text-rose-700 shadow-sm sm:h-9 sm:w-9">
                       <XCircle className="h-4 w-4" />
                     </div>
-                    <div className="mt-2 text-[11px] font-black uppercase tracking-[0.14em] text-rose-700">
+                    <div className="mt-2 text-[10px] font-black uppercase tracking-[0.1em] text-rose-700 sm:text-[11px]">
                       Absents
                     </div>
-                    <div className="mt-1 text-3xl font-black text-rose-900">{row.absent}</div>
+                    <div className="mt-1 text-2xl font-black text-rose-900 sm:text-3xl">{row.absent}</div>
                   </div>
                 </div>
               ) : (
-                <div className="mt-5 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4">
                   <div className="flex items-start gap-3">
                     <div className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-white text-slate-500 shadow-sm">
                       <AlertTriangle className="h-5 w-5" />
                     </div>
                     <div>
                       <div className="font-black text-slate-800">Aucun créneau en cours</div>
-                      <p className="mt-1 text-sm font-medium leading-6 text-slate-500">
-                        Les compteurs présents, permissionnaires et absents s’affichent dès qu’un créneau est actif dans cet établissement.
-                      </p>
                       {row.nextPeriod ? (
-                        <p className="mt-2 text-xs font-black text-sky-700">
+                        <p className="mt-1 text-xs font-black text-sky-700">
                           Prochain : {periodTitle(row.nextPeriod)}
                         </p>
                       ) : row.lastPeriod ? (
-                        <p className="mt-2 text-xs font-black text-slate-600">
+                        <p className="mt-1 text-xs font-black text-slate-600">
                           Dernier : {periodTitle(row.lastPeriod)}
                         </p>
-                      ) : null}
+                      ) : (
+                        <p className="mt-1 text-xs font-semibold text-slate-500">
+                          Aucun créneau actif configuré aujourd’hui.
+                        </p>
+                      )}
                     </div>
                   </div>
                 </div>

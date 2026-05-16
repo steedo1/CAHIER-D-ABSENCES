@@ -75,8 +75,8 @@ export default function FounderShell({ children }: { children: ReactNode }) {
       </header>
 
       <div className="mx-auto max-w-7xl px-2 py-3 sm:px-4 lg:px-6 lg:py-7">
-        <div className="grid min-h-[calc(100vh-86px)] grid-cols-[86px_minmax(0,1fr)] gap-3 sm:grid-cols-[104px_minmax(0,1fr)] lg:grid-cols-[320px_minmax(0,1fr)] lg:gap-7">
-          <aside className="sticky top-[76px] h-[calc(100vh-92px)] self-start overflow-y-auto rounded-[26px] border border-slate-200 bg-white p-2 shadow-sm lg:top-24 lg:h-[calc(100vh-116px)] lg:rounded-[30px] lg:p-3">
+        <div className="lg:grid lg:min-h-[calc(100vh-116px)] lg:grid-cols-[320px_minmax(0,1fr)] lg:gap-7">
+          <aside className="fixed left-2 top-[82px] z-40 h-[calc(100dvh-98px)] w-[86px] overflow-hidden rounded-[26px] border border-slate-200 bg-white p-2 shadow-sm sm:left-4 sm:w-[104px] lg:sticky lg:left-auto lg:top-24 lg:z-auto lg:h-[calc(100vh-116px)] lg:w-auto lg:self-start lg:rounded-[30px] lg:p-3">
             <div className="mb-3 hidden items-center justify-between rounded-[22px] bg-slate-950 px-4 py-4 text-white lg:flex">
               <div>
                 <div className="text-xs font-black uppercase tracking-[0.2em] text-white/55">
@@ -167,8 +167,8 @@ export default function FounderShell({ children }: { children: ReactNode }) {
             </div>
           </aside>
 
-          <main className="min-w-0 pb-8 lg:pb-10">
-            <div className="mb-3 rounded-[24px] border border-slate-200 bg-white p-3 shadow-sm lg:hidden">
+          <main className="min-w-0 pb-8 pl-[96px] sm:pl-[116px] lg:pl-0 lg:pb-10">
+            <div className="mb-3 rounded-[22px] border border-slate-200 bg-white p-3 shadow-sm lg:hidden">
               <div className="flex items-center gap-3">
                 <div className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-slate-950 text-white">
                   <ActiveIcon className="h-5 w-5" />
