@@ -1574,6 +1574,15 @@ export default function ParentPage() {
                 </span>
                 <span>Accueil</span>
               </button>
+              <a
+                href="/parents/payments"
+                className="mt-2 flex w-full items-center gap-3 rounded-2xl bg-emerald-500/20 px-4 py-3 text-left text-[14px] font-extrabold text-white transition hover:bg-emerald-500/30"
+              >
+                <span className="grid h-10 w-10 place-items-center rounded-2xl bg-white/10 text-white">
+                  <IconShield />
+                </span>
+                <span>Paiement en ligne</span>
+              </a>
             </div>
 
             <div className="border-b border-white/10 px-4 py-4">
@@ -1753,6 +1762,15 @@ export default function ParentPage() {
               </span>
               <span>Accueil</span>
             </button>
+            <a
+              href="/parents/payments"
+              className="mt-2 flex w-full items-center gap-3 rounded-2xl bg-emerald-500/20 px-4 py-3 text-left text-[14px] font-extrabold text-white transition hover:bg-emerald-500/30"
+            >
+              <span className="grid h-10 w-10 place-items-center rounded-2xl bg-white/10 text-white">
+                <IconShield />
+              </span>
+              <span>Paiement en ligne</span>
+            </a>
           </div>
 
           <div className="border-b border-white/15 px-4 py-4">

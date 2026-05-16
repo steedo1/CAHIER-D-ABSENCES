@@ -1,0 +1,285 @@
+import { revalidatePath } from "next/cache";
+import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
+import { queueFounderFinancePaymentNotification } from "@/lib/push/founder";
+
+type CreateReceiptInput = {
+  institutionId: string;
+  studentId: string;
+  classId?: string | null;
+  studentChargeId: string;
+  amount: number;
+  payerName?: string | null;
+  referenceNo?: string | null;
+  paymentDateIso?: string | null;
+  notes?: string | null;
+  createdBy?: string | null;
+  notifyFounder?: boolean;
+  req?: Request;
+};
+
+type PostOnlinePaymentInput = {
+  intentId: string;
+  providerTransactionId?: string | null;
+  providerReference?: string | null;
+  rawProviderPayload?: Record<string, any> | null;
+  req?: Request;
+};
+
+function makeReceiptNo() {
+  const now = new Date();
+  const stamp = [
+    now.getFullYear(),
+    String(now.getMonth() + 1).padStart(2, "0"),
+    String(now.getDate()).padStart(2, "0"),
+    String(now.getHours()).padStart(2, "0"),
+    String(now.getMinutes()).padStart(2, "0"),
+    String(now.getSeconds()).padStart(2, "0"),
+  ].join("");
+  const rand = Math.floor(Math.random() * 9000 + 1000);
+  return `REC-${stamp}-${rand}`;
+}
+
+function clean(value: unknown, fallback = "") {
+  const text = String(value ?? "").replace(/\s+/g, " ").trim();
+  return text || fallback;
+}
+
+function money(value: number | string | null | undefined) {
+  return `${Number(value || 0).toLocaleString("fr-FR")} F`;
+}
+
+async function getAcademicYearId(
+  institutionId: string,
+  academicYear: string | null | undefined,
+) {
+  if (!academicYear) return null;
+  const admin = getSupabaseServiceClient();
+  const { data, error } = await admin
+    .from("academic_years")
+    .select("id")
+    .eq("institution_id", institutionId)
+    .eq("code", academicYear)
+    .maybeSingle();
+
+  if (error) throw new Error(error.message);
+  return (data as any)?.id || null;
+}
+
+async function getStudentName(studentId: string, institutionId: string) {
+  const admin = getSupabaseServiceClient();
+  const { data } = await admin
+    .from("students")
+    .select("first_name,last_name,matricule")
+    .eq("id", studentId)
+    .eq("institution_id", institutionId)
+    .maybeSingle();
+
+  const firstName = clean((data as any)?.first_name);
+  const lastName = clean((data as any)?.last_name);
+  const matricule = clean((data as any)?.matricule);
+  return [firstName, lastName].filter(Boolean).join(" ") || matricule || "Élève non précisé";
+}
+
+async function getClassLabel(classId: string | null | undefined, institutionId: string) {
+  if (!classId) return "Classe non précisée";
+  const admin = getSupabaseServiceClient();
+  const { data } = await admin
+    .from("classes")
+    .select("label")
+    .eq("id", classId)
+    .eq("institution_id", institutionId)
+    .maybeSingle();
+  return clean((data as any)?.label, "Classe non précisée");
+}
+
+export async function createPostedReceiptForCharge(input: CreateReceiptInput) {
+  const admin = getSupabaseServiceClient();
+  const amount = Number(input.amount || 0);
+
+  if (!input.institutionId) throw new Error("Établissement manquant.");
+  if (!input.studentId) throw new Error("Élève manquant.");
+  if (!input.studentChargeId) throw new Error("Frais à solder manquant.");
+  if (!Number.isFinite(amount) || amount <= 0) {
+    throw new Error("Le montant doit être supérieur à 0.");
+  }
+
+  const { data: charge, error: chargeErr } = await admin
+    .schema("finance")
+    .from("v_charge_balances")
+    .select(
+      "id,school_id,academic_year_id,academic_year,student_id,class_id,fee_category_id,label,balance_due,computed_status",
+    )
+    .eq("id", input.studentChargeId)
+    .eq("school_id", input.institutionId)
+    .eq("student_id", input.studentId)
+    .maybeSingle();
+
+  if (chargeErr) throw new Error(chargeErr.message);
+  if (!charge) throw new Error("Frais introuvable ou non autorisé.");
+
+  const balanceDue = Number((charge as any).balance_due || 0);
+  if (balanceDue <= 0) throw new Error("Ce frais est déjà soldé.");
+  if (amount > balanceDue) {
+    throw new Error(`Le montant dépasse le reste dû (${money(balanceDue)}).`);
+  }
+
+  const classId = input.classId || (charge as any).class_id || null;
+  const academicYear = (charge as any).academic_year || null;
+  const academicYearId =
+    (charge as any).academic_year_id || (await getAcademicYearId(input.institutionId, academicYear));
+  const paymentDateIso = input.paymentDateIso || new Date().toISOString();
+  const receiptNo = makeReceiptNo();
+  const nowIso = new Date().toISOString();
+
+  const { data: receipt, error: receiptErr } = await admin
+    .schema("finance")
+    .from("receipts")
+    .insert({
+      school_id: input.institutionId,
+      academic_year_id: academicYearId,
+      academic_year: academicYear,
+      student_id: input.studentId,
+      receipt_no: receiptNo,
+      receipt_status: "posted",
+      payment_date: paymentDateIso,
+      payment_method_id: null,
+      cash_account_id: null,
+      payer_name: clean(input.payerName) || null,
+      reference_no: clean(input.referenceNo) || null,
+      total_amount: amount,
+      notes: input.notes || null,
+      cancelled_at: null,
+      cancelled_by: null,
+      cancel_reason: null,
+      created_by: input.createdBy || null,
+      created_at: nowIso,
+      updated_at: nowIso,
+    } as any)
+    .select("id,receipt_no")
+    .single();
+
+  if (receiptErr) throw new Error(receiptErr.message);
+
+  const { error: allocationErr } = await admin
+    .schema("finance")
+    .from("receipt_allocations")
+    .insert({
+      receipt_id: (receipt as any).id,
+      student_charge_id: input.studentChargeId,
+      amount,
+      created_at: nowIso,
+    } as any);
+
+  if (allocationErr) {
+    await admin.schema("finance").from("receipts").delete().eq("id", (receipt as any).id);
+    throw new Error(allocationErr.message);
+  }
+
+  const remainingDueAfterPayment = Math.max(balanceDue - amount, 0);
+
+  if (input.notifyFounder !== false) {
+    try {
+      await queueFounderFinancePaymentNotification({
+        institutionId: input.institutionId,
+        amount,
+        receiptNo: (receipt as any).receipt_no,
+        payerName: input.payerName || null,
+        studentName: await getStudentName(input.studentId, input.institutionId),
+        className: await getClassLabel(classId, input.institutionId),
+        categoryName: clean((charge as any).label, "Frais scolaire"),
+        remainingDue: remainingDueAfterPayment,
+        paidAt: paymentDateIso,
+        req: input.req,
+      });
+    } catch (e: any) {
+      console.warn("[finance/receipt-service] notification founder ignorée", e?.message || e);
+    }
+  }
+
+  revalidatePath("/admin/finance/payments");
+  revalidatePath("/admin/finance/receipts");
+  revalidatePath(`/admin/finance/receipts/${(receipt as any).id}`);
+  revalidatePath("/admin/finance/charges");
+  revalidatePath("/admin/finance/arrears");
+  revalidatePath("/admin/finance");
+  revalidatePath("/founder/finance");
+
+  return {
+    id: String((receipt as any).id),
+    receiptNo: String((receipt as any).receipt_no),
+    remainingDue: remainingDueAfterPayment,
+  };
+}
+
+export async function confirmOnlinePaymentAndCreateReceipt(input: PostOnlinePaymentInput) {
+  const admin = getSupabaseServiceClient();
+
+  if (!input.intentId) throw new Error("Intention de paiement manquante.");
+
+  const { data: intent, error: intentErr } = await admin
+    .schema("finance")
+    .from("online_payment_intents")
+    .select(
+      "id,school_id,student_id,class_id,student_charge_id,amount,provider,status,payer_name,payer_phone,provider_reference,provider_transaction_id,receipt_id,raw_provider_payload",
+    )
+    .eq("id", input.intentId)
+    .maybeSingle();
+
+  if (intentErr) throw new Error(intentErr.message);
+  if (!intent) throw new Error("Intention de paiement introuvable.");
+
+  if ((intent as any).status === "succeeded" && (intent as any).receipt_id) {
+    return {
+      alreadyConfirmed: true,
+      receiptId: String((intent as any).receipt_id),
+    };
+  }
+
+  const receipt = await createPostedReceiptForCharge({
+    institutionId: String((intent as any).school_id),
+    studentId: String((intent as any).student_id),
+    classId: (intent as any).class_id || null,
+    studentChargeId: String((intent as any).student_charge_id),
+    amount: Number((intent as any).amount || 0),
+    payerName: (intent as any).payer_name || null,
+    referenceNo:
+      input.providerTransactionId ||
+      input.providerReference ||
+      (intent as any).provider_transaction_id ||
+      (intent as any).provider_reference ||
+      null,
+    notes: "Paiement en ligne confirmé automatiquement.",
+    notifyFounder: true,
+    req: input.req,
+  });
+
+  const mergedRawPayload = {
+    ...(((intent as any).raw_provider_payload || {}) as Record<string, any>),
+    ...(input.rawProviderPayload || {}),
+  };
+
+  const { error: updateErr } = await admin
+    .schema("finance")
+    .from("online_payment_intents")
+    .update({
+      status: "succeeded",
+      receipt_id: receipt.id,
+      provider_reference: input.providerReference || (intent as any).provider_reference || null,
+      provider_transaction_id:
+        input.providerTransactionId || (intent as any).provider_transaction_id || null,
+      raw_provider_payload: mergedRawPayload,
+      confirmed_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      error_message: null,
+    } as any)
+    .eq("id", input.intentId)
+    .neq("status", "succeeded");
+
+  if (updateErr) throw new Error(updateErr.message);
+
+  return {
+    alreadyConfirmed: false,
+    receiptId: receipt.id,
+    receiptNo: receipt.receiptNo,
+  };
+}
