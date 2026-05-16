@@ -20,7 +20,7 @@ type SearchParams = Record<string, string | string[] | undefined>;
 type PeriodKey = "today" | "week" | "month" | "custom";
 
 type PageProps = {
-  searchParams?: SearchParams | Promise<SearchParams>;
+  searchParams?: Promise<SearchParams>;
 };
 
 const CIV_TIME_ZONE = "Africa/Abidjan";
