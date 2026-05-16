@@ -26,8 +26,26 @@ type QueryResult<T> = {
   error: { message?: string } | null;
 };
 
+const CIV_TIME_ZONE = "Africa/Abidjan";
+
 function todayYmd() {
-  return new Date().toISOString().slice(0, 10);
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: CIV_TIME_ZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
+}
+
+function dayBoundsIso(ymd: string) {
+  // La Côte d’Ivoire est en UTC toute l’année. On garde donc des bornes ISO strictes
+  // pour les colonnes timestamp comme finance.receipts.payment_date.
+  const start = new Date(`${ymd}T00:00:00.000Z`);
+  const end = new Date(start.getTime() + 24 * 60 * 60 * 1000);
+  return {
+    startIso: start.toISOString(),
+    endIso: end.toISOString(),
+  };
 }
 
 function money(value: number) {
@@ -90,8 +108,7 @@ async function getFounderContext() {
 export default async function FounderDashboardPage() {
   const { service, institutionIds, institutions } = await getFounderContext();
   const today = todayYmd();
-  const startIso = `${today}T00:00:00.000Z`;
-  const endIso = `${today}T23:59:59.999Z`;
+  const { startIso, endIso } = dayBoundsIso(today);
 
   const [enrollments, sessions, periods, receipts, expenses] = await Promise.all([
     safeData<any[]>(
@@ -130,7 +147,8 @@ export default async function FounderDashboardPage() {
         .select("id,school_id,total_amount,receipt_status,payment_date")
         .in("school_id", institutionIds)
         .eq("receipt_status", "posted")
-        .eq("payment_date", today),
+        .gte("payment_date", startIso)
+        .lt("payment_date", endIso),
       [],
     ),
     safeData<any[]>(
