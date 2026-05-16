@@ -3600,6 +3600,157 @@ function rapportBaseHeaders() {
   ];
 }
 
+type RapportFSettings = {
+  drenaet: string;
+  ddenaet: string;
+  locality: string;
+  report_author_name: string;
+  report_author_phone: string;
+  opening_meeting_date: string;
+  opening_meeting_organizer: string;
+  opening_meeting_location: string;
+  opening_meeting_observation: string;
+  textbook_exists: string;
+  gradebook_exists: string;
+  attendance_register_exists: string;
+  pedagogical_documents_observation: string;
+  pedagogical_documents_comment: string;
+  up_comment: string;
+  teaching_council_comment: string;
+  class_visit_comment: string;
+  discipline_comment: string;
+  internal_council_comment: string;
+  extracurricular_comment: string;
+  general_observation: string;
+};
+
+const DEFAULT_RAPPORT_F_SETTINGS: RapportFSettings = {
+  drenaet: "",
+  ddenaet: "",
+  locality: "",
+  report_author_name: "",
+  report_author_phone: "",
+  opening_meeting_date: "",
+  opening_meeting_organizer: "",
+  opening_meeting_location: "",
+  opening_meeting_observation: "",
+  textbook_exists: "OUI",
+  gradebook_exists: "OUI",
+  attendance_register_exists: "OUI",
+  pedagogical_documents_observation: "Bien",
+  pedagogical_documents_comment: "",
+  up_comment: "",
+  teaching_council_comment: "",
+  class_visit_comment: "",
+  discipline_comment: "",
+  internal_council_comment: "",
+  extracurricular_comment: "",
+  general_observation: "",
+};
+
+function normalizeRapportFSettings(value: unknown): RapportFSettings {
+  const source = value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+  const out: RapportFSettings = { ...DEFAULT_RAPPORT_F_SETTINGS };
+
+  for (const key of Object.keys(DEFAULT_RAPPORT_F_SETTINGS) as (keyof RapportFSettings)[]) {
+    const raw = source[key];
+    if (typeof raw === "string") out[key] = raw;
+    else if (raw !== null && raw !== undefined) out[key] = String(raw);
+  }
+
+  return out;
+}
+
+async function loadRapportFSettings(params: {
+  supabase: Awaited<ReturnType<typeof getSupabaseServerClient>>;
+  institutionId: string;
+  academicYear: string;
+}): Promise<RapportFSettings> {
+  const { supabase, institutionId, academicYear } = params;
+
+  const { data } = await supabase
+    .from("institutions")
+    .select("settings_json")
+    .eq("id", institutionId)
+    .maybeSingle();
+
+  const settingsJson = (data as any)?.settings_json;
+  const byYear =
+    settingsJson &&
+    typeof settingsJson === "object" &&
+    !Array.isArray(settingsJson) &&
+    settingsJson.rapport_f_by_year &&
+    typeof settingsJson.rapport_f_by_year === "object" &&
+    !Array.isArray(settingsJson.rapport_f_by_year)
+      ? settingsJson.rapport_f_by_year
+      : {};
+
+  return normalizeRapportFSettings((byYear as Record<string, unknown>)[academicYear]);
+}
+
+function cleanRapportValue(value: unknown): string {
+  return String(value ?? "").trim();
+}
+
+function rapportYesNo(value: string): string {
+  const raw = normalizeForMatch(value);
+  if (!raw) return "";
+  return raw === "non" || raw === "no" || raw === "0" || raw === "false" ? "NON" : "OUI";
+}
+
+function makeSparseAoa(rows: number, cols: number) {
+  return Array.from({ length: rows }, () => Array.from({ length: cols }, () => undefined as unknown));
+}
+
+function setSparseAoaCell(aoa: unknown[][], ref: string, value: unknown) {
+  if (value === undefined || value === null) return;
+  const cleaned = typeof value === "string" ? value.trim() : value;
+  if (cleaned === "") return;
+  const { r, c } = cellRefToIndexes(ref);
+  while (aoa.length <= r) aoa.push([]);
+  while (aoa[r].length <= c) aoa[r].push(undefined as unknown);
+  aoa[r][c] = cleaned;
+}
+
+function buildRapportFManualSheets(settings: RapportFSettings, institutionName: string): PreparedSheet[] {
+  const meetingDate = formatDateFr(settings.opening_meeting_date) || settings.opening_meeting_date;
+  const sheets: PreparedSheet[] = [];
+
+  const buildSheet = (sheetName: string, term: 1 | 2 | 3): PreparedSheet => {
+    const aoa = makeSparseAoa(140, 8);
+    const docRow = term === 1 ? 15 : 13;
+    const docCommentRow = term === 1 ? 18 : 16;
+    const upCommentRow = term === 1 ? 130 : term === 2 ? 76 : 77;
+    const ceCommentRow = term === 1 ? 168 : term === 2 ? 122 : 136;
+
+    if (term === 1) {
+      setSparseAoaCell(aoa, "B9", institutionName);
+      setSparseAoaCell(aoa, "C9", meetingDate);
+      setSparseAoaCell(aoa, "D9", settings.opening_meeting_organizer);
+      setSparseAoaCell(aoa, "E9", settings.opening_meeting_location);
+      setSparseAoaCell(aoa, "F9", settings.opening_meeting_observation);
+    } else {
+      setSparseAoaCell(aoa, `B${docRow}`, institutionName);
+    }
+
+    setSparseAoaCell(aoa, `C${docRow}`, rapportYesNo(settings.textbook_exists));
+    setSparseAoaCell(aoa, `D${docRow}`, rapportYesNo(settings.gradebook_exists));
+    setSparseAoaCell(aoa, `E${docRow}`, rapportYesNo(settings.attendance_register_exists));
+    setSparseAoaCell(aoa, `F${docRow}`, settings.pedagogical_documents_observation);
+    setSparseAoaCell(aoa, `B${docCommentRow}`, settings.pedagogical_documents_comment);
+    setSparseAoaCell(aoa, `B${upCommentRow}`, settings.up_comment);
+    setSparseAoaCell(aoa, `B${ceCommentRow}`, settings.teaching_council_comment);
+
+    return { sheetName, aoa };
+  };
+
+  sheets.push(buildSheet("PREMIER TRIMES.", 1));
+  sheets.push(buildSheet("DEUXIEME TRIMES.", 2));
+  sheets.push(buildSheet("TROISIEME TRI et BILAN", 3));
+
+  return sheets;
+}
+
 async function prepareRapportFOfficialExport(params: {
   req: NextRequest;
   supabase: Awaited<ReturnType<typeof getSupabaseServerClient>>;
@@ -3616,6 +3767,8 @@ async function prepareRapportFOfficialExport(params: {
   if (classError) return { error: classError, status: classError === "INVALID_CLASS_ID" ? 400 : 500 };
   if (!classes.length) return { error: "NO_CLASSES_FOUND", status: 404 };
   const studentMetaByKey = await loadStudentMeta({ supabase, classes, academicYear, activeFrom: firstActiveDate });
+  const rapportFSettings = await loadRapportFSettings({ supabase, institutionId, academicYear });
+  const rapportDrena = cleanRapportValue(rapportFSettings.drenaet || rapportFSettings.ddenaet);
 
   const rows: unknown[][] = [["MODELE D'ECRITURE DES CLASSES", "", "", "6è", "5è", "2NDE", "1ERE", "TA"], ["", "", "", "4è", "3è", "2NDEA", "1EREA", "TC"], ["MODELE D'ECRITURE DU GENRE(Garçon / Fille)", "", "", "G", "F", "2NDEC", "1EREC", "TD"], [], rapportBaseHeaders()];
 
@@ -3688,11 +3841,12 @@ async function prepareRapportFOfficialExport(params: {
     mainSheetName: "BASE DE DONNEES",
     rows: [],
     sheets: [
+      ...buildRapportFManualSheets(rapportFSettings, institutionName),
       {
         sheetName: "ETABLISSEMENTS",
         aoa: [
           ["F_26-40_R_0", "SAISIR LA LISTE DE VOS ETABLISSEMENTS", "", "CLIQUEZ POUR CHOISIR LE NOM DE LA DRENA ET DE L'ANNEE SCOLAIRE DANS LES  CELLULES  CI-DESSOUS."],
-          ["N°", "ETABLISSEMENT", "CHOIX_DRENA :", ""],
+          ["N°", "ETABLISSEMENT", "CHOIX_DRENA :", rapportDrena],
           [1, institutionName, "CHOIX_ANNEE SCOLAIRE :", academicYear],
         ],
         clearRanges: ["A4:B369"],

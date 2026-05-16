@@ -69,6 +69,54 @@ type AcademicYearRow = {
   end_date: string;
   is_current: boolean;
 };
+type RapportFSettings = {
+  drenaet: string;
+  ddenaet: string;
+  locality: string;
+  report_author_name: string;
+  report_author_phone: string;
+  opening_meeting_date: string;
+  opening_meeting_organizer: string;
+  opening_meeting_location: string;
+  opening_meeting_observation: string;
+  textbook_exists: string;
+  gradebook_exists: string;
+  attendance_register_exists: string;
+  pedagogical_documents_observation: string;
+  pedagogical_documents_comment: string;
+  up_comment: string;
+  teaching_council_comment: string;
+  class_visit_comment: string;
+  discipline_comment: string;
+  internal_council_comment: string;
+  extracurricular_comment: string;
+  general_observation: string;
+};
+
+const DEFAULT_RAPPORT_F_SETTINGS: RapportFSettings = {
+  drenaet: "",
+  ddenaet: "",
+  locality: "",
+  report_author_name: "",
+  report_author_phone: "",
+  opening_meeting_date: "",
+  opening_meeting_organizer: "",
+  opening_meeting_location: "",
+  opening_meeting_observation: "",
+  textbook_exists: "OUI",
+  gradebook_exists: "OUI",
+  attendance_register_exists: "OUI",
+  pedagogical_documents_observation: "Bien",
+  pedagogical_documents_comment: "",
+  up_comment: "",
+  teaching_council_comment: "",
+  class_visit_comment: "",
+  discipline_comment: "",
+  internal_council_comment: "",
+  extracurricular_comment: "",
+  general_observation: "",
+};
+
 
 const OFFICIAL_TRACK_LABELS: Record<string, string> = {
   "6eme": "6ème",
@@ -112,7 +160,8 @@ type SettingsTabKey =
   | "school"
   | "academic-years"
   | "grading-periods"
-  | "coefficients";
+  | "coefficients"
+  | "rapport-f";
 
 const SETTINGS_TABS: Array<{
   key: SettingsTabKey;
@@ -138,6 +187,11 @@ const SETTINGS_TABS: Array<{
     key: "grading-periods",
     label: "Périodes d’évaluation",
     description: "Trimestres, semestres, dates et coefficients.",
+  },
+  {
+    key: "rapport-f",
+    label: "Rapport F",
+    description: "Données que Mon Cahier ne peut pas deviner.",
   },
   {
     key: "coefficients",
@@ -696,6 +750,14 @@ export default function AdminSettingsPage() {
   const [msgEvalPeriods, setMsgEvalPeriods] = useState<string | null>(null);
 
   /* =======================
+     Rapport F
+  ======================== */
+  const [rapportF, setRapportF] = useState<RapportFSettings>(DEFAULT_RAPPORT_F_SETTINGS);
+  const [loadingRapportF, setLoadingRapportF] = useState(false);
+  const [savingRapportF, setSavingRapportF] = useState(false);
+  const [msgRapportF, setMsgRapportF] = useState<string | null>(null);
+
+  /* =======================
      6) Coeffs disciplines + sous-matières
   ======================== */
   const [subjectCoeffs, setSubjectCoeffs] = useState<SubjectCoeffRow[]>([]);
@@ -721,6 +783,66 @@ export default function AdminSettingsPage() {
     GeneralSecondaryCoeffPresetPreviewItem[]
   >([]);
   const [ciPresetAppliedOnce, setCiPresetAppliedOnce] = useState(false);
+
+  const rapportFYear = selectedAcademicYear || guessCurrentAcademicYear();
+  const rapportFCompletedFields = Object.values(rapportF).filter((value) => String(value || "").trim()).length;
+  const rapportFTotalFields = Object.keys(DEFAULT_RAPPORT_F_SETTINGS).length;
+
+  const setRapportFField = (key: keyof RapportFSettings, value: string) => {
+    setRapportF((current) => ({ ...current, [key]: value }));
+  };
+
+  const renderRapportInput = (
+    key: keyof RapportFSettings,
+    label: string,
+    placeholder = "",
+    type: "text" | "tel" | "date" = "text",
+  ) => (
+    <div>
+      <div className="mb-1 text-xs font-semibold text-slate-500">{label}</div>
+      <input
+        type={type}
+        className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm font-medium text-slate-800 outline-none transition focus:border-sky-500 focus:ring-4 focus:ring-sky-500/10 disabled:bg-slate-100"
+        value={rapportF[key]}
+        onChange={(e) => setRapportFField(key, e.target.value)}
+        disabled={loadingRapportF || savingRapportF}
+        placeholder={placeholder}
+      />
+    </div>
+  );
+
+  const renderRapportTextarea = (
+    key: keyof RapportFSettings,
+    label: string,
+    placeholder = "",
+  ) => (
+    <div>
+      <div className="mb-1 text-xs font-semibold text-slate-500">{label}</div>
+      <textarea
+        rows={3}
+        className="w-full resize-y rounded-xl border border-slate-200 px-3 py-2 text-sm font-medium text-slate-800 outline-none transition focus:border-sky-500 focus:ring-4 focus:ring-sky-500/10 disabled:bg-slate-100"
+        value={rapportF[key]}
+        onChange={(e) => setRapportFField(key, e.target.value)}
+        disabled={loadingRapportF || savingRapportF}
+        placeholder={placeholder}
+      />
+    </div>
+  );
+
+  const renderRapportSelect = (key: keyof RapportFSettings, label: string) => (
+    <div>
+      <div className="mb-1 text-xs font-semibold text-slate-500">{label}</div>
+      <select
+        className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-800 outline-none transition focus:border-sky-500 focus:ring-4 focus:ring-sky-500/10 disabled:bg-slate-100"
+        value={rapportF[key]}
+        onChange={(e) => setRapportFField(key, e.target.value)}
+        disabled={loadingRapportF || savingRapportF}
+      >
+        <option value="OUI">OUI</option>
+        <option value="NON">NON</option>
+      </select>
+    </div>
+  );
 
   const coeffLevels = useMemo(() => {
     const s = new Set<string>();
@@ -1532,6 +1654,60 @@ export default function AdminSettingsPage() {
       setSavingPeriods(false);
     }
   }
+
+  const loadRapportFSettings = async (year = rapportFYear) => {
+    if (!year) return;
+    setLoadingRapportF(true);
+    setMsgRapportF(null);
+    try {
+      const params = new URLSearchParams({ academic_year: year });
+      const r = await fetch(`/api/admin/rapport-f/settings?${params.toString()}`, {
+        cache: "no-store",
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j?.error || "Chargement impossible");
+      setRapportF({ ...DEFAULT_RAPPORT_F_SETTINGS, ...(j?.settings || {}) });
+      setMsgRapportF(`Données Rapport F chargées (${year}).`);
+    } catch (e: any) {
+      setMsgRapportF(e?.message || "Impossible de charger les données Rapport F.");
+    } finally {
+      setLoadingRapportF(false);
+    }
+  };
+
+  const saveRapportFSettings = async () => {
+    if (!rapportFYear) {
+      setMsgRapportF("Choisissez d'abord une année scolaire.");
+      return;
+    }
+    setSavingRapportF(true);
+    setMsgRapportF(null);
+    try {
+      const r = await fetch("/api/admin/rapport-f/settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ academic_year: rapportFYear, settings: rapportF }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j?.error || "Enregistrement impossible");
+      const ok = `Données Rapport F enregistrées ✅ (${rapportFYear}).`;
+      setMsgRapportF(ok);
+      pushToast("success", ok);
+    } catch (e: any) {
+      const msg = e?.message || "Impossible d'enregistrer les données Rapport F.";
+      setMsgRapportF(msg);
+      pushToast("error", msg);
+    } finally {
+      setSavingRapportF(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === "rapport-f") {
+      loadRapportFSettings(rapportFYear);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, rapportFYear]);
 
   /* ====== Coefficients disciplines + sous-matières : chargement & sauvegarde ====== */
   async function loadSubjectCoeffs() {
@@ -3442,6 +3618,121 @@ export default function AdminSettingsPage() {
               </div>
             </SectionCard>
           </>
+        )}
+
+        {activeTab === "rapport-f" && (
+          <section className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm md:p-5">
+            <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+              <div>
+                <div className="text-xs font-black uppercase tracking-[0.16em] text-sky-700">
+                  Données Rapport F
+                </div>
+                <h2 className="mt-1 text-lg font-black text-slate-900">
+                  Informations complémentaires de l’établissement
+                </h2>
+                <div className="mt-2 flex flex-wrap gap-2 text-xs font-semibold">
+                  <span className="rounded-full bg-slate-100 px-3 py-1 text-slate-700">
+                    Année : {rapportFYear}
+                  </span>
+                  <span className="rounded-full bg-sky-50 px-3 py-1 text-sky-700 ring-1 ring-sky-100">
+                    {rapportFCompletedFields}/{rapportFTotalFields} champ(s) renseigné(s)
+                  </span>
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => loadRapportFSettings(rapportFYear)}
+                  disabled={loadingRapportF || savingRapportF}
+                  className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-700 shadow-sm hover:bg-slate-50 disabled:cursor-wait disabled:opacity-60"
+                >
+                  {loadingRapportF ? "Chargement…" : "Recharger"}
+                </button>
+                <button
+                  type="button"
+                  onClick={saveRapportFSettings}
+                  disabled={loadingRapportF || savingRapportF}
+                  className="rounded-xl bg-sky-700 px-4 py-2 text-sm font-black text-white shadow-sm hover:bg-sky-800 disabled:cursor-wait disabled:bg-slate-300"
+                >
+                  {savingRapportF ? "Enregistrement…" : "Enregistrer"}
+                </button>
+              </div>
+            </div>
+
+            {msgRapportF && (
+              <div className="mb-4 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-700">
+                {msgRapportF}
+              </div>
+            )}
+
+            <div className="grid gap-4">
+              <div className="rounded-2xl border border-slate-200 p-4">
+                <div className="mb-3 text-sm font-black text-slate-900">
+                  Identification administrative
+                </div>
+                <div className="grid gap-3 md:grid-cols-3">
+                  {renderRapportInput("drenaet", "DRENAET", "DRENAET ABOISSO")}
+                  {renderRapportInput("ddenaet", "DDENAET", "DDENAET ABOISSO")}
+                  {renderRapportInput("locality", "Localité", "Aboisso")}
+                  {renderRapportInput("report_author_name", "Rédacteur du rapport", "Nom et prénoms")}
+                  {renderRapportInput("report_author_phone", "Contact rédacteur", "+225 ...", "tel")}
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-slate-200 p-4">
+                <div className="mb-3 text-sm font-black text-slate-900">
+                  Réunion de rentrée
+                </div>
+                <div className="grid gap-3 md:grid-cols-4">
+                  {renderRapportInput("opening_meeting_date", "Date", "", "date")}
+                  {renderRapportInput("opening_meeting_organizer", "Organisateur", "Chef d’établissement")}
+                  {renderRapportInput("opening_meeting_location", "Lieu", "Salle des professeurs")}
+                  {renderRapportInput("opening_meeting_observation", "Observation", "Réunion tenue")}
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-slate-200 p-4">
+                <div className="mb-3 text-sm font-black text-slate-900">
+                  Documents pédagogiques
+                </div>
+                <div className="grid gap-3 md:grid-cols-4">
+                  {renderRapportSelect("textbook_exists", "Cahiers de texte")}
+                  {renderRapportSelect("gradebook_exists", "Cahiers de notes")}
+                  {renderRapportSelect("attendance_register_exists", "Cahiers d’appel")}
+                  {renderRapportInput("pedagogical_documents_observation", "Observation", "Bien")}
+                </div>
+                <div className="mt-3">
+                  {renderRapportTextarea(
+                    "pedagogical_documents_comment",
+                    "Appréciation générale",
+                    "Tenue des documents, progression, rythme des évaluations...",
+                  )}
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-slate-200 p-4">
+                <div className="mb-3 text-sm font-black text-slate-900">
+                  Vie pédagogique
+                </div>
+                <div className="grid gap-3 md:grid-cols-2">
+                  {renderRapportTextarea("up_comment", "Unités pédagogiques", "Synthèse des activités des UP")}
+                  {renderRapportTextarea("teaching_council_comment", "Conseils d’enseignement", "Synthèse des activités des CE")}
+                  {renderRapportTextarea("class_visit_comment", "Visites de classes", "Observations sur les visites")}
+                  {renderRapportTextarea("discipline_comment", "Discipline / vie scolaire", "Observations utiles")}
+                  {renderRapportTextarea("internal_council_comment", "Conseil intérieur", "Activités ou décisions importantes")}
+                  {renderRapportTextarea("extracurricular_comment", "Activités parascolaires", "Clubs, activités, observations")}
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-slate-200 p-4">
+                {renderRapportTextarea(
+                  "general_observation",
+                  "Observation générale",
+                  "Synthèse générale à reprendre dans le Rapport F si nécessaire",
+                )}
+              </div>
+            </div>
+          </section>
         )}
 
         {activeTab === "coefficients" && (

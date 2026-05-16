@@ -1,13 +1,13 @@
-//src/app/admin/export-moyennes/page.tsx
+// src/app/admin/export-moyennes/page.tsx
 import { redirect } from "next/navigation";
 import {
-  Download,
   FileSpreadsheet,
   GraduationCap,
   Layers3,
   ShieldCheck,
 } from "lucide-react";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
+import OfficialExportForm from "./OfficialExportForm";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -90,10 +90,6 @@ async function getAdminContext() {
   };
 }
 
-function EmptyOption({ label }: { label: string }) {
-  return <option value="">{label}</option>;
-}
-
 function TermExportCard({
   title,
   term,
@@ -127,51 +123,21 @@ function TermExportCard({
         </div>
       </div>
 
-      <form action="/api/admin/exports/averages" method="GET" className="grid gap-3">
-        <input type="hidden" name="export_kind" value="desps_official_term" />
-        <input type="hidden" name="term" value={term} />
-        <input type="hidden" name="period_ref" value={period ? `period:${period.id}` : ""} />
-        <input type="hidden" name="format" value="xlsx" />
-
-        <select
-          name="academic_year"
-          required
-          className="w-full rounded-2xl border border-slate-300 bg-white px-3 py-2.5 text-sm font-semibold text-slate-900 outline-none transition focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/15"
-          defaultValue={defaultAcademicYear}
-        >
-          {!hasAcademicYears ? (
-            <EmptyOption label="Aucune année disponible" />
-          ) : (
-            academicYears.map((year) => (
-              <option key={`${term}-year-${year}`} value={year}>
-                {year}
-              </option>
-            ))
-          )}
-        </select>
-
-        <select
-          name="class_id"
-          className="w-full rounded-2xl border border-slate-300 bg-white px-3 py-2.5 text-sm font-semibold text-slate-900 outline-none transition focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/15"
-          defaultValue=""
-        >
-          <option value="">{hasClasses ? "Toutes les classes" : "Aucune classe disponible"}</option>
-          {classes.map((cls) => (
-            <option key={`${term}-class-${cls.id}`} value={cls.id}>
-              {classDisplayLabel(cls)}
-            </option>
-          ))}
-        </select>
-
-        <button
-          type="submit"
-          disabled={!hasAcademicYears || !period}
-          className="inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-5 py-3 text-sm font-black text-white shadow-sm transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-500"
-        >
-          <Download className="h-4 w-4" />
-          Télécharger Excel officiel
-        </button>
-      </form>
+      <OfficialExportForm
+        color="emerald"
+        disabled={!hasAcademicYears || !period}
+        fields={{
+          export_kind: "desps_official_term",
+          term: String(term),
+          period_ref: period ? `period:${period.id}` : "",
+          format: "xlsx",
+        }}
+        academicYears={academicYears}
+        defaultAcademicYear={defaultAcademicYear}
+        classes={classes.map((cls) => ({ value: cls.id, label: classDisplayLabel(cls) }))}
+        hasAcademicYears={hasAcademicYears}
+        hasClasses={hasClasses}
+      />
     </section>
   );
 }
@@ -203,49 +169,19 @@ function AnnualExportCard({
         </div>
       </div>
 
-      <form action="/api/admin/exports/averages" method="GET" className="grid gap-3">
-        <input type="hidden" name="export_kind" value="desps_official_annual" />
-        <input type="hidden" name="format" value="xlsx" />
-
-        <select
-          name="academic_year"
-          required
-          className="w-full rounded-2xl border border-slate-300 bg-white px-3 py-2.5 text-sm font-semibold text-slate-900 outline-none transition focus:border-violet-500 focus:ring-4 focus:ring-violet-500/15"
-          defaultValue={defaultAcademicYear}
-        >
-          {!hasAcademicYears ? (
-            <EmptyOption label="Aucune année disponible" />
-          ) : (
-            academicYears.map((year) => (
-              <option key={`annual-year-${year}`} value={year}>
-                {year}
-              </option>
-            ))
-          )}
-        </select>
-
-        <select
-          name="class_id"
-          className="w-full rounded-2xl border border-slate-300 bg-white px-3 py-2.5 text-sm font-semibold text-slate-900 outline-none transition focus:border-violet-500 focus:ring-4 focus:ring-violet-500/15"
-          defaultValue=""
-        >
-          <option value="">{hasClasses ? "Toutes les classes" : "Aucune classe disponible"}</option>
-          {classes.map((cls) => (
-            <option key={`annual-class-${cls.id}`} value={cls.id}>
-              {classDisplayLabel(cls)}
-            </option>
-          ))}
-        </select>
-
-        <button
-          type="submit"
-          disabled={!hasAcademicYears}
-          className="inline-flex items-center justify-center gap-2 rounded-2xl bg-violet-600 px-5 py-3 text-sm font-black text-white shadow-sm transition hover:bg-violet-700 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-500"
-        >
-          <Download className="h-4 w-4" />
-          Télécharger Excel officiel
-        </button>
-      </form>
+      <OfficialExportForm
+        color="violet"
+        disabled={!hasAcademicYears}
+        fields={{
+          export_kind: "desps_official_annual",
+          format: "xlsx",
+        }}
+        academicYears={academicYears}
+        defaultAcademicYear={defaultAcademicYear}
+        classes={classes.map((cls) => ({ value: cls.id, label: classDisplayLabel(cls) }))}
+        hasAcademicYears={hasAcademicYears}
+        hasClasses={hasClasses}
+      />
     </section>
   );
 }
@@ -277,49 +213,20 @@ function RapportFCard({
         </div>
       </div>
 
-      <form action="/api/admin/exports/averages" method="GET" className="grid gap-3 md:grid-cols-[1fr_1fr_auto] md:items-end">
-        <input type="hidden" name="export_kind" value="rapport_f_official" />
-        <input type="hidden" name="format" value="xlsx" />
-
-        <select
-          name="academic_year"
-          required
-          className="w-full rounded-2xl border border-slate-300 bg-white px-3 py-2.5 text-sm font-semibold text-slate-900 outline-none transition focus:border-amber-500 focus:ring-4 focus:ring-amber-500/15"
-          defaultValue={defaultAcademicYear}
-        >
-          {!hasAcademicYears ? (
-            <EmptyOption label="Aucune année disponible" />
-          ) : (
-            academicYears.map((year) => (
-              <option key={`rapport-year-${year}`} value={year}>
-                {year}
-              </option>
-            ))
-          )}
-        </select>
-
-        <select
-          name="class_id"
-          className="w-full rounded-2xl border border-slate-300 bg-white px-3 py-2.5 text-sm font-semibold text-slate-900 outline-none transition focus:border-amber-500 focus:ring-4 focus:ring-amber-500/15"
-          defaultValue=""
-        >
-          <option value="">{hasClasses ? "Toutes les classes" : "Aucune classe disponible"}</option>
-          {classes.map((cls) => (
-            <option key={`rapport-class-${cls.id}`} value={cls.id}>
-              {classDisplayLabel(cls)}
-            </option>
-          ))}
-        </select>
-
-        <button
-          type="submit"
-          disabled={!hasAcademicYears}
-          className="inline-flex items-center justify-center gap-2 rounded-2xl bg-amber-600 px-5 py-3 text-sm font-black text-white shadow-sm transition hover:bg-amber-700 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-500"
-        >
-          <Download className="h-4 w-4" />
-          Télécharger Excel officiel
-        </button>
-      </form>
+      <OfficialExportForm
+        color="amber"
+        className="grid gap-3 md:grid-cols-[1fr_1fr_auto] md:items-start"
+        disabled={!hasAcademicYears}
+        fields={{
+          export_kind: "rapport_f_official",
+          format: "xlsx",
+        }}
+        academicYears={academicYears}
+        defaultAcademicYear={defaultAcademicYear}
+        classes={classes.map((cls) => ({ value: cls.id, label: classDisplayLabel(cls) }))}
+        hasAcademicYears={hasAcademicYears}
+        hasClasses={hasClasses}
+      />
     </section>
   );
 }
