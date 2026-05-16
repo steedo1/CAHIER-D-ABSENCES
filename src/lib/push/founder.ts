@@ -31,6 +31,40 @@ function money(value: number | string | null | undefined) {
   return `${Number(value || 0).toLocaleString("fr-FR")} F`;
 }
 
+function shortDateTime(value: string | null | undefined) {
+  if (!value) return "";
+  try {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return "";
+
+    const parts = new Intl.DateTimeFormat("fr-FR", {
+      timeZone: "Africa/Abidjan",
+      day: "2-digit",
+      month: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    }).formatToParts(date);
+
+    const get = (type: string) => parts.find((part) => part.type === type)?.value || "";
+    const day = get("day");
+    const month = get("month");
+    const hour = get("hour");
+    const minute = get("minute");
+
+    if (!day || !month || !hour || !minute) return "";
+    return `${day}/${month} à ${hour}:${minute}`;
+  } catch {
+    return "";
+  }
+}
+
+function remainingDueLabel(value: number | string | null | undefined) {
+  const amount = Number(value || 0);
+  if (!Number.isFinite(amount) || amount <= 0) return "Soldé";
+  return `Reste dû : ${money(amount)}`;
+}
+
 async function getInstitutionName(institutionId: string) {
   try {
     const srv = getSupabaseServiceClient();
@@ -141,22 +175,50 @@ export async function queueFounderFinancePaymentNotification(input: {
   receiptNo?: string | null;
   payerName?: string | null;
   studentName?: string | null;
+  className?: string | null;
+  categoryName?: string | null;
+  remainingDue?: number | string | null;
+  paidAt?: string | null;
   req?: Request;
 }) {
   const school = await getInstitutionName(input.institutionId);
   const receipt = compactString(input.receiptNo, "reçu enregistré");
-  const payer = compactString(input.payerName || input.studentName, "paiement élève");
+  const student = compactString(input.studentName || input.payerName, "Élève non précisé");
+  const className = compactString(input.className, "Classe non précisée");
+  const category = compactString(input.categoryName, "Frais scolaire");
+  const paidAt = shortDateTime(input.paidAt) || shortDateTime(new Date().toISOString());
+  const remaining = remainingDueLabel(input.remainingDue);
+
+  const studentAndClass = className
+    ? `${student} — ${className}`
+    : student;
+
+  const body = [
+    paidAt,
+    money(input.amount),
+    category,
+    studentAndClass,
+    remaining,
+  ]
+    .filter(Boolean)
+    .join(" • ");
 
   return queueFounderNotification({
     institutionId: input.institutionId,
     kind: "founder_finance_payment_received",
-    title: "Encaissement enregistré",
-    body: `${school} • ${money(input.amount)} encaissés • ${payer}`,
+    title: `Encaissement — ${school}`,
+    body,
     url: "/founder/finance",
     data: {
       amount: Number(input.amount || 0),
       receipt_no: receipt,
-      payer_name: payer,
+      payer_name: compactString(input.payerName, student),
+      student_name: student,
+      class_name: className,
+      category_name: category,
+      remaining_due: Number(input.remainingDue || 0),
+      paid_at: input.paidAt || null,
+      paid_at_label: paidAt,
       institution_name: school,
     },
     req: input.req,

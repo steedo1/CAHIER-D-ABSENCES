@@ -756,13 +756,14 @@ async function createPaymentAction(formData: FormData) {
 
   const { data: cls, error: clsErr } = await admin
     .from("classes")
-    .select("id,academic_year,institution_id")
+    .select("id,label,academic_year,institution_id")
     .eq("id", classId)
     .eq("institution_id", institutionId)
     .maybeSingle();
 
   if (clsErr) throw new Error(clsErr.message);
   academicYear = (cls as any)?.academic_year ?? null;
+  const className = normalize((cls as any)?.label) || "Classe non précisée";
 
   if (!academicYearId && academicYear) {
     academicYearId = await getAcademicYearId(admin, institutionId, academicYear);
@@ -818,12 +819,42 @@ async function createPaymentAction(formData: FormData) {
     throw new Error(allocErr.message);
   }
 
+  const remainingDueAfterPayment = Math.max(balanceDue - amount, 0);
+
+  let studentNameForNotification = payerName || "";
+  try {
+    const { data: studentForNotif, error: studentNotifErr } = await admin
+      .from("students")
+      .select("first_name,last_name,matricule")
+      .eq("id", studentId)
+      .eq("institution_id", institutionId)
+      .maybeSingle();
+
+    if (!studentNotifErr && studentForNotif) {
+      const firstName = normalize((studentForNotif as any).first_name);
+      const lastName = normalize((studentForNotif as any).last_name);
+      const matricule = normalize((studentForNotif as any).matricule);
+      studentNameForNotification =
+        [firstName, lastName].filter(Boolean).join(" ") ||
+        payerName ||
+        matricule ||
+        "Élève non précisé";
+    }
+  } catch (e: any) {
+    console.warn("[finance/payments] student notification lookup skipped", e?.message || e);
+  }
+
   try {
     await queueFounderFinancePaymentNotification({
       institutionId,
       amount,
       receiptNo: receipt.receipt_no,
       payerName: payerName || null,
+      studentName: studentNameForNotification || null,
+      className,
+      categoryName: String((feeCategory as any).name || charge.label || "Frais scolaire"),
+      remainingDue: remainingDueAfterPayment,
+      paidAt: paymentDateIso,
     });
   } catch (e: any) {
     console.warn("[finance/payments] founder finance notification skipped", e?.message || e);
