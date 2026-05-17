@@ -91,6 +91,8 @@ type PaymentIntent = {
   confirmed_at: string | null;
   failed_at: string | null;
   can_internal_test?: boolean;
+  receipt_missing?: boolean;
+  can_receipt_repair?: boolean;
 };
 
 type IntentPayload = {
@@ -730,9 +732,33 @@ export default function AdminOnlinePaymentsPage() {
                         {statusLabel(intent.status)}
                       </span>
                       {intent.receipt_no ? (
-                        <span className="inline-flex rounded-full bg-emerald-50 px-3 py-1 text-xs font-black text-emerald-800 ring-1 ring-emerald-200">
+                        <Link
+                          href={`/admin/finance/receipts/${intent.receipt_id}`}
+                          className="inline-flex rounded-full bg-emerald-50 px-3 py-1 text-xs font-black text-emerald-800 ring-1 ring-emerald-200 transition hover:bg-emerald-100"
+                        >
                           Reçu {intent.receipt_no}
+                        </Link>
+                      ) : null}
+                      {intent.receipt_missing ? (
+                        <span className="inline-flex rounded-full bg-amber-50 px-3 py-1 text-xs font-black text-amber-900 ring-1 ring-amber-200">
+                          Confirmé sans reçu
                         </span>
+                      ) : null}
+                      {intent.can_receipt_repair ? (
+                        <button
+                          type="button"
+                          onClick={() => runInternalPaymentTest(intent.id, "success")}
+                          disabled={Boolean(testingIntentId)}
+                          className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-3 py-1 text-xs font-black text-amber-900 ring-1 ring-amber-200 transition hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60"
+                          title="Réparer uniquement une intention déjà confirmée mais sans reçu en mode Test / Sandbox"
+                        >
+                          {testingIntentId === `${intent.id}:success` ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <CheckCircle2 className="h-3.5 w-3.5" />
+                          )}
+                          Générer le reçu
+                        </button>
                       ) : null}
                       {intent.can_internal_test ? (
                         <div className="flex w-full flex-wrap justify-end gap-2 lg:w-auto">

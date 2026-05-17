@@ -211,6 +211,13 @@ export async function GET(req: NextRequest) {
         ["initiated", "pending"].includes(status) &&
         clean(account?.environment) === "test" &&
         Boolean(account?.is_active),
+      receipt_missing: status === "succeeded" && !clean(row.receipt_id),
+      can_receipt_repair:
+        clean(row.provider) === "orange_money" &&
+        status === "succeeded" &&
+        !clean(row.receipt_id) &&
+        clean(account?.environment) === "test" &&
+        Boolean(account?.is_active),
       error_message: clean(row.error_message) || null,
       created_at: row.created_at || null,
       updated_at: row.updated_at || null,

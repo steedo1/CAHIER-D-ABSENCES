@@ -81,16 +81,30 @@ async function getStudentName(studentId: string, institutionId: string) {
   return [firstName, lastName].filter(Boolean).join(" ") || matricule || "Élève non précisé";
 }
 
-async function getClassLabel(classId: string | null | undefined, institutionId: string) {
-  if (!classId) return "Classe non précisée";
+async function getClassInfo(classId: string | null | undefined, institutionId: string) {
+  if (!classId) {
+    return { label: "Classe non précisée", academicYear: null as string | null };
+  }
+
   const admin = getSupabaseServiceClient();
-  const { data } = await admin
+  const { data, error } = await admin
     .from("classes")
-    .select("label")
+    .select("label,academic_year")
     .eq("id", classId)
     .eq("institution_id", institutionId)
     .maybeSingle();
-  return clean((data as any)?.label, "Classe non précisée");
+
+  if (error) throw new Error(error.message);
+
+  return {
+    label: clean((data as any)?.label, "Classe non précisée"),
+    academicYear: clean((data as any)?.academic_year) || null,
+  };
+}
+
+async function getClassLabel(classId: string | null | undefined, institutionId: string) {
+  const info = await getClassInfo(classId, institutionId);
+  return info.label;
 }
 
 async function findReceiptByReference(institutionId: string, referenceNo: string) {
@@ -170,7 +184,8 @@ export async function createPostedReceiptForCharge(input: CreateReceiptInput) {
   }
 
   const classId = input.classId || (charge as any).class_id || null;
-  const academicYear = (charge as any).academic_year || null;
+  const classInfo = await getClassInfo(classId, input.institutionId);
+  const academicYear = clean((charge as any).academic_year) || classInfo.academicYear || null;
   const academicYearId =
     (charge as any).academic_year_id || (await getAcademicYearId(input.institutionId, academicYear));
   const paymentDateIso = input.paymentDateIso || new Date().toISOString();
@@ -290,54 +305,12 @@ export async function confirmOnlinePaymentAndCreateReceipt(input: PostOnlinePaym
   if (currentErr) throw new Error(currentErr.message);
   if (!currentIntent) throw new Error("Intention de paiement introuvable.");
 
-  if ((currentIntent as any).status === "succeeded" && (currentIntent as any).receipt_id) {
-    return {
-      alreadyConfirmed: true,
-      receiptId: String((currentIntent as any).receipt_id),
-    };
-  }
-
-  const currentStatus = clean((currentIntent as any).status);
-  if (!["initiated", "pending", "succeeded"].includes(currentStatus)) {
-    throw new Error(`Cette intention ne peut plus être confirmée. Statut actuel : ${currentStatus || "inconnu"}.`);
-  }
-
-  const mergedRawPayload = {
-    ...(((currentIntent as any).raw_provider_payload || {}) as Record<string, any>),
-    ...(input.rawProviderPayload || {}),
-  };
-
-  const nowIso = new Date().toISOString();
-  const providerReference = input.providerReference || (currentIntent as any).provider_reference || null;
-  const providerTransactionId =
-    input.providerTransactionId || (currentIntent as any).provider_transaction_id || null;
-
-  const { data: claimed, error: claimErr } = await admin
-    .schema("finance")
-    .from("online_payment_intents")
-    .update({
-      status: "succeeded",
-      provider_reference: providerReference,
-      provider_transaction_id: providerTransactionId,
-      raw_provider_payload: mergedRawPayload,
-      confirmed_at: nowIso,
-      updated_at: nowIso,
-      error_message: null,
-    } as any)
-    .eq("id", input.intentId)
-    .in("status", ["initiated", "pending", "succeeded"])
-    .is("receipt_id", null)
-    .select(
-      "id,school_id,student_id,class_id,student_charge_id,amount,provider,status,payer_name,payer_phone,provider_reference,provider_transaction_id,receipt_id,raw_provider_payload",
-    )
-    .maybeSingle();
-
-  if (claimErr) throw new Error(claimErr.message);
-
-  const intent = claimed || currentIntent;
+  const intent = currentIntent as any;
+  const currentStatus = clean(intent.status);
   const referenceNo = onlineReference(input.intentId);
+  const nowIso = new Date().toISOString();
 
-  const existingReceipt = await findReceiptByReference(String((intent as any).school_id), referenceNo);
+  const existingReceipt = await findReceiptByReference(String(intent.school_id), referenceNo);
   if (existingReceipt) {
     await admin
       .schema("finance")
@@ -345,12 +318,17 @@ export async function confirmOnlinePaymentAndCreateReceipt(input: PostOnlinePaym
       .update({
         status: "succeeded",
         receipt_id: existingReceipt.id,
-        confirmed_at: nowIso,
+        provider_reference: input.providerReference || intent.provider_reference || null,
+        provider_transaction_id: input.providerTransactionId || intent.provider_transaction_id || null,
+        raw_provider_payload: {
+          ...((intent.raw_provider_payload || {}) as Record<string, any>),
+          ...(input.rawProviderPayload || {}),
+        },
+        confirmed_at: intent.confirmed_at || nowIso,
         updated_at: nowIso,
         error_message: null,
       } as any)
-      .eq("id", input.intentId)
-      .is("receipt_id", null);
+      .eq("id", input.intentId);
 
     return {
       alreadyConfirmed: true,
@@ -359,24 +337,60 @@ export async function confirmOnlinePaymentAndCreateReceipt(input: PostOnlinePaym
     };
   }
 
-  const receipt = await createPostedReceiptForCharge({
-    institutionId: String((intent as any).school_id),
-    studentId: String((intent as any).student_id),
-    classId: (intent as any).class_id || null,
-    studentChargeId: String((intent as any).student_charge_id),
-    amount: Number((intent as any).amount || 0),
-    payerName: (intent as any).payer_name || null,
-    referenceNo,
-    notes: [
-      "Paiement en ligne confirmé automatiquement.",
-      providerReference ? `Référence opérateur : ${providerReference}.` : "",
-      providerTransactionId ? `Transaction opérateur : ${providerTransactionId}.` : "",
-    ]
-      .filter(Boolean)
-      .join("\n"),
-    notifyFounder: true,
-    req: input.req,
-  });
+  if (currentStatus === "succeeded" && intent.receipt_id) {
+    return {
+      alreadyConfirmed: true,
+      receiptId: String(intent.receipt_id),
+    };
+  }
+
+  if (!["initiated", "pending", "succeeded"].includes(currentStatus)) {
+    throw new Error(`Cette intention ne peut plus être confirmée. Statut actuel : ${currentStatus || "inconnu"}.`);
+  }
+
+  const providerReference = input.providerReference || intent.provider_reference || null;
+  const providerTransactionId = input.providerTransactionId || intent.provider_transaction_id || null;
+  const mergedRawPayload = {
+    ...((intent.raw_provider_payload || {}) as Record<string, any>),
+    ...(input.rawProviderPayload || {}),
+  };
+
+  let receipt: Awaited<ReturnType<typeof createPostedReceiptForCharge>>;
+  try {
+    receipt = await createPostedReceiptForCharge({
+      institutionId: String(intent.school_id),
+      studentId: String(intent.student_id),
+      classId: intent.class_id || null,
+      studentChargeId: String(intent.student_charge_id),
+      amount: Number(intent.amount || 0),
+      payerName: intent.payer_name || null,
+      referenceNo,
+      notes: [
+        "Paiement en ligne confirmé automatiquement.",
+        providerReference ? `Référence opérateur : ${providerReference}.` : "",
+        providerTransactionId ? `Transaction opérateur : ${providerTransactionId}.` : "",
+      ]
+        .filter(Boolean)
+        .join("\n"),
+      notifyFounder: true,
+      req: input.req,
+    });
+  } catch (e: any) {
+    await admin
+      .schema("finance")
+      .from("online_payment_intents")
+      .update({
+        provider_reference: providerReference,
+        provider_transaction_id: providerTransactionId,
+        raw_provider_payload: mergedRawPayload,
+        updated_at: nowIso,
+        error_message: `Confirmation reçue, mais reçu non généré : ${String(e?.message || e)}`,
+      } as any)
+      .eq("id", input.intentId)
+      .is("receipt_id", null);
+
+    throw e;
+  }
 
   const { error: updateErr } = await admin
     .schema("finance")
