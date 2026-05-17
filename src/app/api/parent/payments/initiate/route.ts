@@ -175,9 +175,22 @@ export async function POST(req: NextRequest) {
     const intentId = String((intent as any).id);
     const clientReference = String((intent as any).client_reference);
     const webhookProviderPath = provider === "orange_money" ? "orange_money" : provider;
-    const callbackUrl = `${origin}/api/payments/webhooks/${webhookProviderPath}?intent_id=${encodeURIComponent(
-      intentId,
-    )}&client_reference=${encodeURIComponent(clientReference)}`;
+    const callback = new URL(`${origin}/api/payments/webhooks/${webhookProviderPath}`);
+    callback.searchParams.set("intent_id", intentId);
+    callback.searchParams.set("client_reference", clientReference);
+
+    const accountSecretConfig = ((account as any).secret_config || {}) as Record<string, any>;
+    const accountWebhookSecret = String(
+      accountSecretConfig.webhook_secret ||
+        accountSecretConfig.orange_webhook_secret ||
+        accountSecretConfig.webpay_webhook_secret ||
+        "",
+    ).trim();
+    if (provider === "orange_money" && accountWebhookSecret) {
+      callback.searchParams.set("secret", accountWebhookSecret);
+    }
+
+    const callbackUrl = callback.toString();
     const returnUrl = `${origin}/parents/payments?intent=${encodeURIComponent(intentId)}`;
 
     const providerAdapter = getPaymentProvider(provider);

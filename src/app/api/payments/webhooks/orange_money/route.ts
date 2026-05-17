@@ -1,8 +1,8 @@
 // src/app/api/payments/webhooks/orange_money/route.ts
-// Réception technique des notifications Orange Money.
-// Cette route ne valide jamais manuellement un paiement : elle reçoit une confirmation opérateur,
-// retrouve l'intention de paiement, puis délègue la génération du reçu officiel au service finance.
+// Réception sécurisée des notifications Orange Money.
+// Règle stricte : une notification opérateur ne peut jamais confirmer un paiement sans secret/signature.
 import { NextRequest, NextResponse } from "next/server";
+import { createHmac, timingSafeEqual } from "crypto";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { confirmOnlinePaymentAndCreateReceipt } from "@/lib/finance/receipt-service";
 
@@ -10,6 +10,11 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 type AnyRecord = Record<string, any>;
+
+type ParsedPayload = {
+  payload: AnyRecord;
+  rawBody: string;
+};
 
 function clean(value: unknown) {
   return String(value ?? "").replace(/\s+/g, " ").trim();
@@ -27,36 +32,52 @@ function lower(value: unknown) {
   return clean(value).toLowerCase();
 }
 
-async function readPayload(req: NextRequest): Promise<AnyRecord> {
+function safeEqual(a: string, b: string) {
+  const left = Buffer.from(a || "", "utf8");
+  const right = Buffer.from(b || "", "utf8");
+  if (left.length !== right.length) return false;
+  return timingSafeEqual(left, right);
+}
+
+function hmacHex(rawBody: string, secret: string) {
+  return createHmac("sha256", secret).update(rawBody || "").digest("hex");
+}
+
+function normalizeSignature(value: unknown) {
+  const text = clean(value);
+  return text.replace(/^sha256=/i, "").replace(/^hmac-sha256=/i, "").trim();
+}
+
+async function readPayload(req: NextRequest): Promise<ParsedPayload> {
   const payload: AnyRecord = {};
 
   for (const [key, value] of req.nextUrl.searchParams.entries()) {
     payload[key] = value;
   }
 
-  if (req.method !== "POST") return payload;
+  if (req.method !== "POST") {
+    return { payload, rawBody: "" };
+  }
 
   const contentType = lower(req.headers.get("content-type"));
-  const raw = await req.text().catch(() => "");
-  if (!raw) return payload;
+  const rawBody = await req.text().catch(() => "");
+  if (!rawBody) return { payload, rawBody };
 
   if (contentType.includes("application/json")) {
     try {
-      return { ...payload, ...(JSON.parse(raw) || {}) };
+      return { payload: { ...payload, ...(JSON.parse(rawBody) || {}) }, rawBody };
     } catch {
-      payload.raw_body = raw;
-      return payload;
+      return { payload: { ...payload, raw_body: rawBody }, rawBody };
     }
   }
 
   if (contentType.includes("application/x-www-form-urlencoded")) {
-    const form = new URLSearchParams(raw);
+    const form = new URLSearchParams(rawBody);
     for (const [key, value] of form.entries()) payload[key] = value;
-    return payload;
+    return { payload, rawBody };
   }
 
-  payload.raw_body = raw;
-  return payload;
+  return { payload: { ...payload, raw_body: rawBody }, rawBody };
 }
 
 function extractIntentId(payload: AnyRecord) {
@@ -150,7 +171,7 @@ async function resolveIntent(srv: ReturnType<typeof getSupabaseServiceClient>, p
   return { intent: data as AnyRecord, error: "" };
 }
 
-async function getAccountSecret(srv: ReturnType<typeof getSupabaseServiceClient>, accountId: string) {
+async function getAccountConfig(srv: ReturnType<typeof getSupabaseServiceClient>, accountId: string) {
   if (!accountId) return {} as AnyRecord;
   const { data, error } = await srv
     .schema("finance")
@@ -163,19 +184,31 @@ async function getAccountSecret(srv: ReturnType<typeof getSupabaseServiceClient>
     console.warn("[orange webhook account]", error.message);
     return {} as AnyRecord;
   }
-  return ((data as AnyRecord)?.secret_config || {}) as AnyRecord;
+  return (data || {}) as AnyRecord;
 }
 
-function verifyWebhookSecret(req: NextRequest, payload: AnyRecord, secretConfig: AnyRecord) {
-  const expected = firstClean(
+function getExpectedSecret(secretConfig: AnyRecord) {
+  return firstClean(
     secretConfig.webhook_secret,
     secretConfig.orange_webhook_secret,
+    secretConfig.webpay_webhook_secret,
     process.env.ORANGE_MONEY_WEBPAY_WEBHOOK_SECRET,
   );
+}
 
-  if (!expected) return true;
+function verifyWebhookSecret(req: NextRequest, payload: AnyRecord, rawBody: string, accountConfig: AnyRecord) {
+  const secretConfig = ((accountConfig || {}).secret_config || {}) as AnyRecord;
+  const expected = getExpectedSecret(secretConfig);
 
-  const received = firstClean(
+  if (!expected) {
+    return {
+      ok: false,
+      error:
+        "Webhook Orange non sécurisé : aucun secret n’est configuré pour ce compte marchand. Confirmation refusée.",
+    };
+  }
+
+  const receivedToken = firstClean(
     req.headers.get("x-orange-webhook-secret"),
     req.headers.get("x-webhook-secret"),
     req.headers.get("x-mon-cahier-orange-secret"),
@@ -184,7 +217,28 @@ function verifyWebhookSecret(req: NextRequest, payload: AnyRecord, secretConfig:
     req.nextUrl.searchParams.get("secret"),
   );
 
-  return received === expected;
+  if (receivedToken && safeEqual(receivedToken, expected)) {
+    return { ok: true, error: "" };
+  }
+
+  const receivedSignature = normalizeSignature(
+    firstClean(
+      req.headers.get("x-orange-signature"),
+      req.headers.get("x-webhook-signature"),
+      req.headers.get("x-mon-cahier-orange-signature"),
+      payload.signature,
+      payload.hmac,
+    ),
+  );
+
+  if (receivedSignature && rawBody) {
+    const computed = hmacHex(rawBody, expected);
+    if (safeEqual(receivedSignature, computed)) {
+      return { ok: true, error: "" };
+    }
+  }
+
+  return { ok: false, error: "Signature ou secret Orange invalide." };
 }
 
 async function markAsFailed(
@@ -224,7 +278,7 @@ async function markAsFailed(
 }
 
 async function handleOrangeWebhook(req: NextRequest) {
-  const payload = await readPayload(req);
+  const { payload, rawBody } = await readPayload(req);
   const srv = getSupabaseServiceClient();
   const { intent, error } = await resolveIntent(srv, payload);
 
@@ -232,9 +286,10 @@ async function handleOrangeWebhook(req: NextRequest) {
     return NextResponse.json({ ok: false, error: error || "Paiement introuvable." }, { status: 404 });
   }
 
-  const secretConfig = await getAccountSecret(srv, clean(intent.account_id));
-  if (!verifyWebhookSecret(req, payload, secretConfig)) {
-    return NextResponse.json({ ok: false, error: "Signature ou secret Orange invalide." }, { status: 403 });
+  const accountConfig = await getAccountConfig(srv, clean(intent.account_id));
+  const auth = verifyWebhookSecret(req, payload, rawBody, accountConfig);
+  if (!auth.ok) {
+    return NextResponse.json({ ok: false, error: auth.error }, { status: 403 });
   }
 
   const kind = statusKind(payload);
