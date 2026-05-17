@@ -48,10 +48,11 @@ function money(value: number | string | null | undefined) {
   return `${Number(value || 0).toLocaleString("fr-FR")} F`;
 }
 
-async function getAcademicYearId(
-  institutionId: string,
-  academicYear: string | null | undefined,
-) {
+function onlineReference(intentId: string) {
+  return `ONLINE-${intentId}`;
+}
+
+async function getAcademicYearId(institutionId: string, academicYear: string | null | undefined) {
   if (!academicYear) return null;
   const admin = getSupabaseServiceClient();
   const { data, error } = await admin
@@ -92,6 +93,25 @@ async function getClassLabel(classId: string | null | undefined, institutionId: 
   return clean((data as any)?.label, "Classe non précisée");
 }
 
+async function findReceiptByReference(institutionId: string, referenceNo: string) {
+  if (!institutionId || !referenceNo) return null;
+  const admin = getSupabaseServiceClient();
+  const { data, error } = await admin
+    .schema("finance")
+    .from("receipts")
+    .select("id,receipt_no")
+    .eq("school_id", institutionId)
+    .eq("reference_no", referenceNo)
+    .maybeSingle();
+
+  if (error) throw new Error(error.message);
+  if (!data) return null;
+  return {
+    id: String((data as any).id),
+    receiptNo: String((data as any).receipt_no),
+  };
+}
+
 export async function createPostedReceiptForCharge(input: CreateReceiptInput) {
   const admin = getSupabaseServiceClient();
   const amount = Number(input.amount || 0);
@@ -101,6 +121,19 @@ export async function createPostedReceiptForCharge(input: CreateReceiptInput) {
   if (!input.studentChargeId) throw new Error("Frais à solder manquant.");
   if (!Number.isFinite(amount) || amount <= 0) {
     throw new Error("Le montant doit être supérieur à 0.");
+  }
+
+  const referenceNo = clean(input.referenceNo) || null;
+  if (referenceNo) {
+    const existing = await findReceiptByReference(input.institutionId, referenceNo);
+    if (existing) {
+      return {
+        id: existing.id,
+        receiptNo: existing.receiptNo,
+        remainingDue: null,
+        alreadyExists: true,
+      };
+    }
   }
 
   const { data: charge, error: chargeErr } = await admin
@@ -118,7 +151,20 @@ export async function createPostedReceiptForCharge(input: CreateReceiptInput) {
   if (!charge) throw new Error("Frais introuvable ou non autorisé.");
 
   const balanceDue = Number((charge as any).balance_due || 0);
-  if (balanceDue <= 0) throw new Error("Ce frais est déjà soldé.");
+  if (balanceDue <= 0) {
+    if (referenceNo) {
+      const existing = await findReceiptByReference(input.institutionId, referenceNo);
+      if (existing) {
+        return {
+          id: existing.id,
+          receiptNo: existing.receiptNo,
+          remainingDue: 0,
+          alreadyExists: true,
+        };
+      }
+    }
+    throw new Error("Ce frais est déjà soldé.");
+  }
   if (amount > balanceDue) {
     throw new Error(`Le montant dépasse le reste dû (${money(balanceDue)}).`);
   }
@@ -145,7 +191,7 @@ export async function createPostedReceiptForCharge(input: CreateReceiptInput) {
       payment_method_id: null,
       cash_account_id: null,
       payer_name: clean(input.payerName) || null,
-      reference_no: clean(input.referenceNo) || null,
+      reference_no: referenceNo,
       total_amount: amount,
       notes: input.notes || null,
       cancelled_at: null,
@@ -158,7 +204,20 @@ export async function createPostedReceiptForCharge(input: CreateReceiptInput) {
     .select("id,receipt_no")
     .single();
 
-  if (receiptErr) throw new Error(receiptErr.message);
+  if (receiptErr) {
+    if (referenceNo && /duplicate|unique/i.test(receiptErr.message || "")) {
+      const existing = await findReceiptByReference(input.institutionId, referenceNo);
+      if (existing) {
+        return {
+          id: existing.id,
+          receiptNo: existing.receiptNo,
+          remainingDue: null,
+          alreadyExists: true,
+        };
+      }
+    }
+    throw new Error(receiptErr.message);
+  }
 
   const { error: allocationErr } = await admin
     .schema("finance")
@@ -202,12 +261,15 @@ export async function createPostedReceiptForCharge(input: CreateReceiptInput) {
   revalidatePath("/admin/finance/charges");
   revalidatePath("/admin/finance/arrears");
   revalidatePath("/admin/finance");
+  revalidatePath("/admin/finance/online-payments");
+  revalidatePath("/parents/payments");
   revalidatePath("/founder/finance");
 
   return {
     id: String((receipt as any).id),
     receiptNo: String((receipt as any).receipt_no),
     remainingDue: remainingDueAfterPayment,
+    alreadyExists: false,
   };
 }
 
@@ -216,7 +278,7 @@ export async function confirmOnlinePaymentAndCreateReceipt(input: PostOnlinePaym
 
   if (!input.intentId) throw new Error("Intention de paiement manquante.");
 
-  const { data: intent, error: intentErr } = await admin
+  const { data: currentIntent, error: currentErr } = await admin
     .schema("finance")
     .from("online_payment_intents")
     .select(
@@ -225,13 +287,75 @@ export async function confirmOnlinePaymentAndCreateReceipt(input: PostOnlinePaym
     .eq("id", input.intentId)
     .maybeSingle();
 
-  if (intentErr) throw new Error(intentErr.message);
-  if (!intent) throw new Error("Intention de paiement introuvable.");
+  if (currentErr) throw new Error(currentErr.message);
+  if (!currentIntent) throw new Error("Intention de paiement introuvable.");
 
-  if ((intent as any).status === "succeeded" && (intent as any).receipt_id) {
+  if ((currentIntent as any).status === "succeeded" && (currentIntent as any).receipt_id) {
     return {
       alreadyConfirmed: true,
-      receiptId: String((intent as any).receipt_id),
+      receiptId: String((currentIntent as any).receipt_id),
+    };
+  }
+
+  const currentStatus = clean((currentIntent as any).status);
+  if (!["initiated", "pending", "succeeded"].includes(currentStatus)) {
+    throw new Error(`Cette intention ne peut plus être confirmée. Statut actuel : ${currentStatus || "inconnu"}.`);
+  }
+
+  const mergedRawPayload = {
+    ...(((currentIntent as any).raw_provider_payload || {}) as Record<string, any>),
+    ...(input.rawProviderPayload || {}),
+  };
+
+  const nowIso = new Date().toISOString();
+  const providerReference = input.providerReference || (currentIntent as any).provider_reference || null;
+  const providerTransactionId =
+    input.providerTransactionId || (currentIntent as any).provider_transaction_id || null;
+
+  const { data: claimed, error: claimErr } = await admin
+    .schema("finance")
+    .from("online_payment_intents")
+    .update({
+      status: "succeeded",
+      provider_reference: providerReference,
+      provider_transaction_id: providerTransactionId,
+      raw_provider_payload: mergedRawPayload,
+      confirmed_at: nowIso,
+      updated_at: nowIso,
+      error_message: null,
+    } as any)
+    .eq("id", input.intentId)
+    .in("status", ["initiated", "pending", "succeeded"])
+    .is("receipt_id", null)
+    .select(
+      "id,school_id,student_id,class_id,student_charge_id,amount,provider,status,payer_name,payer_phone,provider_reference,provider_transaction_id,receipt_id,raw_provider_payload",
+    )
+    .maybeSingle();
+
+  if (claimErr) throw new Error(claimErr.message);
+
+  const intent = claimed || currentIntent;
+  const referenceNo = onlineReference(input.intentId);
+
+  const existingReceipt = await findReceiptByReference(String((intent as any).school_id), referenceNo);
+  if (existingReceipt) {
+    await admin
+      .schema("finance")
+      .from("online_payment_intents")
+      .update({
+        status: "succeeded",
+        receipt_id: existingReceipt.id,
+        confirmed_at: nowIso,
+        updated_at: nowIso,
+        error_message: null,
+      } as any)
+      .eq("id", input.intentId)
+      .is("receipt_id", null);
+
+    return {
+      alreadyConfirmed: true,
+      receiptId: existingReceipt.id,
+      receiptNo: existingReceipt.receiptNo,
     };
   }
 
@@ -242,21 +366,17 @@ export async function confirmOnlinePaymentAndCreateReceipt(input: PostOnlinePaym
     studentChargeId: String((intent as any).student_charge_id),
     amount: Number((intent as any).amount || 0),
     payerName: (intent as any).payer_name || null,
-    referenceNo:
-      input.providerTransactionId ||
-      input.providerReference ||
-      (intent as any).provider_transaction_id ||
-      (intent as any).provider_reference ||
-      null,
-    notes: "Paiement en ligne confirmé automatiquement.",
+    referenceNo,
+    notes: [
+      "Paiement en ligne confirmé automatiquement.",
+      providerReference ? `Référence opérateur : ${providerReference}.` : "",
+      providerTransactionId ? `Transaction opérateur : ${providerTransactionId}.` : "",
+    ]
+      .filter(Boolean)
+      .join("\n"),
     notifyFounder: true,
     req: input.req,
   });
-
-  const mergedRawPayload = {
-    ...(((intent as any).raw_provider_payload || {}) as Record<string, any>),
-    ...(input.rawProviderPayload || {}),
-  };
 
   const { error: updateErr } = await admin
     .schema("finance")
@@ -264,21 +384,19 @@ export async function confirmOnlinePaymentAndCreateReceipt(input: PostOnlinePaym
     .update({
       status: "succeeded",
       receipt_id: receipt.id,
-      provider_reference: input.providerReference || (intent as any).provider_reference || null,
-      provider_transaction_id:
-        input.providerTransactionId || (intent as any).provider_transaction_id || null,
+      provider_reference: providerReference,
+      provider_transaction_id: providerTransactionId,
       raw_provider_payload: mergedRawPayload,
-      confirmed_at: new Date().toISOString(),
+      confirmed_at: nowIso,
       updated_at: new Date().toISOString(),
       error_message: null,
     } as any)
-    .eq("id", input.intentId)
-    .neq("status", "succeeded");
+    .eq("id", input.intentId);
 
   if (updateErr) throw new Error(updateErr.message);
 
   return {
-    alreadyConfirmed: false,
+    alreadyConfirmed: Boolean((receipt as any).alreadyExists),
     receiptId: receipt.id,
     receiptNo: receipt.receiptNo,
   };

@@ -6,6 +6,32 @@ import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+function clean(value: unknown) {
+  return String(value ?? "").trim();
+}
+
+async function attachReceiptNo(srv: ReturnType<typeof getSupabaseServiceClient>, item: any) {
+  const receiptId = clean(item?.receipt_id);
+  if (!receiptId) return { ...item, receipt_no: null };
+
+  const { data: receipt, error } = await srv
+    .schema("finance")
+    .from("receipts")
+    .select("id,receipt_no")
+    .eq("id", receiptId)
+    .maybeSingle();
+
+  if (error) {
+    console.warn("[parent.payments.status.receipt]", error.message);
+    return { ...item, receipt_no: null };
+  }
+
+  return {
+    ...item,
+    receipt_no: clean((receipt as any)?.receipt_no) || null,
+  };
+}
+
 export async function GET(req: NextRequest) {
   const srv = getSupabaseServiceClient();
   const intentId = String(req.nextUrl.searchParams.get("intent_id") || "").trim();
@@ -61,9 +87,8 @@ export async function GET(req: NextRequest) {
       .maybeSingle();
 
     if (updateErr) return NextResponse.json({ error: updateErr.message }, { status: 400 });
-    if (updated) return NextResponse.json({ item: updated });
+    if (updated) return NextResponse.json({ item: await attachReceiptNo(srv, updated) });
   }
 
-  return NextResponse.json({ item: intent });
+  return NextResponse.json({ item: await attachReceiptNo(srv, intent) });
 }
-

@@ -42,6 +42,7 @@ type PaymentStatus = {
   currency: string;
   provider: string;
   receipt_id: string | null;
+  receipt_no: string | null;
   error_message: string | null;
   created_at: string | null;
   updated_at: string | null;
@@ -296,7 +297,11 @@ export default function ParentOnlinePaymentsPage() {
                   <div className="mt-1 text-sm font-semibold">
                     Montant : {formatMoney(currentStatus.amount)} · Référence : {currentStatus.id.slice(0, 8)}
                   </div>
-                  {currentStatus.status !== "succeeded" && (
+                  {currentStatus.status === "succeeded" ? (
+                    <div className="mt-2 text-xs font-bold leading-5">
+                      Reçu officiel généré{currentStatus.receipt_no ? ` : ${currentStatus.receipt_no}` : ""}.
+                    </div>
+                  ) : (
                     <div className="mt-2 text-xs font-bold leading-5">
                       Aucun reçu officiel n’est créé tant que le paiement n’est pas confirmé par l’opérateur.
                     </div>
