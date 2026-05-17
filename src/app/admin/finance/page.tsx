@@ -640,6 +640,16 @@ export default async function AdminFinancePage({
         />
         <QuickLinkCard
           href={financeYearHref(
+            "/admin/finance/online-payments",
+            selectedAcademicYearCode,
+          )}
+          icon={<CreditCard className="h-5 w-5" />}
+          title="Paiement en ligne"
+          description="Activer Orange Money, Wave ou MTN Money sur le compte marchand propre de l’établissement."
+          badge="Mobile Money"
+        />
+        <QuickLinkCard
+          href={financeYearHref(
             "/admin/finance/receipts",
             selectedAcademicYearCode,
           )}
