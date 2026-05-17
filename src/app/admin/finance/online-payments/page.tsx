@@ -68,6 +68,7 @@ type EditableAccount = Account & {
 
 type PaymentIntent = {
   id: string;
+  account_id: string | null;
   status: string;
   provider: string;
   provider_label: string;
@@ -89,6 +90,7 @@ type PaymentIntent = {
   expires_at: string | null;
   confirmed_at: string | null;
   failed_at: string | null;
+  can_internal_test?: boolean;
 };
 
 type IntentPayload = {
@@ -254,6 +256,7 @@ export default function AdminOnlinePaymentsPage() {
   const [loading, setLoading] = useState(true);
   const [loadingIntents, setLoadingIntents] = useState(false);
   const [savingProvider, setSavingProvider] = useState<ProviderCode | null>(null);
+  const [testingIntentId, setTestingIntentId] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
 
@@ -339,6 +342,40 @@ export default function AdminOnlinePaymentsPage() {
 
   async function loadAll() {
     await Promise.all([loadAccounts(), loadIntents()]);
+  }
+
+  async function runInternalPaymentTest(intentId: string, action: "success" | "failed") {
+    const label = action === "success" ? "succès" : "échec";
+    setTestingIntentId(`${intentId}:${action}`);
+    setError("");
+    setMessage("");
+
+    try {
+      const res = await fetch("/api/admin/finance/online-payment-intents/test", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          intent_id: intentId,
+          action,
+        }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || !json?.ok) {
+        throw new Error(json?.error || `Simulation ${label} impossible.`);
+      }
+
+      setMessage(
+        action === "success"
+          ? `Simulation succès validée. Reçu ${json.receiptNo || "créé"}.`
+          : "Simulation échec validée. Aucun reçu officiel n’a été créé.",
+      );
+      await loadIntents();
+    } catch (e: any) {
+      setError(String(e?.message || e));
+    } finally {
+      setTestingIntentId(null);
+    }
   }
 
   useEffect(() => {
@@ -627,7 +664,7 @@ export default function AdminOnlinePaymentsPage() {
               </div>
               <h2 className="mt-3 text-2xl font-black text-slate-950">Historique des paiements en ligne</h2>
               <p className="mt-1 text-sm font-semibold text-slate-600">
-                Ici on vérifie les intentions créées. Aucun reçu officiel n’est généré tant que l’opérateur n’a pas confirmé le paiement.
+                Ici on vérifie les intentions créées. En mode Test / Sandbox, le tunnel interne permet de simuler une réponse opérateur sans ouvrir Orange Developer.
               </p>
             </div>
             <button
@@ -696,6 +733,38 @@ export default function AdminOnlinePaymentsPage() {
                         <span className="inline-flex rounded-full bg-emerald-50 px-3 py-1 text-xs font-black text-emerald-800 ring-1 ring-emerald-200">
                           Reçu {intent.receipt_no}
                         </span>
+                      ) : null}
+                      {intent.can_internal_test ? (
+                        <div className="flex w-full flex-wrap justify-end gap-2 lg:w-auto">
+                          <button
+                            type="button"
+                            onClick={() => runInternalPaymentTest(intent.id, "failed")}
+                            disabled={Boolean(testingIntentId)}
+                            className="inline-flex items-center gap-1 rounded-full bg-rose-50 px-3 py-1 text-xs font-black text-rose-800 ring-1 ring-rose-200 transition hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-60"
+                            title="Simulation technique : échec opérateur en mode Test / Sandbox"
+                          >
+                            {testingIntentId === `${intent.id}:failed` ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            ) : (
+                              <XCircle className="h-3.5 w-3.5" />
+                            )}
+                            Simuler échec
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => runInternalPaymentTest(intent.id, "success")}
+                            disabled={Boolean(testingIntentId)}
+                            className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-3 py-1 text-xs font-black text-emerald-800 ring-1 ring-emerald-200 transition hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-60"
+                            title="Simulation technique : succès opérateur en mode Test / Sandbox"
+                          >
+                            {testingIntentId === `${intent.id}:success` ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            ) : (
+                              <CheckCircle2 className="h-3.5 w-3.5" />
+                            )}
+                            Simuler succès
+                          </button>
+                        </div>
                       ) : null}
                     </div>
                     {intent.error_message ? (

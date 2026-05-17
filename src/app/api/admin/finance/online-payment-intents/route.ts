@@ -122,7 +122,7 @@ export async function GET(req: NextRequest) {
     .schema("finance")
     .from("online_payment_intents")
     .select(
-      "id,school_id,student_id,class_id,student_charge_id,amount,currency,provider,status,payer_name,payer_phone,client_reference,provider_reference,provider_transaction_id,receipt_id,error_message,created_at,updated_at,expires_at,confirmed_at,failed_at",
+      "id,school_id,student_id,class_id,student_charge_id,account_id,amount,currency,provider,status,payer_name,payer_phone,client_reference,provider_reference,provider_transaction_id,receipt_id,error_message,created_at,updated_at,expires_at,confirmed_at,failed_at",
     )
     .eq("school_id", g.institutionId)
     .order("created_at", { ascending: false })
@@ -135,6 +135,7 @@ export async function GET(req: NextRequest) {
   const classIds = Array.from(new Set(rows.map((row: any) => clean(row.class_id)).filter(Boolean)));
   const chargeIds = Array.from(new Set(rows.map((row: any) => clean(row.student_charge_id)).filter(Boolean)));
   const receiptIds = Array.from(new Set(rows.map((row: any) => clean(row.receipt_id)).filter(Boolean)));
+  const accountIds = Array.from(new Set(rows.map((row: any) => clean(row.account_id)).filter(Boolean)));
 
   const { data: students } = studentIds.length
     ? await g.srv.from("students").select("id,first_name,last_name,matricule").in("id", studentIds)
@@ -156,6 +157,14 @@ export async function GET(req: NextRequest) {
     ? await g.srv.schema("finance").from("receipts").select("id,receipt_no").in("id", receiptIds)
     : { data: [] as any[] };
 
+  const { data: paymentAccounts } = accountIds.length
+    ? await g.srv
+        .schema("finance")
+        .from("institution_payment_accounts")
+        .select("id,provider,environment,is_active")
+        .in("id", accountIds)
+    : { data: [] as any[] };
+
   const studentById = new Map<string, any>();
   for (const student of students || []) studentById.set(clean((student as any).id), student);
 
@@ -168,15 +177,21 @@ export async function GET(req: NextRequest) {
   const receiptById = new Map<string, any>();
   for (const receipt of receipts || []) receiptById.set(clean((receipt as any).id), receipt);
 
+  const accountById = new Map<string, any>();
+  for (const account of paymentAccounts || []) accountById.set(clean((account as any).id), account);
+
   const items = rows.map((row: any) => {
     const student = studentById.get(clean(row.student_id));
     const cls = classById.get(clean(row.class_id));
     const charge = chargeById.get(clean(row.student_charge_id));
     const receipt = receiptById.get(clean(row.receipt_id));
+    const account = accountById.get(clean(row.account_id));
+    const status = clean(row.status) || "pending";
 
     return {
       id: clean(row.id),
-      status: clean(row.status) || "pending",
+      status,
+      account_id: clean(row.account_id) || null,
       provider: clean(row.provider),
       provider_label: PROVIDER_LABELS[clean(row.provider)] || clean(row.provider) || "Mobile Money",
       amount: Number(row.amount || 0),
@@ -191,6 +206,11 @@ export async function GET(req: NextRequest) {
       provider_transaction_id: clean(row.provider_transaction_id),
       receipt_id: clean(row.receipt_id) || null,
       receipt_no: clean(receipt?.receipt_no) || null,
+      can_internal_test:
+        clean(row.provider) === "orange_money" &&
+        ["initiated", "pending"].includes(status) &&
+        clean(account?.environment) === "test" &&
+        Boolean(account?.is_active),
       error_message: clean(row.error_message) || null,
       created_at: row.created_at || null,
       updated_at: row.updated_at || null,
