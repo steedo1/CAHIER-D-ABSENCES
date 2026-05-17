@@ -1,4 +1,4 @@
-//src/app/admin/ui/sidebar-nav.tsx
+﻿//src/app/admin/ui/sidebar-nav.tsx
 "use client";
 
 import Link from "next/link";
@@ -331,6 +331,12 @@ const SETTINGS_ITEMS: NavItem[] = [
     label: "Périodes d’évaluation",
     Icon: FileText,
     matchTab: "grading-periods",
+  },
+  {
+    href: "/admin/parametres?tab=rapport-f",
+    label: "Rapport F",
+    Icon: FileSpreadsheet,
+    matchTab: "rapport-f",
   },
   {
     href: "/admin/parametres?tab=coefficients",
@@ -1260,4 +1266,5 @@ export default function SidebarNav() {
     </div>
   );
 }
+
 
