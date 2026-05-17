@@ -97,6 +97,17 @@ const PROVIDER_TONES: Record<
   },
 };
 
+const PARENT_PROVIDER_LABELS: Record<ProviderCode, string> = {
+  orange_money: "Orange Money",
+  wave: "Wave",
+  mtn_momo: "MTN Mobile Money",
+};
+
+function officialParentLabel(provider: ProviderCode) {
+  return PARENT_PROVIDER_LABELS[provider];
+}
+
+
 function cleanPhone(value: string) {
   return value.replace(/\s+/g, "").trim();
 }
@@ -127,7 +138,7 @@ function cloneAccount(account: Account): EditableAccount {
     ...account,
     merchant_phone: account.merchant_phone || "",
     merchant_id: account.merchant_id || "",
-    display_name: account.display_name || account.label,
+    display_name: officialParentLabel(account.provider),
     api_key: "",
     api_user: "",
     api_password: "",
@@ -286,7 +297,7 @@ export default function AdminOnlinePaymentsPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           provider,
-          display_name: form.display_name,
+          display_name: officialParentLabel(provider),
           merchant_id: form.merchant_id,
           merchant_phone: cleanPhone(form.merchant_phone),
           environment: form.environment,
@@ -349,7 +360,7 @@ export default function AdminOnlinePaymentsPage() {
                   Comptes Mobile Money de l’établissement
                 </h1>
                 <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-200 sm:text-[15px]">
-                  Chaque école encaisse directement sur son propre compte marchand. Mon Cahier déclenche le paiement, vérifie la confirmation, crée le reçu et garde l’historique.
+                  Chaque école encaisse directement sur son propre compte marchand. Mon Cahier affiche le moyen officiel, déclenche le paiement, vérifie la confirmation, crée le reçu et garde l’historique.
                 </p>
               </div>
 
@@ -423,7 +434,7 @@ export default function AdminOnlinePaymentsPage() {
             <div>
               <div className="font-black">Important avant activation réelle</div>
               <p className="mt-1 text-sm font-semibold leading-6">
-                Activez seulement un compte dont l’établissement est bien titulaire. Les clés API ne sont jamais renvoyées au navigateur après enregistrement.
+                Activez seulement un compte dont l’établissement est bien titulaire. Le nom de l’opérateur affiché aux parents est imposé afin d’éviter toute confusion. Les clés API ne sont jamais renvoyées au navigateur après enregistrement.
               </p>
             </div>
           </div>
@@ -510,18 +521,22 @@ export default function AdminOnlinePaymentsPage() {
                       </select>
                     </label>
 
-                    <TextInput
-                      label="Nom affiché aux parents"
-                      value={form.display_name}
-                      onChange={(value) => updateForm(item.provider, { display_name: value })}
-                      placeholder={item.label}
-                    />
+                    <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
+                      <div className="text-sm font-black text-slate-800">Nom affiché aux parents</div>
+                      <div className="mt-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-black text-slate-950">
+                        {officialParentLabel(item.provider)}
+                      </div>
+                      <p className="mt-2 text-xs font-semibold leading-5 text-slate-500">
+                        Ce nom est imposé par Mon Cahier pour garder le nom officiel de l’opérateur et éviter les confusions côté parent.
+                      </p>
+                    </div>
 
                     <TextInput
-                      label="Identifiant marchand"
+                      label="Code marchand / identifiant opérateur"
                       value={form.merchant_id}
                       onChange={(value) => updateForm(item.provider, { merchant_id: value })}
                       placeholder="Ex : code marchand, business id, merchant id"
+                      hint="À renseigner uniquement si Orange, Wave ou MTN l’a fourni à l’établissement."
                     />
 
                     <TextInput
@@ -534,8 +549,11 @@ export default function AdminOnlinePaymentsPage() {
 
                     <details className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
                       <summary className="cursor-pointer text-sm font-black text-slate-800">
-                        Clés techniques API, si l’opérateur les fournit
+                        Configuration technique réservée
                       </summary>
+                      <p className="mt-3 rounded-2xl bg-white px-3 py-2 text-xs font-semibold leading-5 text-slate-500">
+                        Partie réservée à la configuration technique Mon Cahier. Remplir uniquement les champs officiellement fournis par l’opérateur.
+                      </p>
                       <div className="mt-4 space-y-3">
                         <SecretInput
                           label="API key"
@@ -577,7 +595,7 @@ export default function AdminOnlinePaymentsPage() {
 
                     <div className="rounded-3xl border border-slate-200 bg-white p-4 text-sm font-semibold text-slate-600">
                       <div className="flex items-center justify-between gap-3">
-                        <span>Clés API enregistrées</span>
+                        <span>Configuration technique enregistrée</span>
                         <span className="font-black text-slate-900">
                           {form.has_secret_config ? "Oui" : "Non"}
                         </span>

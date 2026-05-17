@@ -11,7 +11,7 @@ type ProviderCode = "orange_money" | "wave" | "mtn_momo" | "mock";
 const PROVIDER_LABELS: Record<ProviderCode, string> = {
   orange_money: "Orange Money",
   wave: "Wave",
-  mtn_momo: "MTN Money",
+  mtn_momo: "MTN Mobile Money",
   mock: "Test interne",
 };
 
@@ -171,8 +171,8 @@ export async function GET(_req: NextRequest) {
         id: String(account.id),
         provider: String(account.provider),
         label:
-          String(account.display_name || "").trim() ||
           PROVIDER_LABELS[String(account.provider) as ProviderCode] ||
+          String(account.display_name || "").trim() ||
           String(account.provider || "Paiement"),
         environment: String(account.environment || "test"),
       });

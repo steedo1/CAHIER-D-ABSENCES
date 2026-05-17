@@ -66,6 +66,13 @@ const PROVIDERS: ProviderDefinition[] = [
   },
 ];
 
+const PUBLIC_PROVIDER_LABELS: Record<ProviderCode, string> = {
+  orange_money: "Orange Money",
+  wave: "Wave",
+  mtn_momo: "MTN Mobile Money",
+};
+
+
 function jsonError(message: string, status = 400) {
   return NextResponse.json({ ok: false, error: message }, { status });
 }
@@ -84,6 +91,10 @@ function isProvider(value: string): value is ProviderCode {
 
 function providerLabel(provider: ProviderCode) {
   return PROVIDERS.find((item) => item.provider === provider)?.label || provider;
+}
+
+function publicProviderLabel(provider: ProviderCode) {
+  return PUBLIC_PROVIDER_LABELS[provider] || providerLabel(provider);
 }
 
 function normalizeEnvironment(value: unknown): EnvironmentCode {
@@ -106,7 +117,7 @@ function sanitizeAccount(row: PaymentAccountRow | null | undefined) {
     school_id: row.school_id,
     provider: row.provider,
     label: providerLabel(row.provider),
-    display_name: row.display_name || providerLabel(row.provider),
+    display_name: publicProviderLabel(row.provider),
     merchant_id: row.merchant_id || "",
     merchant_phone: row.merchant_phone || "",
     environment: row.environment || "test",
@@ -234,7 +245,7 @@ export async function GET() {
             school_id: g.institutionId,
             provider: definition.provider,
             label: definition.label,
-            display_name: definition.label,
+            display_name: publicProviderLabel(definition.provider),
             merchant_id: "",
             merchant_phone: "",
             environment: "test" as EnvironmentCode,
@@ -272,7 +283,7 @@ export async function PUT(req: NextRequest) {
 
   const environment = normalizeEnvironment(body?.environment);
   const isActive = Boolean(body?.is_active);
-  const displayName = clean(body?.display_name) || providerLabel(provider);
+  const displayName = publicProviderLabel(provider);
   const merchantId = clean(body?.merchant_id);
   const merchantPhone = normalizePhone(body?.merchant_phone);
 
@@ -327,6 +338,7 @@ export async function PUT(req: NextRequest) {
     managed_from: "admin_finance_online_payments",
     configured_by: g.userId,
     configured_role: g.role,
+    public_label: displayName,
   };
 
   const nowIso = new Date().toISOString();
