@@ -784,7 +784,7 @@ export default function AdminSettingsPage() {
   >([]);
   const [ciPresetAppliedOnce, setCiPresetAppliedOnce] = useState(false);
 
-  const rapportFYear = selectedAcademicYear || guessCurrentAcademicYear();
+  const rapportFYear = selectedAcademicYear || computeAcademicYearFromDate();
   const rapportFCompletedFields = Object.values(rapportF).filter((value) => String(value || "").trim()).length;
   const rapportFTotalFields = Object.keys(DEFAULT_RAPPORT_F_SETTINGS).length;
 
