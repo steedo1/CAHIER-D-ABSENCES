@@ -172,10 +172,18 @@ export async function POST(req: NextRequest) {
     }
 
     const origin = req.nextUrl.origin;
+    const intentId = String((intent as any).id);
+    const clientReference = String((intent as any).client_reference);
+    const webhookProviderPath = provider === "orange_money" ? "orange_money" : provider;
+    const callbackUrl = `${origin}/api/payments/webhooks/${webhookProviderPath}?intent_id=${encodeURIComponent(
+      intentId,
+    )}&client_reference=${encodeURIComponent(clientReference)}`;
+    const returnUrl = `${origin}/parents/payments?intent=${encodeURIComponent(intentId)}`;
+
     const providerAdapter = getPaymentProvider(provider);
     const result = await providerAdapter.initiate({
-      intentId: String((intent as any).id),
-      clientReference: String((intent as any).client_reference),
+      intentId,
+      clientReference,
       amount,
       currency: "XOF",
       payerName: payerName || null,
@@ -191,8 +199,8 @@ export async function POST(req: NextRequest) {
         publicConfig: ((account as any).public_config || {}) as Record<string, any>,
         secretConfig: ((account as any).secret_config || {}) as Record<string, any>,
       } satisfies PaymentAccountConfig,
-      callbackUrl: `${origin}/api/payments/webhooks/${provider}`,
-      returnUrl: `${origin}/parents/payments?intent=${encodeURIComponent(String((intent as any).id))}`,
+      callbackUrl,
+      returnUrl,
     });
 
     const nextStatus = result.status === "pending" ? "pending" : "failed";
