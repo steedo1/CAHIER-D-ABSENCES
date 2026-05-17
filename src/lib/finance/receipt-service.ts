@@ -154,7 +154,7 @@ export async function createPostedReceiptForCharge(input: CreateReceiptInput) {
     .schema("finance")
     .from("v_charge_balances")
     .select(
-      "id,school_id,academic_year_id,academic_year,student_id,class_id,fee_category_id,label,balance_due,computed_status",
+      "id,school_id,academic_year_id,student_id,class_id,fee_category_id,label,balance_due,computed_status",
     )
     .eq("id", input.studentChargeId)
     .eq("school_id", input.institutionId)
