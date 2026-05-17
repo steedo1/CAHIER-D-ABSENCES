@@ -185,7 +185,9 @@ export async function createPostedReceiptForCharge(input: CreateReceiptInput) {
 
   const classId = input.classId || (charge as any).class_id || null;
   const classInfo = await getClassInfo(classId, input.institutionId);
-  const academicYear = clean((charge as any).academic_year) || classInfo.academicYear || null;
+  // La vue finance.v_charge_balances ne contient pas toujours la colonne academic_year.
+  // On reprend donc l'année scolaire depuis la classe, comme dans l'encaissement physique existant.
+  const academicYear = classInfo.academicYear || null;
   const academicYearId =
     (charge as any).academic_year_id || (await getAcademicYearId(input.institutionId, academicYear));
   const paymentDateIso = input.paymentDateIso || new Date().toISOString();
