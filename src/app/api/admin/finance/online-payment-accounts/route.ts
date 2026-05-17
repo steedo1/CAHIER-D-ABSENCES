@@ -144,7 +144,7 @@ async function guard(): Promise<GuardOk | GuardErr> {
 
   const { data: profile, error: profileErr } = await srv
     .from("profiles")
-    .select("id,role,institution_id")
+    .select("id,institution_id")
     .eq("id", user.id)
     .maybeSingle();
 
@@ -153,15 +153,18 @@ async function guard(): Promise<GuardOk | GuardErr> {
   }
 
   let institutionId = clean((profile as any)?.institution_id);
-  let role = clean((profile as any)?.role);
+  let role = "";
 
-  const { data: roleRows } = await srv
+  const { data: roleRows, error: roleErr } = await srv
     .from("user_roles")
     .select("role,institution_id")
     .eq("profile_id", user.id);
 
+  if (roleErr) {
+    return { response: jsonError(roleErr.message, 400) };
+  }
+
   const allRoles = new Set<string>();
-  if (role) allRoles.add(role);
 
   for (const row of roleRows || []) {
     const rowRole = clean((row as any).role);
