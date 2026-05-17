@@ -24,3 +24,5 @@ L’année scolaire est récupérée depuis la classe liée au paiement, comme d
 - le reste dû doit diminuer ;
 - l’intention doit devenir confirmée avec reçu ;
 - aucun doublon ne doit être créé si l’action est rejouée.
+
+Redeploy check: phase 4E active.
