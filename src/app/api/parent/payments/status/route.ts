@@ -23,7 +23,7 @@ export async function GET(req: NextRequest) {
   const { data: intent, error: intentErr } = await srv
     .schema("finance")
     .from("online_payment_intents")
-    .select("id,student_id,status,amount,currency,provider,receipt_id,error_message,created_at,updated_at,confirmed_at")
+    .select("id,student_id,status,amount,currency,provider,receipt_id,error_message,created_at,updated_at,expires_at,confirmed_at,failed_at")
     .eq("id", intentId)
     .maybeSingle();
 
@@ -40,5 +40,30 @@ export async function GET(req: NextRequest) {
   if (linkErr) return NextResponse.json({ error: linkErr.message }, { status: 400 });
   if (!link) return NextResponse.json({ error: "Accès non autorisé." }, { status: 403 });
 
+  const currentStatus = String((intent as any).status || "").trim();
+  const expiresAt = (intent as any).expires_at ? new Date((intent as any).expires_at).getTime() : 0;
+  const isExpired = expiresAt > 0 && expiresAt < Date.now();
+
+  if (["initiated", "pending"].includes(currentStatus) && isExpired && !(intent as any).receipt_id) {
+    const nowIso = new Date().toISOString();
+    const { data: updated, error: updateErr } = await srv
+      .schema("finance")
+      .from("online_payment_intents")
+      .update({
+        status: "expired",
+        error_message: "Paiement expiré automatiquement : confirmation opérateur non reçue dans le délai.",
+        failed_at: nowIso,
+        updated_at: nowIso,
+      } as any)
+      .eq("id", intentId)
+      .in("status", ["initiated", "pending"])
+      .select("id,student_id,status,amount,currency,provider,receipt_id,error_message,created_at,updated_at,expires_at,confirmed_at,failed_at")
+      .maybeSingle();
+
+    if (updateErr) return NextResponse.json({ error: updateErr.message }, { status: 400 });
+    if (updated) return NextResponse.json({ item: updated });
+  }
+
   return NextResponse.json({ item: intent });
 }
+

@@ -39,6 +39,28 @@ function fullName(row: any) {
   return [last, first].filter(Boolean).join(" ") || clean(row?.matricule) || "Élève";
 }
 
+
+async function expirePendingIntents(srv: SupabaseClient, institutionId: string) {
+  const nowIso = new Date().toISOString();
+
+  const { error } = await srv
+    .schema("finance")
+    .from("online_payment_intents")
+    .update({
+      status: "expired",
+      error_message: "Paiement expiré automatiquement : confirmation opérateur non reçue dans le délai.",
+      failed_at: nowIso,
+      updated_at: nowIso,
+    } as any)
+    .eq("school_id", institutionId)
+    .in("status", ["initiated", "pending"])
+    .lt("expires_at", nowIso);
+
+  if (error) {
+    console.warn("[admin.online-payment-intents.expire]", error.message);
+  }
+}
+
 async function guard(): Promise<GuardOk | GuardErr> {
   const supa = (await getSupabaseServerClient()) as unknown as SupabaseClient;
   const srv = getSupabaseServiceClient() as unknown as SupabaseClient;
@@ -90,6 +112,8 @@ async function guard(): Promise<GuardOk | GuardErr> {
 export async function GET(req: NextRequest) {
   const g = await guard();
   if ("response" in g) return g.response;
+
+  await expirePendingIntents(g.srv, g.institutionId);
 
   const limitParam = Number(req.nextUrl.searchParams.get("limit") || 30);
   const limit = Number.isFinite(limitParam) ? Math.min(Math.max(limitParam, 1), 100) : 30;
