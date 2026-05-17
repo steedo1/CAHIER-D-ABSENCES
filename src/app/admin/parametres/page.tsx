@@ -75,6 +75,45 @@ type RapportFSettings = {
   locality: string;
   report_author_name: string;
   report_author_phone: string;
+  report_author_role: string;
+  report_author_email: string;
+  administrative_observation: string;
+  opening_meeting_participants_count: string;
+  up_count: string;
+  up_functional_count: string;
+  up_difficulties: string;
+  teaching_council_count: string;
+  class_visit_planned_count: string;
+  class_visit_done_count: string;
+  class_visit_difficulties: string;
+  major_discipline_cases: string;
+  disciplinary_measures: string;
+  internal_council_held: string;
+  sports_activities: string;
+  cultural_activities: string;
+  school_clubs: string;
+  extracurricular_activities_done: string;
+  term1_up_comment: string;
+  term2_up_comment: string;
+  term3_up_comment: string;
+  term1_teaching_council_comment: string;
+  term2_teaching_council_comment: string;
+  term3_teaching_council_comment: string;
+  term1_class_visit_comment: string;
+  term2_class_visit_comment: string;
+  term3_class_visit_comment: string;
+  term1_discipline_comment: string;
+  term2_discipline_comment: string;
+  term3_discipline_comment: string;
+  term1_internal_council_comment: string;
+  term2_internal_council_comment: string;
+  term3_internal_council_comment: string;
+  term1_extracurricular_comment: string;
+  term2_extracurricular_comment: string;
+  term3_extracurricular_comment: string;
+  term1_general_observation: string;
+  term2_general_observation: string;
+  term3_general_observation: string;
   opening_meeting_date: string;
   opening_meeting_organizer: string;
   opening_meeting_location: string;
@@ -99,6 +138,45 @@ const DEFAULT_RAPPORT_F_SETTINGS: RapportFSettings = {
   locality: "",
   report_author_name: "",
   report_author_phone: "",
+  report_author_role: "",
+  report_author_email: "",
+  administrative_observation: "",
+  opening_meeting_participants_count: "",
+  up_count: "",
+  up_functional_count: "",
+  up_difficulties: "",
+  teaching_council_count: "",
+  class_visit_planned_count: "",
+  class_visit_done_count: "",
+  class_visit_difficulties: "",
+  major_discipline_cases: "",
+  disciplinary_measures: "",
+  internal_council_held: "",
+  sports_activities: "",
+  cultural_activities: "",
+  school_clubs: "",
+  extracurricular_activities_done: "",
+  term1_up_comment: "",
+  term2_up_comment: "",
+  term3_up_comment: "",
+  term1_teaching_council_comment: "",
+  term2_teaching_council_comment: "",
+  term3_teaching_council_comment: "",
+  term1_class_visit_comment: "",
+  term2_class_visit_comment: "",
+  term3_class_visit_comment: "",
+  term1_discipline_comment: "",
+  term2_discipline_comment: "",
+  term3_discipline_comment: "",
+  term1_internal_council_comment: "",
+  term2_internal_council_comment: "",
+  term3_internal_council_comment: "",
+  term1_extracurricular_comment: "",
+  term2_extracurricular_comment: "",
+  term3_extracurricular_comment: "",
+  term1_general_observation: "",
+  term2_general_observation: "",
+  term3_general_observation: "",
   opening_meeting_date: "",
   opening_meeting_organizer: "",
   opening_meeting_location: "",
@@ -3676,6 +3754,15 @@ export default function AdminSettingsPage() {
                   {renderRapportInput("locality", "Localité", "Aboisso")}
                   {renderRapportInput("report_author_name", "Rédacteur du rapport", "Nom et prénoms")}
                   {renderRapportInput("report_author_phone", "Contact rédacteur", "+225 ...", "tel")}
+                  {renderRapportInput("report_author_role", "Fonction du rédacteur", "Éducateur / Responsable pédagogique")}
+                  {renderRapportInput("report_author_email", "Email du rédacteur", "email@exemple.com")}
+                </div>
+                <div className="mt-3">
+                  {renderRapportTextarea(
+                    "administrative_observation",
+                    "Observation administrative",
+                    "Informations administratives à reprendre dans le Rapport F si nécessaire",
+                  )}
                 </div>
               </div>
 
@@ -3687,6 +3774,7 @@ export default function AdminSettingsPage() {
                   {renderRapportInput("opening_meeting_date", "Date", "", "date")}
                   {renderRapportInput("opening_meeting_organizer", "Organisateur", "Chef d’établissement")}
                   {renderRapportInput("opening_meeting_location", "Lieu", "Salle des professeurs")}
+                  {renderRapportInput("opening_meeting_participants_count", "Participants", "Ex. 35")}
                   {renderRapportInput("opening_meeting_observation", "Observation", "Réunion tenue")}
                 </div>
               </div>
@@ -3721,6 +3809,84 @@ export default function AdminSettingsPage() {
                   {renderRapportTextarea("discipline_comment", "Discipline / vie scolaire", "Observations utiles")}
                   {renderRapportTextarea("internal_council_comment", "Conseil intérieur", "Activités ou décisions importantes")}
                   {renderRapportTextarea("extracurricular_comment", "Activités parascolaires", "Clubs, activités, observations")}
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-slate-200 p-4">
+                <div className="mb-3 text-sm font-black text-slate-900">
+                  Pilotage pédagogique détaillé
+                </div>
+                <div className="grid gap-3 md:grid-cols-4">
+                  {renderRapportInput("up_count", "Nombre d’UP", "Ex. 8")}
+                  {renderRapportInput("up_functional_count", "UP fonctionnelles", "Ex. 7")}
+                  {renderRapportInput("teaching_council_count", "Conseils tenus", "Ex. 4")}
+                  {renderRapportInput("class_visit_planned_count", "Visites prévues", "Ex. 12")}
+                  {renderRapportInput("class_visit_done_count", "Visites réalisées", "Ex. 9")}
+                </div>
+                <div className="mt-3 grid gap-3 md:grid-cols-2">
+                  {renderRapportTextarea("up_difficulties", "Difficultés des UP", "Difficultés rencontrées et solutions envisagées")}
+                  {renderRapportTextarea("class_visit_difficulties", "Difficultés pédagogiques constatées", "Constats faits pendant les visites")}
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-slate-200 p-4">
+                <div className="mb-3 text-sm font-black text-slate-900">
+                  Discipline et activités
+                </div>
+                <div className="grid gap-3 md:grid-cols-4">
+                  {renderRapportInput("major_discipline_cases", "Cas majeurs signalés", "Ex. 2")}
+                  {renderRapportInput("disciplinary_measures", "Mesures prises", "Avertissements, convocations...")}
+                  {renderRapportSelect("internal_council_held", "Conseil intérieur tenu")}
+                  {renderRapportInput("school_clubs", "Clubs scolaires", "Ex. Anglais, environnement")}
+                  {renderRapportInput("sports_activities", "Activités sportives", "Ex. OISSU")}
+                  {renderRapportInput("cultural_activities", "Activités culturelles", "Ex. Théâtre, génie en herbe")}
+                </div>
+                <div className="mt-3">
+                  {renderRapportTextarea("extracurricular_activities_done", "Activités réalisées", "Activités parascolaires effectivement réalisées")}
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-slate-200 p-4">
+                <div className="mb-3 text-sm font-black text-slate-900">
+                  Observations par trimestre
+                </div>
+                <div className="grid gap-3 lg:grid-cols-3">
+                  <div className="rounded-2xl border border-slate-100 bg-slate-50 p-3">
+                    <div className="mb-2 text-xs font-black uppercase tracking-[0.14em] text-slate-500">1er trimestre</div>
+                    <div className="grid gap-2">
+                      {renderRapportTextarea("term1_up_comment", "UP", "Observation UP du 1er trimestre")}
+                      {renderRapportTextarea("term1_teaching_council_comment", "Conseils d’enseignement", "Observation CE du 1er trimestre")}
+                      {renderRapportTextarea("term1_class_visit_comment", "Visites de classes", "Observation visites du 1er trimestre")}
+                      {renderRapportTextarea("term1_discipline_comment", "Discipline", "Observation discipline du 1er trimestre")}
+                      {renderRapportTextarea("term1_internal_council_comment", "Conseil intérieur", "Observation conseil intérieur du 1er trimestre")}
+                      {renderRapportTextarea("term1_extracurricular_comment", "Activités", "Observation activités du 1er trimestre")}
+                      {renderRapportTextarea("term1_general_observation", "Observation générale", "Synthèse du 1er trimestre")}
+                    </div>
+                  </div>
+                  <div className="rounded-2xl border border-slate-100 bg-slate-50 p-3">
+                    <div className="mb-2 text-xs font-black uppercase tracking-[0.14em] text-slate-500">2e trimestre</div>
+                    <div className="grid gap-2">
+                      {renderRapportTextarea("term2_up_comment", "UP", "Observation UP du 2e trimestre")}
+                      {renderRapportTextarea("term2_teaching_council_comment", "Conseils d’enseignement", "Observation CE du 2e trimestre")}
+                      {renderRapportTextarea("term2_class_visit_comment", "Visites de classes", "Observation visites du 2e trimestre")}
+                      {renderRapportTextarea("term2_discipline_comment", "Discipline", "Observation discipline du 2e trimestre")}
+                      {renderRapportTextarea("term2_internal_council_comment", "Conseil intérieur", "Observation conseil intérieur du 2e trimestre")}
+                      {renderRapportTextarea("term2_extracurricular_comment", "Activités", "Observation activités du 2e trimestre")}
+                      {renderRapportTextarea("term2_general_observation", "Observation générale", "Synthèse du 2e trimestre")}
+                    </div>
+                  </div>
+                  <div className="rounded-2xl border border-slate-100 bg-slate-50 p-3">
+                    <div className="mb-2 text-xs font-black uppercase tracking-[0.14em] text-slate-500">3e trimestre</div>
+                    <div className="grid gap-2">
+                      {renderRapportTextarea("term3_up_comment", "UP", "Observation UP du 3e trimestre")}
+                      {renderRapportTextarea("term3_teaching_council_comment", "Conseils d’enseignement", "Observation CE du 3e trimestre")}
+                      {renderRapportTextarea("term3_class_visit_comment", "Visites de classes", "Observation visites du 3e trimestre")}
+                      {renderRapportTextarea("term3_discipline_comment", "Discipline", "Observation discipline du 3e trimestre")}
+                      {renderRapportTextarea("term3_internal_council_comment", "Conseil intérieur", "Observation conseil intérieur du 3e trimestre")}
+                      {renderRapportTextarea("term3_extracurricular_comment", "Activités", "Observation activités du 3e trimestre")}
+                      {renderRapportTextarea("term3_general_observation", "Observation générale", "Synthèse du 3e trimestre")}
+                    </div>
+                  </div>
                 </div>
               </div>
 

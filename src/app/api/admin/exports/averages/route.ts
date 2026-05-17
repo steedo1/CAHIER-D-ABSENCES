@@ -3606,6 +3606,45 @@ type RapportFSettings = {
   locality: string;
   report_author_name: string;
   report_author_phone: string;
+  report_author_role: string;
+  report_author_email: string;
+  administrative_observation: string;
+  opening_meeting_participants_count: string;
+  up_count: string;
+  up_functional_count: string;
+  up_difficulties: string;
+  teaching_council_count: string;
+  class_visit_planned_count: string;
+  class_visit_done_count: string;
+  class_visit_difficulties: string;
+  major_discipline_cases: string;
+  disciplinary_measures: string;
+  internal_council_held: string;
+  sports_activities: string;
+  cultural_activities: string;
+  school_clubs: string;
+  extracurricular_activities_done: string;
+  term1_up_comment: string;
+  term2_up_comment: string;
+  term3_up_comment: string;
+  term1_teaching_council_comment: string;
+  term2_teaching_council_comment: string;
+  term3_teaching_council_comment: string;
+  term1_class_visit_comment: string;
+  term2_class_visit_comment: string;
+  term3_class_visit_comment: string;
+  term1_discipline_comment: string;
+  term2_discipline_comment: string;
+  term3_discipline_comment: string;
+  term1_internal_council_comment: string;
+  term2_internal_council_comment: string;
+  term3_internal_council_comment: string;
+  term1_extracurricular_comment: string;
+  term2_extracurricular_comment: string;
+  term3_extracurricular_comment: string;
+  term1_general_observation: string;
+  term2_general_observation: string;
+  term3_general_observation: string;
   opening_meeting_date: string;
   opening_meeting_organizer: string;
   opening_meeting_location: string;
@@ -3630,6 +3669,45 @@ const DEFAULT_RAPPORT_F_SETTINGS: RapportFSettings = {
   locality: "",
   report_author_name: "",
   report_author_phone: "",
+  report_author_role: "",
+  report_author_email: "",
+  administrative_observation: "",
+  opening_meeting_participants_count: "",
+  up_count: "",
+  up_functional_count: "",
+  up_difficulties: "",
+  teaching_council_count: "",
+  class_visit_planned_count: "",
+  class_visit_done_count: "",
+  class_visit_difficulties: "",
+  major_discipline_cases: "",
+  disciplinary_measures: "",
+  internal_council_held: "",
+  sports_activities: "",
+  cultural_activities: "",
+  school_clubs: "",
+  extracurricular_activities_done: "",
+  term1_up_comment: "",
+  term2_up_comment: "",
+  term3_up_comment: "",
+  term1_teaching_council_comment: "",
+  term2_teaching_council_comment: "",
+  term3_teaching_council_comment: "",
+  term1_class_visit_comment: "",
+  term2_class_visit_comment: "",
+  term3_class_visit_comment: "",
+  term1_discipline_comment: "",
+  term2_discipline_comment: "",
+  term3_discipline_comment: "",
+  term1_internal_council_comment: "",
+  term2_internal_council_comment: "",
+  term3_internal_council_comment: "",
+  term1_extracurricular_comment: "",
+  term2_extracurricular_comment: "",
+  term3_extracurricular_comment: "",
+  term1_general_observation: "",
+  term2_general_observation: "",
+  term3_general_observation: "",
   opening_meeting_date: "",
   opening_meeting_organizer: "",
   opening_meeting_location: "",
