@@ -4,11 +4,9 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import {
-  AlertTriangle,
   ArrowLeft,
-  BadgeCheck,
-  Building2,
   CheckCircle2,
+  Clock3,
   CreditCard,
   Loader2,
   RefreshCw,
@@ -68,34 +66,39 @@ type EditableAccount = Account & {
   webhook_secret?: string;
 };
 
-const PROVIDER_TONES: Record<
-  ProviderCode,
-  {
-    border: string;
-    bg: string;
-    icon: string;
-    badge: string;
-  }
-> = {
-  orange_money: {
-    border: "border-orange-200",
-    bg: "bg-orange-50/70",
-    icon: "bg-orange-100 text-orange-700",
-    badge: "bg-orange-100 text-orange-800 ring-orange-200",
-  },
-  wave: {
-    border: "border-sky-200",
-    bg: "bg-sky-50/70",
-    icon: "bg-sky-100 text-sky-700",
-    badge: "bg-sky-100 text-sky-800 ring-sky-200",
-  },
-  mtn_momo: {
-    border: "border-amber-200",
-    bg: "bg-amber-50/70",
-    icon: "bg-amber-100 text-amber-700",
-    badge: "bg-amber-100 text-amber-800 ring-amber-200",
-  },
+type PaymentIntent = {
+  id: string;
+  status: string;
+  provider: string;
+  provider_label: string;
+  amount: number;
+  currency: string;
+  payer_name: string;
+  payer_phone: string;
+  student_name: string;
+  class_label: string;
+  charge_label: string;
+  client_reference: string;
+  provider_reference: string;
+  provider_transaction_id: string;
+  receipt_id: string | null;
+  receipt_no: string | null;
+  error_message: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+  expires_at: string | null;
+  confirmed_at: string | null;
+  failed_at: string | null;
 };
+
+type IntentPayload = {
+  ok: boolean;
+  items?: PaymentIntent[];
+  summary?: Record<string, number>;
+  error?: string;
+};
+
+const PROVIDERS: ProviderCode[] = ["orange_money", "wave", "mtn_momo"];
 
 const PARENT_PROVIDER_LABELS: Record<ProviderCode, string> = {
   orange_money: "Orange Money",
@@ -103,13 +106,34 @@ const PARENT_PROVIDER_LABELS: Record<ProviderCode, string> = {
   mtn_momo: "MTN Mobile Money",
 };
 
+const PROVIDER_TONES: Record<ProviderCode, { border: string; bg: string; icon: string }> = {
+  orange_money: {
+    border: "border-orange-200",
+    bg: "bg-orange-50/70",
+    icon: "bg-orange-100 text-orange-700",
+  },
+  wave: {
+    border: "border-sky-200",
+    bg: "bg-sky-50/70",
+    icon: "bg-sky-100 text-sky-700",
+  },
+  mtn_momo: {
+    border: "border-amber-200",
+    bg: "bg-amber-50/70",
+    icon: "bg-amber-100 text-amber-700",
+  },
+};
+
 function officialParentLabel(provider: ProviderCode) {
   return PARENT_PROVIDER_LABELS[provider];
 }
 
-
 function cleanPhone(value: string) {
   return value.replace(/\s+/g, "").trim();
+}
+
+function money(value: number | string | null | undefined) {
+  return `${Number(value || 0).toLocaleString("fr-FR")} F`;
 }
 
 function providerIcon(provider: ProviderCode) {
@@ -119,7 +143,7 @@ function providerIcon(provider: ProviderCode) {
 }
 
 function formatDate(value: string | null) {
-  if (!value) return "Jamais enregistré";
+  if (!value) return "—";
   try {
     return new Date(value).toLocaleString("fr-FR", {
       day: "2-digit",
@@ -149,26 +173,40 @@ function cloneAccount(account: Account): EditableAccount {
   };
 }
 
+function statusLabel(status: string) {
+  if (status === "succeeded") return "Confirmé";
+  if (status === "failed") return "Échoué";
+  if (status === "cancelled") return "Annulé";
+  if (status === "expired") return "Expiré";
+  if (status === "initiated") return "Initialisé";
+  return "En attente";
+}
+
+function statusClass(status: string) {
+  if (status === "succeeded") return "bg-emerald-100 text-emerald-800 ring-emerald-200";
+  if (status === "failed") return "bg-rose-100 text-rose-800 ring-rose-200";
+  if (status === "cancelled" || status === "expired") return "bg-slate-100 text-slate-700 ring-slate-200";
+  return "bg-amber-100 text-amber-900 ring-amber-200";
+}
+
 function TextInput({
   label,
   value,
   onChange,
   placeholder,
-  type = "text",
   hint,
 }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
   placeholder?: string;
-  type?: string;
   hint?: string;
 }) {
   return (
     <label className="block">
       <span className="text-sm font-black text-slate-800">{label}</span>
       <input
-        type={type}
+        type="text"
         value={value}
         onChange={(event) => onChange(event.target.value)}
         placeholder={placeholder}
@@ -183,12 +221,10 @@ function SecretInput({
   label,
   value,
   onChange,
-  placeholder,
 }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
-  placeholder?: string;
 }) {
   return (
     <label className="block">
@@ -198,7 +234,7 @@ function SecretInput({
         autoComplete="new-password"
         value={value}
         onChange={(event) => onChange(event.target.value)}
-        placeholder={placeholder || "Laisser vide pour conserver la valeur actuelle"}
+        placeholder="Laisser vide pour conserver la valeur actuelle"
         className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-slate-400 focus:ring-4 focus:ring-slate-100"
       />
     </label>
@@ -213,7 +249,10 @@ export default function AdminOnlinePaymentsPage() {
     wave: undefined,
     mtn_momo: undefined,
   });
+  const [intents, setIntents] = useState<PaymentIntent[]>([]);
+  const [intentSummary, setIntentSummary] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
+  const [loadingIntents, setLoadingIntents] = useState(false);
   const [savingProvider, setSavingProvider] = useState<ProviderCode | null>(null);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
@@ -278,8 +317,32 @@ export default function AdminOnlinePaymentsPage() {
     }
   }
 
+  async function loadIntents() {
+    setLoadingIntents(true);
+    try {
+      const res = await fetch("/api/admin/finance/online-payment-intents?limit=30", {
+        credentials: "include",
+        cache: "no-store",
+      });
+      const json = (await res.json().catch(() => ({}))) as IntentPayload;
+      if (!res.ok || !json?.ok) {
+        throw new Error(json?.error || "Impossible de charger l’historique des paiements en ligne.");
+      }
+      setIntents(Array.isArray(json.items) ? json.items : []);
+      setIntentSummary(json.summary || {});
+    } catch (e: any) {
+      setError(String(e?.message || e));
+    } finally {
+      setLoadingIntents(false);
+    }
+  }
+
+  async function loadAll() {
+    await Promise.all([loadAccounts(), loadIntents()]);
+  }
+
   useEffect(() => {
-    loadAccounts();
+    loadAll();
   }, []);
 
   async function saveAccount(provider: ProviderCode) {
@@ -339,11 +402,15 @@ export default function AdminOnlinePaymentsPage() {
 
           <button
             type="button"
-            onClick={loadAccounts}
-            disabled={loading}
+            onClick={loadAll}
+            disabled={loading || loadingIntents}
             className="inline-flex w-fit items-center gap-2 rounded-2xl bg-slate-950 px-4 py-2 text-sm font-black text-white shadow-sm transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
           >
-            {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+            {loading || loadingIntents ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <RefreshCw className="h-4 w-4" />
+            )}
             Actualiser
           </button>
         </div>
@@ -354,98 +421,61 @@ export default function AdminOnlinePaymentsPage() {
               <div className="max-w-3xl">
                 <div className="inline-flex items-center gap-2 rounded-full bg-white/10 px-3 py-1 text-xs font-black uppercase tracking-[0.18em] text-emerald-100 ring-1 ring-white/15">
                   <ShieldCheck className="h-3.5 w-3.5" />
-                  Paiement en ligne direct école
+                  Paiement direct établissement
                 </div>
                 <h1 className="mt-4 text-3xl font-black tracking-tight sm:text-4xl">
-                  Comptes Mobile Money de l’établissement
+                  Paiement en ligne Mobile Money
                 </h1>
                 <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-200 sm:text-[15px]">
-                  Chaque école encaisse directement sur son propre compte marchand. Mon Cahier affiche le moyen officiel, déclenche le paiement, vérifie la confirmation, crée le reçu et garde l’historique.
+                  Chaque école encaisse directement sur son propre compte marchand. Mon Cahier déclenche, suit et prépare le reçu uniquement après confirmation réelle.
                 </p>
               </div>
 
               <div className="grid gap-3 sm:grid-cols-2">
                 <div className="rounded-3xl border border-white/10 bg-white/10 p-4 backdrop-blur">
-                  <div className="text-xs font-black uppercase tracking-[0.16em] text-emerald-100">
-                    Établissement
-                  </div>
-                  <div className="mt-2 line-clamp-2 text-lg font-black text-white">
-                    {institutionName}
-                  </div>
+                  <div className="text-xs font-black uppercase tracking-wide text-slate-300">Moyens actifs</div>
+                  <div className="mt-1 text-3xl font-black">{activeCount}/3</div>
                 </div>
                 <div className="rounded-3xl border border-white/10 bg-white/10 p-4 backdrop-blur">
-                  <div className="text-xs font-black uppercase tracking-[0.16em] text-emerald-100">
-                    Moyens actifs
-                  </div>
-                  <div className="mt-2 text-3xl font-black text-white">
-                    {activeCount}/{accounts.length || 3}
-                  </div>
+                  <div className="text-xs font-black uppercase tracking-wide text-slate-300">Paiements en attente</div>
+                  <div className="mt-1 text-3xl font-black">{intentSummary.pending || 0}</div>
                 </div>
               </div>
             </div>
           </div>
 
-          <div className="grid gap-3 border-t border-slate-200 bg-slate-50 px-5 py-4 sm:grid-cols-3 sm:px-6">
-            <div className="rounded-3xl border border-slate-200 bg-white p-4">
-              <div className="flex items-center gap-2 text-sm font-black text-slate-800">
-                <Building2 className="h-4 w-4 text-slate-500" />
-                Modèle validé
-              </div>
-              <p className="mt-2 text-sm font-semibold leading-6 text-slate-600">
-                Nexa Digital ne reçoit pas les frais scolaires.
-              </p>
+          <div className="grid gap-4 border-t border-slate-200 bg-white p-5 sm:grid-cols-3">
+            <div className="rounded-3xl bg-slate-50 p-4">
+              <div className="text-xs font-black uppercase tracking-wide text-slate-500">Établissement</div>
+              <div className="mt-1 font-black text-slate-950">{institutionName}</div>
             </div>
-            <div className="rounded-3xl border border-slate-200 bg-white p-4">
-              <div className="flex items-center gap-2 text-sm font-black text-slate-800">
-                <BadgeCheck className="h-4 w-4 text-emerald-600" />
-                Reçu officiel
-              </div>
-              <p className="mt-2 text-sm font-semibold leading-6 text-slate-600">
-                Le reçu est créé après confirmation réelle du fournisseur.
-              </p>
+            <div className="rounded-3xl bg-slate-50 p-4">
+              <div className="text-xs font-black uppercase tracking-wide text-slate-500">Configurations</div>
+              <div className="mt-1 font-black text-slate-950">{configuredCount}/3 renseignées</div>
             </div>
-            <div className="rounded-3xl border border-slate-200 bg-white p-4">
-              <div className="flex items-center gap-2 text-sm font-black text-slate-800">
-                <Wallet className="h-4 w-4 text-sky-600" />
-                Configuration
-              </div>
-              <p className="mt-2 text-sm font-semibold leading-6 text-slate-600">
-                {configuredCount} moyen(s) renseigné(s) pour cet établissement.
-              </p>
+            <div className="rounded-3xl bg-emerald-50 p-4 text-emerald-900">
+              <div className="text-xs font-black uppercase tracking-wide">Modèle retenu</div>
+              <div className="mt-1 font-black">Nexa Digital n’encaisse pas les fonds.</div>
             </div>
           </div>
         </section>
 
-        {error ? (
+        {error && (
           <div className="rounded-3xl border border-rose-200 bg-rose-50 p-4 text-sm font-bold text-rose-800">
             {error}
           </div>
-        ) : null}
+        )}
 
-        {message ? (
+        {message && (
           <div className="rounded-3xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-bold text-emerald-800">
             {message}
           </div>
-        ) : null}
-
-        <section className="rounded-[28px] border border-amber-200 bg-amber-50 p-4 text-amber-900 shadow-sm">
-          <div className="flex gap-3">
-            <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" />
-            <div>
-              <div className="font-black">Important avant activation réelle</div>
-              <p className="mt-1 text-sm font-semibold leading-6">
-                Activez seulement un compte dont l’établissement est bien titulaire. Le nom de l’opérateur affiché aux parents est imposé afin d’éviter toute confusion. Les clés API ne sont jamais renvoyées au navigateur après enregistrement.
-              </p>
-            </div>
-          </div>
-        </section>
+        )}
 
         {loading ? (
           <div className="rounded-[28px] border border-slate-200 bg-white p-8 text-center shadow-sm">
             <Loader2 className="mx-auto h-8 w-8 animate-spin text-slate-500" />
-            <div className="mt-3 text-sm font-bold text-slate-600">
-              Chargement des comptes de paiement…
-            </div>
+            <div className="mt-3 text-sm font-bold text-slate-600">Chargement des comptes de paiement…</div>
           </div>
         ) : (
           <section className="grid gap-5 xl:grid-cols-3">
@@ -464,15 +494,13 @@ export default function AdminOnlinePaymentsPage() {
                 >
                   <div className={`border-b px-5 py-5 ${tone.border} ${tone.bg}`}>
                     <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-2">
-                          <span className={`grid h-11 w-11 place-items-center rounded-2xl ${tone.icon}`}>
-                            {providerIcon(item.provider)}
-                          </span>
-                          <div>
-                            <h2 className="text-xl font-black text-slate-950">{item.label}</h2>
-                            <p className="text-sm font-semibold text-slate-600">{item.help}</p>
-                          </div>
+                      <div className="flex min-w-0 items-center gap-2">
+                        <span className={`grid h-11 w-11 place-items-center rounded-2xl ${tone.icon}`}>
+                          {providerIcon(item.provider)}
+                        </span>
+                        <div className="min-w-0">
+                          <h2 className="truncate text-xl font-black text-slate-950">{item.label}</h2>
+                          <p className="text-sm font-semibold text-slate-600">{item.help}</p>
                         </div>
                       </div>
 
@@ -493,9 +521,7 @@ export default function AdminOnlinePaymentsPage() {
                     <label className="flex cursor-pointer items-center justify-between gap-3 rounded-3xl border border-slate-200 bg-slate-50 px-4 py-3">
                       <div>
                         <div className="text-sm font-black text-slate-900">Activer pour les parents</div>
-                        <div className="text-xs font-semibold text-slate-500">
-                          Visible dans l’espace parent si au moins un frais est dû.
-                        </div>
+                        <div className="text-xs font-semibold text-slate-500">Visible si un frais est dû.</div>
                       </div>
                       <input
                         type="checkbox"
@@ -527,7 +553,7 @@ export default function AdminOnlinePaymentsPage() {
                         {officialParentLabel(item.provider)}
                       </div>
                       <p className="mt-2 text-xs font-semibold leading-5 text-slate-500">
-                        Ce nom est imposé par Mon Cahier pour garder le nom officiel de l’opérateur et éviter les confusions côté parent.
+                        Nom officiel imposé par Mon Cahier pour éviter toute confusion côté parent.
                       </p>
                     </div>
 
@@ -536,7 +562,7 @@ export default function AdminOnlinePaymentsPage() {
                       value={form.merchant_id}
                       onChange={(value) => updateForm(item.provider, { merchant_id: value })}
                       placeholder="Ex : code marchand, business id, merchant id"
-                      hint="À renseigner uniquement si Orange, Wave ou MTN l’a fourni à l’établissement."
+                      hint="À renseigner uniquement si l’opérateur l’a fourni à l’établissement."
                     />
 
                     <TextInput
@@ -544,7 +570,7 @@ export default function AdminOnlinePaymentsPage() {
                       value={form.merchant_phone}
                       onChange={(value) => updateForm(item.provider, { merchant_phone: value })}
                       placeholder="Ex : +2250700000000"
-                      hint="Numéro du compte Mobile Money de l’établissement, si fourni par l’opérateur."
+                      hint="Numéro du compte Mobile Money de l’établissement, si fourni."
                     />
 
                     <details className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
@@ -555,56 +581,24 @@ export default function AdminOnlinePaymentsPage() {
                         Partie réservée à la configuration technique Mon Cahier. Remplir uniquement les champs officiellement fournis par l’opérateur.
                       </p>
                       <div className="mt-4 space-y-3">
-                        <SecretInput
-                          label="API key"
-                          value={form.api_key || ""}
-                          onChange={(value) => updateForm(item.provider, { api_key: value })}
-                        />
-                        <SecretInput
-                          label="API user / login"
-                          value={form.api_user || ""}
-                          onChange={(value) => updateForm(item.provider, { api_user: value })}
-                        />
-                        <SecretInput
-                          label="Mot de passe API"
-                          value={form.api_password || ""}
-                          onChange={(value) => updateForm(item.provider, { api_password: value })}
-                        />
-                        <SecretInput
-                          label="Client ID"
-                          value={form.client_id || ""}
-                          onChange={(value) => updateForm(item.provider, { client_id: value })}
-                        />
-                        <SecretInput
-                          label="Client secret"
-                          value={form.client_secret || ""}
-                          onChange={(value) => updateForm(item.provider, { client_secret: value })}
-                        />
-                        <SecretInput
-                          label="Merchant key"
-                          value={form.merchant_key || ""}
-                          onChange={(value) => updateForm(item.provider, { merchant_key: value })}
-                        />
-                        <SecretInput
-                          label="Webhook secret"
-                          value={form.webhook_secret || ""}
-                          onChange={(value) => updateForm(item.provider, { webhook_secret: value })}
-                        />
+                        <SecretInput label="API key" value={form.api_key || ""} onChange={(value) => updateForm(item.provider, { api_key: value })} />
+                        <SecretInput label="API user / login" value={form.api_user || ""} onChange={(value) => updateForm(item.provider, { api_user: value })} />
+                        <SecretInput label="Mot de passe API" value={form.api_password || ""} onChange={(value) => updateForm(item.provider, { api_password: value })} />
+                        <SecretInput label="Client ID" value={form.client_id || ""} onChange={(value) => updateForm(item.provider, { client_id: value })} />
+                        <SecretInput label="Client secret" value={form.client_secret || ""} onChange={(value) => updateForm(item.provider, { client_secret: value })} />
+                        <SecretInput label="Merchant key" value={form.merchant_key || ""} onChange={(value) => updateForm(item.provider, { merchant_key: value })} />
+                        <SecretInput label="Webhook secret" value={form.webhook_secret || ""} onChange={(value) => updateForm(item.provider, { webhook_secret: value })} />
                       </div>
                     </details>
 
                     <div className="rounded-3xl border border-slate-200 bg-white p-4 text-sm font-semibold text-slate-600">
                       <div className="flex items-center justify-between gap-3">
                         <span>Configuration technique enregistrée</span>
-                        <span className="font-black text-slate-900">
-                          {form.has_secret_config ? "Oui" : "Non"}
-                        </span>
+                        <span className="font-black text-slate-900">{form.has_secret_config ? "Oui" : "Non"}</span>
                       </div>
                       <div className="mt-2 flex items-center justify-between gap-3">
                         <span>Dernière mise à jour</span>
-                        <span className="text-right font-black text-slate-900">
-                          {formatDate(form.updated_at)}
-                        </span>
+                        <span className="text-right font-black text-slate-900">{formatDate(form.updated_at)}</span>
                       </div>
                     </div>
 
@@ -623,6 +617,98 @@ export default function AdminOnlinePaymentsPage() {
             })}
           </section>
         )}
+
+        <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <div className="inline-flex items-center gap-2 rounded-full bg-amber-50 px-3 py-1 text-xs font-black uppercase tracking-[0.16em] text-amber-800 ring-1 ring-amber-200">
+                <Clock3 className="h-3.5 w-3.5" />
+                Tunnel interne
+              </div>
+              <h2 className="mt-3 text-2xl font-black text-slate-950">Historique des paiements en ligne</h2>
+              <p className="mt-1 text-sm font-semibold text-slate-600">
+                Ici on vérifie les intentions créées. Aucun reçu officiel n’est généré tant que l’opérateur n’a pas confirmé le paiement.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={loadIntents}
+              disabled={loadingIntents}
+              className="inline-flex w-fit items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-black text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:opacity-60"
+            >
+              {loadingIntents ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+              Actualiser l’historique
+            </button>
+          </div>
+
+          <div className="mt-4 grid gap-3 sm:grid-cols-4">
+            <div className="rounded-3xl bg-slate-50 p-4">
+              <div className="text-xs font-black uppercase tracking-wide text-slate-500">Total récent</div>
+              <div className="mt-1 text-2xl font-black">{intentSummary.total || 0}</div>
+            </div>
+            <div className="rounded-3xl bg-amber-50 p-4 text-amber-900">
+              <div className="text-xs font-black uppercase tracking-wide">En attente</div>
+              <div className="mt-1 text-2xl font-black">{intentSummary.pending || 0}</div>
+            </div>
+            <div className="rounded-3xl bg-emerald-50 p-4 text-emerald-900">
+              <div className="text-xs font-black uppercase tracking-wide">Confirmés</div>
+              <div className="mt-1 text-2xl font-black">{intentSummary.succeeded || 0}</div>
+            </div>
+            <div className="rounded-3xl bg-rose-50 p-4 text-rose-900">
+              <div className="text-xs font-black uppercase tracking-wide">Échoués</div>
+              <div className="mt-1 text-2xl font-black">{intentSummary.failed || 0}</div>
+            </div>
+          </div>
+
+          <div className="mt-4 overflow-hidden rounded-3xl border border-slate-200">
+            {loadingIntents ? (
+              <div className="p-6 text-center text-sm font-bold text-slate-600">Chargement de l’historique…</div>
+            ) : intents.length === 0 ? (
+              <div className="p-6 text-center text-sm font-bold text-slate-600">
+                Aucun paiement en ligne initié pour le moment.
+              </div>
+            ) : (
+              <div className="divide-y divide-slate-200">
+                {intents.map((intent) => (
+                  <div key={intent.id} className="grid gap-3 p-4 lg:grid-cols-[1.2fr_0.8fr_0.8fr_auto] lg:items-center">
+                    <div className="min-w-0">
+                      <div className="truncate text-sm font-black text-slate-950">{intent.student_name}</div>
+                      <div className="mt-1 text-xs font-semibold text-slate-500">
+                        {intent.class_label} · {intent.charge_label}
+                      </div>
+                      <div className="mt-1 text-xs font-semibold text-slate-400">
+                        Réf. Mon Cahier : {intent.client_reference || intent.id.slice(0, 8)}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-sm font-black text-slate-950">{intent.provider_label}</div>
+                      <div className="mt-1 text-xs font-semibold text-slate-500">{intent.payer_phone || "Numéro non précisé"}</div>
+                    </div>
+                    <div>
+                      <div className="text-lg font-black text-slate-950">{money(intent.amount)}</div>
+                      <div className="mt-1 text-xs font-semibold text-slate-500">{formatDate(intent.created_at)}</div>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2 lg:justify-end">
+                      <span className={`inline-flex rounded-full px-3 py-1 text-xs font-black ring-1 ${statusClass(intent.status)}`}>
+                        {statusLabel(intent.status)}
+                      </span>
+                      {intent.receipt_no ? (
+                        <span className="inline-flex rounded-full bg-emerald-50 px-3 py-1 text-xs font-black text-emerald-800 ring-1 ring-emerald-200">
+                          Reçu {intent.receipt_no}
+                        </span>
+                      ) : null}
+                    </div>
+                    {intent.error_message ? (
+                      <div className="rounded-2xl bg-rose-50 px-3 py-2 text-xs font-bold text-rose-800 lg:col-span-4">
+                        {intent.error_message}
+                      </div>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </section>
       </main>
     </div>
   );

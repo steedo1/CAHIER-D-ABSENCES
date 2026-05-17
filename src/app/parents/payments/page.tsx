@@ -3,6 +3,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import { CheckCircle2, Clock3, Loader2, RefreshCw, XCircle } from "lucide-react";
 
 type ProviderOption = {
   id: string;
@@ -33,6 +34,20 @@ type PaymentChild = {
   providers: ProviderOption[];
 };
 
+type PaymentStatus = {
+  id: string;
+  student_id: string;
+  status: string;
+  amount: number;
+  currency: string;
+  provider: string;
+  receipt_id: string | null;
+  error_message: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+  confirmed_at: string | null;
+};
+
 function formatMoney(value: number | string | null | undefined) {
   return `${Number(value || 0).toLocaleString("fr-FR")} F`;
 }
@@ -54,6 +69,27 @@ function dueLabel(value: string | null) {
   }
 }
 
+function statusLabel(status: string) {
+  if (status === "succeeded") return "Paiement confirmé";
+  if (status === "failed") return "Paiement échoué";
+  if (status === "cancelled") return "Paiement annulé";
+  if (status === "expired") return "Paiement expiré";
+  if (status === "initiated") return "Paiement initialisé";
+  return "Paiement en attente";
+}
+
+function statusIcon(status: string) {
+  if (status === "succeeded") return <CheckCircle2 className="h-5 w-5" />;
+  if (["failed", "cancelled", "expired"].includes(status)) return <XCircle className="h-5 w-5" />;
+  return <Clock3 className="h-5 w-5" />;
+}
+
+function statusBoxClass(status: string) {
+  if (status === "succeeded") return "border-emerald-200 bg-emerald-50 text-emerald-900";
+  if (["failed", "cancelled", "expired"].includes(status)) return "border-rose-200 bg-rose-50 text-rose-900";
+  return "border-amber-200 bg-amber-50 text-amber-900";
+}
+
 export default function ParentOnlinePaymentsPage() {
   const [items, setItems] = useState<PaymentChild[]>([]);
   const [loading, setLoading] = useState(true);
@@ -66,6 +102,9 @@ export default function ParentOnlinePaymentsPage() {
   const [payerName, setPayerName] = useState("");
   const [payerPhone, setPayerPhone] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [checkingStatus, setCheckingStatus] = useState(false);
+  const [currentIntentId, setCurrentIntentId] = useState("");
+  const [currentStatus, setCurrentStatus] = useState<PaymentStatus | null>(null);
 
   async function loadOptions() {
     setLoading(true);
@@ -92,8 +131,31 @@ export default function ParentOnlinePaymentsPage() {
     }
   }
 
+  async function checkIntent(intentId: string) {
+    if (!intentId) return;
+    setCheckingStatus(true);
+    setError("");
+    try {
+      const res = await fetch(`/api/parent/payments/status?intent_id=${encodeURIComponent(intentId)}`, {
+        credentials: "include",
+        cache: "no-store",
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json?.error || "Impossible de vérifier le paiement.");
+      setCurrentStatus(json?.item || null);
+      setCurrentIntentId(intentId);
+    } catch (e: any) {
+      setError(String(e?.message || e));
+    } finally {
+      setCheckingStatus(false);
+    }
+  }
+
   useEffect(() => {
     loadOptions();
+    const params = new URLSearchParams(window.location.search);
+    const intent = params.get("intent") || params.get("intent_id") || "";
+    if (intent) checkIntent(intent);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -130,6 +192,7 @@ export default function ParentOnlinePaymentsPage() {
     setSubmitting(true);
     setError("");
     setMessage("");
+    setCurrentStatus(null);
 
     try {
       const res = await fetch("/api/parent/payments/initiate", {
@@ -148,12 +211,20 @@ export default function ParentOnlinePaymentsPage() {
       const json = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(json?.error || "Paiement non initialisé.");
 
+      const intentId = String(json?.intent_id || "");
+      setCurrentIntentId(intentId);
       setMessage(json?.message || "Paiement initialisé. Vérifiez votre téléphone.");
-      if (json?.checkout_url) {
-        window.location.href = String(json.checkout_url);
-      } else {
-        await loadOptions();
+
+      if (intentId) {
+        await checkIntent(intentId);
       }
+
+      if (json?.checkout_url && !String(json.checkout_url).includes("/parents/payments")) {
+        window.location.href = String(json.checkout_url);
+        return;
+      }
+
+      await loadOptions();
     } catch (e: any) {
       setError(String(e?.message || e));
     } finally {
@@ -215,6 +286,39 @@ export default function ParentOnlinePaymentsPage() {
           </div>
         )}
 
+        {currentStatus && (
+          <section className={`rounded-[28px] border p-4 shadow-sm ${statusBoxClass(currentStatus.status)}`}>
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex items-start gap-3">
+                <div className="mt-0.5">{statusIcon(currentStatus.status)}</div>
+                <div>
+                  <div className="text-lg font-black">{statusLabel(currentStatus.status)}</div>
+                  <div className="mt-1 text-sm font-semibold">
+                    Montant : {formatMoney(currentStatus.amount)} · Référence : {currentStatus.id.slice(0, 8)}
+                  </div>
+                  {currentStatus.status !== "succeeded" && (
+                    <div className="mt-2 text-xs font-bold leading-5">
+                      Aucun reçu officiel n’est créé tant que le paiement n’est pas confirmé par l’opérateur.
+                    </div>
+                  )}
+                  {currentStatus.error_message ? (
+                    <div className="mt-2 text-xs font-bold leading-5">{currentStatus.error_message}</div>
+                  ) : null}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => checkIntent(currentIntentId)}
+                disabled={checkingStatus}
+                className="inline-flex w-fit items-center justify-center gap-2 rounded-2xl bg-white/70 px-4 py-2 text-sm font-black shadow-sm ring-1 ring-black/5 disabled:opacity-60"
+              >
+                {checkingStatus ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                Vérifier
+              </button>
+            </div>
+          </section>
+        )}
+
         {!loading && items.length === 0 && (
           <div className="rounded-3xl border border-slate-200 bg-white p-6 text-center shadow-sm">
             <div className="text-lg font-black text-slate-900">Aucun enfant rattaché</div>
@@ -239,6 +343,8 @@ export default function ParentOnlinePaymentsPage() {
                         onClick={() => {
                           setSelectedStudentId(child.student_id);
                           setPayerName(child.student_name || "");
+                          setCurrentStatus(null);
+                          setCurrentIntentId("");
                         }}
                         className={[
                           "rounded-3xl border p-4 text-left transition",
@@ -274,7 +380,11 @@ export default function ParentOnlinePaymentsPage() {
                         <button
                           key={charge.id}
                           type="button"
-                          onClick={() => setSelectedChargeId(charge.id)}
+                          onClick={() => {
+                            setSelectedChargeId(charge.id);
+                            setCurrentStatus(null);
+                            setCurrentIntentId("");
+                          }}
                           className={[
                             "flex w-full items-center justify-between gap-3 rounded-3xl border p-4 text-left transition",
                             active
@@ -283,9 +393,7 @@ export default function ParentOnlinePaymentsPage() {
                           ].join(" ")}
                         >
                           <span className="min-w-0">
-                            <span className="block truncate font-black text-slate-950">
-                              {charge.label}
-                            </span>
+                            <span className="block truncate font-black text-slate-950">{charge.label}</span>
                             <span className="mt-1 block text-xs font-semibold text-slate-500">
                               Échéance : {dueLabel(charge.due_date)}
                             </span>
@@ -362,15 +470,11 @@ export default function ParentOnlinePaymentsPage() {
               </div>
 
               <div className="rounded-3xl bg-slate-50 p-4">
-                <div className="text-xs font-black uppercase tracking-wide text-slate-500">
-                  Résumé
-                </div>
+                <div className="text-xs font-black uppercase tracking-wide text-slate-500">Résumé</div>
                 <div className="mt-2 space-y-1 text-sm font-bold text-slate-700">
                   <div>{selectedChild?.student_name || "Élève"}</div>
                   <div>{selectedCharge?.label || "Frais"}</div>
-                  <div className="text-lg font-black text-emerald-700">
-                    {formatMoney(Number(amount || 0))}
-                  </div>
+                  <div className="text-lg font-black text-emerald-700">{formatMoney(Number(amount || 0))}</div>
                 </div>
               </div>
 

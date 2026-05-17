@@ -72,7 +72,6 @@ const PUBLIC_PROVIDER_LABELS: Record<ProviderCode, string> = {
   mtn_momo: "MTN Mobile Money",
 };
 
-
 function jsonError(message: string, status = 400) {
   return NextResponse.json({ ok: false, error: message }, { status });
 }

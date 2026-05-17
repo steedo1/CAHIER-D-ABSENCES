@@ -30,6 +30,10 @@ function money(value: number | string | null | undefined) {
   return `${Number(value || 0).toLocaleString("fr-FR")} F`;
 }
 
+function isSupportedProvider(value: string): value is OnlinePaymentProvider {
+  return ["orange_money", "wave", "mtn_momo", "mock"].includes(value);
+}
+
 async function parentCanAccessStudent(deviceId: string, studentId: string) {
   const srv = getSupabaseServiceClient();
   const { data, error } = await srv
@@ -41,6 +45,16 @@ async function parentCanAccessStudent(deviceId: string, studentId: string) {
 
   if (error) throw new Error(error.message);
   return Boolean(data?.student_id);
+}
+
+function pendingMessage(provider: OnlinePaymentProvider, rawPayload: Record<string, any> | null | undefined) {
+  if (rawPayload?.mode === "internal_test_pending") {
+    return "Paiement enregistré en attente. Aucun reçu officiel ne sera créé avant confirmation de l’opérateur.";
+  }
+  if (provider === "orange_money") {
+    return "Paiement Orange Money initialisé. Validez l’opération selon les instructions de l’opérateur.";
+  }
+  return "Paiement initialisé. Validez maintenant sur votre téléphone.";
 }
 
 export async function POST(req: NextRequest) {
@@ -57,19 +71,22 @@ export async function POST(req: NextRequest) {
     const body = await req.json().catch(() => ({}));
     const studentId = clean(body.student_id);
     const chargeId = clean(body.charge_id);
-    const provider = clean(body.provider) as OnlinePaymentProvider;
+    const providerValue = clean(body.provider);
     const payerName = clean(body.payer_name);
     const payerPhone = normalizePhone(body.payer_phone);
     const amount = Number(body.amount || 0);
 
     if (!studentId) return NextResponse.json({ error: "Élève manquant." }, { status: 400 });
     if (!chargeId) return NextResponse.json({ error: "Frais à payer manquant." }, { status: 400 });
-    if (!provider) return NextResponse.json({ error: "Moyen de paiement manquant." }, { status: 400 });
+    if (!providerValue || !isSupportedProvider(providerValue)) {
+      return NextResponse.json({ error: "Moyen de paiement invalide." }, { status: 400 });
+    }
     if (!payerPhone) return NextResponse.json({ error: "Numéro Mobile Money obligatoire." }, { status: 400 });
     if (!Number.isFinite(amount) || amount <= 0) {
       return NextResponse.json({ error: "Montant invalide." }, { status: 400 });
     }
 
+    const provider = providerValue;
     const canAccess = await parentCanAccessStudent(deviceId, studentId);
     if (!canAccess) {
       return NextResponse.json({ error: "Vous ne pouvez pas payer pour cet élève." }, { status: 403 });
@@ -78,9 +95,7 @@ export async function POST(req: NextRequest) {
     const { data: charge, error: chargeErr } = await srv
       .schema("finance")
       .from("v_charge_balances")
-      .select(
-        "id,school_id,student_id,class_id,label,balance_due,computed_status",
-      )
+      .select("id,school_id,student_id,class_id,label,balance_due,computed_status")
       .eq("id", chargeId)
       .eq("student_id", studentId)
       .maybeSingle();
@@ -108,9 +123,7 @@ export async function POST(req: NextRequest) {
     const { data: account, error: accountErr } = await srv
       .schema("finance")
       .from("institution_payment_accounts")
-      .select(
-        "id,school_id,provider,merchant_id,merchant_phone,environment,is_active,public_config,secret_config",
-      )
+      .select("id,school_id,provider,merchant_id,merchant_phone,environment,is_active,public_config,secret_config")
       .eq("school_id", schoolId)
       .eq("provider", provider)
       .eq("is_active", true)
@@ -215,7 +228,7 @@ export async function POST(req: NextRequest) {
       status: nextStatus,
       provider_reference: result.providerReference,
       checkout_url: result.checkoutUrl,
-      message: "Paiement initialisé. Validez maintenant sur votre téléphone.",
+      message: pendingMessage(provider, result.rawPayload),
     });
   } catch (e: any) {
     console.error(`[parent.payments.initiate:${trace}] fatal`, e);
