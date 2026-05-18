@@ -1,4 +1,4 @@
-import type {
+﻿import type {
   CandidateSlot,
   LessonBlock,
   Placement,
@@ -14,7 +14,6 @@ import {
   getTerrainRules,
   isAfternoonEpsCandidate,
   isEpsBlock,
-  isEpsCandidateFavorable,
   isEpsSubjectId,
   isOrdinaryFallbackRoom,
   isSharedSportsFieldRoom,
@@ -154,7 +153,7 @@ export function violatesSameSubjectSplitPattern(
     last.hasCandidate = last.hasCandidate || interval.isCandidate;
   }
 
-  // Deux séances séparées de la même matière le même jour ne sont pas acceptées.
+  // Deux sÃ©ances sÃ©parÃ©es de la mÃªme matiÃ¨re le mÃªme jour ne sont pas acceptÃ©es.
   if (groups.length > 1) {
     return true;
   }
@@ -164,8 +163,8 @@ export function violatesSameSubjectSplitPattern(
     return false;
   }
 
-  // Même lorsque les séances se touchent, on refuse de dépasser le plus grand
-  // morceau prévu par le découpage. Exemple : 2+1+1 autorise 2h, pas 3h d’affilée.
+  // MÃªme lorsque les sÃ©ances se touchent, on refuse de dÃ©passer le plus grand
+  // morceau prÃ©vu par le dÃ©coupage. Exemple : 2+1+1 autorise 2h, pas 3h dâ€™affilÃ©e.
   return candidateGroup.end - candidateGroup.start > Math.ceil(maxContiguousUnits);
 }
 
@@ -416,21 +415,9 @@ export function respectsHardRules(
   ) {
     return false;
   }
-
-  // ACE / terrain : en mode strict, EPS ne doit pas tomber dans les heures chaudes.
-  // Si aucune place favorable n'existe, le bloc restera non placé et apparaîtra en
-  // diagnostic au lieu de produire un emploi du temps absurde (EPS 10h-12h).
-  if (
-    terrainRules.epsHotHourMode === "strict" &&
-    isEpsBlock(block, context) &&
-    !isEpsCandidateFavorable(block, candidate, context)
-  ) {
-    return false;
-  }
-
-  if (violatesAfternoonEpsTerminalRule(block, candidate, context, placements)) {
-    return false;
-  }
-
-  return true;
+  // EPS : les heures chaudes ne bloquent plus la generation.
+  // Elles restent signalees en diagnostic afin que l'etablissement decide selon sa realite terrain.
+  // EPS apres-midi non terminal : diagnostic dans validateSchedule.ts, pas blocage moteur.
+  void violatesAfternoonEpsTerminalRule;
+return true;
 }

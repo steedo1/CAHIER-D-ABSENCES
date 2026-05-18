@@ -1,4 +1,4 @@
-import type {
+﻿import type {
   CandidateSlot,
   HalfDay,
   LessonBlock,
@@ -25,15 +25,15 @@ export const DEFAULT_TERRAIN_RULES: TerrainSchedulingRules = {
   allowEpsInOrdinaryRoomWhenNoField: false,
   allowComputerInOrdinaryRoomWhenNoLab: true,
 
-  // Réalité terrain : les terrains EPS sont partageables, mais pas illimités.
-  // Par défaut, un terrain peut accueillir 2 cours EPS au même créneau.
+  // RÃ©alitÃ© terrain : les terrains EPS sont partageables, mais pas illimitÃ©s.
+  // Par dÃ©faut, un terrain peut accueillir 2 cours EPS au mÃªme crÃ©neau.
   treatSportsFieldAsSharedResource: true,
   epsMaxSimultaneousCoursesPerField: 2,
 
-  // Règle terrain par défaut : EPS est fortement évité après 10h le matin
-  // et avant 15h l’après-midi. Si aucune solution propre n’existe, le cours
-  // reste placé mais la case est marquée à vérifier.
-  epsHotHourMode: "strict",
+  // RÃ¨gle terrain par dÃ©faut : EPS est fortement Ã©vitÃ© aprÃ¨s 10h le matin
+  // et avant 15h lâ€™aprÃ¨s-midi. Si aucune solution propre nâ€™existe, le cours
+  // reste placÃ© mais la case est marquÃ©e Ã  vÃ©rifier.
+  epsHotHourMode: "soft",
 
   avoidStudentGaps: true,
   avoidTeacherGaps: true,
@@ -121,10 +121,10 @@ export function canUseOrdinaryRoomFallback(
   const rules = getTerrainRules(context);
 
   if (roomType === "sports_field") {
-    // Règle métier Mon Cahier / ACE : si un terrain EPS est configuré,
-    // EPS ne doit jamais être envoyé en salle ordinaire. Le fallback ne sert
-    // que pour les établissements sans terrain déclaré et seulement si
-    // l’admin l’a explicitement autorisé.
+    // RÃ¨gle mÃ©tier Mon Cahier / ACE : si un terrain EPS est configurÃ©,
+    // EPS ne doit jamais Ãªtre envoyÃ© en salle ordinaire. Le fallback ne sert
+    // que pour les Ã©tablissements sans terrain dÃ©clarÃ© et seulement si
+    // lâ€™admin lâ€™a explicitement autorisÃ©.
     return !hasConfiguredRoomType("sports_field", context) && rules.allowEpsInOrdinaryRoomWhenNoField;
   }
 
@@ -236,8 +236,8 @@ export function isSchoolHalfDayClosed(
     return day.closedHalfDays.includes(halfDay);
   }
 
-  // Sécurité terrain : si l’ancien projet n’a pas encore ce réglage,
-  // on applique le comportement ivoirien le plus courant : mercredi après-midi fermé.
+  // SÃ©curitÃ© terrain : si lâ€™ancien projet nâ€™a pas encore ce rÃ©glage,
+  // on applique le comportement ivoirien le plus courant : mercredi aprÃ¨s-midi fermÃ©.
   return day.dayIndex === 3 && halfDay === "afternoon";
 }
 
@@ -352,8 +352,8 @@ export function getEffectiveRoomTypeRequired(
     return explicit;
   }
 
-  // Sécurité absolue : même si le référentiel Mon Cahier n’a pas renseigné
-  // room_type_required, une matière EPS reconnue doit demander un terrain EPS.
+  // SÃ©curitÃ© absolue : mÃªme si le rÃ©fÃ©rentiel Mon Cahier nâ€™a pas renseignÃ©
+  // room_type_required, une matiÃ¨re EPS reconnue doit demander un terrain EPS.
   if (isEpsBlock(block, context)) {
     return "sports_field";
   }
@@ -431,7 +431,8 @@ export function isEpsCandidateFavorable(
     return true;
   }
 
-  // Terrain : l’après-midi, on accepte seulement les créneaux qui commencent
-  // à 15h ou après. Un EPS placé avant 15h l’après-midi est refusé.
+  // Terrain : lâ€™aprÃ¨s-midi, on accepte seulement les crÃ©neaux qui commencent
+  // Ã  15h ou aprÃ¨s. Un EPS placÃ© avant 15h lâ€™aprÃ¨s-midi est refusÃ©.
   return range.start >= fifteen && range.end <= eighteen;
 }
+
