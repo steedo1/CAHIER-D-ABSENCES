@@ -353,15 +353,19 @@ function computeGroupAnnualCoeff(
   let sumCoeff = 0;
 
   for (const item of group.items ?? []) {
-    const override = Number(item.subject_coeff_override ?? NaN);
-    if (Number.isFinite(override) && override > 0) {
-      sumCoeff += override;
+    const base = coeffBySubject.get(String(item.subject_id));
+    if (base?.include === false) continue;
+
+    // Le coefficient officiel de la matière est prioritaire.
+    // subject_coeff_override ne doit être utilisé qu'en secours si le coefficient officiel manque.
+    const officialCoeff = Number(base?.coeff ?? 0);
+    if (Number.isFinite(officialCoeff) && officialCoeff > 0) {
+      sumCoeff += officialCoeff;
       continue;
     }
 
-    const base = coeffBySubject.get(String(item.subject_id));
-    const c = Number(base?.coeff ?? 0);
-    if (Number.isFinite(c) && c > 0) sumCoeff += c;
+    const override = Number(item.subject_coeff_override ?? NaN);
+    if (Number.isFinite(override) && override > 0) sumCoeff += override;
   }
 
   return cleanCoeff(sumCoeff);
@@ -2296,10 +2300,14 @@ export async function GET(req: NextRequest) {
           const subAvg = ps?.avg20 ?? null;
           if (subAvg === null || subAvg === undefined) continue;
 
+          const officialCoeff = Number(coeffBulletinBySubject.get(sid) ?? 0);
+          const overrideCoeff = Number(it.subject_coeff_override ?? NaN);
           const w =
-            it.subject_coeff_override !== null && it.subject_coeff_override !== undefined
-              ? Number(it.subject_coeff_override)
-              : coeffBulletinBySubject.get(sid) ?? 1;
+            Number.isFinite(officialCoeff) && officialCoeff > 0
+              ? officialCoeff
+              : Number.isFinite(overrideCoeff) && overrideCoeff > 0
+                ? overrideCoeff
+                : 1;
 
           if (!w || w <= 0) continue;
 

@@ -1329,11 +1329,14 @@ function StudentBulletinCard({
         const subj = subjectsForTable.find((s) => s.subject_id === it.subject_id);
         if (!subj) return;
 
+        const officialCoeff = Number(subj.coeff_bulletin ?? 0);
         const override = Number(it.subject_coeff_override ?? NaN);
         const coeff =
-          Number.isFinite(override) && override > 0
-            ? override
-            : Number(subj.coeff_bulletin ?? 0);
+          Number.isFinite(officialCoeff) && officialCoeff > 0
+            ? officialCoeff
+            : Number.isFinite(override) && override > 0
+              ? override
+              : 0;
 
         if (Number.isFinite(coeff) && coeff > 0 && !map.has(subj.subject_id)) {
           map.set(subj.subject_id, coeff);

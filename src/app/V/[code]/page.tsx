@@ -221,11 +221,14 @@ export default async function VerifyByCodePage(props: any) {
       const subj = subjectById.get(sid);
       if (!sid || !subj || effectiveCoeffBySubjectId.has(sid)) continue;
 
+      const officialCoeff = Number(subj?.coeff_bulletin ?? 0);
       const override = Number(item?.subject_coeff_override ?? NaN);
       const coeff =
-        Number.isFinite(override) && override > 0
-          ? override
-          : Number(subj?.coeff_bulletin ?? 0);
+        Number.isFinite(officialCoeff) && officialCoeff > 0
+          ? officialCoeff
+          : Number.isFinite(override) && override > 0
+            ? override
+            : 0;
 
       if (Number.isFinite(coeff) && coeff > 0) {
         effectiveCoeffBySubjectId.set(sid, coeff);
