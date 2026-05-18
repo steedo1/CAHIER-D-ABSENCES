@@ -406,19 +406,19 @@ export default function HomePage() {
       </div>
 
       <header className="sticky top-0 z-30 w-full border-b border-slate-200 bg-white/90 backdrop-blur">
-        <div className="mx-auto flex max-w-7xl items-center justify-between px-4 py-3">
-          <a href="#hero" className="flex items-center gap-3">
-            <div className="grid h-11 w-11 place-items-center rounded-2xl bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200">
+        <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-4 py-3">
+          <a href="#hero" className="flex min-w-0 shrink-0 items-center gap-3">
+            <div className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200">
               <Shield className="h-5 w-5" />
             </div>
 
-            <div className="text-slate-900">
+            <div className="min-w-0 text-slate-900">
               <div className="text-sm font-black tracking-wide">Mon Cahier</div>
-              <div className="text-xs text-slate-500">École, finances &amp; pilotage en temps réel</div>
+              <div className="hidden text-xs text-slate-500 sm:block">École, finances &amp; pilotage en temps réel</div>
             </div>
           </a>
 
-          <nav className="hidden items-center gap-6 text-sm font-bold text-slate-700 lg:flex">
+          <nav className="hidden items-center gap-4 text-sm font-bold text-slate-700 lg:flex">
             <a href="#spaces" className="hover:text-emerald-700">Espaces</a>
             <a href="#modules" className="hover:text-emerald-700">Modules</a>
             <a href="#steps" className="hover:text-emerald-700">Déploiement</a>
@@ -426,26 +426,42 @@ export default function HomePage() {
             <a href="#contact" className="hover:text-emerald-700">Contact</a>
           </nav>
 
-          <div className="hidden items-center gap-3 md:flex">
+          <div className="hidden shrink-0 items-center gap-2 xl:flex">
             <Link
               href="/parents/login"
-              className="inline-flex items-center gap-2 rounded-full border border-emerald-500 bg-white px-4 py-2 text-xs font-bold text-emerald-700 shadow-sm hover:bg-emerald-50"
+              className="inline-flex items-center gap-2 rounded-full border border-emerald-500 bg-white px-3 py-2 text-[11px] font-black text-emerald-700 shadow-sm hover:bg-emerald-50"
             >
               <Users className="h-4 w-4" />
               <span>Parent</span>
             </Link>
 
             <Link
+              href="/login?space=enseignant"
+              className="inline-flex items-center gap-2 rounded-full border border-slate-300 bg-white px-3 py-2 text-[11px] font-black text-slate-700 hover:border-slate-400 hover:bg-slate-50"
+            >
+              <FileSpreadsheet className="h-4 w-4" />
+              <span>Enseignant</span>
+            </Link>
+
+            <Link
               href="/login?space=direction"
-              className="inline-flex items-center gap-2 rounded-full border border-slate-300 bg-white px-4 py-2 text-xs font-bold text-slate-700 hover:border-slate-400 hover:bg-slate-50"
+              className="inline-flex items-center gap-2 rounded-full border border-slate-300 bg-white px-3 py-2 text-[11px] font-black text-slate-700 hover:border-slate-400 hover:bg-slate-50"
             >
               <Building2 className="h-4 w-4" />
               <span>Direction</span>
             </Link>
 
             <Link
+              href="/login?space=finance"
+              className="inline-flex items-center gap-2 rounded-full border border-amber-300 bg-amber-50 px-3 py-2 text-[11px] font-black text-amber-800 hover:bg-amber-100"
+            >
+              <Wallet className="h-4 w-4" />
+              <span>Finance</span>
+            </Link>
+
+            <Link
               href="/login?space=fondateur"
-              className="inline-flex items-center gap-2 rounded-full bg-slate-900 px-4 py-2 text-xs font-bold text-white shadow-sm hover:bg-slate-800"
+              className="inline-flex items-center gap-2 rounded-full bg-slate-900 px-3 py-2 text-[11px] font-black text-white shadow-sm hover:bg-slate-800"
             >
               <UserCog className="h-4 w-4" />
               <span>Fondateur</span>
@@ -454,7 +470,7 @@ export default function HomePage() {
 
           <a
             href="#spaces"
-            className="inline-flex items-center gap-2 rounded-full bg-slate-900 px-4 py-2 text-sm font-bold text-white shadow-sm hover:bg-slate-800 md:hidden"
+            className="inline-flex shrink-0 items-center gap-2 rounded-full bg-slate-900 px-4 py-2 text-sm font-bold text-white shadow-sm hover:bg-slate-800 xl:hidden"
           >
             Se connecter
           </a>
