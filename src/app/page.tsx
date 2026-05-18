@@ -42,14 +42,14 @@ function SectionTitle({
 }) {
   return (
     <div id={id} className="scroll-mt-24">
-      <div className="text-xs font-black uppercase tracking-[0.18em] text-emerald-700">
+      <div className="text-[11px] font-black uppercase tracking-[0.16em] text-emerald-700 md:text-xs md:tracking-[0.18em]">
         {eyebrow}
       </div>
-      <h2 className="mt-3 text-3xl font-black tracking-tight text-slate-900 md:text-4xl">
+      <h2 className="mt-2 text-[2rem] font-black leading-tight tracking-tight text-slate-900 md:mt-3 md:text-4xl">
         {title}
       </h2>
       {description ? (
-        <p className="mt-3 max-w-3xl text-sm leading-7 text-slate-600 md:text-[15px]">
+        <p className="mt-3 max-w-3xl text-[15px] leading-7 text-slate-600 md:text-[15px]">
           {description}
         </p>
       ) : null}
@@ -155,14 +155,14 @@ function StatCard({
   const t = tones[tone];
 
   return (
-    <div className={`rounded-3xl border p-4 shadow-sm ${t.wrap}`}>
+    <div className={`rounded-[24px] border p-4 shadow-sm md:rounded-3xl ${t.wrap}`}>
       <div className="flex items-start justify-between gap-3">
         <div>
-          <div className="text-xs font-bold uppercase tracking-[0.18em] text-slate-500">{label}</div>
-          <div className={`mt-2 text-2xl font-black sm:text-3xl ${t.value}`}>{value}</div>
+          <div className="text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500 md:text-xs md:tracking-[0.18em]">{label}</div>
+          <div className={`mt-2 text-[1.65rem] font-black leading-tight sm:text-3xl ${t.value}`}>{value}</div>
           <div className="mt-1 text-sm text-slate-600">{hint}</div>
         </div>
-        <div className={`grid h-12 w-12 place-items-center rounded-2xl ${t.iconWrap}`}>{icon}</div>
+        <div className={`grid h-11 w-11 place-items-center rounded-2xl md:h-12 md:w-12 ${t.iconWrap}`}>{icon}</div>
       </div>
     </div>
   );
@@ -193,15 +193,15 @@ function SpaceCard({
   return (
     <Link
       href={href}
-      className="group rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
+      className="group rounded-[24px] border border-slate-200 bg-white p-4 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md md:rounded-[28px] md:p-5"
     >
       <div className="flex items-start justify-between gap-3">
         <div>
-          <div className={`grid h-11 w-11 place-items-center rounded-2xl ${tones[tone]}`}>
+          <div className={`grid h-10 w-10 place-items-center rounded-2xl md:h-11 md:w-11 ${tones[tone]}`}>
             <Icon className="h-5 w-5" />
           </div>
 
-          <h3 className="mt-4 text-lg font-black text-slate-900">{title}</h3>
+          <h3 className="mt-3 text-base font-black text-slate-900 md:mt-4 md:text-lg">{title}</h3>
           <p className="mt-2 text-sm leading-6 text-slate-600">{description}</p>
         </div>
 
@@ -237,14 +237,14 @@ function FeatureCard({
   } as const;
 
   return (
-    <article className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md">
-      <div className="flex items-start gap-4">
-        <div className={`grid h-11 w-11 place-items-center rounded-2xl ${tones[tone]}`}>
+    <article className="rounded-[24px] border border-slate-200 bg-white p-4 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md md:rounded-[28px] md:p-5">
+      <div className="flex items-start gap-3 md:gap-4">
+        <div className={`grid h-10 w-10 flex-none place-items-center rounded-2xl md:h-11 md:w-11 ${tones[tone]}`}>
           <Icon className="h-5 w-5" />
         </div>
 
         <div>
-          <h3 className="text-lg font-black text-slate-900">{title}</h3>
+          <h3 className="text-base font-black text-slate-900 md:text-lg">{title}</h3>
           <p className="mt-2 text-sm leading-6 text-slate-600">{desc}</p>
         </div>
       </div>
@@ -277,7 +277,7 @@ function StepCard({
         };
 
   return (
-    <article className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
+    <article className="rounded-[24px] border border-slate-200 bg-white p-5 shadow-sm md:rounded-[28px] md:p-6">
       <div className={`inline-flex items-center gap-2 text-sm font-black ${theme.title}`}>
         <span className={`grid h-9 w-9 place-items-center rounded-2xl ${theme.iconWrap}`}>
           <Icon className="h-4 w-4" />
@@ -285,9 +285,9 @@ function StepCard({
         {title}
       </div>
 
-      <ol className="mt-5 grid gap-4">
+      <ol className="mt-4 grid gap-3 md:mt-5 md:gap-4">
         {steps.map((step, index) => (
-          <li key={index} className="flex items-start gap-3 text-sm leading-7 text-slate-600">
+          <li key={index} className="flex items-start gap-3 text-sm leading-6 text-slate-600 md:leading-7">
             <span className={`mt-0.5 inline-grid h-7 w-7 flex-none place-items-center rounded-full text-xs font-black ${theme.bullet}`}>
               {index + 1}
             </span>
@@ -329,7 +329,7 @@ function TestimonialCard({
   const t = tones[tone];
 
   return (
-    <article className={`flex h-full flex-col rounded-[28px] bg-white p-5 shadow-sm ring-1 ${t.ring}`}>
+    <article className={`flex h-full flex-col rounded-[24px] bg-white p-4 shadow-sm ring-1 md:rounded-[28px] md:p-5 ${t.ring}`}>
       <div className={`mb-4 inline-flex h-10 w-10 items-center justify-center rounded-full ${t.icon}`}>
         <Quote className="h-4 w-4" />
       </div>
@@ -405,15 +405,15 @@ export default function HomePage() {
         <div className="absolute bottom-[-15%] left-[15%] h-60 w-60 rounded-full bg-sky-200/20 blur-3xl md:h-72 md:w-72" />
       </div>
 
-      <header className="sticky top-0 z-30 w-full border-b border-slate-200 bg-white/90 backdrop-blur">
-        <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-4 py-3">
-          <a href="#hero" className="flex min-w-0 shrink-0 items-center gap-3">
-            <div className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200">
+      <header className="sticky top-0 z-30 w-full border-b border-slate-200 bg-white/95 backdrop-blur">
+        <div className="mx-auto flex max-w-7xl items-center justify-between gap-3 px-4 py-2 md:gap-4 md:py-3">
+          <a href="#hero" className="flex min-w-0 shrink items-center gap-2 md:gap-3">
+            <div className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200 md:h-11 md:w-11">
               <Shield className="h-5 w-5" />
             </div>
 
             <div className="min-w-0 text-slate-900">
-              <div className="text-sm font-black tracking-wide">Mon Cahier</div>
+              <div className="truncate text-sm font-black tracking-wide">Mon Cahier</div>
               <div className="hidden text-xs text-slate-500 sm:block">École, finances &amp; pilotage en temps réel</div>
             </div>
           </a>
@@ -470,21 +470,22 @@ export default function HomePage() {
 
           <a
             href="#spaces"
-            className="inline-flex shrink-0 items-center gap-2 rounded-full bg-slate-900 px-4 py-2 text-sm font-bold text-white shadow-sm hover:bg-slate-800 xl:hidden"
+            className="inline-flex shrink-0 items-center gap-2 rounded-full bg-slate-900 px-3 py-2 text-xs font-black text-white shadow-sm hover:bg-slate-800 sm:px-4 sm:text-sm xl:hidden"
           >
-            Se connecter
+            <span className="sm:hidden">Connexion</span>
+            <span className="hidden sm:inline">Se connecter</span>
           </a>
         </div>
       </header>
 
       <section className="border-b border-slate-200 bg-slate-900 text-slate-100">
-        <div className="mx-auto max-w-7xl px-4 py-3 text-center text-sm font-medium tracking-wide">
+        <div className="mx-auto max-w-7xl px-4 py-2.5 text-center text-xs font-semibold leading-5 tracking-wide md:py-3 md:text-sm">
           Mon Cahier réunit assiduité, notes, finances, bulletins, supervision et prédiction scolaire.
         </div>
       </section>
 
-      <section id="hero" className="px-4 pb-6 pt-6 md:pb-8 md:pt-8">
-        <div className="mx-auto max-w-7xl overflow-hidden rounded-[32px] border border-slate-200 bg-gradient-to-br from-slate-950 via-slate-900 to-emerald-950 px-6 py-7 text-white shadow-xl md:px-8 md:py-8">
+      <section id="hero" className="px-4 pb-5 pt-4 md:pb-8 md:pt-8">
+        <div className="mx-auto max-w-7xl overflow-hidden rounded-[26px] border border-slate-200 bg-gradient-to-br from-slate-950 via-slate-900 to-emerald-950 px-5 py-6 text-white shadow-xl md:rounded-[32px] md:px-8 md:py-8">
           <div className="grid grid-cols-1 items-center gap-8 lg:grid-cols-[1.1fr_0.9fr]">
             <div className="max-w-3xl">
               <Pill>
@@ -492,12 +493,12 @@ export default function HomePage() {
                 <span>Plateforme complète de pilotage scolaire</span>
               </Pill>
 
-              <h1 className="mt-4 text-4xl font-black leading-tight tracking-tight sm:text-5xl">
+              <h1 className="mt-4 text-[2.25rem] font-black leading-[1.12] tracking-tight sm:text-5xl">
                 Une seule plateforme pour gérer
                 <span className="block text-emerald-300">l’école, les résultats et les finances</span>
               </h1>
 
-              <p className="mt-4 max-w-2xl text-sm leading-7 text-slate-200 sm:text-[15px]">
+              <p className="mt-4 max-w-2xl text-[15px] leading-7 text-slate-200 sm:text-[15px]">
                 Mon Cahier centralise les appels, notes, bulletins, paiements, reçus, dépenses,
                 paie du personnel, supervision fondateur et prédiction scolaire dans des espaces séparés par rôle.
               </p>
@@ -514,10 +515,10 @@ export default function HomePage() {
                 </span>
               </div>
 
-              <div className="mt-6 flex flex-wrap items-center gap-3">
+              <div className="mt-5 flex flex-wrap items-center gap-3 md:mt-6">
                 <a
                   href="#spaces"
-                  className="inline-flex items-center gap-2 rounded-full bg-emerald-600 px-5 py-3 text-sm font-black text-white shadow-sm hover:bg-emerald-700"
+                  className="inline-flex items-center gap-2 rounded-full bg-emerald-600 px-4 py-2.5 text-sm font-black text-white shadow-sm hover:bg-emerald-700 md:px-5 md:py-3"
                 >
                   Choisir mon espace
                   <ArrowRight className="h-4 w-4" />
@@ -525,14 +526,14 @@ export default function HomePage() {
 
                 <a
                   href="#modules"
-                  className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/10 px-5 py-3 text-sm font-black text-white hover:bg-white/15"
+                  className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/10 px-4 py-2.5 text-sm font-black text-white hover:bg-white/15 md:px-5 md:py-3"
                 >
                   Voir les modules
                 </a>
               </div>
             </div>
 
-            <div className="relative">
+            <div className="relative hidden lg:block">
               <div className="rounded-[28px] border border-white/10 bg-white/10 p-3 backdrop-blur">
                 <div className="overflow-hidden rounded-[24px] border border-slate-200/10 bg-slate-950/40">
                   <Image
@@ -550,7 +551,7 @@ export default function HomePage() {
         </div>
       </section>
 
-      <section className="mx-auto max-w-7xl px-4 pb-6">
+      <section className="mx-auto max-w-7xl px-4 pb-5 md:pb-6">
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
           <StatCard
             icon={<Clock className="h-6 w-6" />}
@@ -590,7 +591,7 @@ export default function HomePage() {
           description="La page d’accueil présente maintenant les accès réellement disponibles : parent, enseignant, direction, finance et fondateur."
         />
 
-        <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+        <div className="mt-5 grid gap-4 md:mt-6 md:grid-cols-2 xl:grid-cols-5">
           <SpaceCard
             href="/parents/login"
             icon={Users}
@@ -641,7 +642,7 @@ export default function HomePage() {
           description="La plateforme n’est plus seulement un cahier d’absences et de notes. Elle couvre désormais plusieurs dimensions de la gestion scolaire."
         />
 
-        <div className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+        <div className="mt-5 grid grid-cols-1 gap-4 md:mt-6 md:grid-cols-2 xl:grid-cols-3">
           <FeatureCard
             icon={Clock}
             title="Assiduité et présence en classe"
@@ -706,7 +707,7 @@ export default function HomePage() {
           description="L’établissement paramètre ses données, puis chaque profil travaille uniquement dans son périmètre."
         />
 
-        <div className="mt-6 grid grid-cols-1 gap-6 md:grid-cols-2">
+        <div className="mt-5 grid grid-cols-1 gap-4 md:mt-6 md:grid-cols-2 md:gap-6">
           <StepCard
             tone="slate"
             icon={Building2}
@@ -738,7 +739,7 @@ export default function HomePage() {
           description="Mon Cahier évolue avec les demandes concrètes des directions, fondateurs, enseignants et parents."
         />
 
-        <div className="mt-6 grid gap-4 md:grid-cols-3">
+        <div className="mt-5 grid gap-4 md:mt-6 md:grid-cols-3">
           <TestimonialCard
             quote="« Les retards et absences sont enfin suivis sérieusement, sans piles de papiers. »"
             author="Direction d’établissement"
@@ -761,14 +762,14 @@ export default function HomePage() {
         <div className="grid grid-cols-1 gap-8 md:grid-cols-2">
           <div>
             <SectionTitle eyebrow="FAQ" title="Démarrer" />
-            <div className="mt-6">
+            <div className="mt-5 md:mt-6">
               <Accordion items={subscribeFaq} />
             </div>
           </div>
 
           <div>
             <SectionTitle eyebrow="FAQ" title="Connexions" />
-            <div className="mt-6">
+            <div className="mt-5 md:mt-6">
               <Accordion items={manageFaq} />
             </div>
           </div>
@@ -776,11 +777,11 @@ export default function HomePage() {
       </section>
 
       <section id="contact" className="mx-auto max-w-7xl px-4 pb-20 pt-6 md:pt-8">
-        <div className="relative overflow-hidden rounded-[32px] border border-slate-200 bg-gradient-to-r from-slate-950 via-slate-900 to-emerald-950 p-6 text-white shadow-xl md:p-8">
+        <div className="relative overflow-hidden rounded-[26px] border border-slate-200 bg-gradient-to-r from-slate-950 via-slate-900 to-emerald-950 p-5 text-white shadow-xl md:rounded-[32px] md:p-8">
           <div className="flex flex-col items-start justify-between gap-6 md:flex-row md:items-center">
             <div className="max-w-3xl">
               <div className="text-xs font-black uppercase tracking-[0.18em] text-emerald-300">Contact</div>
-              <h3 className="mt-3 text-3xl font-black tracking-tight">Présenter Mon Cahier à votre établissement</h3>
+              <h3 className="mt-3 text-2xl font-black leading-tight tracking-tight md:text-3xl">Présenter Mon Cahier à votre établissement</h3>
               <p className="mt-3 text-sm leading-7 text-slate-200 md:text-[15px]">
                 Assiduité, notes, finances, bulletins, supervision fondateur et prédiction scolaire :
                 tout peut être présenté de façon claire selon les besoins de votre école.
@@ -810,7 +811,7 @@ export default function HomePage() {
         </div>
       </section>
 
-      <footer className="bg-slate-900 py-12 text-slate-100">
+      <footer className="bg-slate-900 py-10 text-slate-100 md:py-12">
         <div className="mx-auto grid max-w-7xl grid-cols-1 gap-10 px-4 md:grid-cols-3">
           <div>
             <div className="text-2xl font-black">Mon Cahier</div>
@@ -847,7 +848,7 @@ export default function HomePage() {
 
       <a
         href="#hero"
-        className="fixed bottom-6 right-6 grid h-12 w-12 place-items-center rounded-full bg-slate-900 text-white shadow-lg ring-1 ring-slate-300 transition hover:bg-slate-800"
+        className="fixed bottom-6 right-6 hidden h-12 w-12 place-items-center rounded-full bg-slate-900 text-white shadow-lg ring-1 ring-slate-300 transition hover:bg-slate-800 sm:grid"
         aria-label="Revenir en haut"
       >
         <ArrowUp className="h-5 w-5" />
