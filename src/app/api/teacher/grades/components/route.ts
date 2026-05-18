@@ -9,8 +9,10 @@ export const dynamic = "force-dynamic";
 type SubjectComponentRow = {
   id: string;
   subject_id: string | null;
+  code: string | null;
   label: string;
   short_label: string | null;
+  level: string | null;
   coeff_in_subject: number | null;
   order_index: number | null;
   is_active: boolean | null;
@@ -66,6 +68,24 @@ async function getContext(): Promise<Context> {
 
   console.log("[TeacherGradesComponents] getContext -> OK", ctx);
   return ctx;
+}
+
+function normalizeLevelKey(value: unknown): string | null {
+  const raw = String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[\s_\-.]/g, "");
+
+  if (!raw) return null;
+
+  if (["6", "6e", "6eme", "sixieme"].includes(raw)) return "6e";
+  if (["5", "5e", "5eme", "cinquieme"].includes(raw)) return "5e";
+  if (["4", "4e", "4eme", "quatrieme"].includes(raw)) return "4e";
+  if (["3", "3e", "3eme", "troisieme"].includes(raw)) return "3e";
+
+  return raw;
 }
 
 /* ───────────────────────────────
@@ -130,6 +150,35 @@ export async function GET(req: NextRequest) {
     const { institutionId } = await getContext();
     const supaService = await getSupabaseServiceClient();
 
+    const { data: cls, error: classError } = await supaService
+      .from("classes")
+      .select("id, institution_id, level, official_track_code")
+      .eq("id", classId)
+      .eq("institution_id", institutionId)
+      .maybeSingle();
+
+    if (classError) {
+      console.error("[TeacherGradesComponents] GET -> erreur classe", {
+        classId,
+        institutionId,
+        classError,
+      });
+      return NextResponse.json(
+        { error: "Erreur lors de la vérification de la classe." },
+        { status: 500 }
+      );
+    }
+
+    if (!cls) {
+      return NextResponse.json(
+        { error: "Classe introuvable pour cet établissement." },
+        { status: 403 }
+      );
+    }
+
+    const classLevel = String((cls as any).level ?? "").trim();
+    const normalizedClassLevel = normalizeLevelKey(classLevel);
+
     const globalSubjectId = await resolveSubjectIdToGlobal(
       supaService,
       institutionId,
@@ -138,6 +187,8 @@ export async function GET(req: NextRequest) {
 
     console.log("[TeacherGradesComponents] GET -> paramètres résolus", {
       classId,
+      classLevel,
+      normalizedClassLevel,
       rawSubjectId,
       globalSubjectId,
       institutionId,
@@ -151,7 +202,7 @@ export async function GET(req: NextRequest) {
     const { data, error } = await supaService
       .from("grade_subject_components")
       .select(
-        "id, subject_id, label, short_label, coeff_in_subject, order_index, is_active"
+        "id, subject_id, code, label, short_label, level, coeff_in_subject, order_index, is_active"
       )
       .in("subject_id", subjectIds)
       .eq("institution_id", institutionId)
@@ -171,8 +222,10 @@ export async function GET(req: NextRequest) {
     const rows: SubjectComponentRow[] = (data || []).map((row: any) => ({
       id: String(row.id),
       subject_id: row.subject_id ? String(row.subject_id) : null,
+      code: row.code ? String(row.code) : null,
       label: String(row.label || ""),
       short_label: row.short_label ? String(row.short_label) : null,
+      level: row.level ? String(row.level) : null,
       coeff_in_subject:
         row.coeff_in_subject == null
           ? 1
@@ -185,20 +238,52 @@ export async function GET(req: NextRequest) {
         typeof row.is_active === "boolean" ? row.is_active : true,
     }));
 
-    const components = rows
-      .filter((row) => row.is_active ?? true)
+    const activeRows = rows.filter((row) => row.is_active ?? true);
+    const exactLevelRows = normalizedClassLevel
+      ? activeRows.filter(
+          (row) => normalizeLevelKey(row.level) === normalizedClassLevel
+        )
+      : [];
+
+    // Règle métier : pour une classe de collège, on privilégie STRICTEMENT
+    // les sous-rubriques du niveau réel de la classe. Les anciennes lignes
+    // sans niveau ne servent que de fallback si aucun référentiel niveau n'existe.
+    const filteredRows =
+      exactLevelRows.length > 0
+        ? exactLevelRows
+        : activeRows.filter((row) => !normalizeLevelKey(row.level));
+
+    const seen = new Set<string>();
+    const components = filteredRows
+      .filter((row) => {
+        const key = `${row.code || ""}::${row.label}::${row.level || ""}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      })
       .map((row) => ({
         id: row.id,
         subject_id: row.subject_id,
+        code: row.code,
         label: row.label,
         short_label: row.short_label,
+        level: row.level,
         coeff_in_subject: row.coeff_in_subject ?? 1,
         order_index: row.order_index,
       }));
 
     console.log(
-      "[TeacherGradesComponents] GET -> sous-matières trouvées",
-      components
+      "[TeacherGradesComponents] GET -> sous-matières filtrées par niveau",
+      {
+        classId,
+        classLevel,
+        normalizedClassLevel,
+        totalRows: rows.length,
+        activeRows: activeRows.length,
+        exactLevelRows: exactLevelRows.length,
+        returnedRows: components.length,
+        components,
+      }
     );
 
     return NextResponse.json({ items: components, components });

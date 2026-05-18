@@ -414,6 +414,138 @@ async function getClosedPeriodResponseIfNeeded(
   return null;
 }
 
+
+function normalizeLevelKey(value: unknown): string | null {
+  const raw = String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[\s_\-.]/g, "");
+
+  if (!raw) return null;
+
+  if (["6", "6e", "6eme", "sixieme"].includes(raw)) return "6e";
+  if (["5", "5e", "5eme", "cinquieme"].includes(raw)) return "5e";
+  if (["4", "4e", "4eme", "quatrieme"].includes(raw)) return "4e";
+  if (["3", "3e", "3eme", "troisieme"].includes(raw)) return "3e";
+
+  return raw;
+}
+
+async function validateSubjectComponentForClass(
+  srv: ReturnType<typeof getSupabaseServiceClient>,
+  institutionId: string,
+  classId: string,
+  resolvedSubjectId: string | null,
+  subjectComponentId: string | null
+): Promise<{ ok: true } | { ok: false; error: string; details?: Record<string, unknown> }> {
+  if (!subjectComponentId) return { ok: true };
+
+  if (!resolvedSubjectId) {
+    return {
+      ok: false,
+      error: "INVALID_SUBJECT_COMPONENT",
+      details: { reason: "missing_subject_id", subjectComponentId },
+    };
+  }
+
+  const { data: cls, error: classError } = await srv
+    .from("classes")
+    .select("id,institution_id,level")
+    .eq("id", classId)
+    .eq("institution_id", institutionId)
+    .maybeSingle();
+
+  if (classError || !cls) {
+    console.error("[teacher/grades/evaluations] validate component -> class error", {
+      classId,
+      institutionId,
+      classError,
+    });
+    return { ok: false, error: "INVALID_CLASS_FOR_COMPONENT" };
+  }
+
+  const { data: component, error: componentError } = await srv
+    .from("grade_subject_components")
+    .select("id,institution_id,subject_id,level,code,label,is_active")
+    .eq("id", subjectComponentId)
+    .eq("institution_id", institutionId)
+    .maybeSingle();
+
+  if (componentError || !component) {
+    console.error("[teacher/grades/evaluations] validate component -> component error", {
+      classId,
+      institutionId,
+      subjectComponentId,
+      componentError,
+    });
+    return { ok: false, error: "INVALID_SUBJECT_COMPONENT" };
+  }
+
+  const componentRow = component as any;
+  const classRow = cls as any;
+
+  if (componentRow.is_active === false) {
+    return {
+      ok: false,
+      error: "INACTIVE_SUBJECT_COMPONENT",
+      details: { subjectComponentId },
+    };
+  }
+
+  if (String(componentRow.subject_id || "") !== resolvedSubjectId) {
+    return {
+      ok: false,
+      error: "SUBJECT_COMPONENT_SUBJECT_MISMATCH",
+      details: {
+        subjectComponentId,
+        component_subject_id: componentRow.subject_id,
+        resolvedSubjectId,
+      },
+    };
+  }
+
+  const classLevel = normalizeLevelKey(classRow.level);
+  const componentLevel = normalizeLevelKey(componentRow.level);
+
+  if (classLevel && componentLevel && classLevel !== componentLevel) {
+    return {
+      ok: false,
+      error: "SUBJECT_COMPONENT_LEVEL_MISMATCH",
+      details: {
+        classLevel: classRow.level,
+        componentLevel: componentRow.level,
+        componentLabel: componentRow.label,
+      },
+    };
+  }
+
+  if (classLevel && !componentLevel) {
+    const { data: exactRows, error: exactError } = await srv
+      .from("grade_subject_components")
+      .select("id")
+      .eq("institution_id", institutionId)
+      .eq("subject_id", resolvedSubjectId)
+      .eq("level", String(classRow.level || ""))
+      .limit(1);
+
+    if (!exactError && Array.isArray(exactRows) && exactRows.length > 0) {
+      return {
+        ok: false,
+        error: "SUBJECT_COMPONENT_LEVEL_REQUIRED",
+        details: {
+          classLevel: classRow.level,
+          subjectComponentId,
+          componentLabel: componentRow.label,
+        },
+      };
+    }
+  }
+
+  return { ok: true };
+}
+
 const EVALUATION_SELECT = [
   "id",
   "class_id",
@@ -610,11 +742,52 @@ export async function POST(req: NextRequest) {
 
     const subjRaw = subject_id && subject_id !== "" ? subject_id : null;
 
+    const subjectComponentIdNorm =
+      typeof subjectComponentId === "string" && subjectComponentId.trim() !== ""
+        ? subjectComponentId.trim()
+        : typeof subject_component_id_raw === "string" &&
+            subject_component_id_raw.trim() !== ""
+          ? subject_component_id_raw.trim()
+          : null;
+
     const { raw, globalId, instId } = await resolveSubjectIds(
       srv,
       institutionId,
       subjRaw
     );
+
+    const componentValidation = await validateSubjectComponentForClass(
+      srv,
+      institutionId,
+      class_id,
+      globalId,
+      subjectComponentIdNorm
+    );
+
+    if (!componentValidation.ok) {
+      const invalidComponent = componentValidation as {
+        ok: false;
+        error: string;
+        details?: Record<string, unknown>;
+      };
+
+      console.warn("[teacher/grades/evaluations] POST invalid subject component", {
+        class_id,
+        subjectComponentIdNorm,
+        globalId,
+        error: invalidComponent.error,
+        details: invalidComponent.details,
+      });
+
+      return NextResponse.json(
+        {
+          ok: false,
+          error: invalidComponent.error,
+          details: invalidComponent.details ?? null,
+        },
+        { status: 400 }
+      );
+    }
 
     const subjectCandidates = [raw, globalId, instId].filter(
       (x): x is string => !!x
@@ -637,13 +810,6 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const subjectComponentIdNorm =
-      typeof subjectComponentId === "string" && subjectComponentId.trim() !== ""
-        ? subjectComponentId.trim()
-        : typeof subject_component_id_raw === "string" &&
-            subject_component_id_raw.trim() !== ""
-          ? subject_component_id_raw.trim()
-          : null;
 
     const explicitGradingPeriodId =
       normalizeUuidLike(gradingPeriodId) ??
