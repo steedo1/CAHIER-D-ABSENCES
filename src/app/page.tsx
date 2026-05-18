@@ -7,18 +7,23 @@ import { useEffect, useRef, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "./providers";
 import {
+  ArrowRight,
+  ArrowUp,
+  BadgeCheck,
   Bell,
+  Building2,
   Clock,
   FileSpreadsheet,
-  Rocket,
-  Shield,
-  Users,
-  Building2,
+  Landmark,
   MessageSquare,
   PhoneCall,
-  ArrowUp,
-  ArrowRight,
   Quote,
+  ReceiptText,
+  Rocket,
+  Shield,
+  UserCog,
+  Users,
+  Wallet,
   type LucideIcon,
 } from "lucide-react";
 
@@ -56,10 +61,7 @@ function Accordion({ items }: { items: FaqItem[] }) {
   return (
     <div className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-sm">
       {items.map((it, i) => (
-        <details
-          key={i}
-          className="group border-b border-slate-200 last:border-b-0"
-        >
+        <details key={i} className="group border-b border-slate-200 last:border-b-0">
           <summary className="flex cursor-pointer list-none items-start gap-3 px-5 py-5 text-left">
             <span className="mt-0.5 inline-flex h-7 w-7 items-center justify-center rounded-full bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200 transition group-open:rotate-45">
               +
@@ -68,9 +70,7 @@ function Accordion({ items }: { items: FaqItem[] }) {
               {it.q}
             </span>
           </summary>
-          <div className="px-5 pb-5 pl-16 text-sm leading-7 text-slate-600">
-            {it.a}
-          </div>
+          <div className="px-5 pb-5 pl-16 text-sm leading-7 text-slate-600">{it.a}</div>
         </details>
       ))}
     </div>
@@ -79,7 +79,7 @@ function Accordion({ items }: { items: FaqItem[] }) {
 
 function ContactCTA() {
   const wa =
-    "https://wa.me/2250720672094?text=Bonjour%20Mon%20Cahier%2C%20je%20souhaite%20m%E2%80%99abonner.";
+    "https://wa.me/2250720672094?text=Bonjour%20Mon%20Cahier%2C%20je%20souhaite%20avoir%20une%20pr%C3%A9sentation.";
 
   return (
     <div className="mt-4 flex flex-wrap items-center gap-3">
@@ -90,7 +90,7 @@ function ContactCTA() {
         className="inline-flex items-center gap-2 rounded-full bg-emerald-600 px-4 py-2 text-sm font-bold text-white shadow-sm hover:bg-emerald-700"
       >
         <MessageSquare className="h-4 w-4" />
-        Démarrer sur WhatsApp
+        Écrire sur WhatsApp
       </a>
 
       <a
@@ -98,13 +98,10 @@ function ContactCTA() {
         className="inline-flex items-center gap-2 rounded-full border border-slate-300 bg-white px-4 py-2 text-sm font-bold text-slate-800 hover:bg-slate-50"
       >
         <PhoneCall className="h-4 w-4" />
-        Appeler le commercial
+        Appeler
       </a>
 
-      <a
-        href="mailto:moncahier.ci@gmail.com"
-        className="text-sm font-bold text-emerald-700 hover:underline"
-      >
+      <a href="mailto:moncahier.ci@gmail.com" className="text-sm font-bold text-emerald-700 hover:underline">
         moncahier.ci@gmail.com
       </a>
     </div>
@@ -161,19 +158,11 @@ function StatCard({
     <div className={`rounded-3xl border p-4 shadow-sm ${t.wrap}`}>
       <div className="flex items-start justify-between gap-3">
         <div>
-          <div className="text-xs font-bold uppercase tracking-[0.18em] text-slate-500">
-            {label}
-          </div>
-          <div className={`mt-2 text-2xl font-black sm:text-3xl ${t.value}`}>
-            {value}
-          </div>
+          <div className="text-xs font-bold uppercase tracking-[0.18em] text-slate-500">{label}</div>
+          <div className={`mt-2 text-2xl font-black sm:text-3xl ${t.value}`}>{value}</div>
           <div className="mt-1 text-sm text-slate-600">{hint}</div>
         </div>
-        <div
-          className={`grid h-12 w-12 place-items-center rounded-2xl ${t.iconWrap}`}
-        >
-          {icon}
-        </div>
+        <div className={`grid h-12 w-12 place-items-center rounded-2xl ${t.iconWrap}`}>{icon}</div>
       </div>
     </div>
   );
@@ -185,13 +174,22 @@ function SpaceCard({
   title,
   description,
   badge,
+  tone = "emerald",
 }: {
   href: string;
   icon: LucideIcon;
   title: string;
   description: string;
   badge?: string;
+  tone?: "emerald" | "slate" | "amber" | "violet";
 }) {
+  const tones = {
+    emerald: "bg-emerald-50 text-emerald-700",
+    slate: "bg-slate-100 text-slate-700",
+    amber: "bg-amber-50 text-amber-700",
+    violet: "bg-violet-50 text-violet-700",
+  } as const;
+
   return (
     <Link
       href={href}
@@ -199,7 +197,7 @@ function SpaceCard({
     >
       <div className="flex items-start justify-between gap-3">
         <div>
-          <div className="grid h-11 w-11 place-items-center rounded-2xl bg-emerald-50 text-emerald-700">
+          <div className={`grid h-11 w-11 place-items-center rounded-2xl ${tones[tone]}`}>
             <Icon className="h-5 w-5" />
           </div>
 
@@ -224,15 +222,24 @@ function FeatureCard({
   icon: Icon,
   title,
   desc,
+  tone = "emerald",
 }: {
   icon: LucideIcon;
   title: string;
   desc: string;
+  tone?: "emerald" | "slate" | "amber" | "violet";
 }) {
+  const tones = {
+    emerald: "bg-emerald-50 text-emerald-700",
+    slate: "bg-slate-100 text-slate-700",
+    amber: "bg-amber-50 text-amber-700",
+    violet: "bg-violet-50 text-violet-700",
+  } as const;
+
   return (
     <article className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md">
       <div className="flex items-start gap-4">
-        <div className="grid h-11 w-11 place-items-center rounded-2xl bg-emerald-50 text-emerald-700">
+        <div className={`grid h-11 w-11 place-items-center rounded-2xl ${tones[tone]}`}>
           <Icon className="h-5 w-5" />
         </div>
 
@@ -281,9 +288,7 @@ function StepCard({
       <ol className="mt-5 grid gap-4">
         {steps.map((step, index) => (
           <li key={index} className="flex items-start gap-3 text-sm leading-7 text-slate-600">
-            <span
-              className={`mt-0.5 inline-grid h-7 w-7 flex-none place-items-center rounded-full text-xs font-black ${theme.bullet}`}
-            >
+            <span className={`mt-0.5 inline-grid h-7 w-7 flex-none place-items-center rounded-full text-xs font-black ${theme.bullet}`}>
               {index + 1}
             </span>
             <span dangerouslySetInnerHTML={{ __html: step }} />
@@ -329,9 +334,7 @@ function TestimonialCard({
         <Quote className="h-4 w-4" />
       </div>
       <p className="text-sm leading-7 text-slate-600">{quote}</p>
-      <p className={`mt-5 text-xs font-black uppercase tracking-[0.12em] ${t.author}`}>
-        {author}
-      </p>
+      <p className={`mt-5 text-xs font-black uppercase tracking-[0.12em] ${t.author}`}>{author}</p>
     </article>
   );
 }
@@ -350,47 +353,24 @@ export default function HomePage() {
 
   const subscribeFaq: FaqItem[] = [
     {
-      q: "Comment s’abonner à Mon Cahier ?",
+      q: "Comment démarrer avec Mon Cahier ?",
       a: (
         <>
-          L’abonnement se fait directement avec notre équipe. Les établissements
-          restent <b>autonomes</b> ensuite pour créer classes, enseignants,
-          matières et lier les parents.
+          L’établissement est accompagné au départ, puis il devient autonome pour créer ses classes,
+          enseignants, matières, frais scolaires et accès parents.
           <ContactCTA />
         </>
       ),
     },
     {
-      q: "Quelles fonctionnalités sont incluses dès l’abonnement ?",
+      q: "Quels modules sont désormais couverts ?",
       a: (
         <ul className="ml-5 list-disc space-y-1.5">
-          <li>
-            Création autonome des <b>classes</b> et des <b>comptes enseignants</b>.
-          </li>
-          <li>
-            Contacts parents reliés aux élèves et <b>notifications temps réel</b>.
-          </li>
-          <li>
-            <b>Suivi des heures effectuées</b> par enseignant sur une période donnée.
-          </li>
-          <li>
-            <b>Cahier de notes complet</b> : devoirs, interrogations, moyennes et bulletins.
-          </li>
-          <li>
-            <b>Tableaux de bord</b> clairs et exports CSV.
-          </li>
-          <li>
-            Import facile (CSV) des <b>classes</b>, <b>enseignants</b> et élèves.
-          </li>
-          <li>
-            Affectations <b>en masse</b> des disciplines aux enseignants.
-          </li>
-          <li>
-            Rôles clairs : super admin, admin d’établissement, enseignant, parent.
-          </li>
-          <li>
-            <b>Modèle de prédiction</b> du taux de réussite par classe.
-          </li>
+          <li>Absences, retards, présences en classe et suivi des créneaux.</li>
+          <li>Notes, moyennes, bulletins, exports et publication officielle.</li>
+          <li>Gestion financière : inscriptions, scolarité, paiements, reçus, dépenses et paie.</li>
+          <li>Espace parent, enseignant, direction, finance, fondateur et supervision.</li>
+          <li>Prédiction scolaire et tableaux de bord de pilotage.</li>
         </ul>
       ),
     },
@@ -398,20 +378,20 @@ export default function HomePage() {
 
   const manageFaq: FaqItem[] = [
     {
-      q: "Comment suivre l’échéance et la situation de mon abonnement ?",
+      q: "Le profil fondateur utilise-t-il le même écran que les autres ?",
       a: (
         <>
-          Dans <b>Paramètres → Abonnement</b>, vous voyez l’échéance et
-          l’historique des paiements.
+          Non. Depuis l’accueil, l’accès fondateur ouvre une connexion clairement identifiée, puis le rôle
+          <b> founder</b> est redirigé vers son tableau de bord multi-écoles.
         </>
       ),
     },
     {
-      q: "Comment sont envoyées les notifications aux parents ?",
+      q: "Le gestionnaire financier peut-il aller directement dans son espace ?",
       a: (
         <>
-          Lors de la validation de l’appel ou d’une nouvelle note publiée, le
-          parent est notifié <b>immédiatement</b>.
+          Oui. L’entrée finance ouvre une connexion dédiée et le rôle <b>finance_manager</b> est envoyé vers
+          la gestion financière de l’établissement.
         </>
       ),
     },
@@ -434,28 +414,16 @@ export default function HomePage() {
 
             <div className="text-slate-900">
               <div className="text-sm font-black tracking-wide">Mon Cahier</div>
-              <div className="text-xs text-slate-500">
-                Absences, notes &amp; prédiction des résultats
-              </div>
+              <div className="text-xs text-slate-500">École, finances &amp; pilotage en temps réel</div>
             </div>
           </a>
 
-          <nav className="hidden items-center gap-6 text-sm font-bold text-slate-700 md:flex">
-            <a href="#spaces" className="hover:text-emerald-700">
-              Espaces
-            </a>
-            <a href="#features" className="hover:text-emerald-700">
-              Fonctionnalités
-            </a>
-            <a href="#steps" className="hover:text-emerald-700">
-              Comment ça marche
-            </a>
-            <a href="#faq" className="hover:text-emerald-700">
-              FAQ
-            </a>
-            <a href="#contact" className="hover:text-emerald-700">
-              Contact
-            </a>
+          <nav className="hidden items-center gap-6 text-sm font-bold text-slate-700 lg:flex">
+            <a href="#spaces" className="hover:text-emerald-700">Espaces</a>
+            <a href="#modules" className="hover:text-emerald-700">Modules</a>
+            <a href="#steps" className="hover:text-emerald-700">Déploiement</a>
+            <a href="#faq" className="hover:text-emerald-700">FAQ</a>
+            <a href="#contact" className="hover:text-emerald-700">Contact</a>
           </nav>
 
           <div className="hidden items-center gap-3 md:flex">
@@ -464,7 +432,7 @@ export default function HomePage() {
               className="inline-flex items-center gap-2 rounded-full border border-emerald-500 bg-white px-4 py-2 text-xs font-bold text-emerald-700 shadow-sm hover:bg-emerald-50"
             >
               <Users className="h-4 w-4" />
-              <span>Espace parent</span>
+              <span>Parent</span>
             </Link>
 
             <Link
@@ -472,15 +440,15 @@ export default function HomePage() {
               className="inline-flex items-center gap-2 rounded-full border border-slate-300 bg-white px-4 py-2 text-xs font-bold text-slate-700 hover:border-slate-400 hover:bg-slate-50"
             >
               <Building2 className="h-4 w-4" />
-              <span>Espace direction</span>
+              <span>Direction</span>
             </Link>
 
             <Link
-              href="/login?space=enseignant"
+              href="/login?space=fondateur"
               className="inline-flex items-center gap-2 rounded-full bg-slate-900 px-4 py-2 text-xs font-bold text-white shadow-sm hover:bg-slate-800"
             >
-              <FileSpreadsheet className="h-4 w-4" />
-              <span>Espace enseignant</span>
+              <UserCog className="h-4 w-4" />
+              <span>Fondateur</span>
             </Link>
           </div>
 
@@ -495,7 +463,7 @@ export default function HomePage() {
 
       <section className="border-b border-slate-200 bg-slate-900 text-slate-100">
         <div className="mx-auto max-w-7xl px-4 py-3 text-center text-sm font-medium tracking-wide">
-          Mon Cahier : absences, notes, bulletins et prédiction du taux de réussite dans un seul outil.
+          Mon Cahier réunit assiduité, notes, finances, bulletins, supervision et prédiction scolaire.
         </div>
       </section>
 
@@ -505,29 +473,28 @@ export default function HomePage() {
             <div className="max-w-3xl">
               <Pill>
                 <Rocket className="h-3.5 w-3.5" />
-                <span>Solution complète pour les établissements scolaires</span>
+                <span>Plateforme complète de pilotage scolaire</span>
               </Pill>
 
               <h1 className="mt-4 text-4xl font-black leading-tight tracking-tight sm:text-5xl">
-                Le cahier d’absences et de notes
-                <span className="block text-emerald-300">pensé pour piloter l’école en temps réel</span>
+                Une seule plateforme pour gérer
+                <span className="block text-emerald-300">l’école, les résultats et les finances</span>
               </h1>
 
               <p className="mt-4 max-w-2xl text-sm leading-7 text-slate-200 sm:text-[15px]">
-                Appel ultra-rapide, cahier de notes complet, bulletins automatiques,
-                alertes parents instantanées et <b>modèle de prédiction du taux de réussite</b>
-                pour suivre chaque classe avec précision.
+                Mon Cahier centralise les appels, notes, bulletins, paiements, reçus, dépenses,
+                paie du personnel, supervision fondateur et prédiction scolaire dans des espaces séparés par rôle.
               </p>
 
               <div className="mt-5 flex flex-wrap items-center gap-2 text-xs font-semibold text-slate-200">
                 <span className="rounded-full bg-emerald-500/15 px-3 py-1 ring-1 ring-emerald-400/25">
-                  Communication parents en temps réel
+                  Gestion financière intégrée
                 </span>
                 <span className="rounded-full bg-white/10 px-3 py-1 ring-1 ring-white/15">
-                  Interfaces dédiées par rôle
+                  Espace fondateur multi-écoles
                 </span>
                 <span className="rounded-full bg-white/10 px-3 py-1 ring-1 ring-white/15">
-                  Pilotage pédagogique et administratif
+                  Connexion par profil
                 </span>
               </div>
 
@@ -536,15 +503,15 @@ export default function HomePage() {
                   href="#spaces"
                   className="inline-flex items-center gap-2 rounded-full bg-emerald-600 px-5 py-3 text-sm font-black text-white shadow-sm hover:bg-emerald-700"
                 >
-                  Choisir un espace
+                  Choisir mon espace
                   <ArrowRight className="h-4 w-4" />
                 </a>
 
                 <a
-                  href="#contact"
+                  href="#modules"
                   className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/10 px-5 py-3 text-sm font-black text-white hover:bg-white/15"
                 >
-                  Parler à l’équipe
+                  Voir les modules
                 </a>
               </div>
             </div>
@@ -554,7 +521,7 @@ export default function HomePage() {
                 <div className="overflow-hidden rounded-[24px] border border-slate-200/10 bg-slate-950/40">
                   <Image
                     src="/accueil.png"
-                    alt="Interface Mon Cahier : absences, notes et prédiction"
+                    alt="Interface Mon Cahier : pilotage scolaire et gestion financière"
                     width={900}
                     height={600}
                     className="h-auto w-full object-cover"
@@ -570,31 +537,31 @@ export default function HomePage() {
       <section className="mx-auto max-w-7xl px-4 pb-6">
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
           <StatCard
-            icon={<Users className="h-6 w-6" />}
-            label="Parents touchés"
-            value="10 000+"
-            hint="Suivi mobile simplifié"
+            icon={<Clock className="h-6 w-6" />}
+            label="Assiduité"
+            value="Temps réel"
+            hint="Appels, retards, présences et créneaux"
             tone="slate"
           />
           <StatCard
-            icon={<Clock className="h-6 w-6" />}
-            label="Temps d’appel moyen"
-            value="< 60 s"
-            hint="Saisie rapide en classe"
+            icon={<FileSpreadsheet className="h-6 w-6" />}
+            label="Pédagogie"
+            value="Notes & bulletins"
+            hint="Moyennes, exports et publication"
             tone="emerald"
           />
           <StatCard
-            icon={<Bell className="h-6 w-6" />}
-            label="Notifications"
-            value="250 000+"
-            hint="Absences, retards et notes"
+            icon={<Wallet className="h-6 w-6" />}
+            label="Finance"
+            value="Paiements"
+            hint="Frais, reçus, dépenses et paie"
             tone="amber"
           />
           <StatCard
-            icon={<Rocket className="h-6 w-6" />}
-            label="Prédiction"
-            value="Modèle intelligent"
-            hint="Aide au pilotage des classes"
+            icon={<UserCog className="h-6 w-6" />}
+            label="Fondateur"
+            value="Multi-écoles"
+            hint="Vue consolidée et supervision"
             tone="violet"
           />
         </div>
@@ -603,40 +570,124 @@ export default function HomePage() {
       <section id="spaces" className="mx-auto max-w-7xl px-4 py-6 md:py-8">
         <SectionTitle
           eyebrow="Espaces de connexion"
-          title="Chaque profil dispose de sa propre interface"
-          description="Aucune confusion entre les rôles : parent, direction et enseignant accèdent chacun à un espace clair, dédié et cohérent."
+          title="Chaque profil entre par le bon espace"
+          description="La page d’accueil présente maintenant les accès réellement disponibles : parent, enseignant, direction, finance et fondateur."
         />
 
-        <div className="mt-6 grid gap-4 md:grid-cols-3">
+        <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-5">
           <SpaceCard
             href="/parents/login"
             icon={Users}
-            title="Espace parent"
-            description="Suivi des absences, retards, notes et bulletins de vos enfants, directement depuis le smartphone."
-            badge="Accès mobile"
-          />
-          <SpaceCard
-            href="/login?space=direction"
-            icon={Building2}
-            title="Espace direction"
-            description="Vue globale des classes, enseignants, statistiques, suivi des cours et prédiction du taux de réussite."
-            badge="Pilotage"
+            title="Parent"
+            description="Consulter absences, retards, notes, moyennes et bulletins depuis le téléphone."
+            badge="Famille"
+            tone="emerald"
           />
           <SpaceCard
             href="/login?space=enseignant"
             icon={FileSpreadsheet}
-            title="Espace enseignant"
-            description="Appel, saisie des notes, moyennes et bulletins en quelques clics, en classe ou à la maison."
-            badge="Saisie rapide"
+            title="Enseignant"
+            description="Faire l’appel, saisir les notes et suivre les classes affectées."
+            badge="Classe"
+            tone="slate"
+          />
+          <SpaceCard
+            href="/login?space=direction"
+            icon={Building2}
+            title="Direction"
+            description="Piloter l’établissement : classes, enseignants, bulletins, exports et statistiques."
+            badge="Admin"
+            tone="violet"
+          />
+          <SpaceCard
+            href="/login?space=finance"
+            icon={Wallet}
+            title="Finance"
+            description="Gérer inscriptions, scolarité, paiements, reçus, dépenses et paie."
+            badge="Gestion"
+            tone="amber"
+          />
+          <SpaceCard
+            href="/login?space=fondateur"
+            icon={UserCog}
+            title="Fondateur"
+            description="Suivre plusieurs établissements, les créneaux, la présence et les finances consolidées."
+            badge="Multi-écoles"
+            tone="slate"
+          />
+        </div>
+      </section>
+
+      <section id="modules" className="mx-auto max-w-7xl px-4 py-6 md:py-8">
+        <SectionTitle
+          eyebrow="Modules clés"
+          title="Mon Cahier a grandi : l’accueil doit le montrer clairement"
+          description="La plateforme n’est plus seulement un cahier d’absences et de notes. Elle couvre désormais plusieurs dimensions de la gestion scolaire."
+        />
+
+        <div className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+          <FeatureCard
+            icon={Clock}
+            title="Assiduité et présence en classe"
+            desc="Appels par créneau, retards, absences, présence des enseignants et suivi des cours effectués."
+            tone="slate"
+          />
+          <FeatureCard
+            icon={FileSpreadsheet}
+            title="Notes, moyennes et bulletins"
+            desc="Évaluations, moyennes, publication officielle, bulletins, signatures et exports administratifs."
+            tone="emerald"
+          />
+          <FeatureCard
+            icon={Wallet}
+            title="Gestion financière"
+            desc="Frais d’inscription, scolarité, autres frais, paiements, reçus, dépenses, rapports et paie."
+            tone="amber"
+          />
+          <FeatureCard
+            icon={ReceiptText}
+            title="Reçus et paiements en ligne"
+            desc="Suivi des encaissements, reçus imprimables et préparation de la réconciliation des paiements."
+            tone="amber"
+          />
+          <FeatureCard
+            icon={Landmark}
+            title="Supervision fondateur"
+            desc="Vue globale des établissements rattachés, alertes, statistiques de présence et finance consolidée."
+            tone="violet"
+          />
+          <FeatureCard
+            icon={Rocket}
+            title="Prédiction scolaire"
+            desc="Analyse des notes, absences et indicateurs pédagogiques pour aider la direction à anticiper."
+            tone="emerald"
+          />
+          <FeatureCard
+            icon={Bell}
+            title="Notifications parents"
+            desc="Alertes rapides pour les absences, retards, notes publiées et informations importantes."
+            tone="slate"
+          />
+          <FeatureCard
+            icon={Shield}
+            title="Rôles séparés et sécurité"
+            desc="Aucun mélange entre direction, enseignant, finance, parent, fondateur et supervision."
+            tone="violet"
+          />
+          <FeatureCard
+            icon={BadgeCheck}
+            title="Pilotage administratif"
+            desc="Tableaux de bord, états, exports et indicateurs pour mieux suivre le fonctionnement de l’école."
+            tone="emerald"
           />
         </div>
       </section>
 
       <section id="steps" className="mx-auto max-w-7xl px-4 py-6 md:py-8">
         <SectionTitle
-          eyebrow="Comment ça marche"
-          title="Un déploiement simple, puis une gestion autonome"
-          description="Mon Cahier accompagne l’établissement au démarrage, puis laisse une grande autonomie pour l’organisation quotidienne."
+          eyebrow="Déploiement"
+          title="Une organisation claire dès le départ"
+          description="L’établissement paramètre ses données, puis chaque profil travaille uniquement dans son périmètre."
         />
 
         <div className="mt-6 grid grid-cols-1 gap-6 md:grid-cols-2">
@@ -645,87 +696,46 @@ export default function HomePage() {
             icon={Building2}
             title="Établissement"
             steps={[
-              "Créez vos classes, matières et comptes enseignants <b>(import CSV possible)</b>.",
-              "Affectez vos disciplines aux professeurs en un clic pour l’appel et le cahier de notes.",
-              "En classe, l’appel et les notes alimentent automatiquement les tableaux de bord et le <b>modèle de prédiction</b>.",
+              "Créer les classes, matières, enseignants, élèves et responsables <b>(import possible)</b>.",
+              "Définir les frais scolaires avant les inscriptions pour éviter les saisies incohérentes.",
+              "Suivre ensuite les absences, notes, finances, bulletins et indicateurs depuis les tableaux de bord.",
             ]}
           />
 
           <StepCard
             tone="emerald"
-            icon={Users}
-            title="Parent"
+            icon={UserCog}
+            title="Fondateur et finance"
             steps={[
-              "Connectez-vous à l’Espace parent.",
-              "Associez votre enfant via son matricule si l’établissement l’exige.",
-              "Recevez les alertes d’absence et consultez <b>notes, moyennes et bulletins</b> depuis votre téléphone.",
+              "Le fondateur accède à une vue consolidée des établissements qui lui sont rattachés.",
+              "Le gestionnaire financier traite les paiements, reçus, dépenses, rapports et paie sans mélanger les rôles.",
+              "Les directions gardent le contrôle des paramètres sensibles de leur établissement.",
             ]}
-          />
-        </div>
-      </section>
-
-      <section id="features" className="mx-auto max-w-7xl px-4 py-6 md:py-8">
-        <SectionTitle
-          eyebrow="Fonctionnalités clés"
-          title="Un outil central pour l’assiduité, les notes et le pilotage"
-          description="La plateforme réunit dans une seule interface les briques essentielles du suivi scolaire et administratif."
-        />
-
-        <div className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-          <FeatureCard
-            icon={Clock}
-            title="Appel ultra-rapide"
-            desc="Démarrez un créneau en un clic et notez absences ou retards en quelques secondes depuis le téléphone de la classe."
-          />
-          <FeatureCard
-            icon={Bell}
-            title="Notifications instantanées"
-            desc="Les parents sont alertés en temps réel après validation de l’appel ou publication d’une note."
-          />
-          <FeatureCard
-            icon={FileSpreadsheet}
-            title="Cahier de notes & bulletins"
-            desc="Saisissez devoirs, interrogations et examens ; Mon Cahier calcule automatiquement moyennes, bulletins et exports."
-          />
-          <FeatureCard
-            icon={Rocket}
-            title="Prédiction du taux de réussite"
-            desc="Un modèle interne analyse absences, notes et matières clés pour estimer le potentiel de réussite de chaque classe."
-          />
-          <FeatureCard
-            icon={Shield}
-            title="Rôles & sécurité"
-            desc="Accès sécurisés et vues dédiées : super admin, admin, enseignant, parent ; aucune ambiguïté d’accès."
-          />
-          <FeatureCard
-            icon={Users}
-            title="Parents connectés"
-            desc="Associez les responsables aux élèves et centralisez la communication autour de l’assiduité et des résultats."
           />
         </div>
       </section>
 
       <section id="testimonials" className="mx-auto max-w-7xl px-4 py-6 md:py-8">
         <SectionTitle
-          eyebrow="Ils nous font confiance"
-          title="Une solution pensée pour le terrain"
-          description="Chefs d’établissement, responsables pédagogiques et enseignants utilisent déjà Mon Cahier au quotidien."
+          eyebrow="Terrain"
+          title="Une solution construite autour des besoins réels des écoles"
+          description="Mon Cahier évolue avec les demandes concrètes des directions, fondateurs, enseignants et parents."
         />
 
         <div className="mt-6 grid gap-4 md:grid-cols-3">
           <TestimonialCard
             quote="« Les retards et absences sont enfin suivis sérieusement, sans piles de papiers. »"
-            author="Proviseur · Lycée public Abidjan"
+            author="Direction d’établissement"
             tone="emerald"
           />
           <TestimonialCard
-            quote="« Les parents nous disent qu’ils se sentent vraiment informés du travail de leurs enfants. »"
-            author="Directeur des études · Collège privé à Yopougon"
+            quote="« Le suivi financier devient plus clair quand les frais, paiements et reçus sont centralisés. »"
+            author="Gestion financière"
             tone="slate"
           />
           <TestimonialCard
-            quote="« Ce qui est intéressant, c’est qu’on sait si un enseignant est en classe ou pas. »"
-            author="Responsable pédagogique · Établissement partenaire"
+            quote="« La vue fondateur permet de voir rapidement ce qui se passe dans les établissements. »"
+            author="Pilotage multi-écoles"
             tone="violet"
           />
         </div>
@@ -734,14 +744,14 @@ export default function HomePage() {
       <section id="faq" className="mx-auto max-w-7xl px-4 py-6 md:py-8">
         <div className="grid grid-cols-1 gap-8 md:grid-cols-2">
           <div>
-            <SectionTitle eyebrow="FAQ" title="S’abonner" />
+            <SectionTitle eyebrow="FAQ" title="Démarrer" />
             <div className="mt-6">
               <Accordion items={subscribeFaq} />
             </div>
           </div>
 
           <div>
-            <SectionTitle eyebrow="FAQ" title="Gérer son abonnement" />
+            <SectionTitle eyebrow="FAQ" title="Connexions" />
             <div className="mt-6">
               <Accordion items={manageFaq} />
             </div>
@@ -753,22 +763,17 @@ export default function HomePage() {
         <div className="relative overflow-hidden rounded-[32px] border border-slate-200 bg-gradient-to-r from-slate-950 via-slate-900 to-emerald-950 p-6 text-white shadow-xl md:p-8">
           <div className="flex flex-col items-start justify-between gap-6 md:flex-row md:items-center">
             <div className="max-w-3xl">
-              <div className="text-xs font-black uppercase tracking-[0.18em] text-emerald-300">
-                Contact
-              </div>
-              <h3 className="mt-3 text-3xl font-black tracking-tight">
-                Parlons de votre établissement
-              </h3>
+              <div className="text-xs font-black uppercase tracking-[0.18em] text-emerald-300">Contact</div>
+              <h3 className="mt-3 text-3xl font-black tracking-tight">Présenter Mon Cahier à votre établissement</h3>
               <p className="mt-3 text-sm leading-7 text-slate-200 md:text-[15px]">
-                On s’occupe de la mise en route. Vous gardez ensuite la main sur
-                les classes, enseignants, matières, cahier de notes, bulletins
-                et prédiction du taux de réussite.
+                Assiduité, notes, finances, bulletins, supervision fondateur et prédiction scolaire :
+                tout peut être présenté de façon claire selon les besoins de votre école.
               </p>
             </div>
 
             <div className="flex flex-wrap items-center gap-3">
               <a
-                href="https://wa.me/2250720672094?text=Bonjour%20Mon%20Cahier%2C%20je%20souhaite%20m%E2%80%99abonner."
+                href="https://wa.me/2250720672094?text=Bonjour%20Mon%20Cahier%2C%20je%20souhaite%20avoir%20une%20pr%C3%A9sentation."
                 target="_blank"
                 rel="noreferrer"
                 className="inline-flex items-center gap-2 rounded-full bg-emerald-600 px-4 py-2 text-sm font-bold text-white shadow-sm hover:bg-emerald-700"
@@ -793,9 +798,7 @@ export default function HomePage() {
         <div className="mx-auto grid max-w-7xl grid-cols-1 gap-10 px-4 md:grid-cols-3">
           <div>
             <div className="text-2xl font-black">Mon Cahier</div>
-            <div className="mt-1 text-slate-400">
-              Copyrights © {new Date().getFullYear()}
-            </div>
+            <div className="mt-1 text-slate-400">Copyrights © {new Date().getFullYear()}</div>
             <div className="mt-2 text-[11px] font-bold uppercase tracking-[0.14em] text-slate-300">
               Conçu et développé par <span className="text-white">NEXA DIGITAL SARL</span>
             </div>
@@ -804,26 +807,10 @@ export default function HomePage() {
           <div>
             <h3 className="text-lg font-black">Navigation</h3>
             <ul className="mt-4 space-y-2 text-sm text-slate-300">
-              <li>
-                <a href="#spaces" className="hover:text-white">
-                  Espaces de connexion
-                </a>
-              </li>
-              <li>
-                <a href="#features" className="hover:text-white">
-                  Fonctionnalités
-                </a>
-              </li>
-              <li>
-                <a href="#steps" className="hover:text-white">
-                  Comment ça marche
-                </a>
-              </li>
-              <li>
-                <a href="#faq" className="hover:text-white">
-                  FAQ
-                </a>
-              </li>
+              <li><a href="#spaces" className="hover:text-white">Espaces de connexion</a></li>
+              <li><a href="#modules" className="hover:text-white">Modules</a></li>
+              <li><a href="#steps" className="hover:text-white">Déploiement</a></li>
+              <li><a href="#faq" className="hover:text-white">FAQ</a></li>
             </ul>
           </div>
 

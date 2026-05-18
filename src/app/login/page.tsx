@@ -12,7 +12,7 @@ import LoginCard from "@/components/auth/LoginCard";
 function LoginPageInner() {
   const sp = useSearchParams();
   const bookParam = sp.get("book");
-  const spaceParam = sp.get("space"); // "direction" | "enseignant" | null
+  const spaceParam = sp.get("space"); // "direction" | "enseignant" | "finance" | "fondateur" | null
 
   const book =
     bookParam === "grades" || bookParam === "attendance"
@@ -20,7 +20,10 @@ function LoginPageInner() {
       : undefined;
 
   const space =
-    spaceParam === "direction" || spaceParam === "enseignant"
+    spaceParam === "direction" ||
+    spaceParam === "enseignant" ||
+    spaceParam === "finance" ||
+    spaceParam === "fondateur"
       ? spaceParam
       : undefined;
 
@@ -29,17 +32,21 @@ function LoginPageInner() {
 
   // Forçage du mode de connexion selon l’espace choisi.
   const forcedMode =
-    space === "direction"
-      ? ("emailOnly" as const)
-      : space === "enseignant"
+    space === "enseignant"
       ? ("phoneOnly" as const)
+      : space === "direction" || space === "finance" || space === "fondateur"
+      ? ("emailOnly" as const)
       : undefined;
 
   const headerLabel =
     space === "direction"
-      ? "Espace Direction — Absences & Notes"
+      ? "Espace Direction — Pilotage scolaire"
       : space === "enseignant"
       ? "Espace Enseignant — Absences & Notes"
+      : space === "finance"
+      ? "Espace Finance — Paiements & Reçus"
+      : space === "fondateur"
+      ? "Espace Fondateur — Supervision multi-écoles"
       : book === "grades"
       ? "Mon Cahier de Notes"
       : "Mon Cahier d’Absences & de Notes";
