@@ -397,19 +397,17 @@ function computeGroupAnnualCoeff(
   let sumCoeff = 0;
 
   for (const item of group.items ?? []) {
-    const base = coeffBySubject.get(String(item.subject_id));
-    if (base?.include === false) continue;
-
-    // Le coefficient officiel de la matière est prioritaire.
-    // subject_coeff_override ne doit être utilisé qu'en secours si le coefficient officiel manque.
-    const officialCoeff = Number(base?.coeff ?? 0);
-    if (Number.isFinite(officialCoeff) && officialCoeff > 0) {
-      sumCoeff += officialCoeff;
+    const override = Number(item.subject_coeff_override ?? NaN);
+    if (Number.isFinite(override) && override > 0) {
+      sumCoeff += override;
       continue;
     }
 
-    const override = Number(item.subject_coeff_override ?? NaN);
-    if (Number.isFinite(override) && override > 0) sumCoeff += override;
+    const base = coeffBySubject.get(String(item.subject_id));
+    if (base?.include === false) continue;
+
+    const c = Number(base?.coeff ?? 0);
+    if (Number.isFinite(c) && c > 0) sumCoeff += c;
   }
 
   return cleanCoeff(sumCoeff);
@@ -1698,13 +1696,49 @@ export async function GET(req: NextRequest) {
 
   async function fetchConductAverageMap(
     from: string,
-    to: string
+    to: string,
+    periodCtx?: { academicYear?: string | null; periodCode?: string | null }
   ): Promise<Map<string, number | null>> {
     const out = new Map<string, number | null>();
     studentIds.forEach((sid) => out.set(sid, null));
 
     try {
       const qs = new URLSearchParams({ class_id: classIdStr, from, to });
+
+      // ✅ La conduite modifiée par l'administration est rattachée à une année
+      // scolaire + une période officielle. Le bulletin doit donc transmettre ces
+      // deux informations à l'API conduite, même quand l'appel part du serveur.
+      const matchedConductPeriod =
+        periodsForYear.find(
+          (p) =>
+            String(p.start_date || "").slice(0, 10) ===
+              String(from || "").slice(0, 10) &&
+            String(p.end_date || "").slice(0, 10) ===
+              String(to || "").slice(0, 10),
+        ) || null;
+
+      const effectiveAcademicYear = String(
+        periodCtx?.academicYear ||
+          matchedConductPeriod?.academic_year ||
+          periodMeta.academic_year ||
+          classRow.academic_year ||
+          academicYearForPeriods ||
+          searchParams.get("academic_year") ||
+          "",
+      ).trim();
+
+      const effectivePeriodCode = String(
+        periodCtx?.periodCode ||
+          matchedConductPeriod?.code ||
+          periodMeta.code ||
+          searchParams.get("period_code") ||
+          searchParams.get("period") ||
+          "",
+      ).trim();
+
+      if (effectiveAcademicYear) qs.set("academic_year", effectiveAcademicYear);
+      if (effectivePeriodCode) qs.set("period_code", effectivePeriodCode);
+
       const cookie = req.headers.get("cookie") ?? "";
 
       const r = await fetch(
@@ -2646,7 +2680,12 @@ export async function GET(req: NextRequest) {
 
   // ✅ Conduite (coef 1) : on la récupère une seule fois pour la période demandée
   const conductAvgByStudent =
-    dateFrom && dateTo ? await fetchConductAverageMap(String(dateFrom), String(dateTo)) : null;
+    dateFrom && dateTo
+      ? await fetchConductAverageMap(String(dateFrom), String(dateTo), {
+          academicYear: bulletinAcademicYear,
+          periodCode: periodMeta.code ?? null,
+        })
+      : null;
 
   const items = classStudents.map((cs) => {
     const stu = cs.students || {};
@@ -2778,14 +2817,10 @@ export async function GET(req: NextRequest) {
           const subAvg = ps?.avg20 ?? null;
           if (subAvg === null || subAvg === undefined) continue;
 
-          const officialCoeff = Number(coeffBulletinBySubject.get(sid) ?? 0);
-          const overrideCoeff = Number(it.subject_coeff_override ?? NaN);
           const w =
-            Number.isFinite(officialCoeff) && officialCoeff > 0
-              ? officialCoeff
-              : Number.isFinite(overrideCoeff) && overrideCoeff > 0
-                ? overrideCoeff
-                : 1;
+            it.subject_coeff_override !== null && it.subject_coeff_override !== undefined
+              ? Number(it.subject_coeff_override)
+              : coeffBulletinBySubject.get(sid) ?? 1;
 
           if (!w || w <= 0) continue;
 
@@ -3378,7 +3413,11 @@ export async function GET(req: NextRequest) {
       const w =
         p.coeff === null || p.coeff === undefined ? 1 : Math.max(0, Number(p.coeff) || 0) || 1;
 
-      const conductMapForPeriod = await fetchConductAverageMap(from, to);
+      const conductMapForPeriod = await fetchConductAverageMap(from, to, {
+        academicYear:
+          p.academic_year ?? academicYearForPeriods ?? classRow.academic_year ?? null,
+        periodCode: p.code ?? null,
+      });
 
       const map = await computeGeneralAvgMapForRange(
         from,

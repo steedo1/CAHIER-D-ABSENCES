@@ -723,6 +723,13 @@ export async function GET(req: NextRequest) {
         })
       : new Map<string, Map<string, number>>();
 
+  // ✅ Total officiel affiché/modifiable.
+  // En mode standard, il suit le total des rubriques.
+  // En mode conduite composite (Conduite + Religion + Latin), la moyenne officielle
+  // est toujours une moyenne sur /20.
+  const officialTotalMax =
+    conductPolicy.mode === "conduct_plus_subjects" ? 20 : totalMax;
+
   // ───────────────── Corrections officielles admin ─────────────────
   //
   // ✅ Une correction n’est appliquée que si elle est clairement rattachée à :
@@ -1084,29 +1091,45 @@ export async function GET(req: NextRequest) {
         );
       }
 
-      const calculatedTotal = Number(automaticTotal.toFixed(2));
+      const classicCalculatedTotal = Number(automaticTotal.toFixed(2));
 
-      // ✅ Application de la moyenne finale officielle si l'admin a modifié.
-      const override = overridesByStudent.get(student_id);
-      const rawOverrideTotal = Number(override?.override_total);
-      const isOverridden =
-        !!override && Number.isFinite(rawOverrideTotal);
-
-      const classicFinalTotal = isOverridden
-        ? Number(clamp(rawOverrideTotal, 0, totalMax).toFixed(2))
-        : calculatedTotal;
-
-      const officialConduct = applyInstitutionConductPolicyToStudent({
+      // ✅ 1) On calcule d'abord la conduite officielle automatique.
+      // En mode standard : c'est la conduite classique.
+      // En mode CSCA / conduite composite : c'est Conduite classique + Religion + Latin,
+      // avec les matières manquantes ignorées si la stratégie est ignore_missing.
+      const automaticConduct = applyInstitutionConductPolicyToStudent({
         student_id,
-        classic_total: classicFinalTotal,
+        classic_total: classicCalculatedTotal,
         total_max: totalMax,
         conduct_policy: conductPolicy,
         subject_policies: conductSubjectPolicies,
         subject_averages: conductSubjectAverageBySubject,
       });
 
-      const finalTotal = officialConduct.total;
-      const appreciation = appreciationFromTotal(officialConduct.avg20);
+      const calculatedTotal = Number(
+        (conductPolicy.mode === "conduct_plus_subjects"
+          ? automaticConduct.avg20
+          : automaticConduct.total
+        ).toFixed(2),
+      );
+
+      // ✅ 2) Ensuite seulement, la correction admin remplace la moyenne finale officielle.
+      // Elle ne doit PAS être re-moyennée avec Religion/Latin.
+      const override = overridesByStudent.get(student_id);
+      const rawOverrideTotal = Number(override?.override_total);
+      const isOverridden =
+        !!override && Number.isFinite(rawOverrideTotal);
+
+      const finalTotal = isOverridden
+        ? Number(clamp(rawOverrideTotal, 0, officialTotalMax).toFixed(2))
+        : calculatedTotal;
+
+      const finalAvg20 =
+        officialTotalMax === 20
+          ? finalTotal
+          : normalizeScoreTo20(finalTotal, officialTotalMax);
+
+      const appreciation = appreciationFromTotal(finalAvg20);
 
       return {
         student_id,
@@ -1125,7 +1148,7 @@ export async function GET(req: NextRequest) {
 
         // ✅ Champs supplémentaires utiles pour la page admin.
         calculated_total: calculatedTotal,
-        override_total: isOverridden ? classicFinalTotal : null,
+        override_total: isOverridden ? finalTotal : null,
         is_overridden: isOverridden,
         override_reason: override?.reason ?? null,
         override_updated_at: override?.updated_at ?? null,
@@ -1133,12 +1156,13 @@ export async function GET(req: NextRequest) {
 
         // ✅ Politique spéciale éventuelle : total reste le champ officiel final.
         // Les champs ci-dessous permettent de contrôler le détail sans casser l'ancien front.
-        classic_total: officialConduct.classic_total,
-        classic_total_avg20: officialConduct.classic_avg20,
-        conduct_policy_mode: officialConduct.mode,
-        conduct_policy_applied: officialConduct.policy_applied,
-        conduct_final_avg20: officialConduct.avg20,
-        conduct_policy_components: officialConduct.components,
+        classic_total: automaticConduct.classic_total,
+        classic_total_avg20: automaticConduct.classic_avg20,
+        conduct_policy_mode: automaticConduct.mode,
+        conduct_policy_applied: automaticConduct.policy_applied,
+        conduct_final_avg20: Number(finalAvg20.toFixed(2)),
+        automatic_conduct_final_avg20: automaticConduct.avg20,
+        conduct_policy_components: automaticConduct.components,
 
         appreciation,
 
@@ -1181,7 +1205,7 @@ export async function GET(req: NextRequest) {
       `Tenue (/${RUBRIC_MAX.tenue})`,
       `Moralité (/${RUBRIC_MAX.moralite})`,
       `Discipline (/${RUBRIC_MAX.discipline})`,
-      `Moyenne (/${totalMax})`,
+      `Moyenne (/${officialTotalMax})`,
       "Appréciation",
     ];
 
@@ -1235,7 +1259,7 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({
     class_label: class_label ?? "",
     rubric_max: RUBRIC_MAX,
-    total_max: totalMax,
+    total_max: officialTotalMax,
 
     // Infos utiles pour vérifier que la page envoie bien la période.
     academic_year: academic_year || null,

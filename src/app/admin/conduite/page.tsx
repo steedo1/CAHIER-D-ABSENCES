@@ -348,6 +348,11 @@ export default function ConduitePage() {
   const [conductSettings, setConductSettings] =
     useState<ConductSettings | null>(null);
 
+  // Total officiel renvoyé par l'API conduite.
+  // En mode standard, il correspond généralement au total des rubriques.
+  // En mode CSCA / conduite composite, il doit rester sur /20.
+  const [apiTotalMax, setApiTotalMax] = useState<number | null>(null);
+
   // Identité établissement pour l'export PDF
   const [institution, setInstitution] = useState<InstitutionSettings | null>(
     null,
@@ -609,9 +614,11 @@ export default function ConduitePage() {
     const ten = conductSettings?.tenue_max ?? 3;
     const mor = conductSettings?.moralite_max ?? 4;
     const dis = conductSettings?.discipline_max ?? 7;
-    const total = ass + ten + mor + dis;
+    const rubricTotal = ass + ten + mor + dis;
+    const apiTotal = Number(apiTotalMax);
+    const total = Number.isFinite(apiTotal) && apiTotal > 0 ? apiTotal : rubricTotal;
     return { ass, ten, mor, dis, total };
-  }, [conductSettings]);
+  }, [conductSettings, apiTotalMax]);
 
   const canEditOfficialAverage = useMemo(
     () => !!classId && !!selectedAcademicYear && !!selectedPeriodCode,
@@ -651,6 +658,8 @@ export default function ConduitePage() {
       if (!r.ok) throw new Error(j?.error || `HTTP ${r.status}`);
       setItems(j.items || []);
       setClassLabel(j.class_label || "");
+      const tm = Number(j.total_max);
+      setApiTotalMax(Number.isFinite(tm) && tm > 0 ? tm : null);
     } catch {
       setItems([]);
       setClassLabel("");
@@ -746,20 +755,30 @@ export default function ConduitePage() {
         }),
       });
 
-      const j = await res.json().catch(() => ({}));
+      const raw = await res.text();
+
+      let j: any = {};
+      try {
+        j = raw ? JSON.parse(raw) : {};
+      } catch {
+        j = {};
+      }
 
       if (!res.ok || !j?.ok) {
-        throw new Error(
+        const serverMessage =
           j?.message ||
-            j?.error ||
-            "Impossible d'enregistrer la moyenne finale.",
-        );
+          j?.error ||
+          raw ||
+          `Erreur HTTP ${res.status}`;
+
+        throw new Error(serverMessage);
       }
 
       closeEditModal();
       setNotice("Moyenne finale enregistrée.");
       await validate();
     } catch (e: any) {
+      console.error("[Conduite] Erreur enregistrement override", e);
       setOverrideError(
         e?.message || "Impossible d'enregistrer la moyenne finale.",
       );
@@ -1858,7 +1877,7 @@ export default function ConduitePage() {
                 type="button"
                 onClick={closeEditModal}
                 disabled={savingOverride}
-                className="bg-white text-slate-700 ring-1 ring-slate-200 hover:bg-slate-50"
+                className="bg-white !text-slate-700 ring-1 ring-slate-200 hover:bg-slate-50"
               >
                 Annuler
               </Button>
