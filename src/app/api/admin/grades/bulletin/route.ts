@@ -2543,16 +2543,19 @@ export async function GET(req: NextRequest) {
   /**
    * ✅ Source officielle robuste pour les bulletins.
    *
-   * Certains imports historiques CSCA alimentent correctement
-   * grade_published_scores, mais la vue v_grade_scores_official_for_reports
-   * peut ne pas retourner certaines lignes selon sa définition interne.
-   * Résultat visible : élèves avec notes officielles en base mais bulletin en NC.
+   * Important : une classe complète peut dépasser la limite implicite Supabase/PostgREST
+   * d'une requête standard. Exemple CSCA 5e2 T3 : 49 évaluations × 29 élèves = 1414
+   * notes officielles. Sans pagination, seules les premières lignes reviennent et les
+   * derniers élèves peuvent apparaître NC alors que leurs notes publiées existent bien.
    *
-   * Règle : on lit d'abord grade_published_scores.is_current = true, puis on
-   * complète avec la vue pour garder la compatibilité avec l'existant.
+   * Règle : on lit TOUTES les lignes publiées par pages, d'abord dans
+   * grade_published_scores.is_current = true, puis on complète avec la vue pour garder
+   * la compatibilité avec l'existant.
    */
   async function loadOfficialScoreRowsForEvalIds(evalIds: string[]): Promise<ScoreRow[]> {
     if (!evalIds.length || !studentIds.length) return [];
+
+    const PAGE_SIZE = 1000;
 
     const byKey = new Map<string, ScoreRow>();
     const ingest = (rows: any[] | null | undefined, prefer: boolean) => {
@@ -2572,47 +2575,89 @@ export async function GET(req: NextRequest) {
       }
     };
 
-    let directError: any = null;
-    let viewError: any = null;
+    async function fetchDirectPublishedScores(): Promise<{ rows: any[]; error: any | null }> {
+      const rows: any[] = [];
 
-    try {
-      const { data, error } = await srvClient
-        .from("grade_published_scores")
-        .select("evaluation_id, student_id, score")
-        .eq("institution_id", institutionId)
-        .eq("class_id", classId)
-        .eq("is_current", true)
-        .in("evaluation_id", evalIds)
-        .in("student_id", studentIds);
+      for (let from = 0; ; from += PAGE_SIZE) {
+        const to = from + PAGE_SIZE - 1;
 
-      if (error) directError = error;
-      else ingest(data as any[], true);
-    } catch (error) {
-      directError = error;
+        const { data, error } = await srvClient
+          .from("grade_published_scores")
+          .select("evaluation_id, student_id, score")
+          .eq("institution_id", institutionId)
+          .eq("class_id", classId)
+          .eq("is_current", true)
+          .in("evaluation_id", evalIds)
+          .in("student_id", studentIds)
+          .order("evaluation_id", { ascending: true })
+          .order("student_id", { ascending: true })
+          .range(from, to);
+
+        if (error) return { rows, error };
+
+        const chunk = (data || []) as any[];
+        rows.push(...chunk);
+
+        if (chunk.length < PAGE_SIZE) break;
+      }
+
+      return { rows, error: null };
     }
 
-    try {
-      const { data, error } = await supabase
-        .from("v_grade_scores_official_for_reports")
-        .select("evaluation_id, student_id, score")
-        .in("evaluation_id", evalIds)
-        .in("student_id", studentIds);
+    async function fetchViewOfficialScores(): Promise<{ rows: any[]; error: any | null }> {
+      const rows: any[] = [];
 
-      if (error) viewError = error;
-      else ingest(data as any[], false);
-    } catch (error) {
-      viewError = error;
+      for (let from = 0; ; from += PAGE_SIZE) {
+        const to = from + PAGE_SIZE - 1;
+
+        const { data, error } = await supabase
+          .from("v_grade_scores_official_for_reports")
+          .select("evaluation_id, student_id, score")
+          .in("evaluation_id", evalIds)
+          .in("student_id", studentIds)
+          .order("evaluation_id", { ascending: true })
+          .order("student_id", { ascending: true })
+          .range(from, to);
+
+        if (error) return { rows, error };
+
+        const chunk = (data || []) as any[];
+        rows.push(...chunk);
+
+        if (chunk.length < PAGE_SIZE) break;
+      }
+
+      return { rows, error: null };
     }
 
-    if (!byKey.size && directError && viewError) {
-      throw viewError || directError;
+    const direct = await fetchDirectPublishedScores();
+    if (!direct.error) ingest(direct.rows, true);
+
+    const fromView = await fetchViewOfficialScores();
+    if (!fromView.error) ingest(fromView.rows, false);
+
+    if (!byKey.size && direct.error && fromView.error) {
+      throw fromView.error || direct.error;
     }
 
-    if (directError) {
-      console.warn("[bulletin] lecture directe grade_published_scores indisponible", directError);
+    if (direct.error) {
+      console.warn("[bulletin] lecture directe grade_published_scores indisponible", direct.error);
     }
-    if (viewError) {
-      console.warn("[bulletin] vue v_grade_scores_official_for_reports indisponible", viewError);
+    if (fromView.error) {
+      console.warn(
+        "[bulletin] vue v_grade_scores_official_for_reports indisponible",
+        fromView.error
+      );
+    }
+
+    const expectedMax = evalIds.length * studentIds.length;
+    if (byKey.size < expectedMax) {
+      console.warn("[bulletin] scores officiels incomplets apres pagination", {
+        received: byKey.size,
+        expectedMax,
+        evals: evalIds.length,
+        students: studentIds.length,
+      });
     }
 
     return Array.from(byKey.values());
