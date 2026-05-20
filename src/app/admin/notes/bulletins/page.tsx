@@ -999,15 +999,36 @@ function computeRanksAndStats(res: BulletinResponse | null): EnrichedBulletin | 
 
   const stats: ClassStats = { highest: null, lowest: null, classAvg: null };
 
-  if (withAvg.length) {
-    const sortedForStats = [...withAvg].sort(
-      (a, b) => (b.general_avg ?? 0) - (a.general_avg ?? 0)
-    );
+  /**
+   * Les statistiques de classe doivent refléter les moyennes réellement calculées
+   * pour la période officielle.
+   *
+   * Important : un ancien marquage administratif NC peut mettre general_avg à null
+   * tout en conservant general_avg_before_admin_nc. Dans ce cas, le bulletin de
+   * l'élève reste NC si l'admin l'a décidé, mais les statistiques globales de
+   * classe ne doivent pas perdre ces moyennes calculées. Sinon la moyenne mini
+   * et la moyenne de classe deviennent fausses après une réimportation officielle
+   * des notes.
+   */
+  const statsValues = baseItems
+    .map((it) => {
+      const raw =
+        it.general_avg_before_admin_nc !== null &&
+        it.general_avg_before_admin_nc !== undefined
+          ? it.general_avg_before_admin_nc
+          : it.general_avg;
 
-    const sumAll = withAvg.reduce((acc, it) => acc + (it.general_avg ?? 0), 0);
-    const highest = sortedForStats[0].general_avg ?? null;
-    const lowest = sortedForStats[sortedForStats.length - 1].general_avg ?? null;
-    const classAvg = sumAll / withAvg.length;
+      const n = raw !== null && raw !== undefined ? Number(raw) : null;
+      return n !== null && Number.isFinite(n) ? round2(n) : null;
+    })
+    .filter((n): n is number => typeof n === "number" && Number.isFinite(n));
+
+  if (statsValues.length) {
+    const sortedForStats = [...statsValues].sort((a, b) => b - a);
+    const sumAll = statsValues.reduce((acc, n) => acc + n, 0);
+    const highest = sortedForStats[0] ?? null;
+    const lowest = sortedForStats[sortedForStats.length - 1] ?? null;
+    const classAvg = sumAll / statsValues.length;
 
     stats.highest = highest !== null ? round2(highest) : null;
     stats.lowest = lowest !== null ? round2(lowest) : null;
