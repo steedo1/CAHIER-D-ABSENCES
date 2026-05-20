@@ -2540,21 +2540,94 @@ export async function GET(req: NextRequest) {
   const evalById = new Map<string, EvalRow>();
   for (const e of evals) evalById.set(e.id, e);
 
+  /**
+   * ✅ Source officielle robuste pour les bulletins.
+   *
+   * Certains imports historiques CSCA alimentent correctement
+   * grade_published_scores, mais la vue v_grade_scores_official_for_reports
+   * peut ne pas retourner certaines lignes selon sa définition interne.
+   * Résultat visible : élèves avec notes officielles en base mais bulletin en NC.
+   *
+   * Règle : on lit d'abord grade_published_scores.is_current = true, puis on
+   * complète avec la vue pour garder la compatibilité avec l'existant.
+   */
+  async function loadOfficialScoreRowsForEvalIds(evalIds: string[]): Promise<ScoreRow[]> {
+    if (!evalIds.length || !studentIds.length) return [];
+
+    const byKey = new Map<string, ScoreRow>();
+    const ingest = (rows: any[] | null | undefined, prefer: boolean) => {
+      for (const row of rows || []) {
+        const evaluationId = String(row?.evaluation_id || "");
+        const studentId = String(row?.student_id || "");
+        if (!evaluationId || !studentId) continue;
+
+        const key = `${evaluationId}__${studentId}`;
+        if (!prefer && byKey.has(key)) continue;
+
+        byKey.set(key, {
+          evaluation_id: evaluationId,
+          student_id: studentId,
+          score: row?.score === null || row?.score === undefined ? null : Number(row.score),
+        });
+      }
+    };
+
+    let directError: any = null;
+    let viewError: any = null;
+
+    try {
+      const { data, error } = await srvClient
+        .from("grade_published_scores")
+        .select("evaluation_id, student_id, score")
+        .eq("institution_id", institutionId)
+        .eq("class_id", classId)
+        .eq("is_current", true)
+        .in("evaluation_id", evalIds)
+        .in("student_id", studentIds);
+
+      if (error) directError = error;
+      else ingest(data as any[], true);
+    } catch (error) {
+      directError = error;
+    }
+
+    try {
+      const { data, error } = await supabase
+        .from("v_grade_scores_official_for_reports")
+        .select("evaluation_id, student_id, score")
+        .in("evaluation_id", evalIds)
+        .in("student_id", studentIds);
+
+      if (error) viewError = error;
+      else ingest(data as any[], false);
+    } catch (error) {
+      viewError = error;
+    }
+
+    if (!byKey.size && directError && viewError) {
+      throw viewError || directError;
+    }
+
+    if (directError) {
+      console.warn("[bulletin] lecture directe grade_published_scores indisponible", directError);
+    }
+    if (viewError) {
+      console.warn("[bulletin] vue v_grade_scores_official_for_reports indisponible", viewError);
+    }
+
+    return Array.from(byKey.values());
+  }
+
   let scores: ScoreRow[] = [];
   if (evals.length) {
     const evalIds = evals.map((e) => e.id);
 
-    const { data: scoreData, error: scoreErr } = await supabase
-      .from("v_grade_scores_official_for_reports")
-      .select("evaluation_id, student_id, score")
-      .in("evaluation_id", evalIds)
-      .in("student_id", studentIds);
-
-    if (scoreErr) {
+    try {
+      scores = await loadOfficialScoreRowsForEvalIds(evalIds);
+    } catch (scoreErr) {
+      console.warn("[bulletin] scores officiels indisponibles", scoreErr);
       return NextResponse.json({ ok: false, error: "SCORES_ERROR" }, { status: 500 });
     }
-
-    scores = (scoreData || []) as ScoreRow[];
   }
 
   /* 7bis) Bonus pédagogiques officiels pour le bulletin
@@ -3285,15 +3358,15 @@ export async function GET(req: NextRequest) {
 
       const evalIds = pevals.map((ev) => ev.id);
 
-      const { data: sData, error: sErr } = await supabase
-        .from("v_grade_scores_official_for_reports")
-        .select("evaluation_id, student_id, score")
-        .in("evaluation_id", evalIds)
-        .in("student_id", studentIds);
+      let pscores: ScoreRow[] = [];
+      try {
+        pscores = await loadOfficialScoreRowsForEvalIds(evalIds);
+      } catch (error) {
+        console.warn("[bulletin] scores officiels annuels indisponibles", error);
+        return out;
+      }
 
-      if (sErr || !sData?.length) return out;
-
-      const pscores = (sData as any[]) as ScoreRow[];
+      if (!pscores.length) return out;
 
       const perStuSub = new Map<string, Map<string, { sumWeighted: number; sumCoeff: number }>>();
       const perStuComp = new Map<
