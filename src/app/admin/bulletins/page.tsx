@@ -1118,6 +1118,7 @@ type StudentBulletinCardProps = {
   conduct?: ConductItem | null;
   conductLabel?: string | null;
   conductTeacherName?: string | null;
+  conductRank?: number | null;
   conductRubricMax?: ConductRubricMax;
   conductTotalMax?: number;
   signaturesEnabled?: boolean | null;
@@ -1140,6 +1141,7 @@ function StudentBulletinCard({
   conduct,
   conductLabel,
   conductTeacherName,
+  conductRank,
   conductRubricMax,
   conductTotalMax,
   signaturesEnabled,
@@ -1317,6 +1319,7 @@ function StudentBulletinCard({
       );
       if (existing) {
         existing.avg20 = conductNoteOn20;
+        existing.subject_rank = conductRank ?? null;
         if (!existing.teacher_name && conductResponsibleName) {
           existing.teacher_name = conductResponsibleName;
         }
@@ -1324,14 +1327,14 @@ function StudentBulletinCard({
         base.push({
           subject_id: conductSubject.subject_id,
           avg20: conductNoteOn20,
-          subject_rank: null,
+          subject_rank: conductRank ?? null,
           teacher_name: conductResponsibleName || "",
           teacher_signature_png: null,
         });
       }
     }
     return base;
-  }, [perSubjectBase, conductSubject, conductNoteOn20, conductResponsibleName]);
+  }, [perSubjectBase, conductSubject, conductNoteOn20, conductResponsibleName, conductRank]);
 
   const subjectCompsBySubject = useMemo(() => {
     const map = new Map<string, BulletinSubjectComponent[]>();
@@ -1652,14 +1655,8 @@ function StudentBulletinCard({
         ? round2(Number(avg) * effectiveCoeff)
         : null;
 
-    const isConductSubjectRow = s.subject_id === conductSubject?.subject_id;
-
     const subjectRankLabel =
-      isConductSubjectRow
-        ? "—"
-        : hasAvg && cell && cell.subject_rank != null
-          ? `${cell.subject_rank}e`
-          : "NC";
+      hasAvg && cell && cell.subject_rank != null ? `${cell.subject_rank}e` : "NC";
     const subjectTeacher = cell?.teacher_name || "";
     const appreciationLabel = hasAvg ? computeSubjectAppreciation(avg) : "Non classé";
 
@@ -2562,6 +2559,37 @@ export default function BulletinsPage() {
     return map;
   }, [conductSummary]);
 
+  const conductRankByStudentId = useMemo(() => {
+    const map = new Map<string, number>();
+    const entries = Array.isArray(conductSummary?.items)
+      ? conductSummary.items
+          .map((it) => ({
+            student_id: it.student_id,
+            total: Number(it.total),
+          }))
+          .filter(
+            (it) =>
+              !!it.student_id &&
+              Number.isFinite(it.total)
+          )
+      : [];
+
+    entries.sort((a, b) => b.total - a.total);
+
+    let lastScore: number | null = null;
+    let currentRank = 0;
+
+    entries.forEach((it, idx) => {
+      if (lastScore === null || it.total !== lastScore) {
+        currentRank = idx + 1;
+        lastScore = it.total;
+      }
+      map.set(it.student_id, currentRank);
+    });
+
+    return map;
+  }, [conductSummary]);
+
   const conductRubricMax = conductSummary?.rubric_max;
   const conductTotalMax = conductSummary?.total_max;
 
@@ -2859,6 +2887,7 @@ export default function BulletinsPage() {
                 conduct={conductByStudentId.get(it.student_id) || null}
                 conductLabel={conductSummary?.conduct_label || null}
                 conductTeacherName={conductSummary?.conduct_teacher_name || null}
+                conductRank={conductRankByStudentId.get(it.student_id) ?? null}
                 conductRubricMax={conductRubricMax}
                 conductTotalMax={conductTotalMax}
                 signaturesEnabled={signaturesEnabled}
