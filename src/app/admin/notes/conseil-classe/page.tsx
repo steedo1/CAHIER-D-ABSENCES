@@ -260,6 +260,9 @@ type ConductItem = {
     discipline: number;
   };
   total: number;
+  conduct_label?: string | null;
+  conduct_teacher_id?: string | null;
+  conduct_teacher_name?: string | null;
   appreciation: string;
   absence_count?: number;
   tardy_count?: number;
@@ -269,6 +272,10 @@ type ConductItem = {
 
 type ConductSummaryResponse = {
   class_label: string;
+  conduct_label?: string | null;
+  conduct_teacher_id?: string | null;
+  conduct_teacher_name?: string | null;
+  is_csca?: boolean;
   rubric_max: ConductRubricMax;
   total_max: number;
   items: ConductItem[];
@@ -687,6 +694,8 @@ function subjectAliasesForMatch(value: string | null | undefined): Set<string> {
     aliases.add("art plastique");
   }
   if (normalized.includes("musique")) aliases.add("musique");
+  if (normalized.includes("conduite")) aliases.add("conduite");
+  if (normalized.includes("discipline")) aliases.add("discipline");
 
   return aliases;
 }
@@ -711,6 +720,20 @@ function subjectLabelsMatch(a: string | null | undefined, b: string | null | und
   }
 
   return false;
+}
+
+
+function isConductDisplaySubjectLabel(
+  subjectLabel: string | null | undefined,
+  conductLabel: string | null | undefined,
+): boolean {
+  const label = normalizeLabelForMatch(subjectLabel);
+  const wanted = normalizeLabelForMatch(conductLabel || "Conduite");
+  if (!label) return false;
+
+  if (label.includes("conduite") || label.includes("conduct")) return true;
+  if (wanted.includes("discipline") && label.includes("discipline")) return true;
+  return label === wanted;
 }
 
 function extractRowsFromPayload(payload: any): any[] {
@@ -1033,6 +1056,12 @@ export default function ConseilClassePage() {
       params.set("published", "true");
       params.set("active_only", "true");
 
+      const selectedPeriod = periods.find((p) => p.id === selectedPeriodId);
+      const effectiveAcademicYear = selectedAcademicYear || selectedPeriod?.academic_year || "";
+      const effectivePeriodCode = selectedPeriod?.code || "";
+      if (effectiveAcademicYear) params.set("academic_year", effectiveAcademicYear);
+      if (effectivePeriodCode) params.set("period_code", effectivePeriodCode);
+
       const [activeIdsForClass, resBulletin, resConduct, resAffectations] = await Promise.all([
         fetchActiveStudentIdsForClass(selectedClassId),
         fetch(`/api/admin/grades/bulletin?${params.toString()}`, { cache: "no-store" }),
@@ -1279,6 +1308,7 @@ export default function ConseilClassePage() {
     );
     const seen = new Set<string>();
     const subjects: BulletinSubject[] = [];
+    const conductLabel = String(conductSummary?.conduct_label || "Conduite").trim() || "Conduite";
 
     councilRows.forEach((row) => {
       (row.per_subject ?? []).forEach((ps) => {
@@ -1298,30 +1328,68 @@ export default function ConseilClassePage() {
       });
     });
 
+    const hasConductValues = councilRows.some(
+      (row) => row.conductOn20 !== null && row.conductOn20 !== undefined && Number.isFinite(Number(row.conductOn20)),
+    );
+    const hasConductSubject = subjects.some((subject) =>
+      isConductDisplaySubjectLabel(subject.subject_name, conductLabel),
+    );
+
+    if (hasConductValues && !hasConductSubject) {
+      subjects.push({
+        subject_id: "__CONDUCT__",
+        subject_name: conductLabel,
+        coeff_bulletin: 1,
+        include_in_average: true,
+      });
+    }
+
     return subjects.sort((a, b) =>
       a.subject_name.localeCompare(b.subject_name, undefined, {
         sensitivity: "base",
         numeric: true,
       })
     );
-  }, [enriched, councilRows]);
+  }, [enriched, councilRows, conductSummary]);
 
   const subjectStats = useMemo<SubjectCouncilStat[]>(() => {
     const effectif = councilRows.length;
 
     return effectiveSubjects
       .map((subject) => {
-        const values = councilRows
-          .map((row) => {
-            const cell = row.per_subject?.find((ps) => ps.subject_id === subject.subject_id);
-            const value = cell?.avg20;
-            return value === null || value === undefined ? null : Number(value);
-          })
-          .filter((v): v is number => v !== null && Number.isFinite(v));
+        const conductLabel = String(conductSummary?.conduct_label || "Conduite").trim() || "Conduite";
+        const isCSCAConductSubject =
+          subject.subject_id === "__CONDUCT__" ||
+          (conductSummary?.is_csca === true &&
+            isConductDisplaySubjectLabel(subject.subject_name, conductLabel));
 
-        let teacher_name: string | null = null;
+        const values = isCSCAConductSubject
+          ? councilRows
+              .map((row) => {
+                const value = row.conductOn20;
+                return value === null || value === undefined ? null : Number(value);
+              })
+              .filter((v): v is number => v !== null && Number.isFinite(v))
+          : councilRows
+              .map((row) => {
+                const cell = row.per_subject?.find((ps) => ps.subject_id === subject.subject_id);
+                const value = cell?.avg20;
+                return value === null || value === undefined ? null : Number(value);
+              })
+              .filter((v): v is number => v !== null && Number.isFinite(v));
+
+        let teacher_name: string | null = isCSCAConductSubject
+          ? conductSummary?.conduct_teacher_name || null
+          : null;
         let teacher_signature_png: string | null = null;
         for (const row of councilRows) {
+          if (isCSCAConductSubject) {
+            if (!teacher_name && row.conduct?.conduct_teacher_name) {
+              teacher_name = row.conduct.conduct_teacher_name;
+            }
+            continue;
+          }
+
           const cell = row.per_subject?.find((ps) => ps.subject_id === subject.subject_id);
           const cellAvg = cell?.avg20;
           if (cellAvg === null || cellAvg === undefined || !Number.isFinite(Number(cellAvg))) continue;
@@ -1350,7 +1418,7 @@ export default function ConseilClassePage() {
         };
       })
       .filter((stat) => stat.noted_count > 0);
-  }, [effectiveSubjects, councilRows]);
+  }, [effectiveSubjects, councilRows, conductSummary]);
 
   const councilTeacherRows = useMemo(() => {
     const grouped = new Map<

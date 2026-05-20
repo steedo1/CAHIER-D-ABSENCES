@@ -66,6 +66,245 @@ const DEFAULT_CONDUCT_SETTINGS: ConductSettings = {
 const num = (v: any, fallback: number): number =>
   typeof v === "number" && Number.isFinite(v) ? v : fallback;
 
+
+type InstitutionMeta = {
+  id: string;
+  name?: string | null;
+  code_unique?: string | null;
+  acronym?: string | null;
+};
+
+const CSCA_INSTITUTION_IDS = new Set([
+  // Sécurité : garde-fou pour la base actuelle du Cours Secondaire Catholique d'Aboisso.
+  "ee34ab2a-8033-4e0b-acf0-05979cce1697",
+]);
+
+function normalizePolicyToken(value?: string | null): string {
+  return String(value ?? "")
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "")
+    .trim();
+}
+
+function isCSCAInstitution(meta: InstitutionMeta | null | undefined): boolean {
+  if (!meta) return false;
+  const id = String(meta.id || "").trim();
+  if (CSCA_INSTITUTION_IDS.has(id)) return true;
+
+  const name = normalizePolicyToken(meta.name);
+  const code = normalizePolicyToken(meta.code_unique);
+  const acronym = normalizePolicyToken(meta.acronym);
+  const all = `${name} ${code} ${acronym}`;
+
+  return (
+    acronym === "csca" ||
+    code === "csca" ||
+    all.includes("csca") ||
+    (name.includes("courssecondairecatholique") && name.includes("aboisso"))
+  );
+}
+
+function isCSCALatinOrReligionLabel(value?: string | null): boolean {
+  const compact = normalizePolicyToken(value);
+  if (!compact) return false;
+  return (
+    compact.includes("latin") ||
+    compact.includes("religion") ||
+    compact.includes("religieux") ||
+    compact === "reg" ||
+    compact === "rel"
+  );
+}
+
+function isCSCAConductLabel(value?: string | null): boolean {
+  const compact = normalizePolicyToken(value);
+  return compact.includes("discipline") || compact.includes("conduite") || compact.includes("conduct");
+}
+
+async function loadInstitutionMeta(
+  srv: any,
+  institution_id: string,
+): Promise<InstitutionMeta> {
+  try {
+    const { data } = await srv
+      .from("institutions")
+      .select("id,name,code_unique,acronym")
+      .eq("id", institution_id)
+      .maybeSingle();
+
+    const row = (data || {}) as any;
+    return {
+      id: String(row.id || institution_id),
+      name: row.name ?? null,
+      code_unique: row.code_unique ?? null,
+      acronym: row.acronym ?? null,
+    };
+  } catch {
+    return { id: institution_id };
+  }
+}
+
+async function loadCSCAConductResponsible(
+  srv: any,
+  opts: { institution_id: string; class_id: string },
+): Promise<{ id: string | null; name: string | null } | null> {
+  try {
+    const { data: instSubjects, error: instErr } = await srv
+      .from("institution_subjects")
+      .select("id, subject_id")
+      .eq("institution_id", opts.institution_id);
+
+    if (instErr || !Array.isArray(instSubjects) || instSubjects.length === 0) {
+      return null;
+    }
+
+    const subjectIds = Array.from(
+      new Set(
+        (instSubjects as any[])
+          .map((row) => String(row.subject_id || ""))
+          .filter(Boolean),
+      ),
+    );
+
+    if (subjectIds.length === 0) return null;
+
+    const { data: subjectsRows, error: subErr } = await srv
+      .from("subjects")
+      .select("id, name, code")
+      .in("id", subjectIds);
+
+    if (subErr || !Array.isArray(subjectsRows) || subjectsRows.length === 0) {
+      return null;
+    }
+
+    const conductSubjectIds = new Set<string>();
+    for (const subject of subjectsRows as any[]) {
+      const id = String(subject.id || "");
+      const label = `${subject.name || ""} ${subject.code || ""}`;
+      if (id && isCSCAConductLabel(label)) conductSubjectIds.add(id);
+    }
+
+    if (conductSubjectIds.size === 0) return null;
+
+    const instIds = (instSubjects as any[])
+      .filter((row) => conductSubjectIds.has(String(row.subject_id || "")))
+      .map((row) => String(row.id || ""))
+      .filter(Boolean);
+
+    if (instIds.length === 0) return null;
+
+    const { data: classTeachers, error: ctErr } = await srv
+      .from("class_teachers")
+      .select("teacher_id, start_date, end_date")
+      .eq("institution_id", opts.institution_id)
+      .eq("class_id", opts.class_id)
+      .in("subject_id", instIds);
+
+    if (ctErr || !Array.isArray(classTeachers) || classTeachers.length === 0) {
+      return null;
+    }
+
+    const teacherId = String(
+      (classTeachers as any[])
+        .slice()
+        .sort((a, b) => String(b.start_date || "").localeCompare(String(a.start_date || "")))
+        .find((row) => !!row.teacher_id)?.teacher_id || "",
+    );
+
+    if (!teacherId) return null;
+
+    const { data: profile } = await srv
+      .from("profiles")
+      .select("id, display_name, email, phone")
+      .eq("id", teacherId)
+      .maybeSingle();
+
+    const name = String(
+      (profile as any)?.display_name ||
+        (profile as any)?.email ||
+        (profile as any)?.phone ||
+        "",
+    ).trim();
+
+    return name ? { id: teacherId, name } : { id: teacherId, name: null };
+  } catch {
+    return null;
+  }
+}
+
+function mergeConductSubjectPolicies(
+  configured: ConductSubjectPolicy[],
+  builtin: ConductSubjectPolicy[],
+): ConductSubjectPolicy[] {
+  const byId = new Map<string, ConductSubjectPolicy>();
+
+  for (const row of [...configured, ...builtin]) {
+    const subjectId = String(row.subject_id || "");
+    if (!subjectId || byId.has(subjectId)) continue;
+    byId.set(subjectId, row);
+  }
+
+  return Array.from(byId.values()).sort((a, b) =>
+    a.subject_name.localeCompare(b.subject_name, "fr", {
+      sensitivity: "base",
+      numeric: true,
+    }),
+  );
+}
+
+async function loadCSCABuiltinConductSubjectPolicies(
+  srv: any,
+  institution_id: string,
+): Promise<ConductSubjectPolicy[]> {
+  try {
+    const { data: instSubjects, error: instErr } = await srv
+      .from("institution_subjects")
+      .select("subject_id")
+      .eq("institution_id", institution_id);
+
+    if (instErr || !Array.isArray(instSubjects) || instSubjects.length === 0) {
+      return [];
+    }
+
+    const subjectIds = Array.from(
+      new Set(
+        (instSubjects as any[])
+          .map((row) => String(row.subject_id || ""))
+          .filter(Boolean),
+      ),
+    );
+
+    if (subjectIds.length === 0) return [];
+
+    const { data: subjectRows, error: subErr } = await srv
+      .from("subjects")
+      .select("id, name, code")
+      .in("id", subjectIds);
+
+    if (subErr || !Array.isArray(subjectRows) || subjectRows.length === 0) {
+      return [];
+    }
+
+    return (subjectRows as any[])
+      .map((subject) => {
+        const subject_id = String(subject.id || "");
+        const label = String(subject.name || subject.code || "Matière").trim();
+        const key = `${subject.name || ""} ${subject.code || ""}`;
+        if (!subject_id || !isCSCALatinOrReligionLabel(key)) return null;
+        return {
+          subject_id,
+          subject_name: label || "Matière",
+          conduct_weight: 1,
+        } satisfies ConductSubjectPolicy;
+      })
+      .filter((row): row is ConductSubjectPolicy => !!row);
+  } catch {
+    return [];
+  }
+}
+
 async function loadConductSettings(
   srv: any,
   institution_id: string,
@@ -263,6 +502,8 @@ type InstitutionConductPolicy = {
   classic_conduct_weight: number;
   missing_subject_strategy: "ignore_missing" | "count_as_zero";
   is_active: boolean;
+  display_label: "Conduite" | "Discipline";
+  is_csca: boolean;
 };
 
 type ConductSubjectPolicy = {
@@ -322,6 +563,8 @@ async function loadInstitutionConductPolicy(
     classic_conduct_weight: 1,
     missing_subject_strategy: "ignore_missing",
     is_active: false,
+    display_label: "Conduite",
+    is_csca: false,
   };
 
   try {
@@ -353,6 +596,8 @@ async function loadInstitutionConductPolicy(
         Number.isFinite(weight) && weight >= 0 ? weight : 1,
       missing_subject_strategy,
       is_active: true,
+      display_label: "Conduite",
+      is_csca: false,
     };
   } catch {
     return fallback;
@@ -539,7 +784,7 @@ function applyInstitutionConductPolicyToStudent(opts: {
   const components: ConductPolicyComponent[] = [
     {
       kind: "classic_conduct",
-      label: "Conduite",
+      label: opts.conduct_policy.display_label || "Conduite",
       subject_id: null,
       avg20: classicAvg20,
       weight: classicWeight,
@@ -666,6 +911,9 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "class_id_required" }, { status: 400 });
   }
 
+  const institutionMeta = await loadInstitutionMeta(srv, institution_id);
+  const isCSCA = isCSCAInstitution(institutionMeta);
+
   // Classe
   const { data: cls, error: clsErr } = await srv
     .from("classes")
@@ -732,14 +980,43 @@ export async function GET(req: NextRequest) {
 
 
   // ───────────────── Politique spéciale de conduite par établissement ─────────────────
-  // Exemple : COURS SECONDAIRE CATHOLIQUE ABOISSO
-  // Conduite finale = moyenne pondérée de Conduite classique + LATIN + RELIGION.
-  // Si aucune politique n'est configurée, tout reste strictement comme avant.
-  const conductPolicy = await loadInstitutionConductPolicy(srv, institution_id);
-  const conductSubjectPolicies =
-    conductPolicy.mode === "conduct_plus_subjects"
-      ? await loadConductSubjectPolicies(srv, institution_id)
+  // CSCA : la conduite classique des autres établissements s'affiche comme DISCIPLINE,
+  // puis la moyenne finale de conduite est composée avec Latin et Religion.
+  // Hors CSCA, l'ancien comportement reste strictement inchangé.
+  let conductPolicy = await loadInstitutionConductPolicy(srv, institution_id);
+
+  if (isCSCA) {
+    conductPolicy = {
+      ...conductPolicy,
+      mode: "conduct_plus_subjects",
+      classic_conduct_weight: 1,
+      missing_subject_strategy: "ignore_missing",
+      is_active: true,
+      display_label: "Discipline",
+      is_csca: true,
+    };
+  }
+
+  const cscaConductResponsible = isCSCA
+    ? await loadCSCAConductResponsible(srv, { institution_id, class_id })
+    : null;
+
+  let conductSubjectPolicies: ConductSubjectPolicy[] = [];
+  if (conductPolicy.mode === "conduct_plus_subjects") {
+    const configuredPolicies = await loadConductSubjectPolicies(srv, institution_id);
+    const cscaBuiltinPolicies = isCSCA
+      ? await loadCSCABuiltinConductSubjectPolicies(srv, institution_id)
       : [];
+
+    conductSubjectPolicies = isCSCA
+      ? mergeConductSubjectPolicies(
+          configuredPolicies.filter((p) =>
+            isCSCALatinOrReligionLabel(`${p.subject_name || ""} ${p.subject_id || ""}`),
+          ),
+          cscaBuiltinPolicies,
+        )
+      : configuredPolicies;
+  }
 
   const conductSubjectAverageBySubject =
     conductPolicy.mode === "conduct_plus_subjects" && conductSubjectPolicies.length > 0
@@ -754,7 +1031,7 @@ export async function GET(req: NextRequest) {
 
   // ✅ Total officiel affiché/modifiable.
   // En mode standard, il suit le total des rubriques.
-  // En mode conduite composite (Conduite + Religion + Latin), la moyenne officielle
+  // En mode conduite composite (CSCA : Discipline + Religion + Latin), la moyenne officielle
   // est toujours une moyenne sur /20.
   const officialTotalMax =
     conductPolicy.mode === "conduct_plus_subjects" ? 20 : totalMax;
@@ -1217,7 +1494,7 @@ export async function GET(req: NextRequest) {
 
       // ✅ 1) On calcule d'abord la conduite officielle automatique.
       // En mode standard : c'est la conduite classique.
-      // En mode CSCA / conduite composite : c'est Conduite classique + Religion + Latin,
+      // En mode CSCA / conduite composite : c'est Discipline + Religion + Latin,
       // avec les matières manquantes ignorées si la stratégie est ignore_missing.
       const automaticConduct = applyInstitutionConductPolicyToStudent({
         student_id,
@@ -1256,6 +1533,9 @@ export async function GET(req: NextRequest) {
       return {
         student_id,
         full_name,
+        conduct_label: conductPolicy.display_label,
+        conduct_teacher_id: cscaConductResponsible?.id ?? null,
+        conduct_teacher_name: cscaConductResponsible?.name ?? null,
 
         breakdown: finalBreakdown,
         calculated_breakdown: calculatedBreakdown,
@@ -1378,6 +1658,11 @@ export async function GET(req: NextRequest) {
 
   return NextResponse.json({
     class_label: class_label ?? "",
+    conduct_label: conductPolicy.display_label,
+    conduct_teacher_id: cscaConductResponsible?.id ?? null,
+    conduct_teacher_name: cscaConductResponsible?.name ?? null,
+    is_csca: conductPolicy.is_csca,
+    institution_policy_code: conductPolicy.is_csca ? "CSCA" : null,
     rubric_max: RUBRIC_MAX,
     total_max: officialTotalMax,
 

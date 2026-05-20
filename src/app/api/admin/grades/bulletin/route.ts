@@ -221,6 +221,49 @@ function normalizeAsciiToken(value?: string | null): string {
     .replace(/[^a-z0-9]/g, "");
 }
 
+type InstitutionMeta = {
+  id: string;
+  name?: string | null;
+  code_unique?: string | null;
+  acronym?: string | null;
+};
+
+const CSCA_INSTITUTION_IDS = new Set([
+  // Sécurité : garde-fou pour la base actuelle du Cours Secondaire Catholique d'Aboisso.
+  "ee34ab2a-8033-4e0b-acf0-05979cce1697",
+]);
+
+function isCSCAInstitution(meta: InstitutionMeta | null | undefined): boolean {
+  if (!meta) return false;
+  const id = String(meta.id || "").trim();
+  if (CSCA_INSTITUTION_IDS.has(id)) return true;
+
+  const name = normalizeAsciiToken(meta.name);
+  const code = normalizeAsciiToken(meta.code_unique);
+  const acronym = normalizeAsciiToken(meta.acronym);
+  const all = `${name} ${code} ${acronym}`;
+
+  return (
+    acronym === "csca" ||
+    code === "csca" ||
+    all.includes("csca") ||
+    (name.includes("courssecondairecatholique") && name.includes("aboisso"))
+  );
+}
+
+function isCSCALatinOrReligionSubjectMeta(subject: SubjectRow | null | undefined): boolean {
+  const key = normalizeAsciiToken(`${subject?.code ?? ""} ${subject?.name ?? ""}`);
+  if (!key) return false;
+
+  return (
+    key.includes("latin") ||
+    key.includes("religion") ||
+    key.includes("religieux") ||
+    key === "reg" ||
+    key === "rel"
+  );
+}
+
 /**
  * ✅ Clé officielle utilisée pour les coefficients et sous-matières.
  *
@@ -430,7 +473,7 @@ function isOtherSubject(name?: string | null, code?: string | null): boolean {
     /(^|\b)(eps|e\.p\.s|sport)(\b|$)/.test(c) ||
     /(^|\b)(eps|e\.p\.s|sport)(\b|$)/.test(n) ||
     /(education\s*physique|éducation\s*physique|sportive|eps)/.test(n) ||
-    /(edhc|civique|citoyenn|vie\s*scolaire|conduite)/.test(n) ||
+    /(edhc|civique|citoyenn|vie\s*scolaire|conduite|discipline)/.test(n) ||
     /(musique|chant|arts?\s*plastiques|dessin|th[eé]atre)/.test(n) ||
     /(tic|tice|informatique\s*(de\s*base)?)/.test(n) ||
     /(entrepreneuriat|travail\s*manuel|tm|bonus)/.test(n)
@@ -1433,12 +1476,20 @@ export async function GET(req: NextRequest) {
 
   /* ✅ lire l'option établissement : bulletin_signatures_enabled (institutions) */
   let bulletinSignaturesEnabled = false;
+  let institutionMeta: InstitutionMeta = { id: institutionId };
   {
     const { data: instRow } = await srvClient
       .from("institutions")
-      .select("bulletin_signatures_enabled, settings_json")
+      .select("id, name, code_unique, acronym, bulletin_signatures_enabled, settings_json")
       .eq("id", institutionId)
       .maybeSingle();
+
+    institutionMeta = {
+      id: String((instRow as any)?.id || institutionId),
+      name: (instRow as any)?.name ?? null,
+      code_unique: (instRow as any)?.code_unique ?? null,
+      acronym: (instRow as any)?.acronym ?? null,
+    };
 
     const col = (instRow as any)?.bulletin_signatures_enabled;
     if (typeof col === "boolean") bulletinSignaturesEnabled = col;
@@ -1447,6 +1498,8 @@ export async function GET(req: NextRequest) {
         (instRow as any)?.settings_json?.bulletin_signatures_enabled ?? false
       );
   }
+
+  const isCSCA = isCSCAInstitution(institutionMeta);
 
   // 1a) Lookup du professeur principal (facultatif)
   let headTeacher: HeadTeacherRow | null = null;
@@ -1705,6 +1758,10 @@ export async function GET(req: NextRequest) {
 
     try {
       const qs = new URLSearchParams({ class_id: classIdStr, from, to });
+      const conductAcademicYear = String(periodMeta.academic_year || classRow.academic_year || "").trim();
+      const conductPeriodCode = String(periodMeta.code || "").trim();
+      if (conductAcademicYear) qs.set("academic_year", conductAcademicYear);
+      if (conductPeriodCode) qs.set("period_code", conductPeriodCode);
       const cookie = req.headers.get("cookie") ?? "";
 
       const r = await fetch(
@@ -2105,8 +2162,12 @@ export async function GET(req: NextRequest) {
 
   const isConductSubjectId = (subjectId: string): boolean => {
     const meta = subjectById.get(String(subjectId));
-    const key = `${meta?.code ?? ""} ${meta?.name ?? ""}`.toLowerCase();
-    return key.includes("conduite") || key.includes("conduct");
+    const key = normalizeAsciiToken(`${meta?.code ?? ""} ${meta?.name ?? ""}`);
+    return (
+      key.includes("conduite") ||
+      key.includes("conduct") ||
+      (isCSCA && key.includes("discipline"))
+    );
   };
 
   // ordre final des matières (par nom)
@@ -2130,10 +2191,12 @@ export async function GET(req: NextRequest) {
     const name = s?.name || s?.code || "Matière";
     const info = coeffBySubject.get(sid);
     const coeffBulletin = info ? info.coeff : 1;
-    const includeInAverage = shouldIncludeSubjectInGeneralAverage(
-      sid,
-      info ? info.include : true
-    );
+    const includeInAverage = isCSCA && isCSCALatinOrReligionSubjectMeta(s)
+      ? false
+      : shouldIncludeSubjectInGeneralAverage(
+          sid,
+          info ? info.include : true
+        );
 
     return {
       subject_id: sid,
@@ -2148,8 +2211,8 @@ export async function GET(req: NextRequest) {
   // une vraie note disciplinaire publiée sur la période.
   for (const s of subjectsForReport as any[]) {
     const meta = subjectById.get(String(s.subject_id));
-    const key = `${meta?.code ?? ""} ${meta?.name ?? ""}`.toLowerCase();
-    if (key.includes("conduite") || key.includes("conduct")) {
+    const key = normalizeAsciiToken(`${meta?.code ?? ""} ${meta?.name ?? ""}`);
+    if (key.includes("conduite") || key.includes("conduct") || (isCSCA && key.includes("discipline"))) {
       s.include_in_average = true;
       const c = Number(s.coeff_bulletin ?? 0);
       if (!c || c <= 0) s.coeff_bulletin = 1;
@@ -3062,10 +3125,12 @@ export async function GET(req: NextRequest) {
         const name = (s as any)?.name || (s as any)?.code || "Matière";
         const info = coeffBySubject.get(sid);
         const coeffBulletin = info ? info.coeff : 1;
-        const includeInAverage = shouldIncludeSubjectInGeneralAverage(
-          sid,
-          info ? info.include : true
-        );
+        const includeInAverage = isCSCA && isCSCALatinOrReligionSubjectMeta(s as any)
+          ? false
+          : shouldIncludeSubjectInGeneralAverage(
+              sid,
+              info ? info.include : true
+            );
 
         return {
           subject_id: sid,
@@ -3084,10 +3149,11 @@ export async function GET(req: NextRequest) {
       });
 
     // ✅ Forcer Conduite incluse dans le calcul annuel
+    // CSCA : la même rubrique s'appelle Discipline.
     for (const s of annualSubjectsForReport as any[]) {
       const meta = subjectById.get(String(s.subject_id));
-      const key = `${(meta as any)?.code ?? ""} ${(meta as any)?.name ?? ""}`.toLowerCase();
-      if (key.includes("conduite") || key.includes("conduct")) {
+      const key = normalizeAsciiToken(`${(meta as any)?.code ?? ""} ${(meta as any)?.name ?? ""}`);
+      if (key.includes("conduite") || key.includes("conduct") || (isCSCA && key.includes("discipline"))) {
         s.include_in_average = true;
         const c = Number(s.coeff_bulletin ?? 0);
         if (!c || c <= 0) s.coeff_bulletin = 1;

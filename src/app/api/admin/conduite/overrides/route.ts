@@ -20,6 +20,65 @@ function firstDefined(...values: unknown[]) {
   return undefined;
 }
 
+
+type InstitutionMeta = {
+  id: string;
+  name?: string | null;
+  code_unique?: string | null;
+  acronym?: string | null;
+};
+
+const CSCA_INSTITUTION_IDS = new Set([
+  "ee34ab2a-8033-4e0b-acf0-05979cce1697",
+]);
+
+function normalizePolicyToken(value?: string | null): string {
+  return String(value ?? "")
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "")
+    .trim();
+}
+
+function isCSCAInstitution(meta: InstitutionMeta | null | undefined): boolean {
+  if (!meta) return false;
+  const id = String(meta.id || "").trim();
+  if (CSCA_INSTITUTION_IDS.has(id)) return true;
+
+  const name = normalizePolicyToken(meta.name);
+  const code = normalizePolicyToken(meta.code_unique);
+  const acronym = normalizePolicyToken(meta.acronym);
+  const all = `${name} ${code} ${acronym}`;
+
+  return (
+    acronym === "csca" ||
+    code === "csca" ||
+    all.includes("csca") ||
+    (name.includes("courssecondairecatholique") && name.includes("aboisso"))
+  );
+}
+
+async function loadInstitutionMeta(srv: any, institution_id: string): Promise<InstitutionMeta> {
+  try {
+    const { data } = await srv
+      .from("institutions")
+      .select("id,name,code_unique,acronym")
+      .eq("id", institution_id)
+      .maybeSingle();
+
+    const row = (data || {}) as any;
+    return {
+      id: String(row.id || institution_id),
+      name: row.name ?? null,
+      code_unique: row.code_unique ?? null,
+      acronym: row.acronym ?? null,
+    };
+  } catch {
+    return { id: institution_id };
+  }
+}
+
 type ConductTotalMaxResult = {
   totalMax: number;
   conductPolicyMode: string | null;
@@ -32,6 +91,19 @@ async function getConductTotalMax(
 ): Promise<ConductTotalMaxResult> {
   let conductPolicyMode: string | null = null;
   let isCompositeConduct = false;
+
+  try {
+    const institutionMeta = await loadInstitutionMeta(srv, institution_id);
+    if (isCSCAInstitution(institutionMeta)) {
+      return {
+        totalMax: 20,
+        conductPolicyMode: "csca_conduct_plus_subjects",
+        isCompositeConduct: true,
+      };
+    }
+  } catch {
+    // Si la lecture de l'établissement échoue, on retombe sur la politique générique.
+  }
 
   try {
     const { data: policyRow } = await srv

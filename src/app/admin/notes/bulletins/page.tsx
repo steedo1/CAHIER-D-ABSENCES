@@ -297,6 +297,9 @@ type ConductItem = {
     discipline: number;
   };
   total: number;
+  conduct_label?: string | null;
+  conduct_teacher_id?: string | null;
+  conduct_teacher_name?: string | null;
   appreciation: string;
   absence_count?: number;
   tardy_count?: number;
@@ -306,6 +309,10 @@ type ConductItem = {
 
 type ConductSummaryResponse = {
   class_label: string;
+  conduct_label?: string | null;
+  conduct_teacher_id?: string | null;
+  conduct_teacher_name?: string | null;
+  is_csca?: boolean;
   rubric_max: ConductRubricMax;
   total_max: number;
   items: ConductItem[];
@@ -1048,6 +1055,29 @@ function safeUpper(s: string) {
   }
 }
 
+
+function normalizeSubjectLabelForConduct(value: string | null | undefined): string {
+  return String(value ?? "")
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function isConductDisplaySubject(
+  subject: { subject_name?: string | null; subject_id?: string | null } | null | undefined,
+  conductLabel: string,
+): boolean {
+  const label = normalizeSubjectLabelForConduct(subject?.subject_name);
+  const wanted = normalizeSubjectLabelForConduct(conductLabel || "Conduite");
+  if (!label) return false;
+
+  if (label.includes("conduite") || label.includes("conduct")) return true;
+  if (wanted.includes("discipline") && label.includes("discipline")) return true;
+  return label === wanted;
+}
+
 /* ───────── Student bulletin card ───────── */
 
 type StudentBulletinCardProps = {
@@ -1062,6 +1092,8 @@ type StudentBulletinCardProps = {
   institution: InstitutionSettings | null;
   stats: ClassStats;
   conduct?: ConductItem | null;
+  conductLabel?: string | null;
+  conductTeacherName?: string | null;
   conductRubricMax?: ConductRubricMax;
   conductTotalMax?: number;
   signaturesEnabled?: boolean | null;
@@ -1082,6 +1114,8 @@ function StudentBulletinCard({
   institution,
   stats,
   conduct,
+  conductLabel,
+  conductTeacherName,
   conductRubricMax,
   conductTotalMax,
   signaturesEnabled,
@@ -1226,12 +1260,22 @@ function StudentBulletinCard({
   const annualRank = item.annual_rank ?? null;
   const showAnnual = annualAvgOn20 !== null;
 
+  const conductDisplayLabel =
+    String(conductLabel || conduct?.conduct_label || "Conduite").trim() || "Conduite";
+  const conductResponsibleName =
+    String(conductTeacherName || conduct?.conduct_teacher_name || "").trim() || null;
+
+  const existingConductSubject = useMemo(
+    () => subjects.find((s) => isConductDisplaySubject(s, conductDisplayLabel)) || null,
+    [subjects, conductDisplayLabel],
+  );
+
   const conductSubject: BulletinSubject | null =
     conductNoteOn20 !== null
       ? {
-          subject_id: "__CONDUCT__",
-          subject_name: "Conduite",
-          coeff_bulletin: 1,
+          subject_id: existingConductSubject?.subject_id || "__CONDUCT__",
+          subject_name: conductDisplayLabel,
+          coeff_bulletin: existingConductSubject?.coeff_bulletin || 1,
           include_in_average: true,
         }
       : null;
@@ -1246,18 +1290,21 @@ function StudentBulletinCard({
       );
       if (existing) {
         existing.avg20 = conductNoteOn20;
+        if (!existing.teacher_name && conductResponsibleName) {
+          existing.teacher_name = conductResponsibleName;
+        }
       } else {
         base.push({
           subject_id: conductSubject.subject_id,
           avg20: conductNoteOn20,
           subject_rank: null,
-          teacher_name: "",
+          teacher_name: conductResponsibleName || "",
           teacher_signature_png: null,
         });
       }
     }
     return base;
-  }, [perSubjectBase, conductSubject, conductNoteOn20]);
+  }, [perSubjectBase, conductSubject, conductNoteOn20, conductResponsibleName]);
 
   const subjectCompsBySubject = useMemo(() => {
     const map = new Map<string, BulletinSubjectComponent[]>();
@@ -2758,6 +2805,8 @@ export default function BulletinsPage() {
                 institution={institution}
                 stats={stats}
                 conduct={conductByStudentId.get(it.student_id) || null}
+                conductLabel={conductSummary?.conduct_label || null}
+                conductTeacherName={conductSummary?.conduct_teacher_name || null}
                 conductRubricMax={conductRubricMax}
                 conductTotalMax={conductTotalMax}
                 signaturesEnabled={signaturesEnabled}

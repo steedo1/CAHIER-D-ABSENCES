@@ -357,6 +357,7 @@ export default function ConduitePage() {
   const [loading, setLoading] = useState(false);
   const [items, setItems] = useState<ConductItem[]>([]);
   const [classLabel, setClassLabel] = useState<string>("");
+  const [conductDisplayLabel, setConductDisplayLabel] = useState<string>("Conduite");
 
   // réglages de conduite (max par rubrique)
   const [conductSettings, setConductSettings] =
@@ -683,11 +684,13 @@ export default function ConduitePage() {
       if (!r.ok) throw new Error(j?.error || `HTTP ${r.status}`);
       setItems(j.items || []);
       setClassLabel(j.class_label || "");
+      setConductDisplayLabel(String(j.conduct_label || "Conduite").trim() || "Conduite");
       const tm = Number(j.total_max);
       setApiTotalMax(Number.isFinite(tm) && tm > 0 ? tm : null);
     } catch {
       setItems([]);
       setClassLabel("");
+      setConductDisplayLabel("Conduite");
     } finally {
       setLoading(false);
     }
@@ -1143,7 +1146,7 @@ export default function ConduitePage() {
       }
     }
 
-    const title = "Moyenne de conduite";
+    const title = `Moyenne de ${conductDisplayLabel.toLowerCase()}`;
 
     const institutionMetaParts = [
       institution?.institution_postal_address,
@@ -1748,7 +1751,7 @@ export default function ConduitePage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-semibold">Conduite — Moyennes par élève</h1>
+        <h1 className="text-2xl font-semibold">{conductDisplayLabel} — Moyennes par élève</h1>
         <p className="text-slate-600">
           Sélectionne l&apos;année scolaire, la période, le niveau et la classe.
           Clique sur Assiduité, Tenue, Moralité ou Discipline pour corriger une rubrique.
