@@ -2203,7 +2203,13 @@ export async function GET(req: NextRequest) {
     const name = s?.name || s?.code || "Matière";
     const info = coeffBySubject.get(sid);
     const coeffBulletin = info ? info.coeff : 1;
-    const includeInAverage = isCSCA && isCSCALatinOrReligionSubjectMeta(s)
+
+    // CSCA : Latin et Religion restent visibles sur le bulletin,
+    // mais ils ne participent PAS à la moyenne trimestrielle générale.
+    // Ils servent uniquement de composantes au calcul spécial de la conduite.
+    const isCSCAConductComponentOnly = isCSCA && isCSCALatinOrReligionSubjectMeta(s);
+
+    const includeInAverage = isCSCAConductComponentOnly
       ? false
       : shouldIncludeSubjectInGeneralAverage(
           sid,
@@ -2215,6 +2221,10 @@ export async function GET(req: NextRequest) {
       subject_name: name,
       coeff_bulletin: coeffBulletin,
       include_in_average: includeInAverage,
+
+      // Métadonnée front non cassante : permet d'afficher Latin/Religion
+      // avec une forme visuelle spéciale au CSCA, sans ajouter de texte sur le bulletin.
+      is_conduct_component_only: isCSCAConductComponentOnly,
     };
   });
 

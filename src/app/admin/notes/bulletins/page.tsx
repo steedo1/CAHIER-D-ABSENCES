@@ -49,6 +49,10 @@ type BulletinSubject = {
   subject_name: string;
   coeff_bulletin: number;
   include_in_average?: boolean;
+
+  // CSCA : Latin / Religion restent visibles, mais sont hors moyenne trimestrielle.
+  // Ils servent seulement au calcul spécial de la conduite.
+  is_conduct_component_only?: boolean | null;
 };
 
 type BulletinSubjectComponent = {
@@ -1611,6 +1615,8 @@ function StudentBulletinCard({
     const avg = cell?.avg20 ?? null;
     const hasAvg = avg !== null && avg !== undefined && Number.isFinite(Number(avg));
 
+    const excludedFromTermAverage = s.is_conduct_component_only === true;
+
     const effectiveCoeff =
       effectiveCoeffBySubjectId.get(s.subject_id) ??
       (s.subject_id === conductSubject?.subject_id
@@ -1634,18 +1640,26 @@ function StudentBulletinCard({
 
     const subComps = subjectCompsBySubject.get(s.subject_id) ?? [];
 
+    const specialRowClass = excludedFromTermAverage
+      ? "bg-slate-50 text-slate-700 italic"
+      : "";
+
     return (
       <React.Fragment key={s.subject_id}>
-        <tr>
-          <td className="bdr px-1 py-[1px]">{s.subject_name}</td>
+        <tr className={specialRowClass}>
+          <td className="bdr px-1 py-[1px]">
+            <span className={excludedFromTermAverage ? "font-semibold italic" : undefined}>
+              {s.subject_name}
+            </span>
+          </td>
           <td className="bdr px-1 py-[1px] text-center">
             {hasAvg ? formatNumber(avg) : "NC"}
           </td>
           <td className="bdr px-1 py-[1px] text-center">
-            {formatNumber(effectiveCoeff, 0)}
+            {excludedFromTermAverage ? "—" : formatNumber(effectiveCoeff, 0)}
           </td>
           <td className="bdr px-1 py-[1px] text-center">
-            {hasAvg ? formatNumber(moyCoeff) : "—"}
+            {excludedFromTermAverage ? "—" : hasAvg ? formatNumber(moyCoeff) : "—"}
           </td>
           <td className="bdr px-1 py-[1px] text-center">{subjectRankLabel}</td>
           <td className="bdr px-1 py-[1px]">{appreciationLabel}</td>
