@@ -2160,14 +2160,25 @@ export async function GET(req: NextRequest) {
   const subjectById = new Map<string, SubjectRow>();
   for (const s of subjects) subjectById.set(s.id, s);
 
+  const isCSCADisciplineComponentSubjectId = (subjectId: string): boolean => {
+    if (!isCSCA) return false;
+    const meta = subjectById.get(String(subjectId));
+    const key = normalizeAsciiToken(`${meta?.code ?? ""} ${meta?.name ?? ""}`);
+
+    /*
+     * CSCA : « Discipline » est le résultat des 4 rubriques de conduite
+     * (assiduité, retards/sanctions, tenue, moralité/discipline).
+     * Elle sert uniquement de composante interne pour calculer LA conduite finale
+     * avec Religion et Latin. Elle ne doit donc pas ressortir comme une 2e
+     * matière/ligne de bulletin.
+     */
+    return key.includes("discipline");
+  };
+
   const isConductSubjectId = (subjectId: string): boolean => {
     const meta = subjectById.get(String(subjectId));
     const key = normalizeAsciiToken(`${meta?.code ?? ""} ${meta?.name ?? ""}`);
-    return (
-      key.includes("conduite") ||
-      key.includes("conduct") ||
-      (isCSCA && key.includes("discipline"))
-    );
+    return key.includes("conduite") || key.includes("conduct");
   };
 
   // ordre final des matières (par nom)
@@ -2179,6 +2190,7 @@ export async function GET(req: NextRequest) {
     .map((s) => s.id)
     .filter((sid) => {
       if (!isUuid(sid)) return false;
+      if (isCSCADisciplineComponentSubjectId(sid)) return false;
       if (!hasAssignedSubjectsForClass) return true;
       if (assignedSubjectIds.has(sid)) return true;
       if (isConductSubjectId(sid)) return true;
@@ -2212,7 +2224,7 @@ export async function GET(req: NextRequest) {
   for (const s of subjectsForReport as any[]) {
     const meta = subjectById.get(String(s.subject_id));
     const key = normalizeAsciiToken(`${meta?.code ?? ""} ${meta?.name ?? ""}`);
-    if (key.includes("conduite") || key.includes("conduct") || (isCSCA && key.includes("discipline"))) {
+    if (key.includes("conduite") || key.includes("conduct")) {
       s.include_in_average = true;
       const c = Number(s.coeff_bulletin ?? 0);
       if (!c || c <= 0) s.coeff_bulletin = 1;
@@ -3103,7 +3115,9 @@ export async function GET(req: NextRequest) {
     }
 
     // 2) Charger le nom/code pour les matières manquantes
-    const annualOrderedSubjectIds = Array.from(annualSubjectIds).filter((sid) => isUuid(sid));
+    const annualOrderedSubjectIds = Array.from(annualSubjectIds).filter(
+      (sid) => isUuid(sid) && !isCSCADisciplineComponentSubjectId(sid),
+    );
     const missingMetaIds = annualOrderedSubjectIds.filter((sid) => !subjectById.has(sid));
     if (missingMetaIds.length) {
       const { data: addSubj, error: addSubjErr } = await srv
@@ -3148,12 +3162,13 @@ export async function GET(req: NextRequest) {
         return String(a.subject_id).localeCompare(String(b.subject_id));
       });
 
-    // ✅ Forcer Conduite incluse dans le calcul annuel
-    // CSCA : la même rubrique s'appelle Discipline.
+    // ✅ Forcer Conduite incluse dans le calcul annuel.
+    // CSCA : « Discipline » reste une composante interne de la conduite,
+    // pas une matière annuelle affichée/recalculée à part.
     for (const s of annualSubjectsForReport as any[]) {
       const meta = subjectById.get(String(s.subject_id));
       const key = normalizeAsciiToken(`${(meta as any)?.code ?? ""} ${(meta as any)?.name ?? ""}`);
-      if (key.includes("conduite") || key.includes("conduct") || (isCSCA && key.includes("discipline"))) {
+      if (key.includes("conduite") || key.includes("conduct")) {
         s.include_in_average = true;
         const c = Number(s.coeff_bulletin ?? 0);
         if (!c || c <= 0) s.coeff_bulletin = 1;

@@ -1074,7 +1074,6 @@ function isConductDisplaySubject(
   if (!label) return false;
 
   if (label.includes("conduite") || label.includes("conduct")) return true;
-  if (wanted.includes("discipline") && label.includes("discipline")) return true;
   return label === wanted;
 }
 
@@ -1260,8 +1259,11 @@ function StudentBulletinCard({
   const annualRank = item.annual_rank ?? null;
   const showAnnual = annualAvgOn20 !== null;
 
-  const conductDisplayLabel =
-    String(conductLabel || conduct?.conduct_label || "Conduite").trim() || "Conduite";
+  // Bulletin : on garde UNE SEULE ligne de conduite.
+  // Même au CSCA, « Discipline » reste la composante issue des 4 rubriques ;
+  // elle ne remplace pas le libellé final du bulletin et ne doit pas créer
+  // une deuxième ligne de conduite.
+  const conductDisplayLabel = "Conduite";
   const conductResponsibleName =
     String(conductTeacherName || conduct?.conduct_teacher_name || "").trim() || null;
 
