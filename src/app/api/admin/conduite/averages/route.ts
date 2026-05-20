@@ -443,19 +443,26 @@ async function loadSubjectAveragesForConductPolicy(
     const evalIds = Array.from(evalById.keys());
     if (evalIds.length === 0) return out;
 
-    const { data: gradeRows, error: gradeErr } = await srv
-      .from("student_grades")
+    /*
+     * Point crucial CSCA : la conduite composite doit utiliser exactement
+     * les mêmes notes officielles que le bulletin. On ne lit donc pas
+     * student_grades ici, car cette table peut contenir des notes brouillon
+     * ou non publiées. La source officielle est la vue utilisée pour les
+     * bulletins.
+     */
+    const { data: scoreRows, error: scoreErr } = await srv
+      .from("v_grade_scores_official_for_reports")
       .select("evaluation_id, student_id, score")
       .in("evaluation_id", evalIds)
       .in("student_id", studentIds);
 
-    if (gradeErr || !Array.isArray(gradeRows) || gradeRows.length === 0) {
+    if (scoreErr || !Array.isArray(scoreRows) || scoreRows.length === 0) {
       return out;
     }
 
     const acc = new Map<string, { sum: number; coeff: number }>();
 
-    for (const grade of gradeRows as any[]) {
+    for (const grade of scoreRows as any[]) {
       const evaluationId = String(grade.evaluation_id || "");
       const studentId = String(grade.student_id || "");
       const ev = evalById.get(evaluationId);

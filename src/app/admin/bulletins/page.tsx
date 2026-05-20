@@ -1362,11 +1362,16 @@ function StudentBulletinCard({
 
   const coeffTotal = useMemo(
     () =>
-      Array.from(effectiveCoeffBySubjectId.values()).reduce(
-        (acc, coeff) => acc + coeff,
-        0
-      ),
-    [effectiveCoeffBySubjectId]
+      subjectsForTable.reduce((acc, s) => {
+        if (
+          s.include_in_average === false &&
+          s.subject_id !== conductSubject?.subject_id
+        ) {
+          return acc;
+        }
+        return acc + (effectiveCoeffBySubjectId.get(s.subject_id) ?? 0);
+      }, 0),
+    [subjectsForTable, conductSubject, effectiveCoeffBySubjectId]
   );
 
   const computeDisplayedGroupStats = (
@@ -1376,6 +1381,16 @@ function StudentBulletinCard({
     let sumCoeff = 0;
 
     groupSubjects.forEach((s) => {
+      // Les matières configurées uniquement pour la conduite (ex. Religion/Latin)
+      // restent visibles au bulletin, mais ne doivent pas être recomptées dans le
+      // bilan du groupe si elles sont déjà intégrées à la ligne Conduite.
+      if (
+        s.include_in_average === false &&
+        s.subject_id !== conductSubject?.subject_id
+      ) {
+        return;
+      }
+
       const cell = perSubject.find((ps) => ps.subject_id === s.subject_id);
       const val = cell?.avg20;
 
