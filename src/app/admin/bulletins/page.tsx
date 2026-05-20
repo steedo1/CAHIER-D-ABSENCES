@@ -1652,8 +1652,14 @@ function StudentBulletinCard({
         ? round2(Number(avg) * effectiveCoeff)
         : null;
 
+    const isConductSubjectRow = s.subject_id === conductSubject?.subject_id;
+
     const subjectRankLabel =
-      hasAvg && cell && cell.subject_rank != null ? `${cell.subject_rank}e` : "NC";
+      isConductSubjectRow
+        ? "—"
+        : hasAvg && cell && cell.subject_rank != null
+          ? `${cell.subject_rank}e`
+          : "NC";
     const subjectTeacher = cell?.teacher_name || "";
     const appreciationLabel = hasAvg ? computeSubjectAppreciation(avg) : "Non classé";
 
