@@ -235,6 +235,28 @@ type ConductOverride = {
   edited_by: string | null;
 };
 
+type ConductRubricKey = "assiduite" | "tenue" | "moralite" | "discipline";
+
+type ConductRubricOverride = {
+  student_id: string;
+  rubric_key: ConductRubricKey;
+  override_value: number;
+  calculated_value: number | null;
+  updated_at: string | null;
+  edited_by: string | null;
+};
+
+const CONDUCT_RUBRIC_KEYS: ConductRubricKey[] = [
+  "assiduite",
+  "tenue",
+  "moralite",
+  "discipline",
+];
+
+function isConductRubricKey(value: unknown): value is ConductRubricKey {
+  return CONDUCT_RUBRIC_KEYS.includes(String(value) as ConductRubricKey);
+}
+
 
 type InstitutionConductPolicy = {
   mode: "standard" | "conduct_plus_subjects";
@@ -792,6 +814,66 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  // ───────────────── Corrections officielles par rubrique ─────────────────
+  //
+  // Nouveau fonctionnement privilégié : l'administration modifie Assiduité,
+  // Tenue, Moralité ou Discipline. Ces valeurs remplacent les rubriques
+  // calculées, puis la conduite classique et la conduite finale sont recalculées.
+  const rubricOverridesByStudent = new Map<
+    string,
+    Partial<Record<ConductRubricKey, ConductRubricOverride>>
+  >();
+
+  if (academic_year && period_code && studentIds.length > 0) {
+    try {
+      const { data: rubricRows, error: rubricErr } = await srv
+        .from("conduct_rubric_overrides")
+        .select(
+          `
+          student_id,
+          rubric_key,
+          override_value,
+          calculated_value,
+          updated_at,
+          edited_by
+        `,
+        )
+        .eq("institution_id", institution_id)
+        .eq("class_id", class_id)
+        .eq("academic_year", academic_year)
+        .eq("period_code", period_code)
+        .in("student_id", studentIds);
+
+      if (!rubricErr && Array.isArray(rubricRows)) {
+        for (const row of rubricRows as any[]) {
+          const sid = String(row.student_id || "");
+          const keyRaw = row.rubric_key;
+          const overrideValue = Number(row.override_value);
+
+          if (!sid || !isConductRubricKey(keyRaw) || !Number.isFinite(overrideValue)) {
+            continue;
+          }
+
+          const current = rubricOverridesByStudent.get(sid) || {};
+          current[keyRaw] = {
+            student_id: sid,
+            rubric_key: keyRaw,
+            override_value: Number(overrideValue.toFixed(2)),
+            calculated_value:
+              row.calculated_value === null || row.calculated_value === undefined
+                ? null
+                : Number(row.calculated_value),
+            updated_at: row.updated_at ?? null,
+            edited_by: row.edited_by ?? null,
+          };
+          rubricOverridesByStudent.set(sid, current);
+        }
+      }
+    } catch {
+      // Sécurité : si la table n'existe pas encore, on garde l'ancien calcul.
+    }
+  }
+
   // Minutes d'absences + retards via route centralisée
   const minutesMap = new Map<string, MinutesRec>();
 
@@ -1084,7 +1166,40 @@ export async function GET(req: NextRequest) {
         rubric_max.discipline,
       );
 
-      // Total automatique
+      const calculatedBreakdown = {
+        assiduite: Number(assiduite.toFixed(2)),
+        tenue: Number(tenue.toFixed(2)),
+        moralite: Number(moralite.toFixed(2)),
+        discipline: Number(discipline.toFixed(2)),
+      };
+
+      // ✅ Application des corrections par rubrique avant le total classique.
+      const rubricOverrides = rubricOverridesByStudent.get(student_id) || {};
+
+      assiduite = rubricOverrides.assiduite
+        ? clamp(rubricOverrides.assiduite.override_value, 0, rubric_max.assiduite)
+        : assiduite;
+
+      tenue = rubricOverrides.tenue
+        ? clamp(rubricOverrides.tenue.override_value, 0, rubric_max.tenue)
+        : tenue;
+
+      moralite = rubricOverrides.moralite
+        ? clamp(rubricOverrides.moralite.override_value, 0, rubric_max.moralite)
+        : moralite;
+
+      discipline = rubricOverrides.discipline
+        ? clamp(rubricOverrides.discipline.override_value, 0, rubric_max.discipline)
+        : discipline;
+
+      const finalBreakdown = {
+        assiduite: Number(assiduite.toFixed(2)),
+        tenue: Number(tenue.toFixed(2)),
+        moralite: Number(moralite.toFixed(2)),
+        discipline: Number(discipline.toFixed(2)),
+      };
+
+      // Total automatique après éventuelles corrections de rubriques
       let automaticTotal = assiduite + tenue + moralite + discipline;
 
       const hasCouncil = evs.some(
@@ -1142,12 +1257,10 @@ export async function GET(req: NextRequest) {
         student_id,
         full_name,
 
-        breakdown: {
-          assiduite: Number(assiduite.toFixed(2)),
-          tenue: Number(tenue.toFixed(2)),
-          moralite: Number(moralite.toFixed(2)),
-          discipline: Number(discipline.toFixed(2)),
-        },
+        breakdown: finalBreakdown,
+        calculated_breakdown: calculatedBreakdown,
+        rubric_overrides: rubricOverrides,
+        has_rubric_overrides: Object.keys(rubricOverrides).length > 0,
 
         // ✅ total reste le champ principal utilisé par les bulletins/exportations.
         // Désormais : total = moyenne finale officielle.

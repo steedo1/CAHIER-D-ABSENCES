@@ -1962,15 +1962,6 @@ function StudentBulletinCard({
                 Retards :{" "}
                 <span className="font-semibold">{conduct.tardy_count ?? 0}</span>
               </div>
-              <div className="pt-[2px]">
-                Note de conduite :{" "}
-                <span className="font-semibold">
-                  {conductNoteOn20 !== null
-                    ? `${formatNumber(conductNoteOn20)} / 20`
-                    : "—"}
-                </span>
-              </div>
-
               {conductRubricMax && conduct?.breakdown && (
                 <div className="mt-1 grid grid-cols-2 gap-x-2 gap-y-[2px] text-[8px] text-slate-700">
                   <div>

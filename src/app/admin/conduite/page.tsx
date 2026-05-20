@@ -125,15 +125,29 @@ function generatedAtLabel() {
 /* Types */
 type ClassItem = { id: string; name: string; level: string };
 
+type RubricKey = "assiduite" | "tenue" | "moralite" | "discipline";
+
+type RubricOverrideInfo = {
+  calculated_value?: number | null;
+  override_value?: number | null;
+  updated_at?: string | null;
+  edited_by?: string | null;
+};
+
+const RUBRIC_LABELS: Record<RubricKey, string> = {
+  assiduite: "Assiduité",
+  tenue: "Tenue",
+  moralite: "Moralité",
+  discipline: "Discipline",
+};
+
 type ConductItem = {
   student_id: string;
   full_name: string;
-  breakdown: {
-    assiduite: number;
-    tenue: number;
-    moralite: number;
-    discipline: number;
-  };
+  breakdown: Record<RubricKey, number>;
+  calculated_breakdown?: Partial<Record<RubricKey, number>> | null;
+  rubric_overrides?: Partial<Record<RubricKey, RubricOverrideInfo>> | null;
+  has_rubric_overrides?: boolean;
   total: number;
   calculated_total?: number | null;
   override_total?: number | null;
@@ -358,11 +372,22 @@ export default function ConduitePage() {
     null,
   );
 
-  // Modification officielle de la moyenne finale
+  // Ancienne modification directe de moyenne finale : conservée côté code,
+  // mais l'usage principal devient la modification par rubriques.
   const [editingItem, setEditingItem] = useState<ConductItem | null>(null);
   const [editValue, setEditValue] = useState("");
   const [savingOverride, setSavingOverride] = useState(false);
   const [overrideError, setOverrideError] = useState<string | null>(null);
+
+  // Modification officielle par rubrique : Assiduité / Tenue / Moralité / Discipline
+  const [editingRubric, setEditingRubric] = useState<{
+    item: ConductItem;
+    key: RubricKey;
+  } | null>(null);
+  const [rubricEditValue, setRubricEditValue] = useState("");
+  const [savingRubricOverride, setSavingRubricOverride] = useState(false);
+  const [rubricOverrideError, setRubricOverrideError] = useState<string | null>(null);
+
   const [notice, setNotice] = useState<string | null>(null);
 
   /* ───────── Chargement classes ───────── */
@@ -684,6 +709,208 @@ export default function ConduitePage() {
     });
     return list;
   }, [items]);
+
+  function rubricMax(key: RubricKey) {
+    if (key === "assiduite") return maxes.ass;
+    if (key === "tenue") return maxes.ten;
+    if (key === "moralite") return maxes.mor;
+    return maxes.dis;
+  }
+
+  function calculatedRubricValue(item: ConductItem, key: RubricKey) {
+    const fromApi = item.calculated_breakdown?.[key];
+    if (fromApi !== null && fromApi !== undefined && Number.isFinite(Number(fromApi))) {
+      return Number(fromApi);
+    }
+    return Number(item.breakdown?.[key] ?? 0);
+  }
+
+  function hasRubricOverride(item: ConductItem, key: RubricKey) {
+    const ov = item.rubric_overrides?.[key];
+    return !!ov && ov.override_value !== null && ov.override_value !== undefined;
+  }
+
+  function openRubricEditModal(item: ConductItem, key: RubricKey) {
+    if (!canEditOfficialAverage) {
+      setNotice(
+        "Sélectionne d'abord une année scolaire et une période précise avant de modifier une rubrique.",
+      );
+      return;
+    }
+
+    const max = rubricMax(key);
+    if (max <= 0) {
+      setNotice(`${RUBRIC_LABELS[key]} n'est pas active dans ce paramétrage de conduite.`);
+      return;
+    }
+
+    setEditingRubric({ item, key });
+    setRubricEditValue(fmtNote(item.breakdown?.[key] ?? 0));
+    setRubricOverrideError(null);
+    setNotice(null);
+  }
+
+  function closeRubricEditModal() {
+    if (savingRubricOverride) return;
+    setEditingRubric(null);
+    setRubricEditValue("");
+    setRubricOverrideError(null);
+  }
+
+  async function saveRubricOverride() {
+    if (!editingRubric || !classId) return;
+
+    if (!selectedAcademicYear || !selectedPeriodCode) {
+      setRubricOverrideError(
+        "Sélectionne une année scolaire et une période avant d'enregistrer.",
+      );
+      return;
+    }
+
+    const { item, key } = editingRubric;
+    const max = rubricMax(key);
+    const n = parseFrenchNumber(rubricEditValue);
+
+    if (!Number.isFinite(n)) {
+      setRubricOverrideError("Saisis une valeur valide.");
+      return;
+    }
+
+    if (n < 0 || n > max) {
+      setRubricOverrideError(`La valeur doit être comprise entre 0 et ${max}.`);
+      return;
+    }
+
+    setSavingRubricOverride(true);
+    setRubricOverrideError(null);
+    setNotice(null);
+
+    try {
+      const res = await fetch("/api/admin/conduite/rubric-overrides", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        cache: "no-store",
+        body: JSON.stringify({
+          class_id: classId,
+          student_id: item.student_id,
+          academic_year: selectedAcademicYear,
+          period_code: selectedPeriodCode,
+          rubric_key: key,
+          from_date: from || null,
+          to_date: to || null,
+          calculated_value: calculatedRubricValue(item, key),
+          override_value: n,
+        }),
+      });
+
+      const raw = await res.text();
+      let j: any = {};
+      try {
+        j = raw ? JSON.parse(raw) : {};
+      } catch {
+        j = {};
+      }
+
+      if (!res.ok || !j?.ok) {
+        throw new Error(j?.message || j?.error || raw || `Erreur HTTP ${res.status}`);
+      }
+
+      closeRubricEditModal();
+      setNotice(`${RUBRIC_LABELS[key]} enregistrée.`);
+      await validate();
+    } catch (e: any) {
+      console.error("[Conduite] Erreur enregistrement rubrique", e);
+      setRubricOverrideError(e?.message || "Impossible d'enregistrer la rubrique.");
+    } finally {
+      setSavingRubricOverride(false);
+    }
+  }
+
+  async function resetRubricOverride(item: ConductItem, key: RubricKey) {
+    if (!classId || !selectedAcademicYear || !selectedPeriodCode) {
+      setNotice(
+        "Sélectionne d'abord une année scolaire et une période précise avant de réinitialiser.",
+      );
+      return;
+    }
+
+    const ok = window.confirm(
+      `Réinitialiser ${RUBRIC_LABELS[key]} de ${nomPrenom(item.full_name)} au calcul automatique ?`,
+    );
+
+    if (!ok) return;
+
+    setSavingRubricOverride(true);
+    setNotice(null);
+
+    try {
+      const res = await fetch("/api/admin/conduite/rubric-overrides", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        cache: "no-store",
+        body: JSON.stringify({
+          class_id: classId,
+          student_id: item.student_id,
+          academic_year: selectedAcademicYear,
+          period_code: selectedPeriodCode,
+          rubric_key: key,
+        }),
+      });
+
+      const j = await res.json().catch(() => ({}));
+
+      if (!res.ok || !j?.ok) {
+        throw new Error(j?.error || "Impossible de réinitialiser la rubrique.");
+      }
+
+      setNotice(`${RUBRIC_LABELS[key]} réinitialisée au calcul automatique.`);
+      await validate();
+    } catch (e: any) {
+      setNotice(e?.message || "Impossible de réinitialiser la rubrique.");
+    } finally {
+      setSavingRubricOverride(false);
+    }
+  }
+
+  function renderRubricCell(item: ConductItem, key: RubricKey) {
+    const modified = hasRubricOverride(item, key);
+    const max = rubricMax(key);
+
+    return (
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => openRubricEditModal(item, key)}
+          disabled={!canEditOfficialAverage || savingRubricOverride || max <= 0}
+          className={[
+            "rounded-lg px-2 py-1 text-left font-medium transition",
+            modified
+              ? "bg-amber-50 text-amber-800 ring-1 ring-amber-200"
+              : "hover:bg-slate-100",
+            !canEditOfficialAverage || max <= 0 ? "cursor-not-allowed opacity-70" : "",
+          ].join(" ")}
+          title={
+            max <= 0
+              ? `${RUBRIC_LABELS[key]} non active`
+              : `Modifier ${RUBRIC_LABELS[key]}`
+          }
+        >
+          {fmtNote(item.breakdown?.[key] ?? 0)}
+        </button>
+        {modified && (
+          <button
+            type="button"
+            onClick={() => resetRubricOverride(item, key)}
+            disabled={savingRubricOverride}
+            className="rounded-full bg-white px-2 py-0.5 text-[10px] font-semibold text-rose-700 ring-1 ring-rose-200 hover:bg-rose-50"
+            title={`Réinitialiser ${RUBRIC_LABELS[key]}`}
+          >
+            ×
+          </button>
+        )}
+      </div>
+    );
+  }
 
   function openEditModal(item: ConductItem) {
     if (!canEditOfficialAverage) {
@@ -1524,8 +1751,8 @@ export default function ConduitePage() {
         <h1 className="text-2xl font-semibold">Conduite — Moyennes par élève</h1>
         <p className="text-slate-600">
           Sélectionne l&apos;année scolaire, la période, le niveau et la classe.
-          La moyenne affichée est la moyenne finale officielle : calcul automatique
-          ou correction administrative si elle existe.
+          Clique sur Assiduité, Tenue, Moralité ou Discipline pour corriger une rubrique.
+          La moyenne finale officielle est ensuite recalculée automatiquement.
         </p>
       </div>
 
@@ -1753,16 +1980,16 @@ export default function ConduitePage() {
                           {nomPrenom(it.full_name)}
                         </td>
                         <td className="px-3 py-2">
-                          {fmtNote(it.breakdown.assiduite)}
+                          {renderRubricCell(it, "assiduite")}
                         </td>
                         <td className="px-3 py-2">
-                          {fmtNote(it.breakdown.tenue)}
+                          {renderRubricCell(it, "tenue")}
                         </td>
                         <td className="px-3 py-2">
-                          {fmtNote(it.breakdown.moralite)}
+                          {renderRubricCell(it, "moralite")}
                         </td>
                         <td className="px-3 py-2">
-                          {fmtNote(it.breakdown.discipline)}
+                          {renderRubricCell(it, "discipline")}
                         </td>
                         <td className="px-3 py-2 text-slate-600">
                           {fmtNote(calculated)}
@@ -1771,9 +1998,13 @@ export default function ConduitePage() {
                           {fmtNote(it.total)}
                         </td>
                         <td className="px-3 py-2">
-                          {it.is_overridden ? (
+                          {it.has_rubric_overrides ? (
                             <span className="rounded-full bg-amber-100 px-2 py-1 text-[11px] font-semibold text-amber-800">
-                              Modifiée
+                              Rubrique modifiée
+                            </span>
+                          ) : it.is_overridden ? (
+                            <span className="rounded-full bg-orange-100 px-2 py-1 text-[11px] font-semibold text-orange-800">
+                              Moyenne modifiée
                             </span>
                           ) : (
                             <span className="rounded-full bg-slate-100 px-2 py-1 text-[11px] font-semibold text-slate-600">
@@ -1781,30 +2012,21 @@ export default function ConduitePage() {
                             </span>
                           )}
                         </td>
-                        <td className="px-3 py-2">
-                          <div className="flex justify-end gap-2">
+                        <td className="px-3 py-2 text-right">
+                          {it.is_overridden ? (
                             <Button
                               type="button"
-                              onClick={() => openEditModal(it)}
+                              onClick={() => resetOverride(it)}
                               disabled={!canEditOfficialAverage || savingOverride}
-                              className="bg-slate-900 px-3 py-1.5 text-xs hover:bg-slate-800"
+                              className="bg-white px-3 py-1.5 text-xs !text-rose-700 ring-1 ring-rose-200 hover:bg-rose-50"
                             >
-                              Modifier
+                              Réinitialiser moyenne
                             </Button>
-
-                            {it.is_overridden && (
-                              <Button
-                                type="button"
-                                onClick={() => resetOverride(it)}
-                                disabled={
-                                  !canEditOfficialAverage || savingOverride
-                                }
-                                className="bg-white px-3 py-1.5 text-xs text-rose-700 ring-1 ring-rose-200 hover:bg-rose-50"
-                              >
-                                Réinitialiser
-                              </Button>
-                            )}
-                          </div>
+                          ) : (
+                            <span className="text-[11px] text-slate-500">
+                              Clique une rubrique
+                            </span>
+                          )}
                         </td>
                       </tr>
                     );
@@ -1815,6 +2037,79 @@ export default function ConduitePage() {
           </div>
         )}
       </Card>
+
+      {editingRubric && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 px-4">
+          <div className="w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl">
+            <div className="mb-3">
+              <div className="text-lg font-semibold text-slate-900">
+                Modifier {RUBRIC_LABELS[editingRubric.key]}
+              </div>
+              <div className="mt-1 text-sm text-slate-600">
+                {nomPrenom(editingRubric.item.full_name)}
+              </div>
+            </div>
+
+            <div className="rounded-xl border bg-slate-50 p-3 text-sm">
+              <div className="flex justify-between gap-3">
+                <span className="text-slate-500">Valeur calculée</span>
+                <b>
+                  {fmtNote(calculatedRubricValue(editingRubric.item, editingRubric.key))}
+                  /{rubricMax(editingRubric.key)}
+                </b>
+              </div>
+              <div className="mt-1 flex justify-between gap-3">
+                <span className="text-slate-500">Valeur actuelle</span>
+                <b>
+                  {fmtNote(editingRubric.item.breakdown?.[editingRubric.key] ?? 0)}/
+                  {rubricMax(editingRubric.key)}
+                </b>
+              </div>
+            </div>
+
+            <div className="mt-4">
+              <div className="mb-1 text-xs font-medium text-slate-600">
+                Nouvelle valeur
+              </div>
+              <Input
+                value={rubricEditValue}
+                onChange={(e) => setRubricEditValue(e.target.value)}
+                inputMode="decimal"
+                placeholder="Ex : 19,50"
+                autoFocus
+              />
+              <div className="mt-1 text-[11px] text-slate-500">
+                Valeur comprise entre 0 et {rubricMax(editingRubric.key)}.
+                La moyenne finale sera recalculée automatiquement.
+              </div>
+            </div>
+
+            {rubricOverrideError && (
+              <div className="mt-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+                {rubricOverrideError}
+              </div>
+            )}
+
+            <div className="mt-5 flex justify-end gap-2">
+              <Button
+                type="button"
+                onClick={closeRubricEditModal}
+                disabled={savingRubricOverride}
+                className="bg-white !text-slate-700 ring-1 ring-slate-200 hover:bg-slate-50"
+              >
+                Annuler
+              </Button>
+              <Button
+                type="button"
+                onClick={saveRubricOverride}
+                disabled={savingRubricOverride}
+              >
+                {savingRubricOverride ? "Enregistrement…" : "Enregistrer"}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {editingItem && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 px-4">
