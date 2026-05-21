@@ -260,14 +260,15 @@ export async function GET(req: NextRequest, context: { params: Promise<{ id: str
       }),
     );
 
-  const institution = institutionRes.data || {};
+  const institution = (institutionRes.data || {}) as Record<string, any>;
+  const rawSettings = institution.settings_json;
   const settings =
-    institution?.settings_json && typeof institution.settings_json === "object"
-      ? institution.settings_json
+    rawSettings && typeof rawSettings === "object" && !Array.isArray(rawSettings)
+      ? (rawSettings as Record<string, any>)
       : {};
   const institutionName =
-    String(institution?.name || "").trim() ||
-    String(settings?.institution_name || settings?.school_name || settings?.name || "").trim();
+    String(institution.name || "").trim() ||
+    String(settings.institution_name || settings.school_name || settings.name || "").trim();
 
   return NextResponse.json({
     ok: true,
