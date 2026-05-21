@@ -1928,7 +1928,7 @@ export default function ConseilClassePage() {
         .pv-page {
           width: 210mm;
           min-height: 297mm;
-          padding: 7mm 8mm 8mm;
+          padding: 4mm 7mm 7mm;
           box-sizing: border-box;
           background: #fff;
           color: #10233f;
@@ -1946,7 +1946,53 @@ export default function ConseilClassePage() {
         }
 
         .pv-page.compact {
-          padding-top: 6mm;
+          padding-top: 4mm;
+        }
+
+        .pv-brand-footer {
+          margin-top: auto;
+          padding-top: 6px;
+          border-top: 1px solid #b7c3d4;
+          text-align: center;
+          color: #0f274f;
+          font-size: 9px;
+          line-height: 1.25;
+          letter-spacing: 0.02em;
+        }
+
+        .pv-brand-footer strong {
+          display: block;
+          font-size: 10px;
+          letter-spacing: 0.08em;
+        }
+
+        .pv-members-page {
+          page-break-before: always;
+          break-before: page;
+        }
+
+        .pv-members-table,
+        .pv-members-table tr,
+        .pv-members-table td,
+        .pv-members-table th {
+          page-break-inside: avoid;
+          break-inside: avoid;
+        }
+
+        .pv-members-table td {
+          padding-top: 3px;
+          padding-bottom: 3px;
+        }
+
+        .pv-emargement-line {
+          min-height: 24px;
+          display: flex;
+          align-items: flex-end;
+        }
+
+        .pv-signature-zone {
+          page-break-inside: avoid;
+          break-inside: avoid;
         }
 
         .pv-grid-table {
@@ -2042,7 +2088,7 @@ export default function ConseilClassePage() {
         @media print {
           @page {
             size: A4 portrait;
-            margin: 4mm;
+            margin: 0;
           }
 
           html,
@@ -2077,6 +2123,9 @@ export default function ConseilClassePage() {
           .pv-page {
             box-shadow: none !important;
             margin: 0 auto !important;
+            width: 210mm !important;
+            min-height: 297mm !important;
+            padding-top: 4mm !important;
             page-break-after: always;
             break-after: page;
           }
@@ -2468,6 +2517,8 @@ export default function ConseilClassePage() {
                   </div>
                 </div>
               </div>
+
+              <BrandFooter />
             </div>
 
             <div className="pv-page compact">
@@ -2520,20 +2571,31 @@ export default function ConseilClassePage() {
                 </div>
               </div>
 
-              <div className="mt-3">
-                <OfficialBand>Membres du conseil</OfficialBand>
-                <div className="mt-1 border p-3 text-[11px]" style={{ borderColor: "var(--pv-grid)", background: "var(--pv-soft)" }}>
-                  <div className="mb-2 font-semibold uppercase"></div>
-                  <div className="pv-line-field" />
-                </div>
+              <BrandFooter />
+            </div>
 
-                <table className="pv-grid-table mt-2 pv-mini">
+            <div className="pv-page pv-members-page compact">
+              <OfficialHeader
+                institution={institution}
+                classLabel={currentClassLabel}
+                title={`MEMBRES DU CONSEIL ET ÉMARGEMENTS — ${String(currentClassLabel || "").toUpperCase()}`}
+              />
+
+              <div className="mt-2 grid grid-cols-3 gap-3 text-[11px]">
+                <div><strong>Classe :</strong> {currentClassLabel}</div>
+                <div className="text-center"><strong>Période :</strong> {currentPeriodLabel}</div>
+                <div className="text-right"><strong>Année :</strong> {currentAcademicYear}</div>
+              </div>
+
+              <div className="mt-3 flex-1">
+                <OfficialBand>Enseignants et émargements</OfficialBand>
+                <table className="pv-grid-table pv-members-table mt-1 pv-mini">
                   <thead>
                     <tr>
                       <th style={{ width: "7%" }}>No</th>
-                      <th style={{ width: "34%" }}>Enseignant</th>
+                      <th style={{ width: "35%" }}>Enseignant</th>
                       <th style={{ width: "33%" }}>Discipline(s)</th>
-                      <th style={{ width: "26%" }}>Émargement</th>
+                      <th style={{ width: "25%" }}>Émargement</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -2543,7 +2605,7 @@ export default function ConseilClassePage() {
                         <OfficialTd strong>{row.teacherName}</OfficialTd>
                         <OfficialTd>{row.subjectsLabel || "—"}</OfficialTd>
                         <OfficialTd>
-                          <div className="min-h-[36px] flex items-end">
+                          <div className="pv-emargement-line">
                             <div className="w-full border-b border-slate-400" />
                           </div>
                         </OfficialTd>
@@ -2556,7 +2618,7 @@ export default function ConseilClassePage() {
                         <OfficialTd>&nbsp;</OfficialTd>
                         <OfficialTd>&nbsp;</OfficialTd>
                         <OfficialTd>
-                          <div className="min-h-[36px] flex items-end">
+                          <div className="pv-emargement-line">
                             <div className="w-full border-b border-slate-400" />
                           </div>
                         </OfficialTd>
@@ -2566,11 +2628,11 @@ export default function ConseilClassePage() {
                 </table>
               </div>
 
-              <div className="mt-auto pt-4">
+              <div className="pv-signature-zone mt-auto pt-4">
                 <div className="grid grid-cols-2 items-end gap-10 text-[12px]">
                   <div>
                     <div className="mb-1 font-semibold">Professeur principal</div>
-                    <div className="h-16 border-b border-slate-400" />
+                    <div className="h-14 border-b border-slate-400" />
                     <div className="pt-2 text-[13px]">{currentHeadTeacher || "—"}</div>
                   </div>
 
@@ -2581,11 +2643,13 @@ export default function ConseilClassePage() {
                         : formatDateFR(councilDate)}
                     </div>
                     <div className="mb-1 font-semibold">{institution?.institution_head_title || "Le Directeur"}</div>
-                    <div className="ml-auto h-16 w-full border-b border-slate-400" />
+                    <div className="ml-auto h-14 w-full border-b border-slate-400" />
                     <div className="pt-2 text-[13px]">{chairName || institution?.institution_head_name || "—"}</div>
                   </div>
                 </div>
               </div>
+
+              <BrandFooter />
             </div>
 
 
@@ -2711,6 +2775,8 @@ export default function ConseilClassePage() {
                     </div>
                   </div>
                 </div>
+
+                <BrandFooter />
               </div>
             ) : null}
           </div>
@@ -2799,14 +2865,20 @@ function OfficialHeader({
           </div>
         ) : null}
 
-        <div className="mt-[3px] inline-flex items-center justify-center rounded-full border border-emerald-200 bg-emerald-50 px-3 py-[2px] text-[8.5px] font-bold uppercase tracking-[0.08em] text-emerald-800">
-          Nexa Digital SARL • www.mon-cahier.com
-        </div>
       </div>
 
       <h1 className="mt-2 border-y border-[#9fb0c8] bg-[#dfe6ef] py-1 text-center text-[15px] font-black uppercase tracking-[0.03em] text-[#0f274f]">
         {title}
       </h1>
+    </div>
+  );
+}
+
+function BrandFooter() {
+  return (
+    <div className="pv-brand-footer">
+      <strong>WWW.MON-CAHIER.COM</strong>
+      <span>La plateforme idéale pour une école connectée, l’école du futur.</span>
     </div>
   );
 }
