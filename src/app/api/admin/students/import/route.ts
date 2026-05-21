@@ -419,6 +419,7 @@ export async function POST(req: NextRequest) {
     birthdate: string | null;
     birth_place: string | null;
     nationality: string | null;
+    lv2: string | null;
     regime: string | null;
     is_repeater: boolean | null;
     is_boarder: boolean | null;
@@ -433,7 +434,7 @@ export async function POST(req: NextRequest) {
     const { data: existing, error: exErr } = await srv
       .from("students")
       .select(
-        "id, matricule, full_name_key, first_name, last_name, gender, birthdate, birth_place, nationality, regime, is_repeater, is_boarder, is_affecte, photo_url",
+        "id, matricule, full_name_key, first_name, last_name, gender, birthdate, birth_place, nationality, lv2, regime, is_repeater, is_boarder, is_affecte, photo_url",
       )
       .eq("institution_id", inst)
       .in("matricule", wantedMatr);
@@ -455,6 +456,7 @@ export async function POST(req: NextRequest) {
         birthdate: row.birthdate ?? null,
         birth_place: row.birth_place ?? null,
         nationality: row.nationality ?? null,
+        lv2: row.lv2 ?? null,
         regime: row.regime ?? null,
         is_repeater:
           typeof row.is_repeater === "boolean" ? row.is_repeater : null,
@@ -471,7 +473,7 @@ export async function POST(req: NextRequest) {
     const { data: existing2, error: exErr2 } = await srv
       .from("students")
       .select(
-        "id, matricule, full_name_key, first_name, last_name, gender, birthdate, birth_place, nationality, regime, is_repeater, is_boarder, is_affecte, photo_url",
+        "id, matricule, full_name_key, first_name, last_name, gender, birthdate, birth_place, nationality, lv2, regime, is_repeater, is_boarder, is_affecte, photo_url",
       )
       .eq("institution_id", inst)
       .in("full_name_key", wantedNameKeys);
@@ -494,6 +496,7 @@ export async function POST(req: NextRequest) {
         birthdate: row.birthdate ?? null,
         birth_place: row.birth_place ?? null,
         nationality: row.nationality ?? null,
+        lv2: row.lv2 ?? null,
         regime: row.regime ?? null,
         is_repeater:
           typeof row.is_repeater === "boolean" ? row.is_repeater : null,
@@ -524,6 +527,7 @@ export async function POST(req: NextRequest) {
       birthdate: r.birthdate || null,
       birth_place: r.birth_place || null,
       nationality: r.nationality || null,
+      lv2: r.lv2 || null,
       regime: r.regime || null,
       is_repeater: r.is_repeater ?? null,
       is_boarder: r.is_boarder ?? null,
@@ -537,7 +541,7 @@ export async function POST(req: NextRequest) {
     const { data: createdRows, error: e1 } = await srv
       .from("students")
       .insert(toInsert)
-      .select("id, matricule, full_name_key, first_name, last_name, photo_url");
+      .select("id, matricule, full_name_key, first_name, last_name, gender, birthdate, birth_place, nationality, lv2, regime, is_repeater, is_boarder, is_affecte, photo_url");
 
     if (e1) return NextResponse.json({ error: e1.message }, { status: 400 });
 
@@ -553,14 +557,15 @@ export async function POST(req: NextRequest) {
         full_name_key: row.full_name_key ?? null,
         first_name: row.first_name ?? null,
         last_name: row.last_name ?? null,
-        gender: null,
-        birthdate: null,
-        birth_place: null,
-        nationality: null,
-        regime: null,
-        is_repeater: null,
-        is_boarder: null,
-        is_affecte: null,
+        gender: row.gender ?? null,
+        birthdate: row.birthdate ?? null,
+        birth_place: row.birth_place ?? null,
+        nationality: row.nationality ?? null,
+        lv2: row.lv2 ?? null,
+        regime: row.regime ?? null,
+        is_repeater: typeof row.is_repeater === "boolean" ? row.is_repeater : null,
+        is_boarder: typeof row.is_boarder === "boolean" ? row.is_boarder : null,
+        is_affecte: typeof row.is_affecte === "boolean" ? row.is_affecte : null,
         photo_url: row.photo_url ?? null,
       };
     }
@@ -588,6 +593,7 @@ export async function POST(req: NextRequest) {
       patch.birth_place = r.birth_place;
     if (r.nationality && r.nationality !== (cur.nationality ?? ""))
       patch.nationality = r.nationality;
+    if (r.lv2 && r.lv2 !== (cur.lv2 ?? "")) patch.lv2 = r.lv2;
     if (r.regime && r.regime !== (cur.regime ?? "")) patch.regime = r.regime;
 
     if (typeof r.is_repeater === "boolean" && r.is_repeater !== cur.is_repeater)
@@ -767,55 +773,11 @@ export async function POST(req: NextRequest) {
     insertedTarget = (data ?? []).length;
   }
 
-  // 9) Compléments pour la liste de classe (LV2 notamment).
-  // La table est indépendante pour ne pas casser les autres modules élèves.
-  let rosterDetailsUpdated = 0;
-  {
-    const detailsRows: any[] = [];
-
-    function pushDetail(r: ParsedStudentRow, studentId: string | undefined) {
-      if (!studentId) return;
-      const lv2 = String(r.lv2 || "").trim().toUpperCase();
-      if (!lv2) return;
-      detailsRows.push({
-        institution_id: inst,
-        student_id: studentId,
-        lv2,
-        updated_at: new Date().toISOString(),
-      });
-    }
-
-    for (const r of parsed) {
-      const m = String(r.matricule || "").trim();
-      if (m) {
-        pushDetail(r, existingByMat[m]?.id);
-        continue;
-      }
-      const key = String(r.full_name_key || "").trim();
-      if (!key) continue;
-      const matches = existingByNameKey.get(key) || [];
-      if (matches.length === 1) pushDetail(r, matches[0].id);
-    }
-
-    if (detailsRows.length) {
-      const { data, error } = await srv
-        .from("student_roster_details")
-        .upsert(detailsRows, { onConflict: "institution_id,student_id" })
-        .select("student_id");
-
-      if (error) {
-        return NextResponse.json(
-          {
-            error:
-              "La colonne LV2 est bien détectée, mais la table student_roster_details est absente. Exécute la migration 20260521_student_roster_details.sql dans Supabase, puis relance l’import.",
-            details: error.message,
-          },
-          { status: 400 },
-        );
-      }
-      rosterDetailsUpdated = (data ?? []).length;
-    }
-  }
+  // 9) Les champs officiels élève (sexe, naissance, nationalité, redoublant, LV2)
+  // sont maintenant écrits directement dans public.students.
+  // Ainsi les bulletins, conseils de classe, DESPS et autres exports peuvent les récupérer
+  // depuis la source principale, sans table parallèle.
+  const studentFieldsUpdated = updatedCount + updatedByName + createdCount;
 
   try {
     console.log("[students/import] commit", {
@@ -827,7 +789,7 @@ export async function POST(req: NextRequest) {
       closedOld,
       reactivated,
       insertedTarget,
-      rosterDetailsUpdated,
+      studentFieldsUpdated,
     });
   } catch {}
 
@@ -839,6 +801,6 @@ export async function POST(req: NextRequest) {
     closed_old_enrollments: closedOld,
     reactivated_in_target: reactivated,
     inserted_in_target: insertedTarget,
-    roster_details_updated: rosterDetailsUpdated,
+    student_fields_updated: studentFieldsUpdated,
   });
 }

@@ -13,16 +13,6 @@ type ProfileMini = {
   phone: string | null;
 };
 
-type RosterDetail = {
-  student_id: string;
-  gender: string | null;
-  birthdate: string | null;
-  birth_place: string | null;
-  nationality: string | null;
-  is_repeater: boolean | null;
-  lv2: string | null;
-};
-
 function fullName(row: any) {
   const direct = String(row?.full_name || "").trim();
   if (direct) return direct;
@@ -253,39 +243,6 @@ async function requireAdminContext(classId: string) {
   return { supa, srv, user, me, institutionId, cls };
 }
 
-async function loadRosterDetails(institutionId: string, studentIds: string[]) {
-  const srv = getSupabaseServiceClient();
-  const map = new Map<string, RosterDetail>();
-
-  if (!studentIds.length) return map;
-
-  const { data, error } = await srv
-    .from("student_roster_details")
-    .select("student_id,gender,birthdate,birth_place,nationality,is_repeater,lv2")
-    .eq("institution_id", institutionId)
-    .in("student_id", studentIds);
-
-  // Compatibilité : si la migration n’a pas encore été exécutée, la liste reste imprimable.
-  if (error) return map;
-
-  for (const row of data || []) {
-    const sid = String((row as any).student_id || "").trim();
-    if (!sid) continue;
-    map.set(sid, {
-      student_id: sid,
-      gender: (row as any).gender ?? null,
-      birthdate: (row as any).birthdate ?? null,
-      birth_place: (row as any).birth_place ?? null,
-      nationality: (row as any).nationality ?? null,
-      is_repeater:
-        typeof (row as any).is_repeater === "boolean" ? (row as any).is_repeater : null,
-      lv2: (row as any).lv2 ?? null,
-    });
-  }
-
-  return map;
-}
-
 export async function GET(req: NextRequest, context: { params: Promise<{ id: string }> }) {
   const { id } = await context.params;
   const classId = String(id || "").trim();
@@ -363,7 +320,8 @@ export async function GET(req: NextRequest, context: { params: Promise<{ id: str
         birthdate,
         birth_place,
         nationality,
-        is_repeater
+        is_repeater,
+        lv2
       )
     `,
     )
@@ -371,18 +329,23 @@ export async function GET(req: NextRequest, context: { params: Promise<{ id: str
     .eq("class_id", classId)
     .is("end_date", null);
 
-  if (enrollErr) return NextResponse.json({ error: enrollErr.message }, { status: 400 });
-
-  const studentIds = (enrollments || [])
-    .map((row: any) => String(row.student_id || row.students?.id || "").trim())
-    .filter(Boolean);
-  const details = await loadRosterDetails(institutionId, studentIds);
+  if (enrollErr) {
+    return NextResponse.json(
+      {
+        error:
+          enrollErr.message.includes("lv2")
+            ? "La colonne students.lv2 est absente. Exécute la migration 20260521_students_lv2.sql dans Supabase, puis réessaie."
+            : enrollErr.message,
+        details: enrollErr.message,
+      },
+      { status: 400 },
+    );
+  }
 
   const students = (enrollments || [])
     .map((row: any) => {
       const s = row.students || {};
       const sid = String(s.id || row.student_id || "").trim();
-      const detail = details.get(sid);
       const name = fullName(s) || "—";
 
       return {
@@ -391,17 +354,15 @@ export async function GET(req: NextRequest, context: { params: Promise<{ id: str
         full_name: name,
         first_name: s.first_name ?? null,
         last_name: s.last_name ?? null,
-        gender: detail?.gender ?? s.gender ?? null,
-        birthdate: detail?.birthdate ?? s.birthdate ?? null,
-        birth_place: detail?.birth_place ?? s.birth_place ?? null,
-        nationality: detail?.nationality ?? s.nationality ?? null,
+        gender: s.gender ?? null,
+        birthdate: s.birthdate ?? null,
+        birth_place: s.birth_place ?? null,
+        nationality: s.nationality ?? null,
         is_repeater:
-          typeof detail?.is_repeater === "boolean"
-            ? detail.is_repeater
-            : typeof s.is_repeater === "boolean"
-              ? s.is_repeater
-              : null,
-        lv2: detail?.lv2 ?? null,
+          typeof s.is_repeater === "boolean"
+            ? s.is_repeater
+            : null,
+        lv2: s.lv2 ?? null,
         enrollment_start_date: row.start_date ?? null,
       };
     })
@@ -519,36 +480,45 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
       if (!studentId || !allowed.has(studentId)) return null;
 
       return {
-        institution_id: institutionId,
         student_id: studentId,
-        gender: normalizeGender(row?.gender),
-        birthdate: normalizeDateYmd(row?.birthdate),
-        birth_place: normalizeNullableText(row?.birth_place),
-        nationality: normalizeNullableText(row?.nationality),
-        is_repeater: normalizeBool(row?.is_repeater),
-        lv2: normalizeNullableText(row?.lv2)?.toUpperCase() ?? null,
-        updated_at: new Date().toISOString(),
+        patch: {
+          gender: normalizeGender(row?.gender),
+          birthdate: normalizeDateYmd(row?.birthdate),
+          birth_place: normalizeNullableText(row?.birth_place),
+          nationality: normalizeNullableText(row?.nationality),
+          is_repeater: normalizeBool(row?.is_repeater),
+          lv2: normalizeNullableText(row?.lv2)?.toUpperCase() ?? null,
+        },
       };
     })
-    .filter(Boolean) as any[];
+    .filter(Boolean) as Array<{ student_id: string; patch: Record<string, any> }>;
 
   if (!rows.length) return NextResponse.json({ ok: true, updated: 0 });
 
-  const { data, error } = await srv
-    .from("student_roster_details")
-    .upsert(rows, { onConflict: "institution_id,student_id" })
-    .select("student_id");
+  let updated = 0;
 
-  if (error) {
-    return NextResponse.json(
-      {
-        error:
-          "La table student_roster_details est absente. Exécute la migration 20260521_student_roster_details.sql dans Supabase, puis réessaie.",
-        details: error.message,
-      },
-      { status: 400 },
-    );
+  for (const row of rows) {
+    const { error } = await srv
+      .from("students")
+      .update(row.patch)
+      .eq("id", row.student_id)
+      .eq("institution_id", institutionId);
+
+    if (error) {
+      return NextResponse.json(
+        {
+          error:
+            error.message.includes("lv2")
+              ? "La colonne students.lv2 est absente. Exécute la migration 20260521_students_lv2.sql dans Supabase, puis réessaie."
+              : error.message,
+          details: error.message,
+        },
+        { status: 400 },
+      );
+    }
+
+    updated++;
   }
 
-  return NextResponse.json({ ok: true, updated: (data || []).length });
+  return NextResponse.json({ ok: true, updated });
 }
