@@ -124,6 +124,9 @@ function todayLabel() {
   });
 }
 
+const MON_CAHIER_EXPORT_SITE = "www.mon-cahier.com";
+const MON_CAHIER_EXPORT_SLOGAN = "La plateforme idéale pour une école connectée, l’école du futur.";
+
 function normalizeLv2(value: string | null | undefined) {
   const v = String(value || "").trim();
   return v ? v.toUpperCase() : "";
@@ -396,12 +399,39 @@ export default function ClassListPrintPage() {
         .col-nat { width: 58px; text-align: center; }
 
         .sheet-footer {
-          display: flex;
-          justify-content: space-between;
+          display: grid;
+          grid-template-columns: 1fr 1.45fr 1fr;
+          align-items: end;
           gap: 12px;
           margin-top: 9px;
+          padding-top: 5px;
+          border-top: 1px solid #cbd5e1;
           font-size: 9.6px;
           color: #334155;
+        }
+
+        .export-brand-footer {
+          text-align: center;
+          line-height: 1.25;
+        }
+
+        .export-brand-site {
+          font-size: 10.4px;
+          font-weight: 900;
+          letter-spacing: 0.05em;
+          text-transform: uppercase;
+          color: #0f172a;
+        }
+
+        .export-brand-slogan {
+          margin-top: 1px;
+          font-size: 9.3px;
+          font-weight: 700;
+          color: #475569;
+        }
+
+        .footer-right {
+          text-align: right;
         }
 
         @media print {
@@ -744,7 +774,11 @@ export default function ClassListPrintPage() {
               <div>
                 Filles : {data.totals.girls} &nbsp;|&nbsp; Garçons : {data.totals.boys}
               </div>
-              <div>Document généré le {todayLabel()} via Mon Cahier</div>
+              <div className="export-brand-footer">
+                <div className="export-brand-site">{MON_CAHIER_EXPORT_SITE}</div>
+                <div className="export-brand-slogan">{MON_CAHIER_EXPORT_SLOGAN}</div>
+              </div>
+              <div className="footer-right">Document généré le {todayLabel()} via Mon Cahier</div>
             </footer>
           </article>
         </section>
