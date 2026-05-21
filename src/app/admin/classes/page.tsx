@@ -798,7 +798,20 @@ export default function ClassesPage() {
                                 </div>
                               </div>
 
-                              <div className="flex items-start gap-2">
+                              <div className="flex flex-wrap items-start gap-2">
+                                <a
+                                  title="Exporter la liste de classe en PDF"
+                                  href={`/admin/classes/liste/${c.id}?academic_year=${encodeURIComponent(c.academic_year || academicYear || "")}`}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="inline-flex items-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs font-medium text-emerald-700 hover:bg-emerald-100"
+                                >
+                                  <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor">
+                                    <path d="M6 2a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7.414A2 2 0 0 0 15.414 6L12 2.586A2 2 0 0 0 10.586 2H6Zm5 1.5V6a2 2 0 0 0 2 2h2.5V16a.5.5 0 0 1-.5.5H6a.5.5 0 0 1-.5-.5V4a.5.5 0 0 1 .5-.5h5Z" />
+                                    <path d="M7.5 10.25h5v1.25h-5v-1.25Zm0 2.25h5v1.25h-5V12.5Z" />
+                                  </svg>
+                                  Liste PDF
+                                </a>
                                 <IconButton title="Éditer" onClick={() => openEdit(c)}>
                                   <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor">
                                     <path d="M17.414 2.586a2 2 0 0 0-2.828 0L6 11.172V14h2.828l8.586-8.586a2 2 0 0 0 0-2.828z" />
