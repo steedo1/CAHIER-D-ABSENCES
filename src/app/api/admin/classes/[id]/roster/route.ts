@@ -69,21 +69,10 @@ async function getProfileById(id: string | null): Promise<ProfileMini | null> {
   };
 }
 
-async function getEducators(institutionId: string): Promise<ProfileMini[]> {
-  const srv = getSupabaseServiceClient();
-
-  const { data: roles } = await srv
-    .from("user_roles")
-    .select("profile_id,role")
-    .eq("institution_id", institutionId)
-    .eq("role", "educator");
-
-  const ids = Array.from(
-    new Set((roles || []).map((row: any) => String(row.profile_id || "")).filter(Boolean)),
-  );
-
+async function loadEducatorProfiles(ids: string[]): Promise<ProfileMini[]> {
   if (!ids.length) return [];
 
+  const srv = getSupabaseServiceClient();
   const { data: profiles } = await srv
     .from("profiles")
     .select("id,display_name,email,phone")
@@ -103,6 +92,61 @@ async function getEducators(institutionId: string): Promise<ProfileMini[]> {
         { sensitivity: "base" },
       ),
     );
+}
+
+async function getEducators(
+  institutionId: string,
+  classId: string,
+  classLevel: string | null | undefined,
+): Promise<ProfileMini[]> {
+  const srv = getSupabaseServiceClient();
+
+  const { data: roles } = await srv
+    .from("user_roles")
+    .select("profile_id,role")
+    .eq("institution_id", institutionId)
+    .eq("role", "educator");
+
+  const allEducatorIds = Array.from(
+    new Set((roles || []).map((row: any) => String(row.profile_id || "")).filter(Boolean)),
+  );
+
+  if (!allEducatorIds.length) return [];
+
+  const { data: assignments, error: assignErr } = await srv
+    .from("educator_class_assignments")
+    .select("profile_id,level,class_id")
+    .eq("institution_id", institutionId)
+    .in("profile_id", allEducatorIds);
+
+  // Compatibilité : si la nouvelle table n’existe pas encore,
+  // on conserve l'ancien comportement et on affiche tous les éducateurs.
+  if (assignErr) {
+    return loadEducatorProfiles(allEducatorIds);
+  }
+
+  const rows = Array.isArray(assignments) ? assignments : [];
+  if (rows.length === 0) {
+    return loadEducatorProfiles(allEducatorIds);
+  }
+
+  const level = String(classLevel || "").trim();
+  const matchingIds = Array.from(
+    new Set(
+      rows
+        .filter((row: any) => {
+          const rowClassId = String(row.class_id || "").trim();
+          const rowLevel = String(row.level || "").trim();
+
+          if (rowClassId) return rowClassId === classId;
+          return !!level && rowLevel === level;
+        })
+        .map((row: any) => String(row.profile_id || ""))
+        .filter(Boolean),
+    ),
+  );
+
+  return loadEducatorProfiles(matchingIds);
 }
 
 export async function GET(req: NextRequest, context: { params: Promise<{ id: string }> }) {
@@ -196,7 +240,7 @@ export async function GET(req: NextRequest, context: { params: Promise<{ id: str
           .maybeSingle()
       : Promise.resolve({ data: null, error: null } as any),
     getProfileById((cls as any).head_teacher_id ? String((cls as any).head_teacher_id) : null),
-    getEducators(institutionId),
+    getEducators(institutionId, classId, cls.level),
   ]);
 
   if (institutionRes.error) {

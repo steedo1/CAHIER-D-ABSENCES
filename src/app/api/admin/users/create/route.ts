@@ -121,6 +121,99 @@ type SubjectLite = {
   code: string | null;
 };
 
+function uniqueStrings(values: unknown): string[] {
+  if (!Array.isArray(values)) return [];
+
+  return Array.from(
+    new Set(
+      values
+        .map((value) => String(value || "").trim())
+        .filter(Boolean)
+    )
+  );
+}
+
+async function saveEducatorAssignments(opts: {
+  profileId: string;
+  institutionId: string;
+  level: string | null;
+  classIds: string[];
+}) {
+  const supaSrv = getSupabaseServiceClient();
+  const level = String(opts.level || "").trim();
+
+  if (!level) {
+    return { ok: false as const, error: "educator_level_required" };
+  }
+
+  const classIds = Array.from(new Set(opts.classIds.filter(isUuid)));
+
+  let validClassIds: string[] = [];
+  if (classIds.length > 0) {
+    const { data: classes, error: classErr } = await supaSrv
+      .from("classes")
+      .select("id,level")
+      .eq("institution_id", opts.institutionId)
+      .in("id", classIds);
+
+    if (classErr) {
+      return { ok: false as const, error: classErr.message };
+    }
+
+    const rows = Array.isArray(classes) ? classes : [];
+    validClassIds = rows
+      .filter((row: any) => String(row.level || "").trim() === level)
+      .map((row: any) => String(row.id));
+
+    if (validClassIds.length !== classIds.length) {
+      return { ok: false as const, error: "educator_classes_invalid" };
+    }
+  }
+
+  const table = supaSrv.from("educator_class_assignments");
+
+  const { error: delErr } = await table
+    .delete()
+    .eq("institution_id", opts.institutionId)
+    .eq("profile_id", opts.profileId);
+
+  if (delErr) {
+    return { ok: false as const, error: delErr.message };
+  }
+
+  const rows =
+    validClassIds.length > 0
+      ? validClassIds.map((classId) => ({
+          institution_id: opts.institutionId,
+          profile_id: opts.profileId,
+          level,
+          class_id: classId,
+        }))
+      : [
+          {
+            institution_id: opts.institutionId,
+            profile_id: opts.profileId,
+            level,
+            class_id: null,
+          },
+        ];
+
+  const { error: insErr } = await supaSrv
+    .from("educator_class_assignments")
+    .insert(rows);
+
+  if (insErr) {
+    return { ok: false as const, error: insErr.message };
+  }
+
+  return {
+    ok: true as const,
+    level,
+    class_ids: validClassIds,
+    scope: validClassIds.length > 0 ? "classes" : "level",
+  };
+}
+
 export async function POST(req: NextRequest) {
   const supaSrv = getSupabaseServiceClient(); // service (no RLS)
   const supa = await getSupabaseServerClient(); // user-scoped (RLS)
@@ -189,6 +282,12 @@ export async function POST(req: NextRequest) {
 
   const subjectName = (body?.subject ?? null) as string | null;
 
+  const educatorLevel =
+    typeof body?.educator_level === "string" && body.educator_level.trim()
+      ? String(body.educator_level).trim()
+      : null;
+  const educatorClassIds = uniqueStrings(body?.educator_class_ids);
+
   const country =
     typeof body?.country === "string" && body.country.trim()
       ? String(body.country).trim()
@@ -235,6 +334,13 @@ export async function POST(req: NextRequest) {
     )
   ) {
     return NextResponse.json({ error: "subject_required" }, { status: 400 });
+  }
+
+  if (role === "educator" && !educatorLevel) {
+    return NextResponse.json(
+      { error: "educator_level_required" },
+      { status: 400 }
+    );
   }
 
   // 1) Résoudre / créer l'utilisateur (idempotent)
@@ -389,6 +495,29 @@ export async function POST(req: NextRequest) {
 
   if (rErr) {
     return NextResponse.json({ error: rErr.message }, { status: 400 });
+  }
+
+  if (role === "educator") {
+    const saved = await saveEducatorAssignments({
+      profileId: uid,
+      institutionId: inst,
+      level: educatorLevel,
+      classIds: educatorClassIds,
+    });
+
+    if (!saved.ok) {
+      return NextResponse.json({ error: saved.error }, { status: 400 });
+    }
+
+    return NextResponse.json({
+      ok: true,
+      user_id: uid,
+      educator_assignment: {
+        level: saved.level,
+        class_ids: saved.class_ids,
+        scope: saved.scope,
+      },
+    });
   }
 
   // 4) Matière REQUISE (enseignant)

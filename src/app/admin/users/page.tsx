@@ -48,6 +48,14 @@ function Help({ children }: { children: React.ReactNode }) {
 
 type SubjectItem = { id: string; name: string; code?: string | null };
 
+type ClassItem = {
+  id: string;
+  label: string;
+  level: string | null;
+  code?: string | null;
+  academic_year?: string | null;
+};
+
 type TeacherRow = {
   id: string;
   display_name: string | null;
@@ -200,6 +208,9 @@ export default function UsersPage() {
   const [msg, setMsg] = useState<string | null>(null);
 
   const [subjects, setSubjects] = useState<SubjectItem[]>([]);
+  const [classesForEducator, setClassesForEducator] = useState<ClassItem[]>([]);
+  const [educatorLevel, setEducatorLevel] = useState("");
+  const [educatorClassIds, setEducatorClassIds] = useState<string[]>([]);
 
   const [q, setQ] = useState("");
   const [searching, setSearching] = useState(false);
@@ -231,6 +242,34 @@ export default function UsersPage() {
       payrollTeachers.find((t) => t.profile_id === payrollTeacherId) || null,
     [payrollTeachers, payrollTeacherId]
   );
+
+  const educatorLevels = useMemo(() => {
+    const levels = Array.from(
+      new Set(
+        classesForEducator
+          .map((c) => String(c.level || "").trim())
+          .filter(Boolean)
+      )
+    );
+
+    return levels.sort((a, b) =>
+      a.localeCompare(b, "fr", { numeric: true, sensitivity: "base" })
+    );
+  }, [classesForEducator]);
+
+  const educatorClassesForLevel = useMemo(() => {
+    const level = educatorLevel.trim();
+    if (!level) return [] as ClassItem[];
+
+    return classesForEducator
+      .filter((c) => String(c.level || "").trim() === level)
+      .sort((a, b) =>
+        String(a.label || "").localeCompare(String(b.label || ""), "fr", {
+          numeric: true,
+          sensitivity: "base",
+        })
+      );
+  }, [classesForEducator, educatorLevel]);
 
   function findSubjectById(id: string | null | undefined) {
     if (!id) return null;
@@ -266,9 +305,14 @@ export default function UsersPage() {
 
   useEffect(() => {
     void loadSubjects();
+    void loadClassesForEducator();
     void loadTeachersForAdd();
     void loadPayrollTeachers();
   }, []);
+
+  useEffect(() => {
+    setEducatorClassIds([]);
+  }, [educatorLevel]);
 
   useEffect(() => {
     if (!selectedPayrollTeacher) return;
@@ -298,6 +342,42 @@ export default function UsersPage() {
     } catch {
       setMsg("Impossible de charger les disciplines.");
     }
+  }
+
+  async function loadClassesForEducator() {
+    try {
+      const r = await fetch("/api/admin/classes?limit=999", {
+        cache: "no-store",
+      });
+      if (r.status === 401) {
+        setAuthErr(true);
+        return;
+      }
+
+      const j = await r.json().catch(() => ({}));
+      const rows = Array.isArray(j.items) ? j.items : [];
+      setClassesForEducator(
+        rows
+          .map((c: any) => ({
+            id: String(c.id || ""),
+            label: String(c.label || c.name || c.code || "Classe"),
+            level: c.level ? String(c.level) : null,
+            code: c.code ? String(c.code) : null,
+            academic_year: c.academic_year ? String(c.academic_year) : null,
+          }))
+          .filter((c: ClassItem) => !!c.id)
+      );
+    } catch {
+      setMsg("Impossible de charger les classes pour l’éducateur.");
+    }
+  }
+
+  function toggleEducatorClass(classId: string) {
+    setEducatorClassIds((prev) =>
+      prev.includes(classId)
+        ? prev.filter((id) => id !== classId)
+        : [...prev, classId]
+    );
   }
 
   async function loadTeachersForAdd() {
@@ -446,6 +526,14 @@ export default function UsersPage() {
     const rawEmploymentType = tEmploymentType;
     const rawPayrollEnabled = tPayrollEnabled;
     const canonicalSubject = matchedCreateSubject;
+    const rawEducatorLevel = educatorLevel.trim();
+    const rawEducatorClassIds = educatorClassIds.filter(Boolean);
+
+    if (rawRole === "educator" && !rawEducatorLevel) {
+      setSubmitting(false);
+      setMsg("Choisissez le niveau suivi par l’éducateur.");
+      return;
+    }
 
     try {
       const r = await fetch("/api/admin/users/create", {
@@ -467,6 +555,9 @@ export default function UsersPage() {
             rawRole === "teacher"
               ? canonicalSubject?.name || rawSubject || null
               : null,
+          educator_level: rawRole === "educator" ? rawEducatorLevel : null,
+          educator_class_ids:
+            rawRole === "educator" ? rawEducatorClassIds : [],
         }),
       });
 
@@ -500,7 +591,15 @@ export default function UsersPage() {
         if (rawRole === "educator") labelRole = "éducateur";
         if (rawRole === "admin") labelRole = "admin";
         if (rawRole === "finance_manager") labelRole = "gestionnaire financier";
-        setMsg(`Compte ${labelRole} créé.`);
+
+        if (rawRole === "educator") {
+          const scope = rawEducatorClassIds.length
+            ? `${rawEducatorClassIds.length} classe(s) cochée(s) du niveau ${rawEducatorLevel}`
+            : `tout le niveau ${rawEducatorLevel}`;
+          setMsg(`Compte éducateur créé et affecté à ${scope}.`);
+        } else {
+          setMsg(`Compte ${labelRole} créé.`);
+        }
       }
 
       setTEmail("");
@@ -510,6 +609,8 @@ export default function UsersPage() {
       setTSubjectId("");
       setTEmploymentType("permanent");
       setTPayrollEnabled(true);
+      setEducatorLevel("");
+      setEducatorClassIds([]);
 
       try {
         await loadSubjects();
@@ -849,10 +950,106 @@ export default function UsersPage() {
               </div>
             </>
           )}
+
+
+          {createRole === "educator" && (
+            <div className="md:col-span-2 rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
+              <div className="text-sm font-semibold text-slate-900">
+                Affectation de l’éducateur
+              </div>
+              <div className="mt-1 text-xs text-slate-600">
+                Choisis d’abord le niveau. Si aucune classe n’est cochée,
+                l’éducateur sera affecté à tout ce niveau. Si tu coches des
+                classes, son nom apparaîtra seulement sur les listes PDF de ces
+                classes.
+              </div>
+
+              <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+                <div>
+                  <div className="mb-1 text-xs text-slate-500">Niveau suivi</div>
+                  <Select
+                    value={educatorLevel}
+                    onChange={(e) => setEducatorLevel(e.target.value)}
+                  >
+                    <option value="">— Choisir un niveau —</option>
+                    {educatorLevels.map((level) => (
+                      <option key={level} value={level}>
+                        {level}
+                      </option>
+                    ))}
+                  </Select>
+                  {educatorLevels.length === 0 ? (
+                    <div className="mt-1 text-[11px] text-amber-700">
+                      Aucune classe chargée pour l’année scolaire active. Vérifie
+                      d’abord la création des classes.
+                    </div>
+                  ) : null}
+                </div>
+
+                <div>
+                  <div className="mb-1 text-xs text-slate-500">Portée</div>
+                  <div className="rounded-xl border bg-white px-3 py-2 text-sm text-slate-700">
+                    {educatorLevel ? (
+                      educatorClassIds.length > 0 ? (
+                        <b>{educatorClassIds.length} classe(s) cochée(s)</b>
+                      ) : (
+                        <b>Tout le niveau {educatorLevel}</b>
+                      )
+                    ) : (
+                      <span className="text-slate-500">Niveau à sélectionner</span>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {educatorLevel ? (
+                <div className="mt-3">
+                  <div className="mb-2 text-xs font-medium text-slate-700">
+                    Classes du niveau {educatorLevel} à cocher
+                  </div>
+                  {educatorClassesForLevel.length > 0 ? (
+                    <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
+                      {educatorClassesForLevel.map((classe) => (
+                        <label
+                          key={classe.id}
+                          className="flex items-center gap-2 rounded-xl border bg-white px-3 py-2 text-sm"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={educatorClassIds.includes(classe.id)}
+                            onChange={() => toggleEducatorClass(classe.id)}
+                            className="h-4 w-4"
+                          />
+                          <span className="font-medium">{classe.label}</span>
+                        </label>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                      Aucune classe trouvée pour ce niveau.
+                    </div>
+                  )}
+
+                  <div className="mt-2 text-[11px] text-slate-600">
+                    Rien coché = éducateur de tout le niveau. Classes cochées =
+                    éducateur limité à ces classes.
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          )}
+
         </div>
 
         <div className="mt-4">
-          <Button onClick={createUser} disabled={submitting || !tPhone.trim()}>
+          <Button
+            onClick={createUser}
+            disabled={
+              submitting ||
+              !tPhone.trim() ||
+              (createRole === "educator" && !educatorLevel.trim())
+            }
+          >
             {submitting ? "Création…" : "Créer le compte"}
           </Button>
         </div>
