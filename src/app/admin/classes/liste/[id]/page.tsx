@@ -20,6 +20,7 @@ type StudentRow = {
   birth_place: string | null;
   nationality: string | null;
   is_repeater: boolean | null;
+  lv2: string | null;
   enrollment_start_date: string | null;
 };
 
@@ -68,6 +69,11 @@ type ClassListPayload = {
   };
 };
 
+type EditableStudent = Pick<
+  StudentRow,
+  "id" | "gender" | "birthdate" | "birth_place" | "nationality" | "is_repeater" | "lv2"
+>;
+
 function formatDateFR(value: string | null | undefined) {
   if (!value) return "";
   const raw = String(value).slice(0, 10);
@@ -82,7 +88,7 @@ function sexShort(value: string | null | undefined) {
   const v = String(value || "").trim().toLowerCase();
   if (!v) return "";
   if (v.startsWith("f")) return "F";
-  if (v.startsWith("m") || v.startsWith("h")) return "M";
+  if (v.startsWith("m") || v.startsWith("h") || v.startsWith("g")) return "M";
   return v.slice(0, 1).toUpperCase();
 }
 
@@ -118,6 +124,27 @@ function todayLabel() {
   });
 }
 
+function normalizeLv2(value: string | null | undefined) {
+  const v = String(value || "").trim();
+  return v ? v.toUpperCase() : "";
+}
+
+function cloneEditable(students: StudentRow[]): Record<string, EditableStudent> {
+  const out: Record<string, EditableStudent> = {};
+  for (const s of students) {
+    out[s.id] = {
+      id: s.id,
+      gender: s.gender ?? null,
+      birthdate: s.birthdate ? String(s.birthdate).slice(0, 10) : null,
+      birth_place: s.birth_place ?? null,
+      nationality: s.nationality ?? null,
+      is_repeater: s.is_repeater ?? null,
+      lv2: s.lv2 ?? null,
+    };
+  }
+  return out;
+}
+
 export default function ClassListPrintPage() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
@@ -128,52 +155,43 @@ export default function ClassListPrintPage() {
   const [error, setError] = useState<string | null>(null);
   const [educatorName, setEducatorName] = useState("");
   const [customEducatorName, setCustomEducatorName] = useState("");
+  const [editable, setEditable] = useState<Record<string, EditableStudent>>({});
+  const [saveMsg, setSaveMsg] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [showCorrections, setShowCorrections] = useState(false);
+
+  async function load() {
+    if (!classId) return;
+    setLoading(true);
+    setError(null);
+
+    try {
+      const sp = new URLSearchParams(window.location.search);
+      const academicYear = String(sp.get("academic_year") || "").trim();
+      const qs = academicYear ? `?academic_year=${encodeURIComponent(academicYear)}` : "";
+      const res = await fetch(`/api/admin/classes/${encodeURIComponent(classId)}/roster${qs}`, {
+        cache: "no-store",
+      });
+      const json = await res.json().catch(() => ({}));
+
+      if (res.status === 401) throw new Error("Session expirée. Reconnectez-vous puis réessayez.");
+      if (!res.ok) throw new Error(json?.error || "Impossible de charger la liste de classe.");
+
+      setData(json as ClassListPayload);
+      setEditable(cloneEditable(Array.isArray(json?.students) ? json.students : []));
+      const educators = Array.isArray(json?.staff?.educators) ? json.staff.educators : [];
+      if (educators.length === 1) setEducatorName(personLabel(educators[0]));
+    } catch (e: any) {
+      setError(e?.message || "Erreur de chargement.");
+      setData(null);
+    } finally {
+      setLoading(false);
+    }
+  }
 
   useEffect(() => {
-    let alive = true;
-
-    async function load() {
-      if (!classId) return;
-      setLoading(true);
-      setError(null);
-
-      try {
-        const sp = new URLSearchParams(window.location.search);
-        const academicYear = String(sp.get("academic_year") || "").trim();
-        const qs = academicYear ? `?academic_year=${encodeURIComponent(academicYear)}` : "";
-        const res = await fetch(`/api/admin/classes/${encodeURIComponent(classId)}/roster${qs}`, {
-          cache: "no-store",
-        });
-        const json = await res.json().catch(() => ({}));
-
-        if (res.status === 401) {
-          throw new Error("Session expirée. Reconnectez-vous puis réessayez.");
-        }
-        if (!res.ok) {
-          throw new Error(json?.error || "Impossible de charger la liste de classe.");
-        }
-        if (!alive) return;
-
-        setData(json as ClassListPayload);
-        const educators = Array.isArray(json?.staff?.educators) ? json.staff.educators : [];
-        if (educators.length === 1) {
-          setEducatorName(personLabel(educators[0]));
-        } else {
-          setEducatorName("");
-        }
-      } catch (e: any) {
-        if (!alive) return;
-        setError(e?.message || "Erreur de chargement.");
-        setData(null);
-      } finally {
-        if (alive) setLoading(false);
-      }
-    }
-
-    load();
-    return () => {
-      alive = false;
-    };
+    void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [classId]);
 
   const selectedEducator = useMemo(() => {
@@ -186,6 +204,57 @@ export default function ClassListPrintPage() {
   const headTeacherLabel = personLabel(data?.staff?.head_teacher);
   const students = data?.students || [];
 
+  const printedStudents = useMemo(
+    () =>
+      students.map((student) => ({
+        ...student,
+        ...(editable[student.id] || {}),
+      })),
+    [students, editable],
+  );
+
+  function updateStudent(id: string, patch: Partial<EditableStudent>) {
+    setEditable((prev) => ({
+      ...prev,
+      [id]: {
+        ...(prev[id] || { id }),
+        id,
+        ...patch,
+      },
+    }));
+  }
+
+  async function saveCorrections() {
+    if (!data) return;
+    setSaving(true);
+    setSaveMsg(null);
+    try {
+      const updates = Object.values(editable).map((row) => ({
+        student_id: row.id,
+        gender: row.gender || null,
+        birthdate: row.birthdate || null,
+        birth_place: row.birth_place || null,
+        nationality: row.nationality || null,
+        is_repeater: row.is_repeater,
+        lv2: row.lv2 || null,
+      }));
+
+      const res = await fetch(`/api/admin/classes/${encodeURIComponent(classId)}/roster`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ updates }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json?.error || "Impossible d’enregistrer les corrections.");
+      setSaveMsg("Corrections enregistrées. La liste PDF est à jour.");
+      await load();
+    } catch (e: any) {
+      setSaveMsg(e?.message || "Erreur d’enregistrement.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   function printPdf() {
     setTimeout(() => window.print(), 60);
   }
@@ -195,110 +264,122 @@ export default function ClassListPrintPage() {
       <style jsx global>{`
         @page {
           size: A4 landscape;
-          margin: 7mm;
+          margin: 6mm;
         }
 
         .class-list-sheet {
           width: 100%;
-          max-width: 1120px;
+          max-width: 1088px;
           margin: 0 auto;
           background: white;
           color: #111827;
           border: 1px solid #cbd5e1;
           box-shadow: 0 20px 60px rgba(15, 23, 42, 0.12);
-          padding: 18px 20px 22px;
+          padding: 14px 18px 18px;
           font-family: Arial, Helvetica, sans-serif;
+          overflow: hidden;
         }
 
         .official-header {
           display: grid;
-          grid-template-columns: 34% 32% 34%;
-          gap: 12px;
+          grid-template-columns: minmax(0, 39%) minmax(250px, 30%) minmax(0, 31%);
+          gap: 10px;
           align-items: start;
-          margin-bottom: 12px;
+          margin-bottom: 10px;
         }
 
         .school-block {
           display: flex;
-          gap: 10px;
+          gap: 9px;
           align-items: flex-start;
           min-width: 0;
         }
 
         .school-logo {
-          width: 54px;
-          height: 54px;
+          width: 52px;
+          height: 52px;
           object-fit: contain;
           flex: 0 0 auto;
         }
 
         .school-name {
-          font-size: 15px;
-          font-weight: 800;
-          line-height: 1.15;
-          text-transform: none;
+          max-width: 100%;
+          font-size: 14px;
+          font-weight: 900;
+          line-height: 1.1;
+          text-transform: uppercase;
+          overflow-wrap: anywhere;
         }
 
         .school-meta,
         .right-meta,
         .staff-meta {
-          font-size: 10.5px;
-          line-height: 1.35;
+          font-size: 9.8px;
+          line-height: 1.25;
         }
 
         .list-title {
           display: inline-flex;
-          min-width: 260px;
+          width: 100%;
+          max-width: 290px;
           justify-content: center;
           border: 4px solid #111827;
-          padding: 8px 14px;
-          font-size: 20px;
+          padding: 7px 10px;
+          font-size: 18px;
           font-weight: 900;
           letter-spacing: 0.02em;
           text-transform: uppercase;
+          white-space: nowrap;
         }
 
         .right-meta {
           text-align: right;
-          font-size: 13px;
-          font-weight: 700;
-          white-space: nowrap;
+          font-size: 11px;
+          font-weight: 800;
+          line-height: 1.28;
+        }
+
+        .right-meta .year-line,
+        .right-meta .class-line {
+          display: block;
+          white-space: normal;
+          overflow-wrap: anywhere;
         }
 
         .staff-line {
           display: grid;
           grid-template-columns: 1fr 1fr 1fr;
           gap: 8px;
-          margin: 8px 0 10px;
+          margin: 8px 0 9px;
           border: 1px solid #94a3b8;
           background: #f8fafc;
-          padding: 6px 8px;
-          font-size: 11px;
+          padding: 5px 7px;
+          font-size: 10.4px;
         }
 
         .staff-line strong {
-          font-weight: 800;
+          font-weight: 900;
         }
 
         .roster-table {
           width: 100%;
           border-collapse: collapse;
           table-layout: fixed;
-          font-size: 11px;
+          font-size: 10.5px;
         }
 
         .roster-table th,
         .roster-table td {
           border: 1px solid #475569;
-          padding: 4px 5px;
+          padding: 3.5px 5px;
           vertical-align: middle;
-          line-height: 1.15;
+          line-height: 1.12;
         }
 
         .roster-table thead th {
           background: #e5e7eb;
           text-align: center;
-          font-weight: 800;
+          font-weight: 900;
         }
 
         .roster-table tbody tr:nth-child(even) td {
@@ -306,22 +387,20 @@ export default function ClassListPrintPage() {
         }
 
         .col-no { width: 38px; text-align: center; }
-        .col-matricule { width: 105px; }
-        .col-name { width: auto; font-weight: 700; }
-        .col-date { width: 86px; text-align: center; }
-        .col-sex { width: 42px; text-align: center; }
-        .col-red { width: 42px; text-align: center; }
-        .col-lv2 { width: 48px; text-align: center; }
-        .col-nat { width: 50px; text-align: center; }
-        .col-class { width: 62px; text-align: center; font-weight: 700; }
-        .col-ins { width: 92px; text-align: center; }
+        .col-matricule { width: 112px; }
+        .col-name { width: auto; font-weight: 800; }
+        .col-date { width: 92px; text-align: center; }
+        .col-sex { width: 48px; text-align: center; }
+        .col-red { width: 48px; text-align: center; }
+        .col-lv2 { width: 58px; text-align: center; }
+        .col-nat { width: 58px; text-align: center; }
 
         .sheet-footer {
           display: flex;
           justify-content: space-between;
           gap: 12px;
-          margin-top: 10px;
-          font-size: 10px;
+          margin-top: 9px;
+          font-size: 9.6px;
           color: #334155;
         }
 
@@ -364,7 +443,7 @@ export default function ClassListPrintPage() {
           }
 
           .roster-table {
-            font-size: 9.8px !important;
+            font-size: 9.7px !important;
           }
 
           .roster-table th,
@@ -378,26 +457,34 @@ export default function ClassListPrintPage() {
           }
 
           .school-logo {
-            width: 48px !important;
-            height: 48px !important;
+            width: 46px !important;
+            height: 46px !important;
+          }
+
+          .school-name {
+            font-size: 12.8px !important;
           }
 
           .list-title {
-            font-size: 18px !important;
-            padding: 7px 12px !important;
+            font-size: 17px !important;
+            padding: 6px 10px !important;
+          }
+
+          .right-meta {
+            font-size: 10.4px !important;
           }
         }
       `}</style>
 
-      <div className="screen-toolbar mx-auto mb-4 flex max-w-6xl flex-col gap-3 rounded-2xl border bg-white p-4 shadow-sm md:flex-row md:items-end md:justify-between">
+      <div className="screen-toolbar mx-auto mb-4 flex max-w-6xl flex-col gap-3 rounded-2xl border bg-white p-4 shadow-sm lg:flex-row lg:items-end lg:justify-between">
         <div>
           <div className="text-lg font-semibold">Liste de classe imprimable</div>
           <div className="text-sm text-slate-600">
-            Vérifiez l’éducateur de niveau puis cliquez sur « Exporter PDF ».
+            Vérifiez l’éducateur, corrigez au besoin Sexe / Red / LV2 / Nat, puis exportez en PDF.
           </div>
         </div>
 
-        <div className="grid gap-2 sm:grid-cols-2 md:min-w-[520px]">
+        <div className="grid gap-2 sm:grid-cols-2 lg:min-w-[520px]">
           <label className="text-xs font-medium text-slate-600">
             Éducateur de niveau
             <select
@@ -430,7 +517,15 @@ export default function ClassListPrintPage() {
           </label>
         </div>
 
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => setShowCorrections((v) => !v)}
+            disabled={loading || !!error || !data}
+            className="rounded-xl border px-4 py-2 text-sm font-medium hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            Corriger les champs
+          </button>
           <button
             type="button"
             onClick={() => router.back()}
@@ -448,6 +543,106 @@ export default function ClassListPrintPage() {
           </button>
         </div>
       </div>
+
+      {showCorrections && data ? (
+        <div className="screen-toolbar mx-auto mb-4 max-w-6xl rounded-2xl border bg-white p-4 shadow-sm">
+          <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <div className="font-semibold">Corrections rapides de la liste</div>
+              <div className="text-sm text-slate-600">
+                Ces valeurs complètent la liste PDF sans casser les autres modules. LV2 peut aussi venir de l’import.
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={saveCorrections}
+              disabled={saving}
+              className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
+            >
+              {saving ? "Enregistrement…" : "Enregistrer les corrections"}
+            </button>
+          </div>
+          {saveMsg ? <div className="mb-3 text-sm text-slate-700">{saveMsg}</div> : null}
+          <div className="max-h-[420px] overflow-auto rounded-xl border">
+            <table className="min-w-full text-sm">
+              <thead className="sticky top-0 bg-slate-50">
+                <tr>
+                  <th className="px-3 py-2 text-left">Élève</th>
+                  <th className="px-3 py-2 text-left">Né(e) le</th>
+                  <th className="px-3 py-2 text-left">Sexe</th>
+                  <th className="px-3 py-2 text-left">Red</th>
+                  <th className="px-3 py-2 text-left">LV2</th>
+                  <th className="px-3 py-2 text-left">Nat</th>
+                </tr>
+              </thead>
+              <tbody>
+                {students.map((student) => {
+                  const row = editable[student.id] || { id: student.id };
+                  return (
+                    <tr key={student.id} className="border-t">
+                      <td className="min-w-[260px] px-3 py-2 font-medium">
+                        {student.full_name}
+                        <div className="text-xs font-normal text-slate-500">{student.matricule || "Sans matricule"}</div>
+                      </td>
+                      <td className="px-3 py-2">
+                        <input
+                          type="date"
+                          value={String(row.birthdate || "").slice(0, 10)}
+                          onChange={(e) => updateStudent(student.id, { birthdate: e.target.value || null })}
+                          className="w-[145px] rounded-lg border px-2 py-1"
+                        />
+                      </td>
+                      <td className="px-3 py-2">
+                        <select
+                          value={row.gender || ""}
+                          onChange={(e) => updateStudent(student.id, { gender: e.target.value || null })}
+                          className="w-[82px] rounded-lg border px-2 py-1"
+                        >
+                          <option value="">—</option>
+                          <option value="M">M</option>
+                          <option value="F">F</option>
+                        </select>
+                      </td>
+                      <td className="px-3 py-2">
+                        <select
+                          value={row.is_repeater === true ? "true" : row.is_repeater === false ? "false" : ""}
+                          onChange={(e) =>
+                            updateStudent(student.id, {
+                              is_repeater:
+                                e.target.value === "true" ? true : e.target.value === "false" ? false : null,
+                            })
+                          }
+                          className="w-[92px] rounded-lg border px-2 py-1"
+                        >
+                          <option value="">—</option>
+                          <option value="true">Oui</option>
+                          <option value="false">Non</option>
+                        </select>
+                      </td>
+                      <td className="px-3 py-2">
+                        <input
+                          value={row.lv2 || ""}
+                          onChange={(e) => updateStudent(student.id, { lv2: e.target.value.toUpperCase() || null })}
+                          placeholder="ESP / ALL"
+                          className="w-[96px] rounded-lg border px-2 py-1 uppercase"
+                        />
+                      </td>
+                      <td className="px-3 py-2">
+                        <input
+                          value={row.nationality || ""}
+                          onChange={(e) => updateStudent(student.id, { nationality: e.target.value || null })}
+                          placeholder="Ivoirienne"
+                          className="w-[130px] rounded-lg border px-2 py-1"
+                        />
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ) : null}
 
       {loading ? (
         <div className="mx-auto max-w-6xl rounded-2xl border bg-white p-6 text-sm text-slate-600 shadow-sm">
@@ -484,15 +679,15 @@ export default function ClassListPrintPage() {
               </div>
 
               <div className="text-center">
-                <div className="list-title">LISTE FONDUE {data.class.label}</div>
+                <div className="list-title">LISTE DE CLASSE {data.class.label}</div>
               </div>
 
               <div className="right-meta">
                 <div>
                   {data.totals.students} Élève{data.totals.students > 1 ? "s" : ""}
                 </div>
-                <div>Année scolaire&nbsp;&nbsp;{academicYearLabel}</div>
-                <div className="mt-1 text-[10px] font-normal">Classe : {data.class.label}</div>
+                <span className="year-line">Année scolaire&nbsp;: {academicYearLabel}</span>
+                <span className="class-line">Classe&nbsp;: {data.class.label}</span>
               </div>
             </header>
 
@@ -519,19 +714,17 @@ export default function ClassListPrintPage() {
                   <th className="col-red">Red</th>
                   <th className="col-lv2">LV2</th>
                   <th className="col-nat">Nat</th>
-                  <th className="col-class">Classe</th>
-                  <th className="col-ins">Date inscrit°</th>
                 </tr>
               </thead>
               <tbody>
-                {students.length === 0 ? (
+                {printedStudents.length === 0 ? (
                   <tr>
-                    <td colSpan={10} className="py-8 text-center text-slate-500">
+                    <td colSpan={8} className="py-8 text-center text-slate-500">
                       Aucun élève inscrit dans cette classe.
                     </td>
                   </tr>
                 ) : (
-                  students.map((student, index) => (
+                  printedStudents.map((student, index) => (
                     <tr key={student.id}>
                       <td className="col-no">{index + 1}</td>
                       <td className="col-matricule">{student.matricule || ""}</td>
@@ -539,10 +732,8 @@ export default function ClassListPrintPage() {
                       <td className="col-date">{formatDateFR(student.birthdate)}</td>
                       <td className="col-sex">{sexShort(student.gender)}</td>
                       <td className="col-red">{student.is_repeater ? "R" : ""}</td>
-                      <td className="col-lv2" />
+                      <td className="col-lv2">{normalizeLv2(student.lv2)}</td>
                       <td className="col-nat">{nationalityShort(student.nationality)}</td>
-                      <td className="col-class">{data.class.label}</td>
-                      <td className="col-ins">{formatDateFR(student.enrollment_start_date)}</td>
                     </tr>
                   ))
                 )}

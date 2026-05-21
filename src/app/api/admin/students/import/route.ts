@@ -140,6 +140,12 @@ function parsePhotoCell(raw: string): string | null {
   return v;
 }
 
+function parseLv2Cell(raw: string): string | null {
+  const v = String(raw || "").trim();
+  if (!v) return null;
+  return v.toUpperCase();
+}
+
 /* ───────── Type des lignes CSV parsées ───────── */
 type ParsedStudentRow = {
   _row: number;
@@ -153,6 +159,7 @@ type ParsedStudentRow = {
   birthdate: string | null;
   birth_place: string | null;
   nationality: string | null;
+  lv2: string | null;
   regime: string | null;
   is_repeater: boolean | null;
   is_boarder: boolean | null;
@@ -199,6 +206,9 @@ function parseCsvStudentsFlexible(raw: string): ParsedStudentRow[] {
     nationality: H.findIndex((h) =>
       /^(nationalite|nationality)$/i.test(hCompact(h)),
     ),
+    lv2: H.findIndex((h) =>
+      /^(lv2|langue2|languevivante2|deuxiemelangue|2elangue|languevivanteii)$/i.test(hCompact(h)),
+    ),
     regime: H.findIndex((h) => /^(regime|statut|status)$/i.test(hCompact(h))),
     is_repeater: H.findIndex((h) =>
       /^(redoublant(e)?|redoublant|repeater|repeat)$/i.test(hCompact(h)),
@@ -243,6 +253,7 @@ function parseCsvStudentsFlexible(raw: string): ParsedStudentRow[] {
       idx.birth_place >= 0 ? cell(idx.birth_place) || null : null;
     const nationality =
       idx.nationality >= 0 ? cell(idx.nationality) || null : null;
+    const lv2 = idx.lv2 >= 0 ? parseLv2Cell(cell(idx.lv2)) : null;
     const regime = idx.regime >= 0 ? cell(idx.regime) || null : null;
 
     const is_repeater =
@@ -266,6 +277,7 @@ function parseCsvStudentsFlexible(raw: string): ParsedStudentRow[] {
       birthdate,
       birth_place,
       nationality,
+      lv2,
       regime,
       is_repeater,
       is_boarder,
@@ -359,6 +371,7 @@ export async function POST(req: NextRequest) {
       birthdate: r.birthdate || null,
       birth_place: r.birth_place || null,
       nationality: r.nationality || null,
+      lv2: r.lv2 || null,
       regime: r.regime || null,
       is_repeater: r.is_repeater ?? null,
       is_boarder: r.is_boarder ?? null,
@@ -761,6 +774,56 @@ export async function POST(req: NextRequest) {
     insertedTarget = (data ?? []).length;
   }
 
+  // 9) Compléments pour la liste de classe (LV2 notamment).
+  // La table est indépendante pour ne pas casser les autres modules élèves.
+  let rosterDetailsUpdated = 0;
+  {
+    const detailsRows: any[] = [];
+
+    function pushDetail(r: ParsedStudentRow, studentId: string | undefined) {
+      if (!studentId) return;
+      const lv2 = String(r.lv2 || "").trim().toUpperCase();
+      if (!lv2) return;
+      detailsRows.push({
+        institution_id: inst,
+        student_id: studentId,
+        lv2,
+        updated_at: new Date().toISOString(),
+      });
+    }
+
+    for (const r of parsed) {
+      const m = String(r.matricule || "").trim();
+      if (m) {
+        pushDetail(r, existingByMat[m]?.id);
+        continue;
+      }
+      const key = String(r.full_name_key || "").trim();
+      if (!key) continue;
+      const matches = existingByNameKey.get(key) || [];
+      if (matches.length === 1) pushDetail(r, matches[0].id);
+    }
+
+    if (detailsRows.length) {
+      const { data, error } = await srv
+        .from("student_roster_details")
+        .upsert(detailsRows, { onConflict: "institution_id,student_id" })
+        .select("student_id");
+
+      if (error) {
+        return NextResponse.json(
+          {
+            error:
+              "La colonne LV2 est bien détectée, mais la table student_roster_details est absente. Exécute la migration 20260521_student_roster_details.sql dans Supabase, puis relance l’import.",
+            details: error.message,
+          },
+          { status: 400 },
+        );
+      }
+      rosterDetailsUpdated = (data ?? []).length;
+    }
+  }
+
   try {
     console.log("[students/import] commit", {
       class_id,
@@ -771,6 +834,7 @@ export async function POST(req: NextRequest) {
       closedOld,
       reactivated,
       insertedTarget,
+      rosterDetailsUpdated,
     });
   } catch {}
 
@@ -782,5 +846,6 @@ export async function POST(req: NextRequest) {
     closed_old_enrollments: closedOld,
     reactivated_in_target: reactivated,
     inserted_in_target: insertedTarget,
+    roster_details_updated: rosterDetailsUpdated,
   });
 }

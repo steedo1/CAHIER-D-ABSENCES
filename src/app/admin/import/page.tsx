@@ -501,9 +501,9 @@ export default function ImportPage() {
     }
   }
 
-  const phStudents = `N°,Matricule,Nom et prénoms,Sexe,Date de naissance,Lieu de naissance,Nationalité,Régime,Redoublant,Interne,Affecté
-1,19659352H,Abia Yapi Christ Brayan,M,12/03/2010,Abidjan,Ivoirienne,Externe,Non,Non,Oui
-2,19578655R,Aboy Othniel,M,2010-05-02,Aboisso,Ivoirienne,Externe,Non,Non,Non`;
+  const phStudents = `N°,Matricule,Nom et prénoms,Sexe,Date de naissance,Lieu de naissance,Nationalité,LV2,Régime,Redoublant,Interne,Affecté
+1,19659352H,Abia Yapi Christ Brayan,M,12/03/2010,Abidjan,Ivoirienne,ESP,Externe,Non,Non,Oui
+2,19578655R,Aboy Othniel,M,2010-05-02,Aboisso,Ivoirienne,ALL,Externe,Non,Non,Non`;
 
   const phTeachers = `Nom,Email,Téléphone,Disciplines,Statut,Paie active
 M. FABRE,fabre@ecole.ci,+22501020304,Maths; Physique,vacataire,Oui
@@ -960,6 +960,7 @@ Mme KONE,kone@ecole.ci,+22505060708,Français,permanent,Oui`;
                     <th className="px-3 py-2 text-left">Date naiss.</th>
                     <th className="px-3 py-2 text-left">Lieu naiss.</th>
                     <th className="px-3 py-2 text-left">Nationalité</th>
+                    <th className="px-3 py-2 text-left">LV2</th>
                     <th className="px-3 py-2 text-left">Régime</th>
                     <th className="px-3 py-2 text-left">Redoublant</th>
                     <th className="px-3 py-2 text-left">Interne</th>
@@ -979,6 +980,7 @@ Mme KONE,kone@ecole.ci,+22505060708,Français,permanent,Oui`;
                       <td className="px-3 py-2">{r.birthdate ?? ""}</td>
                       <td className="px-3 py-2">{r.birth_place ?? ""}</td>
                       <td className="px-3 py-2">{r.nationality ?? ""}</td>
+                      <td className="px-3 py-2">{r.lv2 ?? ""}</td>
                       <td className="px-3 py-2">{r.regime ?? ""}</td>
                       <td className="px-3 py-2">{boolLabel(r.is_repeater)}</td>
                       <td className="px-3 py-2">{boolLabel(r.is_boarder)}</td>
