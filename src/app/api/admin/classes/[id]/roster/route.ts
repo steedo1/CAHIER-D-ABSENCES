@@ -213,7 +213,6 @@ export async function GET(req: NextRequest, context: { params: Promise<{ id: str
         [
           "id",
           "name",
-          "acronym",
           "logo_url",
           "phone",
           "email",
@@ -342,7 +341,7 @@ export async function GET(req: NextRequest, context: { params: Promise<{ id: str
     institution: {
       id: String(institution?.id || institutionId),
       name: institutionName || "Établissement",
-      acronym: institution?.acronym ?? null,
+      acronym: null,
       logo_url: institution?.logo_url ?? null,
       phone: institution?.phone ?? null,
       email: institution?.email ?? null,
