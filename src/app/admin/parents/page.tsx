@@ -1212,60 +1212,27 @@ export default function AdminStudentsByClassPage() {
     }
   }
 
-  function asExcelText(val: string) {
-    return `="${val.replace(/"/g, '""')}"`;
-  }
-
-  function toCsvCell(v: string, sep: string) {
-    if (v.includes('"') || v.includes("\n") || v.includes(sep)) {
-      return `"${v.replace(/"/g, '""')}"`;
+  function openClassListPdf() {
+    if (!classId) {
+      setMsg("Choisissez d'abord une classe avant d'exporter la liste PDF.");
+      return;
     }
-    return v;
-  }
 
-  function exportCsv(currentPageOnly: boolean) {
-    const sep = ",";
-    const eol = "\r\n";
-    const rows = currentPageOnly ? pageItems : studentsFiltered;
-    const baseIndex = currentPageOnly ? startIdx : 0;
+    const qs = new URLSearchParams();
+    const year = academicYear || computeAcademicYearFromDate();
+    if (year) qs.set("academic_year", year);
 
-    const header = ["N", "Nom complet", "Matricule", "Classe"];
-    const lines: string[] = [];
-    lines.push(`sep=${sep}`);
-    lines.push(header.join(sep));
+    const url = `/admin/classes/liste/${encodeURIComponent(classId)}${qs.toString() ? `?${qs.toString()}` : ""}`;
+    const win = window.open(url, "_blank", "noopener,noreferrer");
 
-    rows.forEach((row, i) => {
-      const numero = String(baseIndex + i + 1);
-      const nomComplet = nomAvantPrenoms(row.full_name || "");
-      const matricule = row.matricule ? asExcelText(row.matricule) : "";
-      const classe = row.class_label ? asExcelText(row.class_label) : "";
+    if (!win) {
+      setMsg("Impossible d'ouvrir la liste PDF. Verifiez le bloqueur de pop-up du navigateur.");
+      return;
+    }
 
-      lines.push(
-        [
-          toCsvCell(numero, sep),
-          toCsvCell(nomComplet, sep),
-          matricule,
-          classe,
-        ].join(sep)
-      );
-    });
-
-    const csv = "\uFEFF" + lines.join(eol);
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-
-    const cls = classes.find((c) => c.id === classId);
-    const filename =
-      (cls
-        ? `eleves_${(cls.name || cls.label || "classe").replace(/\s+/g, "_")}`
-        : "eleves") + (q.trim() ? "_filtre" : "") + ".csv";
-
-    a.href = url;
-    a.download = filename;
-    a.click();
-
-    URL.revokeObjectURL(url);
+    try {
+      win.focus();
+    } catch {}
   }
 
   async function generateAttestations(rows: StudentRow[], label: string) {
@@ -1461,26 +1428,25 @@ export default function AdminStudentsByClassPage() {
                 Liste des eleves par classe
               </h1>
               <p className="mt-1 text-sm text-white/80">
-                Selectionnez un niveau, choisissez la classe, recherchez,
-                modifiez un eleve et generez les attestations de frequentation.
+                Selectionnez un niveau, choisissez la classe, recherchez, modifiez un eleve,
+                generez la liste PDF et les attestations de frequentation.
               </p>
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
               <Button
                 tone="white"
-                onClick={() => exportCsv(true)}
-                disabled={loading || (!classId && !studentsFiltered.length)}
+                onClick={openClassListPdf}
+                disabled={loading || !classId}
+                title={
+                  classId
+                    ? "Ouvrir la liste de classe officielle puis l'enregistrer en PDF"
+                    : "Choisissez d'abord une classe"
+                }
               >
-                Exporter CSV (page)
+                Liste PDF (classe)
               </Button>
 
-              <Button
-                onClick={() => exportCsv(false)}
-                disabled={loading || (!classId && !studentsFiltered.length)}
-              >
-                Exporter CSV (tous)
-              </Button>
             </div>
           </div>
 
