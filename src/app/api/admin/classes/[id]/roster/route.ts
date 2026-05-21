@@ -156,7 +156,7 @@ async function getEducators(
     .eq("role", "educator");
 
   const allEducatorIds = Array.from(
-    new Set((roles || []).map((row: any) => String(row.profile_id || "").trim()).filter(Boolean)),
+    new Set<string>((roles || []).map((row: any) => String(row.profile_id || "").trim()).filter(Boolean)),
   );
 
   if (!allEducatorIds.length) return [];
@@ -175,7 +175,7 @@ async function getEducators(
 
   const level = String(classLevel || "").trim();
   const matchingIds = Array.from(
-    new Set(
+    new Set<string>(
       rows
         .filter((row: any) => {
           const rowClassId = String(row.class_id || "").trim();
@@ -203,39 +203,34 @@ async function requireAdminContext(classId: string) {
     return { error: NextResponse.json({ error: "unauthorized" }, { status: 401 }) };
   }
 
+  // Important : dans cette base, le rôle n’est pas dans profiles.
+  // La source fiable des rôles est public.user_roles.
   const { data: me, error: meErr } = await supa
     .from("profiles")
-    .select("id,role,institution_id")
+    .select("id,institution_id")
     .eq("id", user.id)
     .maybeSingle();
 
   if (meErr) return { error: NextResponse.json({ error: meErr.message }, { status: 400 }) };
 
-  let institutionId = String(me?.institution_id || "").trim();
-  const profileRole = String(me?.role || "").trim();
+  const { data: roleRows, error: roleErr } = await srv
+    .from("user_roles")
+    .select("role,institution_id")
+    .eq("profile_id", user.id);
 
-  let roleFromUserRoles = "";
-  if (!institutionId || !["admin", "super_admin"].includes(profileRole)) {
-    const { data: roles } = await srv
-      .from("user_roles")
-      .select("role,institution_id")
-      .eq("profile_id", user.id);
+  if (roleErr) return { error: NextResponse.json({ error: roleErr.message }, { status: 400 }) };
 
-    const adminRole = (roles || []).find((row: any) =>
-      ["admin", "super_admin"].includes(String(row.role || "")),
-    );
+  const adminRoles = (roleRows || []).filter((row: any) =>
+    ["admin", "super_admin"].includes(String(row.role || "")),
+  );
 
-    if (adminRole) {
-      roleFromUserRoles = String(adminRole.role || "");
-      if (!institutionId && adminRole.institution_id) {
-        institutionId = String(adminRole.institution_id);
-      }
-    }
+  let institutionId = String((me as any)?.institution_id || "").trim();
+  if (!institutionId) {
+    const roleInstitution = adminRoles.find((row: any) => row.institution_id)?.institution_id;
+    institutionId = roleInstitution ? String(roleInstitution).trim() : "";
   }
 
-  const isAdmin =
-    ["admin", "super_admin"].includes(profileRole) ||
-    ["admin", "super_admin"].includes(roleFromUserRoles);
+  const isAdmin = adminRoles.length > 0;
 
   if (!institutionId) {
     return { error: NextResponse.json({ error: "no_institution" }, { status: 400 }) };

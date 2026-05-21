@@ -304,38 +304,31 @@ async function guardAdmin(
   } = await supa.auth.getUser();
   if (!user) return { error: "unauthorized" };
 
+  // Important : dans cette base, le rôle n’est pas dans profiles.
+  // La source fiable des rôles est public.user_roles.
   const { data: me } = await supa
     .from("profiles")
-    .select("id, role, institution_id")
+    .select("id, institution_id")
     .eq("id", user.id)
     .maybeSingle();
 
+  const { data: urRows } = await srv
+    .from("user_roles")
+    .select("role, institution_id")
+    .eq("profile_id", user.id);
+
+  const adminRows = (urRows || []).filter((r) =>
+    ["admin", "super_admin"].includes(String(r.role || "")),
+  );
+
   let instId: string | null = (me?.institution_id as string) || null;
-  const roleProfile = String(me?.role || "");
-
-  let roleFromUR: string | null = null;
-  if (!instId || !["admin", "super_admin"].includes(roleProfile)) {
-    const { data: urRows } = await srv
-      .from("user_roles")
-      .select("role, institution_id")
-      .eq("profile_id", user.id);
-
-    const adminRow = (urRows || []).find((r) =>
-      ["admin", "super_admin"].includes(String(r.role || "")),
-    );
-    if (adminRow) {
-      roleFromUR = String(adminRow.role);
-      if (!instId && adminRow.institution_id)
-        instId = String(adminRow.institution_id);
-    }
+  if (!instId) {
+    const roleInstitution = adminRows.find((r) => r.institution_id)?.institution_id;
+    instId = roleInstitution ? String(roleInstitution) : null;
   }
 
-  const isAdmin =
-    ["admin", "super_admin"].includes(roleProfile) ||
-    ["admin", "super_admin"].includes(String(roleFromUR || ""));
-
   if (!instId) return { error: "no_institution" };
-  if (!isAdmin) return { error: "forbidden" };
+  if (adminRows.length === 0) return { error: "forbidden" };
 
   return { userId: user.id, instId };
 }
