@@ -22,6 +22,7 @@ type EngineSummary = {
   placements_count?: number;
   assignments_count?: number;
   unplaced_count?: number;
+  blocking_diagnostics_count?: number;
   score?: number;
 };
 
@@ -84,6 +85,17 @@ function StatCard({
       </div>
     </div>
   );
+}
+
+function getQualityIndex(summary?: EngineSummary | null) {
+  const score = Number(summary?.score ?? 0);
+  const unplaced = Number(summary?.unplaced_count ?? 0);
+  const blocking = Number(summary?.blocking_diagnostics_count ?? 0);
+
+  if (unplaced > 0 || blocking > 0) return "À améliorer";
+  if (!Number.isFinite(score) || score <= 3500) return "Bon";
+  if (score <= 9000) return "Moyen";
+  return "À améliorer";
 }
 
 function formatDate(value: string) {
@@ -286,7 +298,7 @@ export default function MontageWorkspace() {
                       return (
                         <div key={project.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
                           <div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="font-bold text-slate-950">{project.name}</p><p className="mt-1 text-xs text-slate-500">Modifié le {formatDate(project.updated_at)}</p></div><span className="rounded-full bg-white px-3 py-1 text-xs font-black uppercase tracking-wide text-slate-600 ring-1 ring-slate-200">{getStatusLabel(project.status)}</span></div>
-                          {summary && <div className="mt-4 grid grid-cols-3 gap-2 text-center text-xs"><div className="rounded-xl bg-white px-2 py-2 ring-1 ring-slate-200"><p className="font-black text-slate-950">{summary.assignments_count ?? 0}</p><p className="text-slate-500">Lignes</p></div><div className="rounded-xl bg-white px-2 py-2 ring-1 ring-slate-200"><p className="font-black text-slate-950">{summary.unplaced_count ?? 0}</p><p className="text-slate-500">Non placés</p></div><div className="rounded-xl bg-white px-2 py-2 ring-1 ring-slate-200"><p className="font-black text-slate-950">{summary.score ?? 0}%</p><p className="text-slate-500">Score</p></div></div>}
+                          {summary && <div className="mt-4 grid grid-cols-3 gap-2 text-center text-xs"><div className="rounded-xl bg-white px-2 py-2 ring-1 ring-slate-200"><p className="font-black text-slate-950">{summary.assignments_count ?? 0}</p><p className="text-slate-500">Lignes</p></div><div className="rounded-xl bg-white px-2 py-2 ring-1 ring-slate-200"><p className="font-black text-slate-950">{summary.unplaced_count ?? 0}</p><p className="text-slate-500">Non placés</p></div><div className="rounded-xl bg-white px-2 py-2 ring-1 ring-slate-200"><p className="font-black text-slate-950">{getQualityIndex(summary)}</p><p className="text-slate-500">Indice qualité</p></div></div>}
                           <div className="mt-3 grid gap-2 sm:grid-cols-2">
                             <Link href={`/admin/montage-emploi-du-temps/projets/${project.id}`} className="inline-flex w-full items-center justify-center rounded-2xl bg-emerald-600 px-4 py-3 text-sm font-black text-white shadow-sm transition hover:bg-emerald-700">Voir l’emploi du temps</Link>
                             <button

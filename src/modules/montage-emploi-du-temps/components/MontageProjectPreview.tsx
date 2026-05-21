@@ -53,6 +53,7 @@ type EngineResult = {
     assignments_count?: number;
     placements_count?: number;
     unplaced_count?: number;
+    blocking_diagnostics_count?: number;
     score?: number;
   };
   assignments?: Assignment[];
@@ -583,6 +584,314 @@ function getInstitutionInfo(snapshot?: SourceSnapshot | null): InstitutionInfo {
   };
 }
 
+
+function getQualityIndex(summary?: EngineResult["summary"] | null) {
+  const score = Number(summary?.score ?? 0);
+  const unplaced = Number(summary?.unplaced_count ?? 0);
+  const blocking = Number(summary?.blocking_diagnostics_count ?? 0);
+
+  if (unplaced > 0 || blocking > 0) return "À améliorer";
+  if (!Number.isFinite(score) || score <= 3500) return "Bon";
+  if (score <= 9000) return "Moyen";
+  return "À améliorer";
+}
+
+function formatUnits(value: number) {
+  if (!Number.isFinite(value) || value <= 0) return "";
+  if (Number.isInteger(value)) return `${value} h`;
+  return `${value.toFixed(1).replace(".", ",")} h`;
+}
+
+function getTeacherDisplayName(item: AnyRecord) {
+  return emptyToBlank(
+    item.display_name ||
+      item.full_name ||
+      item.fullName ||
+      item.name ||
+      item.teacher_name ||
+      item.email,
+  );
+}
+
+function getFirstTeacherId(items: Assignment[]) {
+  return emptyToBlank(items.find((item) => emptyToBlank(item.teacher_id))?.teacher_id);
+}
+
+function getSnapshotTeacher(
+  snapshot: SourceSnapshot | null | undefined,
+  items: Assignment[],
+  label: string,
+) {
+  const teachers = Array.isArray(snapshot?.teachers) ? snapshot?.teachers || [] : [];
+  const teacherId = getFirstTeacherId(items);
+
+  if (teacherId) {
+    const byId = teachers.find((item) => emptyToBlank(item.id) === teacherId);
+    if (byId) return byId;
+  }
+
+  const normalizedLabel = emptyToBlank(label).toLowerCase();
+  return (
+    teachers.find(
+      (item) => getTeacherDisplayName(item).toLowerCase() === normalizedLabel,
+    ) || null
+  );
+}
+
+function getTeacherMaxWeeklyUnits(teacher?: AnyRecord | null) {
+  const value = Number(
+    teacher?.max_weekly_units ??
+      teacher?.maxWeeklyUnits ??
+      teacher?.weekly_quota ??
+      teacher?.service_max ??
+      18,
+  );
+
+  return Number.isFinite(value) && value > 0 ? value : 18;
+}
+
+function getUniqueBlockDuration(item: Assignment) {
+  const durationUnits = getNumeric(item.duration_units);
+  if (durationUnits > 0) return durationUnits;
+
+  const durationSlots = getNumeric(item.duration_slots);
+  if (durationSlots > 0) return durationSlots;
+
+  return 1;
+}
+
+function getBlockIdentityForSummary(item: Assignment) {
+  const explicit = emptyToBlank(item.block_id || item.lesson_block_id || item.id);
+  if (explicit) return explicit;
+
+  return [
+    item.class_id || item.class_label || "class",
+    item.teacher_id || item.teacher_name || "teacher",
+    item.subject_id || item.subject_label || "subject",
+    item.weekday || "day",
+    item.period_no || "period",
+  ].join("|");
+}
+
+function buildTeacherServiceRows(items: Assignment[]) {
+  const seenBlocks = new Set<string>();
+  const map = new Map<
+    string,
+    { className: string; subjectName: string; total: number }
+  >();
+
+  for (const item of sortAssignments(items)) {
+    const blockKey = getBlockIdentityForSummary(item);
+    if (seenBlocks.has(blockKey)) continue;
+    seenBlocks.add(blockKey);
+
+    const className = clean(item.class_label, "Classe");
+    const subjectName = clean(item.subject_label, "Matière");
+    const key = `${className}|${subjectName}`;
+    const current = map.get(key) || { className, subjectName, total: 0 };
+    current.total += getUniqueBlockDuration(item);
+    map.set(key, current);
+  }
+
+  const rows = Array.from(map.values()).sort((a, b) =>
+    `${a.className}-${a.subjectName}`.localeCompare(
+      `${b.className}-${b.subjectName}`,
+      "fr",
+      { numeric: true },
+    ),
+  );
+
+  while (rows.length < 6) rows.push({ className: "", subjectName: "", total: 0 });
+  return rows;
+}
+
+function getTeacherDiscipline(
+  items: Assignment[],
+  snapshot?: SourceSnapshot | null,
+  teacherId?: string,
+) {
+  const subjects = new Map<string, string>();
+
+  for (const item of items) {
+    const label = clean(item.subject_label, "");
+    if (label) subjects.set(label.toLowerCase(), label);
+  }
+
+  const services = Array.isArray(snapshot?.service_assignments)
+    ? snapshot?.service_assignments || []
+    : [];
+
+  if (teacherId) {
+    for (const service of services) {
+      if (emptyToBlank(service.teacher_id) !== teacherId) continue;
+      const label = clean(
+        service.subject_label || service.catalog_subject_label || service.subject_name,
+        "",
+      );
+      if (label) subjects.set(label.toLowerCase(), label);
+    }
+  }
+
+  const values = Array.from(subjects.values()).filter(Boolean);
+  return values.length > 0 ? values.join(" / ") : "........................................";
+}
+
+function TeacherServiceSummary({
+  label,
+  items,
+  snapshot,
+}: {
+  label: string;
+  items: Assignment[];
+  snapshot?: SourceSnapshot | null;
+}) {
+  const teacher = getSnapshotTeacher(snapshot, items, label);
+  const teacherId = getFirstTeacherId(items);
+  const rows = buildTeacherServiceRows(items);
+  const usefulRows = rows.filter((row) => row.total > 0);
+  const total = usefulRows.reduce((sum, row) => sum + row.total, 0);
+  const maxService = getTeacherMaxWeeklyUnits(teacher);
+  const overtime = Math.max(0, total - maxService);
+  const discipline = getTeacherDiscipline(items, snapshot, teacherId);
+  const phone = emptyToBlank(teacher?.phone || teacher?.telephone || teacher?.tel);
+  const email = emptyToBlank(teacher?.email);
+
+  return (
+    <div className="mt-3 space-y-3 print:mt-2">
+      <div className="grid gap-1 border border-black p-2 text-[10px] leading-tight text-black sm:grid-cols-2 lg:grid-cols-3 print:grid-cols-3 print:text-[7.2px]">
+        <div>
+          Nom et prénoms : <strong>{label}</strong>
+        </div>
+        <div>
+          Discipline : <strong>{discipline}</strong>
+        </div>
+        <div>Matricule : ............................</div>
+        <div>Statut : Prof. Lycée / Collège / Stagiaire</div>
+        <div>Contact(s) : {phone || "................................"}</div>
+        <div>Email : {email || "................................"}</div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-0 border-l border-t border-black text-[10px] text-black sm:grid-cols-4 print:text-[7.2px]">
+        <span className="border-b border-r border-black px-2 py-1">Prof. Agrégé de Lycée</span>
+        <span className="border-b border-r border-black px-2 py-1">Prof. de Lycée</span>
+        <span className="border-b border-r border-black px-2 py-1">Prof. de Collège</span>
+        <span className="border-b border-r border-black px-2 py-1">Prof. Stagiaire</span>
+      </div>
+
+      <p className="text-[11px] font-bold text-black print:text-[7.6px]">
+        Professeur principal en classe de : ........................................
+      </p>
+
+      <section>
+        <h4 className="mb-1 text-center text-[12px] font-black uppercase tracking-[0.45em] text-black print:text-[8px] print:tracking-[0.32em]">
+          Tableau récapitulatif
+        </h4>
+        <div className="overflow-x-auto print:overflow-visible">
+          <table className="w-full min-w-[760px] border-collapse text-[10px] text-black print:min-w-0 print:text-[7.2px]">
+            <tbody>
+              <tr>
+                <th className="w-[210px] border border-black px-2 py-1 text-left font-black">
+                  CLASSES
+                </th>
+                {rows.map((row, index) => (
+                  <td key={`class-${index}`} className="border border-black px-2 py-1 text-center">
+                    {row.className}
+                  </td>
+                ))}
+                <td className="border border-black px-2 py-1 text-center" />
+              </tr>
+              <tr>
+                <th className="border border-black px-2 py-1 text-left font-black">
+                  EFFECTIFS
+                </th>
+                {rows.map((_, index) => (
+                  <td key={`effectif-${index}`} className="border border-black px-2 py-1 text-center" />
+                ))}
+                <td className="border border-black px-2 py-1 text-center" />
+              </tr>
+              <tr>
+                <th className="border border-black px-2 py-1 text-left font-black">
+                  DISCIPLINES
+                </th>
+                {rows.map((row, index) => (
+                  <td key={`subject-${index}`} className="border border-black px-2 py-1 text-center font-bold">
+                    {row.subjectName}
+                  </td>
+                ))}
+                <td className="border border-black px-2 py-1 text-center" />
+              </tr>
+              <tr>
+                <th className="border border-black px-2 py-1 text-left font-black">
+                  NBRE D’HEURES D’ENSEIGNEMENT (A)
+                </th>
+                {rows.map((row, index) => (
+                  <td key={`hours-${index}`} className="border border-black px-2 py-1 text-center font-bold">
+                    {formatUnits(row.total)}
+                  </td>
+                ))}
+                <td className="border border-black px-2 py-1 text-center font-black">
+                  A = {formatUnits(total) || "0 h"}
+                </td>
+              </tr>
+              <tr>
+                <th className="border border-black px-2 py-1 text-left font-black">
+                  COMPLÉMENT DE SERVICE (B)
+                </th>
+                {rows.map((_, index) => (
+                  <td key={`service-${index}`} className="border border-black px-2 py-1 text-center" />
+                ))}
+                <td className="border border-black px-2 py-1 text-center font-black">B =</td>
+              </tr>
+              <tr>
+                <th className="border border-black px-2 py-1 text-left font-black">
+                  DÉCHARGES (C)
+                </th>
+                {rows.map((_, index) => (
+                  <td key={`decharge-${index}`} className="border border-black px-2 py-1 text-center" />
+                ))}
+                <td className="border border-black px-2 py-1 text-center font-black">C =</td>
+              </tr>
+              <tr>
+                <th className="border border-black px-2 py-1 text-left font-black">
+                  AUGMENTATION DE SERVICE (D)
+                </th>
+                {rows.map((_, index) => (
+                  <td key={`increase-${index}`} className="border border-black px-2 py-1 text-center" />
+                ))}
+                <td className="border border-black px-2 py-1 text-center font-black">D =</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div className="ml-auto mt-1 grid w-full max-w-[560px] grid-cols-[1fr_120px] border-l border-t border-black text-[10px] text-black print:max-w-[118mm] print:grid-cols-[1fr_28mm] print:text-[7.2px]">
+          <strong className="border-b border-r border-black px-2 py-1">TOTAL : T = A + B + C - D</strong>
+          <span className="border-b border-r border-black px-2 py-1 text-center font-black">
+            T = {formatUnits(total) || "0 h"}
+          </span>
+          <strong className="border-b border-r border-black px-2 py-1">Maximum de service</strong>
+          <span className="border-b border-r border-black px-2 py-1 text-center font-black">
+            Max = {formatUnits(maxService)}
+          </span>
+          <strong className="border-b border-r border-black px-2 py-1">Heures supplémentaires = T - Max</strong>
+          <span className="border-b border-r border-black px-2 py-1 text-center font-black">
+            {formatUnits(overtime) || "0 h"}
+          </span>
+        </div>
+      </section>
+
+      <div className="flex justify-end gap-8 text-center text-[10px] text-black print:text-[7.2px]">
+        <span>Fait à ................, le ................</span>
+        <span>
+          Cachet, signature, Nom et Prénoms
+          <br />
+          du Chef d’établissement
+        </span>
+      </div>
+    </div>
+  );
+}
+
 function StatBox({ label, value }: { label: string; value: number | string }) {
   return (
     <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
@@ -890,6 +1199,12 @@ function OfficialClassSheet({
           </aside>
         ) : null}
       </div>
+
+      {!isClassMode ? (
+        <div className="mx-3 mb-3 print:mx-0 print:mb-0 print:mt-3">
+          <TeacherServiceSummary label={label} items={items} snapshot={snapshot} />
+        </div>
+      ) : null}
 
       {isClassMode ? (
         <div className="mx-3 mb-3 print:mx-0 print:mb-0 print:mt-3">
@@ -1199,8 +1514,8 @@ export default function MontageProjectPreview({
                 value={result?.summary?.unplaced_count ?? unplaced.length}
               />
               <StatBox
-                label="Score"
-                value={`${result?.summary?.score ?? 0}%`}
+                label="Indice de qualité"
+                value={getQualityIndex(result?.summary)}
               />
               <StatBox
                 label="Moteur"

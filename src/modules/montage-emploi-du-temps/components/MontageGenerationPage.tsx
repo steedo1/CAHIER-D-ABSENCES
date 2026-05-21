@@ -65,6 +65,7 @@ type EngineSummary = {
   assignments_count?: number;
   placements_count?: number;
   unplaced_count?: number;
+  blocking_diagnostics_count?: number;
   score?: number;
 };
 
@@ -194,6 +195,17 @@ function phaseLabel(phase: GenerationPhase) {
   return "Génération HoraClasse";
 }
 
+
+function getQualityIndex(summary?: EngineSummary | null) {
+  const score = Number(summary?.score ?? 0);
+  const unplaced = Number(summary?.unplaced_count ?? 0);
+  const blocking = Number(summary?.blocking_diagnostics_count ?? 0);
+
+  if (unplaced > 0 || blocking > 0) return "À améliorer";
+  if (!Number.isFinite(score) || score <= 3500) return "Bon";
+  if (score <= 9000) return "Moyen";
+  return "À améliorer";
+}
 
 function waitForNextPaint(): Promise<void> {
   return new Promise((resolve) => {
@@ -585,7 +597,7 @@ export default function MontageGenerationPage() {
 
       const summary = generated.result?.summary || {};
       setNotice(
-        `Génération terminée : ${summary.assignments_count ?? 0} ligne(s) placée(s), ${summary.unplaced_count ?? 0} bloc(s) à revoir, score ${summary.score ?? 0}%.`,
+        `Génération terminée : ${summary.assignments_count ?? 0} ligne(s) placée(s), ${summary.unplaced_count ?? 0} bloc(s) à revoir, indice de qualité : ${getQualityIndex(summary)}.`,
       );
       await loadProjects();
       router.push(`/admin/montage-emploi-du-temps/projets/${generated.item.id}`);
@@ -613,7 +625,7 @@ export default function MontageGenerationPage() {
       }
       const summary = json.result?.summary || {};
       setNotice(
-        `Génération terminée : ${summary.assignments_count ?? 0} ligne(s) placée(s), ${summary.unplaced_count ?? 0} bloc(s) à revoir, score ${summary.score ?? 0}%.`,
+        `Génération terminée : ${summary.assignments_count ?? 0} ligne(s) placée(s), ${summary.unplaced_count ?? 0} bloc(s) à revoir, indice de qualité : ${getQualityIndex(summary)}.`,
       );
       await loadProjects();
     } catch (err) {
@@ -865,8 +877,8 @@ export default function MontageGenerationPage() {
                               <p className="text-slate-500">À revoir</p>
                             </div>
                             <div className="rounded-xl bg-white px-2 py-2 ring-1 ring-slate-200">
-                              <p className="font-black text-slate-950">{summary.score ?? 0}%</p>
-                              <p className="text-slate-500">Score</p>
+                              <p className="font-black text-slate-950">{getQualityIndex(summary)}</p>
+                              <p className="text-slate-500">Indice qualité</p>
                             </div>
                           </div>
 
