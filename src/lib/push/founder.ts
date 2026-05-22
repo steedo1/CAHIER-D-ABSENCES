@@ -59,10 +59,15 @@ function shortDateTime(value: string | null | undefined) {
   }
 }
 
-function remainingDueLabel(value: number | string | null | undefined) {
+function remainingDueAmount(value: number | string | null | undefined) {
   const amount = Number(value || 0);
-  if (!Number.isFinite(amount) || amount <= 0) return "Soldé";
-  return `Reste dû : ${money(amount)}`;
+  if (!Number.isFinite(amount) || amount <= 0) return 0;
+  return amount;
+}
+
+function remainingDueLabel(value: number | string | null | undefined) {
+  const amount = remainingDueAmount(value);
+  return amount > 0 ? `Restant dû : ${money(amount)}` : "Restant dû : Soldé";
 }
 
 async function getInstitutionName(institutionId: string) {
@@ -187,21 +192,26 @@ export async function queueFounderFinancePaymentNotification(input: {
   const className = compactString(input.className, "Classe non précisée");
   const category = compactString(input.categoryName, "Frais scolaire");
   const paidAt = shortDateTime(input.paidAt) || shortDateTime(new Date().toISOString());
+  const amountLabel = money(input.amount);
+  const remainingAmount = remainingDueAmount(input.remainingDue);
   const remaining = remainingDueLabel(input.remainingDue);
 
   const studentAndClass = className
     ? `${student} — ${className}`
     : student;
 
+  const detailLine = `${category} • ${studentAndClass}`;
+
+  // Note : la notification push native reste du texte brut.
+  // Le rendu gras/italique doit être appliqué côté interface à partir de finance_card.
   const body = [
     paidAt,
-    money(input.amount),
-    category,
-    studentAndClass,
+    `Montant encaissé : ${amountLabel}`,
+    detailLine,
     remaining,
   ]
     .filter(Boolean)
-    .join(" • ");
+    .join("\n");
 
   return queueFounderNotification({
     institutionId: input.institutionId,
@@ -211,15 +221,28 @@ export async function queueFounderFinancePaymentNotification(input: {
     url: "/founder/finance",
     data: {
       amount: Number(input.amount || 0),
+      amount_label: amountLabel,
       receipt_no: receipt,
       payer_name: compactString(input.payerName, student),
       student_name: student,
       class_name: className,
       category_name: category,
-      remaining_due: Number(input.remainingDue || 0),
+      detail_line: detailLine,
+      remaining_due: remainingAmount,
+      remaining_due_label: remaining,
       paid_at: input.paidAt || null,
       paid_at_label: paidAt,
       institution_name: school,
+      finance_card: {
+        kind: "payment_received",
+        layout: "founder_finance_payment",
+        paid_at_label: paidAt,
+        amount_label: amountLabel,
+        amount_class_name: "font-extrabold text-slate-950 text-lg",
+        detail_line: detailLine,
+        remaining_due_label: remaining,
+        remaining_due_class_name: "italic text-slate-500 text-xs",
+      },
     },
     req: input.req,
   });
