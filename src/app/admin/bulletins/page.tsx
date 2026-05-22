@@ -9,6 +9,7 @@ import React, {
   useState,
 } from "react";
 import { Printer, RefreshCw, X } from "lucide-react";
+import { createPortal } from "react-dom";
 
 /* ───────── Types ───────── */
 
@@ -1179,6 +1180,7 @@ function StudentBulletinCard({
 
   /* ✅ FIT-TO-PAGE : si ça dépasse, on scale automatiquement à l’impression */
   const pageRef = useRef<HTMLDivElement | null>(null);
+  const contentRef = useRef<HTMLDivElement | null>(null);
   const [printFitScale, setPrintFitScale] = useState(1);
 
   const setScale = (s: number) => {
@@ -1190,43 +1192,35 @@ function StudentBulletinCard({
   };
 
   const computePrintFit = () => {
-    const el = pageRef.current;
-    if (!el || typeof window === "undefined") return;
+    const pageEl = pageRef.current;
+    const contentEl = contentRef.current;
+    if (!pageEl || !contentEl || typeof window === "undefined") return;
 
     const zoom = Math.max(0.1, Number(previewZoomForMeasure || 1));
 
-    // hauteur réelle du bloc (corrigée du zoom d’aperçu)
-    const rect = el.getBoundingClientRect();
-    const naturalH = rect.height / zoom;
-
-    const cs = window.getComputedStyle(el);
-    const minHPx = parseFloat(cs.minHeight || "0");
+    // Hauteur réelle du CONTENU, corrigée du zoom d’aperçu.
+    // On mesure le contenu interne, pas la page extérieure : cela évite que
+    // le scale casse les sauts de page ou coupe le bas du bulletin.
+    const rect = contentEl.getBoundingClientRect();
+    const naturalH = Math.max(rect.height, contentEl.scrollHeight) / zoom;
 
     if (!Number.isFinite(naturalH) || naturalH <= 0) return;
-    if (!Number.isFinite(minHPx) || minHPx <= 0) {
+
+    // Zone utile A4 très prudente : A4 - marges navigateur/imprimante - marge basse.
+    // 282 mm laisse une vraie réserve pour éviter les pieds de page coupés.
+    const targetPx = (282 / 25.4) * 96;
+
+    if (naturalH <= targetPx) {
       setScale(1);
       return;
     }
 
-    // ✅ Si le bloc ne dépasse PAS la zone A4 utile → pas de scale
-    if (naturalH <= minHPx + 0.5) {
-      setScale(1);
-      return;
-    }
+    const raw = Math.min(1, targetPx / naturalH);
+    const safe = Math.min(1, raw * 0.985);
 
-    // ✅ marge de sécurité anti-arrondis / imprimantes (sinon 1px peut créer une 2e page)
-    const cushion = Math.max(10, Math.round(minHPx * 0.012)); // ~1.2% (≈ 13px sur A4 utile)
-    const usable = Math.max(1, minHPx - cushion);
-
-    // scale < 1 si dépasse
-    const raw = Math.min(1, usable / naturalH);
-
-    // ✅ garde une micro marge en plus
-    const safe = Math.min(1, raw * 0.99);
-
-    // ✅ plus de blocage à 0.82 (c’était la cause du débordement)
-    // on autorise à descendre plus bas pour GARANTIR 1 page
-    const clamped = Math.max(0.45, safe);
+    // En dessous de 0.55, le bulletin deviendrait illisible : on préfère garder
+    // le maximum possible tout en évitant les coupes ordinaires.
+    const clamped = Math.max(0.55, safe);
 
     setScale(clamped);
   };
@@ -1819,12 +1813,13 @@ function StudentBulletinCard({
   return (
     <div
       ref={pageRef}
-      className="print-page print-break relative mx-auto flex flex-col overflow-hidden bg-white text-black"
+      className="print-page print-break relative mx-auto overflow-hidden bg-white text-black"
       style={{
         ["--sig-box-h" as any]: `${sigBoxHeightPx}px`,
         ["--print-fit-scale" as any]: String(printFitScale),
       }}
     >
+      <div ref={contentRef} className="print-page-content relative flex flex-col text-black">
       {institution?.institution_logo_url ? (
         // eslint-disable-next-line @next/next/no-img-element
         <img
@@ -2300,9 +2295,10 @@ function StudentBulletinCard({
         </div>
       </div>
 
-      <div className="mt-1 text-center text-[8px] leading-tight text-black">
+      <div className="mt-1 pb-[2mm] text-center text-[8px] leading-tight text-black">
         <div className="font-bold tracking-[0.04em]">www.mon-cahier.com</div>
         <div className="font-semibold">Bulletin sécurisé par code QR</div>
+      </div>
       </div>
     </div>
   );
@@ -2802,13 +2798,18 @@ export default function BulletinsPage() {
           width: 210mm;
           min-height: 297mm;
           margin: 0 auto;
-
-          /* marge intérieure par défaut écran */
-          padding: 8mm;
-
+          padding: 0;
           box-sizing: border-box;
           font-family: Arial, Helvetica, sans-serif;
           background: #fff;
+        }
+
+        .print-page-content {
+          width: 100%;
+          min-height: 297mm;
+          padding: 8mm;
+          box-sizing: border-box;
+          transform-origin: top left;
         }
 
         .bulletin-watermark {
@@ -2824,18 +2825,20 @@ export default function BulletinsPage() {
           user-select: none;
         }
 
-        .print-page > :not(.bulletin-watermark) {
+        .print-page-content > :not(.bulletin-watermark) {
           position: relative;
           z-index: 1;
         }
 
-        /* ✅ Aperçu : zone imprimable (A4 - marges @page 4mm => 202mm / 289mm) + MARGES GAUCHE/DROITE */
+        /* ✅ Aperçu : zone imprimable (A4 - marges @page 4mm => 202mm / 289mm) */
         .preview-overlay .print-page {
           width: 202mm;
           min-height: 289mm;
+        }
 
-          /* ✅ marge intérieure visible (gauche/droite) sans casser la hauteur */
-          padding: 2mm 6mm;
+        .preview-overlay .print-page-content {
+          min-height: 289mm;
+          padding: 2mm 6mm 4mm;
         }
 
         @supports (zoom: 1) {
@@ -2854,83 +2857,105 @@ export default function BulletinsPage() {
         @media print {
           @page {
             size: A4 portrait;
-            margin: 4mm; /* ✅ conserve la place utile */
+            margin: 4mm;
           }
 
           html,
           body {
+            width: auto !important;
+            min-width: 0 !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            overflow: visible !important;
             background: #fff !important;
             -webkit-print-color-adjust: exact;
             print-color-adjust: exact;
           }
 
-          body * {
-            visibility: hidden !important;
+          /* ✅ Le portail d'impression devient le seul contenu imprimable :
+             cela supprime la page blanche créée par le layout admin caché. */
+          body > *:not(.bulletin-print-portal) {
+            display: none !important;
           }
-          .preview-overlay,
-          .preview-overlay * {
+
+          .bulletin-print-portal,
+          .bulletin-print-portal * {
             visibility: visible !important;
           }
 
-          .preview-overlay {
+          .bulletin-print-portal {
+            display: block !important;
             position: static !important;
             inset: auto !important;
+            width: 100% !important;
+            min-height: 0 !important;
             overflow: visible !important;
             background: transparent !important;
             padding: 0 !important;
+            margin: 0 !important;
+          }
+
+          .preview-pages {
+            display: block !important;
+            gap: 0 !important;
+            padding: 0 !important;
+            margin: 0 !important;
           }
 
           .preview-actions {
             display: none !important;
           }
 
-          /* ✅ PRINT FIT : 1 SEULE PAGE GARANTIE + marges intérieures gauche/droite */
+          /* ✅ La page extérieure reste à taille fixe pour fiabiliser les sauts de page.
+             Seul le contenu interne est réduit si nécessaire : plus de bas coupé. */
           .print-page {
-            width: 202mm;
-            height: 289mm; /* ✅ fixe la page utile */
-            max-height: 289mm; /* ✅ sécurité */
-            overflow: hidden; /* ✅ jamais de 2e page */
-
-            margin: 0 auto;
-
-            /* ✅ marge intérieure (gauche/droite) tout en gardant la couleur */
-            padding: 2mm 6mm;
-
-            box-sizing: border-box;
-
-            page-break-inside: avoid;
-            break-inside: avoid-page;
-
-            zoom: var(--print-fit-scale, 1) !important;
+            display: block !important;
+            position: relative !important;
+            width: 202mm !important;
+            height: 289mm !important;
+            min-height: 289mm !important;
+            max-height: 289mm !important;
+            padding: 0 !important;
+            margin: 0 auto !important;
+            overflow: hidden !important;
+            box-sizing: border-box !important;
+            page-break-inside: avoid !important;
+            break-inside: avoid-page !important;
+            page-break-after: always !important;
+            break-after: page !important;
+            zoom: 1 !important;
             transform: none !important;
           }
 
-          @supports not (zoom: 1) {
-            .print-page {
-              transform: scale(var(--print-fit-scale, 1)) !important;
-              transform-origin: top left !important;
-            }
+          .print-page-content {
+            width: calc(100% / var(--print-fit-scale, 1)) !important;
+            min-height: calc(289mm / var(--print-fit-scale, 1)) !important;
+            padding: 2mm 6mm 5mm !important;
+            box-sizing: border-box !important;
+            transform: scale(var(--print-fit-scale, 1)) !important;
+            transform-origin: top left !important;
           }
 
-          .print-break {
-            page-break-after: always;
-            break-after: page;
+          .print-break:last-of-type,
+          .print-page:last-of-type {
+            page-break-after: auto !important;
+            break-after: auto !important;
           }
 
-          .print-break:last-of-type {
-            page-break-after: auto;
-            break-after: auto;
-          }
-
-          .print\\:hidden {
+          .print\:hidden {
             display: none !important;
           }
         }
       `}</style>
 
-      {previewOpen && items.length > 0 && enriched && classInfo ? (
+      {previewOpen &&
+      items.length > 0 &&
+      enriched &&
+      classInfo &&
+      typeof document !== "undefined" ? (
+        createPortal(
         <div
-          className="preview-overlay fixed inset-0 z-[60] overflow-y-auto bg-slate-200 p-2 md:p-6"
+          className="preview-overlay bulletin-print-portal fixed inset-0 z-[60] overflow-y-auto bg-slate-200 p-2 md:p-6"
           style={{ ["--preview-zoom" as any]: previewZoom }}
         >
           <div className="preview-actions sticky top-2 z-10 mb-3 flex justify-end gap-2">
@@ -2959,7 +2984,7 @@ export default function BulletinsPage() {
             </Button>
           </div>
 
-          <div className="flex flex-col gap-6 pb-6">
+          <div className="preview-pages flex flex-col gap-6 pb-6">
             {items.map((it, idx) => (
               <StudentBulletinCard
                 key={it.student_id}
@@ -2984,7 +3009,9 @@ export default function BulletinsPage() {
               />
             ))}
           </div>
-        </div>
+        </div>,
+        document.body
+        )
       ) : (
         <div className="mx-auto flex max-w-6xl flex-col gap-4 p-4 md:p-6">
           <div className="flex flex-col gap-3 print:hidden sm:flex-row sm:items-center sm:justify-between">
