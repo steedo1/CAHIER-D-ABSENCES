@@ -14,14 +14,14 @@ type ProfileMini = {
 };
 
 function fullName(row: any) {
-  const direct = String(row?.full_name || "").trim();
-  if (direct) return direct;
+  const lastName = cleanText(row?.last_name).toUpperCase();
+  const firstName = cleanText(row?.first_name);
 
-  return [row?.last_name, row?.first_name]
-    .map((value) => String(value || "").trim())
-    .filter(Boolean)
-    .join(" ")
-    .trim();
+  if (lastName && firstName) return `${lastName}, ${firstName}`;
+  if (lastName) return lastName;
+  if (firstName) return firstName;
+
+  return cleanText(row?.full_name);
 }
 
 function cleanText(value: unknown) {

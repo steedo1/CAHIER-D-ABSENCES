@@ -15,6 +15,8 @@ type StudentRow = {
   id: string;
   matricule: string | null;
   full_name: string;
+  first_name?: string | null;
+  last_name?: string | null;
   gender: string | null;
   birthdate: string | null;
   birth_place: string | null;
@@ -104,6 +106,27 @@ function nationalityShort(value: string | null | undefined) {
 function personLabel(person: ProfileMini | null | undefined) {
   if (!person) return "À renseigner";
   return String(person.display_name || person.email || person.phone || "À renseigner").trim() || "À renseigner";
+}
+
+function cleanNamePart(value: string | null | undefined) {
+  return String(value || "").replace(/\s+/g, " ").trim();
+}
+
+function formatTraditionalStudentName(student: Pick<StudentRow, "full_name" | "first_name" | "last_name">) {
+  const lastName = cleanNamePart(student.last_name).toUpperCase();
+  const firstName = cleanNamePart(student.first_name);
+
+  if (lastName && firstName) return `${lastName}, ${firstName}`;
+  if (lastName) return lastName;
+  if (firstName) return firstName;
+
+  return cleanNamePart(student.full_name) || "—";
+}
+
+function traditionalStudentSortKey(student: Pick<StudentRow, "full_name" | "first_name" | "last_name">) {
+  const lastName = cleanNamePart(student.last_name).toUpperCase();
+  const firstName = cleanNamePart(student.first_name);
+  return `${lastName || cleanNamePart(student.full_name)} ${firstName}`.trim();
 }
 
 function buildAcademicYearLabel(data: ClassListPayload | null) {
@@ -209,10 +232,17 @@ export default function ClassListPrintPage() {
 
   const printedStudents = useMemo(
     () =>
-      students.map((student) => ({
-        ...student,
-        ...(editable[student.id] || {}),
-      })),
+      students
+        .map((student) => ({
+          ...student,
+          ...(editable[student.id] || {}),
+        }))
+        .sort((a, b) =>
+          traditionalStudentSortKey(a).localeCompare(traditionalStudentSortKey(b), "fr", {
+            sensitivity: "base",
+            numeric: true,
+          })
+        ),
     [students, editable],
   );
 
@@ -611,7 +641,7 @@ export default function ClassListPrintPage() {
                   return (
                     <tr key={student.id} className="border-t">
                       <td className="min-w-[260px] px-3 py-2 font-medium">
-                        {student.full_name}
+                        {formatTraditionalStudentName(student)}
                         <div className="text-xs font-normal text-slate-500">{student.matricule || "Sans matricule"}</div>
                       </td>
                       <td className="px-3 py-2">
@@ -738,7 +768,7 @@ export default function ClassListPrintPage() {
                 <tr>
                   <th className="col-no">N°</th>
                   <th className="col-matricule">Matricule</th>
-                  <th className="col-name">Nom &amp; prénoms</th>
+                  <th className="col-name">Nom, prénoms</th>
                   <th className="col-date">Né(e) le</th>
                   <th className="col-sex">Sexe</th>
                   <th className="col-red">Red</th>
@@ -758,7 +788,7 @@ export default function ClassListPrintPage() {
                     <tr key={student.id}>
                       <td className="col-no">{index + 1}</td>
                       <td className="col-matricule">{student.matricule || ""}</td>
-                      <td className="col-name">{student.full_name}</td>
+                      <td className="col-name">{formatTraditionalStudentName(student)}</td>
                       <td className="col-date">{formatDateFR(student.birthdate)}</td>
                       <td className="col-sex">{sexShort(student.gender)}</td>
                       <td className="col-red">{student.is_repeater ? "R" : ""}</td>

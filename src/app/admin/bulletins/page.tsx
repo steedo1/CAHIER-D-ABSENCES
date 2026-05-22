@@ -1080,6 +1080,34 @@ function safeUpper(s: string) {
   }
 }
 
+function normalizePlainText(value: string | null | undefined): string {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function getHeadVisaLabel(institution: InstitutionSettings | null | undefined): string {
+  const haystack = normalizePlainText(
+    [institution?.institution_status, institution?.institution_head_title]
+      .filter(Boolean)
+      .join(" ")
+  );
+
+  if (
+    haystack.includes("directeur des etudes") ||
+    haystack.includes("directrice des etudes") ||
+    haystack.includes("prive") ||
+    haystack.includes("private")
+  ) {
+    return "Visa du Directeur des Études";
+  }
+
+  return "Visa du chef d’établissement";
+}
+
 
 function normalizeSubjectLabelForConduct(value: string | null | undefined): string {
   return String(value ?? "")
@@ -1451,6 +1479,39 @@ function StudentBulletinCard({
     [subjectsForTable, conductSubject, effectiveCoeffBySubjectId]
   );
 
+  const moyCoeffTotal = useMemo(() => {
+    let sum = 0;
+    let hasAtLeastOneValue = false;
+
+    subjectsForTable.forEach((subject) => {
+      if (
+        subject.include_in_average === false &&
+        subject.subject_id !== conductSubject?.subject_id
+      ) {
+        return;
+      }
+
+      const cell = perSubject.find((ps) => ps.subject_id === subject.subject_id);
+      const avg = cell?.avg20;
+      if (avg === null || avg === undefined || !Number.isFinite(Number(avg))) {
+        return;
+      }
+
+      const coeff =
+        effectiveCoeffBySubjectId.get(subject.subject_id) ??
+        (subject.subject_id === conductSubject?.subject_id
+          ? 1
+          : Number(subject.coeff_bulletin ?? 0));
+
+      if (!Number.isFinite(coeff) || coeff <= 0) return;
+
+      sum += Number(avg) * coeff;
+      hasAtLeastOneValue = true;
+    });
+
+    return hasAtLeastOneValue ? round2(sum) : null;
+  }, [subjectsForTable, conductSubject, effectiveCoeffBySubjectId, perSubject]);
+
   const computeDisplayedGroupStats = (
     groupSubjects: BulletinSubject[]
   ) => {
@@ -1728,8 +1789,10 @@ function StudentBulletinCard({
                 {cHasAvg && cRank != null ? `${cRank}e` : "NC"}
               </td>
               <td className="bdr px-1 py-[1px]" />
-              <td className="bdr px-1 py-[1px]" />
-              <td className="bdr px-1 py-[1px] sig-cell" />
+              <td className="bdr px-1 py-[1px]">{subjectTeacher}</td>
+              <td className="bdr p-0 align-middle sig-cell">
+                {renderSignatureLine(signaturePng)}
+              </td>
             </tr>
           );
         })}
@@ -1751,16 +1814,27 @@ function StudentBulletinCard({
       (institution?.ministry_name || "MINISTÈRE DE L'ÉDUCATION NATIONALE").trim()
     )
   );
+  const headVisaLabel = getHeadVisaLabel(institution);
 
   return (
     <div
       ref={pageRef}
-      className="print-page print-break mx-auto flex flex-col bg-white text-black"
+      className="print-page print-break relative mx-auto flex flex-col overflow-hidden bg-white text-black"
       style={{
         ["--sig-box-h" as any]: `${sigBoxHeightPx}px`,
         ["--print-fit-scale" as any]: String(printFitScale),
       }}
     >
+      {institution?.institution_logo_url ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={String(institution.institution_logo_url)}
+          alt=""
+          aria-hidden="true"
+          className="bulletin-watermark"
+        />
+      ) : null}
+
       {/* ENTÊTE OFFICIEL */}
       <div className="bdr mb-1 p-1">
         <div className="grid grid-cols-3 items-start gap-2">
@@ -2026,7 +2100,9 @@ function StudentBulletinCard({
             <td className="bdr px-1 py-[1px] text-center">
               {formatNumber(coeffTotal, 0)}
             </td>
-            <td className="bdr px-1 py-[1px]" />
+            <td className="bdr px-1 py-[1px] text-center">
+              {moyCoeffTotal !== null ? formatNumber(moyCoeffTotal) : "—"}
+            </td>
             <td className="bdr px-1 py-[1px]" />
             <td className="bdr px-1 py-[1px]" />
             <td className="bdr px-1 py-[1px]" />
@@ -2200,11 +2276,11 @@ function StudentBulletinCard({
         </div>
       </div>
 
-      {/* VISAS (un peu plus compact pour gagner de la place) */}
+      {/* VISAS */}
       <div className="mt-1 grid grid-cols-2 gap-2 text-[9px] leading-tight">
-        <div className="bdr flex flex-col justify-between p-1">
+        <div className="bdr flex min-h-[70px] flex-col justify-between p-1">
           <div className="font-semibold text-[8px]">Visa du professeur principal</div>
-          <div className="h-[34px]" />
+          <div className="h-[46px]" />
           {classInfo.head_teacher?.display_name && (
             <div className="text-center text-[8px]">
               {classInfo.head_teacher.display_name}
@@ -2212,26 +2288,22 @@ function StudentBulletinCard({
           )}
         </div>
 
-        <div className="bdr flex flex-col justify-between p-1">
-          <div className="font-semibold text-[8px]">
-            Visa du chef d&apos;établissement
-          </div>
-          <div className="h-[34px]" />
+        <div className="bdr flex min-h-[70px] flex-col justify-between p-1">
+          <div className="font-semibold text-[8px]">{headVisaLabel}</div>
+          <div className="h-[46px]" />
           {institution?.institution_head_name && (
             <div className="text-center text-[8px]">
               {institution.institution_head_name}
-              {institution?.institution_head_title ? (
-                <div className="text-[7px] text-slate-600">
-                  {institution.institution_head_title}
-                </div>
-              ) : null}
             </div>
           )}
         </div>
       </div>
 
-      <div className="mt-1 text-center text-[8px] text-black">
-        Conçu et développé par <span className="font-semibold">Nexa Digital SARL</span>
+      <div className="mt-1 text-center text-[8px] leading-tight text-black">
+        <div className="font-bold uppercase tracking-[0.04em]">www.mon-cahier.com</div>
+        <div className="font-semibold">
+          La plateforme idéale pour une école connectée, l’école du futur.
+        </div>
       </div>
     </div>
   );
@@ -2738,6 +2810,24 @@ export default function BulletinsPage() {
           box-sizing: border-box;
           font-family: Arial, Helvetica, sans-serif;
           background: #fff;
+        }
+
+        .bulletin-watermark {
+          position: absolute;
+          inset: 0;
+          z-index: 0;
+          width: 150mm;
+          height: 150mm;
+          margin: auto;
+          object-fit: contain;
+          opacity: 0.055;
+          pointer-events: none;
+          user-select: none;
+        }
+
+        .print-page > :not(.bulletin-watermark) {
+          position: relative;
+          z-index: 1;
         }
 
         /* ✅ Aperçu : zone imprimable (A4 - marges @page 4mm => 202mm / 289mm) + MARGES GAUCHE/DROITE */
