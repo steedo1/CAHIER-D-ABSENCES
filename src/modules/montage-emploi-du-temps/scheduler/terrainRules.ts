@@ -1,7 +1,12 @@
-﻿import type {
+import type {
   CandidateSlot,
   HalfDay,
+  InstitutionRuleBehavior,
+  InstitutionRulePriority,
+  InstitutionRuleScope,
+  InstitutionSchedulingRule,
   LessonBlock,
+  Placement,
   Room,
   SchedulerContext,
   ScienceTandemMode,
@@ -42,7 +47,94 @@ export const DEFAULT_TERRAIN_RULES: TerrainSchedulingRules = {
   avoidSameSubjectSameDay: true,
   balanceHalfDays: true,
   preferMainClassRoom: true,
+
+  // Règles personnalisées par établissement : vide par défaut pour éviter tout comportement spécial caché.
+  institutionRules: [],
 };
+
+
+const RULE_PRIORITIES: InstitutionRulePriority[] = ["hard", "strong", "medium", "soft"];
+const RULE_BEHAVIORS: InstitutionRuleBehavior[] = ["prefer", "avoid", "require", "forbid"];
+const RULE_SCOPES: InstitutionRuleScope[] = ["all", "level", "class", "subject", "teacher"];
+const HALF_DAYS: HalfDay[] = ["morning", "afternoon", "evening"];
+
+function normalizeTextToken(value: unknown): string {
+  return String(value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+}
+
+function textValue(value: unknown, fallback = ""): string {
+  const text = String(value ?? "").trim();
+  return text || fallback;
+}
+
+function asStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return Array.from(new Set(value.map((item) => String(item ?? "").trim()).filter(Boolean)));
+}
+
+function asNumberArray(value: unknown, min: number, max: number): number[] {
+  if (!Array.isArray(value)) return [];
+  return Array.from(
+    new Set(
+      value
+        .map((item) => Number(item))
+        .filter((item) => Number.isInteger(item) && item >= min && item <= max),
+    ),
+  ).sort((a, b) => a - b);
+}
+
+function asHalfDays(value: unknown): HalfDay[] {
+  if (!Array.isArray(value)) return [];
+  return Array.from(
+    new Set(
+      value.filter((item): item is HalfDay => HALF_DAYS.includes(item as HalfDay)),
+    ),
+  );
+}
+
+function oneOf<T extends string>(value: unknown, allowed: readonly T[], fallback: T): T {
+  const text = String(value ?? "").trim();
+  return allowed.includes(text as T) ? (text as T) : fallback;
+}
+
+function makeRuleId(index: number): string {
+  return `rule_${Date.now().toString(36)}_${index + 1}`;
+}
+
+function normalizeInstitutionRules(value: unknown): InstitutionSchedulingRule[] {
+  if (!Array.isArray(value)) return [];
+
+  return value
+    .map((raw, index) => {
+      const item = raw && typeof raw === "object" ? (raw as Partial<InstitutionSchedulingRule>) : {};
+      const name = textValue(item.name, `Règle établissement ${index + 1}`);
+      return {
+        id: textValue(item.id, makeRuleId(index)),
+        name,
+        description: textValue(item.description, "") || null,
+        enabled: item.enabled !== false,
+        priority: oneOf(item.priority, RULE_PRIORITIES, "medium"),
+        behavior: oneOf(item.behavior, RULE_BEHAVIORS, "prefer"),
+        scope: oneOf(item.scope, RULE_SCOPES, "all"),
+        dayIndexes: asNumberArray(item.dayIndexes, 1, 7),
+        periodIndexes: asNumberArray(item.periodIndexes, 1, 20),
+        halfDays: asHalfDays(item.halfDays),
+        classIds: asStringArray(item.classIds),
+        levelCodes: asStringArray(item.levelCodes),
+        subjectIds: asStringArray(item.subjectIds),
+        teacherIds: asStringArray(item.teacherIds),
+        startTime: textValue(item.startTime, "") || null,
+        endTime: textValue(item.endTime, "") || null,
+      } satisfies InstitutionSchedulingRule;
+    })
+    .filter((rule) => rule.name.trim().length > 0);
+}
 
 export function normalizeTerrainRules(
   rules?: Partial<TerrainSchedulingRules> | null,
@@ -81,6 +173,7 @@ export function normalizeTerrainRules(
       Number(rules?.epsMaxSimultaneousCoursesPerField ?? DEFAULT_TERRAIN_RULES.epsMaxSimultaneousCoursesPerField),
     ) || DEFAULT_TERRAIN_RULES.epsMaxSimultaneousCoursesPerField)),
     epsHotHourMode,
+    institutionRules: normalizeInstitutionRules(rules?.institutionRules),
   };
 }
 
@@ -391,6 +484,203 @@ export function getCandidateTimeRange(
     end: timeToMinutes(periods[periods.length - 1].endTime),
     periods,
   };
+}
+
+
+function rulePriorityWeight(priority: InstitutionRulePriority): number {
+  if (priority === "hard") return 120000;
+  if (priority === "strong") return 42000;
+  if (priority === "medium") return 14000;
+  return 4500;
+}
+
+function getClassForBlock(block: LessonBlock, context: SchedulerContext) {
+  return context.classes.find((schoolClass) => schoolClass.id === block.classId) || null;
+}
+
+function getSubjectForBlock(block: LessonBlock, context: SchedulerContext) {
+  return context.subjects.find((subject) => subject.id === block.subjectId) || null;
+}
+
+function valuesMatch(value: string | null | undefined, accepted: string[]): boolean {
+  if (accepted.length === 0) return true;
+  const normalized = normalizeTextToken(value);
+  return accepted.map(normalizeTextToken).includes(normalized);
+}
+
+function ruleTargetsBlock(rule: InstitutionSchedulingRule, block: LessonBlock, context: SchedulerContext): boolean {
+  if (!rule.enabled) return false;
+  if (rule.scope === "all") return true;
+
+  if (rule.scope === "class") {
+    return rule.classIds.length === 0 || rule.classIds.includes(block.classId);
+  }
+
+  if (rule.scope === "teacher") {
+    return rule.teacherIds.length === 0 || rule.teacherIds.includes(block.teacherId);
+  }
+
+  if (rule.scope === "level") {
+    const schoolClass = getClassForBlock(block, context);
+    return valuesMatch(schoolClass?.levelCode, rule.levelCodes);
+  }
+
+  if (rule.scope === "subject") {
+    const subject = getSubjectForBlock(block, context);
+    const accepted = rule.subjectIds;
+    if (accepted.length === 0) return true;
+    const subjectValues = [block.subjectId, subject?.id, subject?.code, subject?.name, subject?.shortName].map(normalizeTextToken);
+    return accepted.map(normalizeTextToken).some((item) => subjectValues.includes(item));
+  }
+
+  return true;
+}
+
+function candidateMatchesRuleTime(rule: InstitutionSchedulingRule, candidate: CandidateSlot, context: SchedulerContext): boolean {
+  if (rule.dayIndexes.length > 0 && !rule.dayIndexes.includes(candidate.dayIndex)) {
+    return false;
+  }
+
+  const periods = getPeriodsForRawCandidate(candidate, context);
+
+  if (rule.periodIndexes.length > 0) {
+    const periodSet = new Set(periods.map((period) => period.periodIndex));
+    if (!rule.periodIndexes.some((periodIndex) => periodSet.has(periodIndex))) {
+      return false;
+    }
+  }
+
+  if (rule.halfDays.length > 0) {
+    const halfDaySet = new Set(periods.map((period) => period.halfDay));
+    if (!rule.halfDays.some((halfDay) => halfDaySet.has(halfDay))) {
+      return false;
+    }
+  }
+
+  const start = rule.startTime ? timeToMinutes(rule.startTime) : null;
+  const end = rule.endTime ? timeToMinutes(rule.endTime) : null;
+
+  if (start !== null || end !== null) {
+    const range = getCandidateTimeRange(candidate, context);
+    if (!range) return false;
+    if (start !== null && range.start < start) return false;
+    if (end !== null && range.end > end) return false;
+  }
+
+  return true;
+}
+
+function candidateTouchesRuleWindow(rule: InstitutionSchedulingRule, candidate: CandidateSlot, context: SchedulerContext): boolean {
+  if (rule.dayIndexes.length > 0 && !rule.dayIndexes.includes(candidate.dayIndex)) {
+    return false;
+  }
+
+  const periods = getPeriodsForRawCandidate(candidate, context);
+
+  if (rule.halfDays.length > 0) {
+    const halfDaySet = new Set(periods.map((period) => period.halfDay));
+    if (!rule.halfDays.some((halfDay) => halfDaySet.has(halfDay))) {
+      return false;
+    }
+  }
+
+  if (rule.periodIndexes.length > 0) {
+    const periodSet = new Set(periods.map((period) => period.periodIndex));
+    if (!rule.periodIndexes.some((periodIndex) => periodSet.has(periodIndex))) {
+      return false;
+    }
+  }
+
+  return Boolean(
+    rule.dayIndexes.length > 0 ||
+      rule.halfDays.length > 0 ||
+      rule.periodIndexes.length > 0 ||
+      rule.startTime ||
+      rule.endTime,
+  );
+}
+
+export function getActiveInstitutionRules(context: SchedulerContext): InstitutionSchedulingRule[] {
+  return getTerrainRules(context).institutionRules.filter((rule) => rule.enabled);
+}
+
+export function getInstitutionRuleCandidatePenalty(
+  block: LessonBlock,
+  candidate: CandidateSlot,
+  context: SchedulerContext,
+): number {
+  let penalty = 0;
+
+  for (const rule of getActiveInstitutionRules(context)) {
+    if (!ruleTargetsBlock(rule, block, context)) continue;
+
+    const weight = rulePriorityWeight(rule.priority);
+    const matchesTime = candidateMatchesRuleTime(rule, candidate, context);
+
+    if (rule.behavior === "forbid") {
+      if (matchesTime) penalty += weight;
+      continue;
+    }
+
+    if (rule.behavior === "avoid") {
+      if (matchesTime) penalty += Math.round(weight * 0.55);
+      continue;
+    }
+
+    if (rule.behavior === "require") {
+      penalty += matchesTime ? -Math.round(weight * 0.04) : weight;
+      continue;
+    }
+
+    // prefer : on encourage la bonne fenêtre, sans transformer une préférence souple en interdiction générale.
+    if (matchesTime) {
+      penalty -= Math.round(weight * 0.12);
+    } else if (candidateTouchesRuleWindow(rule, candidate, context)) {
+      penalty += Math.round(weight * 0.18);
+    }
+  }
+
+  return penalty;
+}
+
+function getCandidateForPlacement(placement: Placement): CandidateSlot {
+  return {
+    dayIndex: placement.dayIndex,
+    startPeriodIndex: placement.startPeriodIndex,
+    durationUnits: placement.durationUnits,
+    roomId: placement.roomId ?? null,
+  };
+}
+
+export function getInstitutionRuleViolationsForPlacement(
+  placement: Placement,
+  block: LessonBlock,
+  context: SchedulerContext,
+): InstitutionSchedulingRule[] {
+  const candidate = getCandidateForPlacement(placement);
+  const violations: InstitutionSchedulingRule[] = [];
+
+  for (const rule of getActiveInstitutionRules(context)) {
+    if (!ruleTargetsBlock(rule, block, context)) continue;
+
+    const matchesTime = candidateMatchesRuleTime(rule, candidate, context);
+
+    if ((rule.behavior === "forbid" || rule.behavior === "avoid") && matchesTime) {
+      violations.push(rule);
+      continue;
+    }
+
+    if (rule.behavior === "require" && !matchesTime) {
+      violations.push(rule);
+      continue;
+    }
+
+    if (rule.behavior === "prefer" && !matchesTime && candidateTouchesRuleWindow(rule, candidate, context)) {
+      violations.push(rule);
+    }
+  }
+
+  return violations;
 }
 
 export function isAfternoonEpsCandidate(

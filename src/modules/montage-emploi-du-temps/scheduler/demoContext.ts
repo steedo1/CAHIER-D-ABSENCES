@@ -276,6 +276,7 @@ export const demoSchedulerContext: SchedulerContext = {
     avoidSameSubjectSameDay: true,
     balanceHalfDays: true,
     preferMainClassRoom: true,
+    institutionRules: [],
   },
 
   teacherUnavailability: [

@@ -9,16 +9,41 @@ import {
   Gauge,
   Loader2,
   Monitor,
+  Plus,
   RefreshCw,
   Save,
   School,
   ShieldCheck,
+  Trash2,
 } from "lucide-react";
 import MontageSectionShell from "./MontageSectionShell";
 
 type TandemScope = "disabled" | "all_classes" | "selected_classes";
 type TandemMode = "parallel" | "rotation";
 type EpsHotHourMode = "disabled" | "soft" | "strict";
+type InstitutionRulePriority = "hard" | "strong" | "medium" | "soft";
+type InstitutionRuleBehavior = "prefer" | "avoid" | "require" | "forbid";
+type InstitutionRuleScope = "all" | "level" | "class" | "subject" | "teacher";
+type HalfDay = "morning" | "afternoon" | "evening";
+
+type InstitutionRule = {
+  id: string;
+  name: string;
+  description?: string | null;
+  enabled: boolean;
+  priority: InstitutionRulePriority;
+  behavior: InstitutionRuleBehavior;
+  scope: InstitutionRuleScope;
+  dayIndexes: number[];
+  periodIndexes: number[];
+  halfDays: HalfDay[];
+  classIds: string[];
+  levelCodes: string[];
+  subjectIds: string[];
+  teacherIds: string[];
+  startTime?: string | null;
+  endTime?: string | null;
+};
 
 type Rules = {
   avoidBreakInsideMultiPeriodBlock: boolean;
@@ -40,6 +65,7 @@ type Rules = {
   avoidSameSubjectSameDay: boolean;
   balanceHalfDays: boolean;
   preferMainClassRoom: boolean;
+  institutionRules: InstitutionRule[];
 };
 
 type ClassOption = {
@@ -166,6 +192,364 @@ function SelectField<T extends string>({
         ))}
       </select>
     </label>
+  );
+}
+
+
+const DAYS = [
+  { value: 1, label: "Lun" },
+  { value: 2, label: "Mar" },
+  { value: 3, label: "Mer" },
+  { value: 4, label: "Jeu" },
+  { value: 5, label: "Ven" },
+  { value: 6, label: "Sam" },
+];
+
+const HALF_DAY_OPTIONS: Array<{ value: HalfDay; label: string }> = [
+  { value: "morning", label: "Matin" },
+  { value: "afternoon", label: "Après-midi" },
+  { value: "evening", label: "Soir" },
+];
+
+function makeRuleId() {
+  return `rule_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
+}
+
+function defaultInstitutionRule(): InstitutionRule {
+  return {
+    id: makeRuleId(),
+    name: "Nouvelle règle établissement",
+    description: "",
+    enabled: true,
+    priority: "medium",
+    behavior: "prefer",
+    scope: "all",
+    dayIndexes: [],
+    periodIndexes: [],
+    halfDays: [],
+    classIds: [],
+    levelCodes: [],
+    subjectIds: [],
+    teacherIds: [],
+    startTime: null,
+    endTime: null,
+  };
+}
+
+function csvToList(value: string): string[] {
+  return value
+    .split(/[;,]/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function listToCsv(value: string[]) {
+  return value.join(", ");
+}
+
+function numberCsvToList(value: string): number[] {
+  return Array.from(
+    new Set(
+      value
+        .split(/[;,]/)
+        .map((item) => Number(item.trim()))
+        .filter((item) => Number.isInteger(item) && item >= 1 && item <= 20),
+    ),
+  ).sort((a, b) => a - b);
+}
+
+function numberListToCsv(value: number[]) {
+  return value.join(", ");
+}
+
+function toggleValue<T extends string | number>(values: T[], value: T, checked: boolean): T[] {
+  if (checked) return Array.from(new Set([...values, value]));
+  return values.filter((item) => item !== value);
+}
+
+function InstitutionRulesEditor({
+  rules,
+  classes,
+  onChange,
+}: {
+  rules: InstitutionRule[];
+  classes: ClassOption[];
+  onChange: (rules: InstitutionRule[]) => void;
+}) {
+  function updateRule(id: string, patch: Partial<InstitutionRule>) {
+    onChange(rules.map((rule) => (rule.id === id ? { ...rule, ...patch } : rule)));
+  }
+
+  function addRule(template?: Partial<InstitutionRule>) {
+    onChange([...rules, { ...defaultInstitutionRule(), ...template, id: makeRuleId() }]);
+  }
+
+  function addRules(templates: Array<Partial<InstitutionRule>>) {
+    onChange([
+      ...rules,
+      ...templates.map((template) => ({ ...defaultInstitutionRule(), ...template, id: makeRuleId() })),
+    ]);
+  }
+
+  function removeRule(id: string) {
+    onChange(rules.filter((rule) => rule.id !== id));
+  }
+
+  return (
+    <RuleBlock
+      title="Règles établissement"
+      description="Chaque école peut ajouter ses contraintes propres avec un niveau de priorité. Ces règles guident le moteur et ressortent dans les diagnostics."
+    >
+      <div className="mb-5 grid gap-3 lg:grid-cols-4">
+        <button
+          type="button"
+          onClick={() => addRule({ name: "Favoriser la première heure lundi/vendredi", behavior: "prefer", priority: "strong", scope: "all", dayIndexes: [1, 5], periodIndexes: [1] })}
+          className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-left text-sm font-black text-slate-800 hover:bg-white"
+        >
+          + Première heure lundi/vendredi
+        </button>
+        <button
+          type="button"
+          onClick={() => addRule({ name: "Lundi : devoirs 3e et Terminale", behavior: "prefer", priority: "medium", scope: "level", dayIndexes: [1], levelCodes: ["3e", "terminale", "tle"] })}
+          className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-left text-sm font-black text-slate-800 hover:bg-white"
+        >
+          + Devoirs 3e / Terminale
+        </button>
+        <button
+          type="button"
+          onClick={() => addRule({ name: "Jeudi : devoirs classes intermédiaires", behavior: "prefer", priority: "medium", scope: "level", dayIndexes: [4], levelCodes: ["6e", "5e", "4e", "2nde", "1re"] })}
+          className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-left text-sm font-black text-slate-800 hover:bg-white"
+        >
+          + Devoirs intermédiaires
+        </button>
+        <button
+          type="button"
+          onClick={() => addRules([
+            { name: "EPS : matin 7h15-11h10", behavior: "prefer", priority: "strong", scope: "subject", subjectIds: ["eps"], startTime: "07:15", endTime: "11:10", halfDays: ["morning"] },
+            { name: "EPS : après-midi 15h25-17h15", behavior: "prefer", priority: "strong", scope: "subject", subjectIds: ["eps"], startTime: "15:25", endTime: "17:15", halfDays: ["afternoon"] },
+          ])}
+          className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-left text-sm font-black text-slate-800 hover:bg-white"
+        >
+          + EPS 7h15-11h10 / 15h25-17h15
+        </button>
+      </div>
+
+      {rules.length === 0 ? (
+        <div className="rounded-3xl border border-dashed border-slate-300 bg-slate-50 p-6 text-center text-sm font-semibold text-slate-500">
+          Aucune règle établissement n’est active. Le moteur utilise seulement les règles terrain générales.
+        </div>
+      ) : null}
+
+      <div className="space-y-4">
+        {rules.map((rule, index) => (
+          <div key={rule.id} className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
+            <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+              <div className="flex flex-1 items-start gap-3">
+                <input
+                  type="checkbox"
+                  checked={rule.enabled}
+                  onChange={(event) => updateRule(rule.id, { enabled: event.target.checked })}
+                  className="mt-3 h-5 w-5 rounded border-slate-300 text-emerald-600"
+                />
+                <div className="grid flex-1 gap-3 lg:grid-cols-[1.4fr_1fr]">
+                  <label className="block">
+                    <span className="text-xs font-black uppercase tracking-[0.18em] text-slate-400">Nom de la règle #{index + 1}</span>
+                    <input
+                      value={rule.name}
+                      onChange={(event) => updateRule(rule.id, { name: event.target.value })}
+                      className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-bold text-slate-900 outline-none focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100"
+                    />
+                  </label>
+                  <label className="block">
+                    <span className="text-xs font-black uppercase tracking-[0.18em] text-slate-400">Description courte</span>
+                    <input
+                      value={rule.description || ""}
+                      onChange={(event) => updateRule(rule.id, { description: event.target.value })}
+                      className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-bold text-slate-900 outline-none focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100"
+                    />
+                  </label>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => removeRule(rule.id)}
+                className="inline-flex items-center justify-center gap-2 rounded-2xl border border-red-200 bg-white px-4 py-3 text-sm font-black text-red-700 hover:bg-red-50"
+              >
+                <Trash2 className="h-4 w-4" />
+                Retirer
+              </button>
+            </div>
+
+            <div className="grid gap-3 lg:grid-cols-4">
+              <SelectField
+                label="Action moteur"
+                value={rule.behavior}
+                onChange={(value) => updateRule(rule.id, { behavior: value })}
+                options={[
+                  { value: "prefer", label: "Favoriser" },
+                  { value: "avoid", label: "Éviter" },
+                  { value: "require", label: "Imposer" },
+                  { value: "forbid", label: "Interdire" },
+                ]}
+              />
+              <SelectField
+                label="Priorité"
+                value={rule.priority}
+                onChange={(value) => updateRule(rule.id, { priority: value })}
+                options={[
+                  { value: "hard", label: "Obligatoire" },
+                  { value: "strong", label: "Forte" },
+                  { value: "medium", label: "Moyenne" },
+                  { value: "soft", label: "Souple" },
+                ]}
+              />
+              <SelectField
+                label="Cible"
+                value={rule.scope}
+                onChange={(value) => updateRule(rule.id, { scope: value })}
+                options={[
+                  { value: "all", label: "Toute l’école" },
+                  { value: "level", label: "Niveaux" },
+                  { value: "class", label: "Classes" },
+                  { value: "subject", label: "Matière" },
+                  { value: "teacher", label: "Enseignant" },
+                ]}
+              />
+              <label className="block">
+                <span className="text-xs font-black uppercase tracking-[0.18em] text-slate-400">Créneaux n°</span>
+                <input
+                  value={numberListToCsv(rule.periodIndexes)}
+                  placeholder="ex: 1, 2"
+                  onChange={(event) => updateRule(rule.id, { periodIndexes: numberCsvToList(event.target.value) })}
+                  className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-bold text-slate-900 outline-none focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100"
+                />
+              </label>
+            </div>
+
+            <div className="mt-4 grid gap-3 lg:grid-cols-3">
+              <div>
+                <span className="text-xs font-black uppercase tracking-[0.18em] text-slate-400">Jours</span>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {DAYS.map((day) => (
+                    <label key={day.value} className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-700">
+                      <input
+                        type="checkbox"
+                        checked={rule.dayIndexes.includes(day.value)}
+                        onChange={(event) => updateRule(rule.id, { dayIndexes: toggleValue(rule.dayIndexes, day.value, event.target.checked).sort((a, b) => a - b) })}
+                        className="h-4 w-4 rounded border-slate-300 text-emerald-600"
+                      />
+                      {day.label}
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <span className="text-xs font-black uppercase tracking-[0.18em] text-slate-400">Demi-journées</span>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {HALF_DAY_OPTIONS.map((item) => (
+                    <label key={item.value} className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-700">
+                      <input
+                        type="checkbox"
+                        checked={rule.halfDays.includes(item.value)}
+                        onChange={(event) => updateRule(rule.id, { halfDays: toggleValue(rule.halfDays, item.value, event.target.checked) })}
+                        className="h-4 w-4 rounded border-slate-300 text-emerald-600"
+                      />
+                      {item.label}
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <label className="block">
+                  <span className="text-xs font-black uppercase tracking-[0.18em] text-slate-400">Début</span>
+                  <input
+                    type="time"
+                    value={rule.startTime || ""}
+                    onChange={(event) => updateRule(rule.id, { startTime: event.target.value || null })}
+                    className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-bold text-slate-900 outline-none focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100"
+                  />
+                </label>
+                <label className="block">
+                  <span className="text-xs font-black uppercase tracking-[0.18em] text-slate-400">Fin</span>
+                  <input
+                    type="time"
+                    value={rule.endTime || ""}
+                    onChange={(event) => updateRule(rule.id, { endTime: event.target.value || null })}
+                    className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-bold text-slate-900 outline-none focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100"
+                  />
+                </label>
+              </div>
+            </div>
+
+            {rule.scope === "class" ? (
+              <div className="mt-4 rounded-3xl border border-slate-200 bg-white p-4">
+                <p className="mb-3 text-sm font-black text-slate-700">Classes ciblées</p>
+                <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                  {classes.map((schoolClass) => (
+                    <label key={schoolClass.id} className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-bold text-slate-700">
+                      <input
+                        type="checkbox"
+                        checked={rule.classIds.includes(schoolClass.id)}
+                        onChange={(event) => updateRule(rule.id, { classIds: toggleValue(rule.classIds, schoolClass.id, event.target.checked) })}
+                        className="h-4 w-4 rounded border-slate-300 text-emerald-600"
+                      />
+                      {schoolClass.label}
+                    </label>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+
+            {rule.scope === "level" ? (
+              <label className="mt-4 block">
+                <span className="text-xs font-black uppercase tracking-[0.18em] text-slate-400">Niveaux ciblés</span>
+                <input
+                  value={listToCsv(rule.levelCodes)}
+                  placeholder="ex: 3e, terminale, tle"
+                  onChange={(event) => updateRule(rule.id, { levelCodes: csvToList(event.target.value) })}
+                  className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-bold text-slate-900 outline-none focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100"
+                />
+              </label>
+            ) : null}
+
+            {rule.scope === "subject" ? (
+              <label className="mt-4 block">
+                <span className="text-xs font-black uppercase tracking-[0.18em] text-slate-400">Matières ciblées</span>
+                <input
+                  value={listToCsv(rule.subjectIds)}
+                  placeholder="ex: eps, mathématiques, pc"
+                  onChange={(event) => updateRule(rule.id, { subjectIds: csvToList(event.target.value) })}
+                  className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-bold text-slate-900 outline-none focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100"
+                />
+              </label>
+            ) : null}
+
+            {rule.scope === "teacher" ? (
+              <label className="mt-4 block">
+                <span className="text-xs font-black uppercase tracking-[0.18em] text-slate-400">IDs enseignants ciblés</span>
+                <input
+                  value={listToCsv(rule.teacherIds)}
+                  placeholder="IDs séparés par virgule si besoin"
+                  onChange={(event) => updateRule(rule.id, { teacherIds: csvToList(event.target.value) })}
+                  className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-bold text-slate-900 outline-none focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100"
+                />
+              </label>
+            ) : null}
+          </div>
+        ))}
+      </div>
+
+      <button
+        type="button"
+        onClick={() => addRule()}
+        className="mt-5 inline-flex items-center gap-2 rounded-2xl bg-slate-950 px-4 py-3 text-sm font-black text-white hover:bg-slate-800"
+      >
+        <Plus className="h-4 w-4" />
+        Ajouter une règle libre
+      </button>
+    </RuleBlock>
   );
 }
 
@@ -486,6 +870,12 @@ export default function MontageTerrainRulesPage() {
               />
             </div>
           </RuleBlock>
+
+          <InstitutionRulesEditor
+            rules={rules.institutionRules || []}
+            classes={classes}
+            onChange={(institutionRules) => patch({ institutionRules })}
+          />
 
           <RuleBlock
             title="Qualité du montage"

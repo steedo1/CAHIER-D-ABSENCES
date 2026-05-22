@@ -736,7 +736,8 @@ function getTeacherDiscipline(
   return values.length > 0 ? values.join(" / ") : "........................................";
 }
 
-function TeacherServiceSummary({
+
+function TeacherIdentityBlock({
   label,
   items,
   snapshot,
@@ -747,41 +748,59 @@ function TeacherServiceSummary({
 }) {
   const teacher = getSnapshotTeacher(snapshot, items, label);
   const teacherId = getFirstTeacherId(items);
-  const rows = buildTeacherServiceRows(items);
-  const usefulRows = rows.filter((row) => row.total > 0);
-  const total = usefulRows.reduce((sum, row) => sum + row.total, 0);
-  const maxService = getTeacherMaxWeeklyUnits(teacher);
-  const overtime = Math.max(0, total - maxService);
   const discipline = getTeacherDiscipline(items, snapshot, teacherId);
   const phone = emptyToBlank(teacher?.phone || teacher?.telephone || teacher?.tel);
   const email = emptyToBlank(teacher?.email);
 
   return (
-    <div className="mt-3 space-y-3 print:mt-2">
-      <div className="grid gap-1 border border-black p-2 text-[10px] leading-tight text-black sm:grid-cols-2 lg:grid-cols-3 print:grid-cols-3 print:text-[7.2px]">
+    <div className="space-y-2 text-black">
+      <div className="grid gap-x-5 gap-y-1 border border-black p-2 text-[10px] leading-tight sm:grid-cols-2 lg:grid-cols-3 print:grid-cols-3 print:text-[7.2px]">
         <div>
-          Nom et prénoms : <strong>{label}</strong>
+          Nom : <strong>{label}</strong>
         </div>
+        <div>Prénom(s) : ........................................</div>
+        <div>Matricule : ............................</div>
         <div>
           Discipline : <strong>{discipline}</strong>
         </div>
-        <div>Matricule : ............................</div>
-        <div>Statut : Prof. Lycée / Collège / Stagiaire</div>
+        <div>Nbre d’années d’enseignement : ....................</div>
+        <div>Sexe : M ......... F .........</div>
         <div>Contact(s) : {phone || "................................"}</div>
         <div>Email : {email || "................................"}</div>
       </div>
 
-      <div className="grid grid-cols-2 gap-0 border-l border-t border-black text-[10px] text-black sm:grid-cols-4 print:text-[7.2px]">
+      <div className="grid grid-cols-2 gap-0 border-l border-t border-black text-[10px] sm:grid-cols-4 print:text-[7.2px]">
         <span className="border-b border-r border-black px-2 py-1">Prof. Agrégé de Lycée</span>
         <span className="border-b border-r border-black px-2 py-1">Prof. de Lycée</span>
         <span className="border-b border-r border-black px-2 py-1">Prof. de Collège</span>
         <span className="border-b border-r border-black px-2 py-1">Prof. Stagiaire</span>
       </div>
 
-      <p className="text-[11px] font-bold text-black print:text-[7.6px]">
+      <p className="text-[11px] font-bold print:text-[7.6px]">
         Professeur principal en classe de : ........................................
       </p>
+    </div>
+  );
+}
 
+function TeacherServiceSummary({
+  label,
+  items,
+  snapshot,
+}: {
+  label: string;
+  items: Assignment[];
+  snapshot?: SourceSnapshot | null;
+}) {
+  const teacher = getSnapshotTeacher(snapshot, items, label);
+  const rows = buildTeacherServiceRows(items);
+  const usefulRows = rows.filter((row) => row.total > 0);
+  const total = usefulRows.reduce((sum, row) => sum + row.total, 0);
+  const maxService = getTeacherMaxWeeklyUnits(teacher);
+  const overtime = Math.max(0, total - maxService);
+
+  return (
+    <div className="mt-3 space-y-3 print:mt-2">
       <section>
         <h4 className="mb-1 text-center text-[12px] font-black uppercase tracking-[0.45em] text-black print:text-[8px] print:tracking-[0.32em]">
           Tableau récapitulatif
@@ -1159,6 +1178,12 @@ function OfficialClassSheet({
           {isClassMode ? `Classe : ${label}` : `Professeur : ${label}`}
         </p>
       </div>
+
+      {!isClassMode ? (
+        <div className="mx-3 mb-3 print:mx-0 print:mb-2">
+          <TeacherIdentityBlock label={label} items={items} snapshot={snapshot} />
+        </div>
+      ) : null}
 
       <div
         className={

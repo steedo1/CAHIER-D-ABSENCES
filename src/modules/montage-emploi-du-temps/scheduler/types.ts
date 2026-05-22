@@ -6,6 +6,30 @@ export type ScienceTandemMode = "parallel" | "rotation";
 
 export type EpsHotHourMode = "disabled" | "soft" | "strict";
 
+
+export type InstitutionRulePriority = "hard" | "strong" | "medium" | "soft";
+export type InstitutionRuleBehavior = "prefer" | "avoid" | "require" | "forbid";
+export type InstitutionRuleScope = "all" | "level" | "class" | "subject" | "teacher";
+
+export type InstitutionSchedulingRule = {
+  id: string;
+  name: string;
+  description?: string | null;
+  enabled: boolean;
+  priority: InstitutionRulePriority;
+  behavior: InstitutionRuleBehavior;
+  scope: InstitutionRuleScope;
+  dayIndexes: number[];
+  periodIndexes: number[];
+  halfDays: HalfDay[];
+  classIds: string[];
+  levelCodes: string[];
+  subjectIds: string[];
+  teacherIds: string[];
+  startTime?: string | null;
+  endTime?: string | null;
+};
+
 export type TerrainSchedulingRules = {
   /** Règle terrain dure : un bloc de plusieurs créneaux ne traverse pas une récréation. */
   avoidBreakInsideMultiPeriodBlock: boolean;
@@ -47,6 +71,9 @@ export type TerrainSchedulingRules = {
   avoidSameSubjectSameDay: boolean;
   balanceHalfDays: boolean;
   preferMainClassRoom: boolean;
+
+  /** Règles propres à chaque établissement : priorisées et configurables, jamais codées en dur pour une seule école. */
+  institutionRules: InstitutionSchedulingRule[];
 };
 
 export type BlockType =

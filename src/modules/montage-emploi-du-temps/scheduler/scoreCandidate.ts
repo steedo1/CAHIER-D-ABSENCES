@@ -1,4 +1,4 @@
-﻿import type {
+import type {
   CandidateSlot,
   HalfDay,
   LessonBlock,
@@ -13,6 +13,7 @@ import {
   getCandidateTimeRange,
   getTerrainRules,
   getEpsMaxSimultaneousCoursesPerField,
+  getInstitutionRuleCandidatePenalty,
   isAfternoonEpsCandidate,
   isEpsBlock,
   isEpsCandidateFavorable,
@@ -1363,6 +1364,7 @@ export function scoreCandidate(
   score += getAceCandidatePenalty(block, candidate, context, placements);
   score += getLateDayPenalty(block, candidate, context, placements);
   score += getProjectedClassDaySpreadPenalty(block, candidate, context, placements);
+  score += getInstitutionRuleCandidatePenalty(block, candidate, context);
 
   // RÃ©partition rÃ©elle : Ã©viter lâ€™effet â€œje remplis les matinÃ©es puis je jette les restesâ€.
   score += getProjectedClassDayLoadPenalty(block, candidate, context, placements);

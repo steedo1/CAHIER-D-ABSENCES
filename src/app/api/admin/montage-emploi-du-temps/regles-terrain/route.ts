@@ -8,6 +8,29 @@ export const dynamic = "force-dynamic";
 type TandemScope = "disabled" | "all_classes" | "selected_classes";
 type TandemMode = "parallel" | "rotation";
 type EpsHotHourMode = "disabled" | "soft" | "strict";
+type InstitutionRulePriority = "hard" | "strong" | "medium" | "soft";
+type InstitutionRuleBehavior = "prefer" | "avoid" | "require" | "forbid";
+type InstitutionRuleScope = "all" | "level" | "class" | "subject" | "teacher";
+type HalfDay = "morning" | "afternoon" | "evening";
+
+type InstitutionSchedulingRulePayload = Partial<{
+  id: string;
+  name: string;
+  description: string | null;
+  enabled: boolean;
+  priority: InstitutionRulePriority;
+  behavior: InstitutionRuleBehavior;
+  scope: InstitutionRuleScope;
+  dayIndexes: number[];
+  periodIndexes: number[];
+  halfDays: HalfDay[];
+  classIds: string[];
+  levelCodes: string[];
+  subjectIds: string[];
+  teacherIds: string[];
+  startTime: string | null;
+  endTime: string | null;
+}>;
 
 type RulesPayload = Partial<{
   avoidBreakInsideMultiPeriodBlock: boolean;
@@ -29,6 +52,7 @@ type RulesPayload = Partial<{
   avoidSameSubjectSameDay: boolean;
   balanceHalfDays: boolean;
   preferMainClassRoom: boolean;
+  institutionRules: InstitutionSchedulingRulePayload[];
 }>;
 
 const DEFAULT_RULES = {
@@ -51,6 +75,7 @@ const DEFAULT_RULES = {
   avoidSameSubjectSameDay: true,
   balanceHalfDays: true,
   preferMainClassRoom: true,
+  institutionRules: [] as InstitutionSchedulingRulePayload[],
 };
 
 function clean(value: unknown) {
@@ -70,6 +95,58 @@ function intInRange(value: unknown, fallback: number, min: number, max: number) 
 function oneOf<T extends string>(value: unknown, allowed: readonly T[], fallback: T): T {
   const text = clean(value);
   return allowed.includes(text as T) ? (text as T) : fallback;
+}
+
+
+function stringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return Array.from(new Set(value.map((item) => clean(item)).filter(Boolean)));
+}
+
+function numberArray(value: unknown, min: number, max: number): number[] {
+  if (!Array.isArray(value)) return [];
+  return Array.from(
+    new Set(
+      value
+        .map((item) => Number(item))
+        .filter((item) => Number.isInteger(item) && item >= min && item <= max),
+    ),
+  ).sort((a, b) => a - b);
+}
+
+function halfDaysArray(value: unknown): HalfDay[] {
+  const allowed: HalfDay[] = ["morning", "afternoon", "evening"];
+  if (!Array.isArray(value)) return [];
+  return Array.from(new Set(value.filter((item): item is HalfDay => allowed.includes(item as HalfDay))));
+}
+
+function normalizeInstitutionRules(value: unknown): InstitutionSchedulingRulePayload[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((raw, index) => {
+      const item = raw && typeof raw === "object" ? (raw as InstitutionSchedulingRulePayload) : {};
+      const id = clean(item.id) || `rule_${Date.now().toString(36)}_${index + 1}`;
+      const name = clean(item.name) || `Règle établissement ${index + 1}`;
+      return {
+        id,
+        name,
+        description: clean(item.description) || null,
+        enabled: item.enabled !== false,
+        priority: oneOf(item.priority, ["hard", "strong", "medium", "soft"] as const, "medium"),
+        behavior: oneOf(item.behavior, ["prefer", "avoid", "require", "forbid"] as const, "prefer"),
+        scope: oneOf(item.scope, ["all", "level", "class", "subject", "teacher"] as const, "all"),
+        dayIndexes: numberArray(item.dayIndexes, 1, 7),
+        periodIndexes: numberArray(item.periodIndexes, 1, 20),
+        halfDays: halfDaysArray(item.halfDays),
+        classIds: stringArray(item.classIds),
+        levelCodes: stringArray(item.levelCodes),
+        subjectIds: stringArray(item.subjectIds),
+        teacherIds: stringArray(item.teacherIds),
+        startTime: clean(item.startTime) || null,
+        endTime: clean(item.endTime) || null,
+      };
+    })
+    .filter((item) => clean(item.name));
 }
 
 function normalizeRules(input: unknown) {
@@ -127,6 +204,7 @@ function normalizeRules(input: unknown) {
     avoidSameSubjectSameDay: bool(raw.avoidSameSubjectSameDay, DEFAULT_RULES.avoidSameSubjectSameDay),
     balanceHalfDays: bool(raw.balanceHalfDays, DEFAULT_RULES.balanceHalfDays),
     preferMainClassRoom: bool(raw.preferMainClassRoom, DEFAULT_RULES.preferMainClassRoom),
+    institutionRules: normalizeInstitutionRules(raw.institutionRules),
   };
 }
 

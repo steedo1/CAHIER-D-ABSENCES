@@ -1,4 +1,4 @@
-﻿import type {
+import type {
   CandidateSlot,
   GenerationWarning,
   HalfDay,
@@ -13,6 +13,7 @@ import {
   candidateHitsClosedSchoolPeriod,
   getCandidateTimeRange,
   getEpsMaxSimultaneousCoursesPerField,
+  getInstitutionRuleViolationsForPlacement,
   getTerrainRules,
   isEpsBlock,
   isEpsCandidateFavorable,
@@ -68,6 +69,20 @@ function makeWarning(
     message,
     ...extra,
   };
+}
+
+
+function getInstitutionRuleSeverity(priority: string, behavior: string): GenerationWarning["severity"] {
+  if (priority === "hard" || behavior === "forbid" || behavior === "require") return "error";
+  if (priority === "strong") return "warning";
+  return "info";
+}
+
+function getRuleBehaviorLabel(behavior: string): string {
+  if (behavior === "forbid") return "interdiction";
+  if (behavior === "avoid") return "règle à éviter";
+  if (behavior === "require") return "obligation";
+  return "préférence";
 }
 
 function getBlockForPlacement(
@@ -784,6 +799,25 @@ export function validateSchedule(
         ),
       );
       continue;
+    }
+
+
+    for (const rule of getInstitutionRuleViolationsForPlacement(placement, block, context)) {
+      warnings.push(
+        makeWarning(
+          getInstitutionRuleSeverity(rule.priority, rule.behavior),
+          rule.priority === "hard" || rule.behavior === "forbid" || rule.behavior === "require"
+            ? "institution_rule_hard_violation"
+            : "institution_rule_soft_violation",
+          `${describePlacement(placement, context)} : règle établissement « ${rule.name} » non respectée (${getRuleBehaviorLabel(rule.behavior)}, priorité ${rule.priority}).`,
+          {
+            lessonBlockId: placement.lessonBlockId,
+            classId: placement.classId,
+            teacherId: placement.teacherId,
+            roomId: placement.roomId ?? null,
+          },
+        ),
+      );
     }
 
     // Les placements en salle ordinaire par fallback sont signalés directement
