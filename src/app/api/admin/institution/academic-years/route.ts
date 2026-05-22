@@ -66,9 +66,14 @@ export async function GET(_req: NextRequest) {
 
 /* =========================
    PUT : enregistre les années scolaires
+
+   Important : on ne supprime plus / réinsère plus toute la liste.
+   Des tables comme grade_periods référencent academic_years.id.
+   Il faut donc conserver les id existants et faire des update/insert ciblés.
    ========================= */
 
 type AcademicYearInput = {
+  id?: string | null;
   code?: string | null;
   label?: string | null;
   start_date?: string | null;
@@ -77,12 +82,18 @@ type AcademicYearInput = {
 };
 
 type NormalizedYear = {
+  id: string | null;
   code: string;
   label: string;
   start_date: string;
   end_date: string;
   is_current: boolean;
 };
+
+function isPersistedId(value?: string | null) {
+  const id = String(value || "").trim();
+  return id.length > 0 && !id.startsWith("temp_") && !id.startsWith("year_");
+}
 
 export async function PUT(req: NextRequest) {
   const { institution_id, error } = await getMyInstitutionId();
@@ -95,6 +106,7 @@ export async function PUT(req: NextRequest) {
 
   const normalized: NormalizedYear[] = [];
   let currentAlreadySet = false;
+  const seenCodes = new Set<string>();
 
   for (let i = 0; i < rawItems.length; i++) {
     const raw = rawItems[i];
@@ -106,9 +118,18 @@ export async function PUT(req: NextRequest) {
       continue;
     }
 
-    const label =
-      (raw.label || "").trim() || `Année scolaire ${code}`;
+    if (seenCodes.has(code)) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: `Ligne ${indexHuman}: l'année scolaire « ${code} » existe déjà dans la liste.`,
+        },
+        { status: 400 }
+      );
+    }
+    seenCodes.add(code);
 
+    const label = (raw.label || "").trim() || `Année scolaire ${code}`;
     const start_date = (raw.start_date || "").trim();
     const end_date = (raw.end_date || "").trim();
 
@@ -137,6 +158,7 @@ export async function PUT(req: NextRequest) {
     if (is_current) currentAlreadySet = true;
 
     normalized.push({
+      id: isPersistedId(raw.id) ? String(raw.id).trim() : null,
       code,
       label,
       start_date,
@@ -147,40 +169,119 @@ export async function PUT(req: NextRequest) {
 
   const supabase = getSupabaseServiceClient();
 
-  // On remplace complètement la liste des années pour cet établissement.
-  const { error: delErr } = await supabase
+  const { data: existingRows, error: existingErr } = await supabase
     .from("academic_years")
-    .delete()
+    .select("id, code")
     .eq("institution_id", institution_id);
 
-  if (delErr) {
-    return NextResponse.json({ ok: false, error: delErr.message }, { status: 400 });
+  if (existingErr) {
+    return NextResponse.json({ ok: false, error: existingErr.message }, { status: 400 });
   }
 
-  if (normalized.length === 0) {
-    // on a tout effacé : c'est autorisé
-    return NextResponse.json({
-      ok: true,
-      items: [],
-    });
+  const existing = Array.isArray(existingRows) ? existingRows : [];
+  const existingById = new Map(existing.map((row: any) => [String(row.id), row]));
+  const existingByCode = new Map(existing.map((row: any) => [String(row.code || ""), row]));
+
+  // Quand l'ancien front n'envoie pas encore l'id, on réassocie par code.
+  const rowsWithResolvedIds = normalized.map((row) => {
+    if (row.id && existingById.has(row.id)) return row;
+    const byCode = existingByCode.get(row.code);
+    if (byCode?.id) return { ...row, id: String(byCode.id) };
+    return { ...row, id: null };
+  });
+
+  const keptIds = new Set(
+    rowsWithResolvedIds
+      .map((row) => row.id)
+      .filter((id): id is string => typeof id === "string" && id.length > 0)
+  );
+  const idsToDelete = existing.map((row: any) => String(row.id)).filter((id) => !keptIds.has(id));
+
+  if (idsToDelete.length > 0) {
+    const { count, error: periodCheckErr } = await supabase
+      .from("grade_periods")
+      .select("id", { count: "exact", head: true })
+      .in("academic_year_id", idsToDelete);
+
+    if (periodCheckErr) {
+      return NextResponse.json({ ok: false, error: periodCheckErr.message }, { status: 400 });
+    }
+
+    if ((count || 0) > 0) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error:
+            "Impossible de supprimer une année scolaire déjà liée à des périodes d'évaluation/bulletins. Désactivez-la ou modifiez ses dates, mais ne la supprimez pas.",
+        },
+        { status: 400 }
+      );
+    }
   }
 
-  const payload = normalized.map((row) => ({
-    institution_id,
-    code: row.code,
-    label: row.label,
-    start_date: row.start_date,
-    end_date: row.end_date,
-    is_current: row.is_current,
-  }));
-
-  const { data, error: insErr } = await supabase
+  // On garantit une seule année courante pour l'établissement.
+  const { error: resetCurrentErr } = await supabase
     .from("academic_years")
-    .insert(payload)
-    .select("id, institution_id, code, label, start_date, end_date, is_current");
+    .update({ is_current: false })
+    .eq("institution_id", institution_id);
 
-  if (insErr) {
-    return NextResponse.json({ ok: false, error: insErr.message }, { status: 400 });
+  if (resetCurrentErr) {
+    return NextResponse.json({ ok: false, error: resetCurrentErr.message }, { status: 400 });
+  }
+
+  for (const row of rowsWithResolvedIds) {
+    if (row.id && existingById.has(row.id)) {
+      const { error: updateErr } = await supabase
+        .from("academic_years")
+        .update({
+          code: row.code,
+          label: row.label,
+          start_date: row.start_date,
+          end_date: row.end_date,
+          is_current: row.is_current,
+        })
+        .eq("institution_id", institution_id)
+        .eq("id", row.id);
+
+      if (updateErr) {
+        return NextResponse.json({ ok: false, error: updateErr.message }, { status: 400 });
+      }
+    } else {
+      const { error: insertErr } = await supabase.from("academic_years").insert({
+        institution_id,
+        code: row.code,
+        label: row.label,
+        start_date: row.start_date,
+        end_date: row.end_date,
+        is_current: row.is_current,
+      });
+
+      if (insertErr) {
+        return NextResponse.json({ ok: false, error: insertErr.message }, { status: 400 });
+      }
+    }
+  }
+
+  if (idsToDelete.length > 0) {
+    const { error: delErr } = await supabase
+      .from("academic_years")
+      .delete()
+      .eq("institution_id", institution_id)
+      .in("id", idsToDelete);
+
+    if (delErr) {
+      return NextResponse.json({ ok: false, error: delErr.message }, { status: 400 });
+    }
+  }
+
+  const { data, error: listErr } = await supabase
+    .from("academic_years")
+    .select("id, institution_id, code, label, start_date, end_date, is_current")
+    .eq("institution_id", institution_id)
+    .order("start_date", { ascending: true });
+
+  if (listErr) {
+    return NextResponse.json({ ok: false, error: listErr.message }, { status: 400 });
   }
 
   return NextResponse.json({
