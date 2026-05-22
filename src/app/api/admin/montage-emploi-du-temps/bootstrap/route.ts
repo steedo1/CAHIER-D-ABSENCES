@@ -138,7 +138,7 @@ export async function GET() {
       await Promise.all([
         srv
           .from("institutions")
-          .select("id,name,code_unique,code,tz,default_session_minutes")
+          .select("id,name,code_unique,code,tz,default_session_minutes,logo_url,phone,email,regional_direction,postal_address,status,settings_json")
           .eq("id", institutionId)
           .maybeSingle(),
 
@@ -322,6 +322,21 @@ export async function GET() {
         acronym: institution?.code_unique ?? institution?.code ?? null,
         tz: institution?.tz ?? "Africa/Abidjan",
         default_session_minutes: Number(institution?.default_session_minutes ?? 60),
+        logo_url: institution?.logo_url ?? null,
+        institution_logo_url: institution?.logo_url ?? null,
+        phone: institution?.phone ?? null,
+        institution_phone: institution?.phone ?? null,
+        email: institution?.email ?? null,
+        institution_email: institution?.email ?? null,
+        regional_direction: institution?.regional_direction ?? null,
+        institution_region: institution?.regional_direction ?? null,
+        postal_address: institution?.postal_address ?? null,
+        institution_postal_address: institution?.postal_address ?? null,
+        status: institution?.status ?? null,
+        settings_json:
+          institution?.settings_json && typeof institution.settings_json === "object"
+            ? institution.settings_json
+            : {},
       },
       classes,
       subjects,

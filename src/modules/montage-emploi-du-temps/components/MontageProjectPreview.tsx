@@ -126,6 +126,9 @@ type InstitutionInfo = {
   phone: string;
   fax: string;
   email: string;
+  region: string;
+  code: string;
+  logoUrl: string;
 };
 
 const WEEKDAYS: Record<number, string> = {
@@ -567,20 +570,119 @@ function getItemSpan(item: Assignment, blockMeta: Map<string, BlockMeta>) {
   return Math.max(1, blockMeta.get(getBlockKey(item))?.span || 1);
 }
 
-function getInstitutionInfo(snapshot?: SourceSnapshot | null): InstitutionInfo {
+function getInstitutionInfo(
+  snapshot?: SourceSnapshot | null,
+  liveSettings?: AnyRecord | null,
+): InstitutionInfo {
   const source = snapshot?.institution || snapshot?.establishment || {};
+  const sourceSettings =
+    source?.settings_json &&
+    typeof source.settings_json === "object" &&
+    !Array.isArray(source.settings_json)
+      ? source.settings_json
+      : {};
+  const live =
+    liveSettings && typeof liveSettings === "object" && !Array.isArray(liveSettings)
+      ? liveSettings
+      : {};
+  const liveJson =
+    live?.settings_json &&
+    typeof live.settings_json === "object" &&
+    !Array.isArray(live.settings_json)
+      ? live.settings_json
+      : {};
 
   return {
     name: emptyToBlank(
-      source.name || source.school_name || source.institution_name,
+      source.name ||
+        source.school_name ||
+        source.institution_name ||
+        live.institution_name ||
+        live.name ||
+        sourceSettings.institution_name ||
+        sourceSettings.name ||
+        liveJson.institution_name ||
+        liveJson.name,
     ),
     academicYear: emptyToBlank(
-      source.academic_year || source.academicYear || source.school_year,
+      source.academic_year ||
+        source.academicYear ||
+        source.school_year ||
+        live.academic_year ||
+        live.academicYear,
     ),
-    bp: emptyToBlank(source.bp || source.postal_box),
-    phone: emptyToBlank(source.phone || source.tel || source.telephone),
-    fax: emptyToBlank(source.fax),
-    email: emptyToBlank(source.email),
+    bp: emptyToBlank(
+      source.bp ||
+        source.postal_box ||
+        source.postal_address ||
+        source.institution_postal_address ||
+        live.institution_postal_address ||
+        live.postal_address ||
+        sourceSettings.institution_postal_address ||
+        sourceSettings.postal_address ||
+        liveJson.institution_postal_address ||
+        liveJson.postal_address,
+    ),
+    phone: emptyToBlank(
+      source.phone ||
+        source.tel ||
+        source.telephone ||
+        source.institution_phone ||
+        live.institution_phone ||
+        live.phone ||
+        sourceSettings.institution_phone ||
+        sourceSettings.phone ||
+        liveJson.institution_phone ||
+        liveJson.phone,
+    ),
+    fax: emptyToBlank(source.fax || live.fax || sourceSettings.fax || liveJson.fax),
+    email: emptyToBlank(
+      source.email ||
+        source.institution_email ||
+        live.institution_email ||
+        live.email ||
+        sourceSettings.institution_email ||
+        sourceSettings.email ||
+        liveJson.institution_email ||
+        liveJson.email,
+    ),
+    region: emptyToBlank(
+      source.regional_direction ||
+        source.region ||
+        source.institution_region ||
+        live.institution_region ||
+        live.region ||
+        sourceSettings.institution_region ||
+        sourceSettings.region ||
+        liveJson.institution_region ||
+        liveJson.region,
+    ),
+    code: emptyToBlank(
+      source.code ||
+        source.acronym ||
+        source.code_unique ||
+        source.institution_code ||
+        live.institution_code ||
+        live.code ||
+        sourceSettings.institution_code ||
+        sourceSettings.code ||
+        liveJson.institution_code ||
+        liveJson.code,
+    ),
+    logoUrl: emptyToBlank(
+      source.logo_url ||
+        source.institution_logo_url ||
+        source.logoUrl ||
+        live.institution_logo_url ||
+        live.logo_url ||
+        live.logoUrl ||
+        sourceSettings.institution_logo_url ||
+        sourceSettings.logo_url ||
+        sourceSettings.logoUrl ||
+        liveJson.institution_logo_url ||
+        liveJson.logo_url ||
+        liveJson.logoUrl,
+    ),
   };
 }
 
@@ -755,10 +857,9 @@ function TeacherIdentityBlock({
   return (
     <div className="space-y-2 text-black">
       <div className="grid gap-x-5 gap-y-1 border border-black p-2 text-[10px] leading-tight sm:grid-cols-2 lg:grid-cols-3 print:grid-cols-3 print:text-[7.2px]">
-        <div>
-          Nom : <strong>{label}</strong>
+        <div className="sm:col-span-2">
+          Nom et prénom(s) : <strong>{label}</strong>
         </div>
-        <div>Prénom(s) : ........................................</div>
         <div>Matricule : ............................</div>
         <div>
           Discipline : <strong>{discipline}</strong>
@@ -1070,7 +1171,7 @@ function OfficialTimetableGrid({
                 <tr key={row.key}>
                   <td
                     colSpan={days.length + 1}
-                    className="border border-black bg-sky-100 py-0.5 text-center text-[8px] font-black uppercase tracking-[0.48em] print:text-[5.8px] print:tracking-[0.34em]"
+                    className="edt-break-row border border-black bg-sky-100 py-0.5 text-center text-[8px] font-black uppercase tracking-[0.48em] print:text-[5.8px] print:tracking-[0.34em]"
                   >
                     {row.label}
                   </td>
@@ -1143,31 +1244,63 @@ function OfficialClassSheet({
   items,
   mode,
   snapshot,
+  institutionSettings,
 }: {
   label: string;
   items: Assignment[];
   mode: ViewMode;
   snapshot?: SourceSnapshot | null;
+  institutionSettings?: AnyRecord | null;
 }) {
   const teacherRows = buildTeacherRows(items);
   const isClassMode = mode === "class";
-  const info = getInstitutionInfo(snapshot);
+  const info = getInstitutionInfo(snapshot, institutionSettings);
 
   return (
-    <section className="min-w-[1120px] overflow-x-auto rounded-[18px] border border-slate-300 bg-white shadow-sm print:min-w-0 print:break-after-page print:overflow-visible print:rounded-none print:border-0 print:shadow-none">
-      <div className="bg-white px-3 pb-2 pt-3 print:px-0 print:pt-0">
-        <div className="mb-2 flex flex-wrap gap-x-6 gap-y-1 text-[10px] text-black print:text-[8px]">
-          <span>
-            Établissement :{" "}
-            {info.name || "...................................."}
-          </span>
-          <span>
-            Année scolaire : {info.academicYear || "20.... / 20......"}
-          </span>
-          <span>BP : {info.bp || "............"}</span>
-          <span>Tél : {info.phone || "............"}</span>
-          <span>Fax : {info.fax || "............"}</span>
-          <span>Email : {info.email || "...................."}</span>
+    <section className="edt-sheet relative min-w-[1120px] overflow-hidden rounded-[18px] border border-slate-300 bg-white shadow-sm print:min-w-0 print:break-after-page print:overflow-visible print:rounded-none print:border-0 print:shadow-none">
+      {info.logoUrl ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={info.logoUrl}
+          alt=""
+          aria-hidden="true"
+          className="edt-watermark"
+        />
+      ) : null}
+
+      <div className="edt-surface px-3 pb-2 pt-3 print:px-0 print:pt-0">
+        <div className="mb-2 grid grid-cols-[76px_minmax(0,1fr)_76px] items-center gap-3 border border-black px-3 py-2 text-black print:grid-cols-[18mm_minmax(0,1fr)_18mm] print:px-2 print:py-1">
+          <div className="flex h-[66px] w-[66px] items-center justify-center print:h-[15mm] print:w-[15mm]">
+            {info.logoUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={info.logoUrl}
+                alt="Logo établissement"
+                className="max-h-full max-w-full object-contain"
+              />
+            ) : null}
+          </div>
+          <div className="text-center leading-tight">
+            <p className="text-[15px] font-black uppercase tracking-wide print:text-[10px]">
+              {info.name || "ÉTABLISSEMENT"}
+            </p>
+            <p className="mt-1 text-[9px] font-semibold print:text-[6.8px]">
+              {[
+                info.region,
+                info.bp ? `BP : ${info.bp}` : "",
+                info.phone ? `Tél : ${info.phone}` : "",
+                info.fax ? `Fax : ${info.fax}` : "",
+                info.email ? `Email : ${info.email}` : "",
+                info.code ? `Code : ${info.code}` : "",
+              ]
+                .filter(Boolean)
+                .join(" • ")}
+            </p>
+            <p className="mt-1 text-[9px] font-black print:text-[6.8px]">
+              Année scolaire : {info.academicYear || "20.... / 20......"}
+            </p>
+          </div>
+          <div />
         </div>
         <div className="mx-auto mb-2 w-fit border-2 border-black px-8 py-1 text-center text-lg font-black uppercase tracking-wide text-black print:text-[14px]">
           {isClassMode
@@ -1349,19 +1482,25 @@ export default function MontageProjectPreview({
   const [mode, setMode] = React.useState<ViewMode>("class");
   const [display, setDisplay] = React.useState<DisplayMode>("grid");
   const [selectedTarget, setSelectedTarget] = React.useState("all");
+  const [institutionSettings, setInstitutionSettings] =
+    React.useState<AnyRecord | null>(null);
 
   async function load() {
     setLoading(true);
     setError(null);
 
     try {
-      const res = await fetch(
-        `/api/admin/montage-emploi-du-temps/projects/${projectId}`,
-        { cache: "no-store" },
-      );
-      const data = (await res.json()) as ProjectResponse;
+      const [projectRes, settingsRes] = await Promise.all([
+        fetch(`/api/admin/montage-emploi-du-temps/projects/${projectId}`, {
+          cache: "no-store",
+        }),
+        fetch("/api/admin/institution/settings", { cache: "no-store" }).catch(
+          () => null,
+        ),
+      ]);
+      const data = (await projectRes.json()) as ProjectResponse;
 
-      if (!res.ok || !data.ok) {
+      if (!projectRes.ok || !data.ok) {
         throw new Error(
           data.ok
             ? "Erreur inconnue."
@@ -1370,6 +1509,17 @@ export default function MontageProjectPreview({
       }
 
       setProject(data.item);
+
+      if (settingsRes?.ok) {
+        const settings = await settingsRes.json().catch(() => null);
+        setInstitutionSettings(
+          settings && typeof settings === "object" && !Array.isArray(settings)
+            ? (settings as AnyRecord)
+            : null,
+        );
+      } else {
+        setInstitutionSettings(null);
+      }
     } catch (err) {
       setError(
         err instanceof Error
@@ -1429,9 +1579,40 @@ export default function MontageProjectPreview({
         dangerouslySetInnerHTML={{
           __html: `
         @page { size: A4 landscape; margin: 7mm; }
+        .edt-watermark {
+          position: absolute;
+          inset: 0;
+          z-index: 2;
+          width: 150mm;
+          height: 150mm;
+          margin: auto;
+          object-fit: contain;
+          opacity: 0.045;
+          pointer-events: none;
+          user-select: none;
+        }
+
+        .edt-sheet > :not(.edt-watermark) {
+          position: relative;
+          z-index: 1;
+        }
+
+        .edt-sheet .edt-surface,
+        .edt-sheet table,
+        .edt-sheet aside,
+        .edt-sheet th,
+        .edt-sheet td {
+          background-color: rgba(255, 255, 255, 0.88) !important;
+        }
+
+        .edt-sheet .edt-break-row {
+          background-color: rgba(224, 242, 254, 0.92) !important;
+        }
+
         @media print {
           body { background: #fff !important; }
           .print\\:break-after-page { break-after: page; page-break-after: always; }
+          .edt-watermark { opacity: 0.055; }
         }
       `,
         }}
@@ -1664,6 +1845,7 @@ export default function MontageProjectPreview({
                             items={group.items}
                             mode={mode}
                             snapshot={snapshot}
+                            institutionSettings={institutionSettings}
                           />
                         ))}
                       </div>
@@ -1673,6 +1855,7 @@ export default function MontageProjectPreview({
                         items={visibleItems}
                         mode={mode}
                         snapshot={snapshot}
+                        institutionSettings={institutionSettings}
                       />
                     )
                   ) : (

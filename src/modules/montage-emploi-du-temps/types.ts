@@ -76,6 +76,18 @@ export type MontageBootstrapResponse =
         acronym: string | null;
         tz: string;
         default_session_minutes: number;
+        logo_url?: string | null;
+        institution_logo_url?: string | null;
+        phone?: string | null;
+        institution_phone?: string | null;
+        email?: string | null;
+        institution_email?: string | null;
+        regional_direction?: string | null;
+        institution_region?: string | null;
+        postal_address?: string | null;
+        institution_postal_address?: string | null;
+        status?: string | null;
+        settings_json?: Record<string, unknown>;
       };
       classes: MontageClass[];
       subjects: MontageSubject[];
