@@ -1611,13 +1611,19 @@ export default function ParentPage() {
               </button>
               <a
                 href="/parents/payments"
-                className="mt-2 flex w-full items-center gap-3 rounded-2xl border border-amber-300 bg-white px-4 py-3 text-left text-[14px] font-extrabold text-[#003766] shadow-sm transition hover:-translate-y-0.5 hover:bg-amber-50 hover:shadow-md"
+                className="mt-2 block w-full rounded-[24px] border-2 border-amber-300 bg-white px-4 py-3 text-left text-[#003766] shadow-sm transition hover:-translate-y-0.5 hover:border-emerald-300 hover:shadow-md"
               >
-                <span className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-emerald-600 text-white shadow-sm">
-                  <IconShield />
-                </span>
-                <span className="min-w-0 flex-1 truncate">Paiement en ligne</span>
-                <OperatorLogoStack className="shrink-0 scale-75 origin-right" max={3} />
+                <div className="flex items-center gap-3">
+                  <span className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-emerald-600 text-white shadow-sm">
+                    <IconShield />
+                  </span>
+                  <span className="min-w-0 flex-1 truncate text-[15px] font-black leading-tight">
+                    Paiement en ligne
+                  </span>
+                </div>
+                <div className="mt-3 flex justify-center">
+                  <OperatorLogoStack className="shrink-0" />
+                </div>
               </a>
             </div>
 
@@ -1803,13 +1809,19 @@ export default function ParentPage() {
             </button>
               <a
                 href="/parents/payments"
-                className="mt-2 flex w-full items-center gap-3 rounded-2xl border border-amber-300 bg-white px-4 py-3 text-left text-[14px] font-extrabold text-[#003766] shadow-sm transition hover:-translate-y-0.5 hover:bg-amber-50 hover:shadow-md"
+                className="mt-2 block w-full rounded-[24px] border-2 border-amber-300 bg-white px-4 py-3 text-left text-[#003766] shadow-sm transition hover:-translate-y-0.5 hover:border-emerald-300 hover:shadow-md"
               >
-                <span className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-emerald-600 text-white shadow-sm">
-                  <IconShield />
-                </span>
-                <span className="min-w-0 flex-1 truncate">Paiement en ligne</span>
-                <OperatorLogoStack className="shrink-0 scale-75 origin-right" max={3} />
+                <div className="flex items-center gap-3">
+                  <span className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-emerald-600 text-white shadow-sm">
+                    <IconShield />
+                  </span>
+                  <span className="min-w-0 flex-1 truncate text-[15px] font-black leading-tight">
+                    Paiement en ligne
+                  </span>
+                </div>
+                <div className="mt-3 flex justify-center">
+                  <OperatorLogoStack className="shrink-0" />
+                </div>
               </a>
           </div>
 
@@ -1948,13 +1960,19 @@ export default function ParentPage() {
                   <div className="mt-5 flex flex-wrap gap-3">
               <a
                 href="/parents/payments"
-                className="mt-2 flex w-full items-center gap-3 rounded-2xl border border-amber-300 bg-white px-4 py-3 text-left text-[14px] font-extrabold text-[#003766] shadow-sm transition hover:-translate-y-0.5 hover:bg-amber-50 hover:shadow-md"
+                className="mt-2 block w-full rounded-[24px] border-2 border-amber-300 bg-white px-4 py-3 text-left text-[#003766] shadow-sm transition hover:-translate-y-0.5 hover:border-emerald-300 hover:shadow-md"
               >
-                <span className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-emerald-600 text-white shadow-sm">
-                  <IconShield />
-                </span>
-                <span className="min-w-0 flex-1 truncate">Paiement en ligne</span>
-                <OperatorLogoStack className="shrink-0 scale-75 origin-right" max={3} />
+                <div className="flex items-center gap-3">
+                  <span className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-emerald-600 text-white shadow-sm">
+                    <IconShield />
+                  </span>
+                  <span className="min-w-0 flex-1 truncate text-[15px] font-black leading-tight">
+                    Paiement en ligne
+                  </span>
+                </div>
+                <div className="mt-3 flex justify-center">
+                  <OperatorLogoStack className="shrink-0" />
+                </div>
               </a>
                     {selectedKid ? (
                       <button
@@ -1978,13 +1996,19 @@ export default function ParentPage() {
                   <div className="mt-3 text-xs font-semibold text-slate-500">Orange Money, Wave, MTN Mobile Money et autres opérateurs activés par l’établissement.</div>
               <a
                 href="/parents/payments"
-                className="mt-2 flex w-full items-center gap-3 rounded-2xl border border-amber-300 bg-white px-4 py-3 text-left text-[14px] font-extrabold text-[#003766] shadow-sm transition hover:-translate-y-0.5 hover:bg-amber-50 hover:shadow-md"
+                className="mt-2 block w-full rounded-[24px] border-2 border-amber-300 bg-white px-4 py-3 text-left text-[#003766] shadow-sm transition hover:-translate-y-0.5 hover:border-emerald-300 hover:shadow-md"
               >
-                <span className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-emerald-600 text-white shadow-sm">
-                  <IconShield />
-                </span>
-                <span className="min-w-0 flex-1 truncate">Paiement en ligne</span>
-                <OperatorLogoStack className="shrink-0 scale-75 origin-right" max={3} />
+                <div className="flex items-center gap-3">
+                  <span className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-emerald-600 text-white shadow-sm">
+                    <IconShield />
+                  </span>
+                  <span className="min-w-0 flex-1 truncate text-[15px] font-black leading-tight">
+                    Paiement en ligne
+                  </span>
+                </div>
+                <div className="mt-3 flex justify-center">
+                  <OperatorLogoStack className="shrink-0" />
+                </div>
               </a>
                 </div>
               </section>
