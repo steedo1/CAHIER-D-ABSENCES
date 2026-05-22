@@ -1611,19 +1611,33 @@ export default function ParentPage() {
               </button>
               <a
                 href="/parents/payments"
-                className="mt-2 block w-full rounded-[24px] border border-emerald-300/30 bg-gradient-to-r from-emerald-500/20 to-cyan-500/20 px-4 py-3 text-left text-white transition hover:from-emerald-500/30 hover:to-cyan-500/30"
+                className="mt-3 block w-full overflow-hidden rounded-[26px] border border-amber-300 bg-gradient-to-r from-amber-300 via-orange-300 to-emerald-300 p-[2px] text-left shadow-lg shadow-amber-950/20 transition hover:-translate-y-0.5 hover:shadow-xl"
               >
-                <div className="flex items-center gap-3">
-                  <span className="grid h-10 w-10 place-items-center rounded-2xl bg-white/10 text-white">
-                    <IconShield />
-                  </span>
-                  <div className="min-w-0">
-                    <div className="text-[14px] font-extrabold">Paiement en ligne</div>
-                    <div className="text-[11px] text-white/80">Réglez les frais et récupérez votre reçu officiel.</div>
+                <div className="rounded-[24px] bg-white px-4 py-4 text-[#003766]">
+                  <div className="flex items-start gap-3">
+                    <span className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-emerald-600 text-white shadow-sm">
+                      <IconShield />
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-[15px] font-black leading-tight">
+                          Paiement en ligne
+                        </span>
+                        <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-black uppercase tracking-wide text-amber-800 ring-1 ring-amber-200">
+                          Visible
+                        </span>
+                      </div>
+                      <div className="mt-1 text-[12px] font-semibold leading-snug text-slate-600">
+                        Frais scolaires, Mobile Money et reçu officiel.
+                      </div>
+                    </div>
                   </div>
-                </div>
-                <div className="mt-3">
-                  <OperatorLogoStack className="shrink-0" />
+                  <div className="mt-3 flex items-center justify-between gap-3">
+                    <OperatorLogoStack className="shrink-0" />
+                    <span className="rounded-full bg-[#003766] px-3 py-1 text-[11px] font-black text-white">
+                      Ouvrir
+                    </span>
+                  </div>
                 </div>
               </a>
             </div>
@@ -1810,12 +1824,34 @@ export default function ParentPage() {
             </button>
             <a
               href="/parents/payments"
-              className="mt-2 flex w-full items-center gap-3 rounded-2xl bg-emerald-500/20 px-4 py-3 text-left text-[14px] font-extrabold text-white transition hover:bg-emerald-500/30"
+              className="mt-3 block w-full overflow-hidden rounded-[26px] border border-amber-300 bg-gradient-to-r from-amber-300 via-orange-300 to-emerald-300 p-[2px] text-left shadow-lg shadow-amber-950/20 transition hover:-translate-y-0.5 hover:shadow-xl"
             >
-              <span className="grid h-10 w-10 place-items-center rounded-2xl bg-white/10 text-white">
-                <IconShield />
-              </span>
-              <span>Paiement en ligne</span>
+              <div className="rounded-[24px] bg-white px-4 py-4 text-[#003766]">
+                  <div className="flex items-start gap-3">
+                    <span className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-emerald-600 text-white shadow-sm">
+                      <IconShield />
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-[15px] font-black leading-tight">
+                          Paiement en ligne
+                        </span>
+                        <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-black uppercase tracking-wide text-amber-800 ring-1 ring-amber-200">
+                          Visible
+                        </span>
+                      </div>
+                      <div className="mt-1 text-[12px] font-semibold leading-snug text-slate-600">
+                        Frais scolaires, Mobile Money et reçu officiel.
+                      </div>
+                    </div>
+                  </div>
+                  <div className="mt-3 flex items-center justify-between gap-3">
+                    <OperatorLogoStack className="shrink-0" />
+                    <span className="rounded-full bg-[#003766] px-3 py-1 text-[11px] font-black text-white">
+                      Ouvrir
+                    </span>
+                  </div>
+              </div>
             </a>
           </div>
 
