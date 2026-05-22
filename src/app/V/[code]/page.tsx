@@ -178,6 +178,10 @@ export default async function VerifyByCodePage(props: any) {
     ? data.subject_components
     : [];
 
+  const institutionLogoUrl = String(
+    inst?.institution_logo_url || inst?.logo_url || inst?.settings_json?.institution_logo_url || ""
+  ).trim();
+
   const perSubjectWithAvg =
     bulletin && Array.isArray(bulletin.per_subject)
       ? bulletin.per_subject.filter(
@@ -272,8 +276,11 @@ export default async function VerifyByCodePage(props: any) {
     coeffTotal > 0 &&
     subjectsWithAvg.length > 0;
 
-  let derivedConductAvg: number | null = null;
-  if (canDeriveConduct) {
+  const apiConductRaw = Number(data?.conduct?.avg20 ?? data?.conduct?.total);
+  const apiConductAvg = Number.isFinite(apiConductRaw) ? round2(apiConductRaw) : null;
+
+  let derivedConductAvg: number | null = apiConductAvg;
+  if (derivedConductAvg === null && canDeriveConduct) {
     const raw = Number(bulletin.general_avg) * (coeffTotal + 1) - displayedWeightedTotal;
     if (Number.isFinite(raw) && raw >= 0 && raw <= 20) {
       derivedConductAvg = round2(raw);
@@ -494,13 +501,31 @@ export default async function VerifyByCodePage(props: any) {
 
   return (
     <main className="min-h-screen bg-slate-50 p-4 sm:p-6">
-      <div className="mx-auto max-w-5xl rounded-2xl border border-slate-200 bg-white p-4 shadow sm:p-6">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <h1 className="text-xl font-extrabold text-slate-900">Vérification du bulletin</h1>
-            <p className="mt-1 text-sm text-slate-500">
-              Contrôle public d’authenticité et affichage des notes officielles.
-            </p>
+      <div className="relative mx-auto max-w-5xl overflow-hidden rounded-2xl border border-slate-200 bg-white p-4 shadow sm:p-6">
+        {institutionLogoUrl ? (
+          <img
+            src={institutionLogoUrl}
+            alt=""
+            aria-hidden="true"
+            className="pointer-events-none absolute left-1/2 top-1/2 h-[72%] max-h-[560px] -translate-x-1/2 -translate-y-1/2 object-contain opacity-[0.055]"
+          />
+        ) : null}
+
+        <div className="relative flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-3">
+            {institutionLogoUrl ? (
+              <img
+                src={institutionLogoUrl}
+                alt="Logo établissement"
+                className="h-14 w-14 rounded-xl border border-slate-200 object-contain p-1"
+              />
+            ) : null}
+            <div>
+              <h1 className="text-xl font-extrabold text-slate-900">Vérification du bulletin</h1>
+              <p className="mt-1 text-sm text-slate-500">
+                Contrôle public d’authenticité et affichage des notes officielles.
+              </p>
+            </div>
           </div>
           <span
             className={
@@ -640,12 +665,6 @@ export default async function VerifyByCodePage(props: any) {
                         </tbody>
                       </table>
                     </div>
-                  </div>
-                )}
-
-                {!conductAlreadyVisible && !showSyntheticConductRow && typeof bulletin?.general_avg === "number" && (
-                  <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900">
-                    
                   </div>
                 )}
 

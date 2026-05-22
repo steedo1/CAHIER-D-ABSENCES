@@ -49,7 +49,100 @@ function normalizeBulletinLevel(level?: string | null): string | null {
 
   return null;
 }
+function normalizeAsciiToken(value?: string | null): string {
+  return String(value ?? "")
+    .trim()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "");
+}
+
+type InstitutionMeta = {
+  id: string;
+  name?: string | null;
+  code?: string | null;
+  code_unique?: string | null;
+  acronym?: string | null;
+  logo_url?: string | null;
+  settings_json?: any;
+};
+
+const CSCA_INSTITUTION_IDS = new Set([
+  "ee34ab2a-8033-4e0b-acf0-05979cce1697",
+]);
+
+function isCSCAInstitution(meta: InstitutionMeta | null | undefined): boolean {
+  if (!meta) return false;
+  const id = String(meta.id || "").trim();
+  if (CSCA_INSTITUTION_IDS.has(id)) return true;
+
+  const name = normalizeAsciiToken(meta.name);
+  const code = normalizeAsciiToken(meta.code_unique || meta.code);
+  const acronym = normalizeAsciiToken(meta.acronym);
+  const all = `${name} ${code} ${acronym}`;
+
+  return (
+    acronym === "csca" ||
+    code === "csca" ||
+    all.includes("csca") ||
+    (name.includes("courssecondairecatholique") && name.includes("aboisso"))
+  );
+}
+
+function isCSCALatinOrReligionLabel(value?: string | null): boolean {
+  const key = normalizeAsciiToken(value);
+  if (!key) return false;
+  return (
+    key.includes("latin") ||
+    key.includes("religion") ||
+    key.includes("religieux") ||
+    key === "reg" ||
+    key === "rel"
+  );
+}
+
+function isCSCALatinOrReligionSubjectMeta(subject: SubjectRow | null | undefined): boolean {
+  return isCSCALatinOrReligionLabel(`${subject?.code ?? ""} ${subject?.name ?? ""}`);
+}
+
+function isCSCAConductLabel(value?: string | null): boolean {
+  const key = normalizeAsciiToken(value);
+  return key.includes("discipline") || key.includes("conduite") || key.includes("conduct");
+}
+
+function normalizeCoeffLevelKey(level?: string | null): string | null {
+  const x = normalizeAsciiToken(level);
+  if (!x) return null;
+
+  if (/^(6|6e|6eme|sixieme)$/.test(x)) return "6eme";
+  if (/^(5|5e|5eme|cinquieme)$/.test(x)) return "5eme";
+  if (/^(4|4e|4eme|quatrieme)$/.test(x)) return "4eme";
+  if (/^(3|3e|3eme|troisieme)$/.test(x)) return "3eme";
+
+  if (/^(2ndea|2dea|secondea|2a|2a[0-9]+)$/.test(x)) return "2ndeA";
+  if (/^(2ndec|2dec|secondec|2c|2c[0-9]+)$/.test(x)) return "2ndeC";
+  if (/^(2nde|2de|seconde)$/.test(x)) return "seconde";
+
+  if (/^(1erea1|premierea1|1rea1|1a1)$/.test(x)) return "1ereA1";
+  if (/^(1erea2|premierea2|1rea2|1a2|1a|1a[0-9]+)$/.test(x)) return "1ereA2";
+  if (/^(1erec|premierec|1rec|1c|1c[0-9]+)$/.test(x)) return "1ereC";
+  if (/^(1ered|premiered|1red|1d|1d[0-9]+)$/.test(x)) return "1ereD";
+  if (/^(1ere|1re|premiere)$/.test(x)) return "première";
+
+  if (/^(tlea1|terminalea1|ta1)$/.test(x)) return "tleA1";
+  if (/^(tlea2|terminalea2|ta2|tlea|terminalea|ta|ta[0-9]+)$/.test(x)) return "tleA2";
+  if (/^(tlec|terminalec|tc|tc[0-9]+)$/.test(x)) return "tleC";
+  if (/^(tled|terminaled|td|td[0-9]+)$/.test(x)) return "tleD";
+  if (/^(tle|terminal|terminale)$/.test(x)) return "terminale";
+
+  return x;
+}
+
 function normalizeStoredLevel(level?: string | null): string | null {
+  const specific = normalizeCoeffLevelKey(level);
+  if (specific) return specific;
+
   const n = normalizeBulletinLevel(level);
   if (n) return n;
 
@@ -57,36 +150,88 @@ function normalizeStoredLevel(level?: string | null): string | null {
   return raw || null;
 }
 
+function pushUniqueLevelCandidate(list: string[], value?: string | null) {
+  const key = normalizeCoeffLevelKey(value);
+  if (key && !list.includes(key)) list.push(key);
+}
+
+const STRICT_OFFICIAL_COEFF_LEVELS = new Set([
+  "1ereA1",
+  "1ereA2",
+  "tleA1",
+  "tleA2",
+]);
+
+function buildCoeffLevelCandidates(classRow: ClassRow, bulletinLevel: string | null): string[] {
+  const out: string[] = [];
+  const official = normalizeCoeffLevelKey(classRow.official_track_code);
+
+  if (official) {
+    out.push(official);
+    if (STRICT_OFFICIAL_COEFF_LEVELS.has(official)) return out;
+
+    pushUniqueLevelCandidate(out, classRow.level);
+    pushUniqueLevelCandidate(out, classRow.code);
+    pushUniqueLevelCandidate(out, classRow.label);
+    pushUniqueLevelCandidate(out, bulletinLevel);
+    if (bulletinLevel && !out.includes(bulletinLevel)) out.push(bulletinLevel);
+    return out;
+  }
+
+  pushUniqueLevelCandidate(out, classRow.level);
+  pushUniqueLevelCandidate(out, classRow.code);
+  pushUniqueLevelCandidate(out, classRow.label);
+  pushUniqueLevelCandidate(out, bulletinLevel);
+  if (bulletinLevel && !out.includes(bulletinLevel)) out.push(bulletinLevel);
+  return out;
+}
+
+function allowSubjectComponentsForBulletinLevel(level?: string | null): boolean {
+  const n = normalizeBulletinLevel(level);
+  return n === "6e" || n === "5e" || n === "4e" || n === "3e";
+}
+
 function pickBestCoeffRow(
   rows: SubjectCoeffRow[],
-  wantedLevel: string | null
+  wantedLevels: Array<string | null | undefined>
 ): SubjectCoeffRow | null {
   if (!rows.length) return null;
 
-  const wanted = normalizeStoredLevel(wantedLevel);
+  const wanted = wantedLevels
+    .map((level) => normalizeStoredLevel(level))
+    .filter((level): level is string => Boolean(level));
 
-  const exact = rows.find((r) => normalizeStoredLevel(r.level) === wanted);
-  if (exact) return exact;
+  for (const key of wanted) {
+    const exact = rows.find((r) => normalizeStoredLevel(r.level) === key);
+    if (exact) return exact;
+  }
 
   const globalRow = rows.find((r) => !normalizeStoredLevel(r.level));
   if (globalRow) return globalRow;
 
+  if (wanted.length) return null;
   return rows[0] ?? null;
 }
 
 function pickBestComponentRows<T extends { level?: string | null }>(
   rows: T[],
-  wantedLevel: string | null
+  wantedLevels: Array<string | null | undefined>
 ): T[] {
   if (!rows.length) return [];
 
-  const wanted = normalizeStoredLevel(wantedLevel);
-  const exact = rows.filter((r) => normalizeStoredLevel(r.level) === wanted);
-  if (exact.length) return exact;
+  const wanted = wantedLevels
+    .map((level) => normalizeStoredLevel(level))
+    .filter((level): level is string => Boolean(level));
+
+  for (const key of wanted) {
+    const exact = rows.filter((r) => normalizeStoredLevel(r.level) === key);
+    if (exact.length) return exact;
+  }
 
   const globalRows = rows.filter((r) => !normalizeStoredLevel(r.level));
   if (globalRows.length) return globalRows;
 
+  if (wanted.length) return [];
   return rows;
 }
 
@@ -150,6 +295,433 @@ const DEFAULT_CONDUCT_SETTINGS: ConductSettings = {
 
 const numSetting = (v: any, fallback: number): number =>
   typeof v === "number" && Number.isFinite(v) ? v : fallback;
+
+type InstitutionConductPolicy = {
+  mode: "standard" | "conduct_plus_subjects";
+  classic_conduct_weight: number;
+  missing_subject_strategy: "ignore_missing" | "count_as_zero";
+  is_active: boolean;
+  display_label: "Conduite" | "Discipline";
+  is_csca: boolean;
+};
+
+type ConductSubjectPolicy = {
+  subject_id: string;
+  subject_name: string;
+  conduct_weight: number;
+};
+
+type ConductPolicyComponent = {
+  kind: "classic_conduct" | "subject";
+  label: string;
+  subject_id: string | null;
+  avg20: number | null;
+  weight: number;
+  included: boolean;
+  missing: boolean;
+};
+
+type ConductPolicyResult = {
+  total: number;
+  avg20: number;
+  policy_applied: boolean;
+  mode: InstitutionConductPolicy["mode"];
+  classic_total: number;
+  classic_avg20: number;
+  components: ConductPolicyComponent[];
+};
+
+type ConductRubricKey = "assiduite" | "tenue" | "moralite" | "discipline";
+
+type ConductOverride = {
+  student_id: string;
+  override_total: number;
+  calculated_total: number | null;
+  reason: string | null;
+  updated_at: string | null;
+  edited_by: string | null;
+};
+
+type ConductRubricOverride = {
+  student_id: string;
+  rubric_key: ConductRubricKey;
+  override_value: number;
+  calculated_value: number | null;
+  updated_at: string | null;
+  edited_by: string | null;
+};
+
+const CONDUCT_RUBRIC_KEYS: ConductRubricKey[] = [
+  "assiduite",
+  "tenue",
+  "moralite",
+  "discipline",
+];
+
+function isConductRubricKey(value: unknown): value is ConductRubricKey {
+  return CONDUCT_RUBRIC_KEYS.includes(String(value) as ConductRubricKey);
+}
+
+function clean2(v: any): number | null {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return null;
+  return Number(n.toFixed(2));
+}
+
+function normalizeScoreTo20(score: number, totalMax: number): number {
+  const max = Number(totalMax);
+  if (!Number.isFinite(max) || max <= 0 || max === 20) {
+    return clampConduct(score, 0, 20);
+  }
+  return clampConduct((score * 20) / max, 0, 20);
+}
+
+function normalizeScoreFrom20(avg20: number, totalMax: number): number {
+  const max = Number(totalMax);
+  if (!Number.isFinite(max) || max <= 0 || max === 20) {
+    return clampConduct(avg20, 0, 20);
+  }
+  return clampConduct((avg20 * max) / 20, 0, max);
+}
+
+async function loadInstitutionConductPolicy(
+  srv: SupabaseClient,
+  institutionId: string
+): Promise<InstitutionConductPolicy> {
+  const fallback: InstitutionConductPolicy = {
+    mode: "standard",
+    classic_conduct_weight: 1,
+    missing_subject_strategy: "ignore_missing",
+    is_active: false,
+    display_label: "Conduite",
+    is_csca: false,
+  };
+
+  try {
+    const { data, error } = await srv
+      .from("institution_conduct_policies")
+      .select("mode, classic_conduct_weight, missing_subject_strategy, is_active")
+      .eq("institution_id", institutionId)
+      .maybeSingle();
+
+    if (error || !data || (data as any).is_active === false) return fallback;
+
+    const modeRaw = String((data as any).mode || "standard");
+    const mode: InstitutionConductPolicy["mode"] =
+      modeRaw === "conduct_plus_subjects" ? "conduct_plus_subjects" : "standard";
+
+    const strategyRaw = String((data as any).missing_subject_strategy || "ignore_missing");
+    const missing_subject_strategy: InstitutionConductPolicy["missing_subject_strategy"] =
+      strategyRaw === "count_as_zero" ? "count_as_zero" : "ignore_missing";
+
+    const weight = Number((data as any).classic_conduct_weight ?? 1);
+
+    return {
+      mode,
+      classic_conduct_weight: Number.isFinite(weight) && weight >= 0 ? weight : 1,
+      missing_subject_strategy,
+      is_active: true,
+      display_label: "Conduite",
+      is_csca: false,
+    };
+  } catch {
+    return fallback;
+  }
+}
+
+async function loadConductSubjectPolicies(
+  srv: SupabaseClient,
+  institutionId: string
+): Promise<ConductSubjectPolicy[]> {
+  try {
+    const { data, error } = await srv
+      .from("institution_subject_grade_policies")
+      .select("subject_id, conduct_weight, include_in_conduct_average, is_active")
+      .eq("institution_id", institutionId)
+      .eq("include_in_conduct_average", true)
+      .eq("is_active", true);
+
+    if (error || !Array.isArray(data) || data.length === 0) return [];
+
+    const rows = (data as any[])
+      .map((row) => ({
+        subject_id: String(row.subject_id || ""),
+        conduct_weight: Number(row.conduct_weight ?? 1),
+      }))
+      .filter((row) => !!row.subject_id);
+
+    const subjectIds = Array.from(new Set(rows.map((row) => row.subject_id)));
+    const nameBySubject = new Map<string, string>();
+
+    if (subjectIds.length > 0) {
+      const { data: subjectRows } = await srv
+        .from("subjects")
+        .select("id, name, code")
+        .in("id", subjectIds);
+
+      for (const s of (subjectRows || []) as any[]) {
+        const id = String(s.id || "");
+        const label = String(s.name || s.code || "Matière").trim();
+        if (id) nameBySubject.set(id, label || "Matière");
+      }
+    }
+
+    return rows.map((row) => ({
+      subject_id: row.subject_id,
+      subject_name: nameBySubject.get(row.subject_id) || "Matière",
+      conduct_weight:
+        Number.isFinite(row.conduct_weight) && row.conduct_weight >= 0
+          ? row.conduct_weight
+          : 1,
+    }));
+  } catch {
+    return [];
+  }
+}
+
+async function loadCSCABuiltinConductSubjectPolicies(
+  srv: SupabaseClient,
+  institutionId: string
+): Promise<ConductSubjectPolicy[]> {
+  try {
+    const { data: instSubjects, error: instErr } = await srv
+      .from("institution_subjects")
+      .select("subject_id")
+      .eq("institution_id", institutionId);
+
+    if (instErr || !Array.isArray(instSubjects) || instSubjects.length === 0) return [];
+
+    const subjectIds = Array.from(
+      new Set(
+        (instSubjects as any[])
+          .map((row) => String(row.subject_id || ""))
+          .filter(Boolean)
+      )
+    );
+
+    if (subjectIds.length === 0) return [];
+
+    const { data: subjectRows, error: subErr } = await srv
+      .from("subjects")
+      .select("id, name, code")
+      .in("id", subjectIds);
+
+    if (subErr || !Array.isArray(subjectRows) || subjectRows.length === 0) return [];
+
+    return (subjectRows as any[])
+      .map((subject) => {
+        const subject_id = String(subject.id || "");
+        const label = String(subject.name || subject.code || "Matière").trim();
+        const key = `${subject.name || ""} ${subject.code || ""}`;
+        if (!subject_id || !isCSCALatinOrReligionLabel(key)) return null;
+        return { subject_id, subject_name: label || "Matière", conduct_weight: 1 };
+      })
+      .filter((row): row is ConductSubjectPolicy => !!row);
+  } catch {
+    return [];
+  }
+}
+
+function mergeConductSubjectPolicies(
+  configured: ConductSubjectPolicy[],
+  builtin: ConductSubjectPolicy[]
+): ConductSubjectPolicy[] {
+  const byId = new Map<string, ConductSubjectPolicy>();
+  for (const row of [...configured, ...builtin]) {
+    const subjectId = String(row.subject_id || "");
+    if (!subjectId || byId.has(subjectId)) continue;
+    byId.set(subjectId, row);
+  }
+  return Array.from(byId.values()).sort((a, b) =>
+    a.subject_name.localeCompare(b.subject_name, "fr", {
+      sensitivity: "base",
+      numeric: true,
+    })
+  );
+}
+
+async function loadSubjectAveragesForConductPolicy(
+  srv: SupabaseClient,
+  opts: {
+    classId: string;
+    subjectIds: string[];
+    studentIds: string[];
+    from: string;
+    to: string;
+  }
+): Promise<Map<string, Map<string, number>>> {
+  const out = new Map<string, Map<string, number>>();
+  const subjectIds = Array.from(new Set(opts.subjectIds.filter(Boolean)));
+  const studentIds = Array.from(new Set(opts.studentIds.filter(Boolean)));
+
+  if (!opts.classId || subjectIds.length === 0 || studentIds.length === 0) return out;
+
+  try {
+    let evalQuery = srv
+      .from("grade_evaluations")
+      .select("id, subject_id, scale, coeff, eval_date, is_published")
+      .eq("class_id", opts.classId)
+      .eq("is_published", true)
+      .in("subject_id", subjectIds);
+
+    if (opts.from) evalQuery = evalQuery.gte("eval_date", opts.from);
+    if (opts.to) evalQuery = evalQuery.lte("eval_date", opts.to);
+
+    const { data: evalRows, error: evalErr } = await evalQuery;
+    if (evalErr || !Array.isArray(evalRows) || evalRows.length === 0) return out;
+
+    const evalById = new Map<string, { subject_id: string; scale: number; coeff: number }>();
+    for (const ev of evalRows as any[]) {
+      const id = String(ev.id || "");
+      const subject_id = String(ev.subject_id || "");
+      if (!id || !subject_id) continue;
+      const scaleRaw = Number(ev.scale ?? 20);
+      const coeffRaw = Number(ev.coeff ?? 1);
+      evalById.set(id, {
+        subject_id,
+        scale: Number.isFinite(scaleRaw) && scaleRaw > 0 ? scaleRaw : 20,
+        coeff: Number.isFinite(coeffRaw) && coeffRaw > 0 ? coeffRaw : 1,
+      });
+    }
+
+    const evalIds = Array.from(evalById.keys());
+    if (evalIds.length === 0) return out;
+
+    const { data: scoreRows, error: scoreErr } = await srv
+      .from("v_grade_scores_official_for_reports")
+      .select("evaluation_id, student_id, score")
+      .in("evaluation_id", evalIds)
+      .in("student_id", studentIds);
+
+    if (scoreErr || !Array.isArray(scoreRows) || scoreRows.length === 0) return out;
+
+    const acc = new Map<string, { sum: number; coeff: number }>();
+
+    for (const grade of scoreRows as any[]) {
+      const evaluationId = String(grade.evaluation_id || "");
+      const studentId = String(grade.student_id || "");
+      const ev = evalById.get(evaluationId);
+      if (!ev || !studentId) continue;
+
+      const score = Number(grade.score);
+      if (!Number.isFinite(score)) continue;
+
+      const mark20 = clampConduct((score * 20) / ev.scale, 0, 20);
+      const key = `${ev.subject_id}|${studentId}`;
+      const cur = acc.get(key) || { sum: 0, coeff: 0 };
+      cur.sum += mark20 * ev.coeff;
+      cur.coeff += ev.coeff;
+      acc.set(key, cur);
+    }
+
+    for (const [key, value] of acc.entries()) {
+      if (!value.coeff) continue;
+      const [subjectId, studentId] = key.split("|");
+      if (!subjectId || !studentId) continue;
+      const avg = clean2(value.sum / value.coeff);
+      if (avg === null) continue;
+      const byStudent = out.get(subjectId) || new Map<string, number>();
+      byStudent.set(studentId, avg);
+      out.set(subjectId, byStudent);
+    }
+  } catch {
+    return out;
+  }
+
+  return out;
+}
+
+function applyInstitutionConductPolicyToStudent(opts: {
+  studentId: string;
+  classicTotal: number;
+  totalMax: number;
+  conductPolicy: InstitutionConductPolicy;
+  subjectPolicies: ConductSubjectPolicy[];
+  subjectAverages: Map<string, Map<string, number>>;
+}): ConductPolicyResult {
+  const classicTotal = clean2(opts.classicTotal) ?? 0;
+  const classicAvg20 = clean2(normalizeScoreTo20(classicTotal, opts.totalMax)) ?? 0;
+  const classicWeight = Math.max(0, Number(opts.conductPolicy.classic_conduct_weight ?? 1));
+
+  const components: ConductPolicyComponent[] = [
+    {
+      kind: "classic_conduct",
+      label: opts.conductPolicy.display_label || "Conduite",
+      subject_id: null,
+      avg20: classicAvg20,
+      weight: classicWeight,
+      included: classicWeight > 0,
+      missing: false,
+    },
+  ];
+
+  if (opts.conductPolicy.mode !== "conduct_plus_subjects" || opts.subjectPolicies.length === 0) {
+    return {
+      total: classicTotal,
+      avg20: classicAvg20,
+      policy_applied: false,
+      mode: opts.conductPolicy.mode,
+      classic_total: classicTotal,
+      classic_avg20: classicAvg20,
+      components,
+    };
+  }
+
+  let weightedSum = classicWeight > 0 ? classicAvg20 * classicWeight : 0;
+  let totalWeight = classicWeight > 0 ? classicWeight : 0;
+
+  for (const subjectPolicy of opts.subjectPolicies) {
+    const weight = Math.max(0, Number(subjectPolicy.conduct_weight ?? 1));
+    const rawAvg = opts.subjectAverages
+      .get(subjectPolicy.subject_id)
+      ?.get(opts.studentId);
+
+    const hasAvg = typeof rawAvg === "number" && Number.isFinite(rawAvg);
+    const shouldCountMissing = opts.conductPolicy.missing_subject_strategy === "count_as_zero";
+    const included = weight > 0 && (hasAvg || shouldCountMissing);
+    const avg20 = hasAvg ? clampConduct(rawAvg, 0, 20) : shouldCountMissing ? 0 : null;
+
+    components.push({
+      kind: "subject",
+      label: subjectPolicy.subject_name,
+      subject_id: subjectPolicy.subject_id,
+      avg20: avg20 === null ? null : clean2(avg20),
+      weight,
+      included,
+      missing: !hasAvg,
+    });
+
+    if (included && avg20 !== null) {
+      weightedSum += avg20 * weight;
+      totalWeight += weight;
+    }
+  }
+
+  if (totalWeight <= 0) {
+    return {
+      total: classicTotal,
+      avg20: classicAvg20,
+      policy_applied: false,
+      mode: opts.conductPolicy.mode,
+      classic_total: classicTotal,
+      classic_avg20: classicAvg20,
+      components,
+    };
+  }
+
+  const finalAvg20 = clean2(weightedSum / totalWeight) ?? classicAvg20;
+  const finalTotal = clean2(normalizeScoreFrom20(finalAvg20, opts.totalMax)) ?? classicTotal;
+
+  return {
+    total: finalTotal,
+    avg20: finalAvg20,
+    policy_applied: true,
+    mode: opts.conductPolicy.mode,
+    classic_total: classicTotal,
+    classic_avg20: classicAvg20,
+    components,
+  };
+}
 
 async function loadConductSettings(
   srv: SupabaseClient,
@@ -402,6 +974,7 @@ type ClassRow = {
   academic_year?: string | null;
   head_teacher_id?: string | null;
   level?: string | null;
+  official_track_code?: string | null;
 };
 
 type HeadTeacherRow = {
@@ -422,6 +995,14 @@ type SubjectCoeffRow = {
   coeff: number;
   include_in_average?: boolean | null;
   level?: string | null;
+};
+
+type SubjectGradePolicyRow = {
+  subject_id: string;
+  include_in_general_average?: boolean | null;
+  include_in_conduct_average?: boolean | null;
+  conduct_weight?: number | null;
+  is_active?: boolean | null;
 };
 
 type BulletinSubjectComponent = {
@@ -739,7 +1320,7 @@ async function computeStudentGeneralAvgForRange(opts: {
   const evalIds = evals.map((e) => e.id);
 
   const { data: scoreData, error: scoreErr } = await srv
-    .from("student_grades")
+    .from("v_grade_scores_official_for_reports")
     .select("evaluation_id, student_id, score")
     .in("evaluation_id", evalIds)
     .eq("student_id", studentId);
@@ -960,10 +1541,10 @@ export async function GET(req: NextRequest) {
     { data: cls, error: clsErr },
     { data: stu, error: stuErr },
   ] = await Promise.all([
-    srv.from("institutions").select("id, name, code").eq("id", instIdStr).maybeSingle(),
+    srv.from("institutions").select("id, name, code, code_unique, acronym, logo_url, settings_json").eq("id", instIdStr).maybeSingle(),
     srv
       .from("classes")
-      .select("id, label, code, institution_id, academic_year, head_teacher_id, level")
+      .select("id, label, code, institution_id, academic_year, head_teacher_id, level, official_track_code")
       .eq("id", classIdStr)
       .maybeSingle(),
     srv
@@ -994,6 +1575,18 @@ export async function GET(req: NextRequest) {
   }
 
   const bulletinLevel = normalizeBulletinLevel(classRow.level);
+  const coeffLevelCandidates = buildCoeffLevelCandidates(classRow, bulletinLevel);
+  const allowSubjectComponents = allowSubjectComponentsForBulletinLevel(bulletinLevel);
+  const institutionMeta: InstitutionMeta = {
+    id: String((inst as any).id || instIdStr),
+    name: (inst as any).name ?? null,
+    code: (inst as any).code ?? null,
+    code_unique: (inst as any).code_unique ?? null,
+    acronym: (inst as any).acronym ?? null,
+    logo_url: (inst as any).logo_url ?? (inst as any).settings_json?.institution_logo_url ?? null,
+    settings_json: (inst as any).settings_json ?? null,
+  };
+  const isCSCA = isCSCAInstitution(institutionMeta);
 
   let periodMeta: {
     id?: string | null;
@@ -1246,13 +1839,23 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({
       ok: true,
       mode,
-      institution: { id: inst.id, name: inst.name, code: inst.code ?? null },
+      institution: {
+        id: institutionMeta.id,
+        name: institutionMeta.name ?? null,
+        code: institutionMeta.code ?? null,
+        code_unique: institutionMeta.code_unique ?? null,
+        acronym: institutionMeta.acronym ?? null,
+        logo_url: institutionMeta.logo_url ?? null,
+        institution_logo_url: institutionMeta.logo_url ?? null,
+      },
       class: {
         id: classRow.id,
         label: classRow.label || classRow.code || "Classe",
         code: classRow.code || null,
         academic_year: classRow.academic_year || null,
         level: classRow.level || null,
+        official_track_code: classRow.official_track_code || null,
+        coefficient_level: coeffLevelCandidates[0] || bulletinLevel || null,
         bulletin_level: bulletinLevel,
         head_teacher: headTeacher
           ? {
@@ -1414,6 +2017,150 @@ export async function GET(req: NextRequest) {
       const conductSettings = await loadConductSettings(srv, instIdStr);
       const rubricMax = conductSettings.rubric_max;
       const defaultSessionMinutes = await loadDefaultSessionMinutes(srv, instIdStr);
+      const totalMax =
+        rubricMax.assiduite + rubricMax.tenue + rubricMax.moralite + rubricMax.discipline;
+
+      let conductPeriodId: string | null = null;
+      let conductAcademicYear = String(
+        periodMeta.academic_year || academicYearToken || classRow.academic_year || ""
+      ).trim();
+      let conductPeriodCode = String(periodMeta.code || periodCodeToken || "").trim();
+
+      try {
+        const { data: gp } = await srv
+          .from("grade_periods")
+          .select("id, academic_year, code, short_label, label")
+          .eq("institution_id", instIdStr)
+          .eq("start_date", from)
+          .eq("end_date", to)
+          .limit(1)
+          .maybeSingle();
+
+        if (gp) {
+          conductPeriodId = (gp as any).id ? String((gp as any).id) : null;
+          conductAcademicYear = String((gp as any).academic_year || conductAcademicYear || "").trim();
+          conductPeriodCode = String(
+            (gp as any).code || (gp as any).short_label || (gp as any).label || conductPeriodCode || ""
+          ).trim();
+        }
+      } catch {
+        // non bloquant
+      }
+
+      let conductPolicy = await loadInstitutionConductPolicy(srv, instIdStr);
+      if (isCSCA) {
+        conductPolicy = {
+          ...conductPolicy,
+          mode: "conduct_plus_subjects",
+          classic_conduct_weight: 1,
+          missing_subject_strategy: "ignore_missing",
+          is_active: true,
+          display_label: "Discipline",
+          is_csca: true,
+        };
+      }
+
+      let conductSubjectPolicies: ConductSubjectPolicy[] = [];
+      if (conductPolicy.mode === "conduct_plus_subjects") {
+        const configuredPolicies = await loadConductSubjectPolicies(srv, instIdStr);
+        const cscaBuiltinPolicies = isCSCA
+          ? await loadCSCABuiltinConductSubjectPolicies(srv, instIdStr)
+          : [];
+
+        conductSubjectPolicies = isCSCA
+          ? mergeConductSubjectPolicies(
+              configuredPolicies.filter((policy) =>
+                isCSCALatinOrReligionLabel(`${policy.subject_name || ""} ${policy.subject_id || ""}`)
+              ),
+              cscaBuiltinPolicies
+            )
+          : configuredPolicies;
+      }
+
+      const conductSubjectAverageBySubject =
+        conductPolicy.mode === "conduct_plus_subjects" && conductSubjectPolicies.length > 0
+          ? await loadSubjectAveragesForConductPolicy(srv, {
+              classId: classIdStr,
+              subjectIds: conductSubjectPolicies.map((policy) => policy.subject_id),
+              studentIds,
+              from,
+              to,
+            })
+          : new Map<string, Map<string, number>>();
+
+      const officialTotalMax = conductPolicy.mode === "conduct_plus_subjects" ? 20 : totalMax;
+
+      const overridesByStudent = new Map<string, ConductOverride>();
+      if (conductAcademicYear && conductPeriodCode && studentIds.length > 0) {
+        try {
+          const { data: overrideRows } = await srv
+            .from("conduct_average_overrides")
+            .select("student_id, override_total, calculated_total, reason, updated_at, edited_by")
+            .eq("institution_id", instIdStr)
+            .eq("class_id", classIdStr)
+            .eq("academic_year", conductAcademicYear)
+            .eq("period_code", conductPeriodCode)
+            .in("student_id", studentIds);
+
+          for (const row of (overrideRows || []) as any[]) {
+            const sid = String(row.student_id || "");
+            const overrideTotal = Number(row.override_total);
+            if (!sid || !Number.isFinite(overrideTotal)) continue;
+            overridesByStudent.set(sid, {
+              student_id: sid,
+              override_total: Number(overrideTotal.toFixed(2)),
+              calculated_total:
+                row.calculated_total === null || row.calculated_total === undefined
+                  ? null
+                  : Number(row.calculated_total),
+              reason: row.reason ?? null,
+              updated_at: row.updated_at ?? null,
+              edited_by: row.edited_by ?? null,
+            });
+          }
+        } catch {
+          // non bloquant
+        }
+      }
+
+      const rubricOverridesByStudent = new Map<
+        string,
+        Partial<Record<ConductRubricKey, ConductRubricOverride>>
+      >();
+      if (conductAcademicYear && conductPeriodCode && studentIds.length > 0) {
+        try {
+          const { data: rubricRows } = await srv
+            .from("conduct_rubric_overrides")
+            .select("student_id, rubric_key, override_value, calculated_value, updated_at, edited_by")
+            .eq("institution_id", instIdStr)
+            .eq("class_id", classIdStr)
+            .eq("academic_year", conductAcademicYear)
+            .eq("period_code", conductPeriodCode)
+            .in("student_id", studentIds);
+
+          for (const row of (rubricRows || []) as any[]) {
+            const sid = String(row.student_id || "");
+            const keyRaw = row.rubric_key;
+            const overrideValue = Number(row.override_value);
+            if (!sid || !isConductRubricKey(keyRaw) || !Number.isFinite(overrideValue)) continue;
+            const current = rubricOverridesByStudent.get(sid) || {};
+            current[keyRaw] = {
+              student_id: sid,
+              rubric_key: keyRaw,
+              override_value: Number(overrideValue.toFixed(2)),
+              calculated_value:
+                row.calculated_value === null || row.calculated_value === undefined
+                  ? null
+                  : Number(row.calculated_value),
+              updated_at: row.updated_at ?? null,
+              edited_by: row.edited_by ?? null,
+            };
+            rubricOverridesByStudent.set(sid, current);
+          }
+        } catch {
+          // non bloquant
+        }
+      }
 
       const { data: absMarks } = await srv
         .from("v_mark_minutes")
@@ -1688,13 +2435,54 @@ export async function GET(req: NextRequest) {
         moralite = clampConduct(moralite - p.moralite, 0, rubricMax.moralite);
         discipline = clampConduct(discipline - p.discipline, 0, rubricMax.discipline);
 
-        let total = assiduite + tenue + moralite + discipline;
+        const rubricOverrides = rubricOverridesByStudent.get(sid) || {};
+        assiduite = rubricOverrides.assiduite
+          ? clampConduct(rubricOverrides.assiduite.override_value, 0, rubricMax.assiduite)
+          : assiduite;
+        tenue = rubricOverrides.tenue
+          ? clampConduct(rubricOverrides.tenue.override_value, 0, rubricMax.tenue)
+          : tenue;
+        moralite = rubricOverrides.moralite
+          ? clampConduct(rubricOverrides.moralite.override_value, 0, rubricMax.moralite)
+          : moralite;
+        discipline = rubricOverrides.discipline
+          ? clampConduct(rubricOverrides.discipline.override_value, 0, rubricMax.discipline)
+          : discipline;
+
+        let classicTotal = assiduite + tenue + moralite + discipline;
         const hasCouncil = evs.some((e) => e.event_type === "discipline_council");
         if (hasCouncil) {
-          total = Math.min(total, conductSettings.rules.discipline.council_cap);
+          classicTotal = Math.min(classicTotal, conductSettings.rules.discipline.council_cap);
         }
 
-        out.set(sid, cleanNumber(total, 4));
+        const automaticConduct = applyInstitutionConductPolicyToStudent({
+          studentId: sid,
+          classicTotal,
+          totalMax,
+          conductPolicy,
+          subjectPolicies: conductSubjectPolicies,
+          subjectAverages: conductSubjectAverageBySubject,
+        });
+
+        const calculatedTotal = Number(
+          (conductPolicy.mode === "conduct_plus_subjects"
+            ? automaticConduct.avg20
+            : automaticConduct.total
+          ).toFixed(2)
+        );
+
+        const override = overridesByStudent.get(sid);
+        const rawOverrideTotal = Number(override?.override_total);
+        const isOverridden = !!override && Number.isFinite(rawOverrideTotal);
+        const finalTotal = isOverridden
+          ? Number(clampConduct(rawOverrideTotal, 0, officialTotalMax).toFixed(2))
+          : calculatedTotal;
+
+        const finalAvg20 = officialTotalMax === 20
+          ? finalTotal
+          : normalizeScoreTo20(finalTotal, officialTotalMax);
+
+        out.set(sid, cleanNumber(finalAvg20, 4));
       }
     } catch {
       // silencieux
@@ -1746,7 +2534,7 @@ export async function GET(req: NextRequest) {
   }
 
   for (const [sid, rows] of coeffRowsBySubject.entries()) {
-    const best = pickBestCoeffRow(rows, bulletinLevel);
+    const best = pickBestCoeffRow(rows, coeffLevelCandidates);
     if (!best) continue;
 
     coeffBySubject.set(sid, {
@@ -1754,6 +2542,68 @@ export async function GET(req: NextRequest) {
       include: best.include_in_average !== false,
     });
   }
+
+  const subjectGradePolicyBySubject = new Map<
+    string,
+    {
+      includeInGeneralAverage: boolean | null;
+      includeInConductAverage: boolean;
+      conductWeight: number;
+    }
+  >();
+
+  try {
+    const { data: policyData, error: policyErr } = await srv
+      .from("institution_subject_grade_policies")
+      .select(
+        "subject_id, include_in_general_average, include_in_conduct_average, conduct_weight, is_active"
+      )
+      .eq("institution_id", instIdStr)
+      .eq("is_active", true);
+
+    if (!policyErr && policyData?.length) {
+      for (const row of policyData as SubjectGradePolicyRow[]) {
+        const sid = String(row.subject_id || "");
+        if (!sid || !isUuid(sid)) continue;
+
+        const includeInGeneralAverage =
+          typeof row.include_in_general_average === "boolean"
+            ? row.include_in_general_average
+            : null;
+
+        const conductWeightRaw = Number(row.conduct_weight ?? 1);
+        const conductWeight =
+          Number.isFinite(conductWeightRaw) && conductWeightRaw > 0 ? conductWeightRaw : 1;
+
+        subjectGradePolicyBySubject.set(sid, {
+          includeInGeneralAverage,
+          includeInConductAverage: row.include_in_conduct_average === true,
+          conductWeight,
+        });
+
+        if (includeInGeneralAverage !== null) {
+          const existing = coeffBySubject.get(sid);
+          coeffBySubject.set(sid, {
+            coeff: existing ? existing.coeff : 1,
+            include: includeInGeneralAverage,
+          });
+        }
+      }
+    }
+  } catch {
+    // non bloquant : l'ancien comportement reste disponible
+  }
+
+  const shouldIncludeSubjectInGeneralAverage = (
+    subjectId: string,
+    fallback: boolean
+  ): boolean => {
+    const policy = subjectGradePolicyBySubject.get(String(subjectId));
+    if (policy && typeof policy.includeInGeneralAverage === "boolean") {
+      return policy.includeInGeneralAverage;
+    }
+    return fallback;
+  };
 
   let evals: EvalRow[] = [];
   {
@@ -1780,8 +2630,59 @@ export async function GET(req: NextRequest) {
   const subjectIdSet = new Set<string>();
   for (const e of evals) if (e.subject_id) subjectIdSet.add(String(e.subject_id));
 
+  const assignedSubjectIds = new Set<string>();
+  {
+    let ctQuery = srv
+      .from("class_teachers")
+      .select("subject_id, start_date, end_date")
+      .eq("institution_id", instIdStr)
+      .eq("class_id", classIdStr);
+
+    const pivot = dateTo || dateFrom || null;
+    if (pivot) {
+      ctQuery = ctQuery
+        .or(`end_date.is.null,end_date.gte.${pivot}`)
+        .or(`start_date.is.null,start_date.lte.${pivot}`);
+    } else {
+      ctQuery = ctQuery.is("end_date", null);
+    }
+
+    const { data: ctData, error: ctErr } = await ctQuery;
+
+    if (!ctErr && ctData?.length) {
+      const instSubjectIds = Array.from(
+        new Set(
+          (ctData as any[])
+            .map((row) => String(row.subject_id || ""))
+            .filter((id) => !!id && isUuid(id))
+        )
+      );
+
+      if (instSubjectIds.length) {
+        const { data: instSubData, error: instSubErr } = await srv
+          .from("institution_subjects")
+          .select("id, subject_id")
+          .eq("institution_id", instIdStr)
+          .in("id", instSubjectIds);
+
+        if (!instSubErr && instSubData?.length) {
+          (instSubData as any[]).forEach((row) => {
+            const sid = String(row.subject_id || "");
+            if (sid && isUuid(sid)) assignedSubjectIds.add(sid);
+          });
+        }
+      }
+    }
+  }
+
+  const hasAssignedSubjectsForClass = assignedSubjectIds.size > 0;
+
   const subjectIdsUnionRaw = Array.from(
-    new Set([...Array.from(subjectIdsFromConfig), ...Array.from(subjectIdSet)])
+    new Set([
+      ...Array.from(subjectIdsFromConfig),
+      ...Array.from(subjectIdSet),
+      ...Array.from(assignedSubjectIds),
+    ])
   );
   const subjectIds = subjectIdsUnionRaw.filter((sid) => isUuid(sid));
 
@@ -1789,13 +2690,23 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({
       ok: true,
       mode,
-      institution: { id: inst.id, name: inst.name, code: inst.code ?? null },
+      institution: {
+        id: institutionMeta.id,
+        name: institutionMeta.name ?? null,
+        code: institutionMeta.code ?? null,
+        code_unique: institutionMeta.code_unique ?? null,
+        acronym: institutionMeta.acronym ?? null,
+        logo_url: institutionMeta.logo_url ?? null,
+        institution_logo_url: institutionMeta.logo_url ?? null,
+      },
       class: {
         id: classRow.id,
         label: classRow.label || classRow.code || "Classe",
         code: classRow.code || null,
         academic_year: classRow.academic_year || null,
         level: classRow.level || null,
+        official_track_code: classRow.official_track_code || null,
+        coefficient_level: coeffLevelCandidates[0] || bulletinLevel || null,
         bulletin_level: bulletinLevel,
         head_teacher: headTeacher
           ? {
@@ -1844,22 +2755,55 @@ export async function GET(req: NextRequest) {
   const subjectById = new Map<string, SubjectRow>();
   for (const s of subjects) subjectById.set(s.id, s);
 
-  const orderedSubjectIds = subjects.map((s) => s.id).filter((sid) => isUuid(sid));
+  const isCSCADisciplineComponentSubjectId = (subjectId: string): boolean => {
+    if (!isCSCA) return false;
+    const meta = subjectById.get(String(subjectId));
+    const key = normalizeAsciiToken(`${meta?.code ?? ""} ${meta?.name ?? ""}`);
+    return key.includes("discipline");
+  };
+
+  const orderedSubjectIds = subjects
+    .map((s) => s.id)
+    .filter((sid) => {
+      if (!isUuid(sid)) return false;
+      if (isCSCADisciplineComponentSubjectId(sid)) return false;
+      if (!hasAssignedSubjectsForClass) return true;
+      if (assignedSubjectIds.has(sid)) return true;
+
+      const meta = subjectById.get(String(sid));
+      if (isConductSubject(meta?.name, meta?.code)) return true;
+      return false;
+    });
 
   const subjectsForReport = orderedSubjectIds.map((sid) => {
     const s = subjectById.get(sid);
     const name = s?.name || s?.code || "Matière";
     const info = coeffBySubject.get(sid);
     const coeffBulletin = info ? info.coeff : 1;
-    const includeInAverage = info ? info.include : true;
+
+    const isCSCAConductComponentOnly = isCSCA && isCSCALatinOrReligionSubjectMeta(s);
+    const includeInAverage = isCSCAConductComponentOnly
+      ? false
+      : shouldIncludeSubjectInGeneralAverage(sid, info ? info.include : true);
 
     return {
       subject_id: sid,
       subject_name: name,
       coeff_bulletin: coeffBulletin,
       include_in_average: includeInAverage,
+      is_conduct_component_only: isCSCAConductComponentOnly,
     };
   });
+
+  for (const s of subjectsForReport as any[]) {
+    const meta = subjectById.get(String(s.subject_id));
+    const key = normalizeAsciiToken(`${meta?.code ?? ""} ${meta?.name ?? ""}`);
+    if (key.includes("conduite") || key.includes("conduct")) {
+      s.include_in_average = true;
+      const c = Number(s.coeff_bulletin ?? 0);
+      if (!c || c <= 0) s.coeff_bulletin = 1;
+    }
+  }
 
   const conductSubjectIds = new Set<string>();
   for (const s of subjectsForReport) {
@@ -1876,13 +2820,15 @@ export async function GET(req: NextRequest) {
   const subjectComponentById = new Map<string, BulletinSubjectComponent>();
   const compsBySubject = new Map<string, BulletinSubjectComponent[]>();
 
-  const { data: compData } = await srv
-    .from("grade_subject_components")
-    .select("id, subject_id, label, short_label, coeff_in_subject, order_index, is_active, level")
-    .eq("institution_id", instIdStr)
-    .in("subject_id", orderedSubjectIds);
+  const { data: compData } = allowSubjectComponents
+    ? await srv
+        .from("grade_subject_components")
+        .select("id, subject_id, label, short_label, coeff_in_subject, order_index, is_active, level")
+        .eq("institution_id", instIdStr)
+        .in("subject_id", orderedSubjectIds)
+    : { data: null } as any;
 
-  if (compData) {
+  if (allowSubjectComponents && compData) {
     const rawRows = ((compData || []) as any[])
       .filter((r) => r.is_active !== false)
       .map((r: any) => ({
@@ -1910,7 +2856,7 @@ export async function GET(req: NextRequest) {
     const finalRows: BulletinSubjectComponent[] = [];
 
     for (const sid of orderedSubjectIds) {
-      const chosen = pickBestComponentRows(rawBySubject.get(sid) || [], bulletinLevel);
+      const chosen = pickBestComponentRows(rawBySubject.get(sid) || [], coeffLevelCandidates);
 
       chosen.sort((a, b) => {
         return (a.order_index ?? 1) - (b.order_index ?? 1);
@@ -2121,21 +3067,96 @@ export async function GET(req: NextRequest) {
 
   const studentIdsInClass = classStudents.map((cs) => cs.student_id).filter(Boolean);
 
+  async function loadOfficialScoreRowsForEvalIds(evalIds: string[]): Promise<ScoreRow[]> {
+    if (!evalIds.length || !studentIdsInClass.length) return [];
+
+    const PAGE_SIZE = 1000;
+    const byKey = new Map<string, ScoreRow>();
+
+    const ingest = (rows: any[] | null | undefined, prefer: boolean) => {
+      for (const row of rows || []) {
+        const evaluationId = String(row?.evaluation_id || "");
+        const sid = String(row?.student_id || "");
+        if (!evaluationId || !sid) continue;
+
+        const key = `${evaluationId}__${sid}`;
+        if (!prefer && byKey.has(key)) continue;
+
+        byKey.set(key, {
+          evaluation_id: evaluationId,
+          student_id: sid,
+          score: row?.score === null || row?.score === undefined ? null : Number(row.score),
+        });
+      }
+    };
+
+    async function fetchDirectPublishedScores(): Promise<{ rows: any[]; error: any | null }> {
+      const rows: any[] = [];
+      for (let from = 0; ; from += PAGE_SIZE) {
+        const to = from + PAGE_SIZE - 1;
+        const { data, error } = await srv
+          .from("grade_published_scores")
+          .select("evaluation_id, student_id, score")
+          .eq("institution_id", instIdStr)
+          .eq("class_id", classIdStr)
+          .eq("is_current", true)
+          .in("evaluation_id", evalIds)
+          .in("student_id", studentIdsInClass)
+          .order("evaluation_id", { ascending: true })
+          .order("student_id", { ascending: true })
+          .range(from, to);
+
+        if (error) return { rows, error };
+        const chunk = (data || []) as any[];
+        rows.push(...chunk);
+        if (chunk.length < PAGE_SIZE) break;
+      }
+      return { rows, error: null };
+    }
+
+    async function fetchViewOfficialScores(): Promise<{ rows: any[]; error: any | null }> {
+      const rows: any[] = [];
+      for (let from = 0; ; from += PAGE_SIZE) {
+        const to = from + PAGE_SIZE - 1;
+        const { data, error } = await srv
+          .from("v_grade_scores_official_for_reports")
+          .select("evaluation_id, student_id, score")
+          .in("evaluation_id", evalIds)
+          .in("student_id", studentIdsInClass)
+          .order("evaluation_id", { ascending: true })
+          .order("student_id", { ascending: true })
+          .range(from, to);
+
+        if (error) return { rows, error };
+        const chunk = (data || []) as any[];
+        rows.push(...chunk);
+        if (chunk.length < PAGE_SIZE) break;
+      }
+      return { rows, error: null };
+    }
+
+    const direct = await fetchDirectPublishedScores();
+    if (!direct.error) ingest(direct.rows, true);
+
+    const fromView = await fetchViewOfficialScores();
+    if (!fromView.error) ingest(fromView.rows, false);
+
+    if (!byKey.size && direct.error && fromView.error) {
+      throw fromView.error || direct.error;
+    }
+
+    return Array.from(byKey.values());
+  }
+
   let scores: ScoreRow[] = [];
   if (evals.length) {
     const evalIds = evals.map((e) => e.id);
 
-    const { data: scoreData, error: scoreErr } = await srv
-      .from("student_grades")
-      .select("evaluation_id, student_id, score")
-      .in("evaluation_id", evalIds)
-      .in("student_id", studentIdsInClass);
-
-    if (scoreErr) {
+    try {
+      scores = await loadOfficialScoreRowsForEvalIds(evalIds);
+    } catch {
       return NextResponse.json({ ok: false, error: "SCORES_ERROR" }, { status: 500 });
     }
-
-    scores = (scoreData || []) as ScoreRow[];
   }
 
   const perStudentSubject = new Map<
@@ -2418,8 +3439,11 @@ export async function GET(req: NextRequest) {
   const snapAnnual =
     snap && typeof snap.a === "number" ? cleanNumber(snap.a, 4) : null;
 
-  if (snapGeneral !== null && (bulletinForStudent as any).general_avg == null) {
+  const recomputedGeneralAvg = cleanNumber((bulletinForStudent as any).general_avg, 4);
+  if (snapGeneral !== null) {
+    (bulletinForStudent as any).recomputed_general_avg = recomputedGeneralAvg;
     (bulletinForStudent as any).general_avg = snapGeneral;
+    (bulletinForStudent as any).general_avg_source = "qr_snapshot";
   }
 
   let annual_avg_for_student: number | null = null;
@@ -2480,19 +3504,28 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  if (annual_avg_for_student !== null) {
-    (bulletinForStudent as any).annual_avg = annual_avg_for_student;
-  } else if (snapAnnual !== null) {
+  const recomputedAnnualAvg = cleanNumber(annual_avg_for_student, 4);
+  if (snapAnnual !== null) {
+    (bulletinForStudent as any).recomputed_annual_avg = recomputedAnnualAvg;
     (bulletinForStudent as any).annual_avg = snapAnnual;
+    (bulletinForStudent as any).annual_avg_source = "qr_snapshot";
+  } else if (annual_avg_for_student !== null) {
+    (bulletinForStudent as any).annual_avg = annual_avg_for_student;
   }
+
+  const conductForStudent = conductAvgMapCurrent.get(studentIdStr) ?? null;
 
   return NextResponse.json({
     ok: true,
     mode,
     institution: {
-      id: inst.id,
-      name: inst.name,
-      code: inst.code ?? null,
+      id: institutionMeta.id,
+      name: institutionMeta.name ?? null,
+      code: institutionMeta.code ?? null,
+      code_unique: institutionMeta.code_unique ?? null,
+      acronym: institutionMeta.acronym ?? null,
+      logo_url: institutionMeta.logo_url ?? null,
+      institution_logo_url: institutionMeta.logo_url ?? null,
     },
     class: {
       id: classRow.id,
@@ -2500,6 +3533,8 @@ export async function GET(req: NextRequest) {
       code: classRow.code || null,
       academic_year: classRow.academic_year || null,
       level: classRow.level || null,
+      official_track_code: classRow.official_track_code || null,
+      coefficient_level: coeffLevelCandidates[0] || bulletinLevel || null,
       bulletin_level: bulletinLevel,
       head_teacher: headTeacher
         ? {
@@ -2533,6 +3568,14 @@ export async function GET(req: NextRequest) {
     subjects: subjectsForReport,
     subject_groups: subjectGroups,
     subject_components: subjectComponentsForReport,
+    conduct: conductForStudent === null
+      ? null
+      : {
+          total: conductForStudent,
+          avg20: conductForStudent,
+          label: isCSCA ? "Conduite" : "Conduite",
+          source: "public_verify",
+        },
     bulletin: bulletinForStudent,
   });
 }
