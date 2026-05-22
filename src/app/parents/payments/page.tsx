@@ -2,7 +2,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { CheckCircle2, Clock3, Loader2, RefreshCw, XCircle } from "lucide-react";
 import { OperatorLogo, OperatorLogoStack } from "@/components/payments/OperatorLogo";
 
@@ -169,10 +169,6 @@ export default function ParentOnlinePaymentsPage() {
     return selectedChild?.charges.find((charge) => charge.id === selectedChargeId) || null;
   }, [selectedChild, selectedChargeId]);
 
-  const selectedProviderOption = useMemo(() => {
-    return selectedChild?.providers.find((provider) => provider.provider === selectedProvider) || null;
-  }, [selectedChild, selectedProvider]);
-
   useEffect(() => {
     if (!selectedChild) return;
     const firstCharge = selectedChild.charges[0];
@@ -191,7 +187,7 @@ export default function ParentOnlinePaymentsPage() {
     Number(amount || 0) > 0 &&
     !submitting;
 
-  async function submitPayment(e: FormEvent<HTMLFormElement>) {
+  async function submitPayment(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     if (!selectedChild || !selectedCharge) return;
 
@@ -259,7 +255,7 @@ export default function ParentOnlinePaymentsPage() {
 
       <main className="mx-auto max-w-5xl space-y-4 px-4 py-5">
         <section className="rounded-[28px] border border-slate-200 bg-white p-4 shadow-sm">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
             <div>
               <div className="text-xs font-black uppercase tracking-[0.18em] text-emerald-700">
                 Mobile Money
@@ -267,13 +263,13 @@ export default function ParentOnlinePaymentsPage() {
               <h2 className="mt-1 text-xl font-black text-slate-950">
                 Régler les frais de votre enfant
               </h2>
-              <div className="mt-3 flex items-center gap-3">
-                <OperatorLogoStack providers={selectedChild?.providers || []} />
-                <span className="text-xs font-bold text-slate-500">Orange Money, Wave, MTN MoMo selon l’établissement</span>
-              </div>
+              <p className="mt-2 text-sm text-slate-600">Choisissez un enfant, un frais puis l’opérateur disponible pour finaliser le paiement.</p>
             </div>
-            <div className="rounded-2xl bg-emerald-50 px-3 py-2 text-sm font-bold text-emerald-800">
-              Reçu officiel après confirmation
+            <div className="flex flex-col items-start gap-3 sm:items-end">
+              <div className="rounded-2xl bg-emerald-50 px-3 py-2 text-sm font-bold text-emerald-800">
+                Reçu officiel après confirmation
+              </div>
+              <OperatorLogoStack />
             </div>
           </div>
         </section>
@@ -302,10 +298,7 @@ export default function ParentOnlinePaymentsPage() {
               <div className="flex items-start gap-3">
                 <div className="mt-0.5">{statusIcon(currentStatus.status)}</div>
                 <div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <div className="text-lg font-black">{statusLabel(currentStatus.status)}</div>
-                    <OperatorLogo provider={currentStatus.provider} size="sm" />
-                  </div>
+                  <div className="text-lg font-black">{statusLabel(currentStatus.status)}</div>
                   <div className="mt-1 text-sm font-semibold">
                     Montant : {formatMoney(currentStatus.amount)} · Référence : {currentStatus.id.slice(0, 8)}
                   </div>
@@ -374,8 +367,11 @@ export default function ParentOnlinePaymentsPage() {
                         <div className="mt-1 text-sm font-semibold text-slate-600">
                           {child.class_label || "Classe non précisée"} · {child.institution_name}
                         </div>
-                        <div className="mt-2 text-xs font-bold uppercase tracking-wide text-slate-500">
-                          {child.charges.length} frais à régler
+                        <div className="mt-2 flex flex-wrap items-center gap-2">
+                          <span className="text-xs font-bold uppercase tracking-wide text-slate-500">
+                            {child.charges.length} frais à régler
+                          </span>
+                          {(child.providers || []).length > 0 ? <OperatorLogoStack providers={child.providers.map((provider) => ({ provider: provider.provider, label: provider.label }))} /> : null}
                         </div>
                       </button>
                     );
@@ -432,14 +428,14 @@ export default function ParentOnlinePaymentsPage() {
             <aside className="space-y-3 rounded-[28px] border border-slate-200 bg-white p-4 shadow-sm lg:sticky lg:top-24 lg:self-start">
               <div>
                 <label className="text-sm font-black text-slate-800">Moyen de paiement</label>
-                {(selectedChild?.providers || []).length === 0 ? (
-                  <div className="mt-2 rounded-3xl border border-slate-200 bg-slate-50 p-4 text-sm font-bold text-slate-600">
-                    Aucun opérateur activé.
-                  </div>
-                ) : (
-                  <div className="mt-2 grid gap-2">
-                    {selectedChild!.providers.map((provider) => {
-                      const active = provider.provider === selectedProvider;
+                <div className="mt-3 grid gap-2">
+                  {(selectedChild?.providers || []).length === 0 ? (
+                    <div className="rounded-3xl border border-dashed border-slate-200 bg-slate-50 p-4 text-sm font-semibold text-slate-500">
+                      Aucun opérateur configuré pour cet établissement.
+                    </div>
+                  ) : (
+                    selectedChild!.providers.map((provider) => {
+                      const active = selectedProvider === provider.provider;
                       return (
                         <button
                           key={provider.id}
@@ -452,21 +448,30 @@ export default function ParentOnlinePaymentsPage() {
                               : "border-slate-200 bg-white hover:bg-slate-50",
                           ].join(" ")}
                         >
-                          <OperatorLogo provider={provider.provider} label={provider.label} size="sm" showNote />
-                          {provider.environment === "test" ? (
-                            <span className="rounded-full bg-amber-100 px-2.5 py-1 text-[11px] font-black text-amber-900 ring-1 ring-amber-200">
-                              Test
-                            </span>
-                          ) : (
-                            <span className="rounded-full bg-emerald-100 px-2.5 py-1 text-[11px] font-black text-emerald-800 ring-1 ring-emerald-200">
-                              Actif
-                            </span>
-                          )}
+                          <div className="min-w-0">
+                            <OperatorLogo
+                              provider={provider.provider}
+                              label={provider.label}
+                              size="md"
+                              showLabel
+                              showNote
+                            />
+                          </div>
+                          <span
+                            className={[
+                              "rounded-full px-2.5 py-1 text-[11px] font-black ring-1",
+                              provider.environment === "production"
+                                ? "bg-emerald-50 text-emerald-700 ring-emerald-200"
+                                : "bg-amber-50 text-amber-800 ring-amber-200",
+                            ].join(" ")}
+                          >
+                            {provider.environment === "production" ? "Actif" : "Test"}
+                          </span>
                         </button>
                       );
-                    })}
-                  </div>
-                )}
+                    })
+                  )}
+                </div>
               </div>
 
               <div>
@@ -511,12 +516,15 @@ export default function ParentOnlinePaymentsPage() {
                 <div className="mt-2 space-y-2 text-sm font-bold text-slate-700">
                   <div>{selectedChild?.student_name || "Élève"}</div>
                   <div>{selectedCharge?.label || "Frais"}</div>
-                  {selectedProviderOption ? (
-                    <OperatorLogo
-                      provider={selectedProviderOption.provider}
-                      label={selectedProviderOption.label}
-                      size="sm"
-                    />
+                  {selectedProvider ? (
+                    <div>
+                      <OperatorLogo
+                        provider={selectedProvider}
+                        label={(selectedChild?.providers || []).find((provider) => provider.provider === selectedProvider)?.label || undefined}
+                        size="sm"
+                        showLabel
+                      />
+                    </div>
                   ) : null}
                   <div className="text-lg font-black text-emerald-700">{formatMoney(Number(amount || 0))}</div>
                 </div>

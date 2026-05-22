@@ -484,6 +484,37 @@ const IconBell = () => (
     <path d="M13.73 21a2 2 0 01-3.46 0" />
   </svg>
 );
+const IconFamily = () => (
+  <svg
+    width="18"
+    height="18"
+    viewBox="0 0 24 24"
+    className="shrink-0"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+  >
+    <path d="M16 20v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2" />
+    <circle cx="10" cy="7" r="3" />
+    <path d="M22 20v-2a4 4 0 00-3-3.87" />
+    <path d="M16 4.13a4 4 0 010 7.75" />
+  </svg>
+);
+const IconChild = () => (
+  <svg
+    width="18"
+    height="18"
+    viewBox="0 0 24 24"
+    className="shrink-0"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+  >
+    <circle cx="12" cy="6.5" r="2.5" />
+    <path d="M9 22v-5l-2.1-1.7A2 2 0 016 13.8l1.2-4A2.2 2.2 0 019.3 8.2h5.4a2.2 2.2 0 012.1 1.6l1.2 4a2 2 0 01-.9 2.5L15 17v5" />
+    <path d="M12 11v11" />
+  </svg>
+);
 const IconPower = () => (
   <svg
     width="18"
@@ -1019,7 +1050,7 @@ export default function ParentPage() {
   const showNotesSection = isNotes;
 
   const sectionMeta: Record<NavSection, { breadcrumb: string; title: string; tab: string }> = {
-    home: { breadcrumb: "Accueil", title: "Accueil", tab: "Accueil" },
+    home: { breadcrumb: "Accueil", title: "Bienvenue cher parent", tab: "Accueil" },
     conduct: { breadcrumb: "Conduite", title: "Conduite et points", tab: "Conduite" },
     absences: { breadcrumb: "Absences", title: "Cahier d'absences", tab: "Absences" },
     notes: { breadcrumb: "Notes", title: "Cahier de notes", tab: "Notes" },
@@ -1528,13 +1559,16 @@ export default function ParentPage() {
           <div className="relative flex h-full w-80 max-w-[86%] flex-col overflow-y-auto overscroll-contain bg-[#003766] text-white shadow-2xl">
             <div className="flex items-center justify-between border-b border-white/15 px-4 py-4">
               <div className="flex items-center gap-3">
-                <div className="grid h-11 w-11 place-items-center rounded-2xl bg-white/20 text-sm font-extrabold">
-                  MC
+                <div className="grid h-11 w-11 place-items-center rounded-2xl bg-white/20 text-white">
+                  <IconFamily />
                 </div>
                 <div className="min-w-0 leading-tight">
-                  <div className="text-[12px] opacity-90">Bienvenue</div>
+                  <div className="text-[12px] opacity-90">Bienvenue cher parent</div>
                   <div className="text-[15px] font-extrabold truncate">
                     Espace parent Mon Cahier
+                  </div>
+                  <div className="mt-1 truncate text-[11px] text-white/80">
+                    Suivre votre enfant, c’est soutenir sa réussite.
                   </div>
                   <div className="mt-1 flex items-center gap-2 text-[12px] text-emerald-200">
                     <span className="h-2.5 w-2.5 rounded-full bg-emerald-400" />
@@ -1577,13 +1611,20 @@ export default function ParentPage() {
               </button>
               <a
                 href="/parents/payments"
-                className="mt-2 flex w-full items-center gap-3 rounded-2xl bg-emerald-500/20 px-4 py-3 text-left text-[14px] font-extrabold text-white transition hover:bg-emerald-500/30"
+                className="mt-2 block w-full rounded-[24px] border border-emerald-300/30 bg-gradient-to-r from-emerald-500/20 to-cyan-500/20 px-4 py-3 text-left text-white transition hover:from-emerald-500/30 hover:to-cyan-500/30"
               >
-                <span className="grid h-10 w-10 place-items-center rounded-2xl bg-white/10 text-white">
-                  <IconShield />
-                </span>
-                <span className="min-w-0 flex-1">Paiement en ligne</span>
-                <OperatorLogoStack providers={["orange_money", "wave", "mtn_momo"]} />
+                <div className="flex items-center gap-3">
+                  <span className="grid h-10 w-10 place-items-center rounded-2xl bg-white/10 text-white">
+                    <IconShield />
+                  </span>
+                  <div className="min-w-0">
+                    <div className="text-[14px] font-extrabold">Paiement en ligne</div>
+                    <div className="text-[11px] text-white/80">Réglez les frais et récupérez votre reçu officiel.</div>
+                  </div>
+                </div>
+                <div className="mt-3">
+                  <OperatorLogoStack className="shrink-0" />
+                </div>
               </a>
             </div>
 
@@ -1638,8 +1679,8 @@ export default function ParentPage() {
                           : "text-white hover:bg-white/10",
                       ].join(" ")}
                     >
-                      <div className="grid h-9 w-9 place-items-center rounded-xl bg-white/20 text-[12px] font-extrabold">
-                        {getInitials(k.full_name)}
+                      <div className="grid h-9 w-9 place-items-center rounded-xl bg-white/20 text-white">
+                        <IconChild />
                       </div>
                       <div className="min-w-0 text-left">
                         <div className="truncate">{k.full_name}</div>
@@ -1697,8 +1738,8 @@ export default function ParentPage() {
             </button>
 
             <div className="flex min-w-0 items-center gap-3">
-              <div className="grid h-11 w-11 place-items-center rounded-2xl bg-white/10 text-sm font-extrabold">
-                MC
+              <div className="grid h-11 w-11 place-items-center rounded-2xl bg-white/10 text-white">
+                <IconFamily />
               </div>
               <div className="min-w-0 leading-tight">
                 <div className="text-[13px] font-extrabold uppercase tracking-wide">
@@ -1726,13 +1767,16 @@ export default function ParentPage() {
         <aside className="hidden w-72 shrink-0 bg-[#003766] text-white lg:sticky lg:top-[72px] lg:flex lg:h-[calc(100vh-72px)] lg:flex-col lg:overflow-y-auto lg:overscroll-contain">
           <div className="border-b border-white/15 px-4 py-5">
             <div className="flex items-center gap-3">
-              <div className="grid h-11 w-11 place-items-center rounded-2xl bg-white/20 text-sm font-extrabold">
-                MC
+              <div className="grid h-11 w-11 place-items-center rounded-2xl bg-white/20 text-white">
+                <IconFamily />
               </div>
               <div className="min-w-0 leading-tight">
-                <div className="text-[12px]">Bienvenue</div>
+                <div className="text-[12px]">Bienvenue cher parent</div>
                 <div className="text-[15px] font-extrabold truncate">
                   Espace parent Mon Cahier
+                </div>
+                <div className="mt-1 truncate text-[11px] text-white/80">
+                  Suivre votre enfant, c’est soutenir sa réussite.
                 </div>
                 <div className="mt-1 flex items-center gap-2 text-[12px] text-emerald-200">
                   <span className="h-2.5 w-2.5 rounded-full bg-emerald-400" />
@@ -1771,8 +1815,7 @@ export default function ParentPage() {
               <span className="grid h-10 w-10 place-items-center rounded-2xl bg-white/10 text-white">
                 <IconShield />
               </span>
-              <span className="min-w-0 flex-1">Paiement en ligne</span>
-              <OperatorLogoStack providers={["orange_money", "wave", "mtn_momo"]} />
+              <span>Paiement en ligne</span>
             </a>
           </div>
 
@@ -1873,7 +1916,7 @@ export default function ParentPage() {
               </h1>
               <div className="text-[14px] font-semibold text-slate-600">
                 {isHome
-                  ? "Gestion du numéro parent"
+                  ? "Suivre votre enfant, c’est soutenir sa réussite."
                   : selectedKid?.full_name || "Aucun enfant sélectionné"}
                 {!isHome && selectedKid?.class_label
                   ? ` · ${selectedKid.class_label}`
@@ -1886,6 +1929,135 @@ export default function ParentPage() {
             <div className="mb-4 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-[14px] text-emerald-800">
               {msg}
             </div>
+          )}
+
+          {isHome && (
+            <>
+              <section className="mb-6 grid gap-4 xl:grid-cols-[1.2fr_0.8fr]">
+                <div className="rounded-[32px] bg-gradient-to-r from-[#003766] via-[#0057a8] to-[#0c7d70] p-5 text-white shadow-sm lg:p-6">
+                  <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                    <div className="flex items-start gap-4">
+                      <div className="grid h-16 w-16 shrink-0 place-items-center rounded-[24px] bg-white/15 text-white">
+                        <IconFamily />
+                      </div>
+                      <div className="min-w-0">
+                        <div className="text-[12px] font-black uppercase tracking-[0.22em] text-amber-300">Espace parent</div>
+                        <h2 className="mt-1 text-2xl font-black">Bienvenue cher parent</h2>
+                        <p className="mt-2 text-sm text-white/90">Suivre votre enfant, c’est soutenir sa réussite.</p>
+                      </div>
+                    </div>
+                    <span className="inline-flex w-fit items-center rounded-full bg-white/12 px-3 py-1 text-[12px] font-bold text-white ring-1 ring-white/10">
+                      {kids.length} enfant{kids.length > 1 ? "s" : ""} rattaché{kids.length > 1 ? "s" : ""}
+                    </span>
+                  </div>
+
+                  <div className="mt-5 flex flex-wrap gap-3">
+                    <a
+                      href="/parents/payments"
+                      className="inline-flex items-center justify-center rounded-2xl bg-white px-4 py-3 text-[14px] font-extrabold text-[#003766] shadow-sm transition hover:bg-slate-100"
+                    >
+                      Paiement en ligne
+                    </a>
+                    {selectedKid ? (
+                      <button
+                        type="button"
+                        onClick={() => openChildSection(selectedKid.id, "notes")}
+                        className="inline-flex items-center justify-center rounded-2xl bg-white/10 px-4 py-3 text-[14px] font-extrabold text-white ring-1 ring-white/15 transition hover:bg-white/15"
+                      >
+                        Voir les notes
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+
+                <div className="rounded-[32px] border border-emerald-200 bg-white p-5 shadow-sm lg:p-6">
+                  <div className="text-[12px] font-black uppercase tracking-[0.18em] text-emerald-700">Paiement en ligne</div>
+                  <h3 className="mt-1 text-xl font-black text-slate-950">Opérateurs disponibles</h3>
+                  <p className="mt-2 text-sm text-slate-600">Consultez les frais, choisissez l’opérateur actif et récupérez votre reçu officiel après confirmation.</p>
+                  <div className="mt-4">
+                    <OperatorLogoStack />
+                  </div>
+                  <div className="mt-3 text-xs font-semibold text-slate-500">Orange Money, Wave, MTN Mobile Money et autres opérateurs activés par l’établissement.</div>
+                  <a
+                    href="/parents/payments"
+                    className="mt-5 inline-flex items-center justify-center rounded-2xl bg-emerald-600 px-4 py-3 text-[14px] font-extrabold text-white shadow-sm transition hover:bg-emerald-700"
+                  >
+                    Ouvrir l’onglet paiement en ligne
+                  </a>
+                </div>
+              </section>
+
+              <section className="mb-6 rounded-[32px] border border-slate-200 bg-white p-5 shadow-sm lg:p-6">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <div className="text-[12px] font-black uppercase tracking-[0.18em] text-slate-500">Enfants rattachés</div>
+                    <h3 className="mt-1 text-xl font-black text-slate-950">Accès rapide à vos enfants</h3>
+                  </div>
+                  <Badge tone="slate">{kids.length} profil{kids.length > 1 ? "s" : ""}</Badge>
+                </div>
+
+                {loadingKids ? (
+                  <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                    <Skeleton className="h-36 w-full" />
+                    <Skeleton className="h-36 w-full" />
+                    <Skeleton className="h-36 w-full" />
+                  </div>
+                ) : !hasKids ? (
+                  <div className="mt-4 rounded-3xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+                    Aucun enfant lié à votre compte pour l’instant.
+                  </div>
+                ) : (
+                  <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                    {kids.map((k) => {
+                      const active = activeChildId === k.id;
+                      return (
+                        <div
+                          key={k.id}
+                          className={[
+                            "rounded-[28px] border p-4 shadow-sm transition",
+                            active ? "border-emerald-300 bg-emerald-50" : "border-slate-200 bg-white",
+                          ].join(" ")}
+                        >
+                          <div className="flex items-start gap-3">
+                            <div className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-[#e7f0fa] text-[#003766]">
+                              <IconChild />
+                            </div>
+                            <div className="min-w-0">
+                              <div className="truncate text-[16px] font-extrabold text-slate-950">{k.full_name}</div>
+                              <div className="mt-1 truncate text-sm text-slate-600">{k.class_label || "Classe non précisée"}</div>
+                            </div>
+                          </div>
+
+                          <div className="mt-4 flex flex-wrap gap-2">
+                            <button
+                              type="button"
+                              onClick={() => openChildSection(k.id, "conduct")}
+                              className="rounded-2xl bg-[#e7f0fa] px-3 py-2 text-[13px] font-extrabold text-[#003766] transition hover:bg-[#d9e8f7]"
+                            >
+                              Conduite
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => openChildSection(k.id, "absences")}
+                              className="rounded-2xl bg-[#fff3db] px-3 py-2 text-[13px] font-extrabold text-[#9a5d00] transition hover:bg-[#fde8ba]"
+                            >
+                              Absences
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => openChildSection(k.id, "notes")}
+                              className="rounded-2xl bg-[#e8f8ef] px-3 py-2 text-[13px] font-extrabold text-[#166534] transition hover:bg-[#d7f1e2]"
+                            >
+                              Notes
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </section>
+            </>
           )}
 
           {selectedKid && !isHome && (
@@ -1946,7 +2118,12 @@ export default function ParentPage() {
               <div className="mt-6 rounded-3xl border border-slate-200 bg-slate-50 p-4">
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                   <div className="flex min-w-0 items-center gap-3">
-                    <div className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-white text-[#003766] shadow-sm">
+                    <div
+                      className={[
+                        "grid h-12 w-12 shrink-0 place-items-center rounded-2xl shadow-sm",
+                        granted ? "bg-emerald-100 text-emerald-700" : "bg-white text-[#003766]",
+                      ].join(" ")}
+                    >
                       <IconBell />
                     </div>
                     <div className="min-w-0">
