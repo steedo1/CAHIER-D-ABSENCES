@@ -1892,13 +1892,13 @@ function StudentBulletinCard({
         </div>
 
         <div className="mt-[2px] grid grid-cols-[110px_1fr_110px] items-start gap-2">
-          <div className="bdr flex h-[110px] w-[110px] items-center justify-center overflow-hidden bg-white">
+          <div className="flex h-[110px] w-[110px] items-center justify-center overflow-hidden bg-white p-1">
             {institution?.institution_logo_url ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img
                 src={String(institution.institution_logo_url)}
                 alt="Logo"
-                className="h-full w-full object-contain"
+                className="max-h-full max-w-full object-contain"
               />
             ) : (
               <div className="text-[8px] text-slate-500">Logo</div>
@@ -2222,88 +2222,87 @@ function StudentBulletinCard({
         </div>
       </div>
 
-      <div className="mt-1 grid grid-cols-2 gap-2 text-[9px] leading-tight">
-        <div className="bdr p-1">
-          <div className="font-semibold uppercase text-center">
-            Mentions du conseil de classe
-          </div>
-          <div className="mt-[2px] text-[8px] font-semibold">DISTINCTIONS</div>
-          <div className="mt-[2px] space-y-[2px] text-[8px]">
-            <div className="flex items-center">
-              {tick(mentions.distinction === "honour")}
-              <span>Tableau d&apos;honneur / Félicitations</span>
+      <div className="mt-1 grid grid-cols-2 items-stretch gap-2 text-[9px] leading-tight">
+        <div className="flex flex-col gap-1">
+          <div className="bdr flex-1 p-1">
+            <div className="font-semibold uppercase text-center">
+              Mentions du conseil de classe
             </div>
-            <div className="flex items-center">
-              {tick(mentions.distinction === "excellence")}
-              <span>Tableau d&apos;excellence</span>
+            <div className="mt-[2px] text-[8px] font-semibold">DISTINCTIONS</div>
+            <div className="mt-[2px] space-y-[2px] text-[8px]">
+              <div className="flex items-center">
+                {tick(mentions.distinction === "honour")}
+                <span>Tableau d&apos;honneur / Félicitations</span>
+              </div>
+              <div className="flex items-center">
+                {tick(mentions.distinction === "excellence")}
+                <span>Tableau d&apos;excellence</span>
+              </div>
+              <div className="flex items-center">
+                {tick(mentions.distinction === "encouragement")}
+                <span>Tableau d&apos;encouragement</span>
+              </div>
             </div>
-            <div className="flex items-center">
-              {tick(mentions.distinction === "encouragement")}
-              <span>Tableau d&apos;encouragement</span>
+
+            <div className="mt-2 text-[8px] font-semibold">SANCTIONS</div>
+            <div className="mt-[2px] space-y-[2px] text-[8px]">
+              <div className="flex items-center">
+                {tick(mentions.sanction === "warningWork")}
+                <span>Avertissement travail</span>
+              </div>
+              <div className="flex items-center">
+                {tick(mentions.sanction === "warningConduct")}
+                <span>Avertissement conduite</span>
+              </div>
+              <div className="flex items-center">
+                {tick(mentions.sanction === "blameWork")}
+                <span>Blâme travail</span>
+              </div>
+              <div className="flex items-center">
+                {tick(mentions.sanction === "blameConduct")}
+                <span>Blâme conduite</span>
+              </div>
             </div>
           </div>
 
-          <div className="mt-2 text-[8px] font-semibold">SANCTIONS</div>
-          <div className="mt-[2px] space-y-[2px] text-[8px]">
-            <div className="flex items-center">
-              {tick(mentions.sanction === "warningWork")}
-              <span>Avertissement travail</span>
-            </div>
-            <div className="flex items-center">
-              {tick(mentions.sanction === "warningConduct")}
-              <span>Avertissement conduite</span>
-            </div>
-            <div className="flex items-center">
-              {tick(mentions.sanction === "blameWork")}
-              <span>Blâme travail</span>
-            </div>
-            <div className="flex items-center">
-              {tick(mentions.sanction === "blameConduct")}
-              <span>Blâme conduite</span>
-            </div>
+          <div className="bdr flex min-h-[78px] flex-col justify-between p-1">
+            <div className="font-semibold text-[8px]">Visa du professeur principal</div>
+            <div className="h-[50px]" />
+            {classInfo.head_teacher?.display_name && (
+              <div className="text-center text-[8px]">
+                {classInfo.head_teacher.display_name}
+              </div>
+            )}
           </div>
         </div>
 
-        <div className="bdr p-1">
-          <div className="font-semibold uppercase text-center">
-            Appréciations du conseil de classe
-          </div>
-          <div className="mt-2 flex h-[62px] items-center justify-center bg-white px-1 bdr">
-            <div className="text-center text-[10px] font-bold leading-snug">
-              {councilText || "\u00A0"}
+        <div className="flex flex-col gap-1">
+          <div className="bdr p-1">
+            <div className="font-semibold uppercase text-center">
+              Appréciations du conseil de classe
+            </div>
+            <div className="mt-1 flex h-[50px] items-center justify-center bg-white px-1 bdr">
+              <div className="text-center text-[10px] font-bold leading-snug">
+                {councilText || "\u00A0"}
+              </div>
             </div>
           </div>
-        </div>
-      </div>
 
-      {/* VISAS */}
-      <div className="mt-1 grid grid-cols-2 gap-2 text-[9px] leading-tight">
-        <div className="bdr flex min-h-[70px] flex-col justify-between p-1">
-          <div className="font-semibold text-[8px]">Visa du professeur principal</div>
-          <div className="h-[46px]" />
-          {classInfo.head_teacher?.display_name && (
-            <div className="text-center text-[8px]">
-              {classInfo.head_teacher.display_name}
-            </div>
-          )}
-        </div>
-
-        <div className="bdr flex min-h-[70px] flex-col justify-between p-1">
-          <div className="font-semibold text-[8px]">{headVisaLabel}</div>
-          <div className="h-[46px]" />
-          {institution?.institution_head_name && (
-            <div className="text-center text-[8px]">
-              {institution.institution_head_name}
-            </div>
-          )}
+          <div className="bdr flex min-h-[128px] flex-1 flex-col justify-between p-1">
+            <div className="font-semibold text-[8px]">{headVisaLabel}</div>
+            <div className="flex-1" />
+            {institution?.institution_head_name && (
+              <div className="pb-1 text-center text-[8px]">
+                {institution.institution_head_name}
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
       <div className="mt-1 text-center text-[8px] leading-tight text-black">
-        <div className="font-bold uppercase tracking-[0.04em]">www.mon-cahier.com</div>
-        <div className="font-semibold">
-          La plateforme idéale pour une école connectée, l’école du futur.
-        </div>
+        <div className="font-bold tracking-[0.04em]">www.mon-cahier.com</div>
+        <div className="font-semibold">Bulletin sécurisé par code QR</div>
       </div>
     </div>
   );
