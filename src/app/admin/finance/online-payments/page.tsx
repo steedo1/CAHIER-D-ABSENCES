@@ -527,7 +527,7 @@ export default function AdminOnlinePaymentsPage() {
                   <div className={`border-b px-5 py-5 ${tone.border} ${tone.bg}`}>
                     <div className="flex items-start justify-between gap-3">
                       <div className="flex min-w-0 items-center gap-3">
-                        <OperatorLogo provider={item.provider} label={item.label} size="md" showNote />
+                        <OperatorLogo provider={item.provider} label={item.label} size="lg" showLabel={false} />
                         <div className="min-w-0">
                           <h2 className="truncate text-xl font-black text-slate-950">{item.label}</h2>
                           <p className="text-sm font-semibold text-slate-600">{item.help}</p>
