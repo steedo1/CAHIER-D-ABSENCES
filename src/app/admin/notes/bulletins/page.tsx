@@ -1434,11 +1434,14 @@ function StudentBulletinCard({
         const subj = subjectsForTable.find((s) => s.subject_id === it.subject_id);
         if (!subj) return;
 
+        const officialCoeff = Number(subj.coeff_bulletin ?? 0);
         const override = Number(it.subject_coeff_override ?? NaN);
         const coeff =
-          Number.isFinite(override) && override > 0
-            ? override
-            : Number(subj.coeff_bulletin ?? 0);
+          Number.isFinite(officialCoeff) && officialCoeff > 0
+            ? officialCoeff
+            : Number.isFinite(override) && override > 0
+              ? override
+              : 0;
 
         if (Number.isFinite(coeff) && coeff > 0 && !map.has(subj.subject_id)) {
           map.set(subj.subject_id, coeff);
@@ -1889,7 +1892,7 @@ function StudentBulletinCard({
         </div>
 
         <div className="mt-[2px] grid grid-cols-[110px_1fr_110px] items-start gap-2">
-          <div className="bdr flex h-[110px] w-[110px] items-center justify-center overflow-hidden bg-white">
+          <div className="flex h-[110px] w-[110px] items-center justify-center overflow-hidden bg-white">
             {institution?.institution_logo_url ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img
@@ -2220,87 +2223,86 @@ function StudentBulletinCard({
       </div>
 
       <div className="mt-1 grid grid-cols-2 gap-2 text-[9px] leading-tight">
-        <div className="bdr p-1">
-          <div className="font-semibold uppercase text-center">
-            Mentions du conseil de classe
-          </div>
-          <div className="mt-[2px] text-[8px] font-semibold">DISTINCTIONS</div>
-          <div className="mt-[2px] space-y-[2px] text-[8px]">
-            <div className="flex items-center">
-              {tick(mentions.distinction === "honour")}
-              <span>Tableau d&apos;honneur / Félicitations</span>
+        <div className="flex flex-col gap-1">
+          <div className="bdr p-1">
+            <div className="font-semibold uppercase text-center">
+              Mentions du conseil de classe
             </div>
-            <div className="flex items-center">
-              {tick(mentions.distinction === "excellence")}
-              <span>Tableau d&apos;excellence</span>
+            <div className="mt-[2px] text-[8px] font-semibold">DISTINCTIONS</div>
+            <div className="mt-[2px] space-y-[2px] text-[8px]">
+              <div className="flex items-center">
+                {tick(mentions.distinction === "honour")}
+                <span>Tableau d&apos;honneur / Félicitations</span>
+              </div>
+              <div className="flex items-center">
+                {tick(mentions.distinction === "excellence")}
+                <span>Tableau d&apos;excellence</span>
+              </div>
+              <div className="flex items-center">
+                {tick(mentions.distinction === "encouragement")}
+                <span>Tableau d&apos;encouragement</span>
+              </div>
             </div>
-            <div className="flex items-center">
-              {tick(mentions.distinction === "encouragement")}
-              <span>Tableau d&apos;encouragement</span>
+
+            <div className="mt-2 text-[8px] font-semibold">SANCTIONS</div>
+            <div className="mt-[2px] space-y-[2px] text-[8px]">
+              <div className="flex items-center">
+                {tick(mentions.sanction === "warningWork")}
+                <span>Avertissement travail</span>
+              </div>
+              <div className="flex items-center">
+                {tick(mentions.sanction === "warningConduct")}
+                <span>Avertissement conduite</span>
+              </div>
+              <div className="flex items-center">
+                {tick(mentions.sanction === "blameWork")}
+                <span>Blâme travail</span>
+              </div>
+              <div className="flex items-center">
+                {tick(mentions.sanction === "blameConduct")}
+                <span>Blâme conduite</span>
+              </div>
             </div>
           </div>
 
-          <div className="mt-2 text-[8px] font-semibold">SANCTIONS</div>
-          <div className="mt-[2px] space-y-[2px] text-[8px]">
-            <div className="flex items-center">
-              {tick(mentions.sanction === "warningWork")}
-              <span>Avertissement travail</span>
-            </div>
-            <div className="flex items-center">
-              {tick(mentions.sanction === "warningConduct")}
-              <span>Avertissement conduite</span>
-            </div>
-            <div className="flex items-center">
-              {tick(mentions.sanction === "blameWork")}
-              <span>Blâme travail</span>
-            </div>
-            <div className="flex items-center">
-              {tick(mentions.sanction === "blameConduct")}
-              <span>Blâme conduite</span>
-            </div>
+          <div className="bdr flex min-h-[70px] flex-col justify-between p-1">
+            <div className="font-semibold text-[8px]">Visa du professeur principal</div>
+            <div className="h-[46px]" />
+            {classInfo.head_teacher?.display_name && (
+              <div className="text-center text-[8px]">
+                {classInfo.head_teacher.display_name}
+              </div>
+            )}
           </div>
         </div>
 
-        <div className="bdr p-1">
-          <div className="font-semibold uppercase text-center">
-            Appréciations du conseil de classe
-          </div>
-          <div className="mt-2 flex h-[62px] items-center justify-center bg-white px-1 bdr">
-            <div className="text-center text-[10px] font-bold leading-snug">
-              {councilText || "\u00A0"}
+        <div className="flex flex-col gap-1">
+          <div className="bdr p-1">
+            <div className="font-semibold uppercase text-center">
+              Appréciations du conseil de classe
+            </div>
+            <div className="mt-2 flex h-[42px] items-center justify-center bg-white px-1 bdr">
+              <div className="text-center text-[10px] font-bold leading-snug">
+                {councilText || "\u00A0"}
+              </div>
             </div>
           </div>
-        </div>
-      </div>
 
-      {/* VISAS */}
-      <div className="mt-1 grid grid-cols-2 gap-2 text-[9px] leading-tight">
-        <div className="bdr flex min-h-[70px] flex-col justify-between p-1">
-          <div className="font-semibold text-[8px]">Visa du professeur principal</div>
-          <div className="h-[46px]" />
-          {classInfo.head_teacher?.display_name && (
-            <div className="text-center text-[8px]">
-              {classInfo.head_teacher.display_name}
-            </div>
-          )}
-        </div>
-
-        <div className="bdr flex min-h-[70px] flex-col justify-between p-1">
-          <div className="font-semibold text-[8px]">{headVisaLabel}</div>
-          <div className="h-[46px]" />
-          {institution?.institution_head_name && (
-            <div className="text-center text-[8px]">
-              {institution.institution_head_name}
-            </div>
-          )}
+          <div className="bdr flex min-h-[112px] flex-1 flex-col justify-between p-1">
+            <div className="font-semibold text-[8px]">{headVisaLabel}</div>
+            <div className="h-[82px]" />
+            {institution?.institution_head_name && (
+              <div className="text-center text-[8px]">
+                {institution.institution_head_name}
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
       <div className="mt-1 text-center text-[8px] leading-tight text-black">
-        <div className="font-bold uppercase tracking-[0.04em]">www.mon-cahier.com</div>
-        <div className="font-semibold">
-          La plateforme idéale pour une école connectée, l’école du futur.
-        </div>
+        <div className="font-bold normal-case tracking-[0.02em]">www.mon-cahier.com</div>
+        <div className="font-semibold">Bulletin sécurisé par code QR</div>
       </div>
     </div>
   );
@@ -2497,8 +2499,14 @@ export default function BulletinsPage() {
       params.set("from", dateFrom);
       params.set("to", dateTo);
 
-      // Important pour la conduite officielle : les corrections admin sont
-      // rattachées à une année scolaire + un code de période.
+      /*
+       * ✅ Important pour la conduite officielle :
+       * l'API conduite utilise academic_year + period_code pour retrouver
+       * une éventuelle moyenne finale modifiée par l'administration.
+       *
+       * On ne change pas la logique du bulletin : on enrichit seulement
+       * l'appel conduite avec les informations de période déjà connues ici.
+       */
       const effectiveAcademicYear =
         selectedAcademicYear || selectedPeriod?.academic_year || "";
       const effectivePeriodCode = selectedPeriod?.code || "";
