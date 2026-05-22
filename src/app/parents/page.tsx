@@ -1587,7 +1587,7 @@ export default function ParentPage() {
               </button>
             </div>
 
-            <div className="border-b border-white/10 px-4 py-4">
+            <div className="border-b border-white/10 px-4 py-3">
               <div className="mb-3 text-[12px] font-extrabold uppercase tracking-wide text-amber-200">
                 Navigation
               </div>
@@ -1611,38 +1611,17 @@ export default function ParentPage() {
               </button>
               <a
                 href="/parents/payments"
-                className="mt-3 block w-full overflow-hidden rounded-[26px] border border-amber-300 bg-gradient-to-r from-amber-300 via-orange-300 to-emerald-300 p-[2px] text-left shadow-lg shadow-amber-950/20 transition hover:-translate-y-0.5 hover:shadow-xl"
+                className="mt-2 flex w-full items-center gap-3 rounded-2xl border border-amber-300 bg-white px-4 py-3 text-left text-[14px] font-extrabold text-[#003766] shadow-sm transition hover:-translate-y-0.5 hover:bg-amber-50 hover:shadow-md"
               >
-                <div className="rounded-[24px] bg-white px-4 py-4 text-[#003766]">
-                  <div className="flex items-start gap-3">
-                    <span className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-emerald-600 text-white shadow-sm">
-                      <IconShield />
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="text-[15px] font-black leading-tight">
-                          Paiement en ligne
-                        </span>
-                        <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-black uppercase tracking-wide text-amber-800 ring-1 ring-amber-200">
-                          Visible
-                        </span>
-                      </div>
-                      <div className="mt-1 text-[12px] font-semibold leading-snug text-slate-600">
-                        Frais scolaires, Mobile Money et reçu officiel.
-                      </div>
-                    </div>
-                  </div>
-                  <div className="mt-3 flex items-center justify-between gap-3">
-                    <OperatorLogoStack className="shrink-0" />
-                    <span className="rounded-full bg-[#003766] px-3 py-1 text-[11px] font-black text-white">
-                      Ouvrir
-                    </span>
-                  </div>
-                </div>
+                <span className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-emerald-600 text-white shadow-sm">
+                  <IconShield />
+                </span>
+                <span className="min-w-0 flex-1 truncate">Paiement en ligne</span>
+                <OperatorLogoStack className="shrink-0 scale-75 origin-right" max={3} />
               </a>
             </div>
 
-            <div className="border-b border-white/10 px-4 py-4">
+            <div className="border-b border-white/10 px-4 py-3">
               <div className="mb-3 text-[12px] font-extrabold uppercase tracking-wide text-amber-200">
                 Ajouter un enfant
               </div>
@@ -1673,7 +1652,7 @@ export default function ParentPage() {
               )}
             </div>
 
-            <div className="border-b border-white/10 px-4 py-4">
+            <div className="border-b border-white/10 px-4 py-3">
               <div className="mb-3 text-[12px] font-extrabold uppercase tracking-wide text-amber-200">
                 Enfants
               </div>
@@ -1740,7 +1719,7 @@ export default function ParentPage() {
 
       {/* ————— HEADER PRINCIPAL sticky ————— */}
       <header className="sticky top-0 z-30 bg-[#003766] text-white shadow">
-        <div className="mx-auto flex max-w-6xl items-center justify-between px-3 py-3 lg:px-4">
+        <div className="mx-auto flex w-full max-w-[1440px] items-center justify-between px-3 py-3 sm:px-4 lg:px-6">
           <div className="flex min-w-0 items-center gap-3">
             <button
               type="button"
@@ -1776,10 +1755,10 @@ export default function ParentPage() {
       </header>
 
       {/* ————— CORPS ————— */}
-      <div className="mx-auto flex w-full max-w-6xl min-w-0">
+      <div className="mx-auto grid w-full max-w-[1440px] min-w-0 grid-cols-1 gap-0 px-0 lg:grid-cols-[280px_minmax(0,1fr)] lg:gap-6 lg:px-6">
         {/* Sidebar desktop */}
-        <aside className="hidden w-72 shrink-0 bg-[#003766] text-white lg:sticky lg:top-[72px] lg:flex lg:h-[calc(100vh-72px)] lg:flex-col lg:overflow-y-auto lg:overscroll-contain">
-          <div className="border-b border-white/15 px-4 py-5">
+        <aside className="hidden w-full shrink-0 bg-[#003766] text-white lg:sticky lg:top-[72px] lg:flex lg:h-[calc(100vh-72px)] lg:flex-col lg:overflow-y-auto lg:overscroll-contain lg:rounded-b-[28px] lg:shadow-xl lg:shadow-slate-900/10">
+          <div className="border-b border-white/15 px-4 py-3">
             <div className="flex items-center gap-3">
               <div className="grid h-11 w-11 place-items-center rounded-2xl bg-white/20 text-white">
                 <IconFamily />
@@ -1800,7 +1779,7 @@ export default function ParentPage() {
             </div>
           </div>
 
-          <div className="border-b border-white/15 px-4 py-4">
+          <div className="border-b border-white/15 px-4 py-3">
             <div className="mb-3 text-[12px] font-extrabold uppercase tracking-wide text-amber-200">
               Navigation
             </div>
@@ -1822,40 +1801,19 @@ export default function ParentPage() {
               </span>
               <span>Accueil</span>
             </button>
-            <a
-              href="/parents/payments"
-              className="mt-3 block w-full overflow-hidden rounded-[26px] border border-amber-300 bg-gradient-to-r from-amber-300 via-orange-300 to-emerald-300 p-[2px] text-left shadow-lg shadow-amber-950/20 transition hover:-translate-y-0.5 hover:shadow-xl"
-            >
-              <div className="rounded-[24px] bg-white px-4 py-4 text-[#003766]">
-                  <div className="flex items-start gap-3">
-                    <span className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-emerald-600 text-white shadow-sm">
-                      <IconShield />
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="text-[15px] font-black leading-tight">
-                          Paiement en ligne
-                        </span>
-                        <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-black uppercase tracking-wide text-amber-800 ring-1 ring-amber-200">
-                          Visible
-                        </span>
-                      </div>
-                      <div className="mt-1 text-[12px] font-semibold leading-snug text-slate-600">
-                        Frais scolaires, Mobile Money et reçu officiel.
-                      </div>
-                    </div>
-                  </div>
-                  <div className="mt-3 flex items-center justify-between gap-3">
-                    <OperatorLogoStack className="shrink-0" />
-                    <span className="rounded-full bg-[#003766] px-3 py-1 text-[11px] font-black text-white">
-                      Ouvrir
-                    </span>
-                  </div>
-              </div>
-            </a>
+              <a
+                href="/parents/payments"
+                className="mt-2 flex w-full items-center gap-3 rounded-2xl border border-amber-300 bg-white px-4 py-3 text-left text-[14px] font-extrabold text-[#003766] shadow-sm transition hover:-translate-y-0.5 hover:bg-amber-50 hover:shadow-md"
+              >
+                <span className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-emerald-600 text-white shadow-sm">
+                  <IconShield />
+                </span>
+                <span className="min-w-0 flex-1 truncate">Paiement en ligne</span>
+                <OperatorLogoStack className="shrink-0 scale-75 origin-right" max={3} />
+              </a>
           </div>
 
-          <div className="border-b border-white/15 px-4 py-4">
+          <div className="border-b border-white/15 px-4 py-3">
             <div className="mb-3 text-[12px] font-extrabold uppercase tracking-wide text-amber-200">
               Ajouter un enfant
             </div>
@@ -1886,7 +1844,7 @@ export default function ParentPage() {
             )}
           </div>
 
-          <div className="border-b border-white/15 px-4 py-4">
+          <div className="border-b border-white/15 px-4 py-3">
             <div className="mb-3 text-[12px] font-extrabold uppercase tracking-wide text-amber-200">
               Enfants
             </div>
@@ -1941,8 +1899,8 @@ export default function ParentPage() {
         </aside>
 
         {/* Contenu principal */}
-        <main className="flex-1 min-w-0 px-3 py-5 lg:px-6 lg:py-6 pb-6">
-          <div className="mb-5 flex flex-col gap-2 rounded-3xl border border-slate-200 bg-white px-4 py-4 shadow-sm">
+        <main className="min-w-0 px-3 py-5 pb-6 sm:px-4 lg:px-0 lg:py-6">
+          <div className="mb-5 flex flex-col gap-2 rounded-3xl border border-slate-200 bg-white px-4 py-4 shadow-sm lg:px-5">
             <div className="text-[12px] text-slate-500">
               Vous êtes ici : <span className="mx-1">›</span> {currentSectionMeta.breadcrumb}
             </div>
@@ -1969,8 +1927,8 @@ export default function ParentPage() {
 
           {isHome && (
             <>
-              <section className="mb-6 grid gap-4 xl:grid-cols-[1.2fr_0.8fr]">
-                <div className="rounded-[32px] bg-gradient-to-r from-[#003766] via-[#0057a8] to-[#0c7d70] p-5 text-white shadow-sm lg:p-6">
+              <section className="mb-6 grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
+                <div className="rounded-[32px] bg-gradient-to-r from-[#003766] via-[#0057a8] to-[#0c7d70] p-5 text-white shadow-sm lg:p-6 xl:min-h-[260px]">
                   <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
                     <div className="flex items-start gap-4">
                       <div className="grid h-16 w-16 shrink-0 place-items-center rounded-[24px] bg-white/15 text-white">
@@ -1988,12 +1946,16 @@ export default function ParentPage() {
                   </div>
 
                   <div className="mt-5 flex flex-wrap gap-3">
-                    <a
-                      href="/parents/payments"
-                      className="inline-flex items-center justify-center rounded-2xl bg-white px-4 py-3 text-[14px] font-extrabold text-[#003766] shadow-sm transition hover:bg-slate-100"
-                    >
-                      Paiement en ligne
-                    </a>
+              <a
+                href="/parents/payments"
+                className="mt-2 flex w-full items-center gap-3 rounded-2xl border border-amber-300 bg-white px-4 py-3 text-left text-[14px] font-extrabold text-[#003766] shadow-sm transition hover:-translate-y-0.5 hover:bg-amber-50 hover:shadow-md"
+              >
+                <span className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-emerald-600 text-white shadow-sm">
+                  <IconShield />
+                </span>
+                <span className="min-w-0 flex-1 truncate">Paiement en ligne</span>
+                <OperatorLogoStack className="shrink-0 scale-75 origin-right" max={3} />
+              </a>
                     {selectedKid ? (
                       <button
                         type="button"
@@ -2014,12 +1976,16 @@ export default function ParentPage() {
                     <OperatorLogoStack />
                   </div>
                   <div className="mt-3 text-xs font-semibold text-slate-500">Orange Money, Wave, MTN Mobile Money et autres opérateurs activés par l’établissement.</div>
-                  <a
-                    href="/parents/payments"
-                    className="mt-5 inline-flex items-center justify-center rounded-2xl bg-emerald-600 px-4 py-3 text-[14px] font-extrabold text-white shadow-sm transition hover:bg-emerald-700"
-                  >
-                    Ouvrir l’onglet paiement en ligne
-                  </a>
+              <a
+                href="/parents/payments"
+                className="mt-2 flex w-full items-center gap-3 rounded-2xl border border-amber-300 bg-white px-4 py-3 text-left text-[14px] font-extrabold text-[#003766] shadow-sm transition hover:-translate-y-0.5 hover:bg-amber-50 hover:shadow-md"
+              >
+                <span className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-emerald-600 text-white shadow-sm">
+                  <IconShield />
+                </span>
+                <span className="min-w-0 flex-1 truncate">Paiement en ligne</span>
+                <OperatorLogoStack className="shrink-0 scale-75 origin-right" max={3} />
+              </a>
                 </div>
               </section>
 
@@ -2033,7 +1999,7 @@ export default function ParentPage() {
                 </div>
 
                 {loadingKids ? (
-                  <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                  <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
                     <Skeleton className="h-36 w-full" />
                     <Skeleton className="h-36 w-full" />
                     <Skeleton className="h-36 w-full" />
@@ -2043,7 +2009,7 @@ export default function ParentPage() {
                     Aucun enfant lié à votre compte pour l’instant.
                   </div>
                 ) : (
-                  <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                  <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
                     {kids.map((k) => {
                       const active = activeChildId === k.id;
                       return (
