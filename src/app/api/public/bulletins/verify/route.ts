@@ -3441,9 +3441,19 @@ export async function GET(req: NextRequest) {
 
   const recomputedGeneralAvg = cleanNumber((bulletinForStudent as any).general_avg, 4);
   if (snapGeneral !== null) {
+    (bulletinForStudent as any).qr_snapshot_general_avg = snapGeneral;
+  }
+
+  // Source de vérité publique : les données officielles recalculées depuis la base.
+  // Le snapshot du QR reste seulement une trace/fallback. Sinon, un ancien code QR
+  // court peut continuer à afficher une moyenne périmée après correction du bulletin.
+  if (recomputedGeneralAvg !== null) {
+    (bulletinForStudent as any).general_avg = recomputedGeneralAvg;
+    (bulletinForStudent as any).general_avg_source = "recomputed_official";
+  } else if (snapGeneral !== null) {
     (bulletinForStudent as any).recomputed_general_avg = recomputedGeneralAvg;
     (bulletinForStudent as any).general_avg = snapGeneral;
-    (bulletinForStudent as any).general_avg_source = "qr_snapshot";
+    (bulletinForStudent as any).general_avg_source = "qr_snapshot_fallback";
   }
 
   let annual_avg_for_student: number | null = null;
@@ -3506,11 +3516,16 @@ export async function GET(req: NextRequest) {
 
   const recomputedAnnualAvg = cleanNumber(annual_avg_for_student, 4);
   if (snapAnnual !== null) {
+    (bulletinForStudent as any).qr_snapshot_annual_avg = snapAnnual;
+  }
+
+  if (recomputedAnnualAvg !== null) {
+    (bulletinForStudent as any).annual_avg = recomputedAnnualAvg;
+    (bulletinForStudent as any).annual_avg_source = "recomputed_official";
+  } else if (snapAnnual !== null) {
     (bulletinForStudent as any).recomputed_annual_avg = recomputedAnnualAvg;
     (bulletinForStudent as any).annual_avg = snapAnnual;
-    (bulletinForStudent as any).annual_avg_source = "qr_snapshot";
-  } else if (annual_avg_for_student !== null) {
-    (bulletinForStudent as any).annual_avg = annual_avg_for_student;
+    (bulletinForStudent as any).annual_avg_source = "qr_snapshot_fallback";
   }
 
   const conductForStudent = conductAvgMapCurrent.get(studentIdStr) ?? null;
