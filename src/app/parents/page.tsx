@@ -2,6 +2,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
+import { OperatorLogoStack } from "@/components/payments/OperatorLogo";
 
 /* ————————— routes dédiées parents + fallbacks ————————— */
 const LOGOUT_PARENTS = "/parents/logout";
@@ -1581,7 +1582,8 @@ export default function ParentPage() {
                 <span className="grid h-10 w-10 place-items-center rounded-2xl bg-white/10 text-white">
                   <IconShield />
                 </span>
-                <span>Paiement en ligne</span>
+                <span className="min-w-0 flex-1">Paiement en ligne</span>
+                <OperatorLogoStack providers={["orange_money", "wave", "mtn_momo"]} />
               </a>
             </div>
 
@@ -1769,7 +1771,8 @@ export default function ParentPage() {
               <span className="grid h-10 w-10 place-items-center rounded-2xl bg-white/10 text-white">
                 <IconShield />
               </span>
-              <span>Paiement en ligne</span>
+              <span className="min-w-0 flex-1">Paiement en ligne</span>
+              <OperatorLogoStack providers={["orange_money", "wave", "mtn_momo"]} />
             </a>
           </div>
 

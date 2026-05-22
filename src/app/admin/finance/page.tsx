@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getFinanceAccessForCurrentUser } from "@/lib/finance-access";
+import { OperatorLogoStack } from "@/components/payments/OperatorLogo";
 import {
   AcademicYearSelector,
   financeYearHref,
@@ -205,12 +206,14 @@ function QuickLinkCard({
   title,
   description,
   badge,
+  footer,
 }: {
   href: string;
   icon: ReactNode;
   title: string;
   description: string;
   badge?: string;
+  footer?: ReactNode;
 }) {
   return (
     <Link
@@ -224,6 +227,7 @@ function QuickLinkCard({
           </div>
           <h3 className="mt-4 text-lg font-black text-slate-900">{title}</h3>
           <p className="mt-2 text-sm leading-6 text-slate-600">{description}</p>
+          {footer ? <div className="mt-4">{footer}</div> : null}
         </div>
 
         <div className="flex flex-col items-end gap-2">
@@ -647,6 +651,7 @@ export default async function AdminFinancePage({
           title="Paiement en ligne"
           description="Activer Orange Money, Wave ou MTN Money sur le compte marchand propre de l’établissement."
           badge="Mobile Money"
+          footer={<OperatorLogoStack providers={["orange_money", "wave", "mtn_momo"]} />}
         />
         <QuickLinkCard
           href={financeYearHref(

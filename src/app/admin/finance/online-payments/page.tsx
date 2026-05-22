@@ -7,15 +7,13 @@ import {
   ArrowLeft,
   CheckCircle2,
   Clock3,
-  CreditCard,
   Loader2,
   RefreshCw,
   Save,
   ShieldCheck,
-  Smartphone,
-  Wallet,
   XCircle,
 } from "lucide-react";
+import { OperatorLogo, OperatorLogoStack } from "@/components/payments/OperatorLogo";
 
 type ProviderCode = "orange_money" | "wave" | "mtn_momo";
 type EnvironmentCode = "test" | "production";
@@ -138,12 +136,6 @@ function cleanPhone(value: string) {
 
 function money(value: number | string | null | undefined) {
   return `${Number(value || 0).toLocaleString("fr-FR")} F`;
-}
-
-function providerIcon(provider: ProviderCode) {
-  if (provider === "wave") return <Wallet className="h-5 w-5" />;
-  if (provider === "mtn_momo") return <Smartphone className="h-5 w-5" />;
-  return <CreditCard className="h-5 w-5" />;
 }
 
 function formatDate(value: string | null) {
@@ -474,6 +466,7 @@ export default function AdminOnlinePaymentsPage() {
                 <div className="rounded-3xl border border-white/10 bg-white/10 p-4 backdrop-blur">
                   <div className="text-xs font-black uppercase tracking-wide text-slate-300">Moyens actifs</div>
                   <div className="mt-1 text-3xl font-black">{activeCount}/3</div>
+                  <OperatorLogoStack providers={PROVIDERS} className="mt-3" />
                 </div>
                 <div className="rounded-3xl border border-white/10 bg-white/10 p-4 backdrop-blur">
                   <div className="text-xs font-black uppercase tracking-wide text-slate-300">Paiements en attente</div>
@@ -533,10 +526,8 @@ export default function AdminOnlinePaymentsPage() {
                 >
                   <div className={`border-b px-5 py-5 ${tone.border} ${tone.bg}`}>
                     <div className="flex items-start justify-between gap-3">
-                      <div className="flex min-w-0 items-center gap-2">
-                        <span className={`grid h-11 w-11 place-items-center rounded-2xl ${tone.icon}`}>
-                          {providerIcon(item.provider)}
-                        </span>
+                      <div className="flex min-w-0 items-center gap-3">
+                        <OperatorLogo provider={item.provider} label={item.label} size="md" showNote />
                         <div className="min-w-0">
                           <h2 className="truncate text-xl font-black text-slate-950">{item.label}</h2>
                           <p className="text-sm font-semibold text-slate-600">{item.help}</p>
@@ -720,7 +711,7 @@ export default function AdminOnlinePaymentsPage() {
                       </div>
                     </div>
                     <div>
-                      <div className="text-sm font-black text-slate-950">{intent.provider_label}</div>
+                      <OperatorLogo provider={intent.provider} label={intent.provider_label} size="sm" />
                       <div className="mt-1 text-xs font-semibold text-slate-500">{intent.payer_phone || "Numéro non précisé"}</div>
                     </div>
                     <div>
