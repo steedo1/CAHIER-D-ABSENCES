@@ -10,6 +10,7 @@ export type AdminStudentRow = {
   level?: string | null;
   class_level?: string | null;
   academic_year?: string | null;
+  gender?: string | null;
   is_affecte?: boolean | null;
   is_boarder?: boolean | null;
   regime?: string | null;
@@ -68,6 +69,7 @@ export async function getAdminStudentsServer(
     level: row.level ? String(row.level) : null,
     class_level: row.class_level ? String(row.class_level) : null,
     academic_year: row.academic_year ? String(row.academic_year) : null,
+    gender: row.gender ? String(row.gender) : null,
     is_affecte:
       typeof row.is_affecte === "boolean" ? row.is_affecte : null,
     is_boarder:

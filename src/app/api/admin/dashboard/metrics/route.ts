@@ -11,6 +11,25 @@ type AcademicYearMeta = {
   label: string;
 };
 
+type StudentProfileStatRow = {
+  id: string;
+  gender: string | null;
+  is_affecte: boolean | null;
+  is_boarder: boolean | null;
+};
+
+type StudentBreakdown = {
+  assigned_students: number;
+  not_assigned_students: number;
+  assignment_unknown: number;
+  boarder_students: number;
+  not_boarder_students: number;
+  boarding_unknown: number;
+  boys: number;
+  girls: number;
+  gender_unknown: number;
+};
+
 function computeAcademicYear(d = new Date()): string {
   // Année scolaire ivoirienne : à partir d'août, on bascule sur N-(N+1)
   const month = d.getUTCMonth() + 1;
@@ -72,6 +91,58 @@ function chunks<T>(items: T[], size = 500): T[][] {
   const out: T[][] = [];
   for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
   return out;
+}
+
+function normalizeGender(value: unknown): "boy" | "girl" | null {
+  const raw = String(value || "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+
+  if (!raw) return null;
+  if (["m", "masculin", "male", "garcon", "garcons", "homme", "boy"].includes(raw)) {
+    return "boy";
+  }
+  if (["f", "feminin", "female", "fille", "filles", "femme", "girl"].includes(raw)) {
+    return "girl";
+  }
+  return null;
+}
+
+function emptyStudentBreakdown(): StudentBreakdown {
+  return {
+    assigned_students: 0,
+    not_assigned_students: 0,
+    assignment_unknown: 0,
+    boarder_students: 0,
+    not_boarder_students: 0,
+    boarding_unknown: 0,
+    boys: 0,
+    girls: 0,
+    gender_unknown: 0,
+  };
+}
+
+function buildStudentBreakdown(rows: StudentProfileStatRow[]): StudentBreakdown {
+  const stats = emptyStudentBreakdown();
+
+  for (const row of rows) {
+    if (row.is_affecte === true) stats.assigned_students += 1;
+    else if (row.is_affecte === false) stats.not_assigned_students += 1;
+    else stats.assignment_unknown += 1;
+
+    if (row.is_boarder === true) stats.boarder_students += 1;
+    else if (row.is_boarder === false) stats.not_boarder_students += 1;
+    else stats.boarding_unknown += 1;
+
+    const gender = normalizeGender(row.gender);
+    if (gender === "boy") stats.boys += 1;
+    else if (gender === "girl") stats.girls += 1;
+    else stats.gender_unknown += 1;
+  }
+
+  return stats;
 }
 
 export async function GET(req: NextRequest) {
@@ -150,6 +221,38 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  // Détails financiers/sociaux des élèves actifs : affecté, interne, sexe.
+  const studentProfileRows: StudentProfileStatRow[] = [];
+  const activeStudentIds = Array.from(studentIdsActive);
+
+  if (activeStudentIds.length > 0) {
+    for (const part of chunks(activeStudentIds)) {
+      const { data: studentRows, error: studentErr } = await srv
+        .from("students")
+        .select("id,gender,is_affecte,is_boarder")
+        .eq("institution_id", institution_id)
+        .in("id", part)
+        .limit(10000);
+
+      if (studentErr) {
+        return NextResponse.json({ ok: false, error: studentErr.message }, { status: 400 });
+      }
+
+      for (const row of studentRows ?? []) {
+        studentProfileRows.push({
+          id: String((row as any).id || ""),
+          gender: ((row as any).gender ?? null) as string | null,
+          is_affecte:
+            typeof (row as any).is_affecte === "boolean" ? ((row as any).is_affecte as boolean) : null,
+          is_boarder:
+            typeof (row as any).is_boarder === "boolean" ? ((row as any).is_boarder as boolean) : null,
+        });
+      }
+    }
+  }
+
+  const studentBreakdown = buildStudentBreakdown(studentProfileRows);
+
   // Enseignants de l'année courante : enseignants affectés aux classes de l'année active.
   const teacherIds = new Set<string>();
   if (classIds.length > 0) {
@@ -225,6 +328,7 @@ export async function GET(req: NextRequest) {
         parents: parentIds.size,
         students: studentIdsActive.size,
         students_total: studentIdsAll.size,
+        ...studentBreakdown,
       },
       kpis: {
         absences,

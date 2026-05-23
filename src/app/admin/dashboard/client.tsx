@@ -33,6 +33,15 @@ type MetricsOk = {
     parents: number;
     students: number; // élèves ACTIFS
     students_total?: number;
+    assigned_students?: number;
+    not_assigned_students?: number;
+    assignment_unknown?: number;
+    boarder_students?: number;
+    not_boarder_students?: number;
+    boarding_unknown?: number;
+    boys?: number;
+    girls?: number;
+    gender_unknown?: number;
   };
   kpis: { absences: number; retards: number };
   meta?: { days?: number; academic_year?: string | null; academic_year_label?: string | null };
@@ -341,7 +350,22 @@ export default function AdminDashboardClient() {
   const isOk = !!data && "ok" in data && (data as any).ok;
   const counts = isOk
     ? (data as MetricsOk).counts
-    : { classes: 0, teachers: 0, parents: 0, students: 0, students_total: 0 };
+    : {
+        classes: 0,
+        teachers: 0,
+        parents: 0,
+        students: 0,
+        students_total: 0,
+        assigned_students: 0,
+        not_assigned_students: 0,
+        assignment_unknown: 0,
+        boarder_students: 0,
+        not_boarder_students: 0,
+        boarding_unknown: 0,
+        boys: 0,
+        girls: 0,
+        gender_unknown: 0,
+      };
 
   const absences = isOk ? (data as MetricsOk).kpis?.absences ?? 0 : 0;
   const retards = isOk ? (data as MetricsOk).kpis?.retards ?? 0 : 0;
@@ -349,6 +373,15 @@ export default function AdminDashboardClient() {
   const meta = isOk ? (data as MetricsOk).meta : undefined;
   const periodLabel = `${meta?.days || days} derniers jours`;
   const academicYearLabel = String(meta?.academic_year_label || meta?.academic_year || "").trim();
+  const assignedStudents = counts.assigned_students ?? 0;
+  const notAssignedStudents = counts.not_assigned_students ?? 0;
+  const assignmentUnknown = counts.assignment_unknown ?? 0;
+  const boarderStudents = counts.boarder_students ?? 0;
+  const notBoarderStudents = counts.not_boarder_students ?? 0;
+  const boardingUnknown = counts.boarding_unknown ?? 0;
+  const boys = counts.boys ?? 0;
+  const girls = counts.girls ?? 0;
+  const genderUnknown = counts.gender_unknown ?? 0;
 
   return (
     <div className="space-y-6">
@@ -467,6 +500,55 @@ export default function AdminDashboardClient() {
           }
           Icon={GraduationCap}
           accent="violet"
+          loading={loading}
+        />
+      </section>
+
+      {/* Profil élèves : lecture financière et administrative sans casser le dashboard existant */}
+      <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+        <StatCard
+          label="Affectés"
+          value={assignedStudents}
+          Icon={UserRoundCheck}
+          accent="emerald"
+          loading={loading}
+          sub={assignmentUnknown > 0 ? `${assignmentUnknown} non renseigné(s)` : undefined}
+        />
+        <StatCard
+          label="Non affectés"
+          value={notAssignedStudents}
+          Icon={Users}
+          accent="amber"
+          loading={loading}
+        />
+        <StatCard
+          label="Internes"
+          value={boarderStudents}
+          Icon={School}
+          accent="teal"
+          loading={loading}
+          sub={boardingUnknown > 0 ? `${boardingUnknown} internat non renseigné` : undefined}
+        />
+        <StatCard
+          label="Non internes"
+          value={notBoarderStudents}
+          Icon={School}
+          accent="sky"
+          loading={loading}
+        />
+        <StatCard
+          label="Garçons"
+          value={boys}
+          Icon={GraduationCap}
+          accent="violet"
+          loading={loading}
+          sub={genderUnknown > 0 ? `${genderUnknown} sexe non renseigné` : undefined}
+        />
+        <StatCard
+          label="Filles"
+          value={girls}
+          Icon={GraduationCap}
+          accent="emerald"
           loading={loading}
         />
       </section>
