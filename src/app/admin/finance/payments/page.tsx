@@ -896,7 +896,7 @@ async function fetchAllChargeBalancesForPayments({
       .schema("finance")
       .from("v_charge_balances")
       .select(
-        "id,school_id,academic_year_id,academic_year,student_id,class_id,fee_schedule_id,fee_category_id,label,base_amount,adjustment_total,net_amount,paid_amount,balance_due,due_date,charge_date,computed_status,created_at,updated_at",
+        "id,school_id,academic_year_id,student_id,class_id,fee_schedule_id,fee_category_id,label,base_amount,adjustment_total,net_amount,paid_amount,balance_due,due_date,charge_date,computed_status,created_at,updated_at",
       )
       .eq("school_id", institutionId)
       .in("student_id", studentIds)
