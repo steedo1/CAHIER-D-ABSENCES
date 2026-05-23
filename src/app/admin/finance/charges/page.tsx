@@ -10,7 +10,6 @@ import {
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { getFinanceAccessForCurrentUser } from "@/lib/finance-access";
-import { fetchFinanceChargeBalancesByClasses } from "@/lib/finance/charge-balances";
 import {
   AcademicYearSelector,
   getFinanceAcademicYearContext,
@@ -352,7 +351,6 @@ export default async function FinanceChargesPage({
   const requestedAcademicYear = String(params?.academic_year || "").trim();
 
   const { institutionId } = await getCurrentContextOrThrow();
-  const supabase = await getSupabaseServerClient();
   const admin = getSupabaseServiceClient();
   const academicYearCtx = await getFinanceAcademicYearContext(
     institutionId,
@@ -364,7 +362,7 @@ export default async function FinanceChargesPage({
     selectedAcademicYearCode || undefined,
   );
 
-  let classesQuery = supabase
+  let classesQuery = admin
     .from("classes")
     .select("id,label,level,academic_year")
     .eq("institution_id", institutionId);
@@ -407,12 +405,16 @@ export default async function FinanceChargesPage({
     })(),
 
     classIds.length > 0
-      ? fetchFinanceChargeBalancesByClasses({
-          institutionIds: [institutionId],
-          classIds,
-        })
-          .then((data) => ({ data, error: null }))
-          .catch((error) => ({ data: [], error }))
+      ? admin
+          .schema("finance")
+          .from("v_charge_balances")
+          .select(
+            "id,school_id,academic_year_id,student_id,class_id,fee_schedule_id,fee_category_id,label,base_amount,adjustment_total,net_amount,paid_amount,balance_due,due_date,charge_date,computed_status,created_at,updated_at",
+          )
+          .eq("school_id", institutionId)
+          .in("class_id", classIds)
+          .neq("computed_status", "cancelled")
+          .range(0, 49999)
       : Promise.resolve({ data: [], error: null } as any),
   ]);
 

@@ -45,14 +45,14 @@ export default function AdminShell({ children }: { children: React.ReactNode }) 
               Icon: LayoutDashboard,
             },
             {
-              href: "/admin/finance",
-              label: "Finance",
-              Icon: FileSpreadsheet,
-            },
-            {
               href: "/admin/parents",
               label: "Listes",
               Icon: UserRoundCheck,
+            },
+            {
+              href: "/admin/finance",
+              label: "Finance",
+              Icon: FileSpreadsheet,
             },
           ]
         : [

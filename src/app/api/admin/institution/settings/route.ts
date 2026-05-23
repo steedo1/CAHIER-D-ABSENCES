@@ -41,14 +41,13 @@ type InstitutionSettingsRow = {
 async function guard(
   supa: SupabaseClient,
   srv: SupabaseClient,
-  options: { write?: boolean } = {},
+  options: { write?: boolean } = {}
 ): Promise<GuardOk | GuardErr> {
   const {
     data: { user },
   } = await supa.auth.getUser();
   if (!user) return { error: "unauthorized" };
 
-  // 1) Essai via profiles
   const { data: me } = await supa
     .from("profiles")
     .select("id, role, institution_id")
@@ -56,35 +55,42 @@ async function guard(
     .maybeSingle();
 
   let instId: string | null = (me?.institution_id as string) || null;
-  let roleProfile = String(me?.role || "");
+  const roleProfile = String(me?.role || "");
 
-  // 2) Complément via user_roles. En lecture, le gestionnaire financier
-  // peut consulter les informations d'en-tête nécessaires aux listes et au dashboard.
-  const allowedReadRoles = ["admin", "super_admin", "finance_manager"];
-  const allowedWriteRoles = ["admin", "super_admin"];
-  const allowedRoles = options.write ? allowedWriteRoles : allowedReadRoles;
+  const allowedRoles = options.write
+    ? new Set(["admin", "super_admin"])
+    : new Set(["admin", "super_admin", "founder", "finance_manager"]);
+
   let roleFromUR: string | null = null;
-  if (!instId || !allowedRoles.includes(roleProfile)) {
-    const { data: urRows } = await srv
-      .from("user_roles")
-      .select("role, institution_id")
-      .eq("profile_id", user.id);
+  let hasAllowedRole = allowedRoles.has(roleProfile);
 
-    const allowedRow = (urRows || []).find((r) =>
-      allowedRoles.includes(String(r.role || ""))
-    );
-    if (allowedRow) {
-      roleFromUR = String(allowedRow.role);
-      if (!instId && allowedRow.institution_id) instId = String(allowedRow.institution_id);
+  const { data: urRows } = await srv
+    .from("user_roles")
+    .select("role, institution_id")
+    .eq("profile_id", user.id);
+
+  for (const row of urRows || []) {
+    const role = String((row as any).role || "");
+    if (!allowedRoles.has(role)) continue;
+
+    const rowInstitutionId = String((row as any).institution_id || "").trim();
+    if (!instId && rowInstitutionId) instId = rowInstitutionId;
+
+    if (role === "super_admin" || !rowInstitutionId || rowInstitutionId === instId) {
+      roleFromUR = role;
+      hasAllowedRole = true;
+      break;
     }
   }
 
-  const hasAllowedRole =
-    allowedRoles.includes(roleProfile) ||
-    allowedRoles.includes(String(roleFromUR || ""));
-
   if (!instId) return { error: "no_institution" };
-  if (!hasAllowedRole) return { error: "forbidden" };
+
+  const isAllowed =
+    allowedRoles.has(roleProfile) ||
+    allowedRoles.has(String(roleFromUR || "")) ||
+    hasAllowedRole;
+
+  if (!isAllowed) return { error: "forbidden" };
 
   return { user: { id: user.id }, instId };
 }

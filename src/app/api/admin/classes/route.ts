@@ -3,6 +3,14 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 
+const READ_ALLOWED_ROLES = new Set([
+  "admin",
+  "super_admin",
+  "founder",
+  "finance_manager",
+  "educator",
+]);
+
 async function getCurrentAcademicYear(
   institutionId: string,
 ): Promise<string | null> {
@@ -30,15 +38,27 @@ async function getCurrentAcademicYear(
   return latest?.code ? String(latest.code) : null;
 }
 
-export async function GET(req: NextRequest) {
+function roleMatchesInstitution(role: string, roleInstitutionId: unknown, institutionId: string) {
+  if (role === "super_admin") return true;
+
+  const roleInst = String(roleInstitutionId || "").trim();
+  // Certaines anciennes lignes user_roles n'ont pas institution_id.
+  // Dans ce cas, on limite quand même la lecture à l'établissement du profil connecté.
+  if (!roleInst) return Boolean(institutionId);
+
+  return roleInst === institutionId;
+}
+
+async function requireReadableInstitution() {
   const supabase = await getSupabaseServerClient();
+  const srv = getSupabaseServiceClient();
 
   const {
     data: { user },
   } = await supabase.auth.getUser();
 
   if (!user) {
-    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+    return { error: NextResponse.json({ error: "unauthorized" }, { status: 401 }) };
   }
 
   const { data: me, error: meErr } = await supabase
@@ -48,14 +68,48 @@ export async function GET(req: NextRequest) {
     .maybeSingle();
 
   if (meErr) {
-    return NextResponse.json({ error: meErr.message }, { status: 400 });
+    return { error: NextResponse.json({ error: meErr.message }, { status: 400 }) };
   }
 
-  if (!me?.institution_id) {
-    return NextResponse.json({ error: "no_institution" }, { status: 400 });
+  const { data: roleRows, error: roleErr } = await srv
+    .from("user_roles")
+    .select("role,institution_id")
+    .eq("profile_id", user.id);
+
+  if (roleErr) {
+    return { error: NextResponse.json({ error: roleErr.message }, { status: 400 }) };
   }
 
-  const institutionId = String(me.institution_id);
+  const allowedRows = (roleRows || []).filter((row: any) =>
+    READ_ALLOWED_ROLES.has(String(row.role || "")),
+  );
+
+  let institutionId = String((me as any)?.institution_id || "").trim();
+  if (!institutionId) {
+    const roleInstitution = allowedRows.find((row: any) => row.institution_id)?.institution_id;
+    institutionId = roleInstitution ? String(roleInstitution).trim() : "";
+  }
+
+  if (!institutionId) {
+    return { error: NextResponse.json({ error: "no_institution" }, { status: 400 }) };
+  }
+
+  const canRead = allowedRows.some((row: any) =>
+    roleMatchesInstitution(String(row.role || ""), row.institution_id, institutionId),
+  );
+
+  if (!canRead) {
+    return { error: NextResponse.json({ error: "forbidden" }, { status: 403 }) };
+  }
+
+  return { srv, institutionId };
+}
+
+export async function GET(req: NextRequest) {
+  const ctx = await requireReadableInstitution();
+  if ("error" in ctx) return ctx.error;
+
+  const { srv, institutionId } = ctx;
   const url = new URL(req.url);
   const limitRaw = url.searchParams.get("limit");
   const academicYearParam = (
@@ -71,7 +125,7 @@ export async function GET(req: NextRequest) {
     academicYearParam || (await getCurrentAcademicYear(institutionId));
   const shouldFilterYear = Boolean(academicYear && academicYear !== "all");
 
-  let query = supabase
+  let query = srv
     .from("classes")
     .select(
       "id,label,level,code,academic_year,official_track_code,class_phone_e164",

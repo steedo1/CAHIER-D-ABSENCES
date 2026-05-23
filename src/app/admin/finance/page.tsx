@@ -19,7 +19,6 @@ import {
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { getFinanceAccessForCurrentUser } from "@/lib/finance-access";
-import { fetchFinanceChargeBalancesByClasses } from "@/lib/finance/charge-balances";
 import { OperatorLogoStack } from "@/components/payments/OperatorLogo";
 import {
   AcademicYearSelector,
@@ -260,7 +259,6 @@ export default async function AdminFinancePage({
   const requestedAcademicYear = String(params?.academic_year || "").trim();
 
   const institutionId = await getCurrentInstitutionIdOrThrow();
-  const supabase = await getSupabaseServerClient();
   const admin = getSupabaseServiceClient();
   const academicYearCtx = await getFinanceAcademicYearContext(
     institutionId,
@@ -277,7 +275,7 @@ export default async function AdminFinancePage({
     selectedAcademicYearCode || undefined,
   );
 
-  let classesQuery = supabase
+  let classesQuery = admin
     .from("classes")
     .select("id,label,level,academic_year")
     .eq("institution_id", institutionId);
@@ -331,14 +329,16 @@ export default async function AdminFinancePage({
     })(),
 
     classIds.length > 0
-      ? fetchFinanceChargeBalancesByClasses({
-          institutionIds: [institutionId],
-          classIds,
-          select:
+      ? admin
+          .schema("finance")
+          .from("v_charge_balances")
+          .select(
             "id,student_id,class_id,label,net_amount,paid_amount,balance_due,due_date,computed_status",
-        })
-          .then((data) => ({ data, error: null }))
-          .catch((error) => ({ data: [], error }))
+          )
+          .eq("school_id", institutionId)
+          .in("class_id", classIds)
+          .neq("computed_status", "cancelled")
+          .range(0, 49999)
       : Promise.resolve({ data: [], error: null } as any),
 
     (() => {

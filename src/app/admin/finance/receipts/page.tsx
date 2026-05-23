@@ -13,6 +13,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
+import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { getFinanceAccessForCurrentUser } from "@/lib/finance-access";
 import {
   AcademicYearSelector,
@@ -188,7 +189,7 @@ export default async function FinanceReceiptsPage({
   const requestedAcademicYear = String(params?.academic_year || "").trim();
 
   const institutionId = await getCurrentInstitutionIdOrThrow();
-  const supabase = await getSupabaseServerClient();
+  const admin = getSupabaseServiceClient();
   const adminStudents = await getAdminStudentsServer();
   const academicYearCtx = await getFinanceAcademicYearContext(
     institutionId,
@@ -196,7 +197,7 @@ export default async function FinanceReceiptsPage({
   );
   const { academicYears, selectedAcademicYearCode } = academicYearCtx;
 
-  let classesQuery = supabase
+  let classesQuery = admin
     .from("classes")
     .select("id,label,level,academic_year")
     .eq("institution_id", institutionId);
@@ -215,7 +216,7 @@ export default async function FinanceReceiptsPage({
   const classIds = classRows.map((row) => row.id);
   const classMap = new Map(classRows.map((c) => [c.id, c]));
 
-  let receiptsQuery = supabase
+  let receiptsQuery = admin
     .schema("finance")
     .from("receipts")
     .select(
@@ -285,7 +286,7 @@ export default async function FinanceReceiptsPage({
   const receiptIds = filteredReceipts.map((r) => r.id);
 
   const { data: allocations, error: allocErr } = receiptIds.length
-    ? await supabase
+    ? await admin
         .schema("finance")
         .from("receipt_allocations")
         .select("id,receipt_id,student_charge_id,amount,created_at")
@@ -300,7 +301,7 @@ export default async function FinanceReceiptsPage({
   );
 
   const { data: charges, error: chErr } = chargeIds.length
-    ? await supabase
+    ? await admin
         .schema("finance")
         .from("v_charge_balances")
         .select(

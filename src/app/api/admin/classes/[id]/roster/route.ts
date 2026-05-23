@@ -213,30 +213,35 @@ async function requireAdminContext(
 
   if (roleErr) return { error: NextResponse.json({ error: roleErr.message }, { status: 400 }) };
 
-  const rows = roleRows || [];
+  const allowedRoles = options.write
+    ? new Set(["admin", "super_admin"])
+    : new Set(["admin", "super_admin", "founder", "finance_manager"]);
+
+  const allowedRoleRows = (roleRows || []).filter((row: any) =>
+    allowedRoles.has(String(row.role || "")),
+  );
+
   let institutionId = String((me as any)?.institution_id || "").trim();
   if (!institutionId) {
-    const roleInstitution = rows.find((row: any) => row.institution_id)?.institution_id;
+    const roleInstitution = allowedRoleRows.find((row: any) => row.institution_id)?.institution_id;
     institutionId = roleInstitution ? String(roleInstitution).trim() : "";
   }
-
-  const hasRoleForInstitution = (allowed: string[]) =>
-    rows.some((row: any) => {
-      const role = String(row.role || "");
-      const rowInstitutionId = String(row.institution_id || "").trim();
-      if (!allowed.includes(role)) return false;
-      if (role === "super_admin") return true;
-      return !rowInstitutionId || rowInstitutionId === institutionId;
-    });
-
-  const canWrite = hasRoleForInstitution(["admin", "super_admin"]);
-  const canView = canWrite || hasRoleForInstitution(["finance_manager"]);
 
   if (!institutionId) {
     return { error: NextResponse.json({ error: "no_institution" }, { status: 400 }) };
   }
 
-  if (options.write ? !canWrite : !canView) {
+  const hasAccess = allowedRoleRows.some((row: any) => {
+    const role = String(row.role || "");
+    if (role === "super_admin") return true;
+    const roleInstitutionId = String(row.institution_id || "").trim();
+    // Compatibilité avec les anciens user_roles sans institution_id :
+    // lecture/écriture limitée à l'établissement du profil connecté.
+    if (!roleInstitutionId) return Boolean(institutionId);
+    return roleInstitutionId === institutionId;
+  });
+
+  if (!hasAccess) {
     return { error: NextResponse.json({ error: "forbidden" }, { status: 403 }) };
   }
 
@@ -250,7 +255,7 @@ async function requireAdminContext(
   if (classErr) return { error: NextResponse.json({ error: classErr.message }, { status: 400 }) };
   if (!cls) return { error: NextResponse.json({ error: "class_not_found" }, { status: 404 }) };
 
-  return { supa, srv, user, me, institutionId, cls, canWrite };
+  return { supa, srv, user, me, institutionId, cls };
 }
 
 export async function GET(req: NextRequest, context: { params: Promise<{ id: string }> }) {
@@ -262,7 +267,7 @@ export async function GET(req: NextRequest, context: { params: Promise<{ id: str
   const ctx = await requireAdminContext(classId);
   if ("error" in ctx) return ctx.error;
 
-  const { srv, institutionId, cls, canWrite } = ctx;
+  const { srv, institutionId, cls } = ctx;
 
   const url = new URL(req.url);
   const academicYearParam = String(url.searchParams.get("academic_year") || "").trim();
@@ -396,7 +401,6 @@ export async function GET(req: NextRequest, context: { params: Promise<{ id: str
 
   return NextResponse.json({
     ok: true,
-    can_edit: Boolean(canWrite),
     class: {
       id: String((cls as any).id),
       label: String((cls as any).label || (cls as any).code || "Classe"),
