@@ -2751,14 +2751,15 @@ export default function BulletinsPage() {
       {/* Styles A4 */}
       <style jsx global>{`
         :root {
-          --bulletin-navy: #123a63;
-          --bulletin-navy-soft: #eaf2f8;
-          --bulletin-gold: #c89b3c;
-          --bulletin-gold-soft: #fff7e6;
+          --bulletin-navy: #0b2f57;
+          --bulletin-navy-2: #123a63;
+          --bulletin-navy-soft: #eef6fc;
+          --bulletin-gold: #b7791f;
+          --bulletin-gold-soft: #fff3d8;
           --bulletin-green: #0f766e;
-          --bulletin-green-soft: #ecfdf5;
-          --bulletin-border: #1f2937;
-          --bulletin-muted-border: #cbd5e1;
+          --bulletin-green-soft: #eefdf9;
+          --bulletin-border: #1e293b;
+          --bulletin-muted-border: #a8b6c8;
           --bulletin-text: #111827;
         }
 
@@ -2772,8 +2773,10 @@ export default function BulletinsPage() {
         }
 
         .bulletin-header {
-          border-top: 3px solid var(--bulletin-navy);
-          background: linear-gradient(180deg, #ffffff 0%, #fbfdff 100%);
+          border: 1px solid var(--bulletin-muted-border);
+          border-top: 5px solid var(--bulletin-navy);
+          background: linear-gradient(180deg, #f6faff 0%, #ffffff 48%, #fffaf0 100%);
+          box-shadow: inset 0 -1px 0 rgba(183, 121, 31, 0.35);
         }
 
         .official-block {
@@ -2782,29 +2785,32 @@ export default function BulletinsPage() {
 
         .official-title {
           display: inline-block;
-          padding: 3px 14px 4px;
+          padding: 5px 18px 6px;
           color: #ffffff;
           background: var(--bulletin-navy);
           border: 1px solid var(--bulletin-navy);
-          letter-spacing: 0.03em;
+          border-radius: 2px;
+          letter-spacing: 0.035em;
+          box-shadow: 0 1px 0 rgba(0, 0, 0, 0.12);
         }
 
         .official-subtitle {
-          margin-top: 3px;
+          margin-top: 4px;
           color: var(--bulletin-navy);
+          letter-spacing: 0.02em;
         }
 
         .institution-title {
           color: var(--bulletin-navy);
-          letter-spacing: 0.02em;
+          letter-spacing: 0.025em;
         }
 
         .institution-title::after {
           content: "";
           display: block;
-          width: 46mm;
-          max-width: 72%;
-          margin: 3px auto 2px;
+          width: 56mm;
+          max-width: 78%;
+          margin: 4px auto 3px;
           border-top: 2px solid var(--bulletin-gold);
         }
 
@@ -2821,8 +2827,9 @@ export default function BulletinsPage() {
         }
 
         .student-identity {
-          background: var(--bulletin-navy-soft);
+          background: linear-gradient(90deg, var(--bulletin-navy-soft) 0%, #ffffff 100%);
           border-color: var(--bulletin-muted-border);
+          border-left: 4px solid var(--bulletin-navy);
         }
 
         .student-identity .font-semibold {
@@ -2842,22 +2849,27 @@ export default function BulletinsPage() {
         .discipline-table .discipline-head th {
           color: #ffffff;
           background: var(--bulletin-navy);
-          border-color: var(--bulletin-navy);
+          border-color: #08243f;
           font-weight: 700;
+          letter-spacing: 0.015em;
         }
 
         .discipline-table tbody tr:nth-child(even):not(.group-total-row):not(.totals-row) {
-          background: #fbfdff;
+          background: #f8fbff;
         }
 
         .discipline-table tbody tr.group-total-row {
-          background: var(--bulletin-navy-soft);
+          background: #e7f1fb;
           color: var(--bulletin-navy);
+          border-top: 1.5px solid var(--bulletin-navy-2);
+          border-bottom: 1.5px solid var(--bulletin-navy-2);
         }
 
         .discipline-table tbody tr.totals-row {
           background: var(--bulletin-gold-soft);
           color: var(--bulletin-text);
+          border-top: 2px solid var(--bulletin-gold);
+          border-bottom: 2px solid var(--bulletin-gold);
         }
 
         .bottom-card,
@@ -2867,28 +2879,44 @@ export default function BulletinsPage() {
           border-color: var(--bulletin-muted-border);
         }
 
+        .bottom-card,
+        .council-card {
+          box-shadow: inset 0 2px 0 rgba(11, 47, 87, 0.08);
+        }
+
         .bottom-card-title {
           margin: -4px -4px 4px;
           padding: 2px 4px;
-          color: var(--bulletin-navy);
-          background: var(--bulletin-navy-soft);
-          border-bottom: 1px solid var(--bulletin-muted-border);
+          color: #ffffff;
+          background: var(--bulletin-navy);
+          border-bottom: 1px solid var(--bulletin-navy);
+          letter-spacing: 0.015em;
         }
 
         .average-card {
           background: var(--bulletin-green-soft);
-          border-color: #99f6e4;
+          border-color: #5eead4;
+          border-width: 1.5px;
         }
 
         .average-card .bottom-card-title {
-          color: var(--bulletin-green);
-          background: #dffaf3;
-          border-bottom-color: #99f6e4;
+          color: #ffffff;
+          background: var(--bulletin-green);
+          border-bottom-color: var(--bulletin-green);
+        }
+
+        .average-card .font-bold {
+          color: #075e57;
         }
 
         .council-appreciation {
           border-color: var(--bulletin-muted-border);
           background: #ffffff;
+        }
+
+        .visa-card .font-semibold,
+        .council-card .font-semibold:not(.bottom-card-title) {
+          color: var(--bulletin-navy);
         }
 
         .head-visa-card {
@@ -2897,8 +2925,9 @@ export default function BulletinsPage() {
 
         .bulletin-footer {
           color: var(--bulletin-navy);
-          border-top: 1px solid var(--bulletin-muted-border);
-          padding-top: 2px;
+          border-top: 1.5px solid var(--bulletin-gold);
+          padding-top: 3px;
+          background: linear-gradient(180deg, #ffffff 0%, #fffaf0 100%);
         }
 
         .sig-img {
