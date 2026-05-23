@@ -35,7 +35,7 @@ type MetricsOk = {
     students_total?: number;
   };
   kpis: { absences: number; retards: number };
-  meta?: { days?: number };
+  meta?: { days?: number; academic_year?: string | null; academic_year_label?: string | null };
 };
 
 type MetricsErr = { ok: false; error: string };
@@ -346,7 +346,9 @@ export default function AdminDashboardClient() {
   const absences = isOk ? (data as MetricsOk).kpis?.absences ?? 0 : 0;
   const retards = isOk ? (data as MetricsOk).kpis?.retards ?? 0 : 0;
 
-  const periodLabel = `${(isOk && (data as MetricsOk).meta?.days) || days} derniers jours`;
+  const meta = isOk ? (data as MetricsOk).meta : undefined;
+  const periodLabel = `${meta?.days || days} derniers jours`;
+  const academicYearLabel = String(meta?.academic_year_label || meta?.academic_year || "").trim();
 
   return (
     <div className="space-y-6">
@@ -397,6 +399,12 @@ export default function AdminDashboardClient() {
               }}
             />
             <div className="flex items-center justify-end gap-2">
+              {academicYearLabel && (
+                <Badge variant="secondary" className="bg-white/20 text-white hover:bg-white/30">
+                  <School className="mr-1 h-3.5 w-3.5" />
+                  Année : {academicYearLabel}
+                </Badge>
+              )}
               <Badge variant="secondary" className="bg-white/20 text-white hover:bg-white/30">
                 <CalendarClock className="mr-1 h-3.5 w-3.5" />
                 {periodLabel}
