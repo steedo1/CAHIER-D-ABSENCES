@@ -137,6 +137,14 @@ const DEFAULT_FEE_CATEGORIES = [
 ];
 
 const PAYMENT_TYPE_LABELS: Record<string, string> = {
+  cash: "Espèces",
+  mobile_money: "Mobile Money",
+  bank_deposit: "Versement bancaire",
+  bank_transfer: "Virement bancaire",
+  cheque: "Chèque",
+  card: "Carte bancaire",
+  other: "Autre",
+  // Compatibilité avec les anciens libellés conservés dans certains formulaires.
   registration: "Frais d’inscription",
   installment_1: "1ère tranche",
   installment_2: "2e tranche",
@@ -620,15 +628,14 @@ async function resolveChargeForPayment({
     classId,
   );
 
-  const labelNeedle = paymentTypeLabel(paymentType).toLowerCase();
   const categoryCharges = openCharges.filter(
     (charge) => charge.fee_category_id === feeCategoryId,
   );
 
-  const exact = categoryCharges.find((charge) =>
-    String(charge.label || "").toLowerCase().includes(labelNeedle),
-  );
-  const fallback = exact || categoryCharges[0] || null;
+  // La catégorie est choisie avant le frais ouvert. Si aucun frais précis n'est
+  // transmis, on utilise le premier frais ouvert de la catégorie au lieu de
+  // chercher par libellé de mode de paiement.
+  const fallback = categoryCharges[0] || null;
 
   if (fallback) {
     const balanceDue = Number(fallback.balance_due || 0);
@@ -665,7 +672,7 @@ async function createPaymentAction(formData: FormData) {
   const selectedStudentId = normalize(formData.get("student_id"));
   const classId = normalize(formData.get("class_id"));
   const feeCategoryId = normalize(formData.get("fee_category_id"));
-  const paymentType = normalize(formData.get("payment_type")) || "free";
+  const paymentType = normalize(formData.get("payment_type")) || "cash";
   const amountRaw = normalize(formData.get("amount"));
   const expectedAmountRaw = normalize(formData.get("expected_amount"));
   const payerName = normalize(formData.get("payer_name"));
@@ -702,7 +709,7 @@ async function createPaymentAction(formData: FormData) {
   if (!feeCategory) throw new Error("Catégorie de frais introuvable.");
 
   let studentId = selectedStudentId;
-  const extraNotes: string[] = [`Type de paiement : ${paymentTypeLabel(paymentType)}`];
+  const extraNotes: string[] = [`Mode d’encaissement : ${paymentTypeLabel(paymentType)}`];
 
   if (mode === "new") {
     const lastName = normalize(formData.get("last_name"));
@@ -870,6 +877,44 @@ async function createPaymentAction(formData: FormData) {
   redirect(`/admin/finance/receipts/${receipt.id}?autoprint=1`);
 }
 
+async function fetchAllChargeBalancesForPayments({
+  institutionId,
+  studentIds,
+}: {
+  institutionId: string;
+  studentIds: string[];
+}): Promise<ChargeBalanceRow[]> {
+  if (studentIds.length === 0) return [];
+
+  const admin = getSupabaseServiceClient();
+  const pageSize = 1000;
+  const rows: ChargeBalanceRow[] = [];
+
+  for (let from = 0; ; from += pageSize) {
+    const to = from + pageSize - 1;
+    const { data, error } = await admin
+      .schema("finance")
+      .from("v_charge_balances")
+      .select(
+        "id,school_id,academic_year_id,academic_year,student_id,class_id,fee_schedule_id,fee_category_id,label,base_amount,adjustment_total,net_amount,paid_amount,balance_due,due_date,charge_date,computed_status,created_at,updated_at",
+      )
+      .eq("school_id", institutionId)
+      .in("student_id", studentIds)
+      .neq("computed_status", "cancelled")
+      .order("due_date", { ascending: true, nullsFirst: false })
+      .range(from, to);
+
+    if (error) throw new Error(error.message);
+
+    const pageRows = (data ?? []) as ChargeBalanceRow[];
+    rows.push(...pageRows);
+
+    if (pageRows.length < pageSize) break;
+  }
+
+  return rows;
+}
+
 function StatCard({
   icon,
   label,
@@ -974,16 +1019,9 @@ export default async function FinancePaymentsPage({
   const [{ data: balances, error: balErr }, { data: receipts, error: recErr }] =
     await Promise.all([
       studentIds.length > 0
-        ? supabase
-            .schema("finance")
-            .from("v_charge_balances")
-            .select(
-              "id,school_id,academic_year_id,student_id,class_id,fee_schedule_id,fee_category_id,label,base_amount,adjustment_total,net_amount,paid_amount,balance_due,due_date,charge_date,computed_status,created_at,updated_at",
-            )
-            .eq("school_id", institutionId)
-            .in("student_id", studentIds)
-            .neq("computed_status", "cancelled")
-            .order("due_date", { ascending: true, nullsFirst: false })
+        ? fetchAllChargeBalancesForPayments({ institutionId, studentIds })
+            .then((data) => ({ data, error: null }))
+            .catch((error) => ({ data: [], error }))
         : Promise.resolve({ data: [], error: null } as any),
 
       (() => {
@@ -1024,7 +1062,9 @@ export default async function FinancePaymentsPage({
 
         const studentBalances = balancesByStudent.get(student.id) ?? [];
         const openCharges = studentBalances
-          .filter((row) => Number(row.balance_due || 0) > 0)
+          .filter(
+            (row) => row.class_id === student.class_id && Number(row.balance_due || 0) > 0,
+          )
           .map((row) => ({
             charge_id: row.id,
             fee_category_id: row.fee_category_id,

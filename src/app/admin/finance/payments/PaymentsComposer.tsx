@@ -85,7 +85,7 @@ export default function PaymentsComposer({
   const [selectedStudentId, setSelectedStudentId] = useState("");
   const [selectedChargeId, setSelectedChargeId] = useState("");
   const [selectedCategoryId, setSelectedCategoryId] = useState("");
-  const [paymentType, setPaymentType] = useState("free");
+  const [paymentType, setPaymentType] = useState("cash");
   const [amount, setAmount] = useState("");
   const [expectedAmount, setExpectedAmount] = useState("");
   const [newClassId, setNewClassId] = useState("");
@@ -171,19 +171,42 @@ export default function PaymentsComposer({
     [selectedChargeId, selectedStudent],
   );
 
+  const categoryChargeOptions = useMemo(() => {
+    if (!selectedStudent || !selectedCategoryId) return [];
+    return selectedStudent.open_charges.filter(
+      (charge) => charge.fee_category_id === selectedCategoryId,
+    );
+  }, [selectedCategoryId, selectedStudent]);
+
+  const selectedCategory = useMemo(
+    () => feeCategories.find((category) => category.id === selectedCategoryId) ?? null,
+    [feeCategories, selectedCategoryId],
+  );
+
+  function applyCharge(charge: PaymentStudentRow["open_charges"][number] | null) {
+    setSelectedChargeId(charge?.charge_id ?? "");
+    if (charge) {
+      setSelectedCategoryId(charge.fee_category_id);
+      setAmount(String(charge.balance_due));
+      setExpectedAmount(String(charge.net_amount));
+    } else {
+      setAmount("");
+      setExpectedAmount("");
+    }
+  }
+
   useEffect(() => {
     if (!selectedStudent) {
-      setSelectedChargeId("");
-      setAmount("");
+      applyCharge(null);
       return;
     }
 
     const firstCharge = selectedStudent.open_charges[0];
     if (firstCharge && !selectedChargeId) {
-      setSelectedChargeId(firstCharge.charge_id);
-      setSelectedCategoryId(firstCharge.fee_category_id);
-      setAmount(String(firstCharge.balance_due));
-      setExpectedAmount(String(firstCharge.net_amount));
+      applyCharge(firstCharge);
+    }
+    if (!firstCharge) {
+      applyCharge(null);
     }
   }, [selectedChargeId, selectedStudent]);
 
@@ -304,13 +327,8 @@ export default function PaymentsComposer({
                     type="button"
                     onClick={() => {
                       setSelectedStudentId(row.student_id);
-                      const firstCharge = row.open_charges[0];
-                      setSelectedChargeId(firstCharge?.charge_id ?? "");
-                      if (firstCharge) {
-                        setSelectedCategoryId(firstCharge.fee_category_id);
-                        setAmount(String(firstCharge.balance_due));
-                        setExpectedAmount(String(firstCharge.net_amount));
-                      }
+                      const firstCharge = row.open_charges[0] ?? null;
+                      applyCharge(firstCharge);
                     }}
                     className={`w-full rounded-3xl border p-4 text-left transition ${
                       active
@@ -385,35 +403,83 @@ export default function PaymentsComposer({
                 </div>
               </div>
 
-              {selectedStudent.open_charges.length > 0 ? (
+              <div className="grid gap-4 md:grid-cols-2">
+                <FeeCategorySelect
+                  feeCategories={feeCategories}
+                  selectedCategoryId={selectedCategoryId}
+                  onChange={(nextCategoryId) => {
+                    setSelectedCategoryId(nextCategoryId);
+                    const nextCharge =
+                      selectedStudent.open_charges.find(
+                        (charge) => charge.fee_category_id === nextCategoryId,
+                      ) ?? null;
+                    applyCharge(nextCharge);
+                  }}
+                />
+
+                {selectedStudent.open_charges.length > 0 ? (
+                  <div>
+                    <label className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-slate-500">
+                      Frais ouvert à régler
+                    </label>
+                    <select
+                      value={selectedChargeId}
+                      onChange={(e) => {
+                        const nextCharge =
+                          selectedStudent.open_charges.find(
+                            (charge) => charge.charge_id === e.target.value,
+                          ) ?? null;
+                        applyCharge(nextCharge);
+                      }}
+                      className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-semibold text-slate-800 outline-none"
+                    >
+                      {categoryChargeOptions.length === 0 ? (
+                        <option value="">Aucun frais ouvert dans cette catégorie</option>
+                      ) : null}
+                      {categoryChargeOptions.map((charge) => (
+                        <option key={charge.charge_id} value={charge.charge_id}>
+                          {charge.label} — attendu {formatMoney(charge.net_amount)} · reste {formatMoney(charge.balance_due)}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                ) : (
+                  <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-800 md:col-span-2">
+                    Aucune situation ouverte n’est encore créée pour cet élève.
+                    Le système la créera automatiquement si un barème existe, ou
+                    créera une ligne manuelle à partir du montant attendu.
+                  </div>
+                )}
+              </div>
+
+              <div className="grid gap-3 rounded-3xl border border-emerald-100 bg-white p-4 sm:grid-cols-3">
                 <div>
-                  <label className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-slate-500">
-                    Frais ouvert à régler
-                  </label>
-                  <select
-                    value={selectedChargeId}
-                    onChange={(e) => setSelectedChargeId(e.target.value)}
-                    className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-semibold text-slate-800 outline-none"
-                  >
-                    {selectedStudent.open_charges.map((charge) => (
-                      <option key={charge.charge_id} value={charge.charge_id}>
-                        {charge.label} — reste {formatMoney(charge.balance_due)}
-                      </option>
-                    ))}
-                  </select>
+                  <div className="text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">
+                    Catégorie sélectionnée
+                  </div>
+                  <div className="mt-1 text-sm font-black text-slate-900">
+                    {selectedCategory?.name || "Non définie"}
+                  </div>
                 </div>
-              ) : (
-                <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-800">
-                  Aucune situation ouverte n’est encore créée pour cet élève.
-                  Le système la créera automatiquement si un barème existe, ou
-                  créera une ligne manuelle à partir du montant attendu.
+                <div>
+                  <div className="text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">
+                    Montant attendu
+                  </div>
+                  <div className="mt-1 text-sm font-black text-slate-900">
+                    {selectedCharge ? formatMoney(selectedCharge.net_amount) : "À saisir"}
+                  </div>
                 </div>
-              )}
+                <div>
+                  <div className="text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">
+                    Reste à régler
+                  </div>
+                  <div className="mt-1 text-sm font-black text-rose-700">
+                    {selectedCharge ? formatMoney(selectedCharge.balance_due) : formatMoney(Number(amount || 0))}
+                  </div>
+                </div>
+              </div>
 
               <PaymentFields
-                feeCategories={feeCategories}
-                selectedCategoryId={selectedCategoryId}
-                setSelectedCategoryId={setSelectedCategoryId}
                 paymentType={paymentType}
                 setPaymentType={setPaymentType}
                 expectedAmount={expectedAmount}
@@ -421,6 +487,7 @@ export default function PaymentsComposer({
                 amount={amount}
                 setAmount={setAmount}
                 today={today}
+                expectedAmountLocked={Boolean(selectedCharge)}
               />
 
               <PendingButton
@@ -518,10 +585,13 @@ export default function PaymentsComposer({
             />
           </div>
 
-          <PaymentFields
+          <FeeCategorySelect
             feeCategories={feeCategories}
             selectedCategoryId={selectedCategoryId}
-            setSelectedCategoryId={setSelectedCategoryId}
+            onChange={setSelectedCategoryId}
+          />
+
+          <PaymentFields
             paymentType={paymentType}
             setPaymentType={setPaymentType}
             expectedAmount={expectedAmount}
@@ -529,6 +599,7 @@ export default function PaymentsComposer({
             amount={amount}
             setAmount={setAmount}
             today={today}
+            expectedAmountLocked={false}
           />
 
           <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
@@ -549,10 +620,39 @@ export default function PaymentsComposer({
   );
 }
 
-function PaymentFields({
+function FeeCategorySelect({
   feeCategories,
   selectedCategoryId,
-  setSelectedCategoryId,
+  onChange,
+}: {
+  feeCategories: FeeCategoryRow[];
+  selectedCategoryId: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <div>
+      <label className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-slate-500">
+        Catégorie
+      </label>
+      <select
+        name="fee_category_id"
+        value={selectedCategoryId}
+        onChange={(e) => onChange(e.target.value)}
+        required
+        className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-semibold text-slate-800 outline-none"
+      >
+        {feeCategories.length === 0 ? <option value="">Aucune catégorie</option> : null}
+        {feeCategories.map((category) => (
+          <option key={category.id} value={category.id}>
+            {category.name}
+          </option>
+        ))}
+      </select>
+    </div>
+  );
+}
+
+function PaymentFields({
   paymentType,
   setPaymentType,
   expectedAmount,
@@ -560,10 +660,8 @@ function PaymentFields({
   amount,
   setAmount,
   today,
+  expectedAmountLocked,
 }: {
-  feeCategories: FeeCategoryRow[];
-  selectedCategoryId: string;
-  setSelectedCategoryId: (value: string) => void;
   paymentType: string;
   setPaymentType: (value: string) => void;
   expectedAmount: string;
@@ -571,52 +669,10 @@ function PaymentFields({
   amount: string;
   setAmount: (value: string) => void;
   today: string;
+  expectedAmountLocked: boolean;
 }) {
   return (
     <div className="space-y-4">
-      <div className="grid gap-4 sm:grid-cols-2">
-        <div>
-          <label className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-slate-500">
-            Catégorie
-          </label>
-          <select
-            name="fee_category_id"
-            value={selectedCategoryId}
-            onChange={(e) => setSelectedCategoryId(e.target.value)}
-            required
-            className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-semibold text-slate-800 outline-none"
-          >
-            {feeCategories.length === 0 ? (
-              <option value="">Aucune catégorie</option>
-            ) : null}
-            {feeCategories.map((category) => (
-              <option key={category.id} value={category.id}>
-                {category.name}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div>
-          <label className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-slate-500">
-            Type de paiement
-          </label>
-          <select
-            name="payment_type"
-            value={paymentType}
-            onChange={(e) => setPaymentType(e.target.value)}
-            className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-semibold text-slate-800 outline-none"
-          >
-            <option value="registration">Frais d’inscription</option>
-            <option value="installment_1">1ère tranche</option>
-            <option value="installment_2">2e tranche</option>
-            <option value="installment_3">3e tranche</option>
-            <option value="full">Paiement complet</option>
-            <option value="free">Versement libre</option>
-          </select>
-        </div>
-      </div>
-
       <div className="grid gap-4 sm:grid-cols-2">
         <div>
           <label className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-slate-500">
@@ -629,10 +685,17 @@ function PaymentFields({
             step="0.01"
             value={expectedAmount}
             onChange={(e) => setExpectedAmount(e.target.value)}
-            placeholder="Facultatif si barème déjà défini"
-            className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-semibold text-slate-800 outline-none placeholder:text-slate-400"
+            readOnly={expectedAmountLocked}
+            placeholder="Renseigné automatiquement si le frais existe"
+            className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-semibold text-slate-800 outline-none placeholder:text-slate-400 read-only:bg-slate-100 read-only:text-slate-600"
           />
+          <p className="mt-1 text-xs text-slate-500">
+            {expectedAmountLocked
+              ? "Montant repris automatiquement depuis le frais ouvert sélectionné."
+              : "À saisir seulement si le frais n’existe pas encore."}
+          </p>
         </div>
+
         <div>
           <label className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-slate-500">
             Montant encaissé
@@ -646,6 +709,40 @@ function PaymentFields({
             value={amount}
             onChange={(e) => setAmount(e.target.value)}
             placeholder="Ex. 25000"
+            className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-semibold text-slate-800 outline-none placeholder:text-slate-400"
+          />
+        </div>
+      </div>
+
+      <div className="grid gap-4 sm:grid-cols-2">
+        <div>
+          <label className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-slate-500">
+            Type de paiement
+          </label>
+          <select
+            name="payment_type"
+            value={paymentType}
+            onChange={(e) => setPaymentType(e.target.value)}
+            className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-semibold text-slate-800 outline-none"
+          >
+            <option value="cash">Espèces</option>
+            <option value="mobile_money">Mobile Money</option>
+            <option value="bank_deposit">Versement bancaire</option>
+            <option value="bank_transfer">Virement bancaire</option>
+            <option value="cheque">Chèque</option>
+            <option value="card">Carte bancaire</option>
+            <option value="other">Autre</option>
+          </select>
+        </div>
+
+        <div>
+          <label className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-slate-500">
+            Référence paiement
+          </label>
+          <input
+            type="text"
+            name="reference_no"
+            placeholder="N° reçu banque, transaction, chèque..."
             className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-semibold text-slate-800 outline-none placeholder:text-slate-400"
           />
         </div>
@@ -678,12 +775,12 @@ function PaymentFields({
 
       <div>
         <label className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-slate-500">
-          Référence / note
+          Note interne
         </label>
         <textarea
           name="notes"
           rows={3}
-          placeholder="Commentaire interne, référence caisse, précision utile..."
+          placeholder="Commentaire interne, précision utile..."
           className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-semibold text-slate-800 outline-none placeholder:text-slate-400"
         />
       </div>
