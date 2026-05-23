@@ -70,7 +70,7 @@ export async function GET(req: NextRequest) {
       `
       student_id,
       class_id,
-      students:student_id ( id, first_name, last_name, full_name, matricule, institution_id ),
+      students:student_id ( id, first_name, last_name, full_name, matricule, institution_id, regime, is_affecte, is_boarder ),
       classes:class_id!inner ( id, label, level, institution_id, academic_year )
     `,
     )
@@ -94,6 +94,9 @@ export async function GET(req: NextRequest) {
     class_label: string | null;
     class_level: string | null;
     academic_year: string | null;
+    is_affecte: boolean | null;
+    is_boarder: boolean | null;
+    regime: string | null;
   }> = [];
 
   for (const row of data ?? []) {
@@ -116,6 +119,11 @@ export async function GET(req: NextRequest) {
       class_label: (c.label ?? null) as string | null,
       class_level: (c.level ?? null) as string | null,
       academic_year: (c.academic_year ?? null) as string | null,
+      is_affecte:
+        typeof s.is_affecte === "boolean" ? (s.is_affecte as boolean) : null,
+      is_boarder:
+        typeof s.is_boarder === "boolean" ? (s.is_boarder as boolean) : null,
+      regime: (s.regime ?? null) as string | null,
     });
   }
 

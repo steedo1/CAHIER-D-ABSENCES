@@ -164,7 +164,7 @@ async function createFeeScheduleAction(formData: FormData) {
     const { data: existingSchedules, error: existingErr } = await admin
       .schema("finance")
       .from("fee_schedules")
-      .select("id,class_id")
+      .select("id,class_id,label")
       .eq("school_id", institutionId)
       .eq("fee_category_id", feeCategoryId)
       .eq("academic_year", academicYear)
@@ -172,27 +172,30 @@ async function createFeeScheduleAction(formData: FormData) {
 
     if (existingErr) throw new Error(existingErr.message);
 
-    const existingClassIds = new Set(
+    const existingKeys = new Set(
       (
         (existingSchedules ?? []) as Array<{
           id: string;
           class_id: string | null;
+          label: string | null;
         }>
-      )
-        .map((row) => row.class_id)
-        .filter(Boolean) as string[],
+      ).map((row) => `${row.class_id || ""}:${normalizeText(row.label)}`),
     );
 
-    if (existingClassIds.size > 0) {
-      const conflicts = targetClasses
-        .filter((c) => existingClassIds.has(c.id))
-        .map((c) => c.label);
+    const conflicts = targetClasses
+      .filter((c) =>
+        existingKeys.has(
+          `${c.id}:${buildLevelScheduleLabel(labelInput, categoryRow.name, c.label)}`,
+        ),
+      )
+      .map((c) => c.label);
 
+    if (conflicts.length > 0) {
       const preview = conflicts.slice(0, 5).join(", ");
       const suffix = conflicts.length > 5 ? " ..." : "";
 
       throw new Error(
-        `Un barème de cette catégorie existe déjà sur l’année ${academicYear} pour : ${preview}${suffix}`,
+        `Un barème avec ce libellé existe déjà sur l’année ${academicYear} pour : ${preview}${suffix}`,
       );
     }
 
@@ -327,6 +330,7 @@ export default async function FinanceFeeSchedulesPage({
 
   const institutionId = await getCurrentInstitutionIdOrThrow();
   const supabase = await getSupabaseServerClient();
+  const admin = getSupabaseServiceClient();
   const academicYearCtx = await getFinanceAcademicYearContext(
     institutionId,
     requestedAcademicYear,
@@ -338,7 +342,7 @@ export default async function FinanceFeeSchedulesPage({
     { data: classes, error: clsErr },
     { data: schedules, error: schErr },
   ] = await Promise.all([
-    supabase
+    admin
       .schema("finance")
       .from("fee_categories")
       .select("id,code,name,is_active")
@@ -347,7 +351,7 @@ export default async function FinanceFeeSchedulesPage({
       .order("name", { ascending: true }),
 
     (() => {
-      let query = supabase
+      let query = admin
         .from("classes")
         .select("id,label,level,academic_year")
         .eq("institution_id", institutionId);
@@ -362,7 +366,7 @@ export default async function FinanceFeeSchedulesPage({
     })(),
 
     (() => {
-      let query = supabase
+      let query = admin
         .schema("finance")
         .from("fee_schedules")
         .select(
@@ -374,7 +378,7 @@ export default async function FinanceFeeSchedulesPage({
         query = query.eq("academic_year", selectedAcademicYearCode);
       }
 
-      return query.order("created_at", { ascending: false });
+      return query.order("created_at", { ascending: false }).range(0, 9999);
     })(),
   ]);
 

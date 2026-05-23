@@ -17,6 +17,7 @@ import {
   BadgeDollarSign,
 } from "lucide-react";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
+import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { getFinanceAccessForCurrentUser } from "@/lib/finance-access";
 import { OperatorLogoStack } from "@/components/payments/OperatorLogo";
 import {
@@ -259,7 +260,7 @@ export default async function AdminFinancePage({
 
   const institutionId = await getCurrentInstitutionIdOrThrow();
   const supabase = await getSupabaseServerClient();
-  const adminStudents = await getAdminStudentsServer();
+  const admin = getSupabaseServiceClient();
   const academicYearCtx = await getFinanceAcademicYearContext(
     institutionId,
     requestedAcademicYear,
@@ -270,6 +271,10 @@ export default async function AdminFinancePage({
     selectedAcademicYearStart,
     selectedAcademicYearEnd,
   } = academicYearCtx;
+
+  const adminStudents = await getAdminStudentsServer(
+    selectedAcademicYearCode || undefined,
+  );
 
   let classesQuery = supabase
     .from("classes")
@@ -299,7 +304,7 @@ export default async function AdminFinancePage({
     { data: teacherPayProfiles, error: payProfErr },
     { data: teacherPayrollRuns, error: payRunErr },
   ] = await Promise.all([
-    supabase
+    admin
       .schema("finance")
       .from("fee_categories")
       .select("id,name,code,is_active")
@@ -307,7 +312,7 @@ export default async function AdminFinancePage({
       .order("name", { ascending: true }),
 
     (() => {
-      let query = supabase
+      let query = admin
         .schema("finance")
         .from("fee_schedules")
         .select("id,class_id,label,amount,due_date,allow_partial,is_active")
@@ -321,11 +326,11 @@ export default async function AdminFinancePage({
         query = query.in("class_id", classIds);
       }
 
-      return query.order("created_at", { ascending: false });
+      return query.order("created_at", { ascending: false }).range(0, 9999);
     })(),
 
     classIds.length > 0
-      ? supabase
+      ? admin
           .schema("finance")
           .from("v_charge_balances")
           .select(
@@ -334,10 +339,11 @@ export default async function AdminFinancePage({
           .eq("school_id", institutionId)
           .in("class_id", classIds)
           .neq("computed_status", "cancelled")
+          .range(0, 49999)
       : Promise.resolve({ data: [], error: null } as any),
 
     (() => {
-      let query = supabase
+      let query = admin
         .schema("finance")
         .from("receipts")
         .select(
@@ -353,7 +359,7 @@ export default async function AdminFinancePage({
     })(),
 
     (() => {
-      let query = supabase
+      let query = admin
         .schema("finance")
         .from("expenses")
         .select("id,expense_status,expense_date,label,amount,beneficiary")
@@ -369,14 +375,14 @@ export default async function AdminFinancePage({
       return query.order("expense_date", { ascending: false }).limit(8);
     })(),
 
-    supabase
+    admin
       .schema("finance")
       .from("teacher_pay_profiles")
       .select("id,profile_id,employment_type,payroll_enabled")
       .eq("institution_id", institutionId),
 
     (() => {
-      let query = supabase
+      let query = admin
         .schema("finance")
         .from("teacher_payroll_runs")
         .select("id,status,period_month,academic_year")
