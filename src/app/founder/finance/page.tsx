@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
+import { fetchFinanceChargeBalancesByClasses } from "@/lib/finance/charge-balances";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -500,22 +501,17 @@ export default async function FounderFinancePage({ searchParams }: PageProps) {
     return !row.academic_year || !expectedYear || String(row.academic_year) === expectedYear;
   });
 
-  const balanceRows: any[] = [];
+  let balanceRows: any[] = [];
   if (classIds.length > 0) {
-    for (const part of chunks(classIds)) {
-      const rows = await safeData<any[]>(
-        "finance.v_charge_balances",
-        service
-          .schema("finance")
-          .from("v_charge_balances")
-          .select("id,school_id,student_id,class_id,label,net_amount,paid_amount,balance_due,due_date,computed_status")
-          .in("school_id", institutionIds)
-          .in("class_id", part)
-          .neq("computed_status", "cancelled")
-          .range(0, 49999),
-        [],
-      );
-      balanceRows.push(...rows);
+    try {
+      balanceRows = await fetchFinanceChargeBalancesByClasses({
+        institutionIds,
+        classIds,
+        select: "id,school_id,student_id,class_id,label,net_amount,paid_amount,balance_due,due_date,computed_status",
+      });
+    } catch (e: any) {
+      console.warn("[founder/finance] finance.v_charge_balances:", e?.message || e);
+      balanceRows = [];
     }
   }
 

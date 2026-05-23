@@ -10,6 +10,7 @@ import {
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { getFinanceAccessForCurrentUser } from "@/lib/finance-access";
+import { fetchFinanceChargeBalancesByClasses } from "@/lib/finance/charge-balances";
 import {
   AcademicYearSelector,
   getFinanceAcademicYearContext,
@@ -406,16 +407,12 @@ export default async function FinanceChargesPage({
     })(),
 
     classIds.length > 0
-      ? admin
-          .schema("finance")
-          .from("v_charge_balances")
-          .select(
-            "id,school_id,academic_year_id,student_id,class_id,fee_schedule_id,fee_category_id,label,base_amount,adjustment_total,net_amount,paid_amount,balance_due,due_date,charge_date,computed_status,created_at,updated_at",
-          )
-          .eq("school_id", institutionId)
-          .in("class_id", classIds)
-          .neq("computed_status", "cancelled")
-          .range(0, 49999)
+      ? fetchFinanceChargeBalancesByClasses({
+          institutionIds: [institutionId],
+          classIds,
+        })
+          .then((data) => ({ data, error: null }))
+          .catch((error) => ({ data: [], error }))
       : Promise.resolve({ data: [], error: null } as any),
   ]);
 
