@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Menu, X, LayoutDashboard, Ban, NotebookPen, Settings, FileSpreadsheet } from "lucide-react";
+import { Menu, X, LayoutDashboard, Ban, NotebookPen, Settings, FileSpreadsheet, UserRoundCheck } from "lucide-react";
 import { LogoutButton } from "@/components/LogoutButton";
 import SidebarNav from "./sidebar-nav";
 import ContactUsButton from "@/components/ContactUsButton";
@@ -40,9 +40,19 @@ export default function AdminShell({ children }: { children: React.ReactNode }) 
       isFinanceManager
         ? [
             {
+              href: "/admin/dashboard",
+              label: "Accueil",
+              Icon: LayoutDashboard,
+            },
+            {
               href: "/admin/finance",
               label: "Finance",
               Icon: FileSpreadsheet,
+            },
+            {
+              href: "/admin/parents",
+              label: "Listes",
+              Icon: UserRoundCheck,
             },
           ]
         : [

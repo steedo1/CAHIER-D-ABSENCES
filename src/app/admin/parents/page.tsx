@@ -778,6 +778,7 @@ export default function AdminStudentsByClassPage() {
   const [docsLoading, setDocsLoading] = useState(false);
   const [authErr, setAuthErr] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  const [role, setRole] = useState<string | null>(null);
 
   const [editing, setEditing] = useState<null | {
     id: string;
@@ -941,6 +942,24 @@ export default function AdminStudentsByClassPage() {
     })();
   }, []);
 
+  useEffect(() => {
+    let alive = true;
+
+    (async () => {
+      try {
+        const res = await fetch("/api/auth/role", { cache: "no-store" });
+        const json = await res.json().catch(() => ({}));
+        if (alive && res.ok) setRole(json?.role ? String(json.role) : null);
+      } catch {
+        if (alive) setRole(null);
+      }
+    })();
+
+    return () => {
+      alive = false;
+    };
+  }, []);
+
   const classLevelById = useMemo(() => {
     const map = new Map<string, string>();
     for (const c of classes) {
@@ -1012,6 +1031,9 @@ export default function AdminStudentsByClassPage() {
   const selectedStudents = useMemo(() => {
     return studentsFiltered.filter((s) => selectedIds.has(s.id));
   }, [studentsFiltered, selectedIds]);
+
+  const isFinanceManager = role === "finance_manager";
+  const canManageStudents = !isFinanceManager;
 
   useEffect(() => {
     setPage(1);
@@ -1110,6 +1132,7 @@ export default function AdminStudentsByClassPage() {
   }
 
   async function saveEdit() {
+    if (!canManageStudents) return;
     if (!editing) return;
 
     setSaving(true);
@@ -1163,6 +1186,7 @@ export default function AdminStudentsByClassPage() {
   }
 
   async function removeFromClass(student: StudentRow) {
+    if (!canManageStudents) return;
     if (!student.class_id) return;
 
     const ok = window.confirm(
@@ -1279,6 +1303,7 @@ export default function AdminStudentsByClassPage() {
   }
 
   async function submitAssign() {
+    if (!canManageStudents) return;
     if (!classId) {
       setMsg("Choisissez d'abord une classe.");
       return;
@@ -1428,7 +1453,7 @@ export default function AdminStudentsByClassPage() {
                 Liste des eleves par classe
               </h1>
               <p className="mt-1 text-sm text-white/80">
-                Selectionnez un niveau, choisissez la classe, recherchez, modifiez un eleve,
+                Selectionnez un niveau, choisissez la classe, recherchez,
                 generez la liste PDF et les attestations de frequentation.
               </p>
             </div>
@@ -1551,18 +1576,20 @@ export default function AdminStudentsByClassPage() {
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            <Button
-              tone="slate"
-              onClick={() => setAssignOpen(true)}
-              disabled={!classId || loading}
-              title={
-                classId
-                  ? "Ajouter ou transferer un eleve dans cette classe"
-                  : "Choisissez une classe d'abord"
-              }
-            >
-              Ajouter / Transferer
-            </Button>
+            {canManageStudents ? (
+              <Button
+                tone="slate"
+                onClick={() => setAssignOpen(true)}
+                disabled={!classId || loading}
+                title={
+                  classId
+                    ? "Ajouter ou transferer un eleve dans cette classe"
+                    : "Choisissez une classe d'abord"
+                }
+              >
+                Ajouter / Transferer
+              </Button>
+            ) : null}
 
             <span className="text-xs text-slate-600">Par page :</span>
 
@@ -1682,18 +1709,22 @@ export default function AdminStudentsByClassPage() {
                             Attestation
                           </Button>
 
-                          <Button tone="white" onClick={() => openEdit(student)}>
-                            Modifier
-                          </Button>
+                          {canManageStudents ? (
+                            <>
+                              <Button tone="white" onClick={() => openEdit(student)}>
+                                Modifier
+                              </Button>
 
-                          <Button
-                            tone="danger"
-                            onClick={() => removeFromClass(student)}
-                            disabled={!student.class_id || removingId === student.id}
-                            title="Retirer l'eleve de cette classe"
-                          >
-                            {removingId === student.id ? "Retrait..." : "Retirer"}
-                          </Button>
+                              <Button
+                                tone="danger"
+                                onClick={() => removeFromClass(student)}
+                                disabled={!student.class_id || removingId === student.id}
+                                title="Retirer l'eleve de cette classe"
+                              >
+                                {removingId === student.id ? "Retrait..." : "Retirer"}
+                              </Button>
+                            </>
+                          ) : null}
                         </div>
                       </td>
                     </tr>
@@ -1711,7 +1742,7 @@ export default function AdminStudentsByClassPage() {
         )}
       </section>
 
-      {editing && (
+      {editing && canManageStudents && (
         <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4">
           <div className="w-full max-w-lg rounded-2xl border bg-white p-5 shadow-xl">
             <div className="flex items-start justify-between">
@@ -1774,7 +1805,7 @@ export default function AdminStudentsByClassPage() {
         </div>
       )}
 
-      {assignOpen && (
+      {assignOpen && canManageStudents && (
         <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4">
           <div className="w-full max-w-lg rounded-2xl border bg-white p-5 shadow-xl">
             <div className="flex items-start justify-between">

@@ -879,40 +879,48 @@ async function createPaymentAction(formData: FormData) {
 
 async function fetchAllChargeBalancesForPayments({
   institutionId,
-  studentIds,
+  classIds,
 }: {
   institutionId: string;
-  studentIds: string[];
+  classIds: string[];
 }): Promise<ChargeBalanceRow[]> {
-  if (studentIds.length === 0) return [];
+  if (classIds.length === 0) return [];
 
   const admin = getSupabaseServiceClient();
   const pageSize = 1000;
   const rows: ChargeBalanceRow[] = [];
 
-  for (let from = 0; ; from += pageSize) {
-    const to = from + pageSize - 1;
-    const { data, error } = await admin
-      .schema("finance")
-      .from("v_charge_balances")
-      .select(
-        "id,school_id,academic_year_id,student_id,class_id,fee_schedule_id,fee_category_id,label,base_amount,adjustment_total,net_amount,paid_amount,balance_due,due_date,charge_date,computed_status,created_at,updated_at",
-      )
-      .eq("school_id", institutionId)
-      .in("student_id", studentIds)
-      .neq("computed_status", "cancelled")
-      .order("due_date", { ascending: true, nullsFirst: false })
-      .range(from, to);
+  for (const classPart of chunkStrings(classIds)) {
+    for (let from = 0; ; from += pageSize) {
+      const to = from + pageSize - 1;
+      const { data, error } = await admin
+        .schema("finance")
+        .from("v_charge_balances")
+        .select(
+          "id,school_id,academic_year_id,student_id,class_id,fee_schedule_id,fee_category_id,label,base_amount,adjustment_total,net_amount,paid_amount,balance_due,due_date,charge_date,computed_status,created_at,updated_at",
+        )
+        .eq("school_id", institutionId)
+        .in("class_id", classPart)
+        .neq("computed_status", "cancelled")
+        .order("due_date", { ascending: true, nullsFirst: false })
+        .range(from, to);
 
-    if (error) throw new Error(error.message);
+      if (error) throw new Error(error.message);
 
-    const pageRows = (data ?? []) as ChargeBalanceRow[];
-    rows.push(...pageRows);
+      const pageRows = (data ?? []) as ChargeBalanceRow[];
+      rows.push(...pageRows);
 
-    if (pageRows.length < pageSize) break;
+      if (pageRows.length < pageSize) break;
+    }
   }
 
   return rows;
+}
+
+function chunkStrings(items: string[], size = 500): string[][] {
+  const out: string[][] = [];
+  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
+  return out;
 }
 
 function StatCard({
@@ -1014,12 +1022,11 @@ export default async function FinancePaymentsPage({
   const studentRows = adminStudents.filter((student) =>
     student.class_id ? classIdSet.has(student.class_id) : false,
   );
-  const studentIds = studentRows.map((student) => student.id);
 
   const [{ data: balances, error: balErr }, { data: receipts, error: recErr }] =
     await Promise.all([
-      studentIds.length > 0
-        ? fetchAllChargeBalancesForPayments({ institutionId, studentIds })
+      classIds.length > 0
+        ? fetchAllChargeBalancesForPayments({ institutionId, classIds })
             .then((data) => ({ data, error: null }))
             .catch((error) => ({ data: [], error }))
         : Promise.resolve({ data: [], error: null } as any),
@@ -1104,8 +1111,11 @@ export default async function FinancePaymentsPage({
   );
   const receiptStudentMap = new Map(receiptStudents.map((s) => [s.id, s]));
 
-  const totalDue = paymentStudentRows.reduce(
-    (sum, row) => sum + Number(row.total_due || 0),
+  const openBalanceRows = balanceRows.filter(
+    (row) => Number(row.balance_due || 0) > 0,
+  );
+  const totalDue = openBalanceRows.reduce(
+    (sum, row) => sum + Number(row.balance_due || 0),
     0,
   );
   const totalReceipts = receiptRows
@@ -1163,7 +1173,7 @@ export default async function FinancePaymentsPage({
           icon={<Wallet className="h-5 w-5" />}
           label="Reste à recouvrer"
           value={formatMoney(totalDue)}
-          hint="Situations ouvertes connues"
+          hint={`${openBalanceRows.length} frais ouvert(s)`}
         />
         <StatCard
           icon={<Receipt className="h-5 w-5" />}

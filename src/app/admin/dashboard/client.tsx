@@ -16,6 +16,7 @@ import {
   AlertTriangle,
   Clock4,
   BarChart3,
+  FileSpreadsheet,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -274,6 +275,7 @@ export default function AdminDashboardClient() {
 
   const [institution, setInstitution] = useState<InstitutionInfo | null>(null);
   const [loadingInstitution, setLoadingInstitution] = useState(true);
+  const [role, setRole] = useState<string | null>(null);
 
   const nfmt = useMemo(() => new Intl.NumberFormat(), []);
   void nfmt;
@@ -293,6 +295,24 @@ export default function AdminDashboardClient() {
       setRefreshing(false);
     }
   }
+
+  useEffect(() => {
+    let alive = true;
+
+    (async () => {
+      try {
+        const res = await fetch("/api/auth/role", { cache: "no-store" });
+        const json = await res.json().catch(() => ({}));
+        if (alive && res.ok) setRole(json?.role ? String(json.role) : null);
+      } catch {
+        if (alive) setRole(null);
+      }
+    })();
+
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   useEffect(() => {
     let alive = true;
@@ -382,6 +402,7 @@ export default function AdminDashboardClient() {
   const boys = counts.boys ?? 0;
   const girls = counts.girls ?? 0;
   const genderUnknown = counts.gender_unknown ?? 0;
+  const isFinanceManager = role === "finance_manager";
 
   return (
     <div className="space-y-6">
@@ -580,24 +601,37 @@ export default function AdminDashboardClient() {
           </CardHeader>
           <CardContent className="pt-0">
             <div className="space-y-2">
-              <QuickLink href="/admin/classes" icon={School}>
-                Créer des classes
-              </QuickLink>
-              <QuickLink href="/admin/users" icon={Users}>
-                Créer un enseignant
-              </QuickLink>
-              <QuickLink href="/admin/affectations" icon={UserRoundCheck}>
-                Affecter des classes
-              </QuickLink>
-              <QuickLink href="/admin/parents" icon={Users}>
-                Liste des classes
-              </QuickLink>
-              <QuickLink href="/admin/import" icon={GraduationCap}>
-                Importer élèves
-              </QuickLink>
-              <QuickLink href="/admin/statistiques" icon={BarChart3}>
-                Contrôle des enseignants
-              </QuickLink>
+              {isFinanceManager ? (
+                <>
+                  <QuickLink href="/admin/finance" icon={FileSpreadsheet}>
+                    Gestion financière
+                  </QuickLink>
+                  <QuickLink href="/admin/parents" icon={Users}>
+                    Listes de classe
+                  </QuickLink>
+                </>
+              ) : (
+                <>
+                  <QuickLink href="/admin/classes" icon={School}>
+                    Créer des classes
+                  </QuickLink>
+                  <QuickLink href="/admin/users" icon={Users}>
+                    Créer un enseignant
+                  </QuickLink>
+                  <QuickLink href="/admin/affectations" icon={UserRoundCheck}>
+                    Affecter des classes
+                  </QuickLink>
+                  <QuickLink href="/admin/parents" icon={Users}>
+                    Liste des classes
+                  </QuickLink>
+                  <QuickLink href="/admin/import" icon={GraduationCap}>
+                    Importer élèves
+                  </QuickLink>
+                  <QuickLink href="/admin/statistiques" icon={BarChart3}>
+                    Contrôle des enseignants
+                  </QuickLink>
+                </>
+              )}
             </div>
           </CardContent>
         </Card>

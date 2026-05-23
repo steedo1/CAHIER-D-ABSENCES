@@ -40,7 +40,8 @@ type InstitutionSettingsRow = {
 
 async function guard(
   supa: SupabaseClient,
-  srv: SupabaseClient
+  srv: SupabaseClient,
+  options: { write?: boolean } = {},
 ): Promise<GuardOk | GuardErr> {
   const {
     data: { user },
@@ -57,29 +58,33 @@ async function guard(
   let instId: string | null = (me?.institution_id as string) || null;
   let roleProfile = String(me?.role || "");
 
-  // 2) Complément via user_roles (admin / super_admin), si besoin
+  // 2) Complément via user_roles. En lecture, le gestionnaire financier
+  // peut consulter les informations d'en-tête nécessaires aux listes et au dashboard.
+  const allowedReadRoles = ["admin", "super_admin", "finance_manager"];
+  const allowedWriteRoles = ["admin", "super_admin"];
+  const allowedRoles = options.write ? allowedWriteRoles : allowedReadRoles;
   let roleFromUR: string | null = null;
-  if (!instId || !["admin", "super_admin"].includes(roleProfile)) {
+  if (!instId || !allowedRoles.includes(roleProfile)) {
     const { data: urRows } = await srv
       .from("user_roles")
       .select("role, institution_id")
       .eq("profile_id", user.id);
 
-    const adminRow = (urRows || []).find((r) =>
-      ["admin", "super_admin"].includes(String(r.role || ""))
+    const allowedRow = (urRows || []).find((r) =>
+      allowedRoles.includes(String(r.role || ""))
     );
-    if (adminRow) {
-      roleFromUR = String(adminRow.role);
-      if (!instId && adminRow.institution_id) instId = String(adminRow.institution_id);
+    if (allowedRow) {
+      roleFromUR = String(allowedRow.role);
+      if (!instId && allowedRow.institution_id) instId = String(allowedRow.institution_id);
     }
   }
 
-  const isAdmin =
-    ["admin", "super_admin"].includes(roleProfile) ||
-    ["admin", "super_admin"].includes(String(roleFromUR || ""));
+  const hasAllowedRole =
+    allowedRoles.includes(roleProfile) ||
+    allowedRoles.includes(String(roleFromUR || ""));
 
   if (!instId) return { error: "no_institution" };
-  if (!isAdmin) return { error: "forbidden" };
+  if (!hasAllowedRole) return { error: "forbidden" };
 
   return { user: { id: user.id }, instId };
 }
@@ -186,7 +191,7 @@ export async function PUT(req: NextRequest) {
   const supa = (await getSupabaseServerClient()) as unknown as SupabaseClient;
   const srv = getSupabaseServiceClient() as unknown as SupabaseClient;
 
-  const g = await guard(supa, srv);
+  const g = await guard(supa, srv, { write: true });
   if ("error" in g) return NextResponse.json({ error: g.error }, { status: 403 });
 
   const body = await req.json().catch(() => ({}));

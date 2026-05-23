@@ -181,7 +181,10 @@ async function getEducators(
   return loadEducatorProfiles(matchingIds);
 }
 
-async function requireAdminContext(classId: string) {
+async function requireAdminContext(
+  classId: string,
+  options: { write?: boolean } = {},
+) {
   const supa = await getSupabaseServerClient();
   const srv = getSupabaseServiceClient();
 
@@ -210,23 +213,30 @@ async function requireAdminContext(classId: string) {
 
   if (roleErr) return { error: NextResponse.json({ error: roleErr.message }, { status: 400 }) };
 
-  const adminRoles = (roleRows || []).filter((row: any) =>
-    ["admin", "super_admin"].includes(String(row.role || "")),
-  );
-
+  const rows = roleRows || [];
   let institutionId = String((me as any)?.institution_id || "").trim();
   if (!institutionId) {
-    const roleInstitution = adminRoles.find((row: any) => row.institution_id)?.institution_id;
+    const roleInstitution = rows.find((row: any) => row.institution_id)?.institution_id;
     institutionId = roleInstitution ? String(roleInstitution).trim() : "";
   }
 
-  const isAdmin = adminRoles.length > 0;
+  const hasRoleForInstitution = (allowed: string[]) =>
+    rows.some((row: any) => {
+      const role = String(row.role || "");
+      const rowInstitutionId = String(row.institution_id || "").trim();
+      if (!allowed.includes(role)) return false;
+      if (role === "super_admin") return true;
+      return !rowInstitutionId || rowInstitutionId === institutionId;
+    });
+
+  const canWrite = hasRoleForInstitution(["admin", "super_admin"]);
+  const canView = canWrite || hasRoleForInstitution(["finance_manager"]);
 
   if (!institutionId) {
     return { error: NextResponse.json({ error: "no_institution" }, { status: 400 }) };
   }
 
-  if (!isAdmin) {
+  if (options.write ? !canWrite : !canView) {
     return { error: NextResponse.json({ error: "forbidden" }, { status: 403 }) };
   }
 
@@ -240,7 +250,7 @@ async function requireAdminContext(classId: string) {
   if (classErr) return { error: NextResponse.json({ error: classErr.message }, { status: 400 }) };
   if (!cls) return { error: NextResponse.json({ error: "class_not_found" }, { status: 404 }) };
 
-  return { supa, srv, user, me, institutionId, cls };
+  return { supa, srv, user, me, institutionId, cls, canWrite };
 }
 
 export async function GET(req: NextRequest, context: { params: Promise<{ id: string }> }) {
@@ -252,7 +262,7 @@ export async function GET(req: NextRequest, context: { params: Promise<{ id: str
   const ctx = await requireAdminContext(classId);
   if ("error" in ctx) return ctx.error;
 
-  const { srv, institutionId, cls } = ctx;
+  const { srv, institutionId, cls, canWrite } = ctx;
 
   const url = new URL(req.url);
   const academicYearParam = String(url.searchParams.get("academic_year") || "").trim();
@@ -386,6 +396,7 @@ export async function GET(req: NextRequest, context: { params: Promise<{ id: str
 
   return NextResponse.json({
     ok: true,
+    can_edit: Boolean(canWrite),
     class: {
       id: String((cls as any).id),
       label: String((cls as any).label || (cls as any).code || "Classe"),
@@ -444,7 +455,7 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
   const classId = String(id || "").trim();
   if (!classId) return NextResponse.json({ error: "missing_class_id" }, { status: 400 });
 
-  const ctx = await requireAdminContext(classId);
+  const ctx = await requireAdminContext(classId, { write: true });
   if ("error" in ctx) return ctx.error;
 
   const { srv, institutionId } = ctx;

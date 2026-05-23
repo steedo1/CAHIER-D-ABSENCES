@@ -868,8 +868,8 @@ export default function SidebarNav() {
   const isFinanceManager = role === "finance_manager";
 
   const topLevelItems = React.useMemo(
-    () => (isFinanceManager ? [] : TOP_LEVEL_ITEMS),
-    [isFinanceManager]
+    () => TOP_LEVEL_ITEMS,
+    []
   );
 
   const montageEdtItems = React.useMemo(
@@ -913,7 +913,10 @@ export default function SidebarNav() {
   );
 
   const organisationItems = React.useMemo(
-    () => (isFinanceManager ? [] : ORGANISATION_ITEMS),
+    () =>
+      isFinanceManager
+        ? ORGANISATION_ITEMS.filter((item) => item.href === "/admin/parents")
+        : ORGANISATION_ITEMS,
     [isFinanceManager]
   );
 
@@ -1141,7 +1144,7 @@ export default function SidebarNav() {
               />
             )}
 
-            {!isFinanceManager && organisationItems.length > 0 && (
+            {organisationItems.length > 0 && (
               <GroupSection
               title="Organisation scolaire"
               Icon={School}
