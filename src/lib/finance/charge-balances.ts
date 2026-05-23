@@ -89,6 +89,8 @@ export async function fetchFinanceChargeBalancesByClasses({
         query = query.order("due_date", { ascending: true, nullsFirst: false });
       }
 
+      query = query.order("id", { ascending: true });
+
       const { data, error } = await query.range(from, to);
 
       if (error) throw new Error(error.message);

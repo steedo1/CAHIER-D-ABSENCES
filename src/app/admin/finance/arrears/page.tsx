@@ -13,6 +13,7 @@ import {
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { getFinanceAccessForCurrentUser } from "@/lib/finance-access";
+import { fetchFinanceChargeBalancesByClasses } from "@/lib/finance/charge-balances";
 import {
   AcademicYearSelector,
   getFinanceAcademicYearContext,
@@ -185,33 +186,16 @@ export default async function FinanceArrearsPage({
   const classIds = classRows.map((row) => row.id);
   const classMap = new Map(classRows.map((c) => [c.id, c]));
 
-  let balancesQuery = admin
-    .schema("finance")
-    .from("v_charge_balances")
-    .select(
-      "id,school_id,academic_year_id,student_id,class_id,fee_schedule_id,fee_category_id,label,base_amount,adjustment_total,net_amount,paid_amount,balance_due,due_date,charge_date,computed_status,created_at,updated_at",
-    )
-    .eq("school_id", institutionId)
-    .gt("balance_due", 0)
-    .neq("computed_status", "cancelled")
-    .order("due_date", { ascending: true, nullsFirst: false });
+  const balanceClassIds = classIdFilter ? [classIdFilter] : classIds;
 
-  if (classIdFilter) {
-    balancesQuery = balancesQuery.eq("class_id", classIdFilter);
-  } else if (classIds.length > 0) {
-    balancesQuery = balancesQuery.in("class_id", classIds);
-  } else {
-    balancesQuery = balancesQuery.eq(
-      "id",
-      "00000000-0000-0000-0000-000000000000",
-    );
-  }
-
-  const { data: balances, error: balErr } = await balancesQuery;
-
-  if (balErr) throw new Error(balErr.message);
-
-  const balanceRows = (balances ?? []) as ChargeBalanceRow[];
+  const balanceRows = balanceClassIds.length
+    ? ((await fetchFinanceChargeBalancesByClasses({
+        institutionIds: [institutionId],
+        classIds: balanceClassIds,
+        onlyOpen: true,
+        orderByDueDate: true,
+      })) as ChargeBalanceRow[])
+    : [];
   const relevantStudentIds = new Set(balanceRows.map((b) => b.student_id));
 
   const classIdSet = new Set(classIds);
