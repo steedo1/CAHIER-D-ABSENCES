@@ -1207,8 +1207,8 @@ function StudentBulletinCard({
     if (!Number.isFinite(naturalH) || naturalH <= 0) return;
 
     // Zone utile A4 très prudente : A4 - marges navigateur/imprimante - marge basse.
-    // 282 mm laisse une vraie réserve pour éviter les pieds de page coupés.
-    const targetPx = (282 / 25.4) * 96;
+    // 284 mm garde une réserve basse tout en évitant de réduire inutilement la police.
+    const targetPx = (284 / 25.4) * 96;
 
     if (naturalH <= targetPx) {
       setScale(1);
@@ -1765,7 +1765,7 @@ function StudentBulletinCard({
           return (
             <tr
               key={`${s.subject_id}-${comp.id}`}
-              className="text-[9px] text-slate-700"
+              className="text-[9.5px] text-slate-700"
             >
               <td className="bdr px-1 py-[1px] pl-4">
                 {comp.short_label || comp.label}
@@ -1833,30 +1833,30 @@ function StudentBulletinCard({
       {/* ENTÊTE OFFICIEL */}
       <div className="bdr bulletin-header mb-1 p-1">
         <div className="grid grid-cols-3 items-start gap-2">
-          <div className="official-block text-center text-[9px] leading-tight">
+          <div className="official-block text-center text-[10px] leading-tight">
             <div className="font-semibold uppercase">{countryName}</div>
-            <div className="text-[8px]">{countryMotto}</div>
-            <div className="mt-1 text-[8px] font-semibold uppercase">
+            <div className="text-[9px]">{countryMotto}</div>
+            <div className="mt-1 text-[9px] font-semibold uppercase">
               {ministryName}
             </div>
-            <div className="mt-1 text-[8px] uppercase">
+            <div className="mt-1 text-[9px] uppercase">
               {String((institution?.institution_region || "").trim())}
             </div>
           </div>
 
           <div className="text-center">
-            <div className="official-title text-[12px] font-bold uppercase leading-tight">
+            <div className="official-title text-[13px] font-bold uppercase leading-tight">
               BULLETIN TRIMESTRIEL DE NOTES
             </div>
-            <div className="official-subtitle text-[10px] font-semibold">{periodTitle(period)}</div>
+            <div className="official-subtitle text-[11px] font-semibold">{periodTitle(period)}</div>
           </div>
 
           <div className="relative flex justify-end gap-2">
-            <div className="official-block text-right text-[9px] leading-tight mr-[118px]">
+            <div className="official-block text-right text-[10px] leading-tight mr-[118px]">
               <div>Année scolaire</div>
               <div className="font-semibold">{academicYear || "—"}</div>
               {institution?.institution_code && (
-                <div className="mt-1 text-[8px]">
+                <div className="mt-1 text-[9px]">
                   Code :{" "}
                   <span className="font-semibold">
                     {String(institution.institution_code)}
@@ -1864,7 +1864,7 @@ function StudentBulletinCard({
                 </div>
               )}
               {(period.from || period.to) && (
-                <div className="mt-1 text-[8px]">
+                <div className="mt-1 text-[9px]">
                   {period.from ? formatDateFR(period.from) : "—"} →{" "}
                   {period.to ? formatDateFR(period.to) : "—"}
                 </div>
@@ -1880,7 +1880,7 @@ function StudentBulletinCard({
                   className="h-[104px] w-[104px] object-contain"
                 />
               ) : (
-                <div className="text-[8px] text-slate-500">QR</div>
+                <div className="text-[9px] text-slate-500">QR</div>
               )}
             </div>
           </div>
@@ -1896,17 +1896,17 @@ function StudentBulletinCard({
                 className="max-h-full max-w-full object-contain"
               />
             ) : (
-              <div className="text-[8px] text-slate-500">Logo</div>
+              <div className="text-[9px] text-slate-500">Logo</div>
             )}
           </div>
 
           <div className="text-center">
-            <div className="institution-title text-[14px] font-bold uppercase leading-tight">
+            <div className="institution-title text-[15px] font-bold uppercase leading-tight">
               {safeUpper(
                 String((institution?.institution_name || "ÉTABLISSEMENT").trim())
               )}
             </div>
-            <div className="institution-info text-[9px]">
+            <div className="institution-info text-[10px]">
               {String(institution?.institution_postal_address || "")}
               {institution?.institution_phone
                 ? ` • Tél : ${institution.institution_phone}`
@@ -1923,7 +1923,7 @@ function StudentBulletinCard({
 
       {/* IDENTITÉ ÉLÈVE */}
       <div className="bdr student-identity mb-1 p-1">
-        <div className="grid grid-cols-[1fr_1fr_1fr_86px] gap-2 text-[9px] leading-tight">
+        <div className="grid grid-cols-[1fr_1fr_1fr_86px] gap-2 text-[10px] leading-tight">
           <div className="space-y-[2px]">
             <div>
               <span className="font-semibold">Nom & prénom(s) : </span>
@@ -1990,14 +1990,14 @@ function StudentBulletinCard({
                 className="h-full w-full object-cover"
               />
             ) : (
-              <div className="text-center text-[8px] text-slate-500">Photo</div>
+              <div className="text-center text-[9px] text-slate-500">Photo</div>
             )}
           </div>
         </div>
       </div>
 
       {/* TABLEAU DISCIPLINES */}
-      <table className="bdr discipline-table w-full text-[9px] leading-tight">
+      <table className="bdr discipline-table w-full text-[10px] leading-tight">
         <thead>
           <tr className="discipline-head">
             <th className="bdr px-1 py-[2px] text-left">DISCIPLINES</th>
@@ -2107,7 +2107,7 @@ function StudentBulletinCard({
       </table>
 
       {/* BLOCS BAS */}
-      <div className="mt-1 grid grid-cols-3 gap-2 text-[9px] leading-tight">
+      <div className="mt-1 grid grid-cols-3 gap-2 text-[10px] leading-tight">
         <div className="bdr bottom-card p-1">
           <div className="bottom-card-title font-semibold text-center">Assiduité</div>
           {conduct ? (
@@ -2121,7 +2121,7 @@ function StudentBulletinCard({
                 <span className="font-semibold">{conduct.tardy_count ?? 0}</span>
               </div>
               {conductRubricMax && conduct?.breakdown && (
-                <div className="mt-1 grid grid-cols-2 gap-x-2 gap-y-[2px] text-[8px] text-slate-700">
+                <div className="mt-1 grid grid-cols-2 gap-x-2 gap-y-[2px] text-[9px] text-slate-700">
                   <div>
                     Assiduité : {conduct.breakdown.assiduite} /{" "}
                     {conductRubricMax.assiduite}
@@ -2141,7 +2141,7 @@ function StudentBulletinCard({
               )}
             </div>
           ) : (
-            <div className="mt-[2px] text-[8px] text-slate-600">
+            <div className="mt-[2px] text-[9px] text-slate-600">
               Données de conduite indisponibles.
             </div>
           )}
@@ -2153,14 +2153,14 @@ function StudentBulletinCard({
             <div className="bottom-card-title font-semibold">Moyennes</div>
             <div className="mt-[3px] grid grid-cols-2 gap-2">
               <div>
-                <div className="text-[8px] font-semibold uppercase">Trimestre</div>
-                <div className="mt-[2px] text-[10px] font-bold">
+                <div className="text-[9px] font-semibold uppercase">Trimestre</div>
+                <div className="mt-[2px] text-[11px] font-bold">
                   {formatNumberOrNCWithMarker(
                     item.general_avg,
                     showGeneralIncompleteMarker
                   )} / 20
                 </div>
-                <div className="mt-[1px] text-[8px]">
+                <div className="mt-[1px] text-[9px]">
                   Rang :{" "}
                   <span className="font-semibold">
                     {generalAvgHasValue ? formatRankOrNC(item.rank) : "NC"}
@@ -2170,14 +2170,14 @@ function StudentBulletinCard({
               </div>
 
               <div>
-                <div className="text-[8px] font-semibold uppercase">Annuel</div>
-                <div className="mt-[2px] text-[10px] font-bold">
+                <div className="text-[9px] font-semibold uppercase">Annuel</div>
+                <div className="mt-[2px] text-[11px] font-bold">
                   {formatNumberOrNCWithMarker(
                     annualAvgOn20,
                     showAnnualIncompleteMarker
                   )} / 20
                 </div>
-                <div className="mt-[1px] text-[8px]">
+                <div className="mt-[1px] text-[9px]">
                   Rang :{" "}
                   <span className="font-semibold">
                     {annualAvgHasValue ? formatRankOrNC(annualRank) : "NC"}
@@ -2190,7 +2190,7 @@ function StudentBulletinCard({
         ) : (
           <div className="bdr bottom-card average-card p-1 text-center">
             <div className="bottom-card-title font-semibold">Moyenne trimestrielle</div>
-            <div className="mt-[3px] text-[10px] font-bold">
+            <div className="mt-[3px] text-[11px] font-bold">
               Moyenne trimestrielle :{" "}
               {formatNumberOrNCWithMarker(
                 item.general_avg,
@@ -2217,14 +2217,14 @@ function StudentBulletinCard({
         </div>
       </div>
 
-      <div className="mt-1 grid grid-cols-2 items-stretch gap-2 text-[9px] leading-tight">
+      <div className="mt-1 grid grid-cols-2 items-stretch gap-2 text-[10px] leading-tight">
         <div className="flex flex-col gap-1">
           <div className="bdr council-card flex-1 p-1">
             <div className="bottom-card-title font-semibold uppercase text-center">
               Mentions du conseil de classe
             </div>
-            <div className="mt-[2px] text-[8px] font-semibold">DISTINCTIONS</div>
-            <div className="mt-[2px] space-y-[2px] text-[8px]">
+            <div className="mt-[2px] text-[9px] font-semibold">DISTINCTIONS</div>
+            <div className="mt-[2px] space-y-[2px] text-[9px]">
               <div className="flex items-center">
                 {tick(mentions.distinction === "honour")}
                 <span>Tableau d&apos;honneur / Félicitations</span>
@@ -2239,8 +2239,8 @@ function StudentBulletinCard({
               </div>
             </div>
 
-            <div className="mt-2 text-[8px] font-semibold">SANCTIONS</div>
-            <div className="mt-[2px] space-y-[2px] text-[8px]">
+            <div className="mt-2 text-[9px] font-semibold">SANCTIONS</div>
+            <div className="mt-[2px] space-y-[2px] text-[9px]">
               <div className="flex items-center">
                 {tick(mentions.sanction === "warningWork")}
                 <span>Avertissement travail</span>
@@ -2261,10 +2261,10 @@ function StudentBulletinCard({
           </div>
 
           <div className="bdr visa-card flex min-h-[78px] flex-col justify-between p-1">
-            <div className="font-semibold text-[8px]">Visa du professeur principal</div>
+            <div className="font-semibold text-[9px]">Visa du professeur principal</div>
             <div className="h-[50px]" />
             {classInfo.head_teacher?.display_name && (
-              <div className="text-center text-[8px]">
+              <div className="text-center text-[9px]">
                 {classInfo.head_teacher.display_name}
               </div>
             )}
@@ -2277,17 +2277,17 @@ function StudentBulletinCard({
               Appréciations du conseil de classe
             </div>
             <div className="council-appreciation mt-1 flex h-[50px] items-center justify-center bg-white px-1 bdr">
-              <div className="text-center text-[10px] font-bold leading-snug">
+              <div className="text-center text-[11px] font-bold leading-snug">
                 {councilText || "\u00A0"}
               </div>
             </div>
           </div>
 
           <div className="bdr visa-card head-visa-card flex min-h-[128px] flex-1 flex-col justify-between p-1">
-            <div className="font-semibold text-[8px]">{headVisaLabel}</div>
+            <div className="font-semibold text-[9px]">{headVisaLabel}</div>
             <div className="flex-1" />
             {institution?.institution_head_name && (
-              <div className="pb-1 text-center text-[8px]">
+              <div className="pb-1 text-center text-[9px]">
                 {institution.institution_head_name}
               </div>
             )}
@@ -2295,7 +2295,7 @@ function StudentBulletinCard({
         </div>
       </div>
 
-      <div className="bulletin-footer mt-1 pb-[2mm] text-center text-[8px] leading-tight text-black">
+      <div className="bulletin-footer mt-1 pb-[2mm] text-center text-[9px] leading-tight text-black">
         <div className="font-bold tracking-[0.04em]">www.mon-cahier.com</div>
         <div className="font-semibold">Bulletin sécurisé par code QR</div>
       </div>
