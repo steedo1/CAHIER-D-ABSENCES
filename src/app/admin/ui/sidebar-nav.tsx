@@ -18,6 +18,7 @@ import {
   NotebookPen,
   FileSpreadsheet,
   FileText,
+  MessageSquare,
 } from "lucide-react";
 import React from "react";
 import type { AppRole } from "@/lib/auth/role";
@@ -291,6 +292,11 @@ const ORGANISATION_ITEMS: NavItem[] = [
    Groupe : Administration & services
 ========================= */
 const ADMIN_ITEMS: NavItem[] = [
+  {
+    href: "/admin/communication",
+    label: "Communication",
+    Icon: MessageSquare,
+  },
   {
     href: "/admin/autorisations",
     label: "Autorisation absences",
@@ -925,6 +931,7 @@ export default function SidebarNav() {
       ADMIN_ITEMS.filter((item) => {
         if (isFinanceManager) return item.href.startsWith("/admin/finance");
         if (isEducator && item.href.startsWith("/admin/finance")) return false;
+        if (isEducator && item.href.startsWith("/admin/communication")) return false;
         return true;
       }),
     [isEducator, isFinanceManager]

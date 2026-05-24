@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { sendOrangeSms } from "@/lib/sms/orange";
 import { buildSmsMessageFromQueue } from "@/lib/sms/messages";
+import { normalizePhone } from "@/lib/phone";
 import {
   getInstitutionSmsPolicy,
   resolveSmsProvider,
@@ -240,6 +241,7 @@ type ContactRow = {
   is_primary: boolean;
   verified_at: string | null;
   created_at: string;
+  source?: "contact" | "profile";
 };
 
 /* ───────────────── Channels ───────────────── */
@@ -283,6 +285,10 @@ function resolveSmsEventFromPayload(payload: any): SmsEventKind | null {
 
   if (kind === "grades_digest" || kind === "notes_digest") {
     return "notes_digest";
+  }
+
+  if (kind === "communication" || event === "communication") {
+    return "communication";
   }
 
   return null;
@@ -421,7 +427,7 @@ async function fetchSmsContactsByProfile(
   for (const row of rows) {
     const key = String(row.profile_id);
     const arr = out.get(key) || [];
-    arr.push(row);
+    arr.push({ ...row, source: "contact" });
     out.set(key, arr);
   }
 
@@ -437,6 +443,44 @@ async function fetchSmsContactsByProfile(
     });
 
     out.set(profileId, arr);
+  }
+
+  // Fallback utile pour le module Communication : les personnels/enseignants
+  // ont souvent un téléphone dans profiles.phone sans ligne dédiée dans
+  // parent_notification_contacts.
+  const missingProfiles = profileIds.filter((profileId) => !(out.get(profileId) || []).length);
+
+  if (missingProfiles.length) {
+    const { data: profiles, error: pErr } = await srv
+      .from("profiles")
+      .select("id,phone")
+      .in("id", missingProfiles);
+
+    if (pErr) {
+      console.warn("[sms/dispatch] profiles_phone_fallback_warn", {
+        error: pErr.message,
+      });
+    } else {
+      for (const row of profiles || []) {
+        const profileId = s((row as any).id);
+        const phone = normalizePhone((row as any).phone);
+        if (!profileId || !phone) continue;
+
+        out.set(profileId, [
+          {
+            id: `profile:${profileId}`,
+            profile_id: profileId,
+            institution_id: null,
+            phone_e164: phone,
+            sms_enabled: true,
+            is_primary: true,
+            verified_at: null,
+            created_at: new Date().toISOString(),
+            source: "profile",
+          },
+        ]);
+      }
+    }
   }
 
   return out;
@@ -720,7 +764,7 @@ async function run(req: Request) {
                 senderName: senderName || undefined,
               });
 
-              usedContactIds.add(best.id);
+              if (best.source !== "profile") usedContactIds.add(best.id);
               successes++;
               acceptedSmsSends++;
 

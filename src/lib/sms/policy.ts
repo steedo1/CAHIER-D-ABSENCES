@@ -5,7 +5,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 export type SmsEventKind =
   | "absent"
   | "late"
-  | "notes_digest";
+  | "notes_digest"
+  | "communication";
 
 export type InstitutionSmsPolicy = {
   institutionId: string;
@@ -71,6 +72,10 @@ export function normalizeSmsEventKind(value: unknown): SmsEventKind | null {
     ].includes(x)
   ) {
     return "notes_digest";
+  }
+
+  if (["communication", "message", "broadcast", "campaign"].includes(x)) {
+    return "communication";
   }
 
   return null;
@@ -202,6 +207,11 @@ export function isSmsEventEnabled(
   if (event === "absent") return !!policy.smsAbsenceEnabled;
   if (event === "late") return !!policy.smsLateEnabled;
   if (event === "notes_digest") return !!policy.smsNotesDigestEnabled;
+
+  // Les campagnes de communication admin sont autorisées dès que le SMS premium
+  // est activé pour l’établissement. On évite de les bloquer derrière les
+  // options absences/retards/notes, qui sont des usages scolaires spécifiques.
+  if (event === "communication") return true;
 
   return false;
 }
