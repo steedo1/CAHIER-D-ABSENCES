@@ -70,6 +70,30 @@ type ChargeRow = {
   balance_due: number | string;
 };
 
+type StudentChargeDirectRow = {
+  id: string;
+  school_id: string;
+  academic_year: string | null;
+  student_id: string;
+  class_id: string | null;
+  fee_category_id: string | null;
+  label: string;
+  due_date: string | null;
+  base_amount: number | string;
+  status: string;
+};
+
+type AllocationLiteRow = {
+  student_charge_id: string;
+  receipt_id: string;
+  amount: number | string;
+};
+
+type ReceiptStatusLiteRow = {
+  id: string;
+  receipt_status: string;
+};
+
 type ClassRow = {
   id: string;
   label: string;
@@ -145,10 +169,6 @@ function isScolariteCharge(label: string | null | undefined) {
 
 function isInternatCharge(label: string | null | undefined) {
   return normalizeText(label).includes("internat");
-}
-
-function isPensionCharge(label: string | null | undefined) {
-  return normalizeText(label).includes("pension");
 }
 
 function safeNumber(value: number | string | null | undefined) {
@@ -389,29 +409,94 @@ export default async function FinanceReceiptPrintPage({
       ),
     );
 
-    if (categoryIds.length > 0) {
-      let scolariteQuery = supabase
+    const referenceClassId = rawLines[0]?.charge?.class_id ?? null;
+
+    if (categoryIds.length > 0 && referenceClassId) {
+      // IMPORTANT : pour le reçu de scolarité, on ne doit pas calculer le
+      // total attendu depuis v_charge_balances. Cette vue peut inclure des
+      // lignes annulées ou des lignes parasites selon l'évolution de la base.
+      // On reconstruit donc le total depuis finance.student_charges en filtrant
+      // explicitement : année du reçu + élève + classe + catégorie + non annulé.
+      const { data: directChargesData, error: directChargesErr } = await supabase
         .schema("finance")
-        .from("v_charge_balances")
+        .from("student_charges")
         .select(
-          "id,school_id,student_id,class_id,fee_category_id,label,due_date,net_amount,paid_amount,balance_due",
+          "id,school_id,academic_year,student_id,class_id,fee_category_id,label,due_date,base_amount,status",
         )
         .eq("school_id", institutionId)
         .eq("student_id", typedReceipt.student_id)
-        .in("fee_category_id", categoryIds);
+        .eq("academic_year", typedReceipt.academic_year)
+        .eq("class_id", referenceClassId)
+        .in("fee_category_id", categoryIds)
+        .neq("status", "cancelled");
 
-      if (rawLines[0]?.charge?.class_id) {
-        scolariteQuery = scolariteQuery.eq(
-          "class_id",
-          rawLines[0].charge.class_id,
+      if (!directChargesErr) {
+        const directCharges = (directChargesData ?? []) as StudentChargeDirectRow[];
+        const directChargeIds = directCharges.map((charge) => charge.id);
+        let allocationsForCharges: AllocationLiteRow[] = [];
+        let receiptStatuses: ReceiptStatusLiteRow[] = [];
+
+        if (directChargeIds.length > 0) {
+          const { data: allocationData, error: allocationErr } = await supabase
+            .schema("finance")
+            .from("receipt_allocations")
+            .select("student_charge_id,receipt_id,amount")
+            .in("student_charge_id", directChargeIds);
+
+          if (!allocationErr) {
+            allocationsForCharges = (allocationData ?? []) as AllocationLiteRow[];
+            const receiptIds = Array.from(
+              new Set(allocationsForCharges.map((row) => row.receipt_id)),
+            );
+
+            if (receiptIds.length > 0) {
+              const { data: receiptStatusData, error: receiptStatusErr } =
+                await supabase
+                  .schema("finance")
+                  .from("receipts")
+                  .select("id,receipt_status")
+                  .in("id", receiptIds);
+
+              if (!receiptStatusErr) {
+                receiptStatuses = (receiptStatusData ?? []) as ReceiptStatusLiteRow[];
+              }
+            }
+          }
+        }
+
+        const receiptStatusMap = new Map(
+          receiptStatuses.map((row) => [row.id, row.receipt_status]),
         );
-      }
+        const paidByCharge = new Map<string, number>();
 
-      const { data: scolariteData, error: scolariteErr } =
-        await scolariteQuery;
+        for (const allocation of allocationsForCharges) {
+          if (receiptStatusMap.get(allocation.receipt_id) === "cancelled") {
+            continue;
+          }
+          paidByCharge.set(
+            allocation.student_charge_id,
+            (paidByCharge.get(allocation.student_charge_id) ?? 0) +
+              safeNumber(allocation.amount),
+          );
+        }
 
-      if (!scolariteErr) {
-        scolariteReferenceCharges = (scolariteData ?? []) as ChargeRow[];
+        scolariteReferenceCharges = directCharges.map((charge) => {
+          const expected = safeNumber(charge.base_amount);
+          const paid = paidByCharge.get(charge.id) ?? 0;
+
+          return {
+            id: charge.id,
+            school_id: charge.school_id,
+            student_id: charge.student_id,
+            class_id: charge.class_id,
+            fee_category_id: charge.fee_category_id,
+            label: charge.label,
+            due_date: charge.due_date,
+            net_amount: expected,
+            paid_amount: paid,
+            balance_due: Math.max(expected - paid, 0),
+          } satisfies ChargeRow;
+        });
       }
     }
   }
@@ -419,7 +504,9 @@ export default async function FinanceReceiptPrintPage({
   const scolariteLinesForTotals =
     scolariteReferenceCharges.length > 0
       ? scolariteReferenceCharges
-      : rawLines.map((line) => line.charge).filter((c): c is ChargeRow => Boolean(c));
+      : rawLines
+          .map((line) => line.charge)
+          .filter((c): c is ChargeRow => Boolean(c));
 
   const displayLines = allLinesAreScolarite
     ? [
@@ -446,41 +533,34 @@ export default async function FinanceReceiptPrintPage({
           components: [] as ReceiptAllocationComponentRow[],
         },
       ]
-    : rawLines
-        .map((line) => {
-          const visibleComponents = line.components.filter(
-            (component) => safeNumber(component.amount) > 0,
-          );
-          const hasClosedOptionalComponents = line.components.some(
-            (component) => safeNumber(component.amount) === 0,
-          );
-          const componentExpected = visibleComponents.reduce(
-            (sum, component) => sum + safeNumber(component.amount),
-            0,
-          );
-
-          return {
-            key: line.alloc.id,
-            label: line.charge?.label || "Dette introuvable",
-            dueDate: line.charge?.due_date ?? null,
-            expected:
-              componentExpected > 0
-                ? componentExpected
-                : safeNumber(line.charge?.net_amount),
-            paid: safeNumber(line.charge?.paid_amount),
-            remaining: hasClosedOptionalComponents
-              ? 0
-              : safeNumber(line.charge?.balance_due),
-            amount: safeNumber(line.alloc.amount),
-            components: visibleComponents,
-          };
-        })
-        .filter(
-          (line) =>
-            safeNumber(line.amount) > 0 ||
-            line.components.length > 0 ||
-            isPensionCharge(line.label),
+    : rawLines.map((line) => {
+        const visibleComponents = line.components.filter(
+          (component) => safeNumber(component.amount) > 0,
         );
+        const hasClosedOptionalComponents = line.components.some(
+          (component) => safeNumber(component.amount) === 0,
+        );
+        const componentExpected = visibleComponents.reduce(
+          (sum, component) => sum + safeNumber(component.amount),
+          0,
+        );
+
+        return {
+          key: line.alloc.id,
+          label: line.charge?.label || "Dette introuvable",
+          dueDate: line.charge?.due_date ?? null,
+          expected:
+            componentExpected > 0
+              ? componentExpected
+              : safeNumber(line.charge?.net_amount),
+          paid: safeNumber(line.charge?.paid_amount),
+          remaining: hasClosedOptionalComponents
+            ? 0
+            : safeNumber(line.charge?.balance_due),
+          amount: safeNumber(line.alloc.amount),
+          components: visibleComponents,
+        };
+      });
 
   const totalAllocated = displayLines.reduce(
     (sum, line) => sum + safeNumber(line.amount),
@@ -492,6 +572,10 @@ export default async function FinanceReceiptPrintPage({
   );
   const totalPaidAfterReceipt = displayLines.reduce(
     (sum, line) => sum + safeNumber(line.paid),
+    0,
+  );
+  const totalPaidBeforeReceipt = Math.max(
+    totalPaidAfterReceipt - totalAllocated,
     0,
   );
   const totalRemainingAfterReceipt = displayLines.reduce(
@@ -996,7 +1080,12 @@ export default async function FinanceReceiptPrintPage({
                             {formatMoney(line.expected)}
                           </td>
                           <td className="px-5 py-4 text-emerald-700">
-                            {formatMoney(line.paid)}
+                            {formatMoney(
+                              Math.max(
+                                safeNumber(line.paid) - safeNumber(line.amount),
+                                0,
+                              ),
+                            )}
                           </td>
                           <td className="px-5 py-4 text-rose-700">
                             {formatMoney(line.remaining)}
@@ -1042,19 +1131,25 @@ export default async function FinanceReceiptPrintPage({
 
                 <div className="receipt-summary-grid mt-4 grid gap-3 text-sm text-slate-700">
                   <div className="flex items-center justify-between gap-3">
-                    <span>Ventilation totale</span>
-                    <span className="font-bold text-slate-900">
-                      {formatMoney(totalAllocated)}
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between gap-3">
                     <span>Total attendu</span>
                     <span className="font-bold text-slate-900">
                       {formatMoney(totalExpected)}
                     </span>
                   </div>
                   <div className="flex items-center justify-between gap-3">
-                    <span>Total déjà versé</span>
+                    <span>Déjà payé</span>
+                    <span className="font-bold text-slate-900">
+                      {formatMoney(totalPaidBeforeReceipt)}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between gap-3">
+                    <span>Montant du reçu</span>
+                    <span className="font-bold text-emerald-700">
+                      {formatMoney(totalAllocated)}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between gap-3">
+                    <span>Total versé</span>
                     <span className="font-bold text-emerald-700">
                       {formatMoney(totalPaidAfterReceipt)}
                     </span>
