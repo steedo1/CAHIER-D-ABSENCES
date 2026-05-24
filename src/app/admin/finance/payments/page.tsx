@@ -684,55 +684,88 @@ async function resolveChargeForPayment({
   });
 }
 
+function chunkArray<T>(items: T[], size = 100): T[][] {
+  const chunks: T[][] = [];
+  for (let i = 0; i < items.length; i += size) {
+    chunks.push(items.slice(i, i + size));
+  }
+  return chunks;
+}
+
 async function fetchActiveScheduleComponents(
   institutionId: string,
   scheduleIds: string[],
 ): Promise<FeeScheduleComponentRow[]> {
-  if (scheduleIds.length === 0) return [];
+  const uniqueScheduleIds = Array.from(new Set(scheduleIds.filter(Boolean)));
+  if (uniqueScheduleIds.length === 0) return [];
 
   const admin = getSupabaseServiceClient();
-  const { data, error } = await admin
-    .schema("finance")
-    .from("fee_schedule_components")
-    .select(
-      "id,school_id,fee_schedule_id,component_code,label,amount,order_index,is_active",
-    )
-    .eq("school_id", institutionId)
-    .in("fee_schedule_id", scheduleIds)
-    .eq("is_active", true)
-    .order("order_index", { ascending: true })
-    .order("label", { ascending: true });
+  const rows: FeeScheduleComponentRow[] = [];
 
-  if (error) {
-    const msg = String(error.message || "").toLowerCase();
-    if (msg.includes("does not exist") || msg.includes("introuvable"))
-      return [];
-    throw new Error(error.message);
+  for (const ids of chunkArray(uniqueScheduleIds, 100)) {
+    const { data, error } = await admin
+      .schema("finance")
+      .from("fee_schedule_components")
+      .select(
+        "id,school_id,fee_schedule_id,component_code,label,amount,order_index,is_active",
+      )
+      .eq("school_id", institutionId)
+      .in("fee_schedule_id", ids)
+      .eq("is_active", true)
+      .order("order_index", { ascending: true })
+      .order("label", { ascending: true });
+
+    if (error) {
+      const msg = String(error.message || "").toLowerCase();
+      if (msg.includes("does not exist") || msg.includes("introuvable")) {
+        return [];
+      }
+      throw new Error(`Lecture des composants de frais impossible : ${error.message}`);
+    }
+
+    rows.push(...((data ?? []) as FeeScheduleComponentRow[]));
   }
-  return (data ?? []) as FeeScheduleComponentRow[];
+
+  return rows.sort(
+    (a, b) =>
+      Number(a.order_index || 0) - Number(b.order_index || 0) ||
+      a.label.localeCompare(b.label, "fr", { numeric: true, sensitivity: "base" }),
+  );
 }
 
 async function fetchPaidComponentsForCharges(
   institutionId: string,
   chargeIds: string[],
 ): Promise<PaidComponentRow[]> {
-  if (chargeIds.length === 0) return [];
+  const uniqueChargeIds = Array.from(new Set(chargeIds.filter(Boolean)));
+  if (uniqueChargeIds.length === 0) return [];
 
   const admin = getSupabaseServiceClient();
-  const { data, error } = await admin
-    .schema("finance")
-    .from("v_receipt_allocation_components")
-    .select("student_charge_id,fee_schedule_component_id,receipt_status")
-    .eq("school_id", institutionId)
-    .in("student_charge_id", chargeIds);
+  const rows: PaidComponentRow[] = [];
 
-  if (error) {
-    const msg = String(error.message || "").toLowerCase();
-    if (msg.includes("does not exist") || msg.includes("introuvable"))
-      return [];
-    throw new Error(error.message);
+  // Important : il peut y avoir plus de 1 800 dettes ouvertes.
+  // Un seul .in("student_charge_id", chargeIds) produit une URL trop longue
+  // côté PostgREST/Vercel. On découpe donc les IDs.
+  for (const ids of chunkArray(uniqueChargeIds, 100)) {
+    const { data, error } = await admin
+      .schema("finance")
+      .from("v_receipt_allocation_components")
+      .select("student_charge_id,fee_schedule_component_id,receipt_status")
+      .eq("school_id", institutionId)
+      .in("student_charge_id", ids);
+
+    if (error) {
+      const msg = String(error.message || "").toLowerCase();
+      if (msg.includes("does not exist") || msg.includes("introuvable")) {
+        return [];
+      }
+      throw new Error(`Lecture des sous-rubriques déjà payées impossible : ${error.message}`);
+    }
+
+    rows.push(...((data ?? []) as PaidComponentRow[]));
   }
-  return (data ?? []) as PaidComponentRow[];
+
+  return rows;
 }
 
 async function resolveSelectedComponentsForPayment({
@@ -1094,37 +1127,44 @@ async function createPaymentAction(formData: FormData) {
 
 async function fetchAllChargeBalancesForPayments({
   institutionId,
-  studentIds,
+  classIds,
 }: {
   institutionId: string;
-  studentIds: string[];
+  classIds: string[];
 }): Promise<ChargeBalanceRow[]> {
-  if (studentIds.length === 0) return [];
+  const uniqueClassIds = Array.from(new Set(classIds.filter(Boolean)));
+  if (uniqueClassIds.length === 0) return [];
 
   const admin = getSupabaseServiceClient();
   const pageSize = 1000;
   const rows: ChargeBalanceRow[] = [];
 
-  for (let from = 0; ; from += pageSize) {
-    const to = from + pageSize - 1;
-    const { data, error } = await admin
-      .schema("finance")
-      .from("v_charge_balances")
-      .select(
-        "id,school_id,academic_year_id,student_id,class_id,fee_schedule_id,fee_category_id,label,base_amount,net_amount,paid_amount,balance_due,due_date,charge_date,computed_status,created_at,updated_at",
-      )
-      .eq("school_id", institutionId)
-      .in("student_id", studentIds)
-      .neq("computed_status", "cancelled")
-      .order("due_date", { ascending: true, nullsFirst: false })
-      .range(from, to);
+  // On filtre par classes affichées, pas par liste complète des élèves.
+  // Cela évite une URL énorme avec plusieurs centaines de UUID student_id.
+  for (const ids of chunkArray(uniqueClassIds, 50)) {
+    for (let from = 0; ; from += pageSize) {
+      const to = from + pageSize - 1;
+      const { data, error } = await admin
+        .schema("finance")
+        .from("v_charge_balances")
+        .select(
+          "id,school_id,academic_year_id,student_id,class_id,fee_schedule_id,fee_category_id,label,base_amount,net_amount,paid_amount,balance_due,due_date,charge_date,computed_status,created_at,updated_at",
+        )
+        .eq("school_id", institutionId)
+        .in("class_id", ids)
+        .neq("computed_status", "cancelled")
+        .order("due_date", { ascending: true, nullsFirst: false })
+        .range(from, to);
 
-    if (error) throw new Error(error.message);
+      if (error) {
+        throw new Error(`Lecture des dettes ouvertes impossible : ${error.message}`);
+      }
 
-    const pageRows = (data ?? []) as ChargeBalanceRow[];
-    rows.push(...pageRows);
+      const pageRows = (data ?? []) as ChargeBalanceRow[];
+      rows.push(...pageRows);
 
-    if (pageRows.length < pageSize) break;
+      if (pageRows.length < pageSize) break;
+    }
   }
 
   return rows;
@@ -1233,8 +1273,8 @@ export default async function FinancePaymentsPage({
 
   const [{ data: balances, error: balErr }, { data: receipts, error: recErr }] =
     await Promise.all([
-      studentIds.length > 0
-        ? fetchAllChargeBalancesForPayments({ institutionId, studentIds })
+      classIds.length > 0
+        ? fetchAllChargeBalancesForPayments({ institutionId, classIds })
             .then((data) => ({ data, error: null }))
             .catch((error) => ({ data: [], error }))
         : Promise.resolve({ data: [], error: null } as any),
