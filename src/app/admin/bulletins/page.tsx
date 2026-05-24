@@ -1199,16 +1199,26 @@ function StudentBulletinCard({
     const zoom = Math.max(0.1, Number(previewZoomForMeasure || 1));
 
     // Hauteur réelle du CONTENU, corrigée du zoom d’aperçu.
-    // On mesure le contenu interne, pas la page extérieure : cela évite que
-    // le scale casse les sauts de page ou coupe le bas du bulletin.
+    // Important : on ignore la hauteur minimale artificielle de la page A4,
+    // sinon l’impression réduit toujours le bulletin même quand le contenu tient déjà.
     const rect = contentEl.getBoundingClientRect();
-    const naturalH = Math.max(rect.height, contentEl.scrollHeight) / zoom;
+    const contentTop = rect.top;
+    const realBottom = Array.from(contentEl.children).reduce((bottom, child) => {
+      const el = child as HTMLElement;
+      if (el.classList.contains("bulletin-watermark")) return bottom;
+      const childRect = el.getBoundingClientRect();
+      return Math.max(bottom, childRect.bottom - contentTop);
+    }, 0);
+    const contentStyles = window.getComputedStyle(contentEl);
+    const paddingBottom = Number.parseFloat(contentStyles.paddingBottom || "0") || 0;
+    const measuredH = realBottom > 0 ? realBottom + paddingBottom : rect.height;
+    const naturalH = measuredH / zoom;
 
     if (!Number.isFinite(naturalH) || naturalH <= 0) return;
 
-    // Zone utile A4 très prudente : A4 - marges navigateur/imprimante - marge basse.
-    // 284 mm garde une réserve basse tout en évitant de réduire inutilement la police.
-    const targetPx = (284 / 25.4) * 96;
+    // Zone utile A4 imprimée : 297 mm - marges @page 4 mm x 2 = 289 mm.
+    // On garde une petite réserve, mais on évite de réduire inutilement la police.
+    const targetPx = (287 / 25.4) * 96;
 
     if (naturalH <= targetPx) {
       setScale(1);
@@ -1216,7 +1226,7 @@ function StudentBulletinCard({
     }
 
     const raw = Math.min(1, targetPx / naturalH);
-    const safe = Math.min(1, raw * 0.985);
+    const safe = Math.min(1, raw * 0.995);
 
     // En dessous de 0.55, le bulletin deviendrait illisible : on préfère garder
     // le maximum possible tout en évitant les coupes ordinaires.
@@ -3105,11 +3115,49 @@ export default function BulletinsPage() {
 
           .print-page-content {
             width: calc(100% / var(--print-fit-scale, 1)) !important;
-            min-height: calc(289mm / var(--print-fit-scale, 1)) !important;
-            padding: 2mm 6mm 5mm !important;
+            min-height: auto !important;
+            padding: 1.5mm 5mm 3.5mm !important;
             box-sizing: border-box !important;
             transform: scale(var(--print-fit-scale, 1)) !important;
             transform-origin: top left !important;
+          }
+
+          /* ✅ Lisibilité papier : règles limitées à l’impression du bulletin. */
+          .bulletin-print-portal .discipline-table,
+          .bulletin-print-portal .discipline-table tr,
+          .bulletin-print-portal .discipline-table th,
+          .bulletin-print-portal .discipline-table td {
+            font-size: 10.4px !important;
+            line-height: 1.12 !important;
+          }
+
+          .bulletin-print-portal .student-identity,
+          .bulletin-print-portal .bottom-card,
+          .bulletin-print-portal .council-card,
+          .bulletin-print-portal .visa-card {
+            font-size: 10.2px !important;
+            line-height: 1.12 !important;
+          }
+
+          .bulletin-print-portal .official-block {
+            font-size: 10.2px !important;
+          }
+
+          .bulletin-print-portal .official-title {
+            font-size: 13.6px !important;
+          }
+
+          .bulletin-print-portal .official-subtitle {
+            font-size: 11.4px !important;
+          }
+
+          .bulletin-print-portal .institution-title {
+            font-size: 15.6px !important;
+          }
+
+          .bulletin-print-portal .institution-info,
+          .bulletin-print-portal .bulletin-footer {
+            font-size: 9.8px !important;
           }
 
           .print-break:last-of-type,
