@@ -89,7 +89,7 @@ type ChargeBalanceRow = {
   fee_category_id: string;
   label: string;
   base_amount: number | string;
-  adjustment_total: number | string;
+  adjustment_total?: number | string;
   net_amount: number | string;
   paid_amount: number | string;
   balance_due: number | string;
@@ -329,7 +329,7 @@ async function fetchChargeById(
     .schema("finance")
     .from("v_charge_balances")
     .select(
-      "id,school_id,academic_year_id,student_id,class_id,fee_schedule_id,fee_category_id,label,base_amount,adjustment_total,net_amount,paid_amount,balance_due,due_date,charge_date,computed_status,created_at,updated_at",
+      "id,school_id,academic_year_id,student_id,class_id,fee_schedule_id,fee_category_id,label,base_amount,net_amount,paid_amount,balance_due,due_date,charge_date,computed_status,created_at,updated_at",
     )
     .eq("id", chargeId)
     .eq("school_id", institutionId)
@@ -349,7 +349,7 @@ async function fetchOpenChargesForStudent(
     .schema("finance")
     .from("v_charge_balances")
     .select(
-      "id,school_id,academic_year_id,student_id,class_id,fee_schedule_id,fee_category_id,label,base_amount,adjustment_total,net_amount,paid_amount,balance_due,due_date,charge_date,computed_status,created_at,updated_at",
+      "id,school_id,academic_year_id,student_id,class_id,fee_schedule_id,fee_category_id,label,base_amount,net_amount,paid_amount,balance_due,due_date,charge_date,computed_status,created_at,updated_at",
     )
     .eq("school_id", institutionId)
     .eq("student_id", studentId)
@@ -1111,7 +1111,7 @@ async function fetchAllChargeBalancesForPayments({
       .schema("finance")
       .from("v_charge_balances")
       .select(
-        "id,school_id,academic_year_id,student_id,class_id,fee_schedule_id,fee_category_id,label,base_amount,adjustment_total,net_amount,paid_amount,balance_due,due_date,charge_date,computed_status,created_at,updated_at",
+        "id,school_id,academic_year_id,student_id,class_id,fee_schedule_id,fee_category_id,label,base_amount,net_amount,paid_amount,balance_due,due_date,charge_date,computed_status,created_at,updated_at",
       )
       .eq("school_id", institutionId)
       .in("student_id", studentIds)
