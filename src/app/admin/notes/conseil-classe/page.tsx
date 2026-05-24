@@ -438,6 +438,47 @@ function periodTitle(
   return t || "Période";
 }
 
+function normalizePlainText(value: string | null | undefined): string {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function isCscaInstitution(institution: InstitutionSettings | null | undefined): boolean {
+  const haystack = normalizePlainText(
+    [
+      institution?.institution_name,
+      institution?.institution_code,
+      institution?.institution_status,
+    ]
+      .filter(Boolean)
+      .join(" ")
+  );
+
+  return (
+    haystack.includes("csca") ||
+    (haystack.includes("cours secondaire catholique") && haystack.includes("aboisso"))
+  );
+}
+
+function getDistinctionFromAverage(
+  avg: number | null | undefined,
+  isCsca = false
+): CouncilMentions["distinction"] {
+  if (avg === null || avg === undefined || !Number.isFinite(Number(avg))) return null;
+  const g = Number(avg);
+  const felicitationMin = isCsca ? 15 : 14;
+  const encouragementMin = isCsca ? 14 : 12;
+
+  if (g >= 16) return "excellence";
+  if (g >= felicitationMin) return "honour";
+  if (g >= encouragementMin) return "encouragement";
+  return null;
+}
+
 function clampTo20(value: number | null | undefined): number | null {
   if (value === null || value === undefined) return null;
   const n = Number(value);
@@ -449,16 +490,20 @@ function clampTo20(value: number | null | undefined): number | null {
 
 function computeCouncilMentions(
   generalAvg: number | null | undefined,
-  conductOn20: number | null | undefined
+  conductOn20: number | null | undefined,
+  isCsca = false
 ): CouncilMentions {
   let distinction: CouncilMentions["distinction"] = null;
   let sanction: CouncilMentions["sanction"] = null;
 
   if (generalAvg !== null && generalAvg !== undefined && Number.isFinite(generalAvg)) {
     const g = Number(generalAvg);
+    const felicitationMin = isCsca ? 15 : 14;
+    const encouragementMin = isCsca ? 14 : 12;
+
     if (g >= 16) distinction = "excellence";
-    else if (g >= 14) distinction = "honour";
-    else if (g >= 12) distinction = "encouragement";
+    else if (g >= felicitationMin) distinction = "honour";
+    else if (g >= encouragementMin) distinction = "encouragement";
     else if (g < 8) sanction = "blameWork";
     else if (g < 10) sanction = "warningWork";
   }
@@ -614,13 +659,13 @@ function shortPeriodLabel(
 
 function annualDecisionLabel(
   avg: number | null | undefined,
-  _complete = true
+  _complete = true,
+  isCsca = false
 ): string {
-  if (avg === null || avg === undefined || !Number.isFinite(Number(avg))) return "—";
-  const g = Number(avg);
-  if (g >= 16) return "Excellence";
-  if (g >= 14) return "Tableau d’honneur";
-  if (g >= 12) return "Encouragement";
+  const distinction = getDistinctionFromAverage(avg, isCsca);
+  if (distinction === "excellence") return "TH + Excellence";
+  if (distinction === "honour") return "TH + Félicitations";
+  if (distinction === "encouragement") return "TH + Encouragement";
   return "—";
 }
 
@@ -907,6 +952,11 @@ export default function ConseilClassePage() {
   const [yearPeriodBulletins, setYearPeriodBulletins] = useState<Record<string, EnrichedBulletin>>({});
   const [yearRecapLoading, setYearRecapLoading] = useState(false);
   const [activeStudentIds, setActiveStudentIds] = useState<string[]>([]);
+
+  const isCscaSchool = useMemo(
+    () => Boolean(conductSummary?.is_csca) || isCscaInstitution(institution),
+    [conductSummary?.is_csca, institution]
+  );
 
   useEffect(() => {
     const run = async () => {
@@ -1227,7 +1277,7 @@ export default function ConseilClassePage() {
         Number.isFinite(Number(item.general_avg))
           ? item.general_avg
           : null;
-      const mentions = computeCouncilMentions(generalForCouncil, conductOn20);
+      const mentions = computeCouncilMentions(generalForCouncil, conductOn20, isCscaSchool);
       const appreciation = computeCouncilAppreciationText(
         mentions,
         generalForCouncil,
@@ -1242,7 +1292,7 @@ export default function ConseilClassePage() {
         appreciation,
       };
     });
-  }, [enriched, conductByStudentId, conductSummary]);
+  }, [enriched, conductByStudentId, conductSummary, isCscaSchool]);
 
   const classStats = useMemo(() => {
     const effectif = councilRows.length;
@@ -1718,15 +1768,17 @@ export default function ConseilClassePage() {
       classAvg: vals.length ? round2(vals.reduce((a, b) => a + b, 0) / vals.length) : null,
       highest: vals.length ? Math.max(...vals) : null,
       lowest: vals.length ? Math.min(...vals) : null,
-      excellence: annualRecapRows.filter((row) => (row.annual_avg ?? -Infinity) >= 16).length,
+      excellence: annualRecapRows.filter(
+        (row) => getDistinctionFromAverage(row.annual_avg, isCscaSchool) === "excellence"
+      ).length,
       honour: annualRecapRows.filter(
-        (row) => (row.annual_avg ?? -Infinity) >= 14 && (row.annual_avg ?? -Infinity) < 16
+        (row) => getDistinctionFromAverage(row.annual_avg, isCscaSchool) === "honour"
       ).length,
       encouragement: annualRecapRows.filter(
-        (row) => (row.annual_avg ?? -Infinity) >= 12 && (row.annual_avg ?? -Infinity) < 14
+        (row) => getDistinctionFromAverage(row.annual_avg, isCscaSchool) === "encouragement"
       ).length,
     };
-  }, [annualRecapRows]);
+  }, [annualRecapRows, isCscaSchool]);
 
   const currentPeriodTopThreeRows = useMemo(() => {
     return councilRows
@@ -1788,7 +1840,7 @@ export default function ConseilClassePage() {
         });
       })
       .slice(0, 3);
-  }, [annualRecapRows]);
+  }, [annualRecapRows, isCscaSchool]);
 
   const periodTopThreeGroups = useMemo(() => {
     if (!annualPeriods.length || !annualRecapRows.length) return [];
@@ -2376,9 +2428,9 @@ export default function ConseilClassePage() {
                       <th style={{ width: "15%" }}>Date de naissance</th>
                       <th style={{ width: "9%" }}>Moyenne</th>
                       <th style={{ width: "7%" }}>Rang</th>
-                      <th style={{ width: "5%" }}>TH+FE</th>
-                      <th style={{ width: "5%" }}>TH+EN</th>
-                      <th style={{ width: "6%" }}>TH</th>
+                      <th style={{ width: "5%" }}>TH+EX</th>
+                      <th style={{ width: "6%" }}>TH+F</th>
+                      <th style={{ width: "5%" }}>TH+ENC</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -2391,8 +2443,8 @@ export default function ConseilClassePage() {
                         <OfficialTd center>{formatNumber(row.general_avg)}</OfficialTd>
                         <OfficialTd center>{formatRankNC(row.rank)}</OfficialTd>
                         <OfficialTd center>{row.mentions.distinction === "excellence" ? "X" : ""}</OfficialTd>
-                        <OfficialTd center>{row.mentions.distinction === "encouragement" ? "X" : ""}</OfficialTd>
                         <OfficialTd center>{row.mentions.distinction === "honour" ? "X" : ""}</OfficialTd>
+                        <OfficialTd center>{row.mentions.distinction === "encouragement" ? "X" : ""}</OfficialTd>
                       </tr>
                     ))}
                   </tbody>
@@ -2481,9 +2533,9 @@ export default function ConseilClassePage() {
                         </tr>
                       </thead>
                       <tbody>
-                        <tr><OfficialTd>TH</OfficialTd><OfficialTd center>{classStats.honour}</OfficialTd></tr>
-                        <tr><OfficialTd>TH + Félicitations</OfficialTd><OfficialTd center>{classStats.excellence}</OfficialTd></tr>
-                        <tr><OfficialTd>TH + Encouragements</OfficialTd><OfficialTd center>{classStats.encouragement}</OfficialTd></tr>
+                        <tr><OfficialTd>TH + Excellence</OfficialTd><OfficialTd center>{classStats.excellence}</OfficialTd></tr>
+                        <tr><OfficialTd>TH + Félicitations</OfficialTd><OfficialTd center>{classStats.honour}</OfficialTd></tr>
+                        <tr><OfficialTd>TH + Encouragement</OfficialTd><OfficialTd center>{classStats.encouragement}</OfficialTd></tr>
                       </tbody>
                     </table>
                   </div>
@@ -2672,8 +2724,9 @@ export default function ConseilClassePage() {
                   <QuickCell label="Effectif" value={String(annualRecapStats.effectif)} />
                   <QuickCell label="Meilleure moy." value={formatNumber(annualRecapStats.highest)} />
                   <QuickCell label="Plus faible moy." value={formatNumber(annualRecapStats.lowest)} />
-                  <QuickCell label="TH" value={String(annualRecapStats.honour)} />
-                  <QuickCell label="TH + Enc./Fél." value={String(annualRecapStats.encouragement + annualRecapStats.excellence)} />
+                  <QuickCell label="TH + Excellence" value={String(annualRecapStats.excellence)} />
+                  <QuickCell label="TH + Félicitations" value={String(annualRecapStats.honour)} />
+                  <QuickCell label="TH + Encouragement" value={String(annualRecapStats.encouragement)} />
                 </div>
 
                 {periodTopThreeGroups.length > 0 ? (
@@ -2742,7 +2795,7 @@ export default function ConseilClassePage() {
                           ))}
                           <OfficialTd center strong>{formatNumber(row.annual_avg)}</OfficialTd>
                           <OfficialTd center>{formatRankNC(row.annual_rank)}</OfficialTd>
-                          <OfficialTd center>{annualDecisionLabel(row.annual_avg, row.annual_is_complete)}</OfficialTd>
+                          <OfficialTd center>{annualDecisionLabel(row.annual_avg, row.annual_is_complete, isCscaSchool)}</OfficialTd>
                         </tr>
                       ))}
                     </tbody>
@@ -2760,9 +2813,9 @@ export default function ConseilClassePage() {
                         </tr>
                       </thead>
                       <tbody>
-                        <tr><OfficialTd>Tableau d’honneur</OfficialTd><OfficialTd center>{annualRecapStats.honour}</OfficialTd></tr>
-                        <tr><OfficialTd>Encouragement</OfficialTd><OfficialTd center>{annualRecapStats.encouragement}</OfficialTd></tr>
-                        <tr><OfficialTd>Excellence</OfficialTd><OfficialTd center>{annualRecapStats.excellence}</OfficialTd></tr>
+                        <tr><OfficialTd>TH + Excellence</OfficialTd><OfficialTd center>{annualRecapStats.excellence}</OfficialTd></tr>
+                        <tr><OfficialTd>TH + Félicitations</OfficialTd><OfficialTd center>{annualRecapStats.honour}</OfficialTd></tr>
+                        <tr><OfficialTd>TH + Encouragement</OfficialTd><OfficialTd center>{annualRecapStats.encouragement}</OfficialTd></tr>
                       </tbody>
                     </table>
                   </div>

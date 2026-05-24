@@ -337,7 +337,8 @@ type CouncilMentions = {
 
 function computeCouncilMentions(
   generalAvg: number | null | undefined,
-  conductOn20: number | null | undefined
+  conductOn20: number | null | undefined,
+  isCsca = false
 ): CouncilMentions {
   let distinction: CouncilMentions["distinction"] = null;
   let sanction: CouncilMentions["sanction"] = null;
@@ -348,9 +349,12 @@ function computeCouncilMentions(
     Number.isFinite(generalAvg)
   ) {
     const g = Number(generalAvg);
+    const felicitationMin = isCsca ? 15 : 14;
+    const encouragementMin = isCsca ? 14 : 12;
+
     if (g >= 16) distinction = "excellence";
-    else if (g >= 14) distinction = "honour";
-    else if (g >= 12) distinction = "encouragement";
+    else if (g >= felicitationMin) distinction = "honour";
+    else if (g >= encouragementMin) distinction = "encouragement";
     else if (g < 8) sanction = "blameWork";
     else if (g < 10) sanction = "warningWork";
   }
@@ -1073,6 +1077,11 @@ function periodTitle(period: BulletinResponse["period"]) {
   return t || "Trimestre";
 }
 
+function endOfYearDecisionLabel(avg: number | null | undefined): string {
+  if (avg === null || avg === undefined || !Number.isFinite(Number(avg))) return "—";
+  return Number(avg) >= 10 ? "ADMIS" : "REDOUBLE";
+}
+
 function safeUpper(s: string) {
   try {
     return s.toUpperCase();
@@ -1088,6 +1097,23 @@ function normalizePlainText(value: string | null | undefined): string {
     .toLowerCase()
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function isCscaInstitution(institution: InstitutionSettings | null | undefined): boolean {
+  const haystack = normalizePlainText(
+    [
+      institution?.institution_name,
+      institution?.institution_code,
+      institution?.institution_status,
+    ]
+      .filter(Boolean)
+      .join(" ")
+  );
+
+  return (
+    haystack.includes("csca") ||
+    (haystack.includes("cours secondaire catholique") && haystack.includes("aboisso"))
+  );
 }
 
 function getHeadVisaLabel(institution: InstitutionSettings | null | undefined): string {
@@ -1576,9 +1602,16 @@ function StudentBulletinCard({
   const showGeneralIncompleteMarker = false;
   const showAnnualIncompleteMarker = false;
 
+  const showEndOfYearDecision = showAnnual && annualAvgHasValue;
+  const endOfYearDecision = showEndOfYearDecision
+    ? endOfYearDecisionLabel(annualAvgOn20)
+    : "—";
+
+  const isCscaSchool = isCscaInstitution(institution);
+
   const mentions = generalAvgHasValue
-    ? computeCouncilMentions(item.general_avg, conductNoteOn20)
-    : computeCouncilMentions(null, conductNoteOn20);
+    ? computeCouncilMentions(item.general_avg, conductNoteOn20, isCscaSchool)
+    : computeCouncilMentions(null, conductNoteOn20, isCscaSchool);
 
   const councilText = generalAvgHasValue
     ? computeCouncilAppreciationText(mentions, item.general_avg, conductNoteOn20)
@@ -2236,16 +2269,16 @@ function StudentBulletinCard({
             <div className="mt-[2px] text-[9px] font-semibold">DISTINCTIONS</div>
             <div className="mt-[2px] space-y-[2px] text-[9px]">
               <div className="flex items-center">
-                {tick(mentions.distinction === "honour")}
-                <span>Tableau d&apos;honneur / Félicitations</span>
+                {tick(mentions.distinction === "excellence")}
+                <span>TH + Excellence</span>
               </div>
               <div className="flex items-center">
-                {tick(mentions.distinction === "excellence")}
-                <span>Tableau d&apos;excellence</span>
+                {tick(mentions.distinction === "honour")}
+                <span>TH + Félicitations</span>
               </div>
               <div className="flex items-center">
                 {tick(mentions.distinction === "encouragement")}
-                <span>Tableau d&apos;encouragement</span>
+                <span>TH + Encouragement</span>
               </div>
             </div>
 
@@ -2270,12 +2303,32 @@ function StudentBulletinCard({
             </div>
           </div>
 
-          <div className="bdr visa-card flex min-h-[78px] flex-col justify-between p-1">
-            <div className="font-semibold text-[9px]">Visa du professeur principal</div>
-            <div className="h-[50px]" />
-            {classInfo.head_teacher?.display_name && (
-              <div className="text-center text-[9px]">
-                {classInfo.head_teacher.display_name}
+          <div
+            className={[
+              "bdr visa-card grid min-h-[78px] overflow-hidden p-0",
+              showEndOfYearDecision ? "grid-cols-2" : "grid-cols-1",
+            ].join(" ")}
+          >
+            <div className="flex min-h-[78px] flex-col justify-between p-1">
+              <div className="font-semibold text-[9px]">Visa du professeur principal</div>
+              <div className="h-[50px]" />
+              {classInfo.head_teacher?.display_name && (
+                <div className="text-center text-[9px]">
+                  {classInfo.head_teacher.display_name}
+                </div>
+              )}
+            </div>
+
+            {showEndOfYearDecision && (
+              <div className="flex min-h-[78px] flex-col border-l border-black p-1 text-center">
+                <div className="text-[8px] font-bold uppercase leading-tight">
+                  Décision de fin d’année
+                </div>
+                <div className="flex flex-1 items-center justify-center">
+                  <div className="text-[13px] font-extrabold uppercase tracking-wide text-red-700">
+                    {endOfYearDecision}
+                  </div>
+                </div>
               </div>
             )}
           </div>
